@@ -7,7 +7,7 @@ import { transcribeVoice, downloadTelegramFile } from '@/lib/whisper'
 export const dynamic = 'force-dynamic'
 
 const BOT = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`
-const BASE_URL = 'https://gogo-memory-os.vercel.app'
+const BASE_URL = 'https://app.askgogo.in'
 
 async function sendMessage(chatId: number, text: string) {
   await fetch(`${BOT}/sendMessage`, {
