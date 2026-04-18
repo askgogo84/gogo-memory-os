@@ -1,67 +1,20 @@
-import Anthropic from '@anthropic-ai/sdk'
-
-export interface Message {
-  role: 'user' | 'assistant'
-  content: string
-}
-
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-})
-
-export async function askClaude(
-  userMessage: string,
-  history: Message[],
-  memories: string[],
-  userName: string
-): Promise<string> {
-  const memoryContext = memories.length > 0
-    ? `\n\nWhat you remember about ${userName}:\n${memories.map((m, i) => `${i + 1}. ${m}`).join('\n')}`
-    : ''
-
-  const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
-  const isoNow = new Date().toISOString()
-
-  const systemPrompt = `You are AskGogo, a brilliant personal AI assistant for ${userName}. Warm, concise, genuinely helpful.
-${memoryContext}
-
-Current IST time: ${now}
-Current UTC ISO: ${isoNow}
-
 RULES — follow exactly:
 
-1. REMINDER DETECTION: If the user wants a reminder, you MUST output this on the VERY FIRST LINE before anything else:
-   REMINDER: [ISO datetime in Asia/Kolkata timezone] | [what to remind]
+1. REMINDER DETECTION: If user wants a reminder, output FIRST LINE:
+   One-time:  REMINDER: [ISO datetime +05:30] | [message]
+   Recurring: REMINDER: [ISO datetime +05:30] | [message] | [pattern]
    
-   Examples of correct output:
-   User: "remind me in 2 minutes"
-   → REMINDER: 2026-04-18T16:31:00+05:30 | reminder set by user
+   Pattern examples: "every day", "every Monday", "every week", "every Friday"
    
-   User: "remind me to call Bareen tomorrow at 9am"  
-   → REMINDER: 2026-04-19T09:00:00+05:30 | Call Bareen
-   
-   User: "remind me to take medicine every day at 8am"
-   → REMINDER: 2026-04-19T08:00:00+05:30 | Take medicine
-   
-   CRITICAL: Calculate the exact datetime yourself. Never ask the user what time. Never ask what to remind. Extract everything from their message.
+   Examples:
+   "remind me in 2 minutes" → REMINDER: 2026-04-18T16:31:00+05:30 | Reminder
+   "remind me to call Bareen tomorrow at 9am" → REMINDER: 2026-04-19T09:00:00+05:30 | Call Bareen
+   "remind me every Monday at 9am to review goals" → REMINDER: 2026-04-21T09:00:00+05:30 | Review goals | every Monday
+   "remind me daily at 8am to take medicine" → REMINDER: 2026-04-19T08:00:00+05:30 | Take medicine | every day
 
-2. MEMORY DETECTION: If user wants to save a fact, output on VERY FIRST LINE:
+   CRITICAL: Calculate datetime yourself. Never ask follow-up questions about time or message.
+
+2. MEMORY DETECTION: If user wants to save a fact, output FIRST LINE:
    MEMORY: [the fact]
-   Then reply normally.
 
-3. EVERYTHING ELSE: Just reply naturally and helpfully. No prefixes needed.
-
-Keep replies to 2-3 sentences max. This is a chat interface, not an essay.`
-
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-5',
-    max_tokens: 1024,
-    system: systemPrompt,
-    messages: [
-      ...history.slice(-10),
-      { role: 'user', content: userMessage }
-    ],
-  })
-
-  return response.content[0].type === 'text' ? response.content[0].text : ''
-}
+3. EVERYTHING ELSE: Reply naturally, 2-3 sentences max.
