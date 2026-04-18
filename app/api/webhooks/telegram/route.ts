@@ -1,3 +1,4 @@
+import { addToList, getList, getAllLists, checkItem, clearList, formatList } from '@/lib/lists'
 import { NextRequest, NextResponse } from 'next/server'
 import { askClaude } from '@/lib/claude'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -79,12 +80,8 @@ async function saveReminder(
 
 function parseResponse(raw: string) {
   let memory: string | null = null
-  let reminder: {
-    remindAt: string
-    message: string
-    isRecurring: boolean
-    pattern: string | null
-  } | null = null
+  let reminder: { remindAt: string; message: string; isRecurring: boolean; pattern: string | null } | null = null
+  let listAction: { type: string; listName: string; items?: string[]; itemText?: string } | null = null
   const filtered: string[] = []
 
   for (const line of raw.split('\n')) {
@@ -101,12 +98,32 @@ function parseResponse(raw: string) {
           pattern: isRecurring ? parts[2].trim() : null,
         }
       }
+    } else if (line.startsWith('LIST_ADD:')) {
+      const parts = line.replace('LIST_ADD:', '').trim().split('|')
+      if (parts.length >= 2) {
+        listAction = {
+          type: 'add',
+          listName: parts[0].trim(),
+          items: parts[1].split(',').map(s => s.trim()).filter(Boolean)
+        }
+      }
+    } else if (line.startsWith('LIST_SHOW:')) {
+      listAction = { type: 'show', listName: line.replace('LIST_SHOW:', '').trim() }
+    } else if (line.startsWith('LIST_CLEAR:')) {
+      listAction = { type: 'clear', listName: line.replace('LIST_CLEAR:', '').trim() }
+    } else if (line.startsWith('LIST_CHECK:')) {
+      const parts = line.replace('LIST_CHECK:', '').trim().split('|')
+      if (parts.length >= 2) {
+        listAction = { type: 'check', listName: parts[0].trim(), itemText: parts[1].trim() }
+      }
+    } else if (line.startsWith('LIST_ALL')) {
+      listAction = { type: 'all', listName: '' }
     } else {
       filtered.push(line)
     }
   }
 
-  return { reply: filtered.join('\n').trim(), memory, reminder }
+  return { reply: filtered.join('\n').trim(), memory, reminder, listAction }
 }
 
 export async function POST(req: NextRequest) {
@@ -212,6 +229,16 @@ export async function POST(req: NextRequest) {
       }
       return NextResponse.json({ ok: true })
     }
+    if (text === '/lists') {
+      const lists = await getAllLists(telegramId)
+      if (lists.length === 0) {
+        await sendMessage(chatId, `📋 No lists yet.\n\nTry: _"Add milk to shopping"_ or _"Add call mom to todo"_`)
+      } else {
+        const summary = lists.map(l => `• *${l.list_name}* — ${(l.items || []).length} items`).join('\n')
+        await sendMessage(chatId, `📋 *Your lists:*\n\n${summary}\n\nSay _"show shopping"_ to see items.`)
+      }
+      return NextResponse.json({ ok: true })
+    }
 
     if (text === '/dashboard') {
       await sendMessage(chatId,
@@ -266,12 +293,46 @@ export async function POST(req: NextRequest) {
 
     const finalReply = isVoice ? `_Heard you via voice note_\n\n${reply}` : reply
 
+    await saveMessage(telegramId, 'user', messageForClaude)
+    const rawResponse = await askClaude(messageForClaude, history, memories, name)
+    const { reply, memory, reminder, listAction } = parseResponse(rawResponse)
+
+    if (memory) await saveMemory(telegramId, memory)
+    if (reminder) {
+      await saveReminder(
+        telegramId, chatId,
+        reminder.remindAt, reminder.message,
+        reminder.isRecurring, reminder.pattern
+      )
+    }
+
+    // Handle list actions
+    let listReply = ''
+    if (listAction) {
+      if (listAction.type === 'add' && listAction.items) {
+        const items = await addToList(telegramId, listAction.listName, listAction.items)
+        listReply = `\n\n✅ Added ${listAction.items.length} items to *${listAction.listName}* (${items.length} total)`
+      } else if (listAction.type === 'show') {
+        const list = await getList(telegramId, listAction.listName)
+        listReply = list ? `\n\n${formatList(listAction.listName, list.items)}` : `\n\n📋 No list named *${listAction.listName}* yet.`
+      } else if (listAction.type === 'clear') {
+        await clearList(telegramId, listAction.listName)
+        listReply = `\n\n🗑️ Cleared *${listAction.listName}* list.`
+      } else if (listAction.type === 'check' && listAction.itemText) {
+        const items = await checkItem(telegramId, listAction.listName, listAction.itemText)
+        listReply = items ? `\n\n✓ Toggled in *${listAction.listName}*` : `\n\n❌ No list named *${listAction.listName}*`
+      } else if (listAction.type === 'all') {
+        const lists = await getAllLists(telegramId)
+        if (lists.length === 0) {
+          listReply = `\n\n📋 You have no lists yet. Try: _"Add milk to shopping"_`
+        } else {
+          const summary = lists.map(l => `• *${l.list_name}* — ${(l.items || []).length} items`).join('\n')
+          listReply = `\n\n📋 *Your lists:*\n\n${summary}`
+        }
+      }
+    }
+
+    const finalReply = (isVoice ? `_Heard you via voice note_\n\n${reply}` : reply) + listReply
+
     await saveMessage(telegramId, 'assistant', reply)
     await sendMessage(chatId, finalReply)
-
-    return NextResponse.json({ ok: true })
-  } catch (error) {
-    console.error('Webhook error:', error)
-    return NextResponse.json({ ok: true })
-  }
-}
