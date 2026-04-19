@@ -1,9 +1,9 @@
-import { addToList, getList, getAllLists, checkItem, clearList, formatList } from '@/lib/lists'
 import { NextRequest, NextResponse } from 'next/server'
 import { askClaude } from '@/lib/claude'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { checkAndIncrementLimit } from '@/lib/limits'
 import { transcribeVoice, downloadTelegramFile } from '@/lib/whisper'
+import { addToList, getList, getAllLists, checkItem, clearList, formatList } from '@/lib/lists'
 
 export const dynamic = 'force-dynamic'
 
@@ -80,8 +80,18 @@ async function saveReminder(
 
 function parseResponse(raw: string) {
   let memory: string | null = null
-  let reminder: { remindAt: string; message: string; isRecurring: boolean; pattern: string | null } | null = null
-  let listAction: { type: string; listName: string; items?: string[]; itemText?: string } | null = null
+  let reminder: {
+    remindAt: string
+    message: string
+    isRecurring: boolean
+    pattern: string | null
+  } | null = null
+  let listAction: {
+    type: string
+    listName: string
+    items?: string[]
+    itemText?: string
+  } | null = null
   const filtered: string[] = []
 
   for (const line of raw.split('\n')) {
@@ -104,7 +114,7 @@ function parseResponse(raw: string) {
         listAction = {
           type: 'add',
           listName: parts[0].trim(),
-          items: parts[1].split(',').map(s => s.trim()).filter(Boolean)
+          items: parts[1].split(',').map(s => s.trim()).filter(Boolean),
         }
       }
     } else if (line.startsWith('LIST_SHOW:')) {
@@ -147,10 +157,9 @@ export async function POST(req: NextRequest) {
         const transcribed = await transcribeVoice(fileBuffer)
         text = transcribed
         isVoice = true
-        console.log(`Voice transcribed for ${telegramId}: "${text}"`)
       } catch (err) {
         console.error('Voice transcription failed:', err)
-        await sendMessage(chatId, `Could not transcribe your voice note. Please try again or type your message.`)
+        await sendMessage(chatId, 'Could not transcribe your voice note. Please try again or type your message.')
         return NextResponse.json({ ok: true })
       }
     }
@@ -163,18 +172,19 @@ export async function POST(req: NextRequest) {
     if (text === '/start') {
       await sendMessage(chatId,
         `Hey ${name}! I'm *AskGogo*, your personal AI assistant.\n\n` +
-        `What I can do:\n` +
-        `*Remember* — _"Remember my gym is at 7am"_\n` +
-        `*Remind* — _"Remind me to call Bareen at 5pm"_\n` +
-        `*Recurring* — _"Remind me every Monday at 9am to review goals"_\n` +
-        `*Voice* — send a voice note, I understand it!\n` +
-        `*Ask* — anything, with full memory context\n\n` +
+        `*Remember* -- _"Remember my gym is at 7am"_\n` +
+        `*Remind* -- _"Remind me to call Divya at 5pm"_\n` +
+        `*Recurring* -- _"Remind me every Monday at 9am to review goals"_\n` +
+        `*Lists* -- _"Add milk to shopping"_\n` +
+        `*Voice* -- send a voice note, I understand it!\n` +
+        `*Ask* -- anything, with full memory context\n\n` +
         `Commands:\n` +
-        `/memory — see what I remember\n` +
-        `/reminders — upcoming reminders\n` +
-        `/dashboard — full web view\n` +
-        `/upgrade — see plans and pricing\n` +
-        `/help — show this menu`
+        `/memory -- see what I remember\n` +
+        `/reminders -- upcoming reminders\n` +
+        `/lists -- all your lists\n` +
+        `/dashboard -- full web view\n` +
+        `/upgrade -- see plans and pricing\n` +
+        `/help -- show this menu`
       )
       return NextResponse.json({ ok: true })
     }
@@ -182,13 +192,15 @@ export async function POST(req: NextRequest) {
     if (text === '/help') {
       await sendMessage(chatId,
         `*AskGogo Commands:*\n\n` +
-        `/memory — view all saved memories\n` +
-        `/reminders — view upcoming reminders\n` +
-        `/dashboard — open web dashboard\n` +
-        `/upgrade — view plans and pricing\n` +
-        `/help — show this menu\n\n` +
-        `Voice notes supported — just send a voice message.\n` +
-        `Recurring reminders — "every day at 8am", "every Monday at 9am"`
+        `/memory -- view all saved memories\n` +
+        `/reminders -- view upcoming reminders\n` +
+        `/lists -- view all your lists\n` +
+        `/dashboard -- open web dashboard\n` +
+        `/upgrade -- view plans and pricing\n` +
+        `/help -- show this menu\n\n` +
+        `Voice notes supported -- just send a voice message.\n` +
+        `Recurring reminders -- "every day at 8am", "every Monday at 9am"\n` +
+        `Lists -- "add milk to shopping", "show my todo"`
       )
       return NextResponse.json({ ok: true })
     }
@@ -196,7 +208,7 @@ export async function POST(req: NextRequest) {
     if (text === '/memory') {
       const memories = await getMemories(telegramId)
       if (memories.length === 0) {
-        await sendMessage(chatId, `No memories yet.\n\nTry: _"Remember that I prefer black coffee"_`)
+        await sendMessage(chatId, 'No memories yet.\n\nTry: _"Remember that I prefer black coffee"_')
       } else {
         await sendMessage(chatId,
           `*What I remember about you:*\n\n` +
@@ -213,7 +225,7 @@ export async function POST(req: NextRequest) {
         .order('remind_at', { ascending: true }).limit(10)
 
       if (!data || data.length === 0) {
-        await sendMessage(chatId, `No upcoming reminders.\n\nTry: _"Remind me every Monday at 9am to review my goals"_`)
+        await sendMessage(chatId, 'No upcoming reminders.\n\nTry: _"Remind me every Monday at 9am to review my goals"_')
       } else {
         const list = data.map((r: {
           message: string
@@ -223,19 +235,22 @@ export async function POST(req: NextRequest) {
         }) => {
           const dt = new Date(r.remind_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
           const tag = r.is_recurring ? ` (repeats ${r.recurring_pattern})` : ''
-          return `- ${r.message} — ${dt}${tag}`
+          return `- ${r.message} -- ${dt}${tag}`
         }).join('\n')
         await sendMessage(chatId, `*Upcoming reminders:*\n\n${list}`)
       }
       return NextResponse.json({ ok: true })
     }
+
     if (text === '/lists') {
       const lists = await getAllLists(telegramId)
       if (lists.length === 0) {
-        await sendMessage(chatId, `📋 No lists yet.\n\nTry: _"Add milk to shopping"_ or _"Add call mom to todo"_`)
+        await sendMessage(chatId, 'No lists yet.\n\nTry: _"Add milk to shopping"_ or _"Add call mom to todo"_')
       } else {
-        const summary = lists.map(l => `• *${l.list_name}* — ${(l.items || []).length} items`).join('\n')
-        await sendMessage(chatId, `📋 *Your lists:*\n\n${summary}\n\nSay _"show shopping"_ to see items.`)
+        const summary = lists.map((l: { list_name: string; items: unknown[] }) =>
+          `- *${l.list_name}* -- ${(l.items || []).length} items`
+        ).join('\n')
+        await sendMessage(chatId, `*Your lists:*\n\n${summary}\n\nSay _"show shopping"_ to see items.`)
       }
       return NextResponse.json({ ok: true })
     }
@@ -254,9 +269,9 @@ export async function POST(req: NextRequest) {
       const currentTier = user?.tier || 'free'
       await sendMessage(chatId,
         `*AskGogo Plans*\n\n` +
-        `${currentTier === 'free' ? '(current) ' : ''}*Free* — Rs 0\n20 msgs/day, 10 memories\n\n` +
-        `${currentTier === 'starter' ? '(current) ' : ''}*Starter* — Rs 299/month\n100 msgs/day, voice notes, 50 memories\n\n` +
-        `${currentTier === 'pro' ? '(current) ' : ''}*Pro* — Rs 999/month\nUnlimited, 500 memories, team reminders\n\n` +
+        `${currentTier === 'free' ? '(current) ' : ''}*Free* -- Rs 0\n20 msgs/day, 10 memories\n\n` +
+        `${currentTier === 'starter' ? '(current) ' : ''}*Starter* -- Rs 149/month\n150 msgs/day, voice notes, 50 memories\n\n` +
+        `${currentTier === 'pro' ? '(current) ' : ''}*Pro* -- Rs 299/month\nUnlimited, 500 memories, all features\n\n` +
         `Upgrade here: ${BASE_URL}/upgrade?id=${telegramId}`
       )
       return NextResponse.json({ ok: true })
@@ -268,7 +283,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     }
     if (limitCheck.remaining === 3) {
-      await sendMessage(chatId, `Only 3 messages left today on free plan. Type /upgrade to get more.`)
+      await sendMessage(chatId, 'Only 3 messages left today on free plan. Type /upgrade to get more.')
     }
 
     const [history, memories] = await Promise.all([
@@ -277,21 +292,6 @@ export async function POST(req: NextRequest) {
     ])
 
     const messageForClaude = isVoice ? `[Voice note]: ${text}` : text
-
-    await saveMessage(telegramId, 'user', messageForClaude)
-    const rawResponse = await askClaude(messageForClaude, history, memories, name)
-    const { reply, memory, reminder } = parseResponse(rawResponse)
-
-    if (memory) await saveMemory(telegramId, memory)
-    if (reminder) {
-      await saveReminder(
-        telegramId, chatId,
-        reminder.remindAt, reminder.message,
-        reminder.isRecurring, reminder.pattern
-      )
-    }
-
-    const finalReply = isVoice ? `_Heard you via voice note_\n\n${reply}` : reply
 
     await saveMessage(telegramId, 'user', messageForClaude)
     const rawResponse = await askClaude(messageForClaude, history, memories, name)
@@ -306,28 +306,29 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Handle list actions
     let listReply = ''
     if (listAction) {
       if (listAction.type === 'add' && listAction.items) {
         const items = await addToList(telegramId, listAction.listName, listAction.items)
-        listReply = `\n\n✅ Added ${listAction.items.length} items to *${listAction.listName}* (${items.length} total)`
+        listReply = `\n\nAdded ${listAction.items.length} items to *${listAction.listName}* (${items.length} total)`
       } else if (listAction.type === 'show') {
         const list = await getList(telegramId, listAction.listName)
-        listReply = list ? `\n\n${formatList(listAction.listName, list.items)}` : `\n\n📋 No list named *${listAction.listName}* yet.`
+        listReply = list ? `\n\n${formatList(listAction.listName, list.items)}` : `\n\nNo list named *${listAction.listName}* yet.`
       } else if (listAction.type === 'clear') {
         await clearList(telegramId, listAction.listName)
-        listReply = `\n\n🗑️ Cleared *${listAction.listName}* list.`
+        listReply = `\n\nCleared *${listAction.listName}* list.`
       } else if (listAction.type === 'check' && listAction.itemText) {
         const items = await checkItem(telegramId, listAction.listName, listAction.itemText)
-        listReply = items ? `\n\n✓ Toggled in *${listAction.listName}*` : `\n\n❌ No list named *${listAction.listName}*`
+        listReply = items ? `\n\nToggled in *${listAction.listName}*` : `\n\nNo list named *${listAction.listName}*`
       } else if (listAction.type === 'all') {
         const lists = await getAllLists(telegramId)
         if (lists.length === 0) {
-          listReply = `\n\n📋 You have no lists yet. Try: _"Add milk to shopping"_`
+          listReply = `\n\nYou have no lists yet. Try: _"Add milk to shopping"_`
         } else {
-          const summary = lists.map(l => `• *${l.list_name}* — ${(l.items || []).length} items`).join('\n')
-          listReply = `\n\n📋 *Your lists:*\n\n${summary}`
+          const summary = lists.map((l: { list_name: string; items: unknown[] }) =>
+            `- *${l.list_name}* -- ${(l.items || []).length} items`
+          ).join('\n')
+          listReply = `\n\n*Your lists:*\n\n${summary}`
         }
       }
     }
@@ -336,3 +337,10 @@ export async function POST(req: NextRequest) {
 
     await saveMessage(telegramId, 'assistant', reply)
     await sendMessage(chatId, finalReply)
+
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    console.error('Webhook error:', error)
+    return NextResponse.json({ ok: true })
+  }
+}
