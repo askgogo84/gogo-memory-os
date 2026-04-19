@@ -126,6 +126,7 @@ export async function POST(req: NextRequest) {
     let text: string = message.text || ''
     let isVoice = false
 
+    // === VOICE NOTES ===
     if (message.voice) {
       await sendTyping(chatId)
       try {
@@ -136,6 +137,44 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         console.error('Voice failed:', err)
         await sendMessage(chatId, 'Could not transcribe voice note. Please type instead.')
+        return NextResponse.json({ ok: true })
+      }
+    }
+
+    // === IMAGE ANALYSIS ===
+    if (message.photo && message.photo.length > 0) {
+      await sendTyping(chatId)
+      try {
+        const photoId = message.photo[message.photo.length - 1].file_id
+        const fileBuffer = await downloadTelegramFile(photoId)
+        const base64Image = fileBuffer.toString('base64')
+        const caption = message.caption || 'What is in this image? Analyze it and extract any useful info.'
+
+        const Anthropic = (await import('@anthropic-ai/sdk')).default
+        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+
+        const visionResponse = await client.messages.create({
+          model: 'claude-sonnet-4-5',
+          max_tokens: 1024,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64Image } },
+              { type: 'text', text: `You are AskGogo, a helpful AI assistant. The user sent this image${caption !== 'What is in this image? Analyze it and extract any useful info.' ? ' with caption: "' + caption + '"' : ''}. Analyze it and respond helpfully. If it contains a list, business card, receipt, or schedule, extract the data clearly. Keep reply concise, 3-5 sentences max.` }
+            ]
+          }],
+        })
+
+        const imageReply = visionResponse.content[0].type === 'text' ? visionResponse.content[0].text : 'Could not analyze the image.'
+
+        await getOrCreateUser(telegramId, name, username)
+        await saveMessage(telegramId, 'user', `[Photo]: ${caption}`)
+        await saveMessage(telegramId, 'assistant', imageReply)
+        await sendMessage(chatId, imageReply)
+        return NextResponse.json({ ok: true })
+      } catch (err) {
+        console.error('Image analysis failed:', err)
+        await sendMessage(chatId, 'Could not analyze the image. Please try again.')
         return NextResponse.json({ ok: true })
       }
     }
@@ -151,8 +190,9 @@ export async function POST(req: NextRequest) {
         `*Remember* -- _"Remember my gym is at 7am"_\n` +
         `*Remind* -- _"Remind me to call Divya at 5pm"_\n` +
         `*Lists* -- _"Add milk to shopping"_\n` +
-        `*Voice* -- send a voice note!\n\n` +
-        `Commands:\n/memory /reminders /lists /dashboard /upgrade /trial /help`
+        `*Voice* -- send a voice note!\n` +
+        `*Photo* -- send a photo, I will analyze it!\n\n` +
+        `Commands:\n/memory /reminders /lists /calendar /briefing\n/dashboard /upgrade /trial /help`
       )
       return NextResponse.json({ ok: true })
     }
@@ -161,7 +201,9 @@ export async function POST(req: NextRequest) {
       await sendMessage(chatId,
         `*AskGogo Commands:*\n\n` +
         `/memory -- saved memories\n/reminders -- upcoming\n/lists -- your lists\n` +
-        `/dashboard -- web view\n/upgrade -- plans\n/trial -- 7-day free Pro\n/help -- this menu`
+        `/calendar -- Google Calendar\n/briefing -- toggle daily 7am briefing\n` +
+        `/dashboard -- web view\n/upgrade -- plans\n/trial -- 7-day free Pro\n/help -- this menu\n\n` +
+        `Also supports: voice notes, photos, and natural language for everything.`
       )
       return NextResponse.json({ ok: true })
     }
@@ -205,6 +247,64 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
+    if (text === '/briefing') {
+      const { data: user } = await supabaseAdmin
+        .from('users').select('briefing_enabled')
+        .eq('telegram_id', telegramId).single()
+
+      const isEnabled = user?.briefing_enabled || false
+      const newState = !isEnabled
+
+      await supabaseAdmin.from('users')
+        .update({ briefing_enabled: newState })
+        .eq('telegram_id', telegramId)
+
+      if (newState) {
+        await sendMessage(chatId,
+          `*Daily briefing enabled!*\n\n` +
+          `Every morning at 7:00 AM IST you will get:\n` +
+          `- Today's reminders\n- Pending list items\n- Memory stats\n\n` +
+          `Type /briefing again to disable.`
+        )
+      } else {
+        await sendMessage(chatId, 'Daily briefing disabled. Type /briefing to re-enable.')
+      }
+      return NextResponse.json({ ok: true })
+    }
+
+    if (text === '/calendar') {
+      const { data: user } = await supabaseAdmin
+        .from('users').select('google_calendar_connected, google_refresh_token')
+        .eq('telegram_id', telegramId).single()
+
+      if (user?.google_calendar_connected && user?.google_refresh_token) {
+        const { refreshAccessToken, getTodayEvents } = await import('@/lib/google-calendar')
+        const accessToken = await refreshAccessToken(user.google_refresh_token)
+        if (accessToken) {
+          const events = await getTodayEvents(accessToken)
+          if (events.length === 0) {
+            await sendMessage(chatId, '*Calendar:* No events today!')
+          } else {
+            const list = events.map((e: any) => {
+              const start = e.start?.dateTime
+                ? new Date(e.start.dateTime).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })
+                : 'All day'
+              return `- ${start} -- ${e.summary || 'Untitled'}`
+            }).join('\n')
+            await sendMessage(chatId, `*Today's calendar:*\n\n${list}`)
+          }
+        } else {
+          await sendMessage(chatId, `Calendar connection expired. Reconnect:\n${BASE_URL}/api/calendar/connect?id=${telegramId}`)
+        }
+      } else {
+        await sendMessage(chatId,
+          `*Connect Google Calendar*\n\nLink your calendar to sync events:\n\n` +
+          `${BASE_URL}/api/calendar/connect?id=${telegramId}`
+        )
+      }
+      return NextResponse.json({ ok: true })
+    }
+
     if (text === '/dashboard') {
       await sendMessage(chatId, `*Your Dashboard*\n\n${BASE_URL}/dashboard?id=${telegramId}`)
       return NextResponse.json({ ok: true })
@@ -236,7 +336,7 @@ export async function POST(req: NextRequest) {
 
       await sendMessage(chatId,
         `*7-day Pro trial activated!*\n\n` +
-        `You now have:\n- Unlimited messages\n- Voice notes\n- Lists\n- Priority AI\n\n` +
+        `You now have:\n- Unlimited messages\n- Voice notes\n- Lists\n- Image analysis\n- Calendar sync\n- Daily briefings\n- Priority AI\n\n` +
         `Trial ends: ${trialEnds.toLocaleDateString('en-IN')}\n\nType /upgrade to see plans.`
       )
       return NextResponse.json({ ok: true })
