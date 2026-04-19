@@ -9,6 +9,7 @@ export const dynamic = 'force-dynamic'
 
 // WhatsApp uses same logic but different send function
 async function getOrCreateWhatsAppUser(whatsappId: string, name: string) {
+  // First try to find by whatsapp_id
   const { data: existing } = await supabaseAdmin
     .from('users')
     .select('*')
@@ -17,10 +18,10 @@ async function getOrCreateWhatsAppUser(whatsappId: string, name: string) {
 
   if (existing) return existing
 
-  // Use negative number for whatsapp "telegram_id" so it doesn't collide
-  const fakeTgId = -Math.abs(parseInt(whatsappId.replace(/\D/g, '').slice(-10)))
+  // Generate a unique negative telegram_id using timestamp
+  const fakeTgId = -Math.abs(Date.now() % 2000000000)
 
-  const { data: newUser } = await supabaseAdmin
+  const { data: newUser, error } = await supabaseAdmin
     .from('users')
     .insert({
       telegram_id: fakeTgId,
@@ -30,6 +31,11 @@ async function getOrCreateWhatsAppUser(whatsappId: string, name: string) {
     })
     .select()
     .single()
+
+  if (error) {
+    console.error('User creation failed:', error)
+    return null
+  }
 
   return newUser
 }
