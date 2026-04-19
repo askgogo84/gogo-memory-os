@@ -28,51 +28,96 @@ export async function GET(req: Request) {
   }
 
   const now = new Date().toISOString()
+
+  // === SEND DUE REMINDERS ===
   const { data: due } = await supabaseAdmin
-    .from('reminders')
-    .select('*')
-    .eq('sent', false)
-    .lte('remind_at', now)
+    .from('reminders').select('*')
+    .eq('sent', false).lte('remind_at', now)
 
-  if (!due || due.length === 0) return NextResponse.json({ sent: 0 })
+  let sentCount = 0
+  if (due && due.length > 0) {
+    await Promise.all(due.map(async (r: any) => {
+      const reminderText = `*Reminder:* ${r.message}${r.is_recurring ? `\n(repeats ${r.recurring_pattern})` : ''}`
 
-  await Promise.all(due.map(async (r: any) => {
-    const reminderText = `⏰ *Reminder:* ${r.message}${r.is_recurring ? `\n🔁 _${r.recurring_pattern}_` : ''}`
+      if (r.whatsapp_to) {
+        await sendWhatsApp(r.whatsapp_to, reminderText)
+      } else if (r.chat_id) {
+        await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: r.chat_id, text: reminderText, parse_mode: 'Markdown' }),
+        })
+      }
 
-    // Send via WhatsApp if whatsapp_to is set, otherwise Telegram
-    if (r.whatsapp_to) {
-      await sendWhatsApp(r.whatsapp_to, reminderText)
-    } else if (r.chat_id) {
-      await fetch(
-        `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
-        {
+      if (r.is_recurring && r.recurring_pattern) {
+        const nextDate = getNextOccurrence(r.recurring_pattern, new Date(r.remind_at))
+        await supabaseAdmin.from('reminders').insert({
+          telegram_id: r.telegram_id, chat_id: r.chat_id, whatsapp_to: r.whatsapp_to,
+          message: r.message, remind_at: nextDate.toISOString(),
+          sent: false, is_recurring: true, recurring_pattern: r.recurring_pattern,
+        })
+      }
+
+      await supabaseAdmin.from('reminders').update({ sent: true }).eq('id', r.id)
+    }))
+    sentCount = due.length
+  }
+
+  // === EXPIRE TRIALS ===
+  const { data: expiredTrials } = await supabaseAdmin
+    .from('users')
+    .select('telegram_id, whatsapp_id, name')
+    .eq('is_trial', true)
+    .lt('trial_ends_at', now)
+
+  if (expiredTrials && expiredTrials.length > 0) {
+    for (const user of expiredTrials as any[]) {
+      await supabaseAdmin.from('users')
+        .update({ tier: 'free', is_trial: false })
+        .eq('telegram_id', user.telegram_id)
+
+      if (user.telegram_id && user.telegram_id > 0) {
+        await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            chat_id: r.chat_id,
-            text: reminderText,
+            chat_id: user.telegram_id,
+            text: `Your 7-day Pro trial has ended.\n\nYou're on Free now (20 msgs/day). Memories are safe!\n\nUpgrade: /upgrade`,
             parse_mode: 'Markdown',
           }),
-        }
-      )
+        })
+      }
     }
+  }
 
-    if (r.is_recurring && r.recurring_pattern) {
-      const nextDate = getNextOccurrence(r.recurring_pattern, new Date(r.remind_at))
-      await supabaseAdmin.from('reminders').insert({
-        telegram_id: r.telegram_id,
-        chat_id: r.chat_id,
-        whatsapp_to: r.whatsapp_to,
-        message: r.message,
-        remind_at: nextDate.toISOString(),
-        sent: false,
-        is_recurring: true,
-        recurring_pattern: r.recurring_pattern,
-      })
+  // === DAY 6 WARNING ===
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  const tomorrowEnd = new Date(tomorrow)
+  tomorrowEnd.setHours(23, 59, 59)
+
+  const { data: expiringTrials } = await supabaseAdmin
+    .from('users')
+    .select('telegram_id, name')
+    .eq('is_trial', true)
+    .gte('trial_ends_at', tomorrow.toISOString())
+    .lte('trial_ends_at', tomorrowEnd.toISOString())
+
+  if (expiringTrials && expiringTrials.length > 0) {
+    for (const user of expiringTrials as any[]) {
+      if (user.telegram_id && user.telegram_id > 0) {
+        await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: user.telegram_id,
+            text: `Hey ${user.name}! Your Pro trial ends *tomorrow*.\n\nContinue at Rs 299/month or stay on Free.\n\nType /upgrade to see plans.`,
+            parse_mode: 'Markdown',
+          }),
+        })
+      }
     }
+  }
 
-    await supabaseAdmin.from('reminders').update({ sent: true }).eq('id', r.id)
-  }))
-
-  return NextResponse.json({ sent: due.length })
+  return NextResponse.json({ sent: sentCount })
 }
