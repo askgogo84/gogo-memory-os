@@ -34,9 +34,8 @@ RULES:
    One-time:  REMINDER: [ISO datetime +05:30] | [message]
    Recurring: REMINDER: [ISO datetime +05:30] | [message] | [pattern]
    Examples:
-   "remind me in 2 minutes" -> REMINDER: 2026-04-19T09:45:00+05:30 | Reminder
-   "remind me every Monday at 9am to review goals" -> REMINDER: 2026-04-21T09:00:00+05:30 | Review goals | every Monday
-   "remind me daily at 8am to take medicine" -> REMINDER: 2026-04-20T08:00:00+05:30 | Take medicine | every day
+   "remind me in 2 minutes" -> REMINDER: 2026-04-20T09:45:00+05:30 | Reminder
+   "remind me every Monday at 9am" -> REMINDER: 2026-04-21T09:00:00+05:30 | Review goals | every Monday
 
 2. MEMORY: If user wants to save a fact, output on FIRST LINE:
    MEMORY: [the fact]
@@ -47,15 +46,23 @@ RULES:
    LIST_CLEAR: [list_name]
    LIST_CHECK: [list_name] | [item_text]
    LIST_ALL
-   Examples:
-   "add milk and bread to shopping" -> LIST_ADD: shopping | milk, bread
-   "show my shopping list" -> LIST_SHOW: shopping
-   "what is on my todo" -> LIST_SHOW: todo
-   "mark milk as done" -> LIST_CHECK: shopping | milk
-   "clear shopping list" -> LIST_CLEAR: shopping
-   "show all my lists" -> LIST_ALL
 
-4. EVERYTHING ELSE: Reply naturally, 2-3 sentences max.
+4. WEB SEARCH: If user asks about current events, news, prices, weather, sports scores, or anything requiring up-to-date information, output on FIRST LINE:
+   SEARCH: [search query]
+   Examples:
+   "What is the weather in Bengaluru?" -> SEARCH: weather Bengaluru today
+   "Latest iPhone 17 specs" -> SEARCH: iPhone 17 specifications 2026
+   "Who won IPL yesterday?" -> SEARCH: IPL results yesterday 2026
+
+5. CONTENT CREATION: If user asks to write/draft a LinkedIn post, tweet, Instagram caption, blog post, email, or any content:
+   - Write it immediately with proper formatting
+   - Use the user's tone based on their memories/context
+   - Include relevant emojis and hashtags for social media
+   - For LinkedIn: professional but authentic, 150-300 words
+   - For Twitter/X: under 280 chars, punchy
+   - For email: clear subject line + body
+
+6. EVERYTHING ELSE: Reply naturally, 2-3 sentences max.
 
 CRITICAL: Calculate datetime yourself. Never ask follow-up questions about time or message.`
 
@@ -67,6 +74,30 @@ CRITICAL: Calculate datetime yourself. Never ask follow-up questions about time 
       ...history.slice(-10),
       { role: 'user', content: userMessage }
     ],
+  })
+
+  return response.content[0].type === 'text' ? response.content[0].text : ''
+}
+
+export async function askClaudeWithContext(
+  userMessage: string,
+  context: string,
+  userName: string
+): Promise<string> {
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 1500,
+    messages: [{
+      role: 'user',
+      content: `You are AskGogo, a helpful AI assistant for ${userName}. Answer the user's question using the web search results provided below.
+
+User's question: ${userMessage}
+
+Web search results:
+${context}
+
+Provide a clear, concise answer based on these results. Cite sources when relevant. If the results don't fully answer the question, say so.`
+    }],
   })
 
   return response.content[0].type === 'text' ? response.content[0].text : ''

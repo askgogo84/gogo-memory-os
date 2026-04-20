@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { askClaude } from '@/lib/claude'
+import { askClaude, askClaudeWithContext } from '@/lib/claude'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { checkAndIncrementLimit } from '@/lib/limits'
 import { transcribeVoice, downloadTelegramFile } from '@/lib/whisper'
 import { addToList, getList, getAllLists, checkItem, clearList, formatList } from '@/lib/lists'
+import { webSearch } from '@/lib/web-search'
 
 export const dynamic = 'force-dynamic'
 
@@ -78,6 +79,7 @@ function parseResponse(raw: string) {
   let memory: string | null = null
   let reminder: { remindAt: string; message: string; isRecurring: boolean; pattern: string | null } | null = null
   let listAction: { type: string; listName: string; items?: string[]; itemText?: string } | null = null
+  let searchQuery: string | null = null
   const filtered: string[] = []
 
   for (const line of raw.split('\n')) {
@@ -105,11 +107,13 @@ function parseResponse(raw: string) {
       }
     } else if (line.startsWith('LIST_ALL')) {
       listAction = { type: 'all', listName: '' }
+    } else if (line.startsWith('SEARCH:')) {
+      searchQuery = line.replace('SEARCH:', '').trim()
     } else {
       filtered.push(line)
     }
   }
-  return { reply: filtered.join('\n').trim(), memory, reminder, listAction }
+  return { reply: filtered.join('\n').trim(), memory, reminder, listAction, searchQuery }
 }
 
 export async function POST(req: NextRequest) {
@@ -141,7 +145,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // === IMAGE ANALYSIS ===
+    // === IMAGE ANALYSIS + EXPENSE TRACKING ===
     if (message.photo && message.photo.length > 0) {
       await sendTyping(chatId)
       try {
@@ -160,12 +164,47 @@ export async function POST(req: NextRequest) {
             role: 'user',
             content: [
               { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64Image } },
-              { type: 'text', text: `You are AskGogo, a helpful AI assistant. The user sent this image${caption !== 'What is in this image? Analyze it and extract any useful info.' ? ' with caption: "' + caption + '"' : ''}. Analyze it and respond helpfully. If it contains a list, business card, receipt, or schedule, extract the data clearly. Keep reply concise, 3-5 sentences max.` }
+              { type: 'text', text: `You are AskGogo, a helpful AI assistant. The user sent this image${caption !== 'What is in this image? Analyze it and extract any useful info.' ? ' with caption: "' + caption + '"' : ''}. Analyze it and respond helpfully.
+
+If this is a RECEIPT or BILL:
+- Extract each item with its price
+- Show the total amount
+- Identify the store/merchant name
+- On the FIRST LINE output: EXPENSE: [total_amount] | [category] | [merchant_name]
+  Categories: food, transport, shopping, bills, health, entertainment, other
+  Example: EXPENSE: 450 | food | Swiggy
+
+If this is a BUSINESS CARD: extract name, phone, email, company, designation.
+If this is a DOCUMENT or TEXT: summarize the key points.
+Otherwise: describe what you see.
+
+Keep reply concise, 3-5 sentences max.` }
             ]
           }],
         })
 
-        const imageReply = visionResponse.content[0].type === 'text' ? visionResponse.content[0].text : 'Could not analyze the image.'
+        let imageReply = visionResponse.content[0].type === 'text' ? visionResponse.content[0].text : 'Could not analyze the image.'
+
+        // Check if receipt/expense was detected
+        const firstLine = imageReply.split('\n')[0]
+        if (firstLine.startsWith('EXPENSE:')) {
+          const parts = firstLine.replace('EXPENSE:', '').trim().split('|')
+          if (parts.length >= 3) {
+            try {
+              await supabaseAdmin.from('expenses').insert({
+                telegram_id: telegramId,
+                amount: parseFloat(parts[0].trim()) || 0,
+                category: parts[1].trim(),
+                description: parts[2].trim(),
+                source: 'receipt_photo',
+              })
+            } catch (e) {
+              console.error('Expense insert failed:', e)
+            }
+          }
+          const cleanReply = imageReply.split('\n').slice(1).join('\n').trim()
+          imageReply = cleanReply + `\n\n_Expense of Rs ${parts[0]?.trim()} logged under ${parts[1]?.trim()}_`
+        }
 
         await getOrCreateUser(telegramId, name, username)
         await saveMessage(telegramId, 'user', `[Photo]: ${caption}`)
@@ -175,6 +214,93 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         console.error('Image analysis failed:', err)
         await sendMessage(chatId, 'Could not analyze the image. Please try again.')
+        return NextResponse.json({ ok: true })
+      }
+    }
+
+    // === DOCUMENT ANALYSIS ===
+    if (message.document) {
+      await sendTyping(chatId)
+      try {
+        const doc = message.document
+        const fileName = doc.file_name || 'document'
+        const mimeType = doc.mime_type || ''
+        const caption = message.caption || `Analyze this document: ${fileName}`
+
+        if (doc.file_size && doc.file_size > 10 * 1024 * 1024) {
+          await sendMessage(chatId, 'File is too large. Please send documents under 10MB.')
+          return NextResponse.json({ ok: true })
+        }
+
+        const fileBuffer = await downloadTelegramFile(doc.file_id)
+        let extractedText = ''
+
+        if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
+          const pdfParse = (await import('pdf-parse')).default
+          const pdfData = await pdfParse(fileBuffer)
+          extractedText = pdfData.text.slice(0, 8000)
+        } else if (
+          mimeType === 'text/plain' ||
+          fileName.endsWith('.txt') ||
+          fileName.endsWith('.csv') ||
+          fileName.endsWith('.json') ||
+          fileName.endsWith('.md')
+        ) {
+          extractedText = fileBuffer.toString('utf-8').slice(0, 8000)
+        } else if (
+          mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+          fileName.endsWith('.docx')
+        ) {
+          const JSZip = (await import('jszip')).default
+          const zip = await JSZip.loadAsync(fileBuffer)
+          const xmlContent = await zip.file('word/document.xml')?.async('text')
+          if (xmlContent) {
+            extractedText = xmlContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 8000)
+          }
+        } else if (
+          mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+          fileName.endsWith('.xlsx') ||
+          fileName.endsWith('.xls')
+        ) {
+          const XLSX = (await import('xlsx')).default
+          const workbook = XLSX.read(fileBuffer, { type: 'buffer' })
+          const sheetName = workbook.SheetNames[0]
+          const sheet = workbook.Sheets[sheetName]
+          extractedText = XLSX.utils.sheet_to_csv(sheet).slice(0, 8000)
+        } else {
+          await sendMessage(chatId, `I can read PDF, Word (.docx), Excel (.xlsx), text, CSV, and JSON files. This file type (${mimeType || fileName}) is not supported yet.`)
+          return NextResponse.json({ ok: true })
+        }
+
+        if (!extractedText || extractedText.trim().length < 10) {
+          await sendMessage(chatId, 'Could not extract text from this document. It might be image-based or encrypted.')
+          return NextResponse.json({ ok: true })
+        }
+
+        const Anthropic = (await import('@anthropic-ai/sdk')).default
+        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+
+        const docResponse = await client.messages.create({
+          model: 'claude-sonnet-4-5',
+          max_tokens: 1500,
+          messages: [{
+            role: 'user',
+            content: `You are AskGogo, a helpful AI assistant. The user sent a document called "${fileName}". Their request: "${caption}"\n\nDocument content:\n${extractedText}\n\nProvide a helpful analysis. If they asked to summarize, give a clear summary. If they asked a specific question, answer it from the document. Keep response concise but thorough.`
+          }],
+        })
+
+        const docReply = docResponse.content[0].type === 'text'
+          ? docResponse.content[0].text
+          : 'Could not analyze the document.'
+
+        await getOrCreateUser(telegramId, name, username)
+        await saveMessage(telegramId, 'user', `[Document: ${fileName}]: ${caption}`)
+        await saveMessage(telegramId, 'assistant', docReply)
+        await sendMessage(chatId, docReply)
+        return NextResponse.json({ ok: true })
+      } catch (err) {
+        console.error('Document analysis failed:', err)
+        await sendMessage(chatId, 'Could not read this document. Please try a different format (PDF, Word, Excel, or text).')
         return NextResponse.json({ ok: true })
       }
     }
@@ -191,8 +317,10 @@ export async function POST(req: NextRequest) {
         `*Remind* -- _"Remind me to call Divya at 5pm"_\n` +
         `*Lists* -- _"Add milk to shopping"_\n` +
         `*Voice* -- send a voice note!\n` +
-        `*Photo* -- send a photo, I will analyze it!\n\n` +
-        `Commands:\n/memory /reminders /lists /calendar /briefing\n/dashboard /upgrade /trial /help`
+        `*Photo* -- send a photo or receipt!\n` +
+        `*Docs* -- send PDF, Word, or Excel!\n` +
+        `*Search* -- _"Search latest AI news"_\n\n` +
+        `Commands:\n/memory /reminders /lists /calendar /briefing /expenses\n/dashboard /upgrade /trial /help`
       )
       return NextResponse.json({ ok: true })
     }
@@ -201,9 +329,10 @@ export async function POST(req: NextRequest) {
       await sendMessage(chatId,
         `*AskGogo Commands:*\n\n` +
         `/memory -- saved memories\n/reminders -- upcoming\n/lists -- your lists\n` +
-        `/calendar -- Google Calendar\n/briefing -- toggle daily 7am briefing\n` +
+        `/calendar -- Google Calendar\n/briefing -- daily 7am briefing\n` +
+        `/expenses -- view tracked expenses\n` +
         `/dashboard -- web view\n/upgrade -- plans\n/trial -- 7-day free Pro\n/help -- this menu\n\n` +
-        `Also supports: voice notes, photos, and natural language for everything.`
+        `Also: voice notes, photos, documents, web search, and natural language for everything.`
       )
       return NextResponse.json({ ok: true })
     }
@@ -244,6 +373,31 @@ export async function POST(req: NextRequest) {
         const summary = lists.map((l: any) => `- *${l.list_name}* -- ${(l.items || []).length} items`).join('\n')
         await sendMessage(chatId, `*Your lists:*\n\n${summary}\n\nSay _"show shopping"_ to see items.`)
       }
+      return NextResponse.json({ ok: true })
+    }
+
+    if (text === '/expenses') {
+      const { data: expenses } = await supabaseAdmin
+        .from('expenses')
+        .select('amount, category, description, date')
+        .eq('telegram_id', telegramId)
+        .order('created_at', { ascending: false })
+        .limit(15)
+
+      if (!expenses || expenses.length === 0) {
+        await sendMessage(chatId, 'No expenses tracked yet.\n\nSend a photo of any receipt and I will extract and log it automatically!')
+        return NextResponse.json({ ok: true })
+      }
+
+      let total = 0
+      const lines = expenses.map((e: any) => {
+        total += parseFloat(e.amount) || 0
+        return `- Rs ${e.amount} | ${e.category} | ${e.description} (${e.date})`
+      })
+
+      await sendMessage(chatId,
+        `*Recent Expenses:*\n\n${lines.join('\n')}\n\n*Total:* Rs ${total.toFixed(0)}\n\n_Send receipt photos to track more!_`
+      )
       return NextResponse.json({ ok: true })
     }
 
@@ -336,7 +490,7 @@ export async function POST(req: NextRequest) {
 
       await sendMessage(chatId,
         `*7-day Pro trial activated!*\n\n` +
-        `You now have:\n- Unlimited messages\n- Voice notes\n- Lists\n- Image analysis\n- Calendar sync\n- Daily briefings\n- Priority AI\n\n` +
+        `You now have:\n- Unlimited messages\n- Voice notes\n- Lists\n- Image analysis\n- Document analysis\n- Web search\n- Expense tracking\n- Calendar sync\n- Daily briefings\n- Priority AI\n\n` +
         `Trial ends: ${trialEnds.toLocaleDateString('en-IN')}\n\nType /upgrade to see plans.`
       )
       return NextResponse.json({ ok: true })
@@ -385,11 +539,20 @@ export async function POST(req: NextRequest) {
 
     await saveMessage(telegramId, 'user', messageForClaude)
     const rawResponse = await askClaude(messageForClaude, history, memories, name)
-    const { reply, memory, reminder, listAction } = parseResponse(rawResponse)
+    const { reply, memory, reminder, listAction, searchQuery } = parseResponse(rawResponse)
 
     if (memory) await saveMemory(telegramId, memory)
     if (reminder) await saveReminder(telegramId, chatId, reminder.remindAt, reminder.message, reminder.isRecurring, reminder.pattern)
 
+    // Handle web search
+    let searchReply = ''
+    if (searchQuery) {
+      await sendTyping(chatId)
+      const searchResults = await webSearch(searchQuery)
+      searchReply = await askClaudeWithContext(messageForClaude, searchResults, name)
+    }
+
+    // Handle list actions
     let listReply = ''
     if (listAction) {
       if (listAction.type === 'add' && listAction.items) {
@@ -414,8 +577,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const finalReply = (isVoice ? `_Heard you via voice note_\n\n${reply}` : reply) + listReply
-    await saveMessage(telegramId, 'assistant', reply)
+    // Build final reply
+    let finalReply = ''
+    if (searchReply) {
+      finalReply = searchReply + listReply
+    } else {
+      finalReply = (isVoice ? `_Heard you via voice note_\n\n${reply}` : reply) + listReply
+    }
+
+    await saveMessage(telegramId, 'assistant', searchReply || reply)
     await sendMessage(chatId, finalReply)
 
     return NextResponse.json({ ok: true })
