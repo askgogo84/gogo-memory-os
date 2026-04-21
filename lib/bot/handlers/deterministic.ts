@@ -1,5 +1,6 @@
 ﻿import { searchWeb } from '@/lib/web-search'
 import { buildDirectWebAnswer } from './web-answer'
+import { formatGoldAnswer, formatIplStandingsAnswer } from './formatters'
 
 function normalize(text: string) {
   return (text || '').toLowerCase().trim()
@@ -32,8 +33,7 @@ export function isIplStandingsQuery(text: string) {
 }
 
 export async function buildDeterministicWeatherReply(userText: string) {
-  const query = userText
-  const context = await searchWeb(query)
+  const context = await searchWeb(userText)
 
   if (!context.trim()) {
     return `I couldn't fetch the weather right now. Please try again in a moment.`
@@ -54,7 +54,7 @@ export async function buildDeterministicGoldReply(userText: string) {
     return `I couldn't fetch the latest metal price right now. Please try again in a moment.`
   }
 
-  return buildDirectWebAnswer(userText, context)
+  return formatGoldAnswer(userText, context)
 }
 
 export async function buildDeterministicIplStandingsReply(userText: string) {
@@ -65,5 +65,5 @@ export async function buildDeterministicIplStandingsReply(userText: string) {
     return `I couldn't fetch the live IPL table right now. Please try again in a moment.`
   }
 
-  return buildDirectWebAnswer(userText, context)
+  return formatIplStandingsAnswer(context)
 }
