@@ -34,7 +34,9 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (
     lower.includes('connect my gmail') ||
+    lower.includes('connect to my gmail') ||
     lower.includes('connect gmail') ||
+    lower.includes('connect to gmail') ||
     lower.includes('link gmail') ||
     lower.includes('gmail connect')
   ) {
@@ -44,6 +46,7 @@ export function detectIntent(text: string): DetectedIntent {
   if (
     lower.includes('connect calendar') ||
     lower.includes('connect my calendar') ||
+    lower.includes('connect to my calendar') ||
     lower.includes('link calendar') ||
     lower.includes('google calendar')
   ) {
