@@ -1,6 +1,7 @@
 ﻿import { searchWeb } from '@/lib/web-search'
 import { buildDirectWebAnswer } from './web-answer'
 import { formatGoldAnswer, formatIplStandingsAnswer } from './formatters'
+import { formatWeatherAnswer } from './weather-format'
 
 function normalize(text: string) {
   return (text || '').toLowerCase().trim()
@@ -33,13 +34,17 @@ export function isIplStandingsQuery(text: string) {
 }
 
 export async function buildDeterministicWeatherReply(userText: string) {
-  const context = await searchWeb(userText)
+  const query = userText.toLowerCase().includes('bangalore')
+    ? 'weather Bangalore'
+    : userText
+
+  const context = await searchWeb(query)
 
   if (!context.trim()) {
     return `I couldn't fetch the weather right now. Please try again in a moment.`
   }
 
-  return buildDirectWebAnswer(userText, context)
+  return formatWeatherAnswer(userText, context)
 }
 
 export async function buildDeterministicGoldReply(userText: string) {
