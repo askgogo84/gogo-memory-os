@@ -9,6 +9,7 @@ import { parseClaudeResponse } from './parse-claude-response'
 import { formatOutgoingText } from './format-response'
 import { searchWeb } from '@/lib/web-search'
 import { buildSportsReply } from './handlers/sports'
+import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -127,6 +128,22 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const sportsReply = buildSportsReply(incomingText) || 'I could not find the next RCB match.'
     await saveConversation(resolvedUser.telegramId, 'assistant', sportsReply)
     return { text: formatOutgoingText(params.channel, sportsReply), resolvedUser }
+  }
+
+  if (intent.type === 'set_reminder') {
+    const parsedReminder = parseReminderIntent(incomingText)
+    if (parsedReminder) {
+      await createReminder(
+        resolvedUser.telegramId,
+        parsedReminder.remindAtIso,
+        parsedReminder.message,
+        parsedReminder.kind === 'recurring' ? parsedReminder.pattern : undefined
+      )
+
+      const reply = buildReminderConfirmation(parsedReminder)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
   }
 
   if (intent.type === 'list_show_all') {
