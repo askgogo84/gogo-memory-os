@@ -10,6 +10,7 @@ import { formatOutgoingText } from './format-response'
 import { searchWeb } from '@/lib/web-search'
 import { buildSportsReply } from './handlers/sports'
 import { buildIplStandingsReply } from './handlers/standings'
+import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 
@@ -143,6 +144,24 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  if (intent.type === 'weather_live') {
+    const reply = await buildDeterministicWeatherReply(incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  if (intent.type === 'gold_live') {
+    const reply = await buildDeterministicGoldReply(incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  if (intent.type === 'sports_standings') {
+    const reply = await buildDeterministicIplStandingsReply(incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
   if (intent.type === 'sports_schedule') {
     const sportsReply = buildSportsReply(incomingText) || 'I could not find the next RCB match.'
     await saveConversation(resolvedUser.telegramId, 'assistant', sportsReply)
@@ -164,12 +183,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
-  }
-
-  if (intent.type === 'sports_standings') {
-    const standingsReply = await buildIplStandingsReply(incomingText, resolvedUser.name)
-    await saveConversation(resolvedUser.telegramId, 'assistant', standingsReply)
-    return { text: formatOutgoingText(params.channel, standingsReply), resolvedUser }
   }
 
   if (intent.type === 'list_show_all') {
@@ -294,6 +307,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
+
+
 
 
 

@@ -8,6 +8,10 @@ export function getStatusText(intent: IntentType, messageType?: string) {
       return '🏏 Checking IPL match details...'
     case 'sports_standings':
       return '📊 Checking the IPL table...'
+    case 'weather_live':
+      return '🌦️ Checking the weather...'
+    case 'gold_live':
+      return '🪙 Checking the latest price...'
     case 'web_search':
       return '🔎 Checking the latest info...'
     case 'connect_gmail':
@@ -29,5 +33,7 @@ export function getStatusText(intent: IntentType, messageType?: string) {
 
 export function shouldUseAnimation(intent: IntentType, messageType?: string) {
   if (messageType === 'voice') return true
-  return intent === 'web_search' || intent === 'sports_schedule' || intent === 'sports_standings' || intent === 'connect_gmail'
+  return intent === 'web_search' || intent === 'sports_schedule' || intent === 'sports_standings' || intent === 'weather_live' || intent === 'gold_live' || intent === 'connect_gmail'
 }
+
+

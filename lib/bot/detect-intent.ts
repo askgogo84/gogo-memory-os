@@ -3,6 +3,8 @@
   | 'connect_calendar'
   | 'sports_schedule'
   | 'sports_standings'
+  | 'weather_live'
+  | 'gold_live'
   | 'list_show_all'
   | 'list_show'
   | 'list_add'
@@ -20,10 +22,8 @@ export type DetectedIntent = {
 }
 
 const SEARCH_HINTS = [
-  'weather', 'temperature', 'forecast',
   'latest', 'news', 'today', 'current',
   'score', 'stock', 'price',
-  'gold', 'silver',
 ]
 
 export function detectIntent(text: string): DetectedIntent {
@@ -48,6 +48,23 @@ export function detectIntent(text: string): DetectedIntent {
     lower.includes('google calendar')
   ) {
     return { type: 'connect_calendar', confidence: 'high' }
+  }
+
+  if (
+    lower.includes('weather') ||
+    lower.includes('temperature') ||
+    lower.includes('rain')
+  ) {
+    return { type: 'weather_live', confidence: 'high' }
+  }
+
+  if (
+    lower.includes('gold price') ||
+    lower.includes('gold rate') ||
+    lower.includes('silver price') ||
+    lower.includes('silver rate')
+  ) {
+    return { type: 'gold_live', confidence: 'high' }
   }
 
   if (
