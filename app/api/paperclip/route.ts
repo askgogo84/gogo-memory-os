@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function POST(req) {
+export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
@@ -14,14 +14,13 @@ export async function POST(req) {
 
     return NextResponse.json({
       success: true,
-      result: Processed: 
+      result: `Processed: ${text}`,
     });
-
-  } catch (err) {
+  } catch (err: any) {
     console.error(err);
 
     return NextResponse.json(
-      { success: false, error: err.message },
+      { success: false, error: err?.message || "Unknown error" },
       { status: 500 }
     );
   }
