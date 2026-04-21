@@ -99,7 +99,10 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (
     lower.includes('remind me') ||
+    lower.includes('remind to') ||
+    lower.startsWith('remind ') ||
     lower.includes('set reminder') ||
+    lower.includes('reminder for') ||
     lower.includes('রিমাইন্ডার') ||
     lower.includes('মনে করিয়ে')
   ) {

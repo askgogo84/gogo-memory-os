@@ -60,8 +60,10 @@ function cleanMessageText(input: string): string {
     .replace(/\bset a reminder\b/gi, '')
     .replace(/\bset reminder\b/gi, '')
     .replace(/\bremind me to\b/gi, '')
+    .replace(/\bremind to\b/gi, '')
     .replace(/\bremind me\b/gi, '')
-    .replace(/\bin\s+\d+\s+(minute|minutes|hour|hours|day|days)\b/gi, '')
+    .replace(/\bremind\b/gi, '')
+    .replace(/\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/gi, '')
     .replace(/\b(tomorrow|tmrw|tmr)\b/gi, '')
     .replace(/\bevery\s+hour\s+from\s+.+?\s+to\s+.+?(daily)?$/gi, '')
     .replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+.+$/gi, '')
@@ -116,14 +118,14 @@ function formatReminderTime(iso: string): string {
 }
 
 function parseRelativeReminder(text: string, now: Date): ParsedReminder {
-  const match = text.match(/\bin\s+(\d+)\s+(minute|minutes|hour|hours|day|days)\b/i)
+  const match = text.match(/\bin\s+(\d+)\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i)
   if (!match) return null
 
   const value = parseInt(match[1], 10)
   const unit = match[2].toLowerCase()
   const when = new Date(now)
 
-  if (unit.startsWith('minute')) when.setMinutes(when.getMinutes() + value)
+  if (unit.startsWith('min')) when.setMinutes(when.getMinutes() + value)
   else if (unit.startsWith('hour')) when.setHours(when.getHours() + value)
   else if (unit.startsWith('day')) when.setDate(when.getDate() + value)
 
@@ -215,7 +217,7 @@ function parseHourlyWindowRecurring(text: string, now: Date): ParsedReminder {
 }
 
 function parseSimpleAtTime(text: string, now: Date): ParsedReminder {
-  if (!/^remind me/i.test(text)) return null
+  if (!/^remind/i.test(text)) return null
   if (!/\bat\s+/i.test(text)) return null
 
   const timeMatch = text.match(/\bat\s+(.+)$/i)
