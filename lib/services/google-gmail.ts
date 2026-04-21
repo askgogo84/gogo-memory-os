@@ -86,7 +86,7 @@ function getHeader(headers: any[], name: string) {
 
 export async function fetchLatestEmails(accessToken: string, maxResults = 5) {
   const listRes = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}&q=in:inbox`,
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}`,
     {
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: 'no-store',

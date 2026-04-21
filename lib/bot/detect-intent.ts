@@ -56,7 +56,15 @@ export function detectIntent(text: string): DetectedIntent {
     lower.includes('check unread emails') ||
     lower.includes('any new mails') ||
     lower.includes('any new mail') ||
-    lower.includes('check my inbox')
+    lower.includes('check my inbox') ||
+    lower.includes('mail summary') ||
+    lower.includes('mails summary') ||
+    lower.includes('email summary') ||
+    lower.includes('emails summary') ||
+    lower.includes('top 3 mails') ||
+    lower.includes('top 3 emails') ||
+    lower.includes('summarize my mails') ||
+    lower.includes('summarize my emails')
   ) {
     return { type: 'read_gmail', confidence: 'high' }
   }
