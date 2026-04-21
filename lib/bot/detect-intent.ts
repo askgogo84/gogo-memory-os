@@ -62,7 +62,13 @@ export function detectIntent(text: string): DetectedIntent {
     lower.includes('email summary') ||
     lower.includes('emails summary') ||
     lower.includes('top 3 mails') ||
+    lower.includes('top 3 mail') ||
     lower.includes('top 3 emails') ||
+    lower.includes('top 3 email') ||
+    lower.includes('check my top 3 mail') ||
+    lower.includes('check my top 3 email') ||
+    lower.includes('show me my top 3 mails') ||
+    lower.includes('show me my top 3 email') ||
     lower.includes('summarize my mails') ||
     lower.includes('summarize my emails')
   ) {

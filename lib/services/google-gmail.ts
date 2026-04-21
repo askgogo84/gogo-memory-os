@@ -84,17 +84,31 @@ function getHeader(headers: any[], name: string) {
   return h?.value || ''
 }
 
-export async function fetchLatestEmails(accessToken: string, maxResults = 5) {
-  const listRes = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}`,
-    {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      cache: 'no-store',
-    }
-  )
+async function listMessages(accessToken: string, maxResults: number, inboxOnly: boolean) {
+  const base = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}`
+  const url = inboxOnly ? `${base}&labelIds=INBOX` : base
 
-  const listData = await listRes.json()
-  const messages = listData.messages || []
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: 'no-store',
+  })
+
+  const data = await res.json()
+
+  if (!res.ok) {
+    console.error('Gmail list messages failed:', data)
+    throw new Error(data?.error?.message || 'Failed to list Gmail messages')
+  }
+
+  return data.messages || []
+}
+
+export async function fetchLatestEmails(accessToken: string, maxResults = 5) {
+  let messages = await listMessages(accessToken, maxResults, true)
+
+  if (!messages.length) {
+    messages = await listMessages(accessToken, maxResults, false)
+  }
 
   const detailed = []
 
@@ -108,6 +122,12 @@ export async function fetchLatestEmails(accessToken: string, maxResults = 5) {
     )
 
     const data = await res.json()
+
+    if (!res.ok) {
+      console.error('Gmail message fetch failed:', data)
+      continue
+    }
+
     const headers = data.payload?.headers || []
 
     detailed.push({
