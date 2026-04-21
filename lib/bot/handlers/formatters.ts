@@ -13,20 +13,21 @@ function extractPrices(text: string) {
   const cleaned = normalize(text)
 
   const price24 =
-    cleaned.match(/24\s*K[T]?\s*(?:Gold)?[^₹]{0,20}₹\s?([\d,]+(?:\.\d+)?)/i) ||
-    cleaned.match(/24\s*karat[^₹]{0,20}₹\s?([\d,]+(?:\.\d+)?)/i)
+    cleaned.match(/24\s*K[T]?\s*(?:Gold)?[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i) ||
+    cleaned.match(/24\s*karat[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i)
 
   const price22 =
-    cleaned.match(/22\s*K[T]?\s*(?:Gold)?[^₹]{0,20}₹\s?([\d,]+(?:\.\d+)?)/i) ||
-    cleaned.match(/22\s*karat[^₹]{0,20}₹\s?([\d,]+(?:\.\d+)?)/i)
+    cleaned.match(/22\s*K[T]?\s*(?:Gold)?[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i) ||
+    cleaned.match(/22\s*karat[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i)
 
   const price18 =
-    cleaned.match(/18\s*K[T]?\s*(?:Gold)?[^₹]{0,20}₹\s?([\d,]+(?:\.\d+)?)/i) ||
-    cleaned.match(/18\s*karat[^₹]{0,20}₹\s?([\d,]+(?:\.\d+)?)/i)
+    cleaned.match(/18\s*K[T]?\s*(?:Gold)?[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i) ||
+    cleaned.match(/18\s*karat[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i)
 
   const silver =
-    cleaned.match(/Silver[^₹]{0,20}₹\s?([\d,]+(?:\.\d+)?)/i) ||
-    cleaned.match(/silver price[^₹]{0,20}₹\s?([\d,]+(?:\.\d+)?)/i)
+    cleaned.match(/silver[^₹]{0,60}₹\s?([\d,]+(?:\.\d+)?)/i) ||
+    cleaned.match(/silver[^0-9]{0,40}([\d,]+(?:\.\d+)?)\s*inr/i) ||
+    cleaned.match(/₹\s?([\d,]+(?:\.\d+)?)\s*(?:per\s*(?:kg|gram|g|10g))?[^.]{0,30}silver/i)
 
   return {
     p24: price24?.[1] || null,
@@ -48,9 +49,19 @@ export function formatGoldAnswer(userText: string, searchContext: string) {
 
   if (lower.includes('silver')) {
     if (prices.silver) {
-      return `*Silver price today:* ₹${prices.silver} per unit based on latest search results.`
+      return `*Silver price today in India:* ₹${prices.silver} based on latest live search results.`
     }
-    return `I found live silver results, but couldn't cleanly extract the latest rate.`
+
+    const firstUseful = blocks[0]
+      .split('\n')
+      .map((x) => normalize(x))
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(' — ')
+
+    return firstUseful
+      ? `*Silver price results:*\n${firstUseful}`
+      : `I found live silver results, but couldn't cleanly extract the latest rate.`
   }
 
   const lines: string[] = []
@@ -70,25 +81,15 @@ export function formatIplStandingsAnswer(searchContext: string) {
 
   const teams = [
     'Royal Challengers Bengaluru',
-    'RCB',
     'Gujarat Titans',
-    'GT',
     'Mumbai Indians',
-    'MI',
     'Chennai Super Kings',
-    'CSK',
     'Delhi Capitals',
-    'DC',
     'Punjab Kings',
-    'PBKS',
     'Lucknow Super Giants',
-    'LSG',
     'Kolkata Knight Riders',
-    'KKR',
     'Rajasthan Royals',
-    'RR',
     'Sunrisers Hyderabad',
-    'SRH',
   ]
 
   const found: string[] = []
@@ -99,9 +100,7 @@ export function formatIplStandingsAnswer(searchContext: string) {
     }
   }
 
-  const cleanedTeams = found
-    .filter((x) => !['RCB','GT','MI','CSK','DC','PBKS','LSG','KKR','RR','SRH'].includes(x))
-    .slice(0, 3)
+  const cleanedTeams = found.slice(0, 3)
 
   if (cleanedTeams.length > 0) {
     return `*IPL table toppers right now:* ${cleanedTeams.join(', ')}.\n\nThis is based on the latest live search results.`
