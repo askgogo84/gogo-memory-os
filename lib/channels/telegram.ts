@@ -1,14 +1,36 @@
 ﻿export async function sendTelegramMessage(chatId: number, text: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN!
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+
+  const send = async (useMarkdown: boolean) => {
+    const payload: any = {
       chat_id: chatId,
       text,
-      parse_mode: 'Markdown',
-    }),
-  })
+    }
+
+    if (useMarkdown) {
+      payload.parse_mode = 'Markdown'
+    }
+
+    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    return response
+  }
+
+  let response = await send(true)
+
+  if (!response.ok) {
+    const body = await response.text()
+
+    if (body.includes('parse entities') || body.includes("can't parse entities")) {
+      response = await send(false)
+    } else {
+      throw new Error(`Telegram send failed: ${body}`)
+    }
+  }
 
   if (!response.ok) {
     const body = await response.text()
