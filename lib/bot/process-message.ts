@@ -9,10 +9,9 @@ import { parseClaudeResponse } from './parse-claude-response'
 import { formatOutgoingText } from './format-response'
 import { searchWeb } from '@/lib/web-search'
 import { buildSportsReply } from './handlers/sports'
-import { buildIplStandingsReply } from './handlers/standings'
+import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
-import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -137,9 +136,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   if (intent.type === 'connect_gmail') {
-    const reply =
-      `Gmail connect is the next integration step.\n\n` +
-      `For now I have rewired the bot core first so Gmail can plug into the same shared processor cleanly.`
+    const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
+    const reply = `Connect your Gmail here:\n${connectUrl}`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -219,7 +217,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       reply = buildDirectWebAnswer(incomingText, searchContext)
     }
 
-    if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch/i.test(reply)) {
+    if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(reply)) {
       reply = buildDirectWebAnswer(incomingText, searchContext)
     }
 
@@ -292,11 +290,19 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (parsed.type === 'search') {
     const searchContext = await searchWeb(parsed.query)
-    finalReply = await askClaudeWithContext(
-      incomingText,
-      searchContext,
-      resolvedUser.name
-    )
+    try {
+      finalReply = await askClaudeWithContext(
+        incomingText,
+        searchContext,
+        resolvedUser.name
+      )
+    } catch {
+      finalReply = buildDirectWebAnswer(incomingText, searchContext)
+    }
+
+    if (!finalReply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(finalReply)) {
+      finalReply = buildDirectWebAnswer(incomingText, searchContext)
+    }
   }
 
   const formatted = formatOutgoingText(params.channel, finalReply)
@@ -307,10 +313,3 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
-
-
-
-
-
-
-
