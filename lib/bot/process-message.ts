@@ -10,6 +10,7 @@ import { formatOutgoingText } from './format-response'
 import { searchWeb } from '@/lib/web-search'
 import { buildSportsReply } from './handlers/sports'
 import { buildIplStandingsReply } from './handlers/standings'
+import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 
 export type ProcessIncomingParams = {
@@ -194,11 +195,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'web_search') {
     const searchContext = await searchWeb(incomingText)
-    const reply = await askClaudeWithContext(
-      incomingText,
-      searchContext,
-      resolvedUser.name
-    )
+    let reply = ''
+    try {
+      reply = await askClaudeWithContext(
+        incomingText,
+        searchContext,
+        resolvedUser.name
+      )
+    } catch {
+      reply = buildDirectWebAnswer(incomingText, searchContext)
+    }
+
+    if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch/i.test(reply)) {
+      reply = buildDirectWebAnswer(incomingText, searchContext)
+    }
 
     const formatted = formatOutgoingText(params.channel, reply)
     await saveConversation(resolvedUser.telegramId, 'assistant', formatted)
@@ -284,5 +294,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
 
 
