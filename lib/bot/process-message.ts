@@ -66,17 +66,34 @@ async function saveMemory(telegramId: number, content: string) {
   })
 }
 
-async function createReminder(telegramId: number, remindAt: string, message: string, pattern?: string) {
+async function createReminder(
+  telegramId: number,
+  chatId: number,
+  remindAt: string,
+  message: string,
+  pattern?: string
+) {
   const payload: any = {
     telegram_id: telegramId,
+    chat_id: chatId,
     message,
     remind_at: remindAt,
     sent: false,
   }
 
-  if (pattern) payload.recurring_pattern = pattern
+  if (pattern) {
+    payload.recurring_pattern = pattern
+    payload.is_recurring = true
+  }
 
-  await supabaseAdmin.from('reminders').insert(payload)
+  const { error } = await supabaseAdmin.from('reminders').insert(payload)
+
+  if (error) {
+    console.error('REMINDER INSERT FAILED:', error, payload)
+    throw new Error(`Reminder insert failed: ${error.message}`)
+  }
+
+  console.log('REMINDER INSERT OK:', payload)
 }
 
 function extractListNameFromText(text: string): string {
@@ -134,6 +151,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const parsedReminder = parseReminderIntent(incomingText)
     if (parsedReminder) {
       await createReminder(
+        resolvedUser.telegramId,
         resolvedUser.telegramId,
         parsedReminder.remindAtIso,
         parsedReminder.message,
@@ -200,6 +218,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (parsed.type === 'reminder') {
     await createReminder(
+      resolvedUser.telegramId,
       resolvedUser.telegramId,
       parsed.remindAt,
       parsed.message,
