@@ -76,6 +76,45 @@ function cleanMessageText(input: string): string {
   return cleaned || 'Reminder'
 }
 
+function formatReminderTime(iso: string): string {
+  const target = new Date(iso)
+  const now = getNowIST()
+
+  const targetDate = new Date(target.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  const today = new Date(now)
+  today.setHours(0, 0, 0, 0)
+
+  const tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+
+  const targetDay = new Date(targetDate)
+  targetDay.setHours(0, 0, 0, 0)
+
+  const timeText = targetDate.toLocaleTimeString('en-IN', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Kolkata',
+  })
+
+  if (targetDay.getTime() === today.getTime()) {
+    return `today at ${timeText}`
+  }
+
+  if (targetDay.getTime() === tomorrow.getTime()) {
+    return `tomorrow at ${timeText}`
+  }
+
+  const dateText = targetDate.toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Kolkata',
+  })
+
+  return `${dateText} at ${timeText}`
+}
+
 function parseRelativeReminder(text: string, now: Date): ParsedReminder {
   const match = text.match(/\bin\s+(\d+)\s+(minute|minutes|hour|hours|day|days)\b/i)
   if (!match) return null
@@ -213,9 +252,11 @@ export function parseReminderIntent(text: string): ParsedReminder {
 }
 
 export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>): string {
+  const displayTime = formatReminderTime(parsed.remindAtIso)
+
   if (parsed.kind === 'one_time') {
-    return `Done — I'll remind you for *${parsed.message}* at *${parsed.remindAtIso}*.`
+    return `Done — I'll remind you to *${parsed.message}* ${displayTime}.`
   }
 
-  return `Done — I've set a recurring reminder for *${parsed.message}* starting at *${parsed.remindAtIso}* with pattern *${parsed.pattern}*.`
+  return `Done — I've set a recurring reminder to *${parsed.message}*, starting ${displayTime}.`
 }
