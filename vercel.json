@@ -2,10 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
-      "path": "/api/cron/reminders",
-      "schedule": "* * * * *"
-    },
-    {
       "path": "/api/cron/briefing",
       "schedule": "25 1 * * *"
     }
