@@ -52,22 +52,27 @@ function parseTimePart(input: string): { hour: number; minute: number } | null {
   return { hour, minute }
 }
 
-function extractReminderMessage(text: string): string {
-  let cleaned = text.trim()
+function cleanMessageText(input: string): string {
+  let cleaned = input
+    .replace(/\bplease\b/gi, '')
+    .replace(/\bkindly\b/gi, '')
+    .replace(/\bfor me\b/gi, '')
+    .replace(/\bset a reminder\b/gi, '')
+    .replace(/\bset reminder\b/gi, '')
+    .replace(/\bremind me to\b/gi, '')
+    .replace(/\bremind me\b/gi, '')
+    .replace(/\bin\s+\d+\s+(minute|minutes|hour|hours|day|days)\b/gi, '')
+    .replace(/\b(tomorrow|tmrw|tmr)\b/gi, '')
+    .replace(/\bevery\s+hour\s+from\s+.+?\s+to\s+.+?(daily)?$/gi, '')
+    .replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+.+$/gi, '')
+    .replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, '')
+    .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
+    .replace(/[.]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 
-  cleaned = cleaned.replace(/^remind me to\s+/i, '')
-  cleaned = cleaned.replace(/^remind me\s+/i, '')
-  cleaned = cleaned.replace(/^set reminder to\s+/i, '')
-  cleaned = cleaned.replace(/^set reminder\s+/i, '')
+  cleaned = cleaned.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim()
 
-  cleaned = cleaned.replace(/\bin\s+\d+\s+(minute|minutes|hour|hours|day|days)\b/i, '')
-  cleaned = cleaned.replace(/\b(tomorrow|tmrw|tmr)\b/i, '')
-  cleaned = cleaned.replace(/\bevery\s+hour\s+from\s+.+?\s+to\s+.+$/i, '')
-  cleaned = cleaned.replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+.+$/i, '')
-  cleaned = cleaned.replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/i, '')
-  cleaned = cleaned.replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/i, '')
-
-  cleaned = cleaned.replace(/\s+/g, ' ').trim()
   return cleaned || 'Reminder'
 }
 
@@ -86,7 +91,7 @@ function parseRelativeReminder(text: string, now: Date): ParsedReminder {
   return {
     kind: 'one_time',
     remindAtIso: toIsoWithOffset(when),
-    message: extractReminderMessage(text),
+    message: cleanMessageText(text),
   }
 }
 
@@ -107,7 +112,7 @@ function parseTomorrowReminder(text: string, now: Date): ParsedReminder {
   return {
     kind: 'one_time',
     remindAtIso: toIsoWithOffset(when),
-    message: extractReminderMessage(text),
+    message: cleanMessageText(text),
   }
 }
 
@@ -137,7 +142,7 @@ function parseWeekdayRecurring(text: string, now: Date): ParsedReminder {
   return {
     kind: 'recurring',
     remindAtIso: toIsoWithOffset(when),
-    message: extractReminderMessage(text),
+    message: cleanMessageText(text),
     pattern: `every ${match[1]}`,
   }
 }
@@ -165,7 +170,7 @@ function parseHourlyWindowRecurring(text: string, now: Date): ParsedReminder {
   return {
     kind: 'recurring',
     remindAtIso: toIsoWithOffset(when),
-    message: extractReminderMessage(text),
+    message: cleanMessageText(text),
     pattern: `hourly_between:${String(start.hour).padStart(2, '0')}:${String(start.minute).padStart(2, '0')}-${String(end.hour).padStart(2, '0')}:${String(end.minute).padStart(2, '0')}:daily`,
   }
 }
@@ -190,7 +195,7 @@ function parseSimpleAtTime(text: string, now: Date): ParsedReminder {
   return {
     kind: 'one_time',
     remindAtIso: toIsoWithOffset(when),
-    message: extractReminderMessage(text),
+    message: cleanMessageText(text),
   }
 }
 
