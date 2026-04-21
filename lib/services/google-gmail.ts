@@ -57,3 +57,67 @@ export async function getGoogleEmail(accessToken: string): Promise<string | null
     return null
   }
 }
+
+export async function refreshGmailAccessToken(refreshToken: string): Promise<string | null> {
+  try {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        refresh_token: refreshToken,
+        client_id: process.env.GOOGLE_CLIENT_ID!,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        grant_type: 'refresh_token',
+      }),
+    })
+
+    const data = await response.json()
+    return data.access_token || null
+  } catch (err) {
+    console.error('Refresh Gmail token failed:', err)
+    return null
+  }
+}
+
+function getHeader(headers: any[], name: string) {
+  const h = (headers || []).find((x) => x.name?.toLowerCase() === name.toLowerCase())
+  return h?.value || ''
+}
+
+export async function fetchLatestEmails(accessToken: string, maxResults = 5) {
+  const listRes = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}&q=in:inbox`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+    }
+  )
+
+  const listData = await listRes.json()
+  const messages = listData.messages || []
+
+  const detailed = []
+
+  for (const msg of messages) {
+    const res = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: 'no-store',
+      }
+    )
+
+    const data = await res.json()
+    const headers = data.payload?.headers || []
+
+    detailed.push({
+      id: data.id,
+      subject: getHeader(headers, 'Subject') || '(No subject)',
+      from: getHeader(headers, 'From') || 'Unknown sender',
+      date: getHeader(headers, 'Date') || '',
+      snippet: data.snippet || '',
+    })
+  }
+
+  return detailed
+}

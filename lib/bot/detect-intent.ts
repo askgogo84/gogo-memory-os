@@ -1,5 +1,6 @@
 ﻿export type IntentType =
   | 'connect_gmail'
+  | 'read_gmail'
   | 'connect_calendar'
   | 'sports_schedule'
   | 'sports_standings'
@@ -41,6 +42,23 @@ export function detectIntent(text: string): DetectedIntent {
     lower.includes('gmail connect')
   ) {
     return { type: 'connect_gmail', confidence: 'high' }
+  }
+
+  if (
+    lower.includes('check my latest mail') ||
+    lower.includes('check my latest mails') ||
+    lower.includes('latest mail') ||
+    lower.includes('latest mails') ||
+    lower.includes('latest email') ||
+    lower.includes('latest emails') ||
+    lower.includes('show my unread emails') ||
+    lower.includes('show unread emails') ||
+    lower.includes('check unread emails') ||
+    lower.includes('any new mails') ||
+    lower.includes('any new mail') ||
+    lower.includes('check my inbox')
+  ) {
+    return { type: 'read_gmail', confidence: 'high' }
   }
 
   if (

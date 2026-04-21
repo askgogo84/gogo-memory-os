@@ -3,6 +3,7 @@ import { addToList, checkItem, clearList, formatList, getAllLists, getList } fro
 import { checkAndIncrementLimit } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAuthUrl } from '@/lib/google-calendar'
+import { fetchLatestEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
 import { resolveUser, type Channel } from './resolve-user'
 import { detectIntent } from './detect-intent'
 import { parseClaudeResponse } from './parse-claude-response'
@@ -94,8 +95,6 @@ async function createReminder(
     console.error('REMINDER INSERT FAILED:', error, payload)
     throw new Error(`Reminder insert failed: ${error.message}`)
   }
-
-  console.log('REMINDER INSERT OK:', payload)
 }
 
 function extractListNameFromText(text: string): string {
@@ -131,6 +130,55 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (intent.type === 'connect_calendar') {
     const url = getAuthUrl(resolvedUser.telegramId)
     const reply = `Connect your Google Calendar here:\n${url}`
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  if (intent.type === 'read_gmail') {
+    const { data: user } = await supabaseAdmin
+      .from('users')
+      .select('gmail_connected, gmail_access_token, gmail_refresh_token, gmail_email')
+      .eq('telegram_id', resolvedUser.telegramId)
+      .single()
+
+    if (!user?.gmail_connected) {
+      const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
+      const reply = `Your Gmail is not connected yet.\n\nConnect it here:\n${connectUrl}`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+
+    let accessToken = user.gmail_access_token
+
+    if (!accessToken && user.gmail_refresh_token) {
+      accessToken = await refreshGmailAccessToken(user.gmail_refresh_token)
+    }
+
+    if (!accessToken) {
+      const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
+      const reply = `I couldn't access your Gmail right now.\n\nReconnect it here:\n${connectUrl}`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+
+    const emails = await fetchLatestEmails(accessToken, 5)
+
+    if (!emails.length) {
+      const reply = `I couldn't find any recent inbox emails right now.`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+
+    const reply =
+      `*Latest emails${user.gmail_email ? ` for ${user.gmail_email}` : ''}:*\n\n` +
+      emails
+        .map((mail: any, idx: number) =>
+          `*${idx + 1}.* ${mail.subject}` +
+          `\nFrom: ${mail.from}` +
+          (mail.snippet ? `\n${mail.snippet}` : '')
+        )
+        .join('\n\n')
+
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -208,11 +256,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const searchContext = await searchWeb(incomingText)
     let reply = ''
     try {
-      reply = await askClaudeWithContext(
-        incomingText,
-        searchContext,
-        resolvedUser.name
-      )
+      reply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name)
     } catch {
       reply = buildDirectWebAnswer(incomingText, searchContext)
     }
@@ -252,9 +296,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       parsed.message,
       parsed.pattern
     )
-    finalReply =
-      parsed.replyText ||
-      `Done — I have set the reminder for ${parsed.message}.`
+    finalReply = parsed.replyText || `Done — I have set the reminder for ${parsed.message}.`
   }
 
   if (parsed.type === 'list_add') {
@@ -271,9 +313,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (parsed.type === 'list_check') {
     const updated = await checkItem(resolvedUser.telegramId, parsed.listName, parsed.itemText)
-    finalReply = updated
-      ? formatList(parsed.listName, updated)
-      : `I could not find that list item.`
+    finalReply = updated ? formatList(parsed.listName, updated) : `I could not find that list item.`
   }
 
   if (parsed.type === 'list_clear') {
@@ -291,11 +331,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (parsed.type === 'search') {
     const searchContext = await searchWeb(parsed.query)
     try {
-      finalReply = await askClaudeWithContext(
-        incomingText,
-        searchContext,
-        resolvedUser.name
-      )
+      finalReply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name)
     } catch {
       finalReply = buildDirectWebAnswer(incomingText, searchContext)
     }

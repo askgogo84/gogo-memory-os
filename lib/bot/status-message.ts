@@ -16,6 +16,8 @@ export function getStatusText(intent: IntentType, messageType?: string) {
       return '🔎 Checking the latest info...'
     case 'connect_gmail':
       return '📬 Preparing Gmail connect...'
+    case 'read_gmail':
+      return '📨 Checking your latest emails...'
     case 'connect_calendar':
       return '📅 Preparing Calendar connect...'
     case 'set_reminder':
@@ -33,7 +35,8 @@ export function getStatusText(intent: IntentType, messageType?: string) {
 
 export function shouldUseAnimation(intent: IntentType, messageType?: string) {
   if (messageType === 'voice') return true
-  return intent === 'web_search' || intent === 'sports_schedule' || intent === 'sports_standings' || intent === 'weather_live' || intent === 'gold_live' || intent === 'connect_gmail'
+  return intent === 'web_search' || intent === 'sports_schedule' || intent === 'sports_standings' || intent === 'weather_live' || intent === 'gold_live' || intent === 'connect_gmail' || intent === 'read_gmail'
 }
+
 
 
