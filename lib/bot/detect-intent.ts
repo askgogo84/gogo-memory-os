@@ -2,6 +2,7 @@
   | 'connect_gmail'
   | 'connect_calendar'
   | 'sports_schedule'
+  | 'sports_standings'
   | 'list_show_all'
   | 'list_show'
   | 'list_add'
@@ -29,9 +30,7 @@ export function detectIntent(text: string): DetectedIntent {
   const t = (text || '').trim()
   const lower = t.toLowerCase()
 
-  if (!lower) {
-    return { type: 'general_chat', confidence: 'low' }
-  }
+  if (!lower) return { type: 'general_chat', confidence: 'low' }
 
   if (
     lower.includes('connect my gmail') ||
@@ -52,6 +51,16 @@ export function detectIntent(text: string): DetectedIntent {
   }
 
   if (
+    lower.includes('ipl table') ||
+    lower.includes('points table') ||
+    lower.includes('table toppers') ||
+    lower.includes('ipl standings') ||
+    lower.includes('ipl topper')
+  ) {
+    return { type: 'sports_standings', confidence: 'high' }
+  }
+
+  if (
     (lower.includes('rcb') && lower.includes('match')) ||
     (lower.includes('ipl') && lower.includes('match')) ||
     lower.includes('next rcb match') ||
@@ -69,9 +78,7 @@ export function detectIntent(text: string): DetectedIntent {
     lower.startsWith('open ') ||
     lower.startsWith('view ')
   ) {
-    if (lower.includes(' list')) {
-      return { type: 'list_show', confidence: 'medium' }
-    }
+    if (lower.includes(' list')) return { type: 'list_show', confidence: 'medium' }
   }
 
   if (
@@ -117,7 +124,7 @@ export function detectIntent(text: string): DetectedIntent {
     return { type: 'save_memory', confidence: 'high' }
   }
 
-  if (SEARCH_HINTS.some(k => lower.includes(k))) {
+  if (SEARCH_HINTS.some((k) => lower.includes(k))) {
     return { type: 'web_search', confidence: 'medium' }
   }
 

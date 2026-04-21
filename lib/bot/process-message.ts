@@ -9,6 +9,7 @@ import { parseClaudeResponse } from './parse-claude-response'
 import { formatOutgoingText } from './format-response'
 import { searchWeb } from '@/lib/web-search'
 import { buildSportsReply } from './handlers/sports'
+import { buildIplStandingsReply } from './handlers/standings'
 import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 
 export type ProcessIncomingParams = {
@@ -164,6 +165,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
+  if (intent.type === 'sports_standings') {
+    const standingsReply = await buildIplStandingsReply(incomingText, resolvedUser.name)
+    await saveConversation(resolvedUser.telegramId, 'assistant', standingsReply)
+    return { text: formatOutgoingText(params.channel, standingsReply), resolvedUser }
+  }
+
   if (intent.type === 'list_show_all') {
     const lists = await getAllLists(resolvedUser.telegramId)
     const reply = !lists.length
@@ -277,3 +284,5 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
+
