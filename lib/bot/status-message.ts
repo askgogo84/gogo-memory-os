@@ -35,8 +35,9 @@ export function getStatusText(intent: IntentType, messageType?: string) {
 
 export function shouldUseAnimation(intent: IntentType, messageType?: string) {
   if (messageType === 'voice') return true
-  return intent === 'web_search' || intent === 'sports_schedule' || intent === 'sports_standings' || intent === 'weather_live' || intent === 'gold_live' || intent === 'connect_gmail' || intent === 'read_gmail'
+  return intent === 'web_search' || intent === 'sports_schedule' || intent === 'sports_standings' || intent === 'weather_live' || intent === 'gold_live' || intent === 'connect_gmail'
 }
+
 
 
 
