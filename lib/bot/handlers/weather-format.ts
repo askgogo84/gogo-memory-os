@@ -2,53 +2,106 @@
   return (text || '').replace(/\s+/g, ' ').trim()
 }
 
-function extractWeatherApiBlock(searchContext: string) {
-  const match = searchContext.match(/\{[\s\S]*?'current':\s*\{[\s\S]*?\}\}/)
-  return match ? match[0] : ''
-}
-
 function extractValue(block: string, pattern: RegExp) {
   const m = block.match(pattern)
   return m?.[1] || null
 }
 
+function extractForecastDay(raw: string) {
+  const forecastBlockMatch =
+    raw.match(/forecastday[\s\S]*?\{[\s\S]*?maxtempc[\s\S]*?mintempc[\s\S]*?\}/i)
+
+  if (!forecastBlockMatch) return ''
+
+  return forecastBlockMatch[0]
+}
+
+function extractCurrentBlock(raw: string) {
+  const match = raw.match(/\{[\s\S]*?'current':\s*\{[\s\S]*?\}\}/)
+  return match ? match[0] : ''
+}
+
 export function formatWeatherAnswer(userText: string, searchContext: string) {
   const raw = searchContext || ''
-  const block = extractWeatherApiBlock(raw)
+  const lower = userText.toLowerCase()
+  const wantsTomorrow = /tmrw|tomorrow/i.test(lower)
 
-  if (block) {
-    const location =
-      extractValue(block, /'name':\s*'([^']+)'/) ||
-      extractValue(block, /"name":\s*"([^"]+)"/) ||
-      'the selected location'
+  const location =
+    extractValue(raw, /'name':\s*'([^']+)'/i) ||
+    extractValue(raw, /"name":\s*"([^"]+)"/i) ||
+    'the selected location'
 
+  if (wantsTomorrow) {
+    const forecastBlock = extractForecastDay(raw)
+
+    if (forecastBlock) {
+      const maxTemp =
+        extractValue(forecastBlock, /'maxtempc':\s*([\d.]+)/i) ||
+        extractValue(forecastBlock, /"maxtempc":\s*([\d.]+)/i)
+
+      const minTemp =
+        extractValue(forecastBlock, /'mintempc':\s*([\d.]+)/i) ||
+        extractValue(forecastBlock, /"mintempc":\s*([\d.]+)/i)
+
+      const avgTemp =
+        extractValue(forecastBlock, /'avgtempc':\s*([\d.]+)/i) ||
+        extractValue(forecastBlock, /"avgtempc":\s*([\d.]+)/i)
+
+      const maxWind =
+        extractValue(forecastBlock, /'maxwindkph':\s*([\d.]+)/i) ||
+        extractValue(forecastBlock, /"maxwindkph":\s*([\d.]+)/i)
+
+      const rainChance =
+        extractValue(forecastBlock, /'daily_chance_of_rain':\s*'?(.*?)'?(,|\})/i) ||
+        extractValue(forecastBlock, /"daily_chance_of_rain":\s*"?(.*?)"?(,|\})/i)
+
+      const condition =
+        extractValue(forecastBlock, /'text':\s*'([^']+)'/i) ||
+        extractValue(forecastBlock, /"text":\s*"([^"]+)"/i)
+
+      const pieces: string[] = []
+      pieces.push(`*Tomorrow in ${location}:*`)
+
+      const line1: string[] = []
+      if (condition) line1.push(condition)
+      if (avgTemp) line1.push(`avg ${avgTemp}°C`)
+      if (maxTemp && minTemp) line1.push(`high ${maxTemp}°C / low ${minTemp}°C`)
+      if (line1.length) pieces.push(line1.join(', '))
+
+      const line2: string[] = []
+      if (rainChance && rainChance !== 'null') line2.push(`Rain chance ${rainChance}%`)
+      if (maxWind) line2.push(`Wind up to ${maxWind} km/h`)
+      if (line2.length) pieces.push(line2.join(' • '))
+
+      return pieces.join('\n')
+    }
+  }
+
+  const currentBlock = extractCurrentBlock(raw)
+
+  if (currentBlock) {
     const tempC =
-      extractValue(block, /'tempc':\s*([\d.]+)/i) ||
-      extractValue(block, /"tempc":\s*([\d.]+)/i)
+      extractValue(currentBlock, /'tempc':\s*([\d.]+)/i) ||
+      extractValue(currentBlock, /"tempc":\s*([\d.]+)/i)
 
     const feelsC =
-      extractValue(block, /'feelslikec':\s*([\d.]+)/i) ||
-      extractValue(block, /"feelslikec":\s*([\d.]+)/i)
+      extractValue(currentBlock, /'feelslikec':\s*([\d.]+)/i) ||
+      extractValue(currentBlock, /"feelslikec":\s*([\d.]+)/i)
 
     const humidity =
-      extractValue(block, /'humidity':\s*(\d+)/i) ||
-      extractValue(block, /"humidity":\s*(\d+)/i)
+      extractValue(currentBlock, /'humidity':\s*(\d+)/i) ||
+      extractValue(currentBlock, /"humidity":\s*(\d+)/i)
 
     const condition =
-      extractValue(block, /'text':\s*'([^']+)'/) ||
-      extractValue(block, /"text":\s*"([^"]+)"/)
+      extractValue(currentBlock, /'text':\s*'([^']+)'/i) ||
+      extractValue(currentBlock, /"text":\s*"([^"]+)"/i)
 
     const windKph =
-      extractValue(block, /'windkph':\s*([\d.]+)/i) ||
-      extractValue(block, /"windkph":\s*([\d.]+)/i)
+      extractValue(currentBlock, /'windkph':\s*([\d.]+)/i) ||
+      extractValue(currentBlock, /"windkph":\s*([\d.]+)/i)
 
     const pieces: string[] = []
-
-    if (/tmrw|tomorrow/i.test(userText)) {
-      pieces.push(`*Weather for ${location}:*`)
-    } else {
-      pieces.push(`*Current weather in ${location}:*`)
-    }
+    pieces.push(`*Current weather in ${location}:*`)
 
     const line1: string[] = []
     if (condition) line1.push(condition)

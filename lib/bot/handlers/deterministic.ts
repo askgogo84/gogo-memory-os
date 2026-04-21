@@ -34,9 +34,7 @@ export function isIplStandingsQuery(text: string) {
 }
 
 export async function buildDeterministicWeatherReply(userText: string) {
-  const query = userText.toLowerCase().includes('bangalore')
-    ? 'weather Bangalore'
-    : userText
+  const query = /tmrw|tomorrow/i.test(userText) ? 'weather forecast tomorrow Bangalore' : (userText.toLowerCase().includes('bangalore') ? 'weather Bangalore' : userText)
 
   const context = await searchWeb(query)
 
@@ -72,3 +70,4 @@ export async function buildDeterministicIplStandingsReply(userText: string) {
 
   return formatIplStandingsAnswer(context)
 }
+
