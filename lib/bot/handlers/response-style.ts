@@ -12,10 +12,12 @@
     return `Locked in — ${task.charAt(0).toUpperCase() + task.slice(1)} on ${when}.`
       .replace('on today at', 'today at')
       .replace('on tomorrow at', 'tomorrow at')
+      .replace(/\.\.+$/g, '.')
   }
 
   text = text.replace(/^Done\s*—\s*/i, 'Locked in — ')
   text = text.replace(/\*\*/g, '*')
+  text = text.replace(/\.\.+$/g, '.')
   return text
 }
 
