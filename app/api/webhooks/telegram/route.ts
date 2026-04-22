@@ -1,9 +1,19 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
-import { sendTelegramChatAction, sendTelegramMessage } from '@/lib/channels/telegram'
+import {
+  deleteTelegramMessage,
+  sendTelegramAnimation,
+  sendTelegramChatAction,
+  sendTelegramMessage,
+} from '@/lib/channels/telegram'
 import { downloadTelegramFile, transcribeVoice } from '@/lib/whisper'
+import { detectIntent } from '@/lib/bot/detect-intent'
+import { getStatusText, shouldUseAnimation } from '@/lib/bot/status-message'
 
 export const dynamic = 'force-dynamic'
+
+const PREMIUM_LOADING_GIF =
+  'https://media.giphy.com/media/xTkcEQACH24SMPxIQg/giphy.gif'
 
 function getTelegramUserName(message: any): string {
   return (
@@ -46,6 +56,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, skipped: 'unsupported message type' })
     }
 
+    const intent = detectIntent(inputText)
+    const statusText = getStatusText(intent.type, messageType)
+
+    let tempMessageId: number | null = null
+
+    if (shouldUseAnimation(intent.type, messageType)) {
+      try {
+        const anim = await sendTelegramAnimation(chatId, PREMIUM_LOADING_GIF, statusText)
+        tempMessageId = anim?.result?.message_id ?? null
+      } catch {
+        try {
+          const sent = await sendTelegramMessage(chatId, statusText)
+          tempMessageId = sent?.result?.message_id ?? null
+        } catch {
+          tempMessageId = null
+        }
+      }
+    }
+
     const result = await processIncomingMessage({
       channel: 'telegram',
       externalUserId: String(chatId),
@@ -53,6 +82,13 @@ export async function POST(req: NextRequest) {
       userName,
       messageType,
     })
+
+    if (tempMessageId) {
+      try {
+        await deleteTelegramMessage(chatId, tempMessageId)
+      } catch {
+      }
+    }
 
     const outgoing =
       messageType === 'voice'
@@ -70,4 +106,3 @@ export async function POST(req: NextRequest) {
     )
   }
 }
-

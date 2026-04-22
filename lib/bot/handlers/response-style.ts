@@ -1,75 +1,71 @@
-﻿function titleLine(text: string) {
-  return text.trim()
-}
-
-export function styleReminderConfirmation(message: string) {
+﻿export function styleReminderConfirmation(message: string) {
   let text = message.trim()
 
-  text = text.replace(
-    /^Done\s*—\s*I'll remind you to (.+?) (today|tomorrow|[A-Za-z]+,\s+\d+\s+[A-Za-z]+ at .+|[A-Za-z]+,\s+\d+\s+[A-Za-z]+\s+at\s+.+)$/i,
-    'Locked in — $2 for $1.'
-  )
+  let m =
+    text.match(/^Done\s*—\s*I'll remind you to (.+?) (today at .+)$/i) ||
+    text.match(/^Done\s*—\s*I'll remind you to (.+?) (tomorrow at .+)$/i) ||
+    text.match(/^Done\s*—\s*I'll remind you to (.+?) ([A-Za-z]+,\s+\d+\s+[A-Za-z]+\s+at\s+.+)$/i)
 
-  text = text.replace(
-    /^Done\s*—\s*I'll remind you to (.+?) ([A-Za-z]+,\s+\d+\s+[A-Za-z]+ at .+)$/i,
-    'Locked in — $2 for $1.'
-  )
-
-  text = text.replace(
-    /^Done\s*—\s*I'll remind you (today at .+|tomorrow at .+|[A-Za-z]+,\s+\d+\s+[A-Za-z]+ at .+)$/i,
-    'Locked in — $1.'
-  )
+  if (m) {
+    const task = m[1].replace(/^\*|\*$/g, '').trim()
+    const when = m[2].trim()
+    return `Locked in — ${task.charAt(0).toUpperCase() + task.slice(1)} on ${when}.`
+      .replace('on today at', 'today at')
+      .replace('on tomorrow at', 'tomorrow at')
+  }
 
   text = text.replace(/^Done\s*—\s*/i, 'Locked in — ')
   text = text.replace(/\*\*/g, '*')
-
-  return titleLine(text)
+  return text
 }
 
 export function styleWeatherReply(message: string) {
   const text = message.trim()
 
-  const tomorrow = text.match(/^Tomorrow in ([^:]+):\s*\n(.+), avg ([\d.]+°C), high ([\d.]+°C) \/ low ([\d.]+°C)\s*\nRain chance (\d+%) • Wind up to ([\d.]+ km\/h)$/i)
+  const tomorrow = text.match(
+    /^Tomorrow in ([^:]+):\s*\n(.+), avg ([\d.]+°C), high ([\d.]+°C) \/ low ([\d.]+°C)\s*\nRain chance (\d+%) • Wind up to ([\d.]+ km\/h)$/i
+  )
   if (tomorrow) {
     return `Tomorrow in ${tomorrow[1]} looks ${tomorrow[2].toLowerCase()}: ${tomorrow[6]} rain chance, ${tomorrow[4]} high, ${tomorrow[5]} low.`
   }
 
-  const current = text.match(/^Current weather in ([^:]+):\s*\n(.+), ([\d.]+°C), feels like ([\d.]+°C)\s*\nHumidity (\d+%) • Wind ([\d.]+ km\/h)$/i)
+  const current = text.match(
+    /^Current weather in ([^:]+):\s*\n(.+), ([\d.]+°C), feels like ([\d.]+°C)\s*\nHumidity (\d+%) • Wind ([\d.]+ km\/h)$/i
+  )
   if (current) {
     return `${current[1]} right now: ${current[2].toLowerCase()}, ${current[3]}, feels like ${current[4]}.`
   }
 
-  return titleLine(text)
+  return text
 }
 
 export function styleSportsReply(message: string) {
-  return titleLine(
-    message.replace(/\n\nWant me to set a reminder for it\?/i, '\n\nWant a reminder 1 hour before?')
-  )
+  return message
+    .replace(/\n\nWant me to set a reminder for it\?/i, '\n\nWant a reminder 1 hour before?')
+    .trim()
 }
 
 export function styleEmailListReply(message: string) {
-  let text = message.trim()
-  text = text.replace(/^Top 3 latest emails/i, 'Here are your top 3 latest emails')
-  text = text.replace(/^Top 3 unread emails/i, 'Here are your top 3 unread emails')
-  text = text.replace(/^Top 3 latest email summaries/i, 'Here are your top 3 latest email summaries')
-  text = text.replace(/^Top 3 unread email summaries/i, 'Here are your top 3 unread email summaries')
-  return titleLine(text)
+  return message
+    .replace(/^Top 3 latest emails/i, 'Here are your top 3 latest emails')
+    .replace(/^Top 3 unread emails/i, 'Here are your top 3 unread emails')
+    .replace(/^Top 3 latest email summaries/i, 'Here are your top 3 latest email summaries')
+    .replace(/^Top 3 unread email summaries/i, 'Here are your top 3 unread email summaries')
+    .trim()
 }
 
 export function styleEmailDraftReply(message: string) {
-  let text = message.trim()
-  text = text.replace(/^Draft reply suggestion/i, 'Here’s a reply draft')
-  return titleLine(text)
+  return message
+    .replace(/^Draft reply suggestion/i, 'Here’s a reply draft:')
+    .trim()
 }
 
 export function styleGenericReply(message: string) {
-  return titleLine(
-    message
-      .replace(/^Got it!\s*/i, 'Got it — ')
-      .replace(/^Sure!\s*/i, '')
-      .replace(/^Absolutely!\s*/i, '')
-  )
+  return message
+    .replace(/^Got it!\s*/i, 'Got it — ')
+    .replace(/^Sure!\s*/i, '')
+    .replace(/^Absolutely!\s*/i, '')
+    .trim()
 }
 
 export function addSmartPrompt(intentType: string, message: string) {
@@ -97,6 +93,5 @@ export function styleReplyByIntent(intentType: string, message: string) {
     text = styleGenericReply(text)
   }
 
-  text = addSmartPrompt(intentType, text)
-  return text.trim()
+  return addSmartPrompt(intentType, text).trim()
 }
