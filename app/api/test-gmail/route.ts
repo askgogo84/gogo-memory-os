@@ -1,8 +1,17 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { fetchLatestEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
+import { refreshGmailAccessToken } from '@/lib/google-gmail'
 
 export const dynamic = 'force-dynamic'
+
+async function gmailFetch(accessToken: string, url: string) {
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: 'no-store',
+  })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, data }
+}
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
@@ -45,30 +54,39 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  try {
-    const emails = await fetchLatestEmails(accessToken, 3)
+  const inboxList = await gmailFetch(
+    accessToken,
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=3&labelIds=INBOX'
+  )
 
-    return NextResponse.json({
-      ok: true,
-      stage: 'fetch',
-      gmail_connected: user.gmail_connected,
-      gmail_email: user.gmail_email || null,
-      has_access_token: !!user.gmail_access_token,
-      has_refresh_token: !!user.gmail_refresh_token,
-      refreshed,
-      email_count: emails.length,
-      emails,
-    })
-  } catch (e: any) {
-    return NextResponse.json({
-      ok: false,
-      stage: 'fetch',
-      gmail_connected: user.gmail_connected,
-      gmail_email: user.gmail_email || null,
-      has_access_token: !!user.gmail_access_token,
-      has_refresh_token: !!user.gmail_refresh_token,
-      refreshed,
-      error: e?.message || 'Unknown Gmail fetch error',
-    }, { status: 500 })
+  const firstId = inboxList?.data?.messages?.[0]?.id || null
+
+  let firstMessage = null
+  let firstMessageMeta = null
+
+  if (firstId) {
+    firstMessage = await gmailFetch(
+      accessToken,
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${firstId}`
+    )
+
+    firstMessageMeta = await gmailFetch(
+      accessToken,
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${firstId}?format=metadata`
+    )
   }
+
+  return NextResponse.json({
+    ok: true,
+    stage: 'debug-one-message',
+    gmail_connected: user.gmail_connected,
+    gmail_email: user.gmail_email || null,
+    has_access_token: !!user.gmail_access_token,
+    has_refresh_token: !!user.gmail_refresh_token,
+    refreshed,
+    inboxList,
+    firstId,
+    firstMessage,
+    firstMessageMeta,
+  })
 }
