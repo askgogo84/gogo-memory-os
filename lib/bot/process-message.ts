@@ -11,6 +11,7 @@ import { formatOutgoingText } from './format-response'
 import { searchWeb } from '@/lib/web-search'
 import { buildSportsReplyWithState } from './handlers/sports'
 import { getLatestFollowupState } from './handlers/followup-state'
+import { buildEmailActionReply } from './handlers/email-actions'
 import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
@@ -196,6 +197,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (intent.type === 'connect_calendar') {
     const url = getAuthUrl(resolvedUser.telegramId)
     const reply = `Connect your Google Calendar here:\n${url}`
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  if (intent.type === 'email_action') {
+    const reply = await buildEmailActionReply(resolvedUser.telegramId, incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -465,6 +472,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
+
 
 
 

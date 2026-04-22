@@ -1,6 +1,7 @@
 ﻿export type IntentType =
   | 'connect_gmail'
   | 'read_gmail'
+  | 'email_action'
   | 'connect_calendar'
   | 'sports_schedule'
   | 'sports_standings'
@@ -42,6 +43,19 @@ export function detectIntent(text: string): DetectedIntent {
     lower.includes('gmail connect')
   ) {
     return { type: 'connect_gmail', confidence: 'high' }
+  }
+
+  if (
+    lower.includes('draft a reply') ||
+    lower.includes('reply to this email') ||
+    lower.includes('reply to this mail') ||
+    lower.includes('reply to the latest mail') ||
+    lower.includes('reply to latest email') ||
+    lower.includes('reply to the vercel email') ||
+    lower.includes('draft reply to') ||
+    lower.includes('write a reply to this email')
+  ) {
+    return { type: 'email_action', confidence: 'high' }
   }
 
   if (
@@ -189,4 +203,3 @@ export function detectIntent(text: string): DetectedIntent {
 
   return { type: 'general_chat', confidence: 'low' }
 }
-
