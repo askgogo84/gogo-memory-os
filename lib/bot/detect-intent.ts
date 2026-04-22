@@ -121,6 +121,21 @@ export function detectIntent(text: string): DetectedIntent {
     return { type: 'sports_schedule', confidence: 'high' }
   }
 
+  if (
+    lower.includes('remind me') ||
+    lower.includes('remind to') ||
+    lower.startsWith('remind ') ||
+    lower.includes('set a reminder') ||
+    lower.includes('set reminder') ||
+    lower.includes('reminder for') ||
+    /\b(on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower) ||
+    /\b(tomorrow|tmrw|tmr)\b/i.test(lower) ||
+    /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(lower) ||
+    /\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(lower)
+  ) {
+    return { type: 'set_reminder', confidence: 'high' }
+  }
+
   if (lower === 'show all lists' || lower === 'list all' || lower === 'show my lists') {
     return { type: 'list_show_all', confidence: 'high' }
   }
@@ -154,18 +169,6 @@ export function detectIntent(text: string): DetectedIntent {
     lower.startsWith('remove list ')
   ) {
     return { type: 'list_clear', confidence: 'medium' }
-  }
-
-  if (
-    lower.includes('remind me') ||
-    lower.includes('remind to') ||
-    lower.startsWith('remind ') ||
-    lower.includes('set reminder') ||
-    lower.includes('reminder for') ||
-    lower.includes('রিমাইন্ডার') ||
-    lower.includes('মনে করিয়ে')
-  ) {
-    return { type: 'set_reminder', confidence: 'high' }
   }
 
   if (

@@ -127,6 +127,21 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   await saveConversation(resolvedUser.telegramId, 'user', incomingText)
 
+  const eagerReminder = parseReminderIntent(incomingText)
+  if (eagerReminder && intent.type === 'set_reminder') {
+    await createReminder(
+      resolvedUser.telegramId,
+      resolvedUser.telegramId,
+      eagerReminder.remindAtIso,
+      eagerReminder.message,
+      eagerReminder.kind === 'recurring' ? eagerReminder.pattern : undefined
+    )
+
+    const reply = buildReminderConfirmation(eagerReminder)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
   if (intent.type === 'connect_calendar') {
     const url = getAuthUrl(resolvedUser.telegramId)
     const reply = `Connect your Google Calendar here:\n${url}`
@@ -355,5 +370,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
 
 
