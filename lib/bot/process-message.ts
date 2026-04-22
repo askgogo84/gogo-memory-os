@@ -163,29 +163,39 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
 
-    let accessToken = user.gmail_access_token
-
-    if (!accessToken && user.gmail_refresh_token) {
-      accessToken = await refreshGmailAccessToken(user.gmail_refresh_token)
-    }
-
-    if (!accessToken) {
-      const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-      const reply = `I couldn't access your Gmail right now.\n\nReconnect it here:\n${connectUrl}`
-      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
-    }
+    let accessToken = user.gmail_access_token || null
 
     let emails: any[] = []
+    if (accessToken) {
+      try {
+        emails = await fetchLatestEmails(accessToken, 3)
+      } catch (error) {
+        console.error('fetchLatestEmails with current token failed:', error)
+      }
+    }
 
-    try {
-      emails = await fetchLatestEmails(accessToken, 3)
-    } catch (error) {
-      console.error('fetchLatestEmails failed:', error)
+    if (!emails.length && user.gmail_refresh_token) {
+      const refreshedToken = await refreshGmailAccessToken(user.gmail_refresh_token)
+
+      if (refreshedToken) {
+        accessToken = refreshedToken
+
+        await supabaseAdmin
+          .from('users')
+          .update({ gmail_access_token: refreshedToken })
+          .eq('telegram_id', resolvedUser.telegramId)
+
+        try {
+          emails = await fetchLatestEmails(refreshedToken, 3)
+        } catch (error) {
+          console.error('fetchLatestEmails with refreshed token failed:', error)
+        }
+      }
     }
 
     if (!emails.length) {
-      const reply = `I couldn't fetch your latest emails right now. Please try again in a moment.`
+      const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
+      const reply = `I couldn't fetch your latest emails right now.\n\nTry reconnecting Gmail here:\n${connectUrl}`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
@@ -375,6 +385,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
 
 
 
