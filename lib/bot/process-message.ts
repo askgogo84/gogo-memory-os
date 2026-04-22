@@ -12,6 +12,7 @@ import { searchWeb } from '@/lib/web-search'
 import { buildSportsReplyWithState } from './handlers/sports'
 import { getLatestFollowupState } from './handlers/followup-state'
 import { buildEmailActionReply } from './handlers/email-actions'
+import { styleReplyByIntent } from './handlers/response-style'
 import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
@@ -190,21 +191,24 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     )
 
     const reply = buildReminderConfirmation(eagerReminder)
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
+    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
   }
 
   if (intent.type === 'connect_calendar') {
     const url = getAuthUrl(resolvedUser.telegramId)
     const reply = `Connect your Google Calendar here:\n${url}`
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
+    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
   }
 
   if (intent.type === 'email_action') {
     const reply = await buildEmailActionReply(resolvedUser.telegramId, incomingText)
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
+    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
   }
 
   if (intent.type === 'read_gmail') {
@@ -295,15 +299,17 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
           .join('\n\n')
     }
 
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
+    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
   }
 
   if (intent.type === 'connect_gmail') {
     const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
     const reply = `Connect your Gmail here:\n${connectUrl}`
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
+    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
   }
 
   if (intent.type === 'weather_live') {
@@ -314,27 +320,31 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       console.error('Weather handler failed:', error)
       reply = "I couldn't fetch the weather right now. Please try again in a moment."
 }
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
+    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
   }
 
   if (intent.type === 'gold_live') {
     const reply = await buildDeterministicGoldReply(incomingText)
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
+    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
   }
 
   if (intent.type === 'sports_standings') {
     const reply = await buildDeterministicIplStandingsReply(incomingText)
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
+    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
   }
 
   if (intent.type === 'sports_schedule') {
     const sportsResult = await buildSportsReplyWithState(incomingText, resolvedUser.telegramId)
     const sportsReply = sportsResult?.reply || 'I could not find the next RCB match.'
-    await saveConversation(resolvedUser.telegramId, 'assistant', sportsReply)
-    return { text: formatOutgoingText(params.channel, sportsReply), resolvedUser }
+    const styledSportsReply = styleReplyByIntent('sports_schedule', sportsReply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledSportsReply)
+    return { text: formatOutgoingText(params.channel, styledSportsReply), resolvedUser }
   }
 
   if (intent.type === 'set_reminder') {
@@ -349,8 +359,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       )
 
       const reply = buildReminderConfirmation(parsedReminder)
-      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      const styledReminderReply = styleReplyByIntent('set_reminder', reply)
+      await saveConversation(resolvedUser.telegramId, 'assistant', styledReminderReply)
+      return { text: formatOutgoingText(params.channel, styledReminderReply), resolvedUser }
     }
   }
 
@@ -360,8 +371,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       ? 'You do not have any lists yet.'
       : `Your lists:\n` + lists.map((l: any) => `- ${l.list_name}`).join('\n')
 
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
+    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
   }
 
   if (intent.type === 'list_show') {
@@ -371,8 +383,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       ? formatList(list.list_name, list.items || [])
       : `I could not find a list called "${listName}".`
 
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
+    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
   }
 
   if (intent.type === 'web_search') {
@@ -472,6 +485,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
+
+
+
+
+
 
 
 
