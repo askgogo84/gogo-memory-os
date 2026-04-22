@@ -176,10 +176,16 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
 
-    const emails = await fetchLatestEmails(accessToken, 5)
+    let emails: any[] = []
+
+    try {
+      emails = await fetchLatestEmails(accessToken, 3)
+    } catch (error) {
+      console.error('fetchLatestEmails failed:', error)
+    }
 
     if (!emails.length) {
-      const reply = `I couldn't find any recent inbox emails right now.`
+      const reply = `I couldn't fetch your latest emails right now. Please try again in a moment.`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
@@ -188,8 +194,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       `*Latest emails${user.gmail_email ? ` for ${user.gmail_email}` : ''}:*\n\n` +
       emails
         .map((mail: any, idx: number) =>
-          `*${idx + 1}.* ${mail.subject}` +
-          `\nFrom: ${mail.from}` +
+          `*${idx + 1}.* ${mail.subject}\nFrom: ${mail.from}` +
           (mail.snippet ? `\n${mail.snippet}` : '')
         )
         .join('\n\n')
@@ -370,6 +375,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
 
 
 

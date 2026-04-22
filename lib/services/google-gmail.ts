@@ -1,4 +1,19 @@
-﻿export function getGmailAuthUrl(telegramId: number): string {
+﻿function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+    promise
+      .then((value) => {
+        clearTimeout(timer)
+        resolve(value)
+      })
+      .catch((err) => {
+        clearTimeout(timer)
+        reject(err)
+      })
+  })
+}
+
+export function getGmailAuthUrl(telegramId: number): string {
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!,
     redirect_uri: 'https://app.askgogo.in/api/gmail/callback',
@@ -88,10 +103,13 @@ async function listMessages(accessToken: string, maxResults: number, inboxOnly: 
   const base = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}`
   const url = inboxOnly ? `${base}&labelIds=INBOX` : base
 
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: 'no-store',
-  })
+  const res = await withTimeout(
+    fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+    }),
+    8000
+  )
 
   const data = await res.json()
 
@@ -103,40 +121,53 @@ async function listMessages(accessToken: string, maxResults: number, inboxOnly: 
   return data.messages || []
 }
 
-export async function fetchLatestEmails(accessToken: string, maxResults = 3) {
-  let messages = await listMessages(accessToken, maxResults, true)
+async function fetchMessageMeta(accessToken: string, messageId: string) {
+  const res = await withTimeout(
+    fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: 'no-store',
+      }
+    ),
+    8000
+  )
 
-  if (!messages.length) {
-    messages = await listMessages(accessToken, maxResults, false)
+  const data = await res.json()
+
+  if (!res.ok) {
+    console.error('Gmail message fetch failed:', data)
+    return null
   }
 
+  const headers = data.payload?.headers || []
+
+  return {
+    id: data.id,
+    subject: getHeader(headers, 'Subject') || '(No subject)',
+    from: getHeader(headers, 'From') || 'Unknown sender',
+    date: getHeader(headers, 'Date') || '',
+    snippet: data.snippet || '',
+  }
+}
+
+export async function fetchLatestEmails(accessToken: string, maxResults = 3) {
+  let messages = []
+
+  try {
+    messages = await listMessages(accessToken, maxResults, true)
+    if (!messages.length) {
+      messages = await listMessages(accessToken, maxResults, false)
+    }
+  } catch (err) {
+    console.error('Gmail list fallback failed:', err)
+    return []
+  }
+
+  if (!messages.length) return []
+
   const detailed = await Promise.all(
-    messages.map(async (msg: any) => {
-      const res = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          cache: 'no-store',
-        }
-      )
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        console.error('Gmail message fetch failed:', data)
-        return null
-      }
-
-      const headers = data.payload?.headers || []
-
-      return {
-        id: data.id,
-        subject: getHeader(headers, 'Subject') || '(No subject)',
-        from: getHeader(headers, 'From') || 'Unknown sender',
-        date: getHeader(headers, 'Date') || '',
-        snippet: data.snippet || '',
-      }
-    })
+    messages.slice(0, maxResults).map((msg: any) => fetchMessageMeta(accessToken, msg.id))
   )
 
   return detailed.filter(Boolean)
