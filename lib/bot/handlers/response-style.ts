@@ -7,14 +7,9 @@
 }
 
 export function styleReminderConfirmation(message: string) {
-  let text = message.trim()
-
-  text = text.replace(/^Done\s*—\s*I'll remind you to\s*/i, "Locked in — ")
-  text = text.replace(/^Done\s*—\s*I'll remind you\s*/i, "Locked in — ")
-  text = text.replace(/^Done\s*—\s*I've set a recurring reminder to\s*/i, "Recurring reminder set — ")
-  text = text.replace(/\*\*/g, '*')
-
-  return text
+  return message
+    .replace(/\*\*/g, '*')
+    .trim()
 }
 
 export function styleWeatherReply(message: string) {
@@ -48,18 +43,6 @@ export function styleGenericReply(message: string) {
 export function addSmartPrompt(intentType: string, message: string) {
   if (intentType === 'sports_schedule' && !/Want a reminder/i.test(message)) {
     return `${message}\n\nWant a reminder 1 hour before?`
-  }
-
-  if (intentType === 'weather_live' && !/Want a rain alert/i.test(message)) {
-    return `${message}\n\nWant a rain alert tomorrow morning too?`
-  }
-
-  if (intentType === 'email_action' && !/Want a shorter reply draft/i.test(message)) {
-    return `${message}\n\nWant a shorter reply draft or a more formal one?`
-  }
-
-  if (intentType === 'read_gmail' && /summary|emails/i.test(message) && !/Want a reply draft/i.test(message)) {
-    return `${message}\n\nWant a reply draft for any of these?`
   }
 
   return message
