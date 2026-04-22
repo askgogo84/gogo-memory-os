@@ -13,7 +13,6 @@ import { buildSportsReplyWithState } from './handlers/sports'
 import { getLatestFollowupState } from './handlers/followup-state'
 import { buildEmailActionReply } from './handlers/email-actions'
 import { styleReplyByIntent } from './handlers/response-style'
-import { styleReplyByIntent } from './handlers/response-style'
 import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
@@ -167,7 +166,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       )
 
       let reply = ''
-
       if (lower.includes('1 hour before')) {
         reply = `Done — I'll remind you 1 hour before *${latestSportsFollowup.payload.match_label}*.`
       } else if (lower.includes('2 hours before')) {
@@ -177,10 +175,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       } else {
         reply = `Done — I'll remind you before *${latestSportsFollowup.payload.match_label}*.`
       }
+
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
   }
+
   const eagerReminder = parseReminderIntent(incomingText)
   if (eagerReminder && intent.type === 'set_reminder') {
     await createReminder(
@@ -192,24 +192,23 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     )
 
     const reply = buildReminderConfirmation(eagerReminder)
-    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
-    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
+    const styledReminderReply = styleReplyByIntent('set_reminder', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledReminderReply)
+    return { text: formatOutgoingText(params.channel, styledReminderReply), resolvedUser }
   }
 
   if (intent.type === 'connect_calendar') {
     const url = getAuthUrl(resolvedUser.telegramId)
     const reply = `Connect your Google Calendar here:\n${url}`
-    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
-    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'email_action') {
     const reply = await buildEmailActionReply(resolvedUser.telegramId, incomingText)
-    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
-    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
+    const styledEmailActionReply = styleReplyByIntent('email_action', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledEmailActionReply)
+    return { text: formatOutgoingText(params.channel, styledEmailActionReply), resolvedUser }
   }
 
   if (intent.type === 'read_gmail') {
@@ -228,18 +227,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
     const lowerText = incomingText.toLowerCase()
     const wantsUnread = lowerText.includes('unread')
-    const wantsSummary =
-      lowerText.includes('summary') ||
-      lowerText.includes('summarize')
+    const wantsSummary = lowerText.includes('summary') || lowerText.includes('summarize')
 
     let emails: any[] = []
     let accessToken = user.gmail_access_token || null
 
-    const fetchMode = async (token: string) => {
-      return wantsUnread
-        ? await fetchUnreadEmails(token, 3)
-        : await fetchLatestEmails(token, 3)
-    }
+    const fetchMode = async (token: string) =>
+      wantsUnread ? await fetchUnreadEmails(token, 3) : await fetchLatestEmails(token, 3)
 
     if (accessToken) {
       try {
@@ -276,41 +270,38 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
 
     let reply = ''
-
     if (wantsSummary) {
       reply =
-        `*Top 3 ${wantsUnread ? 'unread' : 'latest'} email summaries${user.gmail_email ? ` for ${user.gmail_email}` : ''}:*\n\n` +
+        `Top 3 ${wantsUnread ? 'unread' : 'latest'} email summaries${user.gmail_email ? ` for ${user.gmail_email}` : ''}:\n\n` +
         emails
           .map((mail: any, idx: number) => {
             const safeSnippet = (mail.snippet || '').replace(/\s+/g, ' ').trim()
             const shortSnippet = safeSnippet.length > 120 ? safeSnippet.slice(0, 117) + '...' : safeSnippet
-            return `*${idx + 1}.* ${mail.subject}\nFrom: ${mail.from}\nSummary: ${shortSnippet || 'No preview available.'}`
+            return `${idx + 1}. ${mail.subject}\nFrom: ${mail.from}\nSummary: ${shortSnippet || 'No preview available.'}`
           })
           .join('\n\n')
     } else {
       reply =
-        `*Top 3 ${wantsUnread ? 'unread' : 'latest'} emails${user.gmail_email ? ` for ${user.gmail_email}` : ''}:*\n\n` +
+        `Top 3 ${wantsUnread ? 'unread' : 'latest'} emails${user.gmail_email ? ` for ${user.gmail_email}` : ''}:\n\n` +
         emails
           .map((mail: any, idx: number) => {
             const safeSnippet = (mail.snippet || '').replace(/\s+/g, ' ').trim()
             const shortSnippet = safeSnippet.length > 160 ? safeSnippet.slice(0, 157) + '...' : safeSnippet
-            return `*${idx + 1}.* ${mail.subject}\nFrom: ${mail.from}` +
-              (shortSnippet ? `\n${shortSnippet}` : '')
+            return `${idx + 1}. ${mail.subject}\nFrom: ${mail.from}` + (shortSnippet ? `\n${shortSnippet}` : '')
           })
           .join('\n\n')
     }
 
-    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
-    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
+    const styledGmailReply = styleReplyByIntent('read_gmail', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledGmailReply)
+    return { text: formatOutgoingText(params.channel, styledGmailReply), resolvedUser }
   }
 
   if (intent.type === 'connect_gmail') {
     const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
     const reply = `Connect your Gmail here:\n${connectUrl}`
-    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
-    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'weather_live') {
@@ -319,8 +310,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       reply = await buildDeterministicWeatherReply(incomingText)
     } catch (error) {
       console.error('Weather handler failed:', error)
-      reply = "I couldn't fetch the weather right now. Please try again in a moment."
-}
+      reply = `I couldn't fetch the weather right now. Please try again in a moment.`
+    }
     const styledWeatherReply = styleReplyByIntent('weather_live', reply)
     await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
     return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
@@ -328,16 +319,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'gold_live') {
     const reply = await buildDeterministicGoldReply(incomingText)
-    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
-    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'sports_standings') {
     const reply = await buildDeterministicIplStandingsReply(incomingText)
-    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
-    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'sports_schedule') {
@@ -348,33 +337,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, styledSportsReply), resolvedUser }
   }
 
-  if (intent.type === 'set_reminder') {
-    const parsedReminder = parseReminderIntent(incomingText)
-    if (parsedReminder) {
-      await createReminder(
-        resolvedUser.telegramId,
-        resolvedUser.telegramId,
-        parsedReminder.remindAtIso,
-        parsedReminder.message,
-        parsedReminder.kind === 'recurring' ? parsedReminder.pattern : undefined
-      )
-
-      const reply = buildReminderConfirmation(parsedReminder)
-      const styledReminderReply = styleReplyByIntent('set_reminder', reply)
-      await saveConversation(resolvedUser.telegramId, 'assistant', styledReminderReply)
-      return { text: formatOutgoingText(params.channel, styledReminderReply), resolvedUser }
-    }
-  }
-
   if (intent.type === 'list_show_all') {
     const lists = await getAllLists(resolvedUser.telegramId)
     const reply = !lists.length
       ? 'You do not have any lists yet.'
       : `Your lists:\n` + lists.map((l: any) => `- ${l.list_name}`).join('\n')
 
-    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
-    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'list_show') {
@@ -384,9 +354,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       ? formatList(list.list_name, list.items || [])
       : `I could not find a list called "${listName}".`
 
-    const styledWeatherReply = styleReplyByIntent('weather_live', reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
-    return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'web_search') {
@@ -402,20 +371,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       reply = buildDirectWebAnswer(incomingText, searchContext)
     }
 
-    const formatted = formatOutgoingText(params.channel, reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', formatted)
-    return { text: formatted, resolvedUser }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   const history = await getConversationHistory(resolvedUser.telegramId)
   const memories = await getMemories(resolvedUser.telegramId)
 
-  const rawClaude = await askClaude(
-    incomingText,
-    history,
-    memories,
-    resolvedUser.name
-  )
+  const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name)
 
   const parsed = parseClaudeResponse(rawClaude)
   let finalReply = rawClaude
@@ -486,31 +449,3 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
