@@ -155,7 +155,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         remindAt = new Date(matchTime.getTime() - 60 * 60 * 1000)
       }
 
-      const reminderMessage = ${latestSportsFollowup.payload.match_label} match reminder
+      const reminderMessage = `${latestSportsFollowup.payload.match_label} match reminder`
 
       await createReminder(
         resolvedUser.telegramId,
@@ -457,6 +457,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
 
 
 
