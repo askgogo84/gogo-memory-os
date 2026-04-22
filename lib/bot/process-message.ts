@@ -163,7 +163,17 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         reminderMessage
       )
 
-      const reply = `Done — I'll remind you about *${latestSportsFollowup.payload.match_label}* before the match.`
+      let reply = ''
+
+      if (lower.includes('1 hour before')) {
+        reply = `Done — I'll remind you 1 hour before *${latestSportsFollowup.payload.match_label}*.`
+      } else if (lower.includes('2 hours before')) {
+        reply = `Done — I'll remind you 2 hours before *${latestSportsFollowup.payload.match_label}*.`
+      } else if (lower.includes('tomorrow morning')) {
+        reply = `Done — I'll remind you tomorrow morning about *${latestSportsFollowup.payload.match_label}*.`
+      } else {
+        reply = `Done — I'll remind you before *${latestSportsFollowup.payload.match_label}*.`
+      }
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
@@ -455,6 +465,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
 
 
 
