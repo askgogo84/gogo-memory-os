@@ -143,20 +143,19 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       } else if (lower.includes('2 hours before')) {
         remindAt = new Date(matchTime.getTime() - 2 * 60 * 60 * 1000)
       } else if (lower.includes('tomorrow morning')) {
-        const base = new Date(matchTime)
-        const y = new Intl.DateTimeFormat('en-CA', {
+        const d = new Intl.DateTimeFormat('en-CA', {
           timeZone: 'Asia/Kolkata',
           year: 'numeric',
           month: '2-digit',
           day: '2-digit',
-        }).format(base).split('-')
-        remindAt = new Date(Date.UTC(Number(y[0]), Number(y[1]) - 1, Number(y[2]), 3, 30, 0))
+        }).format(new Date(matchTime.getTime() - 24 * 60 * 60 * 1000)).split('-')
+
+        remindAt = new Date(Date.UTC(Number(d[0]), Number(d[1]) - 1, Number(d[2]), 3, 30, 0))
       } else {
         remindAt = new Date(matchTime.getTime() - 60 * 60 * 1000)
       }
 
       const reminderMessage = `${latestSportsFollowup.payload.match_label} match reminder`
-
       await createReminder(
         resolvedUser.telegramId,
         resolvedUser.telegramId,
@@ -164,12 +163,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         reminderMessage
       )
 
-      const reply = Done — I'll remind you about ** before the match.
+      const reply = `Done — I'll remind you about *${latestSportsFollowup.payload.match_label}* before the match.`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
   }
-
   const eagerReminder = parseReminderIntent(incomingText)
   if (eagerReminder && intent.type === 'set_reminder') {
     await createReminder(
@@ -457,6 +455,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
 
 
 
