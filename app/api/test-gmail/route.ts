@@ -1,17 +1,8 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { refreshGmailAccessToken } from '@/lib/google-gmail'
+import { fetchLatestEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
 
 export const dynamic = 'force-dynamic'
-
-async function gmailFetch(accessToken: string, url: string) {
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: 'no-store',
-  })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, data }
-}
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
@@ -34,59 +25,47 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  let accessToken = user.gmail_access_token
+  let accessToken = user.gmail_access_token || null
   let refreshed = false
+  let emails: any[] = []
 
-  if (!accessToken && user.gmail_refresh_token) {
-    accessToken = await refreshGmailAccessToken(user.gmail_refresh_token)
-    refreshed = true
+  if (accessToken) {
+    try {
+      emails = await fetchLatestEmails(accessToken, 3)
+    } catch (error) {
+      console.error('fetchLatestEmails with current token failed:', error)
+    }
   }
 
-  if (!accessToken) {
-    return NextResponse.json({
-      ok: false,
-      stage: 'token',
-      gmail_connected: user.gmail_connected,
-      has_access_token: !!user.gmail_access_token,
-      has_refresh_token: !!user.gmail_refresh_token,
-      gmail_email: user.gmail_email || null,
-      error: 'No usable Gmail access token',
-    })
-  }
+  if (!emails.length && user.gmail_refresh_token) {
+    const refreshedToken = await refreshGmailAccessToken(user.gmail_refresh_token)
 
-  const inboxList = await gmailFetch(
-    accessToken,
-    'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=3&labelIds=INBOX'
-  )
+    if (refreshedToken) {
+      refreshed = true
+      accessToken = refreshedToken
 
-  const firstId = inboxList?.data?.messages?.[0]?.id || null
+      await supabaseAdmin
+        .from('users')
+        .update({ gmail_access_token: refreshedToken })
+        .eq('telegram_id', Number(telegramId))
 
-  let firstMessage = null
-  let firstMessageMeta = null
-
-  if (firstId) {
-    firstMessage = await gmailFetch(
-      accessToken,
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${firstId}`
-    )
-
-    firstMessageMeta = await gmailFetch(
-      accessToken,
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${firstId}?format=metadata`
-    )
+      try {
+        emails = await fetchLatestEmails(refreshedToken, 3)
+      } catch (error) {
+        console.error('fetchLatestEmails with refreshed token failed:', error)
+      }
+    }
   }
 
   return NextResponse.json({
     ok: true,
-    stage: 'debug-one-message',
+    stage: 'refresh-debug',
     gmail_connected: user.gmail_connected,
     gmail_email: user.gmail_email || null,
     has_access_token: !!user.gmail_access_token,
     has_refresh_token: !!user.gmail_refresh_token,
     refreshed,
-    inboxList,
-    firstId,
-    firstMessage,
-    firstMessageMeta,
+    email_count: emails.length,
+    emails,
   })
 }
