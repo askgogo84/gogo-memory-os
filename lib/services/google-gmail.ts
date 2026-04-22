@@ -108,7 +108,7 @@ async function listMessages(accessToken: string, maxResults: number, inboxOnly: 
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: 'no-store',
     }),
-    8000
+    12000
   )
 
   const data = await res.json()
@@ -124,13 +124,13 @@ async function listMessages(accessToken: string, maxResults: number, inboxOnly: 
 async function fetchMessageMeta(accessToken: string, messageId: string) {
   const res = await withTimeout(
     fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=metadata`,
       {
         headers: { Authorization: `Bearer ${accessToken}` },
         cache: 'no-store',
       }
     ),
-    8000
+    12000
   )
 
   const data = await res.json()
@@ -166,9 +166,12 @@ export async function fetchLatestEmails(accessToken: string, maxResults = 3) {
 
   if (!messages.length) return []
 
-  const detailed = await Promise.all(
+  const settled = await Promise.allSettled(
     messages.slice(0, maxResults).map((msg: any) => fetchMessageMeta(accessToken, msg.id))
   )
 
-  return detailed.filter(Boolean)
+  return settled
+    .filter((x): x is PromiseFulfilledResult<any> => x.status === 'fulfilled')
+    .map((x) => x.value)
+    .filter(Boolean)
 }

@@ -1,17 +1,8 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { refreshGmailAccessToken } from '@/lib/google-gmail'
+import { fetchLatestEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
 
 export const dynamic = 'force-dynamic'
-
-async function gmailFetch(accessToken: string, url: string) {
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: 'no-store',
-  })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, data }
-}
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
@@ -54,33 +45,30 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  const profile = await gmailFetch(accessToken, 'https://gmail.googleapis.com/gmail/v1/users/me/profile')
-  const labels = await gmailFetch(accessToken, 'https://gmail.googleapis.com/gmail/v1/users/me/labels')
-  const inboxList = await gmailFetch(
-    accessToken,
-    'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=3&labelIds=INBOX'
-  )
-  const allList = await gmailFetch(
-    accessToken,
-    'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=3'
-  )
-  const categoryPrimaryList = await gmailFetch(
-    accessToken,
-    'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=3&labelIds=CATEGORY_PERSONAL'
-  )
+  try {
+    const emails = await fetchLatestEmails(accessToken, 3)
 
-  return NextResponse.json({
-    ok: true,
-    stage: 'debug',
-    gmail_connected: user.gmail_connected,
-    gmail_email: user.gmail_email || null,
-    has_access_token: !!user.gmail_access_token,
-    has_refresh_token: !!user.gmail_refresh_token,
-    refreshed,
-    profile,
-    labels,
-    inboxList,
-    allList,
-    categoryPrimaryList,
-  })
+    return NextResponse.json({
+      ok: true,
+      stage: 'fetch',
+      gmail_connected: user.gmail_connected,
+      gmail_email: user.gmail_email || null,
+      has_access_token: !!user.gmail_access_token,
+      has_refresh_token: !!user.gmail_refresh_token,
+      refreshed,
+      email_count: emails.length,
+      emails,
+    })
+  } catch (e: any) {
+    return NextResponse.json({
+      ok: false,
+      stage: 'fetch',
+      gmail_connected: user.gmail_connected,
+      gmail_email: user.gmail_email || null,
+      has_access_token: !!user.gmail_access_token,
+      has_refresh_token: !!user.gmail_refresh_token,
+      refreshed,
+      error: e?.message || 'Unknown Gmail fetch error',
+    }, { status: 500 })
+  }
 }
