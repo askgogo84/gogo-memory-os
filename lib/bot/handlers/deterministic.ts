@@ -32,25 +32,46 @@ export function isIplStandingsQuery(text: string) {
   )
 }
 
-function inferWeatherLocation(userText: string) {
-  const lower = userText.toLowerCase()
+function titleCase(input: string) {
+  return input
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+}
 
-  if (lower.includes('bangalore') || lower.includes('bengaluru')) return 'Bangalore'
-  if (lower.includes('hyderabad')) return 'Hyderabad'
-  if (lower.includes('mumbai')) return 'Mumbai'
-  if (lower.includes('delhi')) return 'Delhi'
-  if (lower.includes('kolkata')) return 'Kolkata'
-  if (lower.includes('chennai')) return 'Chennai'
+function extractWeatherLocation(userText: string) {
+  const raw = (userText || '').trim()
+
+  const patterns = [
+    /\bweather\s+in\s+([a-zA-Z\s]+?)(?:\s+tomorrow|\s+tmrw|\s+today|\?|$)/i,
+    /\brain\s+in\s+([a-zA-Z\s]+?)(?:\s+tomorrow|\s+tmrw|\s+today|\?|$)/i,
+    /\btemperature\s+in\s+([a-zA-Z\s]+?)(?:\s+tomorrow|\s+tmrw|\s+today|\?|$)/i,
+    /\bin\s+([a-zA-Z\s]+?)(?:\s+weather|\s+temperature|\s+rain|\s+today|\s+tomorrow|\s+tmrw|\?|$)/i,
+  ]
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern)
+    if (match?.[1]) {
+      const cleaned = match[1]
+        .replace(/\b(today|tomorrow|tmrw|now|right now)\b/gi, '')
+        .replace(/[^\p{L}\s]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+
+      if (cleaned) return titleCase(cleaned)
+    }
+  }
 
   return 'Bangalore'
 }
 
 export async function buildDeterministicWeatherReply(userText: string) {
-  const location = inferWeatherLocation(userText)
+  const location = extractWeatherLocation(userText)
   const forecast = await fetchWeatherForecast(location, 2)
 
   if (!forecast) {
-    return `I couldn't fetch the weather right now. Please try again in a moment.`
+    return `I couldn't fetch the weather for ${location} right now. Please try again in a moment.`
   }
 
   if (/tmrw|tomorrow/i.test(userText)) {
