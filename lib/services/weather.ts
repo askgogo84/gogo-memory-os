@@ -51,9 +51,9 @@ export async function fetchWeatherForecast(location: string, days = 2): Promise<
     const data = await res.json()
 
     if (!res.ok) {
-      console.error('Weather API failed:', data)
-      return null
-    }
+    console.error('Weather API failed:', data)
+    return null
+  }
 
     return data
   } catch (err) {
@@ -109,3 +109,4 @@ export function formatTomorrowWeather(data: WeatherForecastResponse) {
 
   return pieces.join('\n')
 }
+

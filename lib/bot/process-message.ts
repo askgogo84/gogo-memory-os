@@ -191,7 +191,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   if (intent.type === 'weather_live') {
-    const reply = await buildDeterministicWeatherReply(incomingText)
+    let reply = ''
+    try {
+      reply = await buildDeterministicWeatherReply(incomingText)
+    } catch (error) {
+      console.error('Weather handler failed:', error)
+      reply = I couldn't fetch the weather right now. Please try again in a moment. 
+    }
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -349,3 +355,4 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+

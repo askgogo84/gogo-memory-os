@@ -38,7 +38,6 @@ export function shouldUseAnimation(intent: IntentType, messageType?: string) {
     intent === 'web_search' ||
     intent === 'sports_schedule' ||
     intent === 'sports_standings' ||
-    intent === 'weather_live' ||
     intent === 'gold_live' ||
     intent === 'connect_gmail'
   )
