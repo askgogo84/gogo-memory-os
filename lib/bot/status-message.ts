@@ -1,33 +1,27 @@
 ﻿import type { IntentType } from './detect-intent'
 
 export function getStatusText(intent: IntentType, messageType?: string) {
-  if (messageType === 'voice') return '🎙️ Transcribing your voice note...'
+  if (messageType === 'voice') return 'Listening…'
 
   switch (intent) {
-    case 'sports_schedule':
-      return '🏏 Checking IPL match details...'
-    case 'sports_standings':
-      return '📊 Checking the IPL table...'
-    case 'weather_live':
-      return '🌦️ Checking the weather...'
-    case 'gold_live':
-      return '🪙 Checking the latest price...'
+    case 'read_gmail':
+    case 'email_action':
+      return 'Fetching your inbox…'
     case 'web_search':
-      return '🔎 Checking the latest info...'
+      return 'Checking that for you…'
+    case 'sports_schedule':
+    case 'sports_standings':
+      return 'Pulling the latest match update…'
+    case 'weather_live':
+      return 'Checking the latest forecast…'
+    case 'gold_live':
+      return 'Pulling the latest price…'
     case 'connect_gmail':
-      return '📬 Preparing Gmail connect...'
+      return 'Preparing Gmail connect…'
     case 'connect_calendar':
-      return '📅 Preparing Calendar connect...'
-    case 'set_reminder':
-      return '⏰ Setting your reminder...'
-    case 'list_show':
-    case 'list_show_all':
-    case 'list_add':
-    case 'list_check':
-    case 'list_clear':
-      return '📝 Updating your list...'
+      return 'Preparing Calendar connect…'
     default:
-      return '🧠 Thinking...'
+      return 'Working on it…'
   }
 }
 
@@ -35,10 +29,8 @@ export function shouldUseAnimation(intent: IntentType, messageType?: string) {
   if (messageType === 'voice') return true
 
   return (
-    intent === 'web_search' ||
-    intent === 'sports_schedule' ||
-    intent === 'sports_standings' ||
-    intent === 'gold_live' ||
-    intent === 'connect_gmail'
+    intent === 'read_gmail' ||
+    intent === 'email_action' ||
+    intent === 'web_search'
   )
 }
