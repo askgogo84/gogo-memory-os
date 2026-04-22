@@ -37,10 +37,18 @@ async function alreadyProcessed(updateId: number) {
 }
 
 async function markProcessed(updateId: number) {
-  await supabaseAdmin.from('processed_updates').insert({
+  const { error } = await supabaseAdmin.from('processed_updates').insert({
     platform: 'telegram',
     update_id: String(updateId),
   })
+
+  if (error) {
+    const msg = (error.message || '').toLowerCase()
+    if (msg.includes('duplicate') || msg.includes('unique')) {
+      return
+    }
+    throw error
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -55,6 +63,10 @@ export async function POST(req: NextRequest) {
 
     if (updateId && (await alreadyProcessed(updateId))) {
       return NextResponse.json({ ok: true, skipped: 'duplicate update' })
+    }
+
+    if (updateId) {
+      await markProcessed(updateId)
     }
 
     const chatId = Number(message.chat.id)
@@ -93,9 +105,6 @@ export async function POST(req: NextRequest) {
         const sent = await sendTelegramMessage(chatId, statusText)
         tempMessageId = sent?.result?.message_id ?? null
       }
-    } else {
-      const sent = await sendTelegramMessage(chatId, statusText)
-      tempMessageId = sent?.result?.message_id ?? null
     }
 
     const result = await processIncomingMessage({
@@ -126,4 +135,3 @@ export async function POST(req: NextRequest) {
     )
   }
 }
-
