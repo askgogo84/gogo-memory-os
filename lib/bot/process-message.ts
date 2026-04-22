@@ -164,8 +164,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
 
     let accessToken = user.gmail_access_token || null
-
     let emails: any[] = []
+
     if (accessToken) {
       try {
         emails = await fetchLatestEmails(accessToken, 3)
@@ -201,12 +201,15 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
 
     const reply =
-      `*Latest emails${user.gmail_email ? ` for ${user.gmail_email}` : ''}:*\n\n` +
+      `*Top 3 latest emails${user.gmail_email ? ` for ${user.gmail_email}` : ''}:*\n\n` +
       emails
-        .map((mail: any, idx: number) =>
-          `*${idx + 1}.* ${mail.subject}\nFrom: ${mail.from}` +
-          (mail.snippet ? `\n${mail.snippet}` : '')
-        )
+        .map((mail: any, idx: number) => {
+          const safeSnippet = (mail.snippet || '').replace(/\s+/g, ' ').trim()
+          const shortSnippet = safeSnippet.length > 160 ? safeSnippet.slice(0, 157) + '...' : safeSnippet
+
+          return `*${idx + 1}.* ${mail.subject}\nFrom: ${mail.from}` +
+            (shortSnippet ? `\n${shortSnippet}` : '')
+        })
         .join('\n\n')
 
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -385,6 +388,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
 
 
 
