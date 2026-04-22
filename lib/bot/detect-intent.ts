@@ -51,6 +51,10 @@ export function detectIntent(text: string): DetectedIntent {
     lower.includes('reply to this mail') ||
     lower.includes('reply to the latest mail') ||
     lower.includes('reply to latest email') ||
+    lower.includes('reply to the latest unread email') ||
+    lower.includes('reply to latest unread email') ||
+    lower.includes('reply to the latest unread mail') ||
+    lower.includes('reply to latest unread mail') ||
     lower.includes('reply to the vercel email') ||
     lower.includes('draft reply to') ||
     lower.includes('write a reply to this email')
@@ -203,3 +207,4 @@ export function detectIntent(text: string): DetectedIntent {
 
   return { type: 'general_chat', confidence: 'low' }
 }
+
