@@ -18,10 +18,7 @@ export function styleReminderConfirmation(message: string) {
 }
 
 export function styleWeatherReply(message: string) {
-  return message
-    .replace(/^Current weather in /i, '')
-    .replace(/^Tomorrow in /i, 'Tomorrow in ')
-    .trim()
+  return message.trim()
 }
 
 export function styleSportsReply(message: string) {
@@ -57,8 +54,12 @@ export function addSmartPrompt(intentType: string, message: string) {
     return `${message}\n\nWant a rain alert tomorrow morning too?`
   }
 
-  if (intentType === 'read_gmail' && !/Want a shorter reply draft/i.test(message) && /reply draft|latest emails|unread emails/i.test(message)) {
+  if (intentType === 'email_action' && !/Want a shorter reply draft/i.test(message)) {
     return `${message}\n\nWant a shorter reply draft or a more formal one?`
+  }
+
+  if (intentType === 'read_gmail' && /summary|emails/i.test(message) && !/Want a reply draft/i.test(message)) {
+    return `${message}\n\nWant a reply draft for any of these?`
   }
 
   return message
