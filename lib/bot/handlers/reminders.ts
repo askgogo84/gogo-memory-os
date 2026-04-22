@@ -22,10 +22,6 @@ const WEEKDAYS = [
   'saturday',
 ]
 
-function nowUtc(): Date {
-  return new Date()
-}
-
 function istNowParts() {
   const now = new Date()
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -37,6 +33,7 @@ function istNowParts() {
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
+    weekday: 'long',
   }).formatToParts(now)
 
   const get = (type: string) => parts.find((p) => p.type === type)?.value || '00'
@@ -48,6 +45,7 @@ function istNowParts() {
     hour: Number(get('hour')),
     minute: Number(get('minute')),
     second: Number(get('second')),
+    weekday: (get('weekday') || '').toLowerCase(),
   }
 }
 
@@ -90,21 +88,21 @@ function cleanMessageText(input: string): string {
     .replace(/\bplease\b/gi, '')
     .replace(/\bkindly\b/gi, '')
     .replace(/\bfor me\b/gi, '')
+    .replace(/\bset a reminder to\b/gi, '')
     .replace(/\bset a reminder\b/gi, '')
     .replace(/\bset reminder\b/gi, '')
     .replace(/\bremind me to\b/gi, '')
     .replace(/\bremind to\b/gi, '')
     .replace(/\bremind me\b/gi, '')
     .replace(/\bremind\b/gi, '')
+    .replace(/\bcall\b/gi, 'call')
     .replace(/\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/gi, '')
     .replace(/\b(tomorrow|tmrw|tmr)\b/gi, '')
     .replace(/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
-    .replace(/\bevery\s+hour\s+from\s+.+?\s+to\s+.+?(daily)?$/gi, '')
-    .replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+.+$/gi, '')
+    .replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, '')
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
-    .replace(/\bfor\s+match\s+on\b/gi, 'for match')
     .replace(/[.]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -157,7 +155,7 @@ function parseRelativeReminder(text: string): ParsedReminder {
 
   const value = parseInt(match[1], 10)
   const unit = match[2].toLowerCase()
-  const when = nowUtc()
+  const when = new Date()
 
   if (unit.startsWith('min')) when.setMinutes(when.getMinutes() + value)
   else if (unit.startsWith('hour')) when.setHours(when.getHours() + value)
@@ -193,23 +191,17 @@ function parseTomorrowReminder(text: string): ParsedReminder {
 }
 
 function parseSpecificWeekdayReminder(text: string): ParsedReminder {
+  if (/\bevery\s+/i.test(text)) return null
+
   const match = text.match(/\b(?:on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)
   if (!match) return null
-  if (/\bevery\s+/i.test(text)) return null
 
   const weekdayName = match[1].toLowerCase()
   const time = parseTimePart(text) || { hour: 9, minute: 0 }
 
-  const now = new Date()
   const nowIst = istNowParts()
   const targetDay = WEEKDAYS.indexOf(weekdayName)
-
-  const currentIstWeekday = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Kolkata',
-    weekday: 'long',
-  }).format(now).toLowerCase()
-
-  const currentDayIndex = WEEKDAYS.indexOf(currentIstWeekday)
+  const currentDayIndex = WEEKDAYS.indexOf(nowIst.weekday)
 
   let delta = targetDay - currentDayIndex
   if (delta < 0) delta += 7
@@ -246,16 +238,10 @@ function parseWeekdayRecurring(text: string): ParsedReminder {
   const time = parseTimePart(match[2])
   if (!time) return null
 
-  const now = new Date()
   const nowIst = istNowParts()
   const targetDay = WEEKDAYS.indexOf(weekdayName)
+  const currentDayIndex = WEEKDAYS.indexOf(nowIst.weekday)
 
-  const currentIstWeekday = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Kolkata',
-    weekday: 'long',
-  }).format(now).toLowerCase()
-
-  let currentDayIndex = WEEKDAYS.indexOf(currentIstWeekday)
   let delta = targetDay - currentDayIndex
   if (delta < 0) delta += 7
 
@@ -331,6 +317,7 @@ function parseSimpleAtTime(text: string): ParsedReminder {
     return null
   }
   if (!/\bat\s+/i.test(text)) return null
+  if (/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text)) return null
 
   const timeMatch = text.match(/\bat\s+(.+)$/i)
   if (!timeMatch) return null
@@ -379,6 +366,9 @@ export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>)
   const displayTime = formatReminderTime(parsed.remindAtIso)
 
   if (parsed.kind === 'one_time') {
+    if (parsed.message === 'Reminder') {
+      return `Done — I'll remind you ${displayTime}.`
+    }
     return `Done — I'll remind you to *${parsed.message}* ${displayTime}.`
   }
 
