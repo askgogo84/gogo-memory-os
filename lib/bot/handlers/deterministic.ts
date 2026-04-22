@@ -1,7 +1,6 @@
 ﻿import { searchWeb } from '@/lib/web-search'
-import { buildDirectWebAnswer } from './web-answer'
 import { formatGoldAnswer, formatIplStandingsAnswer } from './formatters'
-import { formatWeatherAnswer } from './weather-format'
+import { fetchWeatherForecast, formatCurrentWeather, formatTomorrowWeather } from '@/lib/services/weather'
 
 function normalize(text: string) {
   return (text || '').toLowerCase().trim()
@@ -33,16 +32,32 @@ export function isIplStandingsQuery(text: string) {
   )
 }
 
+function inferWeatherLocation(userText: string) {
+  const lower = userText.toLowerCase()
+
+  if (lower.includes('bangalore') || lower.includes('bengaluru')) return 'Bangalore'
+  if (lower.includes('hyderabad')) return 'Hyderabad'
+  if (lower.includes('mumbai')) return 'Mumbai'
+  if (lower.includes('delhi')) return 'Delhi'
+  if (lower.includes('kolkata')) return 'Kolkata'
+  if (lower.includes('chennai')) return 'Chennai'
+
+  return 'Bangalore'
+}
+
 export async function buildDeterministicWeatherReply(userText: string) {
-  const query = /tmrw|tomorrow/i.test(userText) ? 'weather forecast tomorrow Bangalore' : (userText.toLowerCase().includes('bangalore') ? 'weather Bangalore' : userText)
+  const location = inferWeatherLocation(userText)
+  const forecast = await fetchWeatherForecast(location, 2)
 
-  const context = await searchWeb(query)
-
-  if (!context.trim()) {
+  if (!forecast) {
     return `I couldn't fetch the weather right now. Please try again in a moment.`
   }
 
-  return formatWeatherAnswer(userText, context)
+  if (/tmrw|tomorrow/i.test(userText)) {
+    return formatTomorrowWeather(forecast)
+  }
+
+  return formatCurrentWeather(forecast)
 }
 
 export async function buildDeterministicGoldReply(userText: string) {
@@ -70,4 +85,3 @@ export async function buildDeterministicIplStandingsReply(userText: string) {
 
   return formatIplStandingsAnswer(context)
 }
-

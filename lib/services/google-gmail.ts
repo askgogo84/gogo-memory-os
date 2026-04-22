@@ -103,41 +103,41 @@ async function listMessages(accessToken: string, maxResults: number, inboxOnly: 
   return data.messages || []
 }
 
-export async function fetchLatestEmails(accessToken: string, maxResults = 5) {
+export async function fetchLatestEmails(accessToken: string, maxResults = 3) {
   let messages = await listMessages(accessToken, maxResults, true)
 
   if (!messages.length) {
     messages = await listMessages(accessToken, maxResults, false)
   }
 
-  const detailed = []
+  const detailed = await Promise.all(
+    messages.map(async (msg: any) => {
+      const res = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          cache: 'no-store',
+        }
+      )
 
-  for (const msg of messages) {
-    const res = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        cache: 'no-store',
+      const data = await res.json()
+
+      if (!res.ok) {
+        console.error('Gmail message fetch failed:', data)
+        return null
       }
-    )
 
-    const data = await res.json()
+      const headers = data.payload?.headers || []
 
-    if (!res.ok) {
-      console.error('Gmail message fetch failed:', data)
-      continue
-    }
-
-    const headers = data.payload?.headers || []
-
-    detailed.push({
-      id: data.id,
-      subject: getHeader(headers, 'Subject') || '(No subject)',
-      from: getHeader(headers, 'From') || 'Unknown sender',
-      date: getHeader(headers, 'Date') || '',
-      snippet: data.snippet || '',
+      return {
+        id: data.id,
+        subject: getHeader(headers, 'Subject') || '(No subject)',
+        from: getHeader(headers, 'From') || 'Unknown sender',
+        date: getHeader(headers, 'Date') || '',
+        snippet: data.snippet || '',
+      }
     })
-  }
+  )
 
-  return detailed
+  return detailed.filter(Boolean)
 }

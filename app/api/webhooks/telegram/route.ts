@@ -77,8 +77,6 @@ export async function POST(req: NextRequest) {
         chatId,
         'I can handle text and voice right now. Image and document flows will be re-added in the next phase.'
       )
-
-      if (updateId) await markProcessed(updateId)
       return NextResponse.json({ ok: true, skipped: 'unsupported message type' })
     }
 
@@ -119,8 +117,6 @@ export async function POST(req: NextRequest) {
 
     await sendTelegramMessage(chatId, outgoing)
 
-    if (updateId) await markProcessed(updateId)
-
     return NextResponse.json({ ok: true })
   } catch (error: any) {
     console.error('Telegram webhook error:', error)
@@ -130,3 +126,4 @@ export async function POST(req: NextRequest) {
     )
   }
 }
+
