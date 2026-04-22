@@ -9,7 +9,8 @@ import { detectIntent } from './detect-intent'
 import { parseClaudeResponse } from './parse-claude-response'
 import { formatOutgoingText } from './format-response'
 import { searchWeb } from '@/lib/web-search'
-import { buildSportsReply } from './handlers/sports'
+import { buildSportsReplyWithState } from './handlers/sports'
+import { getLatestFollowupState } from './handlers/followup-state'
 import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
@@ -126,6 +127,48 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+
+  const followupYes = /^(yes|yeah|yep|haan|ok|okay)( .*)?$/i.test(incomingText)
+  if (followupYes) {
+    const latestSportsFollowup = await getLatestFollowupState(resolvedUser.telegramId, 'sports_match')
+
+    if (latestSportsFollowup?.payload?.match_time_iso) {
+      const matchTime = new Date(latestSportsFollowup.payload.match_time_iso)
+      const lower = incomingText.toLowerCase()
+
+      let remindAt = new Date(matchTime)
+
+      if (lower.includes('1 hour before')) {
+        remindAt = new Date(matchTime.getTime() - 60 * 60 * 1000)
+      } else if (lower.includes('2 hours before')) {
+        remindAt = new Date(matchTime.getTime() - 2 * 60 * 60 * 1000)
+      } else if (lower.includes('tomorrow morning')) {
+        const base = new Date(matchTime)
+        const y = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Kolkata',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(base).split('-')
+        remindAt = new Date(Date.UTC(Number(y[0]), Number(y[1]) - 1, Number(y[2]), 3, 30, 0))
+      } else {
+        remindAt = new Date(matchTime.getTime() - 60 * 60 * 1000)
+      }
+
+      const reminderMessage = ${latestSportsFollowup.payload.match_label} match reminder
+
+      await createReminder(
+        resolvedUser.telegramId,
+        resolvedUser.telegramId,
+        remindAt.toISOString(),
+        reminderMessage
+      )
+
+      const reply = Done — I'll remind you about ** before the match.
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+  }
 
   const eagerReminder = parseReminderIntent(incomingText)
   if (eagerReminder && intent.type === 'set_reminder') {
@@ -273,7 +316,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   if (intent.type === 'sports_schedule') {
-    const sportsReply = buildSportsReply(incomingText) || 'I could not find the next RCB match.'
+    const sportsResult = await buildSportsReplyWithState(incomingText, resolvedUser.telegramId)
+    const sportsReply = sportsResult?.reply || 'I could not find the next RCB match.'
     await saveConversation(resolvedUser.telegramId, 'assistant', sportsReply)
     return { text: formatOutgoingText(params.channel, sportsReply), resolvedUser }
   }
@@ -413,6 +457,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
+
+
 
 
 
