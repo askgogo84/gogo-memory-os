@@ -70,7 +70,11 @@ export function detectIntent(text: string): DetectedIntent {
     lower.includes('show me my top 3 mails') ||
     lower.includes('show me my top 3 email') ||
     lower.includes('summarize my mails') ||
-    lower.includes('summarize my emails')
+    lower.includes('summarize my emails') ||
+    lower.includes('summarize top 3 mails') ||
+    lower.includes('summarize top 3 emails') ||
+    lower.includes('top 3 mails summary') ||
+    lower.includes('top 3 emails summary')
   ) {
     return { type: 'read_gmail', confidence: 'high' }
   }
@@ -185,3 +189,4 @@ export function detectIntent(text: string): DetectedIntent {
 
   return { type: 'general_chat', confidence: 'low' }
 }
+

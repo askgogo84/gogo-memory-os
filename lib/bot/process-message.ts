@@ -3,7 +3,7 @@ import { addToList, checkItem, clearList, formatList, getAllLists, getList } fro
 import { checkAndIncrementLimit } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAuthUrl } from '@/lib/google-calendar'
-import { fetchLatestEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
+import { fetchLatestEmails, fetchUnreadEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
 import { resolveUser, type Channel } from './resolve-user'
 import { detectIntent } from './detect-intent'
 import { parseClaudeResponse } from './parse-claude-response'
@@ -163,14 +163,26 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
 
-    let accessToken = user.gmail_access_token || null
+    const lowerText = incomingText.toLowerCase()
+    const wantsUnread = lowerText.includes('unread')
+    const wantsSummary =
+      lowerText.includes('summary') ||
+      lowerText.includes('summarize')
+
     let emails: any[] = []
+    let accessToken = user.gmail_access_token || null
+
+    const fetchMode = async (token: string) => {
+      return wantsUnread
+        ? await fetchUnreadEmails(token, 3)
+        : await fetchLatestEmails(token, 3)
+    }
 
     if (accessToken) {
       try {
-        emails = await fetchLatestEmails(accessToken, 3)
+        emails = await fetchMode(accessToken)
       } catch (error) {
-        console.error('fetchLatestEmails with current token failed:', error)
+        console.error('fetch emails with current token failed:', error)
       }
     }
 
@@ -186,31 +198,44 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
           .eq('telegram_id', resolvedUser.telegramId)
 
         try {
-          emails = await fetchLatestEmails(refreshedToken, 3)
+          emails = await fetchMode(refreshedToken)
         } catch (error) {
-          console.error('fetchLatestEmails with refreshed token failed:', error)
+          console.error('fetch emails with refreshed token failed:', error)
         }
       }
     }
 
     if (!emails.length) {
       const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-      const reply = `I couldn't fetch your latest emails right now.\n\nTry reconnecting Gmail here:\n${connectUrl}`
+      const reply = `I couldn't fetch your emails right now.\n\nTry reconnecting Gmail here:\n${connectUrl}`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
 
-    const reply =
-      `*Top 3 latest emails${user.gmail_email ? ` for ${user.gmail_email}` : ''}:*\n\n` +
-      emails
-        .map((mail: any, idx: number) => {
-          const safeSnippet = (mail.snippet || '').replace(/\s+/g, ' ').trim()
-          const shortSnippet = safeSnippet.length > 160 ? safeSnippet.slice(0, 157) + '...' : safeSnippet
+    let reply = ''
 
-          return `*${idx + 1}.* ${mail.subject}\nFrom: ${mail.from}` +
-            (shortSnippet ? `\n${shortSnippet}` : '')
-        })
-        .join('\n\n')
+    if (wantsSummary) {
+      reply =
+        `*Top 3 ${wantsUnread ? 'unread' : 'latest'} email summaries${user.gmail_email ? ` for ${user.gmail_email}` : ''}:*\n\n` +
+        emails
+          .map((mail: any, idx: number) => {
+            const safeSnippet = (mail.snippet || '').replace(/\s+/g, ' ').trim()
+            const shortSnippet = safeSnippet.length > 120 ? safeSnippet.slice(0, 117) + '...' : safeSnippet
+            return `*${idx + 1}.* ${mail.subject}\nFrom: ${mail.from}\nSummary: ${shortSnippet || 'No preview available.'}`
+          })
+          .join('\n\n')
+    } else {
+      reply =
+        `*Top 3 ${wantsUnread ? 'unread' : 'latest'} emails${user.gmail_email ? ` for ${user.gmail_email}` : ''}:*\n\n` +
+        emails
+          .map((mail: any, idx: number) => {
+            const safeSnippet = (mail.snippet || '').replace(/\s+/g, ' ').trim()
+            const shortSnippet = safeSnippet.length > 160 ? safeSnippet.slice(0, 157) + '...' : safeSnippet
+            return `*${idx + 1}.* ${mail.subject}\nFrom: ${mail.from}` +
+              (shortSnippet ? `\n${shortSnippet}` : '')
+          })
+          .join('\n\n')
+    }
 
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -388,6 +413,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
+
 
 
 

@@ -112,44 +112,82 @@ async function gmailFetchJson(accessToken: string, url: string) {
   return { ok: res.ok, status: res.status, data }
 }
 
-export async function fetchLatestEmails(accessToken: string, maxResults = 3) {
-  const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}&labelIds=INBOX`
-  let list = await gmailFetchJson(accessToken, listUrl)
+async function listMessages(accessToken: string, maxResults: number, mode: 'latest' | 'unread') {
+  let url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}&labelIds=INBOX`
 
-  if (!list.ok) {
-    console.error('Gmail list messages failed:', list.data)
+  if (mode === 'unread') {
+    url += '&q=is:unread'
+  }
+
+  const res = await gmailFetchJson(accessToken, url)
+
+  if (!res.ok) {
+    console.error('Gmail list messages failed:', res.data)
+    throw new Error(res.data?.error?.message || 'Failed to list Gmail messages')
+  }
+
+  return res.data.messages || []
+}
+
+async function fetchMessageMeta(accessToken: string, messageId: string) {
+  const detail = await gmailFetchJson(
+    accessToken,
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=metadata`
+  )
+
+  if (!detail.ok) {
+    console.error('Gmail message fetch failed:', detail.data)
+    return null
+  }
+
+  const headers = detail.data.payload?.headers || []
+  const labelIds = detail.data.labelIds || []
+
+  return {
+    id: detail.data.id,
+    subject: getHeader(headers, 'Subject') || '(No subject)',
+    from: getHeader(headers, 'From') || 'Unknown sender',
+    date: getHeader(headers, 'Date') || '',
+    snippet: detail.data.snippet || '',
+    isUnread: labelIds.includes('UNREAD'),
+  }
+}
+
+export async function fetchEmails(accessToken: string, mode: 'latest' | 'unread' = 'latest', maxResults = 3) {
+  let messages = []
+
+  try {
+    messages = await listMessages(accessToken, maxResults, mode)
+    if (!messages.length && mode === 'latest') {
+      const fallback = await gmailFetchJson(
+        accessToken,
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}`
+      )
+      if (fallback.ok) {
+        messages = fallback.data.messages || []
+      }
+    }
+  } catch (err) {
+    console.error('Gmail list fallback failed:', err)
     return []
   }
 
-  const messages = list.data.messages || []
   if (!messages.length) return []
 
   const settled = await Promise.allSettled(
-    messages.slice(0, maxResults).map(async (msg: any) => {
-      const detail = await gmailFetchJson(
-        accessToken,
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata`
-      )
-
-      if (!detail.ok) {
-        console.error('Gmail message fetch failed:', detail.data)
-        return null
-      }
-
-      const headers = detail.data.payload?.headers || []
-
-      return {
-        id: detail.data.id,
-        subject: getHeader(headers, 'Subject') || '(No subject)',
-        from: getHeader(headers, 'From') || 'Unknown sender',
-        date: getHeader(headers, 'Date') || '',
-        snippet: detail.data.snippet || '',
-      }
-    })
+    messages.slice(0, maxResults).map((msg: any) => fetchMessageMeta(accessToken, msg.id))
   )
 
   return settled
     .filter((x): x is PromiseFulfilledResult<any> => x.status === 'fulfilled')
     .map((x) => x.value)
     .filter(Boolean)
+}
+
+export async function fetchLatestEmails(accessToken: string, maxResults = 3) {
+  return fetchEmails(accessToken, 'latest', maxResults)
+}
+
+export async function fetchUnreadEmails(accessToken: string, maxResults = 3) {
+  return fetchEmails(accessToken, 'unread', maxResults)
 }
