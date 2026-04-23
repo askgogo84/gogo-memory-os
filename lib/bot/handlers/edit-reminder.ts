@@ -66,10 +66,10 @@ function formatWhen(iso: string) {
 export async function getLatestPendingReminder(telegramId: number) {
   const { data } = await supabaseAdmin
     .from('reminders')
-    .select('id, message, remind_at, sent')
+    .select('id, message, remind_at, sent, created_at')
     .eq('telegram_id', telegramId)
     .eq('sent', false)
-    .order('remind_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(1)
 
   return data?.[0] || null
