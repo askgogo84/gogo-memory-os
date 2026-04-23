@@ -18,6 +18,8 @@ export async function GET(req: NextRequest) {
   const token = url.searchParams.get('hub.verify_token')
   const challenge = url.searchParams.get('hub.challenge')
 
+  console.log('WhatsApp GET verify:', { mode, tokenPresent: !!token })
+
   if (
     mode === 'subscribe' &&
     token &&
@@ -40,14 +42,16 @@ export async function POST(req: NextRequest) {
 
     const from = normalizeWhatsAppNumber(fromRaw)
 
-    console.log('WhatsApp inbound:', {
+    console.log('WhatsApp inbound raw:', {
+      fromRaw,
       from,
-      body: bodyRaw,
+      bodyRaw,
       profileName,
       numMedia,
     })
 
     if (!from) {
+      console.log('WhatsApp skipped: missing from')
       return new NextResponse(emptyTwiml(), {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
@@ -55,6 +59,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!bodyRaw.trim() && numMedia === 0) {
+      console.log('WhatsApp skipped: empty body and no media')
       return new NextResponse(emptyTwiml(), {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
@@ -62,6 +67,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (numMedia > 0 && !bodyRaw.trim()) {
+      console.log('WhatsApp media-only message')
       await sendWhatsAppMessage(
         from,
         'I can handle text right now. Media support will be added next.'
@@ -81,12 +87,11 @@ export async function POST(req: NextRequest) {
       messageType: 'text',
     })
 
-    console.log('WhatsApp outbound:', {
-      to: from,
-      text: result.text,
-    })
+    console.log('WhatsApp processed reply:', result.text)
 
     await sendWhatsAppMessage(from, result.text)
+
+    console.log('WhatsApp send complete')
 
     return new NextResponse(emptyTwiml(), {
       status: 200,
@@ -94,7 +99,6 @@ export async function POST(req: NextRequest) {
     })
   } catch (error: any) {
     console.error('WhatsApp webhook error:', error)
-
     return new NextResponse(emptyTwiml(), {
       status: 200,
       headers: { 'Content-Type': 'text/xml' },
