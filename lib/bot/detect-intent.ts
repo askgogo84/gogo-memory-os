@@ -13,6 +13,7 @@
   | 'list_check'
   | 'list_clear'
   | 'set_reminder'
+  | 'edit_reminder'
   | 'save_memory'
   | 'web_search'
   | 'general_chat'
@@ -35,6 +36,17 @@ export function detectIntent(text: string): DetectedIntent {
   if (!lower) return { type: 'general_chat', confidence: 'low' }
 
   if (
+    /^snooze\b/i.test(lower) ||
+    /^move it\b/i.test(lower) ||
+    /^move reminder\b/i.test(lower) ||
+    /^reschedule\b/i.test(lower) ||
+    /^tomorrow instead$/i.test(lower) ||
+    /^change it to\b/i.test(lower)
+  ) {
+    return { type: 'edit_reminder', confidence: 'high' }
+  }
+
+  if (
     lower.includes('connect my gmail') ||
     lower.includes('connect to my gmail') ||
     lower.includes('connect gmail') ||
@@ -51,11 +63,11 @@ export function detectIntent(text: string): DetectedIntent {
     lower.includes('reply to this mail') ||
     lower.includes('reply to the latest mail') ||
     lower.includes('reply to latest email') ||
+    lower.includes('reply to the vercel email') ||
     lower.includes('reply to the latest unread email') ||
     lower.includes('reply to latest unread email') ||
     lower.includes('reply to the latest unread mail') ||
     lower.includes('reply to latest unread mail') ||
-    lower.includes('reply to the vercel email') ||
     lower.includes('draft reply to') ||
     lower.includes('write a reply to this email')
   ) {
@@ -207,4 +219,3 @@ export function detectIntent(text: string): DetectedIntent {
 
   return { type: 'general_chat', confidence: 'low' }
 }
-

@@ -14,6 +14,7 @@ import { getLatestFollowupState } from './handlers/followup-state'
 import { buildEmailActionReply } from './handlers/email-actions'
 import { styleReplyByIntent } from './handlers/response-style'
 import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
+import { editLatestReminder } from './handlers/edit-reminder'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
 
@@ -195,6 +196,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const styledReminderReply = styleReplyByIntent('set_reminder', reply)
     await saveConversation(resolvedUser.telegramId, 'assistant', styledReminderReply)
     return { text: formatOutgoingText(params.channel, styledReminderReply), resolvedUser }
+  }
+
+  if (intent.type === 'edit_reminder') {
+    const reply = await editLatestReminder(resolvedUser.telegramId, incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'connect_calendar') {
@@ -449,3 +456,5 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
+
