@@ -114,16 +114,22 @@ function extractListNameFromText(text: string): string {
 }
 
 export async function processIncomingMessage(params: ProcessIncomingParams): Promise<ProcessIncomingResult> {
+  console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
+  console.log('PIM:before resolveUser')
   const resolvedUser = await resolveUser({
     channel: params.channel,
     externalUserId: params.externalUserId,
     userName: params.userName,
   })
 
+  console.log('PIM:after resolveUser', { telegramId: resolvedUser.telegramId, name: resolvedUser.name, platform: resolvedUser.platform })
   const incomingText = (params.text || '').trim()
   const intent = detectIntent(incomingText)
+  console.log('PIM:intent', intent)
 
+  console.log('PIM:before limit')
   const limit = await checkAndIncrementLimit(resolvedUser.telegramId)
+  console.log('PIM:after limit', limit)
   if (!limit.allowed) {
     return {
       text: formatOutgoingText(params.channel, limit.upgradeMessage || 'Daily limit reached.'),
@@ -131,7 +137,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
+  console.log('PIM:before save user message')
   await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+  console.log('PIM:after save user message')
 
   const followupYes = /^(yes|yeah|yep|haan|ok|okay)( .*)?$/i.test(incomingText)
   if (followupYes) {
@@ -470,6 +478,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
 
 
 

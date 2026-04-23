@@ -79,6 +79,7 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    console.log('WhatsApp before processIncomingMessage')
     const result = await processIncomingMessage({
       channel: 'whatsapp',
       externalUserId: from,
@@ -105,3 +106,4 @@ export async function POST(req: NextRequest) {
     })
   }
 }
+
