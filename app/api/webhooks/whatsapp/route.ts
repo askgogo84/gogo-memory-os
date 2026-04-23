@@ -8,6 +8,10 @@ function normalizeWhatsAppNumber(value: string | null | undefined): string {
   return (value || '').replace(/^whatsapp:/, '').trim()
 }
 
+function emptyTwiml() {
+  return `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const mode = url.searchParams.get('hub.mode')
@@ -36,20 +40,37 @@ export async function POST(req: NextRequest) {
 
     const from = normalizeWhatsAppNumber(fromRaw)
 
+    console.log('WhatsApp inbound:', {
+      from,
+      body: bodyRaw,
+      profileName,
+      numMedia,
+    })
+
     if (!from) {
-      return new NextResponse('OK', { status: 200 })
+      return new NextResponse(emptyTwiml(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      })
     }
 
     if (!bodyRaw.trim() && numMedia === 0) {
-      return new NextResponse('OK', { status: 200 })
+      return new NextResponse(emptyTwiml(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      })
     }
 
     if (numMedia > 0 && !bodyRaw.trim()) {
       await sendWhatsAppMessage(
         from,
-        'I can handle text right now. Media support will be re-added in the next phase.'
+        'I can handle text right now. Media support will be added next.'
       )
-      return new NextResponse('OK', { status: 200 })
+
+      return new NextResponse(emptyTwiml(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      })
     }
 
     const result = await processIncomingMessage({
@@ -60,12 +81,23 @@ export async function POST(req: NextRequest) {
       messageType: 'text',
     })
 
+    console.log('WhatsApp outbound:', {
+      to: from,
+      text: result.text,
+    })
+
     await sendWhatsAppMessage(from, result.text)
 
-    return new NextResponse('OK', { status: 200 })
+    return new NextResponse(emptyTwiml(), {
+      status: 200,
+      headers: { 'Content-Type': 'text/xml' },
+    })
   } catch (error: any) {
     console.error('WhatsApp webhook error:', error)
-    return new NextResponse(error?.message || 'Internal error', { status: 500 })
+
+    return new NextResponse(emptyTwiml(), {
+      status: 200,
+      headers: { 'Content-Type': 'text/xml' },
+    })
   }
 }
-
