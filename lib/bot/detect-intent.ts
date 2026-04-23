@@ -14,6 +14,8 @@
   | 'list_clear'
   | 'set_reminder'
   | 'edit_reminder'
+  | 'morning_briefing'
+  | 'set_briefing_time'
   | 'save_memory'
   | 'web_search'
   | 'general_chat'
@@ -34,6 +36,27 @@ export function detectIntent(text: string): DetectedIntent {
   const lower = t.toLowerCase()
 
   if (!lower) return { type: 'general_chat', confidence: 'low' }
+
+  if (
+    /set my briefing to/i.test(lower) ||
+    /set briefing time to/i.test(lower) ||
+    /change briefing time to/i.test(lower) ||
+    /send my morning briefing at/i.test(lower) ||
+    /set morning briefing at/i.test(lower) ||
+    /briefing at \d/i.test(lower)
+  ) {
+    return { type: 'set_briefing_time', confidence: 'high' }
+  }
+
+  if (
+    lower === 'morning briefing' ||
+    lower === 'today briefing' ||
+    lower === 'daily briefing' ||
+    lower === 'good morning' ||
+    lower === 'brief me'
+  ) {
+    return { type: 'morning_briefing', confidence: 'high' }
+  }
 
   if (
     /^snooze\b/i.test(lower) ||
