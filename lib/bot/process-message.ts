@@ -15,6 +15,8 @@ import { buildEmailActionReply } from './handlers/email-actions'
 import { styleReplyByIntent } from './handlers/response-style'
 import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 import { editLatestReminder } from './handlers/edit-reminder'
+import { buildMorningBriefing } from './handlers/morning-briefing'
+import { setBriefingTime } from './handlers/briefing-settings'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
 
@@ -200,6 +202,18 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'edit_reminder') {
     const reply = await editLatestReminder(resolvedUser.telegramId, incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  if (intent.type === 'set_briefing_time') {
+    const reply = await setBriefingTime(resolvedUser.telegramId, incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  if (intent.type === 'morning_briefing') {
+    const reply = await buildMorningBriefing(resolvedUser.telegramId, resolvedUser.name)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -456,6 +470,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
+
 
 
 
