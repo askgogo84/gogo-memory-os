@@ -17,8 +17,6 @@ import { buildReminderConfirmation, parseReminderIntent } from './handlers/remin
 import { editLatestReminder } from './handlers/edit-reminder'
 import { buildMorningBriefing } from './handlers/morning-briefing'
 import { setBriefingTime } from './handlers/briefing-settings'
-import { buildMorningBriefing } from './handlers/morning-briefing'
-import { setBriefingTime } from './handlers/briefing-settings'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
 
@@ -82,7 +80,8 @@ async function createReminder(
   chatId: number,
   remindAt: string,
   message: string,
-  pattern?: string
+  pattern?: string,
+  whatsappTo?: string | null
 ) {
   const payload: any = {
     telegram_id: telegramId,
@@ -90,6 +89,10 @@ async function createReminder(
     message,
     remind_at: remindAt,
     sent: false,
+  }
+
+  if (whatsappTo) {
+    payload.whatsapp_to = whatsappTo
   }
 
   if (pattern) {
@@ -212,18 +215,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'edit_reminder') {
     const reply = await editLatestReminder(resolvedUser.telegramId, incomingText)
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
-  }
-
-  if (intent.type === 'set_briefing_time') {
-    const reply = await setBriefingTime(resolvedUser.telegramId, incomingText)
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
-  }
-
-  if (intent.type === 'morning_briefing') {
-    const reply = await buildMorningBriefing(resolvedUser.telegramId, resolvedUser.name)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -492,6 +483,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
+
+
+
 
 
 

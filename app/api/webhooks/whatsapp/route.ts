@@ -1,11 +1,26 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
-import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 
 export const dynamic = 'force-dynamic'
 
 function normalizeWhatsAppNumber(value: string | null | undefined): string {
   return (value || '').replace(/^whatsapp:/, '').trim()
+}
+
+function xmlEscape(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function buildTwimlMessage(message: string) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Message>${xmlEscape(message)}</Message>
+</Response>`
 }
 
 function emptyTwiml() {
@@ -17,8 +32,6 @@ export async function GET(req: NextRequest) {
   const mode = url.searchParams.get('hub.mode')
   const token = url.searchParams.get('hub.verify_token')
   const challenge = url.searchParams.get('hub.challenge')
-
-  console.log('WhatsApp GET verify:', { mode, tokenPresent: !!token })
 
   if (
     mode === 'subscribe' &&
@@ -42,7 +55,7 @@ export async function POST(req: NextRequest) {
 
     const from = normalizeWhatsAppNumber(fromRaw)
 
-    console.log('WhatsApp inbound raw:', {
+    console.log('WA inbound', {
       fromRaw,
       from,
       bodyRaw,
@@ -51,7 +64,6 @@ export async function POST(req: NextRequest) {
     })
 
     if (!from) {
-      console.log('WhatsApp skipped: missing from')
       return new NextResponse(emptyTwiml(), {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
@@ -59,7 +71,6 @@ export async function POST(req: NextRequest) {
     }
 
     if (!bodyRaw.trim() && numMedia === 0) {
-      console.log('WhatsApp skipped: empty body and no media')
       return new NextResponse(emptyTwiml(), {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
@@ -67,19 +78,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (numMedia > 0 && !bodyRaw.trim()) {
-      console.log('WhatsApp media-only message')
-      await sendWhatsAppMessage(
-        from,
-        'I can handle text right now. Media support will be added next.'
+      return new NextResponse(
+        buildTwimlMessage('I can handle text right now. Media support will be added next.'),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'text/xml' },
+        }
       )
-
-      return new NextResponse(emptyTwiml(), {
-        status: 200,
-        headers: { 'Content-Type': 'text/xml' },
-      })
     }
 
-    console.log('WhatsApp before processIncomingMessage')
     const result = await processIncomingMessage({
       channel: 'whatsapp',
       externalUserId: from,
@@ -88,22 +95,27 @@ export async function POST(req: NextRequest) {
       messageType: 'text',
     })
 
-    console.log('WhatsApp processed reply:', result.text)
+    console.log('WA processed reply', result.text)
 
-    await sendWhatsAppMessage(from, result.text)
-
-    console.log('WhatsApp send complete')
-
-    return new NextResponse(emptyTwiml(), {
+    return new NextResponse(buildTwimlMessage(result.text), {
       status: 200,
       headers: { 'Content-Type': 'text/xml' },
     })
   } catch (error: any) {
-    console.error('WhatsApp webhook error:', error)
-    return new NextResponse(emptyTwiml(), {
-      status: 200,
-      headers: { 'Content-Type': 'text/xml' },
+    console.error('WA webhook error:', {
+      message: error?.message,
+      stack: error?.stack,
+      code: error?.code,
+      status: error?.status,
+      moreInfo: error?.moreInfo,
     })
+
+    return new NextResponse(
+      buildTwimlMessage('I hit a small issue just now. Please try again.'),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      }
+    )
   }
 }
-
