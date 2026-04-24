@@ -1,6 +1,6 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
-import { sendWhatsAppMessage, sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
+import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
@@ -77,27 +77,17 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    if (!text && numMedia === 0) {
-      console.log('WhatsApp skipped: empty body and no media')
+    if (!text) {
+      console.log('WhatsApp skipped: empty or media-only message')
       return new NextResponse(emptyTwiml(), {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
       })
     }
 
-    if (numMedia > 0 && !text) {
-      console.log('WhatsApp media-only message')
-      await sendWhatsAppMessage(
-        from,
-        'I can handle text right now. Media support will be added next.'
-      )
-
-      return new NextResponse(emptyTwiml(), {
-        status: 200,
-        headers: { 'Content-Type': 'text/xml' },
-      })
-    }
-
+    // Direct premium text override for WhatsApp-native UX.
+    // This handles only exact menu/pricing/referral commands.
+    // All real assistant tasks still go through processIncomingMessage below.
     const resolvedUser = await resolveUser({
       channel: 'whatsapp',
       externalUserId: from,
@@ -107,7 +97,7 @@ export async function POST(req: NextRequest) {
     const directReply = getDirectWhatsappPremiumReply(text, resolvedUser.name)
 
     if (directReply) {
-      console.log('WhatsApp direct premium reply triggered')
+      console.log('WhatsApp direct premium reply triggered:', text)
 
       await saveConversation(resolvedUser.telegramId, 'user', text)
 
@@ -116,12 +106,7 @@ export async function POST(req: NextRequest) {
       }
 
       await saveConversation(resolvedUser.telegramId, 'assistant', directReply.text)
-
-      if (directReply.mediaUrl) {
-        await sendWhatsAppMediaMessage(from, directReply.text, directReply.mediaUrl)
-      } else {
-        await sendWhatsAppMessage(from, directReply.text)
-      }
+      await sendWhatsAppMessage(from, directReply.text)
 
       return new NextResponse(emptyTwiml(), {
         status: 200,

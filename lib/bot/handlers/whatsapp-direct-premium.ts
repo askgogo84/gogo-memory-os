@@ -1,4 +1,9 @@
-﻿const ASK_GOGO_WHATSAPP_LINK =
+﻿export type DirectWhatsappReply = {
+  text: string
+  saveMemory?: string | null
+}
+
+const ASK_GOGO_WHATSAPP_LINK =
   process.env.ASK_GOGO_WHATSAPP_JOIN_LINK ||
   'https://wa.me/15797006612?text=Hi%20AskGogo'
 
@@ -8,12 +13,6 @@ function firstName(name?: string) {
   return clean.split(' ')[0]
 }
 
-export type DirectWhatsappReply = {
-  text: string
-  mediaUrl?: string | null
-  saveMemory?: string | null
-}
-
 export function getDirectWhatsappPremiumReply(input: string, userName?: string): DirectWhatsappReply | null {
   const raw = (input || '').trim()
   const lower = raw.toLowerCase()
@@ -21,7 +20,6 @@ export function getDirectWhatsappPremiumReply(input: string, userName?: string):
 
   if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) {
     return {
-      mediaUrl: process.env.ASKGOGO_WELCOME_GIF_URL || null,
       text: `Hey ${name}, I’m *AskGogo* 👋
 
 Your AI assistant inside WhatsApp.
@@ -32,7 +30,7 @@ I can help you with:
 • morning briefing
 • weather
 • sports updates
-• quick drafts
+• quick reply drafts
 
 Try:
 1. Remind me in 10 mins to call Rahul
@@ -41,7 +39,7 @@ Try:
 4. Morning briefing
 5. Next RCB match
 
-Built for people who live on WhatsApp.`,
+Built for people who live on WhatsApp.`
     }
   }
 
@@ -76,7 +74,7 @@ Built for people who live on WhatsApp.`,
 • Notify me
 • Invite friends
 
-Type naturally. I’ll understand.`,
+Type naturally. I’ll understand.`
     }
   }
 
@@ -125,7 +123,7 @@ Razorpay verification is in progress, so checkout is not live yet.
 
 Until then, you’re on founder beta access.
 
-Reply *notify me* and I’ll mark you for early founder pricing.`,
+Reply *notify me* and I’ll mark you for early founder pricing.`
     }
   }
 
@@ -146,7 +144,7 @@ I’ll remember that you want early access pricing.
 
 When Razorpay goes live, you’ll be among the first to get the founder offer.
 
-Meanwhile, you can keep using AskGogo beta on WhatsApp.`,
+Meanwhile, you can keep using AskGogo beta on WhatsApp.`
     }
   }
 
@@ -169,7 +167,7 @@ Copy and send this:
 Try it here:
 ${ASK_GOGO_WHATSAPP_LINK}”
 
-Founder beta users will get priority access when paid plans go live.`,
+Founder beta users will get priority access when paid plans go live.`
     }
   }
 
