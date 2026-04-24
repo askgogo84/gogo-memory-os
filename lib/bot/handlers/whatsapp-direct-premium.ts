@@ -1,5 +1,6 @@
 ﻿export type DirectWhatsappReply = {
   text: string
+  mediaUrl?: string | null
   saveMemory?: string | null
 }
 
@@ -13,6 +14,12 @@ function firstName(name?: string) {
   return clean.split(' ')[0]
 }
 
+function envUrl(name: string) {
+  const value = process.env[name]
+  if (!value || !value.trim()) return null
+  return value.trim()
+}
+
 export function getDirectWhatsappPremiumReply(input: string, userName?: string): DirectWhatsappReply | null {
   const raw = (input || '').trim()
   const lower = raw.toLowerCase()
@@ -20,9 +27,12 @@ export function getDirectWhatsappPremiumReply(input: string, userName?: string):
 
   if (/^(hi|hello|hey|start|\/start|hi askgogo|hello askgogo|hey askgogo|start askgogo|askgogo)$/i.test(lower)) {
     return {
+      mediaUrl: envUrl('ASKGOGO_WELCOME_GIF_URL'),
       text: `Hey ${name}, I’m *AskGogo* 👋
 
 Your AI assistant inside WhatsApp.
+
+Now you can use me by *typing or sending a voice note*.
 
 I can help you with:
 • reminders
@@ -31,12 +41,14 @@ I can help you with:
 • weather
 • sports updates
 • quick reply drafts
+• lists and notes
+• web search
 
 Try:
-1. Remind me in 10 mins to call Rahul
+1. Send a voice note: “Remind me in 10 mins to call Rahul”
 2. Bangalore weather tomorrow
 3. Show my unread emails
-4. Morning briefing
+4. Today
 5. Next RCB match
 
 Built for people who live on WhatsApp.`
@@ -48,16 +60,21 @@ Built for people who live on WhatsApp.`
     lower === '/help' ||
     lower === 'menu' ||
     lower === 'commands' ||
-    lower === 'what can you do'
+    lower === 'what can you do' ||
+    lower === 'features'
   ) {
     return {
       text: `✨ *AskGogo Menu*
+
+🎙️ *Voice first*
+Send a voice note in English, Hindi, Hinglish, Kannada, Tamil, Telugu or Malayalam.
 
 ⏰ *Reminders*
 • Remind me in 20 mins to call Rahul
 • Remind me tomorrow at 9 am
 • Snooze 10 mins
 • Move it to 8 pm
+• Done
 
 📬 *Email*
 • Connect Gmail
@@ -65,6 +82,7 @@ Built for people who live on WhatsApp.`
 • Reply to the latest mail
 
 ☀️ *Daily*
+• Today
 • Morning briefing
 • Bangalore weather tomorrow
 • Next RCB match
@@ -74,7 +92,7 @@ Built for people who live on WhatsApp.`
 • Notify me
 • Invite friends
 
-Type naturally. I’ll understand.`
+Type or speak naturally. I’ll understand.`
     }
   }
 
@@ -90,6 +108,7 @@ Type naturally. I’ll understand.`
     lower.includes('razorpay')
   ) {
     return {
+      mediaUrl: envUrl('ASKGOGO_PRICING_IMAGE_URL'),
       text: `💚 *AskGogo Pricing*
 
 Less than a chai a day.
@@ -137,6 +156,7 @@ Reply *notify me* and I’ll mark you for early founder pricing.`
     lower.includes('early access')
   ) {
     return {
+      mediaUrl: envUrl('ASKGOGO_SUCCESS_GIF_URL'),
       saveMemory: 'User asked to be notified when AskGogo Razorpay/payment/founder pricing goes live.',
       text: `✅ *You’re on the founder list*
 
@@ -158,11 +178,14 @@ Meanwhile, you can keep using AskGogo beta on WhatsApp.`
     lower.includes('refer friends')
   ) {
     return {
+      mediaUrl: envUrl('ASKGOGO_REFERRAL_GIF_URL'),
       text: `🎁 *Invite friends to AskGogo*
 
 Copy and send this:
 
 “I’ve been testing AskGogo — an AI assistant on WhatsApp for reminders, email help, weather, sports updates and morning briefings.
+
+You can type or send voice notes in Indian languages.
 
 Try it here:
 ${ASK_GOGO_WHATSAPP_LINK}”

@@ -1,6 +1,6 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
-import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
+import { sendWhatsAppMessage, sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
@@ -186,7 +186,12 @@ export async function POST(req: NextRequest) {
           : directReply.text
 
       await saveConversation(resolvedUser.telegramId, 'assistant', finalReply)
-      await sendWhatsAppMessage(from, finalReply)
+
+      if (directReply.mediaUrl) {
+        await sendWhatsAppMediaMessage(from, finalReply, directReply.mediaUrl)
+      } else {
+        await sendWhatsAppMessage(from, finalReply)
+      }
 
       return new NextResponse(emptyTwiml(), {
         status: 200,
