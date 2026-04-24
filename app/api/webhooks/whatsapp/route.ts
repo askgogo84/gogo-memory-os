@@ -4,6 +4,7 @@ import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
+import { normalizeVoicePromptForBot } from '@/lib/bot/handlers/voice-normalizer'
 import {
   isAudioContentType,
   transcribeTwilioVoiceNote,
@@ -145,7 +146,8 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const text = incoming.text.trim()
+    const originalText = incoming.text.trim()
+    const text = incoming.wasVoice ? normalizeVoicePromptForBot(originalText) : originalText
 
     if (!text) {
       await sendWhatsAppMessage(
@@ -171,7 +173,7 @@ export async function POST(req: NextRequest) {
       await saveConversation(
         resolvedUser.telegramId,
         'user',
-        incoming.wasVoice ? `[voice] ${text}` : text
+        incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text
       )
 
       if (directReply.saveMemory) {
@@ -180,7 +182,7 @@ export async function POST(req: NextRequest) {
 
       const finalReply =
         incoming.wasVoice && incoming.voiceTranscript
-          ? addVoicePrefix(directReply.text, incoming.voiceTranscript)
+          ? addVoicePrefix(directReply.text, originalText)
           : directReply.text
 
       await saveConversation(resolvedUser.telegramId, 'assistant', finalReply)
@@ -202,7 +204,7 @@ export async function POST(req: NextRequest) {
 
     const finalReply =
       incoming.wasVoice && incoming.voiceTranscript
-        ? addVoicePrefix(result.text, incoming.voiceTranscript)
+        ? addVoicePrefix(result.text, originalText)
         : result.text
 
     await sendWhatsAppMessage(from, finalReply)
