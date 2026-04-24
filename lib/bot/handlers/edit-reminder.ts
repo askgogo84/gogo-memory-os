@@ -29,6 +29,7 @@ function istWallTimeToUtcDate(year: number, month: number, day: number, hour: nu
 
 function addIstDays(parts: { year: number; month: number; day: number }, daysToAdd: number) {
   const d = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + daysToAdd, 0, 0, 0))
+
   return {
     year: d.getUTCFullYear(),
     month: d.getUTCMonth() + 1,
@@ -48,6 +49,7 @@ function parseTimePart(input: string): { hour: number; minute: number } | null {
   if (ampm === 'am' && hour === 12) hour = 0
 
   if (hour > 23 || minute > 59) return null
+
   return { hour, minute }
 }
 
@@ -63,6 +65,12 @@ function formatWhen(iso: string) {
   }).format(new Date(iso))
 }
 
+function cleanReminderName(message: string) {
+  return (message || 'Reminder')
+    .replace(/^to\s+/i, '')
+    .trim()
+}
+
 export async function getLatestPendingReminder(telegramId: number) {
   const { data } = await supabaseAdmin
     .from('reminders')
@@ -75,31 +83,80 @@ export async function getLatestPendingReminder(telegramId: number) {
   return data?.[0] || null
 }
 
-export async function editLatestReminder(telegramId: number, input: string) {
+export async function markLatestReminderDone(telegramId: number) {
   const reminder = await getLatestPendingReminder(telegramId)
+
   if (!reminder) {
-    return `I couldn't find any pending reminder to update.`
+    return `No pending reminder found.`
   }
 
-  const lower = input.toLowerCase()
+  const { error } = await supabaseAdmin
+    .from('reminders')
+    .update({ sent: true })
+    .eq('id', reminder.id)
+
+  if (error) {
+    return `I couldn't mark that reminder done right now.`
+  }
+
+  return `✅ *Marked done*\n\n${cleanReminderName(reminder.message)}`
+}
+
+export async function editLatestReminder(telegramId: number, input: string) {
+  const lower = input.toLowerCase().trim()
+
+  if (
+    lower === 'done' ||
+    lower === 'mark done' ||
+    lower === 'completed' ||
+    lower === 'complete' ||
+    lower === 'finished' ||
+    lower === 'mark as done'
+  ) {
+    return await markLatestReminderDone(telegramId)
+  }
+
+  const reminder = await getLatestPendingReminder(telegramId)
+
+  if (!reminder) {
+    return `No pending reminder found.\n\nCreate one first, then say “snooze 10 mins”, “move it to 8 pm”, or “done”.`
+  }
+
   let nextTime = new Date(reminder.remind_at)
 
   const snoozeMatch = lower.match(/snooze\s+(\d+)\s*(minute|minutes|min|mins|hour|hours)/i)
+
   if (snoozeMatch) {
     const value = parseInt(snoozeMatch[1], 10)
     const unit = snoozeMatch[2].toLowerCase()
-    if (unit.startsWith('hour')) nextTime = new Date(nextTime.getTime() + value * 60 * 60 * 1000)
-    else nextTime = new Date(nextTime.getTime() + value * 60 * 1000)
+
+    if (unit.startsWith('hour')) {
+      nextTime = new Date(new Date().getTime() + value * 60 * 60 * 1000)
+    } else {
+      nextTime = new Date(new Date().getTime() + value * 60 * 1000)
+    }
   } else if (lower === 'tomorrow instead') {
     nextTime = new Date(nextTime.getTime() + 24 * 60 * 60 * 1000)
-  } else if (/^move it to\b/i.test(lower) || /^change it to\b/i.test(lower) || /^reschedule\b/i.test(lower)) {
+  } else if (
+    /^move it to\b/i.test(lower) ||
+    /^change it to\b/i.test(lower) ||
+    /^reschedule\b/i.test(lower) ||
+    /^move reminder to\b/i.test(lower)
+  ) {
     const time = parseTimePart(lower)
+
     if (!time) {
-      return `I couldn't understand the new time. Try something like "move it to 6 pm".`
+      return `I couldn't understand the new time.\n\nTry: “move it to 8 pm”.`
     }
 
     const nowIst = istNowParts()
-    let targetDate = { year: nowIst.year, month: nowIst.month, day: nowIst.day }
+
+    let targetDate = {
+      year: nowIst.year,
+      month: nowIst.month,
+      day: nowIst.day,
+    }
+
     const currentMinutes = nowIst.hour * 60 + nowIst.minute
     const targetMinutes = time.hour * 60 + time.minute
 
@@ -107,19 +164,25 @@ export async function editLatestReminder(telegramId: number, input: string) {
       targetDate = addIstDays(nowIst, 1)
     }
 
-    nextTime = istWallTimeToUtcDate(targetDate.year, targetDate.month, targetDate.day, time.hour, time.minute)
+    nextTime = istWallTimeToUtcDate(
+      targetDate.year,
+      targetDate.month,
+      targetDate.day,
+      time.hour,
+      time.minute
+    )
   } else {
-    return `I couldn't understand how to update that reminder. Try "snooze 10 mins" or "move it to 6 pm".`
+    return `I couldn't understand how to update that reminder.\n\nTry:\n• snooze 10 mins\n• move it to 8 pm\n• done`
   }
 
   const { error } = await supabaseAdmin
     .from('reminders')
-    .update({ remind_at: nextTime.toISOString() })
+    .update({ remind_at: nextTime.toISOString(), sent: false })
     .eq('id', reminder.id)
 
   if (error) {
     return `I couldn't update that reminder right now.`
   }
 
-  return `Done — I’ve updated your reminder to ${formatWhen(nextTime.toISOString())}.`
+  return `✅ *Reminder updated*\n\n${cleanReminderName(reminder.message)}\nNew time: ${formatWhen(nextTime.toISOString())}`
 }

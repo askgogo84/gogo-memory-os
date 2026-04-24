@@ -141,9 +141,7 @@ export async function GET(req: Request) {
   const results: any[] = []
 
   for (const reminder of due || []) {
-    const reminderText = `⏰ *Reminder*\n\n${reminder.message}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm${
-      reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''
-    }`
+    const reminderText = `⏰ *Reminder*\n\n${String(reminder.message || 'Reminder').replace(/^to\\s+/i, '').trim()}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''}`
 
     try {
       const whatsappTo = await findWhatsAppForReminder(reminder)

@@ -182,6 +182,12 @@ export function detectIntent(text: string): DetectedIntent {
   }
 
   if (
+    lower === 'done' ||
+    lower === 'mark done' ||
+    lower === 'completed' ||
+    lower === 'complete' ||
+    lower === 'finished' ||
+    lower === 'mark as done' ||
     /^snooze\b/i.test(lower) ||
     /^move it\b/i.test(lower) ||
     /^move reminder\b/i.test(lower) ||
