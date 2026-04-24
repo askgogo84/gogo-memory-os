@@ -1,5 +1,9 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
+import { sendWhatsAppMessage, sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
+import { resolveUser } from '@/lib/bot/resolve-user'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
 
 export const dynamic = 'force-dynamic'
 
@@ -7,24 +11,23 @@ function normalizeWhatsAppNumber(value: string | null | undefined): string {
   return (value || '').replace(/^whatsapp:/, '').trim()
 }
 
-function xmlEscape(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
-
-function buildTwimlMessage(message: string) {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Message>${xmlEscape(message)}</Message>
-</Response>`
-}
-
 function emptyTwiml() {
   return `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`
+}
+
+async function saveConversation(telegramId: number, role: 'user' | 'assistant', content: string) {
+  await supabaseAdmin.from('conversations').insert({
+    telegram_id: telegramId,
+    role,
+    content,
+  })
+}
+
+async function saveMemory(telegramId: number, content: string) {
+  await supabaseAdmin.from('memories').insert({
+    telegram_id: telegramId,
+    content,
+  })
 }
 
 export async function GET(req: NextRequest) {
@@ -32,6 +35,8 @@ export async function GET(req: NextRequest) {
   const mode = url.searchParams.get('hub.mode')
   const token = url.searchParams.get('hub.verify_token')
   const challenge = url.searchParams.get('hub.challenge')
+
+  console.log('WhatsApp GET verify:', { mode, tokenPresent: !!token })
 
   if (
     mode === 'subscribe' &&
@@ -54,8 +59,9 @@ export async function POST(req: NextRequest) {
     const numMedia = Number(formData.get('NumMedia') || '0')
 
     const from = normalizeWhatsAppNumber(fromRaw)
+    const text = bodyRaw.trim()
 
-    console.log('WA inbound', {
+    console.log('WhatsApp inbound raw:', {
       fromRaw,
       from,
       bodyRaw,
@@ -64,58 +70,91 @@ export async function POST(req: NextRequest) {
     })
 
     if (!from) {
+      console.log('WhatsApp skipped: missing from')
       return new NextResponse(emptyTwiml(), {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
       })
     }
 
-    if (!bodyRaw.trim() && numMedia === 0) {
+    if (!text && numMedia === 0) {
+      console.log('WhatsApp skipped: empty body and no media')
       return new NextResponse(emptyTwiml(), {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
       })
     }
 
-    if (numMedia > 0 && !bodyRaw.trim()) {
-      return new NextResponse(
-        buildTwimlMessage('I can handle text right now. Media support will be added next.'),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'text/xml' },
-        }
+    if (numMedia > 0 && !text) {
+      console.log('WhatsApp media-only message')
+      await sendWhatsAppMessage(
+        from,
+        'I can handle text right now. Media support will be added next.'
       )
+
+      return new NextResponse(emptyTwiml(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      })
     }
+
+    const resolvedUser = await resolveUser({
+      channel: 'whatsapp',
+      externalUserId: from,
+      userName: profileName,
+    })
+
+    const directReply = getDirectWhatsappPremiumReply(text, resolvedUser.name)
+
+    if (directReply) {
+      console.log('WhatsApp direct premium reply triggered')
+
+      await saveConversation(resolvedUser.telegramId, 'user', text)
+
+      if (directReply.saveMemory) {
+        await saveMemory(resolvedUser.telegramId, directReply.saveMemory)
+      }
+
+      await saveConversation(resolvedUser.telegramId, 'assistant', directReply.text)
+
+      if (directReply.mediaUrl) {
+        await sendWhatsAppMediaMessage(from, directReply.text, directReply.mediaUrl)
+      } else {
+        await sendWhatsAppMessage(from, directReply.text)
+      }
+
+      return new NextResponse(emptyTwiml(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      })
+    }
+
+    console.log('WhatsApp before processIncomingMessage')
 
     const result = await processIncomingMessage({
       channel: 'whatsapp',
       externalUserId: from,
-      text: bodyRaw.trim(),
+      text,
       userName: profileName,
       messageType: 'text',
     })
 
-    console.log('WA processed reply', result.text)
+    console.log('WhatsApp processed reply:', result.text)
 
-    return new NextResponse(buildTwimlMessage(result.text), {
+    await sendWhatsAppMessage(from, result.text)
+
+    console.log('WhatsApp send complete')
+
+    return new NextResponse(emptyTwiml(), {
       status: 200,
       headers: { 'Content-Type': 'text/xml' },
     })
   } catch (error: any) {
-    console.error('WA webhook error:', {
-      message: error?.message,
-      stack: error?.stack,
-      code: error?.code,
-      status: error?.status,
-      moreInfo: error?.moreInfo,
-    })
+    console.error('WhatsApp webhook error:', error)
 
-    return new NextResponse(
-      buildTwimlMessage('I hit a small issue just now. Please try again.'),
-      {
-        status: 200,
-        headers: { 'Content-Type': 'text/xml' },
-      }
-    )
+    return new NextResponse(emptyTwiml(), {
+      status: 200,
+      headers: { 'Content-Type': 'text/xml' },
+    })
   }
 }

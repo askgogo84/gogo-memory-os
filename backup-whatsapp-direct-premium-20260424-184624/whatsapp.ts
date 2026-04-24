@@ -4,6 +4,18 @@ const accountSid = process.env.TWILIO_ACCOUNT_SID
 const authToken = process.env.TWILIO_AUTH_TOKEN
 const rawWhatsappFrom = process.env.TWILIO_WHATSAPP_NUMBER
 
+if (!accountSid) {
+  console.warn('Missing TWILIO_ACCOUNT_SID')
+}
+
+if (!authToken) {
+  console.warn('Missing TWILIO_AUTH_TOKEN')
+}
+
+if (!rawWhatsappFrom) {
+  console.warn('Missing TWILIO_WHATSAPP_NUMBER')
+}
+
 const client = twilio(accountSid!, authToken!)
 
 function normalizeWhatsAppAddress(value: string): string {
@@ -26,28 +38,21 @@ function normalizeWhatsAppAddress(value: string): string {
   return `whatsapp:${normalized}`
 }
 
-export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: string | null) {
+export async function sendWhatsApp(toNumber: string, text: string) {
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
 
-  const payload: any = {
+  const message = await client.messages.create({
     body: text,
     from,
     to,
-  }
-
-  if (mediaUrl && mediaUrl.trim()) {
-    payload.mediaUrl = [mediaUrl.trim()]
-  }
-
-  const message = await client.messages.create(payload)
+  })
 
   console.log('WHATSAPP_SENT:', {
     sid: message.sid,
     from,
     to,
     status: message.status,
-    hasMedia: Boolean(mediaUrl),
   })
 
   return message
