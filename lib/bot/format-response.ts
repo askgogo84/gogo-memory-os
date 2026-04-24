@@ -5,27 +5,29 @@ function cleanBaseText(text: string): string {
     .replace(/\r\n/g, '\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/This message was sent automatically with n8n\.?/gi, '')
     .trim()
 }
 
 function formatForWhatsApp(text: string): string {
   let clean = cleanBaseText(text)
 
+  // WhatsApp uses single *bold*
   clean = clean.replace(/\*\*/g, '*')
-  clean = clean.replace(/This message was sent automatically with n8n\.?/gi, '').trim()
 
-  if (clean.length > 3200) {
-    clean = clean.slice(0, 3150).trim() + '\n\nReply “more” if you want the rest.'
+  // Keep replies premium and not too long
+  if (clean.length > 3000) {
+    clean = clean.slice(0, 2950).trim() + '\n\nReply “more” and I’ll continue.'
   }
 
   return clean
 }
 
 function formatForTelegram(text: string): string {
-  const clean = cleanBaseText(text)
+  let clean = cleanBaseText(text)
 
   if (clean.length > 4096) {
-    return clean.slice(0, 4050).trim() + '\n\nReply “more” if you want the rest.'
+    clean = clean.slice(0, 4050).trim() + '\n\nReply “more” and I’ll continue.'
   }
 
   return clean

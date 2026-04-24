@@ -16,6 +16,7 @@
   | 'edit_reminder'
   | 'morning_briefing'
   | 'set_briefing_time'
+  | 'upgrade_plan'
   | 'save_memory'
   | 'web_search'
   | 'general_chat'
@@ -36,6 +37,19 @@ export function detectIntent(text: string): DetectedIntent {
   const lower = t.toLowerCase()
 
   if (!lower) return { type: 'general_chat', confidence: 'low' }
+
+  if (
+    lower === '/upgrade' ||
+    lower === 'upgrade' ||
+    lower === 'pricing' ||
+    lower === 'plans' ||
+    lower === 'payment' ||
+    lower.includes('paid plan') ||
+    lower.includes('subscribe') ||
+    lower.includes('razorpay')
+  ) {
+    return { type: 'upgrade_plan', confidence: 'high' }
+  }
 
   if (
     /set my briefing to/i.test(lower) ||

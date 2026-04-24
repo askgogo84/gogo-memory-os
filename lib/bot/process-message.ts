@@ -19,6 +19,7 @@ import { buildMorningBriefing } from './handlers/morning-briefing'
 import { setBriefingTime } from './handlers/briefing-settings'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
+import { buildUpgradeReply } from './handlers/upgrade'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -131,6 +132,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const incomingText = (params.text || '').trim()
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
+
+  if (intent.type === 'upgrade_plan') {
+    const reply = styleReplyByIntent('upgrade_plan', buildUpgradeReply())
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
 
   console.log('PIM:before limit')
   const limit = await checkAndIncrementLimit(resolvedUser.telegramId)

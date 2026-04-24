@@ -1,9 +1,9 @@
-import { supabaseAdmin } from './supabase-admin'
+﻿import { supabaseAdmin } from './supabase-admin'
 
 const LIMITS = {
-  free:    { daily: 20,  memories: 10  },
-  starter: { daily: 100, memories: 50  },
-  pro:     { daily: 999, memories: 500 },
+  free: { daily: 20, memories: 10 },
+  starter: { daily: 100, memories: 50 },
+  pro: { daily: 999, memories: 500 },
 }
 
 export async function checkAndIncrementLimit(telegramId: number): Promise<{
@@ -20,21 +20,23 @@ export async function checkAndIncrementLimit(telegramId: number): Promise<{
 
   if (!user) return { allowed: true, tier: 'free', remaining: 20 }
 
-  // Expire tier if past date
   let tier = user.tier || 'free'
+
   if (user.tier_expires_at && new Date(user.tier_expires_at) < new Date()) {
     tier = 'free'
+
     await supabaseAdmin
       .from('users')
       .update({ tier: 'free' })
       .eq('telegram_id', telegramId)
   }
 
-  // Reset daily count if new day (IST)
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
   let dailyCount = user.daily_count || 0
+
   if (user.last_reset !== today) {
     dailyCount = 0
+
     await supabaseAdmin
       .from('users')
       .update({ daily_count: 0, last_reset: today })
@@ -50,11 +52,13 @@ export async function checkAndIncrementLimit(telegramId: number): Promise<{
       tier,
       remaining: 0,
       upgradeMessage:
-        `⚠️ You've used all *${limit.daily} messages* for today on the *${tier}* plan.\n\n` +
-        `Upgrade to keep going:\n` +
-        `⚡ *Starter* — ₹299/month — 100 msgs/day\n` +
-        `🚀 *Pro* — ₹999/month — Unlimited\n\n` +
-        `👉 /upgrade to see plans`,
+        `⚡ *Daily free limit reached*\n\n` +
+        `You’ve used your ${limit.daily} messages for today on the *${tier}* plan.\n\n` +
+        `AskGogo is currently in founder beta. Payments are not live yet.\n\n` +
+        `Paid plans coming soon:\n` +
+        `• Starter — ₹299/month\n` +
+        `• Pro — ₹999/month\n\n` +
+        `Your data and reminders are safe. Your limit resets tomorrow.`,
     }
   }
 
