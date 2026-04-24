@@ -19,7 +19,6 @@ import { buildMorningBriefing } from './handlers/morning-briefing'
 import { setBriefingTime } from './handlers/briefing-settings'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
-import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { buildUpgradeReply } from './handlers/upgrade'
 
 export type ProcessIncomingParams = {
@@ -133,33 +132,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const incomingText = (params.text || '').trim()
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
-
-  // ASKGOGO_PREMIUM_WHATSAPP_HANDLER
-  if (
-    intent.type === 'welcome_menu' ||
-    intent.type === 'help_menu' ||
-    intent.type === 'upgrade_plan' ||
-    intent.type === 'referral_flow' ||
-    intent.type === 'notify_me'
-  ) {
-    const reply = buildPremiumWhatsappReply(intent.type, resolvedUser.name)
-
-    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
-
-    if (intent.type === 'notify_me') {
-      await saveMemory(
-        resolvedUser.telegramId,
-        'User asked to be notified for AskGogo founder pricing / paid plan launch.'
-      )
-    }
-
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-
-    return {
-      text: formatOutgoingText(params.channel, reply),
-      resolvedUser,
-    }
-  }
 
   if (intent.type === 'upgrade_plan') {
     const reply = styleReplyByIntent('upgrade_plan', buildUpgradeReply())

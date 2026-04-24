@@ -141,7 +141,7 @@ export async function GET(req: Request) {
   const results: any[] = []
 
   for (const reminder of due || []) {
-    const reminderText = `⏰ *Reminder*\n\n${reminder.message}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm${
+    const reminderText = `⏰ *Reminder*\n\n${reminder.message}${
       reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''
     }`
 

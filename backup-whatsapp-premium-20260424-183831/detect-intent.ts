@@ -16,10 +16,6 @@
   | 'edit_reminder'
   | 'morning_briefing'
   | 'set_briefing_time'
-  | 'notify_me'
-  | 'referral_flow'
-  | 'help_menu'
-  | 'welcome_menu'
   | 'upgrade_plan'
   | 'save_memory'
   | 'web_search'
@@ -41,58 +37,6 @@ export function detectIntent(text: string): DetectedIntent {
   const lower = t.toLowerCase()
 
   if (!lower) return { type: 'general_chat', confidence: 'low' }
-
-  // ASKGOGO_PREMIUM_WHATSAPP_INTENTS
-  if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) {
-    return { type: 'welcome_menu', confidence: 'high' }
-  }
-
-  if (
-    lower === 'help' ||
-    lower === 'menu' ||
-    lower === '/help' ||
-    lower === 'what can you do' ||
-    lower === 'commands'
-  ) {
-    return { type: 'help_menu', confidence: 'high' }
-  }
-
-  if (
-    lower === '/upgrade' ||
-    lower === 'upgrade' ||
-    lower === 'pricing' ||
-    lower === 'plans' ||
-    lower === 'payment' ||
-    lower === 'payments' ||
-    lower.includes('paid plan') ||
-    lower.includes('subscribe') ||
-    lower.includes('razorpay')
-  ) {
-    return { type: 'upgrade_plan', confidence: 'high' }
-  }
-
-  if (
-    lower === 'invite' ||
-    lower === 'invite friends' ||
-    lower === 'refer' ||
-    lower === 'referral' ||
-    lower === 'share' ||
-    lower.includes('invite my friends') ||
-    lower.includes('refer friends')
-  ) {
-    return { type: 'referral_flow', confidence: 'high' }
-  }
-
-  if (
-    lower === 'notify me' ||
-    lower === 'notify me when live' ||
-    lower === 'notify me when payment is live' ||
-    lower === 'founder offer' ||
-    lower === 'founder pricing' ||
-    lower.includes('early access')
-  ) {
-    return { type: 'notify_me', confidence: 'high' }
-  }
 
   if (
     lower === '/upgrade' ||
