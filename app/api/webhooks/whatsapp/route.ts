@@ -119,19 +119,6 @@ async function sendThinkingIfNeeded(from: string, text: string) {
       error: error?.message || error,
     })
   }
-
-  const thinkingUrl = process.env.ASKGOGO_THINKING_GIF_URL
-
-  if (!thinkingUrl) return
-
-  try {
-    await sendWhatsAppMediaMessage(from, ' ', thinkingUrl)
-  } catch (error: any) {
-    console.error('WHATSAPP_THINKING_MEDIA_FAILED:', {
-      mediaUrl: thinkingUrl,
-      error: error?.message || error,
-    })
-  }
 }
 
 export async function GET(req: NextRequest) {
