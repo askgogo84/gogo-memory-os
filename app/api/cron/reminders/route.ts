@@ -5,9 +5,27 @@ import { sendWhatsApp } from '@/lib/whatsapp'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
+function isAuthorized(req: Request) {
+  const { searchParams } = new URL(req.url)
+  const querySecret = searchParams.get('secret')
+  const authHeader = req.headers.get('authorization') || ''
+  const bearerSecret = authHeader.replace(/^Bearer\s+/i, '').trim()
+
+  const expected = process.env.CRON_SECRET
+
+  if (!expected) return false
+
+  return querySecret === expected || bearerSecret === expected
+}
+
 function getNextOccurrence(pattern: string, fromDate: Date): Date {
   const next = new Date(fromDate)
   const lower = pattern.toLowerCase()
+
+  if (lower.includes('hourly_between')) {
+    next.setHours(next.getHours() + 1)
+    return next
+  }
 
   if (lower.includes('every day') || lower.includes('daily')) {
     next.setDate(next.getDate() + 1)
@@ -60,12 +78,43 @@ async function sendTelegram(chatId: number, text: string) {
   return body
 }
 
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url)
-  const secret = searchParams.get('secret')
+async function findWhatsAppForReminder(reminder: any): Promise<string | null> {
+  if (reminder.whatsapp_to) {
+    return reminder.whatsapp_to
+  }
 
-  if (secret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!reminder.telegram_id) {
+    return null
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .select('whatsapp_id')
+    .eq('telegram_id', reminder.telegram_id)
+    .maybeSingle()
+
+  if (error) {
+    console.error('FIND_WHATSAPP_USER_FAILED:', error)
+    return null
+  }
+
+  return data?.whatsapp_id || null
+}
+
+async function markReminderSent(id: string | number) {
+  const { error } = await supabaseAdmin
+    .from('reminders')
+    .update({ sent: true })
+    .eq('id', id)
+
+  if (error) {
+    throw new Error(`Failed to mark reminder sent: ${error.message}`)
+  }
+}
+
+export async function GET(req: Request) {
+  if (!isAuthorized(req)) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
   }
 
   const now = new Date().toISOString()
@@ -76,62 +125,70 @@ export async function GET(req: Request) {
     .eq('sent', false)
     .lte('remind_at', now)
     .order('remind_at', { ascending: true })
-    .limit(25)
+    .limit(50)
 
   if (dueError) {
     console.error('CRON_REMINDERS_SELECT_FAILED:', dueError)
     return NextResponse.json(
-      { ok: false, error: dueError.message },
+      {
+        ok: false,
+        error: dueError.message,
+      },
       { status: 500 }
     )
   }
 
   const results: any[] = []
 
-  for (const r of due || []) {
-    const reminderText = `⏰ *Reminder*\n\n${r.message}${
-      r.is_recurring ? `\n\nRepeats: ${r.recurring_pattern}` : ''
+  for (const reminder of due || []) {
+    const reminderText = `⏰ *Reminder*\n\n${reminder.message}${
+      reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''
     }`
 
     try {
-      if (r.whatsapp_to) {
-        await sendWhatsApp(r.whatsapp_to, reminderText)
+      const whatsappTo = await findWhatsAppForReminder(reminder)
+
+      if (whatsappTo) {
+        await sendWhatsApp(whatsappTo, reminderText)
 
         results.push({
-          id: r.id,
+          id: reminder.id,
           channel: 'whatsapp',
-          to: r.whatsapp_to,
-          message: r.message,
+          to: whatsappTo,
+          message: reminder.message,
           status: 'sent',
         })
-      } else if (r.chat_id && Number(r.chat_id) > 0) {
-        await sendTelegram(Number(r.chat_id), reminderText)
+      } else if (reminder.chat_id && Number(reminder.chat_id) > 0) {
+        await sendTelegram(Number(reminder.chat_id), reminderText)
 
         results.push({
-          id: r.id,
+          id: reminder.id,
           channel: 'telegram',
-          to: r.chat_id,
-          message: r.message,
+          to: reminder.chat_id,
+          message: reminder.message,
           status: 'sent',
         })
       } else {
         throw new Error(
-          `No valid delivery target. whatsapp_to=${r.whatsapp_to || ''}, chat_id=${r.chat_id || ''}`
+          `No delivery target found. whatsapp_to=${reminder.whatsapp_to || ''}, telegram_id=${reminder.telegram_id || ''}, chat_id=${reminder.chat_id || ''}`
         )
       }
 
-      if (r.is_recurring && r.recurring_pattern) {
-        const nextDate = getNextOccurrence(r.recurring_pattern, new Date(r.remind_at))
+      if (reminder.is_recurring && reminder.recurring_pattern) {
+        const nextDate = getNextOccurrence(
+          reminder.recurring_pattern,
+          new Date(reminder.remind_at)
+        )
 
         const { error: recurringError } = await supabaseAdmin.from('reminders').insert({
-          telegram_id: r.telegram_id,
-          chat_id: r.chat_id,
-          whatsapp_to: r.whatsapp_to,
-          message: r.message,
+          telegram_id: reminder.telegram_id,
+          chat_id: reminder.chat_id,
+          whatsapp_to: reminder.whatsapp_to || null,
+          message: reminder.message,
           remind_at: nextDate.toISOString(),
           sent: false,
           is_recurring: true,
-          recurring_pattern: r.recurring_pattern,
+          recurring_pattern: reminder.recurring_pattern,
         })
 
         if (recurringError) {
@@ -139,30 +196,26 @@ export async function GET(req: Request) {
         }
       }
 
-      const { error: updateError } = await supabaseAdmin
-        .from('reminders')
-        .update({ sent: true })
-        .eq('id', r.id)
-
-      if (updateError) {
-        throw new Error(`Reminder sent but failed to mark sent: ${updateError.message}`)
-      }
+      await markReminderSent(reminder.id)
     } catch (error: any) {
+      const message = error?.message || String(error)
+
       console.error('REMINDER_SEND_FAILED:', {
-        id: r.id,
-        message: r.message,
-        whatsapp_to: r.whatsapp_to,
-        chat_id: r.chat_id,
-        error: error?.message || error,
+        id: reminder.id,
+        message: reminder.message,
+        whatsapp_to: reminder.whatsapp_to,
+        telegram_id: reminder.telegram_id,
+        chat_id: reminder.chat_id,
+        error: message,
       })
 
       results.push({
-        id: r.id,
-        channel: r.whatsapp_to ? 'whatsapp' : 'telegram',
-        to: r.whatsapp_to || r.chat_id || null,
-        message: r.message,
+        id: reminder.id,
+        channel: reminder.whatsapp_to ? 'whatsapp' : 'unknown',
+        to: reminder.whatsapp_to || reminder.chat_id || null,
+        message: reminder.message,
         status: 'failed',
-        error: error?.message || String(error),
+        error: message,
       })
     }
   }

@@ -178,7 +178,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         resolvedUser.telegramId,
         resolvedUser.telegramId,
         remindAt.toISOString(),
-        reminderMessage
+        reminderMessage,
+        undefined,
+        params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
       )
 
       let reply = ''
@@ -204,7 +206,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       resolvedUser.telegramId,
       eagerReminder.remindAtIso,
       eagerReminder.message,
-      eagerReminder.kind === 'recurring' ? eagerReminder.pattern : undefined
+      eagerReminder.kind === 'recurring' ? eagerReminder.pattern : undefined,
+      params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
     )
 
     const reply = buildReminderConfirmation(eagerReminder)
@@ -428,7 +431,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       resolvedUser.telegramId,
       parsed.remindAt,
       parsed.message,
-      parsed.pattern
+      parsed.pattern,
+      params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
     )
     finalReply = parsed.replyText || `Done — I have set the reminder for ${parsed.message}.`
   }
