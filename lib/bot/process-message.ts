@@ -20,7 +20,6 @@ import { setBriefingTime } from './handlers/briefing-settings'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
-import { buildUpgradeReply } from './handlers/upgrade'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -159,12 +158,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       text: formatOutgoingText(params.channel, reply),
       resolvedUser,
     }
-  }
-
-  if (intent.type === 'upgrade_plan') {
-    const reply = styleReplyByIntent('upgrade_plan', buildUpgradeReply())
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   console.log('PIM:before limit')

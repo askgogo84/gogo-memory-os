@@ -42,6 +42,59 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (!lower) return { type: 'general_chat', confidence: 'low' }
 
+  // ASKGOGO_FORCE_PREMIUM_INTENTS
+  if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) {
+    return { type: 'welcome_menu', confidence: 'high' }
+  }
+
+  if (
+    lower === 'help' ||
+    lower === '/help' ||
+    lower === 'menu' ||
+    lower === 'commands' ||
+    lower === 'what can you do'
+  ) {
+    return { type: 'help_menu', confidence: 'high' }
+  }
+
+  if (
+    lower === 'pricing' ||
+    lower === 'price' ||
+    lower === 'plans' ||
+    lower === 'plan' ||
+    lower === 'upgrade' ||
+    lower === '/upgrade' ||
+    lower === 'payment' ||
+    lower === 'payments' ||
+    lower.includes('razorpay')
+  ) {
+    return { type: 'upgrade_plan', confidence: 'high' }
+  }
+
+  if (
+    lower === 'notify me' ||
+    lower === 'notify' ||
+    lower === 'notify me when live' ||
+    lower === 'notify me when payment is live' ||
+    lower === 'founder offer' ||
+    lower === 'founder pricing' ||
+    lower.includes('early access')
+  ) {
+    return { type: 'notify_me', confidence: 'high' }
+  }
+
+  if (
+    lower === 'invite' ||
+    lower === 'invite friends' ||
+    lower === 'refer' ||
+    lower === 'referral' ||
+    lower === 'share' ||
+    lower.includes('invite my friends') ||
+    lower.includes('refer friends')
+  ) {
+    return { type: 'referral_flow', confidence: 'high' }
+  }
+
   // ASKGOGO_PREMIUM_WHATSAPP_INTENTS
   if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) {
     return { type: 'welcome_menu', confidence: 'high' }
