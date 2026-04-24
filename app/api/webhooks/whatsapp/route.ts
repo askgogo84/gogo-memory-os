@@ -86,6 +86,46 @@ function addVoicePrefix(reply: string, transcript: string) {
   return `🎙️ *Heard you via voice note*\n“${cleanTranscript}”\n\n${reply}`
 }
 
+// ASKGOGO_THINKING_LAYER_V2
+function shouldSendThinkingMedia(text: string) {
+  const lower = (text || '').toLowerCase().trim()
+
+  return (
+    lower === 'today' ||
+    lower === 'morning briefing' ||
+    lower === 'today briefing' ||
+    lower === 'today summary' ||
+    lower.includes('show my unread') ||
+    lower.includes('unread emails') ||
+    lower.includes('latest emails') ||
+    lower.includes('latest mail') ||
+    lower.includes('reply to latest') ||
+    lower.includes('reply to the latest') ||
+    lower.includes('summarize my emails') ||
+    lower.includes('summarize my mails')
+  )
+}
+
+async function sendThinkingIfNeeded(from: string, text: string) {
+  if (!shouldSendThinkingMedia(text)) return
+
+  // Text first, so user always sees immediate feedback.
+  await sendWhatsAppMessage(from, '🧘 Working on it…')
+
+  const thinkingUrl = process.env.ASKGOGO_THINKING_GIF_URL
+
+  if (!thinkingUrl) return
+
+  try {
+    await sendWhatsAppMediaMessage(from, ' ', thinkingUrl)
+  } catch (error: any) {
+    console.error('WHATSAPP_THINKING_MEDIA_FAILED:', {
+      mediaUrl: thinkingUrl,
+      error: error?.message || error,
+    })
+  }
+}
+
 function shouldSendThinkingMedia(text: string) {
   const lower = (text || '').toLowerCase()
 
