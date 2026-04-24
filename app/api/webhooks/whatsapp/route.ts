@@ -21,7 +21,11 @@ function emptyTwiml() {
   return `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`
 }
 
-async function saveConversation(telegramId: number, role: 'user' | 'assistant', content: string) {
+async function saveConversation(
+  telegramId: number,
+  role: 'user' | 'assistant',
+  content: string
+) {
   await supabaseAdmin.from('conversations').insert({
     telegram_id: telegramId,
     role,
@@ -86,7 +90,6 @@ function addVoicePrefix(reply: string, transcript: string) {
   return `🎙️ *Heard you via voice note*\n“${cleanTranscript}”\n\n${reply}`
 }
 
-// ASKGOGO_THINKING_LAYER_V2
 function shouldSendThinkingMedia(text: string) {
   const lower = (text || '').toLowerCase().trim()
 
@@ -109,8 +112,13 @@ function shouldSendThinkingMedia(text: string) {
 async function sendThinkingIfNeeded(from: string, text: string) {
   if (!shouldSendThinkingMedia(text)) return
 
-  // Text first, so user always sees immediate feedback.
-  await sendWhatsAppMessage(from, '🧘 Working on it…')
+  try {
+    await sendWhatsAppMessage(from, '🧘 Working on it…')
+  } catch (error: any) {
+    console.error('WHATSAPP_THINKING_TEXT_FAILED:', {
+      error: error?.message || error,
+    })
+  }
 
   const thinkingUrl = process.env.ASKGOGO_THINKING_GIF_URL
 
@@ -123,50 +131,6 @@ async function sendThinkingIfNeeded(from: string, text: string) {
       mediaUrl: thinkingUrl,
       error: error?.message || error,
     })
-  }
-}
-
-function shouldSendThinkingMedia(text: string) {
-  const lower = (text || '').toLowerCase()
-
-  return (
-    lower === 'today' ||
-    lower === 'morning briefing' ||
-    lower.includes('show my unread') ||
-    lower.includes('unread emails') ||
-    lower.includes('latest emails') ||
-    lower.includes('latest mail') ||
-    lower.includes('reply to latest') ||
-    lower.includes('reply to the latest') ||
-    lower.includes('summarize my emails') ||
-    lower.includes('summarize my mails') ||
-    lower.includes('news') ||
-    lower.includes('latest') ||
-    lower.includes('search')
-  )
-}
-
-async function sendThinkingIfNeeded(from: string, text: string) {
-  const thinkingUrl = process.env.ASKGOGO_THINKING_GIF_URL
-
-  if (!thinkingUrl || !shouldSendThinkingMedia(text)) {
-    return
-  }
-
-  try {
-    await sendWhatsAppMediaMessage(
-      from,
-      'Working on it…',
-      thinkingUrl
-    )
-  } catch (error: any) {
-    console.error('WHATSAPP_THINKING_MEDIA_FAILED:', {
-      error: error?.message || error,
-    })
-
-    try {
-      await sendWhatsAppMessage(from, 'Working on it…')
-    } catch {}
   }
 }
 
@@ -271,11 +235,8 @@ export async function POST(req: NextRequest) {
 
       await saveConversation(resolvedUser.telegramId, 'assistant', finalReply)
 
-      // Always send text first so the user never gets a silent failure.
       await sendWhatsAppMessage(from, finalReply)
 
-      // Then try optional media as a separate WhatsApp message.
-      // If GIF/media fails, text has already reached the user.
       if (directReply.mediaUrl) {
         try {
           await sendWhatsAppMediaMessage(from, ' ', directReply.mediaUrl)
