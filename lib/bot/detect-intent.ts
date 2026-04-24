@@ -172,6 +172,10 @@ export function detectIntent(text: string): DetectedIntent {
   }
 
   if (
+    lower === 'today' ||
+    lower === 'today summary' ||
+    lower === 'today briefing' ||
+    lower === 'what is today' ||
     lower === 'morning briefing' ||
     lower === 'today briefing' ||
     lower === 'daily briefing' ||

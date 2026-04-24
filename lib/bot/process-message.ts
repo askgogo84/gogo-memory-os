@@ -258,8 +258,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'morning_briefing') {
     const reply = await buildMorningBriefing(resolvedUser.telegramId, resolvedUser.name)
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const styledReply = styleReplyByIntent('morning_briefing', reply)
+    await saveConversation(resolvedUser.telegramId, 'assistant', styledReply)
+    return { text: formatOutgoingText(params.channel, styledReply), resolvedUser }
   }
 
   if (intent.type === 'connect_calendar') {
@@ -285,7 +286,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
     if (!user?.gmail_connected) {
       const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-      const reply = `Your Gmail is not connected yet.\n\nConnect it here:\n${connectUrl}`
+      const reply = `📬 *Connect Gmail*\n\nTo show unread emails and draft replies, connect Gmail once.\n\n${connectUrl}\n\nAfter connecting, come back and type:\nshow my unread emails`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
@@ -364,7 +365,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'connect_gmail') {
     const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-    const reply = `Connect your Gmail here:\n${connectUrl}`
+    const reply = `📬 *Connect Gmail*\n\nConnect once to unlock email summaries and reply drafts.\n\n${connectUrl}`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
