@@ -61,6 +61,7 @@ function istWallTimeToUtcDate(
 
 function addIstDays(parts: { year: number; month: number; day: number }, daysToAdd: number) {
   const d = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + daysToAdd, 0, 0, 0))
+
   return {
     year: d.getUTCFullYear(),
     month: d.getUTCMonth() + 1,
@@ -80,6 +81,7 @@ function parseTimePart(input: string): { hour: number; minute: number } | null {
   if (ampm === 'am' && hour === 12) hour = 0
 
   if (hour > 23 || minute > 59) return null
+
   return { hour, minute }
 }
 
@@ -88,14 +90,22 @@ function cleanMessageText(input: string): string {
     .replace(/\bplease\b/gi, '')
     .replace(/\bkindly\b/gi, '')
     .replace(/\bfor me\b/gi, '')
+
+    // Remove reminder command words
     .replace(/\bset a reminder to\b/gi, '')
+    .replace(/\bset a reminder for\b/gi, '')
     .replace(/\bset a reminder\b/gi, '')
+    .replace(/\bset reminder to\b/gi, '')
+    .replace(/\bset reminder for\b/gi, '')
     .replace(/\bset reminder\b/gi, '')
     .replace(/\bremind me to\b/gi, '')
+    .replace(/\bremind me for\b/gi, '')
     .replace(/\bremind to\b/gi, '')
+    .replace(/\bremind for\b/gi, '')
     .replace(/\bremind me\b/gi, '')
     .replace(/\bremind\b/gi, '')
-    .replace(/\bcall\b/gi, 'call')
+
+    // Remove date/time phrases
     .replace(/\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/gi, '')
     .replace(/\b(tomorrow|tmrw|tmr)\b/gi, '')
     .replace(/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
@@ -103,9 +113,15 @@ function cleanMessageText(input: string): string {
     .replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, '')
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
+
+    // Cleanup punctuation/spaces
     .replace(/[.]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+
+  // Important cleanup:
+  // "Remind me in 2 mins to drink water" becomes "drink water", not "to drink water"
+  cleaned = cleaned.replace(/^(to|for)\s+/i, '').trim()
 
   cleaned = cleaned.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim()
 
@@ -126,6 +142,7 @@ function formatReminderTime(iso: string): string {
 
   const targetDay = fmtDate(target)
   const today = fmtDate(now)
+
   const tomorrowDate = new Date(now.getTime() + 24 * 60 * 60 * 1000)
   const tomorrow = fmtDate(tomorrowDate)
 
@@ -157,9 +174,13 @@ function parseRelativeReminder(text: string): ParsedReminder {
   const unit = match[2].toLowerCase()
   const when = new Date()
 
-  if (unit.startsWith('min')) when.setMinutes(when.getMinutes() + value)
-  else if (unit.startsWith('hour')) when.setHours(when.getHours() + value)
-  else if (unit.startsWith('day')) when.setDate(when.getDate() + value)
+  if (unit.startsWith('min')) {
+    when.setMinutes(when.getMinutes() + value)
+  } else if (unit.startsWith('hour')) {
+    when.setHours(when.getHours() + value)
+  } else if (unit.startsWith('day')) {
+    when.setDate(when.getDate() + value)
+  }
 
   return {
     kind: 'one_time',
@@ -247,7 +268,10 @@ function parseWeekdayRecurring(text: string): ParsedReminder {
 
   const currentMinutes = nowIst.hour * 60 + nowIst.minute
   const targetMinutes = time.hour * 60 + time.minute
-  if (delta === 0 && targetMinutes <= currentMinutes) delta = 7
+
+  if (delta === 0 && targetMinutes <= currentMinutes) {
+    delta = 7
+  }
 
   const targetDate = addIstDays(nowIst, delta)
 
@@ -273,6 +297,7 @@ function parseHourlyWindowRecurring(text: string): ParsedReminder {
 
   const start = parseTimePart(match[1])
   const end = parseTimePart(match[2])
+
   if (!start || !end) return null
 
   const nowIst = istNowParts()
@@ -288,7 +313,11 @@ function parseHourlyWindowRecurring(text: string): ParsedReminder {
     candidateMinute = start.minute
   }
 
-  let targetDate = { year: nowIst.year, month: nowIst.month, day: nowIst.day }
+  let targetDate = {
+    year: nowIst.year,
+    month: nowIst.month,
+    day: nowIst.day,
+  }
 
   if (candidateHour > end.hour || (candidateHour === end.hour && candidateMinute > end.minute)) {
     targetDate = addIstDays(nowIst, 1)
@@ -316,8 +345,12 @@ function parseSimpleAtTime(text: string): ParsedReminder {
   if (!/^remind/i.test(text) && !/\bset a reminder\b/i.test(text) && !/\bset reminder\b/i.test(text)) {
     return null
   }
+
   if (!/\bat\s+/i.test(text)) return null
-  if (/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text)) return null
+
+  if (/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text)) {
+    return null
+  }
 
   const timeMatch = text.match(/\bat\s+(.+)$/i)
   if (!timeMatch) return null
@@ -327,7 +360,12 @@ function parseSimpleAtTime(text: string): ParsedReminder {
 
   const nowIst = istNowParts()
 
-  let targetDate = { year: nowIst.year, month: nowIst.month, day: nowIst.day }
+  let targetDate = {
+    year: nowIst.year,
+    month: nowIst.month,
+    day: nowIst.day,
+  }
+
   const currentMinutes = nowIst.hour * 60 + nowIst.minute
   const targetMinutes = time.hour * 60 + time.minute
 
@@ -369,6 +407,7 @@ export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>)
     if (parsed.message === 'Reminder') {
       return `Done — I'll remind you ${displayTime}.`
     }
+
     return `Done — I'll remind you to *${parsed.message}* ${displayTime}.`
   }
 
