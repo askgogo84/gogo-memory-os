@@ -1,7 +1,6 @@
 ﻿import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   createCalendarEvent,
-  getTodayEvents,
   refreshAccessToken,
 } from '@/lib/google-calendar'
 
@@ -10,23 +9,75 @@ type CalendarActionResult = {
   reply: string
 }
 
-function istNow() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+type CalendarDateTarget = 'today' | 'tomorrow' | 'day_after_tomorrow'
+
+function istPartsNow() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+  }
 }
 
-function startOfDay(date: Date) {
-  const d = new Date(date)
-  d.setHours(0, 0, 0, 0)
-  return d
+function istDatePartsPlusDays(days: number) {
+  const now = istPartsNow()
+
+  // Create a UTC noon anchor to safely add days without timezone drift.
+  const anchor = new Date(Date.UTC(now.year, now.month - 1, now.day, 12, 0, 0))
+  anchor.setUTCDate(anchor.getUTCDate() + days)
+
+  return {
+    year: anchor.getUTCFullYear(),
+    month: anchor.getUTCMonth() + 1,
+    day: anchor.getUTCDate(),
+  }
 }
 
-function addDays(date: Date, days: number) {
-  const d = new Date(date)
-  d.setDate(d.getDate() + days)
-  return d
+function istWallTimeToUtcDate(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number
+) {
+  // IST is UTC+05:30, so subtract 5h30m from IST wall time.
+  return new Date(Date.UTC(year, month - 1, day, hour - 5, minute - 30, 0))
 }
 
-function formatIstDateTime(date: Date) {
+function googleDateTimeWithIstOffset(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number
+) {
+  const yyyy = String(year)
+  const mm = String(month).padStart(2, '0')
+  const dd = String(day).padStart(2, '0')
+  const hh = String(hour).padStart(2, '0')
+  const min = String(minute).padStart(2, '0')
+
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:00+05:30`
+}
+
+function formatIstDisplayFromParts(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number
+) {
+  const utcDate = istWallTimeToUtcDate(year, month, day, hour, minute)
+
   return new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
     weekday: 'short',
@@ -35,7 +86,7 @@ function formatIstDateTime(date: Date) {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-  }).format(date)
+  }).format(utcDate)
 }
 
 function formatEventTime(event: any) {
@@ -52,14 +103,36 @@ function formatEventTime(event: any) {
   }).format(new Date(start))
 }
 
-function toGoogleIsoFromIst(date: Date) {
-  const yyyy = date.getFullYear()
-  const mm = String(date.getMonth() + 1).padStart(2, '0')
-  const dd = String(date.getDate()).padStart(2, '0')
-  const hh = String(date.getHours()).padStart(2, '0')
-  const min = String(date.getMinutes()).padStart(2, '0')
+function targetFromText(text: string): CalendarDateTarget {
+  const lower = text.toLowerCase()
 
-  return `${yyyy}-${mm}-${dd}T${hh}:${min}:00+05:30`
+  if (lower.includes('day after tomorrow')) return 'day_after_tomorrow'
+  if (lower.includes('tomorrow')) return 'tomorrow'
+
+  return 'today'
+}
+
+function targetLabel(target: CalendarDateTarget) {
+  if (target === 'tomorrow') return 'tomorrow'
+  if (target === 'day_after_tomorrow') return 'day after tomorrow'
+  return 'today'
+}
+
+function targetParts(target: CalendarDateTarget) {
+  if (target === 'tomorrow') return istDatePartsPlusDays(1)
+  if (target === 'day_after_tomorrow') return istDatePartsPlusDays(2)
+  return istDatePartsPlusDays(0)
+}
+
+function calendarRangeForTarget(target: CalendarDateTarget) {
+  const parts = targetParts(target)
+  const startUtc = istWallTimeToUtcDate(parts.year, parts.month, parts.day, 0, 0)
+  const endUtc = istWallTimeToUtcDate(parts.year, parts.month, parts.day, 23, 59)
+
+  return {
+    timeMin: startUtc.toISOString(),
+    timeMax: endUtc.toISOString(),
+  }
 }
 
 function cleanTitle(text: string) {
@@ -68,7 +141,7 @@ function cleanTitle(text: string) {
     .replace(/\b(on|in my)?\s*calendar\b/gi, '')
     .replace(/\btomorrow\b/gi, '')
     .replace(/\btoday\b/gi, '')
-    .replace(/\b(day after tomorrow)\b/gi, '')
+    .replace(/\bday after tomorrow\b/gi, '')
     .replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?/gi, '')
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\s+/g, ' ')
@@ -91,7 +164,7 @@ function parseTime(text: string) {
   if (ampm === 'pm' && hour < 12) hour += 12
   if (ampm === 'am' && hour === 12) hour = 0
 
-  // If user says "4" without am/pm, assume PM for calendar meetings.
+  // If user says "4" without am/pm, assume PM for meetings/calls.
   if (!ampm && hour >= 1 && hour <= 7) hour += 12
 
   return { hour, minute }
@@ -108,8 +181,10 @@ function parseCalendarCreate(text: string) {
     lower.includes('add call') ||
     lower.includes('schedule call') ||
     lower.includes('create call') ||
+    lower.includes('book call') ||
     lower.includes('add event') ||
     lower.includes('schedule event') ||
+    lower.includes('create event') ||
     lower.includes('add to calendar') ||
     lower.includes('calendar event')
 
@@ -124,21 +199,8 @@ function parseCalendarCreate(text: string) {
     }
   }
 
-  const now = istNow()
-  let date = startOfDay(now)
-
-  if (lower.includes('day after tomorrow')) {
-    date = startOfDay(addDays(now, 2))
-  } else if (lower.includes('tomorrow')) {
-    date = startOfDay(addDays(now, 1))
-  } else {
-    date = startOfDay(now)
-  }
-
-  date.setHours(time.hour, time.minute, 0, 0)
-
-  const end = new Date(date)
-  end.setMinutes(end.getMinutes() + 30)
+  const target = targetFromText(text)
+  const parts = targetParts(target)
 
   let title = cleanTitle(text)
 
@@ -148,11 +210,37 @@ function parseCalendarCreate(text: string) {
 
   title = title.charAt(0).toUpperCase() + title.slice(1)
 
+  const endHourMinute = (() => {
+    const endDate = istWallTimeToUtcDate(parts.year, parts.month, parts.day, time.hour, time.minute)
+    endDate.setMinutes(endDate.getMinutes() + 30)
+
+    const endParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(endDate)
+
+    return {
+      hour: Number(endParts.find((p) => p.type === 'hour')?.value || time.hour),
+      minute: Number(endParts.find((p) => p.type === 'minute')?.value || time.minute),
+    }
+  })()
+
   return {
     needsTime: false,
     title,
-    start: date,
-    end,
+    target,
+    start: {
+      ...parts,
+      hour: time.hour,
+      minute: time.minute,
+    },
+    end: {
+      ...parts,
+      hour: endHourMinute.hour,
+      minute: endHourMinute.minute,
+    },
   }
 }
 
@@ -185,6 +273,29 @@ async function getCalendarTokens(telegramId: number) {
   }
 }
 
+async function getEventsForTarget(accessToken: string, target: CalendarDateTarget) {
+  const range = calendarRangeForTarget(target)
+
+  const params = new URLSearchParams({
+    timeMin: range.timeMin,
+    timeMax: range.timeMax,
+    singleEvents: 'true',
+    orderBy: 'startTime',
+  })
+
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+    }
+  )
+
+  const data = await response.json()
+
+  return data.items || []
+}
+
 export function isCalendarAction(text: string) {
   const lower = (text || '').toLowerCase()
 
@@ -194,6 +305,8 @@ export function isCalendarAction(text: string) {
     lower.includes('schedule call') ||
     lower.includes('add call') ||
     lower.includes('book call') ||
+    lower.includes('add event') ||
+    lower.includes('schedule event') ||
     lower.includes('what is on my calendar') ||
     lower.includes("what's on my calendar")
   )
@@ -205,16 +318,18 @@ export async function buildCalendarActionReply(
 ): Promise<CalendarActionResult> {
   const lower = (text || '').toLowerCase().trim()
 
-  const wantsCalendarToday =
+  const wantsCalendarView =
     lower.includes('calendar today') ||
+    lower.includes('calendar tomorrow') ||
     lower.includes('calendar for today') ||
+    lower.includes('calendar for tomorrow') ||
     lower.includes('what is on my calendar') ||
     lower.includes("what's on my calendar") ||
     lower.includes('show my calendar')
 
   const createIntent = parseCalendarCreate(text)
 
-  if (!wantsCalendarToday && !createIntent) {
+  if (!wantsCalendarView && !createIntent) {
     return {
       handled: false,
       reply: '',
@@ -233,15 +348,16 @@ export async function buildCalendarActionReply(
     }
   }
 
-  if (wantsCalendarToday) {
-    const events = await getTodayEvents(tokens.accessToken)
+  if (wantsCalendarView) {
+    const target = targetFromText(text)
+    const events = await getEventsForTarget(tokens.accessToken, target)
 
     if (!events.length) {
       return {
         handled: true,
         reply:
-          `📅 *Your calendar today*\n\n` +
-          `No calendar events lined up today.\n\n` +
+          `📅 *Your calendar ${targetLabel(target)}*\n\n` +
+          `No calendar events lined up ${targetLabel(target)}.\n\n` +
           `Try:\n` +
           `• Add meeting tomorrow at 4 pm\n` +
           `• Plan my day`,
@@ -251,7 +367,7 @@ export async function buildCalendarActionReply(
     return {
       handled: true,
       reply:
-        `📅 *Your calendar today*\n\n` +
+        `📅 *Your calendar ${targetLabel(target)}*\n\n` +
         events
           .slice(0, 7)
           .map((event: any) => {
@@ -275,11 +391,30 @@ export async function buildCalendarActionReply(
   }
 
   if (createIntent && !createIntent.needsTime && createIntent.start && createIntent.end) {
+    const start = createIntent.start
+    const end = createIntent.end
+
+    const startIso = googleDateTimeWithIstOffset(
+      start.year,
+      start.month,
+      start.day,
+      start.hour,
+      start.minute
+    )
+
+    const endIso = googleDateTimeWithIstOffset(
+      end.year,
+      end.month,
+      end.day,
+      end.hour,
+      end.minute
+    )
+
     const created = await createCalendarEvent(
       tokens.accessToken,
       createIntent.title,
-      toGoogleIsoFromIst(createIntent.start),
-      toGoogleIsoFromIst(createIntent.end)
+      startIso,
+      endIso
     )
 
     if (created?.error) {
@@ -297,7 +432,7 @@ export async function buildCalendarActionReply(
       reply:
         `✅ *Calendar event added*\n\n` +
         `${createIntent.title}\n` +
-        `${formatIstDateTime(createIntent.start)}\n\n` +
+        `${formatIstDisplayFromParts(start.year, start.month, start.day, start.hour, start.minute)}\n\n` +
         `Duration: 30 mins`,
     }
   }
