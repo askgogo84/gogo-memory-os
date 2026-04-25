@@ -20,6 +20,7 @@ import { setBriefingTime } from './handlers/briefing-settings'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
+import { buildCalendarActionReply, isCalendarAction } from './handlers/calendar-actions'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -252,6 +253,16 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const reply = await setBriefingTime(resolvedUser.telegramId, incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  // PIM:calendar action
+  if (isCalendarAction(incomingText)) {
+    const calendarResult = await buildCalendarActionReply(resolvedUser.telegramId, incomingText)
+
+    if (calendarResult.handled) {
+      await saveConversation(resolvedUser.telegramId, 'assistant', calendarResult.reply)
+      return { text: formatOutgoingText(params.channel, calendarResult.reply), resolvedUser }
+    }
   }
 
   if (intent.type === 'morning_briefing') {
