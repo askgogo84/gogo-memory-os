@@ -21,6 +21,7 @@ import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeter
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { buildCalendarActionReply, isCalendarAction } from './handlers/calendar-actions'
+import { buildPlanMyDayReply, isPlanMyDayIntent } from './handlers/plan-my-day'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -224,6 +225,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
+  }
+
+  // PIM:plan my day
+  if (isPlanMyDayIntent(incomingText)) {
+    const reply = await buildPlanMyDayReply(resolvedUser.telegramId, resolvedUser.name)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   // PIM:calendar action
