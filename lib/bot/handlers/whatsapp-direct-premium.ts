@@ -32,23 +32,23 @@ export function getDirectWhatsappPremiumReply(input: string, userName?: string):
 
 Your AI assistant inside WhatsApp.
 
-Now you can use me by *typing or sending a voice note*.
+Use me by *typing or sending a voice note*.
 
 I can help you with:
 • reminders
-• unread emails
-• morning briefing
+• calendar planning
+• today briefing
 • weather
 • sports updates
-• quick reply drafts
 • lists and notes
+• quick drafts
 • web search
 
 Try:
 1. Send a voice note: “Remind me in 10 mins to call Rahul”
-2. Bangalore weather tomorrow
-3. Show my unread emails
-4. Today
+2. Connect calendar
+3. Today
+4. Bangalore weather tomorrow
 5. Next RCB match
 
 Built for people who live on WhatsApp.`
@@ -76,13 +76,13 @@ Send a voice note in English, Hindi, Hinglish, Kannada, Tamil, Telugu or Malayal
 • Move it to 8 pm
 • Done
 
-📬 *Email*
-• Connect Gmail
-• Show my unread emails
-• Reply to the latest mail
+📅 *Calendar*
+• Connect calendar
+• Today
+• What’s on my calendar today?
+• Add meeting tomorrow at 4 pm
 
 ☀️ *Daily*
-• Today
 • Morning briefing
 • Bangalore weather tomorrow
 • Next RCB match
@@ -108,34 +108,45 @@ Type or speak naturally. I’ll understand.`
     lower.includes('razorpay')
   ) {
     return {
-      mediaUrl: envUrl('ASKGOGO_PRICING_IMAGE_URL'),
+      // Disabled for now because old pricing image had Family plan.
+      // Add new pricing.png later and re-enable ASKGOGO_PRICING_IMAGE_URL.
+      mediaUrl: null,
       text: `💚 *AskGogo Pricing*
 
-Less than a chai a day.
+Built for WhatsApp-first productivity.
+
+*Free Beta*
+₹0
+• 25 AI actions/month
+• 3 active reminders
+• Voice notes enabled
+• Weather, sports, reminders, lists
 
 *Starter*
-₹149/month — about ₹5/day
-• 20 messages/day
-• 5 active reminders
+₹149/month
+• 100 AI actions/month
+• 10 active reminders
+• Voice notes
 • Basic memory
 • Lists & notes
 
 *Pro — most popular*
-₹299/month — about ₹10/day
-• Unlimited messages
-• Unlimited reminders
-• Full memory everywhere
-• Document analysis
-• Web search
-• Expense tracking
-• Google Calendar sync
+₹299/month
+• 250 AI actions/month
+• 50 active reminders
+• Calendar integration
+• Today briefing
+• Voice notes
+• Web search: 30/month
+• Quick drafts
 
-*Family*
-₹399/month — about ₹2.5/day/user
-• Everything in Pro
-• 5 family members
-• Shared lists & events
-• Save 60%
+*Founder Pro*
+₹499/month
+• 600 AI actions/month
+• Priority access
+• Calendar power features
+• Web search: 100/month
+• Best for power users
 
 *Current status*
 Razorpay verification is in progress, so checkout is not live yet.
@@ -183,7 +194,7 @@ Meanwhile, you can keep using AskGogo beta on WhatsApp.`
 
 Copy and send this:
 
-“I’ve been testing AskGogo — an AI assistant on WhatsApp for reminders, email help, weather, sports updates and morning briefings.
+“I’ve been testing AskGogo — an AI assistant on WhatsApp for reminders, calendar planning, weather, sports updates and daily briefings.
 
 You can type or send voice notes in Indian languages.
 

@@ -1,6 +1,6 @@
 ﻿import { supabaseAdmin } from '@/lib/supabase-admin'
-import { fetchUnreadEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
 import { fetchWeatherForecast, formatCurrentWeather } from '@/lib/services/weather'
+import { getTodayEvents, refreshAccessToken } from '@/lib/google-calendar'
 
 function todayDateKey() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -18,6 +18,20 @@ function formatReminderTime(iso: string) {
     minute: '2-digit',
     hour12: true,
   }).format(new Date(iso))
+}
+
+function formatEventTime(event: any) {
+  const start = event?.start?.dateTime || event?.start?.date
+  if (!start) return 'All day'
+
+  if (!event?.start?.dateTime) return 'All day'
+
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(new Date(start))
 }
 
 function cleanReminderText(text: string) {
@@ -53,53 +67,41 @@ async function getTodaysReminders(telegramId: number) {
   })
 }
 
-async function getUnreadEmails(telegramId: number) {
+async function getCalendarState(telegramId: number) {
   const { data: user } = await supabaseAdmin
     .from('users')
-    .select('gmail_connected, gmail_access_token, gmail_refresh_token, gmail_email')
+    .select('google_calendar_connected, google_refresh_token')
     .eq('telegram_id', telegramId)
     .single()
 
-  if (!user?.gmail_connected) {
+  if (!user?.google_calendar_connected || !user?.google_refresh_token) {
     return {
       connected: false,
-      email: null,
-      emails: [],
+      events: [],
     }
   }
 
-  let accessToken = user.gmail_access_token || null
-  let emails: any[] = []
+  const accessToken = await refreshAccessToken(user.google_refresh_token)
 
-  if (accessToken) {
-    try {
-      emails = await fetchUnreadEmails(accessToken, 3)
-    } catch {
-      emails = []
+  if (!accessToken) {
+    return {
+      connected: false,
+      events: [],
     }
   }
 
-  if (!emails.length && user.gmail_refresh_token) {
-    const refreshedToken = await refreshGmailAccessToken(user.gmail_refresh_token)
+  try {
+    const events = await getTodayEvents(accessToken)
 
-    if (refreshedToken) {
-      await supabaseAdmin
-        .from('users')
-        .update({ gmail_access_token: refreshedToken })
-        .eq('telegram_id', telegramId)
-
-      try {
-        emails = await fetchUnreadEmails(refreshedToken, 3)
-      } catch {
-        emails = []
-      }
+    return {
+      connected: true,
+      events,
     }
-  }
-
-  return {
-    connected: true,
-    email: user.gmail_email || null,
-    emails,
+  } catch {
+    return {
+      connected: true,
+      events: [],
+    }
   }
 }
 
@@ -123,7 +125,7 @@ function cleanWeather(raw: string) {
 
 export async function buildMorningBriefing(telegramId: number, userName?: string) {
   const reminders = await getTodaysReminders(telegramId)
-  const emailState = await getUnreadEmails(telegramId)
+  const calendarState = await getCalendarState(telegramId)
 
   let weatherText = 'Weather unavailable right now.'
   try {
@@ -141,7 +143,22 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
 
   reply += `🌤️ *Weather*\n${weatherText}\n\n`
 
-  reply += `⏰ *Reminders*\n`
+  reply += `📅 *Calendar*\n`
+  if (!calendarState.connected) {
+    reply += `Calendar is not connected yet.\nType *connect calendar* to enable your daily schedule.`
+  } else if (calendarState.events.length) {
+    reply += calendarState.events
+      .slice(0, 5)
+      .map((event: any) => {
+        const title = event.summary || 'Untitled event'
+        return `• ${formatEventTime(event)} — ${title}`
+      })
+      .join('\n')
+  } else {
+    reply += `No calendar events lined up today.`
+  }
+
+  reply += `\n\n⏰ *Reminders*\n`
   if (reminders.length) {
     reply += reminders
       .slice(0, 5)
@@ -151,23 +168,7 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
     reply += `No reminders lined up for today.`
   }
 
-  reply += `\n\n📬 *Unread emails*\n`
-  if (!emailState.connected) {
-    reply += `Gmail is not connected yet.\nType *connect Gmail* to enable email summaries.`
-  } else if (emailState.emails.length) {
-    reply += emailState.emails
-      .slice(0, 3)
-      .map((e: any, idx: number) => {
-        const subject = e.subject || 'No subject'
-        const from = e.from || 'Unknown sender'
-        return `${idx + 1}. ${subject}\nFrom: ${from}`
-      })
-      .join('\n\n')
-  } else {
-    reply += `No unread emails right now.`
-  }
-
-  reply += `\n\n*Next actions*\n• show my unread emails\n• set a reminder\n• next RCB match`
+  reply += `\n\n*Next actions*\n• connect calendar\n• set a reminder\n• next RCB match`
 
   return reply
 }

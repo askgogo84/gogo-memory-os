@@ -263,7 +263,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'connect_calendar') {
     const url = getAuthUrl(resolvedUser.telegramId)
-    const reply = `Connect your Google Calendar here:\n${url}`
+    const reply = `📅 *Connect Google Calendar*\n\nThis lets AskGogo include your schedule in Today briefing and help you plan reminders better.\n\n${url}\n\nAfter connecting, come back and type:\nToday`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
