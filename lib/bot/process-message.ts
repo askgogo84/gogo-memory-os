@@ -211,16 +211,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
       )
 
-      let reply = ''
-      if (lower.includes('1 hour before')) {
-        reply = `Done — I'll remind you 1 hour before *${latestSportsFollowup.payload.match_label}*.`
-      } else if (lower.includes('2 hours before')) {
-        reply = `Done — I'll remind you 2 hours before *${latestSportsFollowup.payload.match_label}*.`
+      let timingLabel = '1 hour before the match'
+      if (lower.includes('2 hours before')) {
+        timingLabel = '2 hours before the match'
       } else if (lower.includes('tomorrow morning')) {
-        reply = `Done — I'll remind you tomorrow morning about *${latestSportsFollowup.payload.match_label}*.`
-      } else {
-        reply = `Done — I'll remind you before *${latestSportsFollowup.payload.match_label}*.`
+        timingLabel = 'tomorrow morning'
       }
+
+      const reply = `✅ *Match reminder set*\n\n${latestSportsFollowup.payload.match_label}\n${timingLabel}`
 
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -330,7 +328,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
     if (!emails.length) {
       const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-      const reply = `I couldn't fetch your emails right now.\n\nTry reconnecting Gmail here:\n${connectUrl}`
+      const reply = `📬 *Gmail needs reconnecting*\n\nI couldn’t fetch your emails right now.\n\nReconnect Gmail here:\n${connectUrl}\n\nThen type:\nshow my unread emails`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }

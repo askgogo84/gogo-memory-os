@@ -20,6 +20,16 @@ function formatReminderTime(iso: string) {
   }).format(new Date(iso))
 }
 
+function cleanReminderText(text: string) {
+  return (text || 'Reminder').replace(/^to\s+/i, '').trim()
+}
+
+function firstName(name?: string) {
+  const clean = (name || '').trim()
+  if (!clean) return 'there'
+  return clean.split(' ')[0]
+}
+
 async function getTodaysReminders(telegramId: number) {
   const { data } = await supabaseAdmin
     .from('reminders')
@@ -50,7 +60,13 @@ async function getUnreadEmails(telegramId: number) {
     .eq('telegram_id', telegramId)
     .single()
 
-  if (!user?.gmail_connected) return []
+  if (!user?.gmail_connected) {
+    return {
+      connected: false,
+      email: null,
+      emails: [],
+    }
+  }
 
   let accessToken = user.gmail_access_token || null
   let emails: any[] = []
@@ -80,51 +96,78 @@ async function getUnreadEmails(telegramId: number) {
     }
   }
 
-  return emails
+  return {
+    connected: true,
+    email: user.gmail_email || null,
+    emails,
+  }
+}
+
+function cleanWeather(raw: string) {
+  let text = raw
+    .replace(/\*/g, '')
+    .replace(/^Current weather in /i, '')
+    .replace(/:\s*\n/i, ': ')
+    .replace(/\n/g, ' • ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  text = text.replace(/^Bangalore:\s*/i, 'Bangalore: ')
+
+  if (!text.toLowerCase().startsWith('bangalore')) {
+    text = `Bangalore: ${text}`
+  }
+
+  return text
 }
 
 export async function buildMorningBriefing(telegramId: number, userName?: string) {
   const reminders = await getTodaysReminders(telegramId)
-  const emails = await getUnreadEmails(telegramId)
+  const emailState = await getUnreadEmails(telegramId)
 
   let weatherText = 'Weather unavailable right now.'
   try {
     const forecast = await fetchWeatherForecast('Bangalore', 2)
     if (forecast) {
-      weatherText = formatCurrentWeather(forecast)
-        .replace(/^Current weather in /i, '')
-        .replace(/:\s*\n/i, ': ')
-        .replace(/\n/g, ' • ')
+      weatherText = cleanWeather(formatCurrentWeather(forecast))
     }
   } catch {
     weatherText = 'Weather unavailable right now.'
   }
 
-  const greetingName = userName?.trim() || 'there'
+  const name = firstName(userName)
 
-  let reply = `Good morning, ${greetingName}.\n\n`
+  let reply = `☀️ *Today for ${name}*\n\n`
 
-  reply += `*Today's weather*\n${weatherText}\n\n`
+  reply += `🌤️ *Weather*\n${weatherText}\n\n`
 
-  reply += `*Today's reminders*\n`
+  reply += `⏰ *Reminders*\n`
   if (reminders.length) {
     reply += reminders
       .slice(0, 5)
-      .map((r: any, idx: number) => `${idx + 1}. ${r.message} — ${formatReminderTime(r.remind_at)}`)
+      .map((r: any) => `• ${cleanReminderText(r.message)} — ${formatReminderTime(r.remind_at)}`)
       .join('\n')
   } else {
     reply += `No reminders lined up for today.`
   }
 
-  reply += `\n\n*Top unread emails*\n`
-  if (emails.length) {
-    reply += emails
+  reply += `\n\n📬 *Unread emails*\n`
+  if (!emailState.connected) {
+    reply += `Gmail is not connected yet.\nType *connect Gmail* to enable email summaries.`
+  } else if (emailState.emails.length) {
+    reply += emailState.emails
       .slice(0, 3)
-      .map((e: any, idx: number) => `${idx + 1}. ${e.subject} — ${e.from}`)
-      .join('\n')
+      .map((e: any, idx: number) => {
+        const subject = e.subject || 'No subject'
+        const from = e.from || 'Unknown sender'
+        return `${idx + 1}. ${subject}\nFrom: ${from}`
+      })
+      .join('\n\n')
   } else {
     reply += `No unread emails right now.`
   }
+
+  reply += `\n\n*Next actions*\n• show my unread emails\n• set a reminder\n• next RCB match`
 
   return reply
 }

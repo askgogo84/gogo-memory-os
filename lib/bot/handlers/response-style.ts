@@ -59,6 +59,8 @@ export function styleWeatherReply(message: string) {
   }
 
   return text
+    .replace(/\*Current weather in ([^:*]+):\*/i, '🌤️ *$1 now*')
+    .replace(/\*Tomorrow in ([^:*]+):\*/i, '🌤️ *$1 tomorrow*')
 }
 
 export function styleSportsReply(message: string) {
@@ -72,7 +74,7 @@ export function styleSportsReply(message: string) {
 
   text = text.replace(/\n\nWant me to set a reminder for it\?/i, '\n\nReply “Yes” and I’ll remind you 1 hour before.')
 
-  if (!/Reply “Yes”/i.test(text) && /match/i.test(text)) {
+  if (!/Reply “Yes”/i.test(text) && /match/i.test(text) && /next/i.test(text)) {
     text += '\n\nReply “Yes” and I’ll remind you 1 hour before.'
   }
 
@@ -89,8 +91,9 @@ export function styleEmailListReply(message: string) {
     .replace(/^Top 3 unread email summaries/i, '📬 *Unread email summaries*')
     .replace(/^Here are your top 3 latest emails/i, '📬 *Latest emails*')
     .replace(/^Here are your top 3 unread emails/i, '📬 *Unread emails*')
+    .replace(/^I couldn't fetch your emails right now\./i, '📬 *Gmail needs reconnecting*')
 
-  if (/📬/.test(text) && !/Reply:/i.test(text)) {
+  if (/📬/.test(text) && !/Reply:/i.test(text) && !/connect/i.test(text)) {
     text += `\n\nReply:\n• summarize emails\n• reply to latest mail`
   }
 
