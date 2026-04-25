@@ -226,6 +226,18 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
+  // PIM:calendar action
+  // Important: calendar commands must run before reminder parsing.
+  // Example: "Add meeting with Rahul tomorrow at 4 pm" should create a calendar event, not a reminder.
+  if (isCalendarAction(incomingText)) {
+    const calendarResult = await buildCalendarActionReply(resolvedUser.telegramId, incomingText)
+
+    if (calendarResult.handled) {
+      await saveConversation(resolvedUser.telegramId, 'assistant', calendarResult.reply)
+      return { text: formatOutgoingText(params.channel, calendarResult.reply), resolvedUser }
+    }
+  }
+
   const eagerReminder = parseReminderIntent(incomingText)
   if (eagerReminder && intent.type === 'set_reminder') {
     await createReminder(
@@ -253,16 +265,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const reply = await setBriefingTime(resolvedUser.telegramId, incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
-  }
-
-  // PIM:calendar action
-  if (isCalendarAction(incomingText)) {
-    const calendarResult = await buildCalendarActionReply(resolvedUser.telegramId, incomingText)
-
-    if (calendarResult.handled) {
-      await saveConversation(resolvedUser.telegramId, 'assistant', calendarResult.reply)
-      return { text: formatOutgoingText(params.channel, calendarResult.reply), resolvedUser }
-    }
   }
 
   if (intent.type === 'morning_briefing') {
