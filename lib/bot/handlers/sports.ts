@@ -8,71 +8,177 @@ type SportsReplyResult = {
   }
 }
 
-function toIsoWithIst(dateText: string, timeText: string) {
-  const monthMap: Record<string, number> = {
-    Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
-    Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12,
-  }
+type Match = {
+  team: string
+  opponent: string
+  label: string
+  venue: string
+  city: string
+  dateText: string
+  timeText: string
+  iso: string
+}
 
-  const m = dateText.match(/(\d{1,2})\s+([A-Za-z]{3}),\s*(\d{4})/)
-  const t = timeText.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
-
-  if (!m || !t) return null
-
-  const day = Number(m[1])
-  const month = monthMap[m[2]]
-  const year = Number(m[3])
-
-  let hour = Number(t[1])
-  const minute = Number(t[2])
-  const ampm = t[3].toUpperCase()
-
-  if (ampm === 'PM' && hour < 12) hour += 12
-  if (ampm === 'AM' && hour === 12) hour = 0
-
+function istToUtcIso(year: number, month: number, day: number, hour: number, minute: number) {
   const utc = new Date(Date.UTC(year, month - 1, day, hour - 5, minute - 30, 0))
   return utc.toISOString()
 }
 
-export function buildSportsReply(input: string): string | null {
+const RCB_2026_MATCHES: Match[] = [
+  {
+    team: 'RCB',
+    opponent: 'SRH',
+    label: 'RCB vs SRH',
+    venue: 'M. Chinnaswamy Stadium',
+    city: 'Bengaluru',
+    dateText: 'Sat, 28 Mar, 2026',
+    timeText: '7:30 PM IST',
+    iso: istToUtcIso(2026, 3, 28, 19, 30),
+  },
+  {
+    team: 'RCB',
+    opponent: 'CSK',
+    label: 'RCB vs CSK',
+    venue: 'M. Chinnaswamy Stadium',
+    city: 'Bengaluru',
+    dateText: 'Sun, 5 Apr, 2026',
+    timeText: '7:30 PM IST',
+    iso: istToUtcIso(2026, 4, 5, 19, 30),
+  },
+  {
+    team: 'RR',
+    opponent: 'RCB',
+    label: 'RR vs RCB',
+    venue: 'ACA Stadium',
+    city: 'Guwahati',
+    dateText: 'Fri, 10 Apr, 2026',
+    timeText: '7:30 PM IST',
+    iso: istToUtcIso(2026, 4, 10, 19, 30),
+  },
+  {
+    team: 'MI',
+    opponent: 'RCB',
+    label: 'MI vs RCB',
+    venue: 'Wankhede Stadium',
+    city: 'Mumbai',
+    dateText: 'Sun, 12 Apr, 2026',
+    timeText: '7:30 PM IST',
+    iso: istToUtcIso(2026, 4, 12, 19, 30),
+  },
+  {
+    team: 'RCB',
+    opponent: 'LSG',
+    label: 'RCB vs LSG',
+    venue: 'M. Chinnaswamy Stadium',
+    city: 'Bengaluru',
+    dateText: 'Wed, 15 Apr, 2026',
+    timeText: '7:30 PM IST',
+    iso: istToUtcIso(2026, 4, 15, 19, 30),
+  },
+  {
+    team: 'RCB',
+    opponent: 'DC',
+    label: 'RCB vs DC',
+    venue: 'M. Chinnaswamy Stadium',
+    city: 'Bengaluru',
+    dateText: 'Sat, 18 Apr, 2026',
+    timeText: '3:30 PM IST',
+    iso: istToUtcIso(2026, 4, 18, 15, 30),
+  },
+  {
+    team: 'RCB',
+    opponent: 'GT',
+    label: 'RCB vs GT',
+    venue: 'M. Chinnaswamy Stadium',
+    city: 'Bengaluru',
+    dateText: 'Fri, 24 Apr, 2026',
+    timeText: '7:30 PM IST',
+    iso: istToUtcIso(2026, 4, 24, 19, 30),
+  },
+  {
+    team: 'DC',
+    opponent: 'RCB',
+    label: 'DC vs RCB',
+    venue: 'Arun Jaitley Stadium',
+    city: 'Delhi',
+    dateText: 'Mon, 27 Apr, 2026',
+    timeText: '7:30 PM IST',
+    iso: istToUtcIso(2026, 4, 27, 19, 30),
+  },
+]
+
+function isRcbQuery(input: string) {
   const lower = input.toLowerCase()
 
-  if (
+  return (
     lower.includes('next rcb match') ||
     lower.includes('when is next rcb match') ||
-    lower.includes('when is the next rcb match')
-  ) {
-    return `RCB's next match is RCB vs GT on Fri, 24 Apr, 2026.\n\nWant me to set a reminder for it?`
-  }
+    lower.includes('when is the next rcb match') ||
+    lower.includes('rcb next match') ||
+    lower.includes('royal challengers next match')
+  )
+}
 
-  return null
+function getNextRcbMatch() {
+  const now = new Date()
+
+  return RCB_2026_MATCHES.find((match) => {
+    return new Date(match.iso).getTime() > now.getTime()
+  }) || null
+}
+
+function buildNoMatchReply() {
+  return `🏏 *RCB match update*
+
+I don’t see another upcoming RCB fixture in the saved schedule.
+
+I can still check live cricket updates if you ask:
+“latest RCB news” or “IPL points table”.`
+}
+
+function buildReply(match: Match) {
+  return `🏏 *Next RCB match*
+
+${match.label}
+${match.dateText}
+${match.timeText}
+${match.venue}, ${match.city}
+
+Reply “Yes” and I’ll remind you 1 hour before.`
+}
+
+export function buildSportsReply(input: string): string | null {
+  if (!isRcbQuery(input)) return null
+
+  const match = getNextRcbMatch()
+
+  if (!match) return buildNoMatchReply()
+
+  return buildReply(match)
 }
 
 export async function buildSportsReplyWithState(
   input: string,
   telegramId: number
 ): Promise<SportsReplyResult | null> {
-  const lower = input.toLowerCase()
+  if (!isRcbQuery(input)) return null
 
-  if (
-    lower.includes('next rcb match') ||
-    lower.includes('when is next rcb match') ||
-    lower.includes('when is the next rcb match')
-  ) {
-    const matchIso = toIsoWithIst('24 Apr, 2026', '7:30 PM')
-    if (matchIso) {
-      await saveFollowupState(telegramId, 'sports_match', {
-        team: 'RCB',
-        opponent: 'GT',
-        match_label: 'RCB vs GT',
-        match_time_iso: matchIso,
-      })
-    }
+  const match = getNextRcbMatch()
 
+  if (!match) {
     return {
-      reply: `RCB's next match is RCB vs GT on Fri, 24 Apr, 2026.\n\nWant me to set a reminder for it?`,
+      reply: buildNoMatchReply(),
     }
   }
 
-  return null
+  await saveFollowupState(telegramId, 'sports_match', {
+    team: 'RCB',
+    opponent: match.opponent,
+    match_label: match.label,
+    match_time_iso: match.iso,
+  })
+
+  return {
+    reply: buildReply(match),
+  }
 }
