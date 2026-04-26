@@ -1,4 +1,4 @@
-﻿export type PremiumWhatsappIntent =
+export type PremiumWhatsappIntent =
   | 'welcome_menu'
   | 'help_menu'
   | 'upgrade_plan'
@@ -20,113 +20,135 @@ export function buildWelcomeReply(userName?: string) {
 
   return `Hey ${name}, I’m *AskGogo* 👋
 
-Your personal AI assistant on WhatsApp.
+Your AI assistant inside WhatsApp.
+
+Use me by *typing or sending a voice note*.
 
 I can help you with:
 • reminders
+• calendar planning
+• today briefing
 • weather
-• unread emails
-• morning briefing
 • sports updates
-• quick reply drafts
+• lists and notes
+• quick drafts
+• web search
 
 Try:
-• Remind me in 10 mins to call Rahul
-• Bangalore weather tomorrow
-• Show my unread emails
-• Morning briefing
-• Next RCB match
+1. Send a voice note: “Remind me in 10 mins to call Rahul”
+2. Connect calendar
+3. Today
+4. Show my reminders
+5. Bangalore weather tomorrow
 
-I’ll keep it short, useful and WhatsApp-native.`
+Built for people who live on WhatsApp.`
 }
 
 export function buildHelpReply() {
   return `✨ *AskGogo Menu*
 
-Here’s what you can ask me:
+🎙️ *Voice first*
+Send a voice note in English, Hindi, Hinglish, Kannada, Tamil, Telugu or Malayalam.
 
 ⏰ *Reminders*
 • Remind me in 20 mins to call Rahul
-• Remind me tomorrow at 9 am
+• Show my reminders
+• Cancel water reminder
 • Snooze 10 mins
 • Move it to 8 pm
+• Done
 
-📬 *Email*
-• Show my unread emails
-• Summarize my latest emails
-• Reply to the latest mail
+📅 *Calendar*
+• Connect calendar
+• Today
+• What’s on my calendar today?
+• Add meeting tomorrow at 4 pm
 
 ☀️ *Daily*
 • Morning briefing
 • Bangalore weather tomorrow
 • Next RCB match
 
-🚀 *Beta*
+🚀 *Founder Beta*
 • Pricing
-• Invite friends
+• Usage
 • Notify me
+• Invite friends
 
-Type any command naturally.`
+Type or speak naturally. I’ll understand.`
 }
 
 export function buildUpgradeReply() {
-  return `🚀 *AskGogo Founder Beta*
+  return `💚 *AskGogo Pricing*
 
-You’re using early access right now.
+Starting at ₹99/month — less than a cup of chai/day.
 
-Payments are not live yet because Razorpay verification is still in progress.
+*Free Beta*
+₹0
+• 25 AI actions/month
+• 3 active reminders
+• 5 voice notes/month
 
-Until then:
-• You can continue using the free beta
-• Your reminders will keep working
-• Gmail and briefing features can be tested
-• Early users will get founder pricing when payments go live
+*Lite*
+₹99/month
+• 60 AI actions/month
+• 5 active reminders
+• 10 voice notes/month
+• Weather, sports, lists and notes
 
-Expected plans:
-• Starter — ₹299/month
-• Pro — ₹999/month
+*Starter*
+₹149/month
+• 100 AI actions/month
+• 10 active reminders
+• 30 voice notes/month
+• Basic memory
 
-Want early access to the founder offer?
+*Pro — most popular*
+₹299/month
+• 250 AI actions/month
+• Calendar integration
+• Today briefing
+• Web search
 
-Reply:
-*notify me*
+*Founder Pro*
+₹499/month
+• 600 AI actions/month
+• Priority access
+• Calendar power features
 
-Want to invite friends?
+Razorpay verification is in progress, so checkout is not live yet.
 
-Reply:
-*invite friends*`
+Reply *notify me* to get early founder pricing.`
 }
 
 export function buildNotifyMeReply(userName?: string) {
   const name = cleanName(userName)
 
-  return `✅ *You’re on the founder list, ${name}*
+  return `✅ *You’re on the founder pricing list, ${name}*
 
-I’ll remember that you’re interested in early access pricing.
+I’ll remember that you want early access when paid plans go live.
 
-When payments go live, you’ll be among the first to get the founder offer.
+Plans will start at *₹99/month* — less than a cup of chai/day.
 
-Meanwhile, keep testing:
-• reminders
-• unread emails
-• morning briefing
-• weather
-• sports alerts`
+Want priority Founder Beta access?
+Invite 3 friends who live on WhatsApp.
+
+Reply *invite friends* and I’ll give you a ready-to-send message.`
 }
 
 export function buildReferralReply() {
-  return `🎁 *Invite friends to AskGogo*
+  return `🎁 *Invite 3 friends to AskGogo*
 
-Share this with people who live on WhatsApp and need a personal AI assistant.
+Copy and send this:
 
-Copy and send:
+“I’ve been testing AskGogo — an AI assistant on WhatsApp for reminders, calendar planning, weather, sports updates and daily briefings.
 
-“I’ve been testing AskGogo — an AI assistant on WhatsApp for reminders, email help, weather, sports updates and morning briefings.
+You can type or send voice notes in Indian languages.
 
 Try it here:
 ${ASK_GOGO_WHATSAPP_LINK}”
 
-Founder beta users will get priority access when paid plans go live.`
+Founder beta users who invite friends will get priority early pricing when Razorpay goes live.`
 }
 
 export function buildPremiumWhatsappReply(
