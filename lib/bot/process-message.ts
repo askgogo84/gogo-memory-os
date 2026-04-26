@@ -1,6 +1,6 @@
-﻿import { askClaude, askClaudeWithContext, type Message } from '@/lib/claude'
+import { askClaude, askClaudeWithContext, type Message } from '@/lib/claude'
 import { addToList, checkItem, clearList, formatList, getAllLists, getList } from '@/lib/lists'
-import { checkAndIncrementLimit } from '@/lib/limits'
+import { checkAndIncrementLimit, getUsageStatusReply } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAuthUrl } from '@/lib/google-calendar'
 import { fetchLatestEmails, fetchUnreadEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
@@ -121,6 +121,19 @@ function extractListNameFromText(text: string): string {
   return 'list'
 }
 
+function isUsageCommand(text: string) {
+  const lower = (text || '').toLowerCase().trim()
+
+  return (
+    lower === 'usage' ||
+    lower === 'my usage' ||
+    lower === 'usage status' ||
+    lower === 'plan usage' ||
+    lower === 'limits' ||
+    lower === 'my limits'
+  )
+}
+
 export async function processIncomingMessage(params: ProcessIncomingParams): Promise<ProcessIncomingResult> {
   console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
   console.log('PIM:before resolveUser')
@@ -134,6 +147,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const incomingText = (params.text || '').trim()
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
+
+  if (isUsageCommand(incomingText)) {
+    const reply = await getUsageStatusReply(resolvedUser.telegramId)
+    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
 
   // ASKGOGO_PREMIUM_WHATSAPP_HANDLER
   if (
@@ -535,15 +555,3 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     resolvedUser,
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
