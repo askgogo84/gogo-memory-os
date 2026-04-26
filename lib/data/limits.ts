@@ -371,6 +371,32 @@ export async function checkAndIncrementLimit(telegramId: number): Promise<{
   }
 }
 
+export async function getUsageStatusReply(telegramId: number) {
+  const { user, tier, plan } = await getUserPlan(telegramId)
+  const monthKey = currentMonthKey()
+
+  const monthlyActionsUsed = user?.daily_count || 0
+  const activeReminders = await getActiveReminderCount(telegramId)
+  const voiceUsed = await countUsageFromMemories(telegramId, 'voice_note', monthKey)
+  const webUsed = await countUsageFromMemories(telegramId, 'web_search', monthKey)
+  const calendarUsed = await countUsageFromMemories(telegramId, 'calendar_event', monthKey)
+
+  return (
+    `📊 *Your AskGogo usage*\n\n` +
+    `Plan: *${plan.label}*\n\n` +
+    `AI actions: ${monthlyActionsUsed} / ${plan.monthlyActions} this month\n` +
+    `Active reminders: ${activeReminders} / ${plan.activeReminders}\n` +
+    `Voice notes: ${voiceUsed} / ${plan.voiceNotesMonthly} this month\n` +
+    `Calendar events: ${calendarUsed} / ${plan.calendarEventsMonthly} this month\n` +
+    `Web searches: ${webUsed} / ${plan.webSearchesMonthly} this month\n\n` +
+    `Current beta plans:\n` +
+    `• Starter — ₹149/month\n` +
+    `• Pro — ₹299/month\n` +
+    `• Founder Pro — ₹499/month\n\n` +
+    `Reply *pricing* to see plan details.`
+  )
+}
+
 export function getPlanLimits() {
   return LIMITS
 }
