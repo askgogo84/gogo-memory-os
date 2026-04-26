@@ -11,6 +11,7 @@ import { buildNotesReply, isNotesCommand } from '@/lib/bot/handlers/notes-contro
 import { buildPaymentIntentReply, isPaymentIntentCommand } from '@/lib/bot/handlers/payment-intent'
 import { buildAdminWhatsAppReply, isAdminCommand, isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
 import { buildFirstValueReferralNudge } from '@/lib/bot/handlers/first-value-nudge'
+import { buildMeetingNotesReply, shouldTreatAudioAsMeeting } from '@/lib/bot/handlers/meeting-notes'
 import {
   buildReferralUnlockReply,
   buildReferralWelcomeNote,
@@ -106,10 +107,7 @@ export async function GET(req: NextRequest) {
   const token = url.searchParams.get('hub.verify_token')
   const challenge = url.searchParams.get('hub.challenge')
 
-  if (mode === 'subscribe' && token && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-    return new NextResponse(challenge || 'OK', { status: 200 })
-  }
-
+  if (mode === 'subscribe' && token && token === process.env.WHATSAPP_VERIFY_TOKEN) return new NextResponse(challenge || 'OK', { status: 200 })
   return new NextResponse('Forbidden', { status: 403 })
 }
 
@@ -125,10 +123,7 @@ export async function POST(req: NextRequest) {
     console.log('WhatsApp inbound:', { fromRaw, from, profileName, numMedia, messageSid: inboundMessageSid, body: String(formData.get('Body') || ''), mediaType: String(formData.get('MediaContentType0') || '') })
 
     if (!from) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
-
-    if (inboundMessageSid) {
-      sendWhatsAppTyping(inboundMessageSid).catch((error: any) => console.error('WHATSAPP_TYPING_BACKGROUND_FAILED:', error?.message || error))
-    }
+    if (inboundMessageSid) sendWhatsAppTyping(inboundMessageSid).catch((error: any) => console.error('WHATSAPP_TYPING_BACKGROUND_FAILED:', error?.message || error))
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
     const bodyText = String(formData.get('Body') || '').trim()
@@ -138,7 +133,6 @@ export async function POST(req: NextRequest) {
         await sendWhatsAppMessage(from, `Admin access is restricted.`)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
-
       const reply = await buildAdminWhatsAppReply(bodyText)
       await saveConversation(resolvedUser.telegramId, 'user', bodyText)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -177,6 +171,20 @@ export async function POST(req: NextRequest) {
 
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nSend a short voice note, type your request, or upload a photo/screenshot of your notes.`)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    if (incoming.wasVoice && shouldTreatAudioAsMeeting({ caption: bodyText, transcript: originalText })) {
+      try {
+        await sendWhatsAppMessage(from, '🧘 Transcribing your meeting…')
+        const reply = await buildMeetingNotesReply({ telegramId: resolvedUser.telegramId, transcript: originalText, caption: bodyText })
+        await saveConversation(resolvedUser.telegramId, 'user', `[meeting audio] ${bodyText || originalText.slice(0, 300)}`)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[meeting audio]', reply })
+      } catch (error: any) {
+        console.error('WHATSAPP_MEETING_NOTES_FAILED:', error?.message || error)
+        await sendWhatsAppMessage(from, `I couldn’t summarize that meeting audio clearly.\n\nTry a shorter recording, or add caption: *meeting notes* when sending the audio.`)
+      }
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
