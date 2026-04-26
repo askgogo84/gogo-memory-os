@@ -107,7 +107,10 @@ function isDoneCommand(input: string) {
     lower === 'completed' ||
     lower === 'complete' ||
     lower === 'finished' ||
-    lower === 'mark as done'
+    lower === 'mark as done' ||
+    /^done\s+\d+\b/i.test(lower) ||
+    /^complete\s+\d+\b/i.test(lower) ||
+    /^mark\s+\d+\s+done\b/i.test(lower)
   )
 }
 
@@ -150,6 +153,16 @@ function isSnoozeOrMoveCommand(input: string) {
     /^change it to\b/i.test(lower) ||
     lower === 'tomorrow instead'
   )
+}
+
+function extractReminderIndex(input: string) {
+  const lower = normalizeNumberWords(input.toLowerCase().trim())
+  const match = lower.match(/\b(\d+)\b/)
+  if (!match) return null
+
+  const index = parseInt(match[1], 10) - 1
+  if (Number.isNaN(index) || index < 0) return null
+  return index
 }
 
 function extractCancelQuery(input: string) {
@@ -231,12 +244,21 @@ export async function showActiveReminders(telegramId: number) {
         return `${idx + 1}. ${cleanReminderName(reminder.message)} — ${formatWhen(reminder.remind_at)}`
       })
       .join('\n') +
-    `\n\nYou can say:\n` +
+    `\n\nReply with:\n` +
     `• cancel 1\n` +
-    `• cancel water reminder\n` +
-    `• done\n` +
-    `• snooze 10 mins`
+    `• done 2\n` +
+    `• snooze 3 for 10 mins\n` +
+    `• cancel water reminder`
   )
+}
+
+async function updateReminderSent(reminder: any, sent: boolean) {
+  const { error } = await supabaseAdmin
+    .from('reminders')
+    .update({ sent })
+    .eq('id', reminder.id)
+
+  return !error
 }
 
 export async function cancelReminder(telegramId: number, input: string) {
@@ -247,12 +269,10 @@ export async function cancelReminder(telegramId: number, input: string) {
   }
 
   const lower = normalizeNumberWords(input.toLowerCase().trim())
-  const numberMatch = lower.match(/(?:cancel|delete|remove|clear|stop)\s+(\d+)\b/i)
-
   let reminder: any | null = null
 
-  if (numberMatch) {
-    const index = parseInt(numberMatch[1], 10) - 1
+  const index = extractReminderIndex(lower)
+  if (index !== null) {
     reminder = reminders[index] || null
   }
 
@@ -273,31 +293,33 @@ export async function cancelReminder(telegramId: number, input: string) {
     )
   }
 
-  const { error } = await supabaseAdmin
-    .from('reminders')
-    .update({ sent: true })
-    .eq('id', reminder.id)
+  const ok = await updateReminderSent(reminder, true)
 
-  if (error) {
+  if (!ok) {
     return `I couldn’t cancel that reminder right now.`
   }
 
   return `🗑️ *Reminder cancelled*\n\n${cleanReminderName(reminder.message)}\n${formatWhen(reminder.remind_at)}`
 }
 
-export async function markLatestReminderDone(telegramId: number) {
-  const reminder = await getLatestActionableReminder(telegramId)
+export async function markLatestReminderDone(telegramId: number, input?: string) {
+  const lower = normalizeNumberWords((input || '').toLowerCase().trim())
+  const reminders = await getActiveReminders(telegramId, 20)
+  const index = extractReminderIndex(lower)
+
+  let reminder = index !== null ? reminders[index] : null
+
+  if (!reminder) {
+    reminder = await getLatestActionableReminder(telegramId)
+  }
 
   if (!reminder) {
     return `No recent reminder found.`
   }
 
-  const { error } = await supabaseAdmin
-    .from('reminders')
-    .update({ sent: true })
-    .eq('id', reminder.id)
+  const ok = await updateReminderSent(reminder, true)
 
-  if (error) {
+  if (!ok) {
     return `I couldn't mark that reminder done right now.`
   }
 
@@ -316,22 +338,34 @@ export async function editLatestReminder(telegramId: number, input: string) {
   }
 
   if (isDoneCommand(lower)) {
-    return await markLatestReminderDone(telegramId)
+    return await markLatestReminderDone(telegramId, lower)
   }
 
-  let reminder = await getLatestPendingReminder(telegramId)
+  let reminder: any | null = null
+  const reminderIndex = extractReminderIndex(lower)
+
+  if (reminderIndex !== null && (isSnoozeOrMoveCommand(lower) || /^snooze\s+\d+\s+for\b/i.test(lower))) {
+    const reminders = await getActiveReminders(telegramId, 20)
+    reminder = reminders[reminderIndex] || null
+  }
+
+  if (!reminder) {
+    reminder = await getLatestPendingReminder(telegramId)
+  }
 
   if (!reminder && isSnoozeOrMoveCommand(lower)) {
     reminder = await getLatestActionableReminder(telegramId)
   }
 
   if (!reminder) {
-    return `No recent reminder found.\n\nCreate one first, then say:\n• show my reminders\n• cancel 1\n• snooze 10 mins\n• move it to 8 pm\n• done`
+    return `No recent reminder found.\n\nCreate one first, then say:\n• show my reminders\n• cancel 1\n• done 2\n• snooze 3 for 10 mins\n• move it to 8 pm`
   }
 
   let nextTime = new Date(reminder.remind_at)
 
-  const snoozeMatch = lower.match(/snooze\s+(?:for\s+)?(\d+)\s*(minute|minutes|min|mins|hour|hours)/i)
+  const indexedSnoozeMatch = lower.match(/snooze\s+\d+\s+(?:for\s+)?(\d+)\s*(minute|minutes|min|mins|hour|hours)/i)
+  const regularSnoozeMatch = lower.match(/snooze\s+(?:for\s+)?(\d+)\s*(minute|minutes|min|mins|hour|hours)/i)
+  const snoozeMatch = indexedSnoozeMatch || regularSnoozeMatch
 
   if (snoozeMatch) {
     const value = parseInt(snoozeMatch[1], 10)
@@ -379,7 +413,7 @@ export async function editLatestReminder(telegramId: number, input: string) {
       time.minute
     )
   } else {
-    return `I couldn't understand how to update that reminder.\n\nTry:\n• show my reminders\n• cancel 1\n• cancel water reminder\n• snooze 10 mins\n• snooze for 5 minutes\n• move it to 8 pm\n• done`
+    return `I couldn't understand how to update that reminder.\n\nTry:\n• show my reminders\n• cancel 1\n• cancel water reminder\n• done 2\n• snooze 3 for 10 mins\n• move it to 8 pm`
   }
 
   const { error } = await supabaseAdmin
