@@ -8,6 +8,7 @@ import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direc
 import { normalizeVoicePromptForBot } from '@/lib/bot/handlers/voice-normalizer'
 import { buildMemoryControlReply, isMemoryControlCommand } from '@/lib/bot/handlers/memory-control'
 import { buildNotesReply, isNotesCommand } from '@/lib/bot/handlers/notes-control'
+import { buildPaymentIntentReply, isPaymentIntentCommand } from '@/lib/bot/handlers/payment-intent'
 import {
   buildReferralUnlockReply,
   buildReferralWelcomeNote,
@@ -171,6 +172,14 @@ export async function POST(req: NextRequest) {
 
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nSend a short voice note, type your request, or upload a photo/screenshot of your notes.`)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    if (isPaymentIntentCommand(text)) {
+      const reply = await buildPaymentIntentReply({ telegramId: resolvedUser.telegramId, text, userName: resolvedUser.name })
+      await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
