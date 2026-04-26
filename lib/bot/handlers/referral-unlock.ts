@@ -4,8 +4,12 @@ const ASK_GOGO_WHATSAPP_LINK =
   process.env.ASK_GOGO_WHATSAPP_JOIN_LINK ||
   'https://wa.me/15797006612?text=Hi%20AskGogo'
 
+function cleanReferralId(value: number | string) {
+  return String(value).replace(/\D/g, '').slice(-10)
+}
+
 function referralCodeForTelegramId(telegramId: number) {
-  return `GOGO-${telegramId}`
+  return `GOGO-${cleanReferralId(telegramId)}`
 }
 
 function buildReferralLink(code: string) {
@@ -15,15 +19,28 @@ function buildReferralLink(code: string) {
 }
 
 function extractReferralCode(text: string) {
-  const match = (text || '').match(/\bGOGO-(\d+)\b/i)
+  const match = (text || '').match(/\bGOGO-?(\d+)\b/i)
   if (!match) return null
-  return `GOGO-${match[1]}`
+  return `GOGO-${cleanReferralId(match[1])}`
 }
 
-function telegramIdFromReferralCode(code: string) {
-  const match = code.match(/GOGO-(\d+)/i)
+function referralIdFromCode(code: string) {
+  const match = code.match(/GOGO-?(\d+)/i)
   if (!match) return null
-  return Number(match[1])
+  return cleanReferralId(match[1])
+}
+
+async function findUserByReferralCode(code: string) {
+  const referralId = referralIdFromCode(code)
+  if (!referralId) return null
+
+  const { data } = await supabaseAdmin
+    .from('users')
+    .select('telegram_id, whatsapp_id')
+    .ilike('whatsapp_id', `%${referralId}%`)
+    .limit(1)
+
+  return data?.[0] || null
 }
 
 export function isReferralCommand(text: string) {
@@ -52,15 +69,13 @@ export async function recordReferralJoinFromText(params: {
   const code = extractReferralCode(params.text)
   if (!code) return null
 
-  const referrerTelegramId = telegramIdFromReferralCode(code)
-  if (!referrerTelegramId) return null
+  const referrer = await findUserByReferralCode(code)
+  if (!referrer?.telegram_id) return null
+
+  const referrerTelegramId = Number(referrer.telegram_id)
 
   if (referrerTelegramId === params.referredTelegramId) {
-    return {
-      code,
-      saved: false,
-      reason: 'self_referral',
-    }
+    return { code, saved: false, reason: 'self_referral' }
   }
 
   const uniqueKey = `ASKGOGO_REFERRAL_JOINED:${code}:${params.referredExternalId}`
@@ -72,13 +87,7 @@ export async function recordReferralJoinFromText(params: {
     .like('content', `${uniqueKey}%`)
     .limit(1)
 
-  if (existing?.length) {
-    return {
-      code,
-      saved: false,
-      reason: 'already_recorded',
-    }
-  }
+  if (existing?.length) return { code, saved: false, reason: 'already_recorded' }
 
   await supabaseAdmin.from('memories').insert({
     telegram_id: referrerTelegramId,
@@ -97,11 +106,7 @@ export async function recordReferralJoinFromText(params: {
     content: `ASKGOGO_REFERRED_BY:${code}`,
   })
 
-  return {
-    code,
-    saved: true,
-    reason: 'recorded',
-  }
+  return { code, saved: true, reason: 'recorded' }
 }
 
 async function getReferralCount(telegramId: number) {
