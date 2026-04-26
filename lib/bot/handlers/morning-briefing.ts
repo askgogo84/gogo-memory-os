@@ -1,4 +1,4 @@
-﻿import { supabaseAdmin } from '@/lib/supabase-admin'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchWeatherForecast, formatCurrentWeather } from '@/lib/services/weather'
 import { getTodayEvents, refreshAccessToken } from '@/lib/google-calendar'
 
@@ -44,6 +44,20 @@ function firstName(name?: string) {
   return clean.split(' ')[0]
 }
 
+function uniqueReminders(reminders: any[]) {
+  const seen = new Set<string>()
+  const output: any[] = []
+
+  for (const reminder of reminders) {
+    const key = `${cleanReminderText(reminder.message).toLowerCase()}|${formatReminderTime(reminder.remind_at)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    output.push(reminder)
+  }
+
+  return output
+}
+
 async function getTodaysReminders(telegramId: number) {
   const { data } = await supabaseAdmin
     .from('reminders')
@@ -51,11 +65,11 @@ async function getTodaysReminders(telegramId: number) {
     .eq('telegram_id', telegramId)
     .eq('sent', false)
     .order('remind_at', { ascending: true })
-    .limit(20)
+    .limit(30)
 
   const today = todayDateKey()
 
-  return (data || []).filter((r: any) => {
+  const reminders = (data || []).filter((r: any) => {
     const d = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Kolkata',
       year: 'numeric',
@@ -65,6 +79,8 @@ async function getTodaysReminders(telegramId: number) {
 
     return d === today
   })
+
+  return uniqueReminders(reminders)
 }
 
 async function getCalendarState(telegramId: number) {
@@ -161,14 +177,18 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
   reply += `\n\n⏰ *Reminders*\n`
   if (reminders.length) {
     reply += reminders
-      .slice(0, 5)
+      .slice(0, 7)
       .map((r: any) => `• ${cleanReminderText(r.message)} — ${formatReminderTime(r.remind_at)}`)
       .join('\n')
   } else {
     reply += `No reminders lined up for today.`
   }
 
-  reply += `\n\n*Next actions*\n• connect calendar\n• set a reminder\n• next RCB match`
+  const nextActions = calendarState.connected
+    ? ['add meeting tomorrow at 4 pm', 'show my reminders', 'plan my day']
+    : ['connect calendar', 'set a reminder', 'next RCB match']
+
+  reply += `\n\n*Next actions*\n${nextActions.map((x) => `• ${x}`).join('\n')}`
 
   return reply
 }
