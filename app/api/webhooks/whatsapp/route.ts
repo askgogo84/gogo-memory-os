@@ -14,7 +14,9 @@ import { buildFirstValueReferralNudge } from '@/lib/bot/handlers/first-value-nud
 import {
   buildReferralUnlockReply,
   buildReferralWelcomeNote,
+  buildShareMyWinReply,
   isReferralCommand,
+  isShareMyWinCommand,
   recordReferralJoinFromText,
 } from '@/lib/bot/handlers/referral-unlock'
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
@@ -196,6 +198,14 @@ export async function POST(req: NextRequest) {
     }
 
     const referralResult = await recordReferralJoinFromText({ text, referredTelegramId: resolvedUser.telegramId, referredExternalId: from, referredName: profileName })
+
+    if (isShareMyWinCommand(text)) {
+      const reply = await buildShareMyWinReply(resolvedUser.telegramId)
+      await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
 
     if (isReferralCommand(text)) {
       const reply = await buildReferralUnlockReply(resolvedUser.telegramId)
