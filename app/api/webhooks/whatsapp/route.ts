@@ -6,6 +6,12 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
 import { normalizeVoicePromptForBot } from '@/lib/bot/handlers/voice-normalizer'
 import { buildMemoryControlReply, isMemoryControlCommand } from '@/lib/bot/handlers/memory-control'
+import {
+  buildReferralUnlockReply,
+  buildReferralWelcomeNote,
+  isReferralCommand,
+  recordReferralJoinFromText,
+} from '@/lib/bot/handlers/referral-unlock'
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import {
   isAudioContentType,
@@ -45,9 +51,7 @@ async function getTextFromIncomingWhatsApp(formData: FormData) {
   const mediaUrl = String(formData.get('MediaUrl0') || '')
   const contentType = String(formData.get('MediaContentType0') || '')
 
-  if (!mediaUrl || !isAudioContentType(contentType)) {
-    return { text: '', wasVoice: false, voiceTranscript: null as string | null }
-  }
+  if (!mediaUrl || !isAudioContentType(contentType)) return { text: '', wasVoice: false, voiceTranscript: null as string | null }
 
   const transcript = await transcribeTwilioVoiceNote({ mediaUrl, contentType })
   return { text: transcript, wasVoice: true, voiceTranscript: transcript }
@@ -103,7 +107,6 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
-
     const fromRaw = String(formData.get('From') || '')
     const profileName = String(formData.get('ProfileName') || 'Friend')
     const numMedia = Number(formData.get('NumMedia') || '0')
@@ -147,6 +150,29 @@ export async function POST(req: NextRequest) {
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
 
+    const referralResult = await recordReferralJoinFromText({
+      text,
+      referredTelegramId: resolvedUser.telegramId,
+      referredExternalId: from,
+      referredName: profileName,
+    })
+
+    if (isReferralCommand(text)) {
+      const reply = await buildReferralUnlockReply(resolvedUser.telegramId)
+      await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    const referralWelcome = await buildReferralWelcomeNote(text)
+    if (referralWelcome && referralResult?.saved) {
+      await saveConversation(resolvedUser.telegramId, 'user', text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', referralWelcome)
+      await sendWhatsAppMessage(from, referralWelcome)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     if (isMemoryControlCommand(text)) {
       const reply = await buildMemoryControlReply(resolvedUser.telegramId, text)
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
@@ -168,13 +194,10 @@ export async function POST(req: NextRequest) {
 
     if (directReply) {
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
-
       if (directReply.saveMemory) await saveMemory(resolvedUser.telegramId, directReply.saveMemory)
-
       const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(directReply.text, originalText) : directReply.text
       await saveConversation(resolvedUser.telegramId, 'assistant', finalReply)
       await sendWhatsAppMessage(from, finalReply)
-
       if (directReply.mediaUrl) {
         try {
           await sendWhatsAppMediaMessage(from, ' ', directReply.mediaUrl)
@@ -182,7 +205,6 @@ export async function POST(req: NextRequest) {
           console.error('WHATSAPP_PREMIUM_MEDIA_FAILED:', { mediaUrl: directReply.mediaUrl, error: mediaError?.message || mediaError })
         }
       }
-
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
