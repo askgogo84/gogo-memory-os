@@ -1,4 +1,4 @@
-﻿import OpenAI from 'openai'
+import OpenAI from 'openai'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -69,7 +69,7 @@ export async function transcribeTwilioVoiceNote(params: {
     file,
     response_format: 'json',
     prompt:
-      'Transcribe WhatsApp voice notes accurately. The user may speak English, Hindi, Hinglish, Kannada, Tamil, Telugu, Malayalam, or mixed Indian languages. Keep reminder phrases, times, names, places, and user intent clear.',
+      'Transcribe WhatsApp voice notes accurately. The user may speak English, Hindi, Hinglish, Kannada, Tamil, Telugu, Malayalam, or mixed Indian languages. Preserve Indian names, product names, startup terms, and brands exactly when possible. Important vocabulary: Razorpay, Srinivas, Goverdhan, AskGogo, WhatsApp, LinkedIn, Tipplr, ONDC, GoKhana, Digihaat, Vercel, Supabase, Google Calendar, Founder Pro, Bengaluru, Bangalore. Do not change Razorpay to Razor. Do not change Srinivas to Shini. Keep reminder phrases, times, names, places, and user intent clear.',
   })
 
   const text = (result.text || '').trim()
