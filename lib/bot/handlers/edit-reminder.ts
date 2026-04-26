@@ -98,6 +98,33 @@ function cleanReminderName(message: string) {
     .trim()
 }
 
+function semanticReminderKey(reminder: any) {
+  const text = cleanReminderName(reminder.message).toLowerCase()
+  const time = formatWhen(reminder.remind_at)
+
+  if (text.includes('top priority')) return `day-plan-priority|${time}`
+  if (text.includes('calendar') && text.includes('follow')) return `day-plan-followups|${time}`
+  if (text.includes('plan tomorrow') || text.includes('review the day') || text.includes('close pending')) {
+    return `day-plan-evening-review|${time}`
+  }
+
+  return `${text}|${time}`
+}
+
+function dedupeReminders(reminders: any[]) {
+  const seen = new Set<string>()
+  const output: any[] = []
+
+  for (const reminder of reminders) {
+    const key = semanticReminderKey(reminder)
+    if (seen.has(key)) continue
+    seen.add(key)
+    output.push(reminder)
+  }
+
+  return output
+}
+
 function isDoneCommand(input: string) {
   const lower = input.toLowerCase().trim()
 
@@ -221,7 +248,7 @@ export async function getActiveReminders(telegramId: number, limit = 10) {
     .order('remind_at', { ascending: true })
     .limit(limit)
 
-  return data || []
+  return dedupeReminders(data || [])
 }
 
 export async function showActiveReminders(telegramId: number) {
