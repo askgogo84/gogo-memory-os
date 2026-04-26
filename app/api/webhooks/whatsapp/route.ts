@@ -3,6 +3,7 @@ import { processIncomingMessage } from '@/lib/bot/process-message'
 import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { addToList } from '@/lib/lists'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
 import { normalizeVoicePromptForBot } from '@/lib/bot/handlers/voice-normalizer'
 import { buildMemoryControlReply, isMemoryControlCommand } from '@/lib/bot/handlers/memory-control'
@@ -18,6 +19,11 @@ import {
   isAudioContentType,
   transcribeTwilioVoiceNote,
 } from '@/lib/services/voice-transcription'
+import {
+  compactImageNoteForSaving,
+  isImageContentType,
+  readAndSummarizeImageNote,
+} from '@/lib/services/image-note-reader'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -128,6 +134,29 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
+
+    const firstMediaUrl = String(formData.get('MediaUrl0') || '')
+    const firstMediaType = String(formData.get('MediaContentType0') || '')
+    const bodyText = String(formData.get('Body') || '').trim()
+
+    if (numMedia > 0 && firstMediaUrl && isImageContentType(firstMediaType)) {
+      try {
+        await sendWhatsAppMessage(from, '🧘 Reading your note…')
+        const imageReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
+        const savedNote = compactImageNoteForSaving(imageReply)
+        await addToList(resolvedUser.telegramId, 'notes', [savedNote])
+        await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image note]')
+        await saveConversation(resolvedUser.telegramId, 'assistant', imageReply)
+        await sendWhatsAppMessage(from, `${imageReply}\n\n✅ Saved to *my notes*.`)
+      } catch (error: any) {
+        console.error('WHATSAPP_IMAGE_NOTE_FAILED:', error?.message || error)
+        await sendWhatsAppMessage(from, `I couldn’t read that image clearly.\n\nTry sending a clearer photo of the note, diary page, screenshot, or document.`)
+      }
+
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     let incoming
     try {
       incoming = await getTextFromIncomingWhatsApp(formData)
@@ -141,11 +170,9 @@ export async function POST(req: NextRequest) {
     const text = incoming.wasVoice ? normalizeVoicePromptForBot(originalText) : originalText
 
     if (!text) {
-      await sendWhatsAppMessage(from, `I can read text and voice notes right now.\n\nPlease send a short voice note or type your request.`)
+      await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nSend a short voice note, type your request, or upload a photo/screenshot of your notes.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
-
-    const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
 
     if (isNotesCommand(text)) {
       const reply = await buildNotesReply(resolvedUser.telegramId, text)
@@ -155,12 +182,7 @@ export async function POST(req: NextRequest) {
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
-    const referralResult = await recordReferralJoinFromText({
-      text,
-      referredTelegramId: resolvedUser.telegramId,
-      referredExternalId: from,
-      referredName: profileName,
-    })
+    const referralResult = await recordReferralJoinFromText({ text, referredTelegramId: resolvedUser.telegramId, referredExternalId: from, referredName: profileName })
 
     if (isReferralCommand(text)) {
       const reply = await buildReferralUnlockReply(resolvedUser.telegramId)
@@ -215,13 +237,7 @@ export async function POST(req: NextRequest) {
 
     await sendThinkingIfNeeded(from, text)
 
-    const result = await processIncomingMessage({
-      channel: 'whatsapp',
-      externalUserId: from,
-      text,
-      userName: profileName,
-      messageType: incoming.wasVoice ? 'voice' : 'text',
-    })
+    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text' })
 
     const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(result.text, originalText) : result.text
     await sendWhatsAppMessage(from, finalReply)
