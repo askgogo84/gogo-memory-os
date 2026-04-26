@@ -6,6 +6,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
 import { normalizeVoicePromptForBot } from '@/lib/bot/handlers/voice-normalizer'
 import { buildMemoryControlReply, isMemoryControlCommand } from '@/lib/bot/handlers/memory-control'
+import { buildNotesReply, isNotesCommand } from '@/lib/bot/handlers/notes-control'
 import {
   buildReferralUnlockReply,
   buildReferralWelcomeNote,
@@ -29,11 +30,7 @@ function emptyTwiml() {
   return `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`
 }
 
-async function saveConversation(
-  telegramId: number,
-  role: 'user' | 'assistant',
-  content: string
-) {
+async function saveConversation(telegramId: number, role: 'user' | 'assistant', content: string) {
   await supabaseAdmin.from('conversations').insert({ telegram_id: telegramId, role, content })
 }
 
@@ -149,6 +146,14 @@ export async function POST(req: NextRequest) {
     }
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
+
+    if (isNotesCommand(text)) {
+      const reply = await buildNotesReply(resolvedUser.telegramId, text)
+      await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
 
     const referralResult = await recordReferralJoinFromText({
       text,
