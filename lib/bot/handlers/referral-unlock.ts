@@ -189,6 +189,9 @@ export async function buildReferralWelcomeNote(text: string) {
     `• Plan my day\n` +
     `• My notes\n` +
     `• Bangalore weather tomorrow\n\n` +
+    `💚 *Founder beta perk*\n` +
+    `After you try it, type *invite friends*.\n` +
+    `I’ll create your own referral link. Invite 3 friends to unlock Founder Pro trial priority when paid plans go live.\n\n` +
     `You can type or send a voice note.`
   )
 }
