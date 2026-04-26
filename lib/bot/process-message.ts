@@ -21,7 +21,7 @@ import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeter
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { buildCalendarActionReply, isCalendarAction } from './handlers/calendar-actions'
-import { buildPlanMyDayReply, isPlanMyDayIntent } from './handlers/plan-my-day'
+import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -162,49 +162,24 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
-  // ASKGOGO_PREMIUM_WHATSAPP_HANDLER
-  if (
-    intent.type === 'welcome_menu' ||
-    intent.type === 'help_menu' ||
-    intent.type === 'upgrade_plan' ||
-    intent.type === 'referral_flow' ||
-    intent.type === 'notify_me'
-  ) {
-    const reply = buildPremiumWhatsappReply(intent.type, resolvedUser.name)
-
-    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
-
-    if (intent.type === 'notify_me') {
-      await saveMemory(
-        resolvedUser.telegramId,
-        'User asked to be notified for AskGogo founder pricing / paid plan launch.'
-      )
-    }
-
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-
-    return {
-      text: formatOutgoingText(params.channel, reply),
-      resolvedUser,
-    }
-  }
-
-  console.log('PIM:before limit')
-  const limit = await checkAndIncrementLimit(resolvedUser.telegramId)
-  console.log('PIM:after limit', limit)
-  if (!limit.allowed) {
-    return {
-      text: formatOutgoingText(params.channel, limit.upgradeMessage || 'Daily limit reached.'),
-      resolvedUser,
-    }
-  }
-
-  console.log('PIM:before save user message')
-  await saveConversation(resolvedUser.telegramId, 'user', incomingText)
-  console.log('PIM:after save user message')
-
   const followupYes = /^(yes|yeah|yep|haan|ok|okay)( .*)?$/i.test(incomingText)
   if (followupYes) {
+    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+
+    const latestDayPlanFollowup = await getLatestFollowupState(resolvedUser.telegramId, 'day_plan')
+
+    if (latestDayPlanFollowup?.payload?.items?.length) {
+      const reply = await createDayPlanReminders({
+        telegramId: resolvedUser.telegramId,
+        chatId: resolvedUser.telegramId,
+        whatsappTo: params.channel === 'whatsapp' ? resolvedUser.whatsappId : null,
+        items: latestDayPlanFollowup.payload.items,
+      })
+
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+
     const latestSportsFollowup = await getLatestFollowupState(resolvedUser.telegramId, 'sports_match')
 
     if (latestSportsFollowup?.payload?.match_time_iso) {
@@ -253,6 +228,47 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
   }
+
+  // ASKGOGO_PREMIUM_WHATSAPP_HANDLER
+  if (
+    intent.type === 'welcome_menu' ||
+    intent.type === 'help_menu' ||
+    intent.type === 'upgrade_plan' ||
+    intent.type === 'referral_flow' ||
+    intent.type === 'notify_me'
+  ) {
+    const reply = buildPremiumWhatsappReply(intent.type, resolvedUser.name)
+
+    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+
+    if (intent.type === 'notify_me') {
+      await saveMemory(
+        resolvedUser.telegramId,
+        'User asked to be notified for AskGogo founder pricing / paid plan launch.'
+      )
+    }
+
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+
+    return {
+      text: formatOutgoingText(params.channel, reply),
+      resolvedUser,
+    }
+  }
+
+  console.log('PIM:before limit')
+  const limit = await checkAndIncrementLimit(resolvedUser.telegramId)
+  console.log('PIM:after limit', limit)
+  if (!limit.allowed) {
+    return {
+      text: formatOutgoingText(params.channel, limit.upgradeMessage || 'Daily limit reached.'),
+      resolvedUser,
+    }
+  }
+
+  console.log('PIM:before save user message')
+  await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+  console.log('PIM:after save user message')
 
   // PIM:plan my day
   if (isPlanMyDayIntent(incomingText)) {
