@@ -1,4 +1,4 @@
-﻿export type IntentType =
+export type IntentType =
   | 'connect_gmail'
   | 'read_gmail'
   | 'email_action'
@@ -78,7 +78,14 @@ export function detectIntent(text: string): DetectedIntent {
     lower === 'notify me when payment is live' ||
     lower === 'founder offer' ||
     lower === 'founder pricing' ||
-    lower.includes('early access')
+    lower.includes('early access') ||
+    lower.includes('i want pro') ||
+    lower.includes('i want lite') ||
+    lower.includes('i want starter') ||
+    lower.includes('i want founder') ||
+    lower.includes('want paid plan') ||
+    lower.includes('want to subscribe') ||
+    lower.includes('interested in paid')
   ) {
     return { type: 'notify_me', confidence: 'high' }
   }
@@ -93,6 +100,25 @@ export function detectIntent(text: string): DetectedIntent {
     lower.includes('refer friends')
   ) {
     return { type: 'referral_flow', confidence: 'high' }
+  }
+
+  if (
+    lower === 'show reminders' ||
+    lower === 'show my reminders' ||
+    lower === 'my reminders' ||
+    lower === 'pending reminders' ||
+    lower === 'active reminders' ||
+    lower === 'list reminders' ||
+    lower === 'what are my reminders' ||
+    lower === 'what reminders do i have' ||
+    lower.includes('show pending reminders') ||
+    /^cancel\b/i.test(lower) ||
+    /^delete\b/i.test(lower) ||
+    /^remove\b/i.test(lower) ||
+    /^clear reminder\b/i.test(lower) ||
+    /^stop reminder\b/i.test(lower)
+  ) {
+    return { type: 'edit_reminder', confidence: 'high' }
   }
 
   // ASKGOGO_PREMIUM_WHATSAPP_INTENTS
