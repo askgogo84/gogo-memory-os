@@ -49,6 +49,9 @@ export function isReferralCommand(text: string) {
   return (
     lower === 'invite' ||
     lower === 'invite friends' ||
+    lower === 'invite friend' ||
+    lower === 'invite frnds' ||
+    lower === 'invite frnd' ||
     lower === 'refer' ||
     lower === 'referral' ||
     lower === 'share' ||
@@ -56,7 +59,9 @@ export function isReferralCommand(text: string) {
     lower === 'referral status' ||
     lower === 'my referral status' ||
     lower.includes('invite my friends') ||
-    lower.includes('refer friends')
+    lower.includes('invite my frnds') ||
+    lower.includes('refer friends') ||
+    lower.includes('refer frnds')
   )
 }
 
