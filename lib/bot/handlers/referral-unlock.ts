@@ -43,10 +43,24 @@ async function findUserByReferralCode(code: string) {
   return data?.[0] || null
 }
 
+export function isShareMyWinCommand(text: string) {
+  const lower = (text || '').toLowerCase().trim()
+  return (
+    lower === 'share my win' ||
+    lower === 'share win' ||
+    lower === 'my win' ||
+    lower === 'share askgogo' ||
+    lower === 'share askgogo win' ||
+    lower === 'what should i share' ||
+    lower === 'give me share message'
+  )
+}
+
 export function isReferralCommand(text: string) {
   const lower = (text || '').toLowerCase().trim()
 
   return (
+    isShareMyWinCommand(text) ||
     lower === 'invite' ||
     lower === 'invite friends' ||
     lower === 'invite friend' ||
@@ -148,6 +162,34 @@ function buildViralInviteCopy(link: string) {
     `Try it here:\n` +
     `${link}\n\n` +
     `Once it opens, just send *Hi*.”`
+  )
+}
+
+function buildShareWinCopy(link: string) {
+  return (
+    `“Small win today — I used AskGogo inside WhatsApp to reduce my mental clutter.\n\n` +
+    `I can now just send a message or voice note for:\n` +
+    `• reminders\n` +
+    `• day planning\n` +
+    `• notes\n` +
+    `• screenshots / image notes\n` +
+    `• calendar checks\n\n` +
+    `No new app. No learning curve. Just WhatsApp.\n\n` +
+    `Try the founder beta here:\n` +
+    `${link}\n\n` +
+    `Once it opens, just send *Hi*.”`
+  )
+}
+
+export async function buildShareMyWinReply(telegramId: number) {
+  const code = referralCodeForTelegramId(telegramId)
+  const link = buildReferralLink(code)
+
+  return (
+    `🚀 *Share your AskGogo win*\n\n` +
+    `Copy and post/send this to WhatsApp groups, friends, or LinkedIn comments:\n\n` +
+    buildShareWinCopy(link) +
+    `\n\nYour referral link is already included.`
   )
 }
 
