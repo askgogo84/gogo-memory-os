@@ -44,12 +44,25 @@ function firstName(name?: string) {
   return clean.split(' ')[0]
 }
 
+function semanticReminderKey(reminder: any) {
+  const text = cleanReminderText(reminder.message).toLowerCase()
+  const time = formatReminderTime(reminder.remind_at)
+
+  if (text.includes('top priority')) return `day-plan-priority|${time}`
+  if (text.includes('calendar') && text.includes('follow')) return `day-plan-followups|${time}`
+  if (text.includes('plan tomorrow') || text.includes('review the day') || text.includes('close pending')) {
+    return `day-plan-evening-review|${time}`
+  }
+
+  return `${text}|${time}`
+}
+
 function uniqueReminders(reminders: any[]) {
   const seen = new Set<string>()
   const output: any[] = []
 
   for (const reminder of reminders) {
-    const key = `${cleanReminderText(reminder.message).toLowerCase()}|${formatReminderTime(reminder.remind_at)}`
+    const key = semanticReminderKey(reminder)
     if (seen.has(key)) continue
     seen.add(key)
     output.push(reminder)
