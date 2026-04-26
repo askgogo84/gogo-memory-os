@@ -85,7 +85,22 @@ function parseTimePart(input: string): { hour: number; minute: number } | null {
   return { hour, minute }
 }
 
+function extractTaskAfterTo(input: string) {
+  const match = input.match(/\bto\s+(.+)$/i)
+  if (!match) return null
+
+  const task = match[1]
+    .replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, '')
+    .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return task || null
+}
+
 function cleanMessageText(input: string): string {
+  const taskAfterTo = extractTaskAfterTo(input)
+
   let cleaned = input
     .replace(/\bplease\b/gi, '')
     .replace(/\bkindly\b/gi, '')
@@ -109,9 +124,9 @@ function cleanMessageText(input: string): string {
     .replace(/\bevery\s+(day|daily|morning|evening|night)\b/gi, '')
     .replace(/\bdaily\b/gi, '')
     .replace(/\bevery\s+\d+\s+(minute|minutes|min|mins|hour|hours)\b/gi, '')
+    .replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
-    .replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, '')
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\bfrom\s+.+?\s+to\s+.+?(daily)?$/gi, '')
@@ -120,10 +135,18 @@ function cleanMessageText(input: string): string {
     .replace(/\s+/g, ' ')
     .trim()
 
-  cleaned = cleaned.replace(/^(to|for)\s+/i, '').trim()
+  cleaned = cleaned.replace(/^(to|for|every)\s+/i, '').trim()
   cleaned = cleaned.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim()
 
-  return cleaned || 'Reminder'
+  if ((!cleaned || cleaned === 'Reminder' || cleaned.toLowerCase().startsWith('every ')) && taskAfterTo) {
+    cleaned = taskAfterTo
+  }
+
+  if (/^every\s+to\s+/i.test(cleaned) && taskAfterTo) {
+    cleaned = taskAfterTo
+  }
+
+  return cleaned || taskAfterTo || 'Reminder'
 }
 
 function formatReminderTime(iso: string): string {
@@ -165,14 +188,9 @@ function formatReminderTime(iso: string): string {
 function nextDailyTime(time: { hour: number; minute: number }) {
   const nowIst = istNowParts()
   let targetDate = { year: nowIst.year, month: nowIst.month, day: nowIst.day }
-
   const currentMinutes = nowIst.hour * 60 + nowIst.minute
   const targetMinutes = time.hour * 60 + time.minute
-
-  if (targetMinutes <= currentMinutes) {
-    targetDate = addIstDays(nowIst, 1)
-  }
-
+  if (targetMinutes <= currentMinutes) targetDate = addIstDays(nowIst, 1)
   return istWallTimeToUtcDate(targetDate.year, targetDate.month, targetDate.day, time.hour, time.minute)
 }
 
@@ -183,7 +201,6 @@ function parseRelativeReminder(text: string): ParsedReminder {
   const value = parseInt(match[1], 10)
   const unit = match[2].toLowerCase()
   const when = new Date()
-
   if (unit.startsWith('min')) when.setMinutes(when.getMinutes() + value)
   else if (unit.startsWith('hour')) when.setHours(when.getHours() + value)
   else if (unit.startsWith('day')) when.setDate(when.getDate() + value)
@@ -193,17 +210,10 @@ function parseRelativeReminder(text: string): ParsedReminder {
 
 function parseDailyRecurring(text: string): ParsedReminder {
   const lower = text.toLowerCase()
-  const isDaily =
-    /\bevery\s+day\b/i.test(lower) ||
-    /\bdaily\b/i.test(lower) ||
-    /\bevery\s+morning\b/i.test(lower) ||
-    /\bevery\s+evening\b/i.test(lower) ||
-    /\bevery\s+night\b/i.test(lower)
-
+  const isDaily = /\bevery\s+day\b/i.test(lower) || /\bdaily\b/i.test(lower) || /\bevery\s+morning\b/i.test(lower) || /\bevery\s+evening\b/i.test(lower) || /\bevery\s+night\b/i.test(lower)
   if (!isDaily) return null
 
   let time = parseTimePart(text)
-
   if (!time) {
     if (/every\s+morning/i.test(lower)) time = { hour: 9, minute: 0 }
     else if (/every\s+evening/i.test(lower)) time = { hour: 18, minute: 0 }
@@ -212,7 +222,6 @@ function parseDailyRecurring(text: string): ParsedReminder {
   }
 
   const when = nextDailyTime(time)
-
   return {
     kind: 'recurring',
     remindAtIso: when.toISOString(),
@@ -228,7 +237,6 @@ function parseEveryNRecurring(text: string): ParsedReminder {
   const value = parseInt(match[1], 10)
   const unit = match[2].toLowerCase()
   const when = new Date()
-
   if (unit.startsWith('hour')) when.setHours(when.getHours() + value)
   else when.setMinutes(when.getMinutes() + value)
 
@@ -242,60 +250,47 @@ function parseEveryNRecurring(text: string): ParsedReminder {
 
 function parseTomorrowReminder(text: string): ParsedReminder {
   if (!/\b(tomorrow|tmrw|tmr)\b/i.test(text)) return null
-
   const nowIst = istNowParts()
   const nextDay = addIstDays(nowIst, 1)
   const time = parseTimePart(text) || { hour: 9, minute: 0 }
   const when = istWallTimeToUtcDate(nextDay.year, nextDay.month, nextDay.day, time.hour, time.minute)
-
   return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text) }
 }
 
 function parseSpecificWeekdayReminder(text: string): ParsedReminder {
   if (/\bevery\s+/i.test(text)) return null
-
   const match = text.match(/\b(?:on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)
   if (!match) return null
-
   const weekdayName = match[1].toLowerCase()
   const time = parseTimePart(text) || { hour: 9, minute: 0 }
   const nowIst = istNowParts()
   const targetDay = WEEKDAYS.indexOf(weekdayName)
   const currentDayIndex = WEEKDAYS.indexOf(nowIst.weekday)
-
   let delta = targetDay - currentDayIndex
   if (delta < 0) delta += 7
-
   const currentMinutes = nowIst.hour * 60 + nowIst.minute
   const targetMinutes = time.hour * 60 + time.minute
   if (delta === 0 && targetMinutes <= currentMinutes) delta = 7
-
   const targetDate = addIstDays(nowIst, delta)
   const when = istWallTimeToUtcDate(targetDate.year, targetDate.month, targetDate.day, time.hour, time.minute)
-
   return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text) }
 }
 
 function parseWeekdayRecurring(text: string): ParsedReminder {
   const match = text.match(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at\s+(.+))?/i)
   if (!match) return null
-
   const weekdayName = match[1].toLowerCase()
   const time = parseTimePart(match[2] || text) || { hour: 9, minute: 0 }
   const nowIst = istNowParts()
   const targetDay = WEEKDAYS.indexOf(weekdayName)
   const currentDayIndex = WEEKDAYS.indexOf(nowIst.weekday)
-
   let delta = targetDay - currentDayIndex
   if (delta < 0) delta += 7
-
   const currentMinutes = nowIst.hour * 60 + nowIst.minute
   const targetMinutes = time.hour * 60 + time.minute
   if (delta === 0 && targetMinutes <= currentMinutes) delta = 7
-
   const targetDate = addIstDays(nowIst, delta)
   const when = istWallTimeToUtcDate(targetDate.year, targetDate.month, targetDate.day, time.hour, time.minute)
-
   return {
     kind: 'recurring',
     remindAtIso: when.toISOString(),
@@ -307,30 +302,23 @@ function parseWeekdayRecurring(text: string): ParsedReminder {
 function parseHourlyWindowRecurring(text: string): ParsedReminder {
   const match = text.match(/\bevery\s+hour\s+from\s+(.+?)\s+to\s+(.+?)(?:\s+daily)?$/i)
   if (!match) return null
-
   const start = parseTimePart(match[1])
   const end = parseTimePart(match[2])
   if (!start || !end) return null
-
   const nowIst = istNowParts()
   let candidateHour = start.hour
   let candidateMinute = start.minute
-
   if (nowIst.hour > start.hour || (nowIst.hour === start.hour && nowIst.minute >= start.minute)) {
     candidateHour = nowIst.minute < start.minute ? nowIst.hour : nowIst.hour + 1
     candidateMinute = start.minute
   }
-
   let targetDate = { year: nowIst.year, month: nowIst.month, day: nowIst.day }
-
   if (candidateHour > end.hour || (candidateHour === end.hour && candidateMinute > end.minute)) {
     targetDate = addIstDays(nowIst, 1)
     candidateHour = start.hour
     candidateMinute = start.minute
   }
-
   const when = istWallTimeToUtcDate(targetDate.year, targetDate.month, targetDate.day, candidateHour, candidateMinute)
-
   return {
     kind: 'recurring',
     remindAtIso: when.toISOString(),
@@ -343,40 +331,24 @@ function parseSimpleAtTime(text: string): ParsedReminder {
   if (!/^remind/i.test(text) && !/\bset a reminder\b/i.test(text) && !/\bset reminder\b/i.test(text)) return null
   if (!/\bat\s+/i.test(text)) return null
   if (/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text)) return null
-
   const timeMatch = text.match(/\bat\s+(.+)$/i)
   if (!timeMatch) return null
-
   const time = parseTimePart(timeMatch[1])
   if (!time) return null
-
   const when = nextDailyTime(time)
-
   return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text) }
 }
 
 export function parseReminderIntent(text: string): ParsedReminder {
-  return (
-    parseDailyRecurring(text) ||
-    parseEveryNRecurring(text) ||
-    parseRelativeReminder(text) ||
-    parseTomorrowReminder(text) ||
-    parseSpecificWeekdayReminder(text) ||
-    parseWeekdayRecurring(text) ||
-    parseHourlyWindowRecurring(text) ||
-    parseSimpleAtTime(text) ||
-    null
-  )
+  return parseDailyRecurring(text) || parseEveryNRecurring(text) || parseRelativeReminder(text) || parseTomorrowReminder(text) || parseSpecificWeekdayReminder(text) || parseWeekdayRecurring(text) || parseHourlyWindowRecurring(text) || parseSimpleAtTime(text) || null
 }
 
 export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>): string {
   const displayTime = formatReminderTime(parsed.remindAtIso)
-
   if (parsed.kind === 'one_time') {
     if (parsed.message === 'Reminder') return `Done — I'll remind you ${displayTime}.`
     return `Done — I'll remind you to *${parsed.message}* ${displayTime}.`
   }
-
   const patternText = parsed.pattern.startsWith('daily:')
     ? 'daily'
     : parsed.pattern.startsWith('weekly:')
@@ -384,6 +356,5 @@ export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>)
       : parsed.pattern.startsWith('every_')
         ? parsed.pattern.replace(/_/g, ' ')
         : 'recurring'
-
   return `🔁 *Recurring reminder set*\n\n${parsed.message}\nPattern: ${patternText}\nStarts: ${displayTime}.`
 }
