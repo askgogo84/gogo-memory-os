@@ -1,4 +1,4 @@
-﻿export type DirectWhatsappReply = {
+export type DirectWhatsappReply = {
   text: string
   mediaUrl?: string | null
   saveMemory?: string | null
@@ -108,25 +108,31 @@ Type or speak naturally. I’ll understand.`
     lower.includes('razorpay')
   ) {
     return {
-      // Disabled for now because old pricing image had Family plan.
-      // Add new pricing.png later and re-enable ASKGOGO_PRICING_IMAGE_URL.
       mediaUrl: null,
       text: `💚 *AskGogo Pricing*
 
-Built for WhatsApp-first productivity.
+Starting at ₹99/month — less than a cup of chai/day.
 
 *Free Beta*
 ₹0
 • 25 AI actions/month
 • 3 active reminders
-• Voice notes enabled
+• 5 voice notes/month
 • Weather, sports, reminders, lists
+
+*Lite*
+₹99/month
+• 60 AI actions/month
+• 5 active reminders
+• 10 voice notes/month
+• Weather & sports
+• Lists and notes
 
 *Starter*
 ₹149/month
 • 100 AI actions/month
 • 10 active reminders
-• Voice notes
+• 30 voice notes/month
 • Basic memory
 • Lists & notes
 
