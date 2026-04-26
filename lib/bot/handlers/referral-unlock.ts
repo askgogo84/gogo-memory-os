@@ -131,6 +131,24 @@ function progressBar(count: number) {
   return '🟩'.repeat(filled) + '⬜'.repeat(3 - filled)
 }
 
+function buildViralInviteCopy(link: string) {
+  return (
+    `“I found something genuinely useful 👇\n\n` +
+    `AskGogo is like a personal assistant inside WhatsApp.\n\n` +
+    `You can just type or send a voice note like:\n` +
+    `• remind me in 10 mins\n` +
+    `• plan my day\n` +
+    `• read this screenshot\n` +
+    `• save this note\n` +
+    `• what’s on my calendar today\n\n` +
+    `No app to download. No complicated prompts.\n` +
+    `It works inside WhatsApp.\n\n` +
+    `They’re opening founder beta access now. Try it here:\n` +
+    `${link}\n\n` +
+    `Send *Hi* after it opens.”`
+  )
+}
+
 export async function buildReferralUnlockReply(telegramId: number) {
   const code = referralCodeForTelegramId(telegramId)
   const count = await getReferralCount(telegramId)
@@ -144,7 +162,7 @@ export async function buildReferralUnlockReply(telegramId: number) {
 
   return (
     `🎁 *AskGogo Referral Unlock*\n\n` +
-    `Invite 3 friends who live on WhatsApp.\n\n` +
+    `Share AskGogo with friends who live on WhatsApp.\n\n` +
     `Your referral code:\n` +
     `*${code}*\n\n` +
     `Your invite link:\n` +
@@ -152,10 +170,8 @@ export async function buildReferralUnlockReply(telegramId: number) {
     `Progress:\n` +
     `${progressBar(count)} ${Math.min(count, 3)} / 3 joined\n\n` +
     `${unlockText}\n\n` +
-    `Copy and send this:\n\n` +
-    `“I’m testing AskGogo — an AI assistant on WhatsApp for reminders, calendar planning, weather, sports and daily briefings.\n\n` +
-    `You can type or send voice notes in Indian languages.\n\n` +
-    `Try it here:\n${link}”`
+    `*Copy and send this:*\n\n` +
+    buildViralInviteCopy(link)
   )
 }
 
@@ -165,9 +181,12 @@ export async function buildReferralWelcomeNote(text: string) {
 
   return (
     `🎁 Referral code detected: *${code}*\n\n` +
-    `You’re in the AskGogo founder beta. Type *Hi* to see what I can do, or try:\n` +
+    `Welcome to AskGogo founder beta. I work inside WhatsApp.\n\n` +
+    `Try these now:\n` +
     `• Remind me in 10 mins to drink water\n` +
-    `• Today\n` +
-    `• Bangalore weather tomorrow`
+    `• Plan my day\n` +
+    `• My notes\n` +
+    `• Bangalore weather tomorrow\n\n` +
+    `You can type or send a voice note.`
   )
 }
