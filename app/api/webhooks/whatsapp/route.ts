@@ -1,10 +1,11 @@
-﻿import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { sendWhatsAppMessage, sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
 import { normalizeVoicePromptForBot } from '@/lib/bot/handlers/voice-normalizer'
+import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import {
   isAudioContentType,
   transcribeTwilioVoiceNote,
@@ -105,7 +106,9 @@ function shouldSendThinkingMedia(text: string) {
     lower.includes('reply to latest') ||
     lower.includes('reply to the latest') ||
     lower.includes('summarize my emails') ||
-    lower.includes('summarize my mails')
+    lower.includes('summarize my mails') ||
+    lower.includes('plan my day') ||
+    lower.includes('help me plan')
   )
 }
 
@@ -201,6 +204,26 @@ export async function POST(req: NextRequest) {
       externalUserId: from,
       userName: profileName,
     })
+
+    if (incoming.wasVoice) {
+      const voiceLimit = await checkFeatureLimit(resolvedUser.telegramId, 'voice_note')
+
+      if (!voiceLimit.allowed) {
+        await sendWhatsAppMessage(
+          from,
+          voiceLimit.upgradeMessage || 'Voice note limit reached.'
+        )
+
+        return new NextResponse(emptyTwiml(), {
+          status: 200,
+          headers: { 'Content-Type': 'text/xml' },
+        })
+      }
+
+      await logUsage(resolvedUser.telegramId, 'voice_note', {
+        transcript: originalText,
+      })
+    }
 
     const directReply = getDirectWhatsappPremiumReply(text, resolvedUser.name)
 
