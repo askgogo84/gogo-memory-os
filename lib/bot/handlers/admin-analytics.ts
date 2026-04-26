@@ -21,8 +21,33 @@ export type AdminAnalytics = {
   recentPaymentIntents: any[]
 }
 
+type PlanKey = 'free' | 'starter' | 'pro' | 'founder_pro'
+
+const PLAN_LABELS: Record<PlanKey, string> = {
+  free: 'Free Beta',
+  starter: 'Starter',
+  pro: 'Pro',
+  founder_pro: 'Founder Pro',
+}
+
+const PLAN_LIMITS: Record<PlanKey, string> = {
+  free: '25 AI actions/month',
+  starter: '100 AI actions/month',
+  pro: '250 AI actions/month',
+  founder_pro: '600 AI actions/month',
+}
+
 function normalizePhone(value: string | null | undefined) {
   return (value || '').replace(/^whatsapp:/, '').replace(/\D/g, '').slice(-10)
+}
+
+function normalizePlan(value: string | null | undefined): PlanKey | null {
+  const clean = (value || '').toLowerCase().trim().replace(/-/g, '_').replace(/\s+/g, '_')
+  if (clean === 'free' || clean === 'free_beta') return 'free'
+  if (clean === 'starter') return 'starter'
+  if (clean === 'pro') return 'pro'
+  if (clean === 'founder' || clean === 'founder_pro') return 'founder_pro'
+  return null
 }
 
 export function isAdminPhone(phone: string | null | undefined) {
@@ -45,7 +70,10 @@ export function isAdminCommand(text: string) {
     lower === 'admin payments' ||
     lower === 'admin referrals' ||
     lower === 'admin stats' ||
-    lower === 'admin analytics'
+    lower === 'admin analytics' ||
+    /^admin\s+find\s+/i.test(lower) ||
+    /^admin\s+upgrade\s+/i.test(lower) ||
+    /^admin\s+downgrade\s+/i.test(lower)
   )
 }
 
@@ -67,11 +95,7 @@ function parsePaymentIntent(row: any) {
   const jsonStart = (row.content || '').indexOf('{')
   let parsed: any = {}
   if (jsonStart >= 0) {
-    try {
-      parsed = JSON.parse(row.content.slice(jsonStart))
-    } catch {
-      parsed = {}
-    }
+    try { parsed = JSON.parse(row.content.slice(jsonStart)) } catch { parsed = {} }
   }
 
   return {
@@ -81,6 +105,104 @@ function parsePaymentIntent(row: any) {
     userName: parsed.userName || '',
     created_at: row.created_at,
   }
+}
+
+async function findUserByPhone(phone: string) {
+  const digits = normalizePhone(phone)
+  if (!digits) return null
+
+  const { data } = await supabaseAdmin
+    .from('users')
+    .select('*')
+    .ilike('whatsapp_id', `%${digits}%`)
+    .limit(1)
+
+  return data?.[0] || null
+}
+
+function formatUserCard(user: any) {
+  const phone = user?.whatsapp_id ? normalizePhone(user.whatsapp_id) : '-'
+  const tier = String(user?.tier || 'free')
+  const plan = normalizePlan(tier) || 'free'
+
+  return (
+    `👤 *User found*\n\n` +
+    `Name: *${user?.name || 'Friend'}*\n` +
+    `Phone: *${phone}*\n` +
+    `Platform: *${user?.platform || 'unknown'}*\n` +
+    `Plan: *${PLAN_LABELS[plan]}*\n` +
+    `Limit: ${PLAN_LIMITS[plan]}\n` +
+    `Telegram ID: ${user?.telegram_id || '-'}\n\n` +
+    `Commands:\n` +
+    `• admin upgrade ${phone} pro\n` +
+    `• admin upgrade ${phone} founder_pro\n` +
+    `• admin downgrade ${phone} free`
+  )
+}
+
+async function buildAdminFindReply(text: string) {
+  const match = text.match(/^admin\s+find\s+(.+)$/i)
+  const phone = match?.[1]?.trim() || ''
+  const user = await findUserByPhone(phone)
+
+  if (!user) {
+    return `I couldn’t find a user with phone *${normalizePhone(phone) || phone}*.\n\nTry: *admin users*`
+  }
+
+  return formatUserCard(user)
+}
+
+async function buildAdminPlanChangeReply(text: string) {
+  const upgradeMatch = text.match(/^admin\s+upgrade\s+(\S+)\s+(\S+)$/i)
+  const downgradeMatch = text.match(/^admin\s+downgrade\s+(\S+)\s+(\S+)$/i)
+  const match = upgradeMatch || downgradeMatch
+
+  if (!match) {
+    return (
+      `Usage:\n` +
+      `• admin upgrade 8884501501 starter\n` +
+      `• admin upgrade 8884501501 pro\n` +
+      `• admin upgrade 8884501501 founder_pro\n` +
+      `• admin downgrade 8884501501 free`
+    )
+  }
+
+  const phone = match[1]
+  const plan = normalizePlan(match[2])
+
+  if (!plan) {
+    return `Invalid plan. Use *free*, *starter*, *pro*, or *founder_pro*.`
+  }
+
+  const user = await findUserByPhone(phone)
+  if (!user) return `I couldn’t find a user with phone *${normalizePhone(phone) || phone}*.`
+
+  const { error } = await supabaseAdmin
+    .from('users')
+    .update({ tier: plan })
+    .eq('id', user.id)
+
+  if (error) return `Plan update failed: ${error.message}`
+
+  await supabaseAdmin.from('memories').insert({
+    telegram_id: user.telegram_id,
+    content: `ASKGOGO_ADMIN_PLAN_CHANGE:${plan}:` + JSON.stringify({
+      phone: normalizePhone(phone),
+      oldPlan: user.tier || 'free',
+      newPlan: plan,
+      changed_at: new Date().toISOString(),
+    }),
+  })
+
+  return (
+    `✅ *User plan updated*\n\n` +
+    `Name: *${user.name || 'Friend'}*\n` +
+    `Phone: *${normalizePhone(user.whatsapp_id || phone)}*\n` +
+    `Old plan: ${PLAN_LABELS[normalizePlan(user.tier) || 'free']}\n` +
+    `New plan: *${PLAN_LABELS[plan]}*\n` +
+    `Limit: ${PLAN_LIMITS[plan]}\n\n` +
+    `Ask the user to type *usage* to confirm.`
+  )
 }
 
 export async function getAdminAnalytics(): Promise<AdminAnalytics> {
@@ -151,6 +273,10 @@ function moneyPlanLabel(plan: string) {
 
 export async function buildAdminWhatsAppReply(text: string) {
   const lower = (text || '').toLowerCase().trim()
+
+  if (/^admin\s+find\s+/i.test(lower)) return await buildAdminFindReply(text)
+  if (/^admin\s+upgrade\s+/i.test(lower) || /^admin\s+downgrade\s+/i.test(lower)) return await buildAdminPlanChangeReply(text)
+
   const analytics = await getAdminAnalytics()
 
   if (lower === 'admin payment intents' || lower === 'admin payments') {
@@ -182,9 +308,7 @@ export async function buildAdminWhatsAppReply(text: string) {
     )
   }
 
-  if (lower === 'admin referrals') {
-    return `🎁 *Referrals*\n\nTotal joined via referral: *${analytics.totals.referrals}*`
-  }
+  if (lower === 'admin referrals') return `🎁 *Referrals*\n\nTotal joined via referral: *${analytics.totals.referrals}*`
 
   return (
     `📊 *AskGogo Admin Dashboard*\n\n` +
@@ -198,6 +322,9 @@ export async function buildAdminWhatsAppReply(text: string) {
     `Commands:\n` +
     `• admin users\n` +
     `• admin payment intents\n` +
-    `• admin referrals`
+    `• admin referrals\n` +
+    `• admin find 8884501501\n` +
+    `• admin upgrade 8884501501 founder_pro\n` +
+    `• admin downgrade 8884501501 free`
   )
 }
