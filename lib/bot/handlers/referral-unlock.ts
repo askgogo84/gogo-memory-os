@@ -134,18 +134,20 @@ function progressBar(count: number) {
 function buildViralInviteCopy(link: string) {
   return (
     `“I found something genuinely useful 👇\n\n` +
-    `AskGogo is like a personal assistant inside WhatsApp.\n\n` +
-    `You can just type or send a voice note like:\n` +
+    `AskGogo is a personal AI assistant inside WhatsApp.\n\n` +
+    `You can just type or send a voice note like:\n\n` +
     `• remind me in 10 mins\n` +
     `• plan my day\n` +
     `• read this screenshot\n` +
     `• save this note\n` +
     `• what’s on my calendar today\n\n` +
-    `No app to download. No complicated prompts.\n` +
-    `It works inside WhatsApp.\n\n` +
-    `They’re opening founder beta access now. Try it here:\n` +
+    `No new app.\n` +
+    `No complicated prompts.\n` +
+    `Just WhatsApp.\n\n` +
+    `They’re opening founder beta access now.\n\n` +
+    `Try it here:\n` +
     `${link}\n\n` +
-    `Send *Hi* after it opens.”`
+    `Once it opens, just send *Hi*.”`
   )
 }
 
