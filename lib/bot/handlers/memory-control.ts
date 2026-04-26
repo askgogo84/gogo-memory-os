@@ -8,12 +8,16 @@ function cleanMemoryContent(content: string) {
 }
 
 function isInternalMemory(content: string) {
-  const lower = (content || '').toLowerCase()
+  const lower = (content || '').toLowerCase().trim()
   return (
     lower.startsWith('askgogo_usage:') ||
     lower.includes('founder pricing / paid plan launch') ||
     lower.includes('calendar_conflict') ||
-    lower.includes('day_plan')
+    lower.includes('day_plan') ||
+    lower.includes('user completed task') ||
+    lower.includes('completed task') ||
+    /^task\s+\d+\s+completed/.test(lower) ||
+    /^done\s+\d+/.test(lower)
   )
 }
 
@@ -47,11 +51,8 @@ async function getUserMemories(telegramId: number) {
 
   return (data || [])
     .filter((m: any) => m.content && !isInternalMemory(m.content))
-    .map((m: any) => ({
-      ...m,
-      content: cleanMemoryContent(m.content),
-    }))
-    .filter((m: any) => m.content)
+    .map((m: any) => ({ ...m, content: cleanMemoryContent(m.content) }))
+    .filter((m: any) => m.content && !isInternalMemory(m.content))
 }
 
 function extractForgetQuery(text: string) {
@@ -76,10 +77,7 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
 
   if (lower === 'clear my memory' || lower === 'forget everything') {
     const memories = await getUserMemories(telegramId)
-
-    if (!memories.length) {
-      return `🧠 *Memory*\n\nI don’t have any saved personal memories yet.`
-    }
+    if (!memories.length) return `🧠 *Memory*\n\nI don’t have any saved personal memories yet.`
 
     const ids = memories.map((m: any) => m.id)
     await supabaseAdmin.from('memories').delete().in('id', ids)
@@ -93,13 +91,7 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
     const matched = memories.filter((m: any) => matchesMemory(m.content, query))
 
     if (!matched.length) {
-      return (
-        `I couldn’t find a memory matching *${query || 'that'}*.\n\n` +
-        `Try:\n` +
-        `• what do you remember about me\n` +
-        `• forget my office address\n` +
-        `• clear my memory`
-      )
+      return `I couldn’t find a memory matching *${query || 'that'}*.\n\nTry:\n• what do you remember about me\n• forget my office address\n• clear my memory`
     }
 
     await supabaseAdmin.from('memories').delete().in('id', matched.map((m: any) => m.id))
@@ -114,23 +106,12 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
   const memories = await getUserMemories(telegramId)
 
   if (!memories.length) {
-    return (
-      `🧠 *Memory*\n\n` +
-      `I don’t have any saved personal memories yet.\n\n` +
-      `Try saying:\n` +
-      `Remember that my office is in Indiranagar\n` +
-      `Remember that I prefer morning meetings`
-    )
+    return `🧠 *Memory*\n\nI don’t have any saved personal memories yet.\n\nTry saying:\nRemember that my office is in Indiranagar\nRemember that I prefer morning meetings`
   }
 
   return (
     `🧠 *What I remember about you*\n\n` +
-    memories
-      .slice(0, 10)
-      .map((m: any, idx: number) => `${idx + 1}. ${m.content}`)
-      .join('\n') +
-    `\n\nYou can say:\n` +
-    `• forget my office address\n` +
-    `• clear my memory`
+    memories.slice(0, 10).map((m: any, idx: number) => `${idx + 1}. ${m.content}`).join('\n') +
+    `\n\nYou can say:\n• forget my office address\n• clear my memory`
   )
 }
