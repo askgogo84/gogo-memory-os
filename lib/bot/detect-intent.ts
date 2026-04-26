@@ -116,7 +116,11 @@ export function detectIntent(text: string): DetectedIntent {
     /^delete\b/i.test(lower) ||
     /^remove\b/i.test(lower) ||
     /^clear reminder\b/i.test(lower) ||
-    /^stop reminder\b/i.test(lower)
+    /^stop reminder\b/i.test(lower) ||
+    /^done\s+\d+\b/i.test(lower) ||
+    /^complete\s+\d+\b/i.test(lower) ||
+    /^mark\s+\d+\s+done\b/i.test(lower) ||
+    /^snooze\s+\d+\s+(for\s+)?\d+\s*(minute|minutes|min|mins|hour|hours)\b/i.test(lower)
   ) {
     return { type: 'edit_reminder', confidence: 'high' }
   }
@@ -218,6 +222,9 @@ export function detectIntent(text: string): DetectedIntent {
     lower === 'complete' ||
     lower === 'finished' ||
     lower === 'mark as done' ||
+    /^done\s+\d+\b/i.test(lower) ||
+    /^complete\s+\d+\b/i.test(lower) ||
+    /^mark\s+\d+\s+done\b/i.test(lower) ||
     /^snooze\b/i.test(lower) ||
     /^move it\b/i.test(lower) ||
     /^move reminder\b/i.test(lower) ||
