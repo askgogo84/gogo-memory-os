@@ -20,7 +20,7 @@ import { setBriefingTime } from './handlers/briefing-settings'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
-import { buildCalendarActionReply, isCalendarAction } from './handlers/calendar-actions'
+import { buildCalendarActionReply, createCalendarConflictEvent, isCalendarAction } from './handlers/calendar-actions'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
 
 export type ProcessIncomingParams = {
@@ -162,9 +162,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
-  const followupYes = /^(yes|yeah|yep|haan|ok|okay)( .*)?$/i.test(incomingText)
+  const followupYes = /^(yes|yeah|yep|haan|ok|okay|add anyway)( .*)?$/i.test(incomingText)
   if (followupYes) {
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+
+    const latestCalendarConflict = await getLatestFollowupState(resolvedUser.telegramId, 'calendar_conflict')
+
+    if (latestCalendarConflict?.payload?.startIso) {
+      const reply = await createCalendarConflictEvent(resolvedUser.telegramId, latestCalendarConflict.payload)
+
+      if (reply) {
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
+    }
 
     const latestDayPlanFollowup = await getLatestFollowupState(resolvedUser.telegramId, 'day_plan')
 
