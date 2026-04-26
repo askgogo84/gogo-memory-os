@@ -11,6 +11,7 @@ import { buildNotesReply, isNotesCommand } from '@/lib/bot/handlers/notes-contro
 import { buildPaymentIntentReply, isPaymentIntentCommand } from '@/lib/bot/handlers/payment-intent'
 import { buildAdminWhatsAppReply, isAdminCommand, isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
 import { buildFirstValueReferralNudge } from '@/lib/bot/handlers/first-value-nudge'
+import { getLatestFollowupState } from '@/lib/bot/handlers/followup-state'
 import { buildMeetingNotesReply, shouldTreatAudioAsMeeting } from '@/lib/bot/handlers/meeting-notes'
 import {
   buildReferralUnlockReply,
@@ -48,6 +49,52 @@ async function saveConversation(telegramId: number, role: 'user' | 'assistant', 
 
 async function saveMemory(telegramId: number, content: string) {
   await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content })
+}
+
+async function createReminder(params: {
+  telegramId: number
+  message: string
+  remindAtIso: string
+  whatsappTo?: string | null
+}) {
+  const payload: any = {
+    telegram_id: params.telegramId,
+    chat_id: params.telegramId,
+    message: params.message,
+    remind_at: params.remindAtIso,
+    sent: false,
+  }
+  if (params.whatsappTo) payload.whatsapp_to = params.whatsappTo
+  await supabaseAdmin.from('reminders').insert(payload)
+}
+
+async function createMeetingActionReminders(params: {
+  telegramId: number
+  whatsappTo: string | null
+}) {
+  const latest = await getLatestFollowupState(params.telegramId, 'meeting_action_items')
+  const items = latest?.payload?.items || []
+
+  if (!items.length) return null
+
+  for (const item of items.slice(0, 5)) {
+    if (!item?.message || !item?.remindAtIso) continue
+    await createReminder({
+      telegramId: params.telegramId,
+      message: item.message,
+      remindAtIso: item.remindAtIso,
+      whatsappTo: params.whatsappTo,
+    })
+  }
+
+  return (
+    `✅ *Meeting action reminders created*\n\n` +
+    items
+      .slice(0, 5)
+      .map((item: any, index: number) => `${index + 1}. ${item.message}`)
+      .join('\n') +
+    `\n\nI’ll remind you tomorrow through the day.`
+  )
 }
 
 async function sendWithFirstValueNudge(params: {
@@ -172,6 +219,17 @@ export async function POST(req: NextRequest) {
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nSend a short voice note, type your request, or upload a photo/screenshot of your notes.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    const yesFollowup = /^(yes|yeah|yep|haan|ok|okay|create reminders|add reminders)( .*)?$/i.test(text)
+    if (yesFollowup) {
+      const meetingReminderReply = await createMeetingActionReminders({ telegramId: resolvedUser.telegramId, whatsappTo: from })
+      if (meetingReminderReply) {
+        await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', meetingReminderReply)
+        await sendWhatsAppMessage(from, meetingReminderReply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
     }
 
     if (incoming.wasVoice && shouldTreatAudioAsMeeting({ caption: bodyText, transcript: originalText })) {
