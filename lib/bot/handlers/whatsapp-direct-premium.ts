@@ -4,10 +4,6 @@ export type DirectWhatsappReply = {
   saveMemory?: string | null
 }
 
-const ASK_GOGO_WHATSAPP_LINK =
-  process.env.ASK_GOGO_WHATSAPP_JOIN_LINK ||
-  'https://wa.me/15797006612?text=Hi%20AskGogo'
-
 function firstName(name?: string) {
   const clean = (name || '').trim()
   if (!clean || clean.toLowerCase() === 'friend') return 'there'
@@ -36,12 +32,13 @@ Use me by *typing or sending a voice note*.
 
 I can help you with:
 • reminders
+• recurring reminders
 • calendar planning
 • today briefing
+• memory
 • weather
 • sports updates
 • lists and notes
-• quick drafts
 • web search
 
 Try:
@@ -49,7 +46,7 @@ Try:
 2. Connect calendar
 3. Today
 4. Show my reminders
-5. Bangalore weather tomorrow
+5. Invite friends
 
 Built for people who live on WhatsApp.`
     }
@@ -71,10 +68,10 @@ Send a voice note in English, Hindi, Hinglish, Kannada, Tamil, Telugu or Malayal
 
 ⏰ *Reminders*
 • Remind me in 20 mins to call Rahul
+• Remind me every day at 9 pm to review expenses
 • Show my reminders
 • Cancel water reminder
 • Snooze 10 mins
-• Move it to 8 pm
 • Done
 
 📅 *Calendar*
@@ -83,10 +80,10 @@ Send a voice note in English, Hindi, Hinglish, Kannada, Tamil, Telugu or Malayal
 • What’s on my calendar today?
 • Add meeting tomorrow at 4 pm
 
-☀️ *Daily*
-• Morning briefing
-• Bangalore weather tomorrow
-• Next RCB match
+🧠 *Memory*
+• Remember that I prefer morning meetings
+• What do you remember about me?
+• Forget my office address
 
 🚀 *Beta*
 • Pricing
@@ -113,28 +110,20 @@ Type or speak naturally. I’ll understand.`
       mediaUrl: null,
       text: `💚 *AskGogo Pricing*
 
-Starting at ₹99/month — less than a cup of chai/day.
+Built for WhatsApp-first productivity.
 
 *Free Beta*
 ₹0
 • 25 AI actions/month
 • 3 active reminders
-• 5 voice notes/month
+• Voice notes enabled
 • Weather, sports, reminders, lists
-
-*Lite*
-₹99/month
-• 60 AI actions/month
-• 5 active reminders
-• 10 voice notes/month
-• Weather & sports
-• Lists and notes
 
 *Starter*
 ₹149/month
 • 100 AI actions/month
 • 10 active reminders
-• 30 voice notes/month
+• Voice notes
 • Basic memory
 • Lists & notes
 
@@ -181,40 +170,13 @@ Reply *notify me* and I’ll mark you for early founder pricing.`
 
 I’ll remember that you want early access when paid plans go live.
 
-Plans start at *₹99/month* — less than a cup of chai/day.
-
 Want priority Founder Beta access?
 Invite 3 friends who live on WhatsApp.
 
-Reply *invite friends* and I’ll give you a ready-to-send message.`
+Reply *invite friends* and I’ll give you your referral link.`
     }
   }
 
-  if (
-    lower === 'invite' ||
-    lower === 'invite friends' ||
-    lower === 'refer' ||
-    lower === 'referral' ||
-    lower === 'share' ||
-    lower.includes('invite my friends') ||
-    lower.includes('refer friends')
-  ) {
-    return {
-      mediaUrl: envUrl('ASKGOGO_REFERRAL_GIF_URL'),
-      text: `🎁 *Invite 3 friends to AskGogo*
-
-Copy and send this:
-
-“I’ve been testing AskGogo — an AI assistant on WhatsApp for reminders, calendar planning, weather, sports updates and daily briefings.
-
-You can type or send voice notes in Indian languages.
-
-Try it here:
-${ASK_GOGO_WHATSAPP_LINK}”
-
-Founder beta users who invite friends will get priority early pricing when Razorpay goes live.`
-    }
-  }
-
+  // Referral commands are handled by referral-unlock.ts before this direct handler.
   return null
 }
