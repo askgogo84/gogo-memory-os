@@ -25,6 +25,35 @@ export function isMeetingNotesCaption(text: string) {
   )
 }
 
+export function isTypedMeetingNotesCommand(text: string) {
+  const lower = (text || '').toLowerCase().trim()
+
+  return (
+    lower.startsWith('meeting notes') ||
+    lower.startsWith('call notes') ||
+    lower.startsWith('summarize meeting') ||
+    lower.startsWith('summarise meeting') ||
+    lower.startsWith('summarize this meeting') ||
+    lower.startsWith('summarise this meeting') ||
+    lower.startsWith('transcribe meeting') ||
+    lower.startsWith('meeting summary') ||
+    lower.includes('we discussed') && lower.includes('action') ||
+    lower.includes('meeting notes.') ||
+    lower.includes('meeting notes:')
+  )
+}
+
+export function cleanTypedMeetingNotesText(text: string) {
+  return (text || '')
+    .replace(/^send\s+a\s+\d+\s*[–-]\s*\d+\s*min\s+meeting-style\s+voice\s+note:?/i, '')
+    .replace(/^meeting\s+notes\s*[:.]?\s*/i, '')
+    .replace(/^call\s+notes\s*[:.]?\s*/i, '')
+    .replace(/^summari[sz]e\s+(this\s+)?meeting\s*[:.]?\s*/i, '')
+    .replace(/^transcribe\s+meeting\s*[:.]?\s*/i, '')
+    .replace(/[“”]/g, '')
+    .trim()
+}
+
 export function shouldTreatAudioAsMeeting(params: {
   caption?: string | null
   transcript: string
@@ -169,9 +198,7 @@ export async function buildMeetingNotesReply(params: {
   await addToList(params.telegramId, 'notes', [savedNote])
 
   const actionItems = extractActionItems(reply)
-  if (actionItems.length) {
-    await saveFollowupState(params.telegramId, 'meeting_action_items', { items: actionItems })
-  }
+  if (actionItems.length) await saveFollowupState(params.telegramId, 'meeting_action_items', { items: actionItems })
 
   await supabaseAdmin.from('memories').insert({
     telegram_id: params.telegramId,
@@ -189,8 +216,6 @@ export async function buildMeetingNotesReply(params: {
     `${reply}\n\n` +
     `✅ Saved to *my notes*.\n\n` +
     `Plan note: ${meetingLimitText(access.tier)}\n\n` +
-    (actionItems.length
-      ? `Want me to create reminders for these action items? Reply *yes*.`
-      : `No clear action items found to create reminders.`)
+    (actionItems.length ? `Want me to create reminders for these action items? Reply *yes*.` : `No clear action items found to create reminders.`)
   )
 }
