@@ -114,7 +114,7 @@ function polishMeetingReply(reply: string) {
   return (reply || '')
     .replace(/Owner TBD\s*[—:-]\s*/gi, '')
     .replace(/\bOwner TBD\b/gi, '')
-    .replace(/\n\s*(\d+\.\s*)\s+/g, '\n$1')
+    .replace(/\n\s*(\d+)\.\s*/g, '\n$1. ')
     .replace(/\s+\./g, '.')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
@@ -160,7 +160,7 @@ export async function buildMeetingNotesReply(params: { telegramId: number; trans
       {
         role: 'system',
         content:
-          'You are AskGogo meeting notes assistant for WhatsApp. Summarize meeting transcripts into concise, useful notes. Use WhatsApp-friendly formatting. Do not invent names or decisions. Keep action items short and natural. Do not write Owner TBD. If owner is unclear, write only the action. If owner is clear, write Name — action.',
+          'You are AskGogo meeting notes assistant for WhatsApp. Summarize meeting transcripts into concise, useful notes. Use WhatsApp-friendly formatting. Do not invent names or decisions. Keep action items short and natural. Do not write Owner TBD. If owner is unclear, write only the action. If owner is clear, write Name — action. Always put a space after numbered list markers, like 1. Follow up.',
       },
       {
         role: 'user',
