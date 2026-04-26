@@ -1,4 +1,4 @@
-﻿import { supabaseAdmin } from '@/lib/supabase-admin'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 function istNowParts() {
   const now = new Date()
@@ -35,6 +35,33 @@ function addIstDays(parts: { year: number; month: number; day: number }, daysToA
     month: d.getUTCMonth() + 1,
     day: d.getUTCDate(),
   }
+}
+
+function normalizeNumberWords(input: string) {
+  const words: Record<string, string> = {
+    one: '1',
+    two: '2',
+    three: '3',
+    four: '4',
+    five: '5',
+    six: '6',
+    seven: '7',
+    eight: '8',
+    nine: '9',
+    ten: '10',
+    fifteen: '15',
+    twenty: '20',
+    thirty: '30',
+    forty: '40',
+    fifty: '50',
+    sixty: '60',
+  }
+
+  let out = input
+  for (const [word, value] of Object.entries(words)) {
+    out = out.replace(new RegExp(`\\b${word}\\b`, 'gi'), value)
+  }
+  return out
 }
 
 function parseTimePart(input: string): { hour: number; minute: number } | null {
@@ -139,13 +166,11 @@ export async function markLatestReminderDone(telegramId: number) {
     return `I couldn't mark that reminder done right now.`
   }
 
-  return `✅ *Marked done*
-
-${cleanReminderName(reminder.message)}`
+  return `✅ *Marked done*\n\n${cleanReminderName(reminder.message)}`
 }
 
 export async function editLatestReminder(telegramId: number, input: string) {
-  const lower = input.toLowerCase().trim()
+  const lower = normalizeNumberWords(input.toLowerCase().trim())
 
   if (isDoneCommand(lower)) {
     return await markLatestReminderDone(telegramId)
@@ -158,17 +183,12 @@ export async function editLatestReminder(telegramId: number, input: string) {
   }
 
   if (!reminder) {
-    return `No recent reminder found.
-
-Create one first, then say:
-• snooze 10 mins
-• move it to 8 pm
-• done`
+    return `No recent reminder found.\n\nCreate one first, then say:\n• snooze 10 mins\n• move it to 8 pm\n• done`
   }
 
   let nextTime = new Date(reminder.remind_at)
 
-  const snoozeMatch = lower.match(/snooze\s+(\d+)\s*(minute|minutes|min|mins|hour|hours)/i)
+  const snoozeMatch = lower.match(/snooze\s+(?:for\s+)?(\d+)\s*(minute|minutes|min|mins|hour|hours)/i)
 
   if (snoozeMatch) {
     const value = parseInt(snoozeMatch[1], 10)
@@ -190,9 +210,7 @@ Create one first, then say:
     const time = parseTimePart(lower)
 
     if (!time) {
-      return `I couldn't understand the new time.
-
-Try: “move it to 8 pm”.`
+      return `I couldn't understand the new time.\n\nTry: “move it to 8 pm”.`
     }
 
     const nowIst = istNowParts()
@@ -218,12 +236,7 @@ Try: “move it to 8 pm”.`
       time.minute
     )
   } else {
-    return `I couldn't understand how to update that reminder.
-
-Try:
-• snooze 10 mins
-• move it to 8 pm
-• done`
+    return `I couldn't understand how to update that reminder.\n\nTry:\n• snooze 10 mins\n• snooze for 5 minutes\n• move it to 8 pm\n• done`
   }
 
   const { error } = await supabaseAdmin
@@ -238,8 +251,5 @@ Try:
     return `I couldn't update that reminder right now.`
   }
 
-  return `✅ *Reminder updated*
-
-${cleanReminderName(reminder.message)}
-New time: ${formatWhen(nextTime.toISOString())}`
+  return `✅ *Reminder updated*\n\n${cleanReminderName(reminder.message)}\nNew time: ${formatWhen(nextTime.toISOString())}`
 }
