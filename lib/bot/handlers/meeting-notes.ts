@@ -37,7 +37,7 @@ export function isTypedMeetingNotesCommand(text: string) {
     lower.startsWith('summarise this meeting') ||
     lower.startsWith('transcribe meeting') ||
     lower.startsWith('meeting summary') ||
-    lower.includes('we discussed') && lower.includes('action') ||
+    (lower.includes('we discussed') && (lower.includes('need to') || lower.includes('action') || lower.includes('follow up'))) ||
     lower.includes('meeting notes.') ||
     lower.includes('meeting notes:')
   )
@@ -54,11 +54,9 @@ export function cleanTypedMeetingNotesText(text: string) {
     .trim()
 }
 
-export function shouldTreatAudioAsMeeting(params: {
-  caption?: string | null
-  transcript: string
-}) {
+export function shouldTreatAudioAsMeeting(params: { caption?: string | null; transcript: string }) {
   if (isMeetingNotesCaption(params.caption || '')) return true
+  if (isTypedMeetingNotesCommand(params.transcript || '')) return true
   return wordCount(params.transcript) >= 80
 }
 
@@ -71,12 +69,7 @@ function normalizeTier(tier?: string | null) {
 }
 
 async function getUserTier(telegramId: number) {
-  const { data } = await supabaseAdmin
-    .from('users')
-    .select('tier')
-    .eq('telegram_id', telegramId)
-    .single()
-
+  const { data } = await supabaseAdmin.from('users').select('tier').eq('telegram_id', telegramId).single()
   return normalizeTier(data?.tier)
 }
 
@@ -94,20 +87,13 @@ async function canUseMeetingNotes(telegramId: number) {
 
 function istTomorrowReminderIso(slotIndex: number) {
   const now = new Date()
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(now)
-
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now)
   const get = (type: string) => parts.find((p) => p.type === type)?.value || '00'
   const year = Number(get('year'))
   const month = Number(get('month'))
   const day = Number(get('day'))
   const slots = [9, 11, 15, 17, 19]
   const hour = slots[Math.min(slotIndex, slots.length - 1)]
-
   return new Date(Date.UTC(year, month - 1, day + 1, hour - 5, 30, 0)).toISOString()
 }
 
@@ -132,17 +118,10 @@ function extractActionItems(reply: string) {
     .filter(Boolean)
     .filter((line) => !/^none$/i.test(line))
     .slice(0, 5)
-    .map((message, index) => ({
-      message,
-      remindAtIso: istTomorrowReminderIso(index),
-    }))
+    .map((message, index) => ({ message, remindAtIso: istTomorrowReminderIso(index) }))
 }
 
-export async function buildMeetingNotesReply(params: {
-  telegramId: number
-  transcript: string
-  caption?: string | null
-}) {
+export async function buildMeetingNotesReply(params: { telegramId: number; transcript: string; caption?: string | null }) {
   const access = await canUseMeetingNotes(params.telegramId)
 
   if (!access.allowed) {
@@ -186,15 +165,9 @@ export async function buildMeetingNotesReply(params: {
   })
 
   const reply = response.choices?.[0]?.message?.content?.trim()
-
   if (!reply) throw new Error('Could not summarize meeting transcript')
 
-  const savedNote = reply
-    .replace(/\*/g, '')
-    .replace(/🎙️\s*Meeting notes ready/gi, 'Meeting notes')
-    .trim()
-    .slice(0, 1500)
-
+  const savedNote = reply.replace(/\*/g, '').replace(/🎙️\s*Meeting notes ready/gi, 'Meeting notes').trim().slice(0, 1500)
   await addToList(params.telegramId, 'notes', [savedNote])
 
   const actionItems = extractActionItems(reply)
@@ -204,12 +177,7 @@ export async function buildMeetingNotesReply(params: {
     telegram_id: params.telegramId,
     content:
       'ASKGOGO_MEETING_NOTES_CREATED:' +
-      JSON.stringify({
-        tier: access.tier,
-        words: wordCount(params.transcript),
-        action_items: actionItems.length,
-        created_at: new Date().toISOString(),
-      }),
+      JSON.stringify({ tier: access.tier, words: wordCount(params.transcript), action_items: actionItems.length, created_at: new Date().toISOString() }),
   })
 
   return (
