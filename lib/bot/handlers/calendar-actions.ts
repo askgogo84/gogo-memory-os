@@ -1,4 +1,5 @@
-﻿import { supabaseAdmin } from '@/lib/supabase-admin'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import {
   createCalendarEvent,
   refreshAccessToken,
@@ -30,8 +31,6 @@ function istPartsNow() {
 
 function istDatePartsPlusDays(days: number) {
   const now = istPartsNow()
-
-  // Create a UTC noon anchor to safely add days without timezone drift.
   const anchor = new Date(Date.UTC(now.year, now.month - 1, now.day, 12, 0, 0))
   anchor.setUTCDate(anchor.getUTCDate() + days)
 
@@ -49,7 +48,6 @@ function istWallTimeToUtcDate(
   hour: number,
   minute: number
 ) {
-  // IST is UTC+05:30, so subtract 5h30m from IST wall time.
   return new Date(Date.UTC(year, month - 1, day, hour - 5, minute - 30, 0))
 }
 
@@ -163,8 +161,6 @@ function parseTime(text: string) {
 
   if (ampm === 'pm' && hour < 12) hour += 12
   if (ampm === 'am' && hour === 12) hour = 0
-
-  // If user says "4" without am/pm, assume PM for meetings/calls.
   if (!ampm && hour >= 1 && hour <= 7) hour += 12
 
   return { hour, minute }
@@ -391,6 +387,15 @@ export async function buildCalendarActionReply(
   }
 
   if (createIntent && !createIntent.needsTime && createIntent.start && createIntent.end) {
+    const calendarLimit = await checkFeatureLimit(telegramId, 'calendar_event')
+
+    if (!calendarLimit.allowed) {
+      return {
+        handled: true,
+        reply: calendarLimit.upgradeMessage || 'Calendar event limit reached.',
+      }
+    }
+
     const start = createIntent.start
     const end = createIntent.end
 
@@ -426,6 +431,12 @@ export async function buildCalendarActionReply(
           `Please try again, or reconnect calendar.`,
       }
     }
+
+    await logUsage(telegramId, 'calendar_event', {
+      title: createIntent.title,
+      startIso,
+      endIso,
+    })
 
     return {
       handled: true,
