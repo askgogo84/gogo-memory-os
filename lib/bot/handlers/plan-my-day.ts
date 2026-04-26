@@ -1,6 +1,15 @@
-﻿import { supabaseAdmin } from '@/lib/supabase-admin'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { fetchWeatherForecast, formatCurrentWeather } from '@/lib/services/weather'
 import { getTodayEvents, refreshAccessToken } from '@/lib/google-calendar'
+import { saveFollowupState } from './followup-state'
+
+type DayPlanItem = {
+  timeLabel: string
+  hour: number
+  minute: number
+  message: string
+}
 
 function formatReminderTime(iso: string) {
   return new Intl.DateTimeFormat('en-IN', {
@@ -42,6 +51,29 @@ function todayDateKey() {
     month: '2-digit',
     day: '2-digit',
   }).format(new Date())
+}
+
+function istTodayParts() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+  }
+}
+
+function istWallTimeToUtcIso(hour: number, minute: number) {
+  const parts = istTodayParts()
+  const utc = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, hour - 5, minute - 30, 0))
+  return utc.toISOString()
 }
 
 async function getTodaysReminders(telegramId: number) {
@@ -123,28 +155,38 @@ function cleanWeather(raw: string) {
   return text
 }
 
-function buildSuggestedFlow(events: any[], reminders: any[]) {
+function defaultDayPlanItems(events: any[], reminders: any[]): DayPlanItem[] {
   const hasEvents = events.length > 0
   const hasReminders = reminders.length > 0
 
-  const flow: string[] = []
+  return [
+    {
+      timeLabel: '3:30 PM',
+      hour: 15,
+      minute: 30,
+      message: 'Clear your top priority before distractions',
+    },
+    {
+      timeLabel: '6:30 PM',
+      hour: 18,
+      minute: 30,
+      message: hasEvents
+        ? 'Review calendar and prepare for follow-ups'
+        : 'Deep work / follow-up block',
+    },
+    {
+      timeLabel: '8:30 PM',
+      hour: 20,
+      minute: 30,
+      message: hasReminders
+        ? 'Close pending reminders and plan tomorrow'
+        : 'Review the day and plan tomorrow',
+    },
+  ]
+}
 
-  flow.push('• Morning — clear your top priority before distractions')
-
-  if (hasEvents) {
-    const firstEvent = events[0]
-    flow.push(`• Midday — stay ready for ${firstEvent.summary || 'your calendar event'} at ${formatEventTime(firstEvent)}`)
-  } else {
-    flow.push('• Afternoon — use this as your deep work / follow-up block')
-  }
-
-  if (hasReminders) {
-    flow.push('• Evening — finish pending reminders and close loops')
-  } else {
-    flow.push('• Evening — review the day and plan tomorrow')
-  }
-
-  return flow.join('\n')
+function buildSuggestedFlow(items: DayPlanItem[]) {
+  return items.map((item) => `• ${item.timeLabel} — ${item.message}`).join('\n')
 }
 
 export function isPlanMyDayIntent(text: string) {
@@ -165,6 +207,7 @@ export async function buildPlanMyDayReply(telegramId: number, userName?: string)
   const name = firstName(userName)
   const reminders = await getTodaysReminders(telegramId)
   const calendarState = await getCalendarEvents(telegramId)
+  const planItems = defaultDayPlanItems(calendarState.events, reminders)
 
   let weatherText = 'Weather unavailable right now.'
 
@@ -176,6 +219,11 @@ export async function buildPlanMyDayReply(telegramId: number, userName?: string)
   } catch {
     weatherText = 'Weather unavailable right now.'
   }
+
+  await saveFollowupState(telegramId, 'day_plan', {
+    items: planItems,
+    created_at: new Date().toISOString(),
+  })
 
   let reply = `🧠 *Plan for ${name}*\n\n`
 
@@ -206,9 +254,54 @@ export async function buildPlanMyDayReply(telegramId: number, userName?: string)
   }
 
   reply += `✨ *Suggested flow*\n`
-  reply += buildSuggestedFlow(calendarState.events, reminders)
+  reply += buildSuggestedFlow(planItems)
 
-  reply += `\n\nWant me to add this plan as reminders?\nReply *yes* to create a simple day plan.`
+  reply += `\n\nWant me to add this plan as reminders?\nReply *yes* to create this day plan.`
 
   return reply
+}
+
+export async function createDayPlanReminders(params: {
+  telegramId: number
+  chatId: number
+  whatsappTo?: string | null
+  items: DayPlanItem[]
+}) {
+  for (const item of params.items) {
+    const limit = await checkFeatureLimit(params.telegramId, 'reminder_create')
+
+    if (!limit.allowed) {
+      return limit.upgradeMessage || 'Reminder limit reached.'
+    }
+
+    const payload: any = {
+      telegram_id: params.telegramId,
+      chat_id: params.chatId,
+      message: item.message,
+      remind_at: istWallTimeToUtcIso(item.hour, item.minute),
+      sent: false,
+    }
+
+    if (params.whatsappTo) {
+      payload.whatsapp_to = params.whatsappTo
+    }
+
+    const { error } = await supabaseAdmin.from('reminders').insert(payload)
+
+    if (error) {
+      console.error('DAY_PLAN_REMINDER_INSERT_FAILED:', error, payload)
+      return `I couldn't add the full day plan right now. Please try again.`
+    }
+
+    await logUsage(params.telegramId, 'reminder_create', {
+      message: item.message,
+      source: 'day_plan',
+    })
+  }
+
+  return (
+    `✅ *Day plan added*\n\n` +
+    params.items.map((item) => `${item.timeLabel} — ${item.message}`).join('\n') +
+    `\n\nI’ll remind you through the day.`
+  )
 }
