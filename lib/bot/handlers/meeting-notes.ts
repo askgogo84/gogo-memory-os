@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import { addToList } from '@/lib/lists'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { saveFollowupState } from './followup-state'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
@@ -62,6 +63,52 @@ async function canUseMeetingNotes(telegramId: number) {
   return { allowed: tier !== 'free', tier }
 }
 
+function istTomorrowReminderIso(slotIndex: number) {
+  const now = new Date()
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now)
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || '00'
+  const year = Number(get('year'))
+  const month = Number(get('month'))
+  const day = Number(get('day'))
+  const slots = [9, 11, 15, 17, 19]
+  const hour = slots[Math.min(slotIndex, slots.length - 1)]
+
+  return new Date(Date.UTC(year, month - 1, day + 1, hour - 5, 30, 0)).toISOString()
+}
+
+function cleanActionLine(line: string) {
+  return (line || '')
+    .replace(/^[-•\d.)\s]+/, '')
+    .replace(/^owner\s+tbd\s*[—:-]\s*/i, '')
+    .replace(/^tbd\s*[—:-]\s*/i, '')
+    .replace(/\*+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function extractActionItems(reply: string) {
+  const plain = (reply || '').replace(/\*/g, '')
+  const match = plain.match(/Action items\s*\n([\s\S]*?)(?=\n(?:Follow-ups to create|Transcript snapshot|Summary|Key decisions)\s*\n|$)/i)
+  const section = match?.[1] || ''
+
+  return section
+    .split('\n')
+    .map(cleanActionLine)
+    .filter(Boolean)
+    .filter((line) => !/^none$/i.test(line))
+    .slice(0, 5)
+    .map((message, index) => ({
+      message,
+      remindAtIso: istTomorrowReminderIso(index),
+    }))
+}
+
 export async function buildMeetingNotesReply(params: {
   telegramId: number
   transcript: string
@@ -111,9 +158,7 @@ export async function buildMeetingNotesReply(params: {
 
   const reply = response.choices?.[0]?.message?.content?.trim()
 
-  if (!reply) {
-    throw new Error('Could not summarize meeting transcript')
-  }
+  if (!reply) throw new Error('Could not summarize meeting transcript')
 
   const savedNote = reply
     .replace(/\*/g, '')
@@ -123,6 +168,11 @@ export async function buildMeetingNotesReply(params: {
 
   await addToList(params.telegramId, 'notes', [savedNote])
 
+  const actionItems = extractActionItems(reply)
+  if (actionItems.length) {
+    await saveFollowupState(params.telegramId, 'meeting_action_items', { items: actionItems })
+  }
+
   await supabaseAdmin.from('memories').insert({
     telegram_id: params.telegramId,
     content:
@@ -130,6 +180,7 @@ export async function buildMeetingNotesReply(params: {
       JSON.stringify({
         tier: access.tier,
         words: wordCount(params.transcript),
+        action_items: actionItems.length,
         created_at: new Date().toISOString(),
       }),
   })
@@ -138,6 +189,8 @@ export async function buildMeetingNotesReply(params: {
     `${reply}\n\n` +
     `✅ Saved to *my notes*.\n\n` +
     `Plan note: ${meetingLimitText(access.tier)}\n\n` +
-    `Soon I’ll also let you reply *yes* to create reminders from the action items.`
+    (actionItems.length
+      ? `Want me to create reminders for these action items? Reply *yes*.`
+      : `No clear action items found to create reminders.`)
   )
 }
