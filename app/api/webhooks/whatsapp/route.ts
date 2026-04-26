@@ -12,7 +12,12 @@ import { buildPaymentIntentReply, isPaymentIntentCommand } from '@/lib/bot/handl
 import { buildAdminWhatsAppReply, isAdminCommand, isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
 import { buildFirstValueReferralNudge } from '@/lib/bot/handlers/first-value-nudge'
 import { getLatestFollowupState } from '@/lib/bot/handlers/followup-state'
-import { buildMeetingNotesReply, shouldTreatAudioAsMeeting } from '@/lib/bot/handlers/meeting-notes'
+import {
+  buildMeetingNotesReply,
+  cleanTypedMeetingNotesText,
+  isTypedMeetingNotesCommand,
+  shouldTreatAudioAsMeeting,
+} from '@/lib/bot/handlers/meeting-notes'
 import {
   buildReferralUnlockReply,
   buildReferralWelcomeNote,
@@ -51,77 +56,42 @@ async function saveMemory(telegramId: number, content: string) {
   await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content })
 }
 
-async function createReminder(params: {
-  telegramId: number
-  message: string
-  remindAtIso: string
-  whatsappTo?: string | null
-}) {
-  const payload: any = {
-    telegram_id: params.telegramId,
-    chat_id: params.telegramId,
-    message: params.message,
-    remind_at: params.remindAtIso,
-    sent: false,
-  }
+async function createReminder(params: { telegramId: number; message: string; remindAtIso: string; whatsappTo?: string | null }) {
+  const payload: any = { telegram_id: params.telegramId, chat_id: params.telegramId, message: params.message, remind_at: params.remindAtIso, sent: false }
   if (params.whatsappTo) payload.whatsapp_to = params.whatsappTo
   await supabaseAdmin.from('reminders').insert(payload)
 }
 
-async function createMeetingActionReminders(params: {
-  telegramId: number
-  whatsappTo: string | null
-}) {
+async function createMeetingActionReminders(params: { telegramId: number; whatsappTo: string | null }) {
   const latest = await getLatestFollowupState(params.telegramId, 'meeting_action_items')
   const items = latest?.payload?.items || []
-
   if (!items.length) return null
 
   for (const item of items.slice(0, 5)) {
     if (!item?.message || !item?.remindAtIso) continue
-    await createReminder({
-      telegramId: params.telegramId,
-      message: item.message,
-      remindAtIso: item.remindAtIso,
-      whatsappTo: params.whatsappTo,
-    })
+    await createReminder({ telegramId: params.telegramId, message: item.message, remindAtIso: item.remindAtIso, whatsappTo: params.whatsappTo })
   }
 
   return (
     `✅ *Meeting action reminders created*\n\n` +
-    items
-      .slice(0, 5)
-      .map((item: any, index: number) => `${index + 1}. ${item.message}`)
-      .join('\n') +
+    items.slice(0, 5).map((item: any, index: number) => `${index + 1}. ${item.message}`).join('\n') +
     `\n\nI’ll remind you tomorrow through the day.`
   )
 }
 
-async function sendWithFirstValueNudge(params: {
-  from: string
-  telegramId: number
-  userText: string
-  reply: string
-}) {
-  const nudge = await buildFirstValueReferralNudge({
-    telegramId: params.telegramId,
-    userText: params.userText,
-    botReply: params.reply,
-  })
-
+async function sendWithFirstValueNudge(params: { from: string; telegramId: number; userText: string; reply: string }) {
+  const nudge = await buildFirstValueReferralNudge({ telegramId: params.telegramId, userText: params.userText, botReply: params.reply })
   await sendWhatsAppMessage(params.from, `${params.reply}${nudge}`)
 }
 
 async function getTextFromIncomingWhatsApp(formData: FormData) {
   const bodyRaw = String(formData.get('Body') || '').trim()
   const numMedia = Number(formData.get('NumMedia') || '0')
-
   if (bodyRaw) return { text: bodyRaw, wasVoice: false, voiceTranscript: null as string | null }
   if (numMedia <= 0) return { text: '', wasVoice: false, voiceTranscript: null as string | null }
 
   const mediaUrl = String(formData.get('MediaUrl0') || '')
   const contentType = String(formData.get('MediaContentType0') || '')
-
   if (!mediaUrl || !isAudioContentType(contentType)) return { text: '', wasVoice: false, voiceTranscript: null as string | null }
 
   const transcript = await transcribeTwilioVoiceNote({ mediaUrl, contentType })
@@ -135,12 +105,7 @@ function addVoicePrefix(reply: string, transcript: string) {
 
 function shouldSendThinkingMedia(text: string) {
   const lower = (text || '').toLowerCase().trim()
-  return (
-    lower === 'today' || lower === 'morning briefing' || lower === 'today briefing' || lower === 'today summary' ||
-    lower.includes('show my unread') || lower.includes('unread emails') || lower.includes('latest emails') || lower.includes('latest mail') ||
-    lower.includes('reply to latest') || lower.includes('reply to the latest') || lower.includes('summarize my emails') || lower.includes('summarize my mails') ||
-    lower.includes('plan my day') || lower.includes('help me plan')
-  )
+  return lower === 'today' || lower === 'morning briefing' || lower === 'today briefing' || lower === 'today summary' || lower.includes('show my unread') || lower.includes('unread emails') || lower.includes('latest emails') || lower.includes('latest mail') || lower.includes('reply to latest') || lower.includes('reply to the latest') || lower.includes('summarize my emails') || lower.includes('summarize my mails') || lower.includes('plan my day') || lower.includes('help me plan')
 }
 
 async function sendThinkingIfNeeded(from: string, text: string) {
@@ -153,7 +118,6 @@ export async function GET(req: NextRequest) {
   const mode = url.searchParams.get('hub.mode')
   const token = url.searchParams.get('hub.verify_token')
   const challenge = url.searchParams.get('hub.challenge')
-
   if (mode === 'subscribe' && token && token === process.env.WHATSAPP_VERIFY_TOKEN) return new NextResponse(challenge || 'OK', { status: 200 })
   return new NextResponse('Forbidden', { status: 403 })
 }
@@ -168,7 +132,6 @@ export async function POST(req: NextRequest) {
     const from = normalizeWhatsAppNumber(fromRaw)
 
     console.log('WhatsApp inbound:', { fromRaw, from, profileName, numMedia, messageSid: inboundMessageSid, body: String(formData.get('Body') || ''), mediaType: String(formData.get('MediaContentType0') || '') })
-
     if (!from) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     if (inboundMessageSid) sendWhatsAppTyping(inboundMessageSid).catch((error: any) => console.error('WHATSAPP_TYPING_BACKGROUND_FAILED:', error?.message || error))
 
@@ -230,6 +193,21 @@ export async function POST(req: NextRequest) {
         await sendWhatsAppMessage(from, meetingReminderReply)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
+    }
+
+    if (!incoming.wasVoice && isTypedMeetingNotesCommand(text)) {
+      try {
+        await sendWhatsAppMessage(from, '🧘 Preparing meeting notes…')
+        const transcript = cleanTypedMeetingNotesText(text)
+        const reply = await buildMeetingNotesReply({ telegramId: resolvedUser.telegramId, transcript, caption: 'Typed meeting notes' })
+        await saveConversation(resolvedUser.telegramId, 'user', `[typed meeting notes] ${transcript.slice(0, 500)}`)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply })
+      } catch (error: any) {
+        console.error('WHATSAPP_TYPED_MEETING_NOTES_FAILED:', error?.message || error)
+        await sendWhatsAppMessage(from, `I couldn’t turn that into meeting notes.\n\nTry starting with: *Meeting notes:* followed by the discussion and action items.`)
+      }
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
     if (incoming.wasVoice && shouldTreatAudioAsMeeting({ caption: bodyText, transcript: originalText })) {
@@ -308,7 +286,6 @@ export async function POST(req: NextRequest) {
     }
 
     const directReply = getDirectWhatsappPremiumReply(text, resolvedUser.name)
-
     if (directReply) {
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
       if (directReply.saveMemory) await saveMemory(resolvedUser.telegramId, directReply.saveMemory)
@@ -322,7 +299,6 @@ export async function POST(req: NextRequest) {
     }
 
     await sendThinkingIfNeeded(from, text)
-
     const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text' })
     const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(result.text, originalText) : result.text
     await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: finalReply })
