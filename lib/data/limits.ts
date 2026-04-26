@@ -96,6 +96,25 @@ function currentDayKey() {
   })
 }
 
+function nextResetLabel() {
+  const now = new Date()
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(now)
+
+  const year = Number(parts.find((p) => p.type === 'year')?.value || now.getUTCFullYear())
+  const month = Number(parts.find((p) => p.type === 'month')?.value || now.getUTCMonth() + 1)
+  const nextMonthAnchor = new Date(Date.UTC(year, month, 1, 0, 0, 0))
+
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: 'numeric',
+    month: 'short',
+  }).format(nextMonthAnchor)
+}
+
 function normalizeTier(tier?: string | null): PlanKey {
   const clean = (tier || 'free').toLowerCase().trim()
 
@@ -111,6 +130,38 @@ function normalizeTier(tier?: string | null): PlanKey {
 
 function usageMemoryPrefix(kind: UsageKind, periodKey: string) {
   return `ASKGOGO_USAGE:${kind}:${periodKey}:`
+}
+
+function usageBar(used: number, limit: number) {
+  const total = 5
+  const ratio = limit > 0 ? Math.min(used / limit, 1) : 0
+  const filled = Math.max(0, Math.min(total, Math.ceil(ratio * total)))
+  return '🟩'.repeat(filled) + '⬜'.repeat(total - filled)
+}
+
+function usageLine(label: string, used: number, limit: number, suffix = '') {
+  const remaining = Math.max(limit - used, 0)
+  return (
+    `*${label}*\n` +
+    `${used} / ${limit} used${suffix}\n` +
+    `${usageBar(used, limit)} ${remaining} left`
+  )
+}
+
+function recommendedPlan(tier: PlanKey) {
+  if (tier === 'free') {
+    return `Lite — ₹99/month\n60 AI actions/month\nLess than a cup of chai/day.`
+  }
+  if (tier === 'lite') {
+    return `Starter — ₹149/month\n100 AI actions/month\nMore voice notes and reminders.`
+  }
+  if (tier === 'starter') {
+    return `Pro — ₹299/month\n250 AI actions/month\nCalendar power features and deeper usage.`
+  }
+  if (tier === 'pro') {
+    return `Founder Pro — ₹499/month\n600 AI actions/month\nBest for power users.`
+  }
+  return `You’re already on the highest founder plan. 💚`
 }
 
 function buildLimitReachedMessage(params: {
@@ -394,21 +445,21 @@ export async function getUsageStatusReply(telegramId: number) {
   const voiceUsed = await countUsageFromMemories(telegramId, 'voice_note', monthKey)
   const webUsed = await countUsageFromMemories(telegramId, 'web_search', monthKey)
   const calendarUsed = await countUsageFromMemories(telegramId, 'calendar_event', monthKey)
+  const resetLabel = nextResetLabel()
 
   return (
-    `📊 *Your AskGogo usage*\n\n` +
-    `Plan: *${plan.label}*\n\n` +
-    `AI actions: ${monthlyActionsUsed} / ${plan.monthlyActions} this month\n` +
-    `Active reminders: ${activeReminders} / ${plan.activeReminders}\n` +
-    `Voice notes: ${voiceUsed} / ${plan.voiceNotesMonthly} this month\n` +
-    `Calendar events: ${calendarUsed} / ${plan.calendarEventsMonthly} this month\n` +
-    `Web searches: ${webUsed} / ${plan.webSearchesMonthly} this month\n\n` +
-    `Current beta plans:\n` +
-    `• Lite — ₹99/month\n` +
-    `• Starter — ₹149/month\n` +
-    `• Pro — ₹299/month\n` +
-    `• Founder Pro — ₹499/month\n\n` +
-    `Reply *pricing* to see plan details.`
+    `📊 *AskGogo Usage Dashboard*\n\n` +
+    `Plan: *${plan.label}*\n` +
+    `Resets on: *${resetLabel}*\n\n` +
+    `${usageLine('AI actions', monthlyActionsUsed, plan.monthlyActions, ' this month')}\n\n` +
+    `${usageLine('Active reminders', activeReminders, plan.activeReminders)}\n\n` +
+    `${usageLine('Voice notes', voiceUsed, plan.voiceNotesMonthly, ' this month')}\n\n` +
+    `${usageLine('Calendar events', calendarUsed, plan.calendarEventsMonthly, ' this month')}\n\n` +
+    `${usageLine('Web searches', webUsed, plan.webSearchesMonthly, ' this month')}\n\n` +
+    `💡 *Best next plan*\n` +
+    `${recommendedPlan(tier)}\n\n` +
+    `Reply *pricing* to see all plans.\n` +
+    `Reply *notify me* for founder pricing.`
   )
 }
 
