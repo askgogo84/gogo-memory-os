@@ -1,6 +1,6 @@
 import { supabaseAdmin } from './supabase-admin'
 
-type PlanKey = 'free' | 'starter' | 'pro' | 'founder_pro'
+type PlanKey = 'free' | 'lite' | 'starter' | 'pro' | 'founder_pro'
 
 export type UsageKind =
   | 'ai_action'
@@ -32,6 +32,17 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
     webSearchesMonthly: 3,
     calendarEventsMonthly: 3,
     costGuardrailInr: 25,
+  },
+  lite: {
+    label: 'Lite',
+    priceInr: 99,
+    monthlyActions: 60,
+    dailyActions: 15,
+    activeReminders: 5,
+    voiceNotesMonthly: 10,
+    webSearchesMonthly: 5,
+    calendarEventsMonthly: 5,
+    costGuardrailInr: 60,
   },
   starter: {
     label: 'Starter',
@@ -88,6 +99,7 @@ function currentDayKey() {
 function normalizeTier(tier?: string | null): PlanKey {
   const clean = (tier || 'free').toLowerCase().trim()
 
+  if (clean === 'lite') return 'lite'
   if (clean === 'starter') return 'starter'
   if (clean === 'pro') return 'pro'
   if (clean === 'founder_pro') return 'founder_pro'
@@ -111,6 +123,7 @@ function buildLimitReachedMessage(params: {
     `You’re on the *${params.planLabel}* plan and have reached the ${params.limitLabel} limit of *${params.limitValue}*.\n\n` +
     `AskGogo is still in founder beta while Razorpay checkout is being enabled.\n\n` +
     `Going live soon:\n` +
+    `• Lite — ₹99/month — 60 AI actions/month\n` +
     `• Starter — ₹149/month — 100 AI actions/month\n` +
     `• Pro — ₹299/month — 250 AI actions/month\n` +
     `• Founder Pro — ₹499/month — 600 AI actions/month\n\n` +
@@ -391,6 +404,7 @@ export async function getUsageStatusReply(telegramId: number) {
     `Calendar events: ${calendarUsed} / ${plan.calendarEventsMonthly} this month\n` +
     `Web searches: ${webUsed} / ${plan.webSearchesMonthly} this month\n\n` +
     `Current beta plans:\n` +
+    `• Lite — ₹99/month\n` +
     `• Starter — ₹149/month\n` +
     `• Pro — ₹299/month\n` +
     `• Founder Pro — ₹499/month\n\n` +
