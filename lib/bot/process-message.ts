@@ -155,6 +155,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  if (intent.type === 'edit_reminder') {
+    const reply = await editLatestReminder(resolvedUser.telegramId, incomingText)
+    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
   // ASKGOGO_PREMIUM_WHATSAPP_HANDLER
   if (
     intent.type === 'welcome_menu' ||
@@ -281,12 +288,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const styledReminderReply = styleReplyByIntent('set_reminder', reply)
     await saveConversation(resolvedUser.telegramId, 'assistant', styledReminderReply)
     return { text: formatOutgoingText(params.channel, styledReminderReply), resolvedUser }
-  }
-
-  if (intent.type === 'edit_reminder') {
-    const reply = await editLatestReminder(resolvedUser.telegramId, incomingText)
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'set_briefing_time') {
