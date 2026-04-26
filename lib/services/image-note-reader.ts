@@ -102,11 +102,61 @@ export async function readAndSummarizeImageNote(params: {
   return text
 }
 
-export function compactImageNoteForSaving(text: string) {
-  return text
-    .replace(/\*/g, '')
-    .replace(/📝\s*Image note read/gi, '')
-    .replace(/\n{3,}/g, '\n\n')
+function extractSection(text: string, heading: string) {
+  const plain = text.replace(/\*/g, '')
+  const regex = new RegExp(`${heading}\\s*\\n([\\s\\S]*?)(?=\\n(?:Summary|Extracted text|Next actions)\\s*\\n|$)`, 'i')
+  const match = plain.match(regex)
+  return (match?.[1] || '').trim()
+}
+
+function cleanBulletLine(line: string) {
+  return line.replace(/^[-•\d.)\s]+/, '').replace(/\s+/g, ' ').trim()
+}
+
+function titleFromSummary(summaryLines: string[]) {
+  const first = summaryLines[0] || 'Image note'
+  const clean = first
+    .replace(/^the image\s+(discusses|shows|contains|outlines|describes)\s+/i, '')
+    .replace(/^this image\s+(discusses|shows|contains|outlines|describes)\s+/i, '')
+    .replace(/^a\s+/i, '')
+    .replace(/\.$/, '')
     .trim()
-    .slice(0, 1200)
+
+  const title = clean.length > 48 ? clean.slice(0, 45).trim() + '...' : clean
+  return title ? `Image note — ${title}` : 'Image note'
+}
+
+export function compactImageNoteForSaving(text: string) {
+  const summary = extractSection(text, 'Summary')
+  const extracted = extractSection(text, 'Extracted text')
+  const actions = extractSection(text, 'Next actions')
+
+  const summaryLines = summary
+    .split('\n')
+    .map(cleanBulletLine)
+    .filter(Boolean)
+    .filter((line) => !/^none$/i.test(line))
+    .slice(0, 3)
+
+  const actionLines = actions
+    .split('\n')
+    .map(cleanBulletLine)
+    .filter(Boolean)
+    .filter((line) => !/^none$/i.test(line))
+    .slice(0, 2)
+
+  const readableExtract = extracted && !/not readable|not clearly readable|no readable text/i.test(extracted)
+  const compactParts: string[] = []
+  compactParts.push(titleFromSummary(summaryLines))
+
+  if (summaryLines.length) compactParts.push(...summaryLines.map((line) => `• ${line}`))
+
+  if (readableExtract) {
+    const shortExtract = extracted.replace(/\s+/g, ' ').trim().slice(0, 220)
+    compactParts.push(`Text: ${shortExtract}${extracted.length > 220 ? '...' : ''}`)
+  }
+
+  if (actionLines.length) compactParts.push(...actionLines.map((line) => `Action: ${line}`))
+
+  return compactParts.join('\n').trim().slice(0, 900)
 }
