@@ -102,13 +102,26 @@ function cleanActionLine(line: string) {
     .replace(/^[-•\d.)\s]+/, '')
     .replace(/^owner\s+tbd\s*[—:-]\s*/i, '')
     .replace(/^tbd\s*[—:-]\s*/i, '')
+    .replace(/\bOwner TBD\b\s*[—:-]\s*/gi, '')
+    .replace(/\bOwner TBD\b/gi, '')
     .replace(/\*+/g, '')
     .replace(/\s+/g, ' ')
+    .replace(/\s+\./g, '.')
+    .trim()
+}
+
+function polishMeetingReply(reply: string) {
+  return (reply || '')
+    .replace(/Owner TBD\s*[—:-]\s*/gi, '')
+    .replace(/\bOwner TBD\b/gi, '')
+    .replace(/\n\s*(\d+\.\s*)\s+/g, '\n$1')
+    .replace(/\s+\./g, '.')
+    .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
 
 function extractActionItems(reply: string) {
-  const plain = (reply || '').replace(/\*/g, '')
+  const plain = polishMeetingReply(reply).replace(/\*/g, '')
   const match = plain.match(/Action items\s*\n([\s\S]*?)(?=\n(?:Follow-ups to create|Transcript snapshot|Summary|Key decisions)\s*\n|$)/i)
   const section = match?.[1] || ''
 
@@ -147,7 +160,7 @@ export async function buildMeetingNotesReply(params: { telegramId: number; trans
       {
         role: 'system',
         content:
-          'You are AskGogo meeting notes assistant for WhatsApp. Summarize meeting transcripts into concise, useful notes. Use WhatsApp-friendly formatting. Do not invent names or decisions. If speaker names are unclear, use Owner TBD.',
+          'You are AskGogo meeting notes assistant for WhatsApp. Summarize meeting transcripts into concise, useful notes. Use WhatsApp-friendly formatting. Do not invent names or decisions. Keep action items short and natural. Do not write Owner TBD. If owner is unclear, write only the action. If owner is clear, write Name — action.',
       },
       {
         role: 'user',
@@ -157,15 +170,16 @@ export async function buildMeetingNotesReply(params: { telegramId: number; trans
           `🎙️ *Meeting notes ready*\n\n` +
           `*Summary*\n• ...\n• ...\n\n` +
           `*Key decisions*\n• ...\n\n` +
-          `*Action items*\n1. Owner — action\n2. Owner — action\n\n` +
+          `*Action items*\n1. action item\n2. Name — action item\n\n` +
           `*Follow-ups to create*\n• reminder suggestion if any\n\n` +
           `*Transcript snapshot*\nshort important excerpt / or concise transcript summary`,
       },
     ],
   })
 
-  const reply = response.choices?.[0]?.message?.content?.trim()
-  if (!reply) throw new Error('Could not summarize meeting transcript')
+  const rawReply = response.choices?.[0]?.message?.content?.trim()
+  if (!rawReply) throw new Error('Could not summarize meeting transcript')
+  const reply = polishMeetingReply(rawReply)
 
   const savedNote = reply.replace(/\*/g, '').replace(/🎙️\s*Meeting notes ready/gi, 'Meeting notes').trim().slice(0, 1500)
   await addToList(params.telegramId, 'notes', [savedNote])
