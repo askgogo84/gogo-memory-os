@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
-import { sendWhatsAppMessage, sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
+import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
@@ -148,6 +148,7 @@ export async function POST(req: NextRequest) {
     const fromRaw = String(formData.get('From') || '')
     const profileName = String(formData.get('ProfileName') || 'Friend')
     const numMedia = Number(formData.get('NumMedia') || '0')
+    const inboundMessageSid = String(formData.get('MessageSid') || formData.get('SmsMessageSid') || '').trim()
     const from = normalizeWhatsAppNumber(fromRaw)
 
     console.log('WhatsApp inbound:', {
@@ -155,6 +156,7 @@ export async function POST(req: NextRequest) {
       from,
       profileName,
       numMedia,
+      messageSid: inboundMessageSid,
       body: String(formData.get('Body') || ''),
       mediaType: String(formData.get('MediaContentType0') || ''),
     })
@@ -163,6 +165,12 @@ export async function POST(req: NextRequest) {
       return new NextResponse(emptyTwiml(), {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
+      })
+    }
+
+    if (inboundMessageSid) {
+      sendWhatsAppTyping(inboundMessageSid).catch((error: any) => {
+        console.error('WHATSAPP_TYPING_BACKGROUND_FAILED:', error?.message || error)
       })
     }
 
