@@ -10,6 +10,7 @@ import { buildMemoryControlReply, isMemoryControlCommand } from '@/lib/bot/handl
 import { buildNotesReply, isNotesCommand } from '@/lib/bot/handlers/notes-control'
 import { buildPaymentIntentReply, isPaymentIntentCommand } from '@/lib/bot/handlers/payment-intent'
 import { buildAdminWhatsAppReply, isAdminCommand, isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
+import { buildFirstValueReferralNudge } from '@/lib/bot/handlers/first-value-nudge'
 import {
   buildReferralUnlockReply,
   buildReferralWelcomeNote,
@@ -44,6 +45,21 @@ async function saveConversation(telegramId: number, role: 'user' | 'assistant', 
 
 async function saveMemory(telegramId: number, content: string) {
   await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content })
+}
+
+async function sendWithFirstValueNudge(params: {
+  from: string
+  telegramId: number
+  userText: string
+  reply: string
+}) {
+  const nudge = await buildFirstValueReferralNudge({
+    telegramId: params.telegramId,
+    userText: params.userText,
+    botReply: params.reply,
+  })
+
+  await sendWhatsAppMessage(params.from, `${params.reply}${nudge}`)
 }
 
 async function getTextFromIncomingWhatsApp(formData: FormData) {
@@ -139,7 +155,7 @@ export async function POST(req: NextRequest) {
         await addToList(resolvedUser.telegramId, 'notes', [savedNote])
         await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image note]')
         await saveConversation(resolvedUser.telegramId, 'assistant', imageReply)
-        await sendWhatsAppMessage(from, `${imageReply}\n\n✅ Saved to *my notes*.`)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image note]', reply: `${imageReply}\n\n✅ Saved to *my notes*.` })
       } catch (error: any) {
         console.error('WHATSAPP_IMAGE_NOTE_FAILED:', error?.message || error)
         await sendWhatsAppMessage(from, `I couldn’t read that image clearly.\n\nTry sending a clearer photo of the note, diary page, screenshot, or document.`)
@@ -174,7 +190,8 @@ export async function POST(req: NextRequest) {
       const reply = await buildNotesReply(resolvedUser.telegramId, text)
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-      await sendWhatsAppMessage(from, incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply)
+      const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply
+      await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: finalReply })
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
@@ -200,7 +217,8 @@ export async function POST(req: NextRequest) {
       const reply = await buildMemoryControlReply(resolvedUser.telegramId, text)
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-      await sendWhatsAppMessage(from, incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply)
+      const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply
+      await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: finalReply })
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
@@ -231,7 +249,7 @@ export async function POST(req: NextRequest) {
 
     const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text' })
     const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(result.text, originalText) : result.text
-    await sendWhatsAppMessage(from, finalReply)
+    await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: finalReply })
 
     return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
   } catch (error: any) {
