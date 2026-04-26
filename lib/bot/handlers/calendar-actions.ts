@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
+import { saveFollowupState } from './followup-state'
 import {
   createCalendarEvent,
   refreshAccessToken,
@@ -11,6 +12,14 @@ type CalendarActionResult = {
 }
 
 type CalendarDateTarget = 'today' | 'tomorrow' | 'day_after_tomorrow'
+
+type CalendarCreatePayload = {
+  title: string
+  startIso: string
+  endIso: string
+  displayTime: string
+  created_at?: string
+}
 
 function istPartsNow() {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -292,6 +301,63 @@ async function getEventsForTarget(accessToken: string, target: CalendarDateTarge
   return data.items || []
 }
 
+function findConflictingEvents(events: any[], startIso: string, endIso: string) {
+  const start = new Date(startIso).getTime()
+  const end = new Date(endIso).getTime()
+
+  return events.filter((event: any) => {
+    const eventStart = event?.start?.dateTime
+    const eventEnd = event?.end?.dateTime
+
+    if (!eventStart || !eventEnd) return false
+
+    const existingStart = new Date(eventStart).getTime()
+    const existingEnd = new Date(eventEnd).getTime()
+
+    return existingStart < end && existingEnd > start
+  })
+}
+
+async function createEventFromPayload(
+  telegramId: number,
+  accessToken: string,
+  payload: CalendarCreatePayload
+) {
+  const calendarLimit = await checkFeatureLimit(telegramId, 'calendar_event')
+
+  if (!calendarLimit.allowed) {
+    return calendarLimit.upgradeMessage || 'Calendar event limit reached.'
+  }
+
+  const created = await createCalendarEvent(
+    accessToken,
+    payload.title,
+    payload.startIso,
+    payload.endIso
+  )
+
+  if (created?.error) {
+    return (
+      `📅 *Calendar error*\n\n` +
+      `I couldn’t add this event right now.\n\n` +
+      `Please try again, or reconnect calendar.`
+    )
+  }
+
+  await logUsage(telegramId, 'calendar_event', {
+    title: payload.title,
+    startIso: payload.startIso,
+    endIso: payload.endIso,
+  })
+
+  return (
+    `✅ *Calendar event added*\n\n` +
+    `${payload.title}\n` +
+    `${payload.displayTime}\n\n` +
+    `Duration: 30 mins`
+  )
+}
+
 export function isCalendarAction(text: string) {
   const lower = (text || '').toLowerCase()
 
@@ -306,6 +372,28 @@ export function isCalendarAction(text: string) {
     lower.includes('what is on my calendar') ||
     lower.includes("what's on my calendar")
   )
+}
+
+export async function createCalendarConflictEvent(
+  telegramId: number,
+  payload: CalendarCreatePayload
+) {
+  if (!payload?.title || !payload?.startIso || !payload?.endIso) {
+    return null
+  }
+
+  if (payload.created_at) {
+    const ageMs = Date.now() - new Date(payload.created_at).getTime()
+    if (ageMs > 15 * 60 * 1000) return null
+  }
+
+  const tokens = await getCalendarTokens(telegramId)
+
+  if (!tokens.connected || !tokens.accessToken) {
+    return null
+  }
+
+  return await createEventFromPayload(telegramId, tokens.accessToken, payload)
 }
 
 export async function buildCalendarActionReply(
@@ -387,15 +475,6 @@ export async function buildCalendarActionReply(
   }
 
   if (createIntent && !createIntent.needsTime && createIntent.start && createIntent.end) {
-    const calendarLimit = await checkFeatureLimit(telegramId, 'calendar_event')
-
-    if (!calendarLimit.allowed) {
-      return {
-        handled: true,
-        reply: calendarLimit.upgradeMessage || 'Calendar event limit reached.',
-      }
-    }
-
     const start = createIntent.start
     const end = createIntent.end
 
@@ -415,36 +494,44 @@ export async function buildCalendarActionReply(
       end.minute
     )
 
-    const created = await createCalendarEvent(
-      tokens.accessToken,
-      createIntent.title,
-      startIso,
-      endIso
-    )
+    const displayTime = formatIstDisplayFromParts(start.year, start.month, start.day, start.hour, start.minute)
+    const eventsForDay = await getEventsForTarget(tokens.accessToken, createIntent.target)
+    const conflicts = findConflictingEvents(eventsForDay, startIso, endIso)
 
-    if (created?.error) {
+    if (conflicts.length) {
+      const conflict = conflicts[0]
+      const payload = {
+        title: createIntent.title,
+        startIso,
+        endIso,
+        displayTime,
+        created_at: new Date().toISOString(),
+      }
+
+      await saveFollowupState(telegramId, 'calendar_conflict', payload)
+
       return {
         handled: true,
         reply:
-          `📅 *Calendar error*\n\n` +
-          `I couldn’t add this event right now.\n\n` +
-          `Please try again, or reconnect calendar.`,
+          `⚠️ *Calendar conflict found*\n\n` +
+          `You already have:\n` +
+          `• ${formatEventTime(conflict)} — ${conflict.summary || 'Calendar event'}\n\n` +
+          `New event:\n` +
+          `• ${displayTime} — ${createIntent.title}\n\n` +
+          `Reply *yes* to add anyway, or send another time like *move to 4:30 pm*.`,
       }
     }
 
-    await logUsage(telegramId, 'calendar_event', {
+    const reply = await createEventFromPayload(telegramId, tokens.accessToken, {
       title: createIntent.title,
       startIso,
       endIso,
+      displayTime,
     })
 
     return {
       handled: true,
-      reply:
-        `✅ *Calendar event added*\n\n` +
-        `${createIntent.title}\n` +
-        `${formatIstDisplayFromParts(start.year, start.month, start.day, start.hour, start.minute)}\n\n` +
-        `Duration: 30 mins`,
+      reply,
     }
   }
 
