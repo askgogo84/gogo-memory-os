@@ -48,8 +48,8 @@ Try:
 1. Send a voice note: “Remind me in 10 mins to call Rahul”
 2. Connect calendar
 3. Today
-4. Bangalore weather tomorrow
-5. Next RCB match
+4. Show my reminders
+5. Bangalore weather tomorrow
 
 Built for people who live on WhatsApp.`
     }
@@ -71,7 +71,8 @@ Send a voice note in English, Hindi, Hinglish, Kannada, Tamil, Telugu or Malayal
 
 ⏰ *Reminders*
 • Remind me in 20 mins to call Rahul
-• Remind me tomorrow at 9 am
+• Show my reminders
+• Cancel water reminder
 • Snooze 10 mins
 • Move it to 8 pm
 • Done
@@ -89,6 +90,7 @@ Send a voice note in English, Hindi, Hinglish, Kannada, Tamil, Telugu or Malayal
 
 🚀 *Beta*
 • Pricing
+• Usage
 • Notify me
 • Invite friends
 
@@ -175,13 +177,16 @@ Reply *notify me* and I’ll mark you for early founder pricing.`
     return {
       mediaUrl: envUrl('ASKGOGO_SUCCESS_GIF_URL'),
       saveMemory: 'User asked to be notified when AskGogo Razorpay/payment/founder pricing goes live.',
-      text: `✅ *You’re on the founder list*
+      text: `✅ *You’re on the founder pricing list, ${name}*
 
-I’ll remember that you want early access pricing.
+I’ll remember that you want early access when paid plans go live.
 
-When Razorpay goes live, you’ll be among the first to get the founder offer.
+Plans start at *₹99/month* — less than a cup of chai/day.
 
-Meanwhile, you can keep using AskGogo beta on WhatsApp.`
+Want priority Founder Beta access?
+Invite 3 friends who live on WhatsApp.
+
+Reply *invite friends* and I’ll give you a ready-to-send message.`
     }
   }
 
@@ -196,7 +201,7 @@ Meanwhile, you can keep using AskGogo beta on WhatsApp.`
   ) {
     return {
       mediaUrl: envUrl('ASKGOGO_REFERRAL_GIF_URL'),
-      text: `🎁 *Invite friends to AskGogo*
+      text: `🎁 *Invite 3 friends to AskGogo*
 
 Copy and send this:
 
@@ -207,7 +212,7 @@ You can type or send voice notes in Indian languages.
 Try it here:
 ${ASK_GOGO_WHATSAPP_LINK}”
 
-Founder beta users will get priority access when paid plans go live.`
+Founder beta users who invite friends will get priority early pricing when Razorpay goes live.`
     }
   }
 
