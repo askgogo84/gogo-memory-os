@@ -107,14 +107,15 @@ function buildLimitReachedMessage(params: {
   limitValue: number
 }) {
   return (
-    `⚡ *Fair-use limit reached*\n\n` +
-    `You’ve reached your ${params.limitLabel} limit of *${params.limitValue}* on the *${params.planLabel}* plan.\n\n` +
-    `AskGogo is currently in founder beta. Razorpay checkout is being enabled soon.\n\n` +
-    `Plans going live:\n` +
+    `⚡ *You’ve used today’s free beta quota*\n\n` +
+    `You’re on the *${params.planLabel}* plan and have reached the ${params.limitLabel} limit of *${params.limitValue}*.\n\n` +
+    `AskGogo is still in founder beta while Razorpay checkout is being enabled.\n\n` +
+    `Going live soon:\n` +
     `• Starter — ₹149/month — 100 AI actions/month\n` +
     `• Pro — ₹299/month — 250 AI actions/month\n` +
     `• Founder Pro — ₹499/month — 600 AI actions/month\n\n` +
-    `Reply *notify me* and I’ll mark you for early founder pricing.`
+    `Reply *notify me* to get early founder pricing.\n` +
+    `Reply *usage* to see your current limits.`
   )
 }
 
