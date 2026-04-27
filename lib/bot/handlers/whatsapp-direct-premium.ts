@@ -23,7 +23,7 @@ export function getDirectWhatsappPremiumReply(input: string, userName?: string):
 
   if (/^(hi|hello|hey|start|\/start|hi askgogo|hello askgogo|hey askgogo|start askgogo|askgogo)$/i.test(lower)) {
     return {
-      mediaUrl: envUrl('ASKGOGO_WELCOME_GIF_URL'),
+      mediaUrl: null,
       text: `👋 Hey ${name}, I’m *AskGogo*.
 
 Your AI assistant inside WhatsApp.
