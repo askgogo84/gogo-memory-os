@@ -69,6 +69,50 @@ function addIstDays(parts: { year: number; month: number; day: number }, daysToA
   }
 }
 
+function compactTimeParts(digits: string): { hour: number; minute: number } | null {
+  if (!/^\d{3,4}$/.test(digits)) return null
+  const hour = parseInt(digits.slice(0, -2), 10)
+  const minute = parseInt(digits.slice(-2), 10)
+  if (hour < 1 || hour > 12 || minute > 59) return null
+  return { hour, minute }
+}
+
+export function getAmbiguousReminderTime(text: string): { label: string; hour: number; minute: number } | null {
+  const raw = text || ''
+  if (/\b\d{1,4}([:.]\d{2})?\s*(am|pm)\b/i.test(raw)) return null
+  if (!/\b(remind|wake|alarm|set|tomorrow|tmrw|tmr|at)\b/i.test(raw)) return null
+
+  const compact = raw.match(/\b(\d{3,4})\b/)
+  if (compact) {
+    const parsed = compactTimeParts(compact[1])
+    if (parsed) {
+      return {
+        label: `${parsed.hour}:${String(parsed.minute).padStart(2, '0')}`,
+        ...parsed,
+      }
+    }
+  }
+
+  const hourOnly = raw.match(/\bat\s+(\d{1,2})\b/i)
+  if (hourOnly) {
+    const hour = parseInt(hourOnly[1], 10)
+    if (hour >= 1 && hour <= 12) return { label: `${hour}:00`, hour, minute: 0 }
+  }
+
+  return null
+}
+
+export function buildAmPmClarificationReply(text: string) {
+  const ambiguous = getAmbiguousReminderTime(text)
+  const label = ambiguous?.label || 'that time'
+  return (
+    `Quick check — did you mean *${label} AM* or *${label} PM*?\n\n` +
+    `Reply like:\n` +
+    `• ${label} am\n` +
+    `• ${label} pm`
+  )
+}
+
 function parseTimePart(input: string): { hour: number; minute: number } | null {
   const raw = input || ''
 
@@ -286,6 +330,7 @@ function parseEveryNRecurring(text: string): ParsedReminder {
 
 function parseTomorrowReminder(text: string): ParsedReminder {
   if (!/\b(tomorrow|tmrw|tmr)\b/i.test(text)) return null
+  if (getAmbiguousReminderTime(text)) return null
   const nowIst = istNowParts()
   const nextDay = addIstDays(nowIst, 1)
   const time = parseTimePart(text) || { hour: 9, minute: 0 }
@@ -297,6 +342,7 @@ function parseSpecificWeekdayReminder(text: string): ParsedReminder {
   if (/\bevery\s+/i.test(text)) return null
   const match = text.match(/\b(?:on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)
   if (!match) return null
+  if (getAmbiguousReminderTime(text)) return null
   const weekdayName = match[1].toLowerCase()
   const time = parseTimePart(text) || { hour: 9, minute: 0 }
   const nowIst = istNowParts()
@@ -315,6 +361,7 @@ function parseSpecificWeekdayReminder(text: string): ParsedReminder {
 function parseWeekdayRecurring(text: string): ParsedReminder {
   const match = text.match(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at\s+(.+))?/i)
   if (!match) return null
+  if (getAmbiguousReminderTime(text)) return null
   const weekdayName = match[1].toLowerCase()
   const time = parseTimePart(match[2] || text) || { hour: 9, minute: 0 }
   const nowIst = istNowParts()
@@ -367,6 +414,7 @@ function parseSimpleAtTime(text: string): ParsedReminder {
   if (!/^remind/i.test(text) && !/\bset a reminder\b/i.test(text) && !/\bset reminder\b/i.test(text)) return null
   if (!/\bat\s+/i.test(text)) return null
   if (/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text)) return null
+  if (getAmbiguousReminderTime(text)) return null
   const timeMatch = text.match(/\bat\s+(.+)$/i)
   if (!timeMatch) return null
   const time = parseTimePart(timeMatch[1])
