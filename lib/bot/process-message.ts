@@ -13,7 +13,7 @@ import { buildSportsReplyWithState } from './handlers/sports'
 import { getLatestFollowupState } from './handlers/followup-state'
 import { buildEmailActionReply } from './handlers/email-actions'
 import { styleReplyByIntent } from './handlers/response-style'
-import { buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
+import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 import { editLatestReminder } from './handlers/edit-reminder'
 import { buildMorningBriefing } from './handlers/morning-briefing'
 import { setBriefingTime } from './handlers/briefing-settings'
@@ -258,6 +258,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (intent.type === 'notify_me') {
       await saveMemory(resolvedUser.telegramId, 'User asked to be notified for AskGogo founder pricing / paid plan launch.')
     }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  if (getAmbiguousReminderTime(incomingText) && (intent.type === 'set_reminder' || /\b(remind|wake|alarm|set)\b/i.test(incomingText))) {
+    const reply = buildAmPmClarificationReply(incomingText)
+    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
