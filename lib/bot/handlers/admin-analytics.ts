@@ -13,12 +13,16 @@ export type AdminAnalytics = {
     activeReminders: number
     paymentIntents: number
     referrals: number
+    institutions: number
+    institutionUsers: number
+    pilotInstitutions: number
   }
   usersByPlatform: Record<string, number>
   usersByTier: Record<string, number>
   paymentByPlan: Record<string, number>
   recentUsers: any[]
   recentPaymentIntents: any[]
+  institutions: any[]
 }
 
 type PlanKey = 'free' | 'starter' | 'pro' | 'founder_pro'
@@ -71,6 +75,8 @@ export function isAdminCommand(text: string) {
     lower === 'admin referrals' ||
     lower === 'admin stats' ||
     lower === 'admin analytics' ||
+    lower === 'admin institutions' ||
+    lower === 'admin pilots' ||
     /^admin\s+find\s+/i.test(lower) ||
     /^admin\s+upgrade\s+/i.test(lower) ||
     /^admin\s+downgrade\s+/i.test(lower)
@@ -131,6 +137,9 @@ function formatUserCard(user: any) {
     `Phone: *${phone}*\n` +
     `Platform: *${user?.platform || 'unknown'}*\n` +
     `Plan: *${PLAN_LABELS[plan]}*\n` +
+    `Institution: *${user?.institution_name || '-'}*\n` +
+    `Role: *${user?.institution_role || '-'}*\n` +
+    `Segment: *${user?.institution_segment || '-'}*\n` +
     `Limit: ${PLAN_LIMITS[plan]}\n` +
     `Telegram ID: ${user?.telegram_id || '-'}\n\n` +
     `Commands:\n` +
@@ -205,6 +214,54 @@ async function buildAdminPlanChangeReply(text: string) {
   )
 }
 
+function buildInstitutionRows(users: any[], institutions: any[]) {
+  const usersByInstitutionId = users.reduce((acc: Record<string, any[]>, user: any) => {
+    const key = user.institution_id || user.institution_name || 'Unassigned'
+    if (!acc[key]) acc[key] = []
+    acc[key].push(user)
+    return acc
+  }, {})
+
+  const known = institutions.map((inst: any) => {
+    const linkedUsers = usersByInstitutionId[inst.id] || usersByInstitutionId[inst.name] || []
+    const platformCounts = countBy(linkedUsers, 'platform')
+    const tierCounts = countBy(linkedUsers, 'tier')
+    return {
+      ...inst,
+      user_count: linkedUsers.length,
+      whatsapp_users: platformCounts.whatsapp || 0,
+      telegram_users: platformCounts.telegram || 0,
+      free_users: tierCounts.free || 0,
+      founder_pro_users: tierCounts.founder_pro || tierCounts.founder || 0,
+      segments: Array.from(new Set(linkedUsers.map((u: any) => u.institution_segment).filter(Boolean))).slice(0, 8),
+    }
+  })
+
+  const unassignedInstitutionUsers = users.filter((u: any) => !u.institution_id && u.institution_name)
+  const unassignedNames = Array.from(new Set(unassignedInstitutionUsers.map((u: any) => u.institution_name).filter(Boolean)))
+
+  const inferred = unassignedNames.map((name: any) => {
+    const linkedUsers = unassignedInstitutionUsers.filter((u: any) => u.institution_name === name)
+    const platformCounts = countBy(linkedUsers, 'platform')
+    return {
+      id: `name:${name}`,
+      name,
+      type: linkedUsers[0]?.institution_type || 'unknown',
+      city: '',
+      contact_name: '',
+      contact_phone: '',
+      plan: 'pilot',
+      status: 'pilot',
+      user_count: linkedUsers.length,
+      whatsapp_users: platformCounts.whatsapp || 0,
+      telegram_users: platformCounts.telegram || 0,
+      segments: Array.from(new Set(linkedUsers.map((u: any) => u.institution_segment).filter(Boolean))).slice(0, 8),
+    }
+  })
+
+  return [...known, ...inferred].sort((a, b) => (b.user_count || 0) - (a.user_count || 0))
+}
+
 export async function getAdminAnalytics(): Promise<AdminAnalytics> {
   const { data: usersRaw } = await supabaseAdmin
     .from('users')
@@ -213,6 +270,15 @@ export async function getAdminAnalytics(): Promise<AdminAnalytics> {
     .limit(5000)
 
   const users = usersRaw || []
+
+  const { data: institutionsRaw } = await supabaseAdmin
+    .from('institutions')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(1000)
+
+  const institutionsRawSafe = institutionsRaw || []
+  const institutions = buildInstitutionRows(users, institutionsRawSafe)
 
   const { count: activeReminders } = await supabaseAdmin
     .from('reminders')
@@ -242,6 +308,8 @@ export async function getAdminAnalytics(): Promise<AdminAnalytics> {
     return acc
   }, {})
 
+  const institutionUsers = users.filter((u: any) => u.institution_id || u.institution_name).length
+
   return {
     totals: {
       users: users.length,
@@ -255,12 +323,16 @@ export async function getAdminAnalytics(): Promise<AdminAnalytics> {
       activeReminders: activeReminders || 0,
       paymentIntents: paymentIntents || 0,
       referrals: referrals || 0,
+      institutions: institutions.length,
+      institutionUsers,
+      pilotInstitutions: institutions.filter((x: any) => String(x.status || '').toLowerCase() === 'pilot').length,
     },
     usersByPlatform,
     usersByTier,
     paymentByPlan,
     recentUsers: users.slice(0, 25),
     recentPaymentIntents,
+    institutions,
   }
 }
 
@@ -271,6 +343,18 @@ function moneyPlanLabel(plan: string) {
   return 'Unknown'
 }
 
+function formatInstitutionsForWhatsApp(institutions: any[]) {
+  if (!institutions.length) return `No institutions added yet.`
+  return institutions
+    .slice(0, 10)
+    .map((inst: any, idx: number) =>
+      `${idx + 1}. *${inst.name}* (${inst.type || 'institution'})\n` +
+      `   Users: ${inst.user_count || 0} • WA: ${inst.whatsapp_users || 0} • TG: ${inst.telegram_users || 0}\n` +
+      `   Status: ${inst.status || 'pilot'} • Plan: ${inst.plan || 'pilot'}`
+    )
+    .join('\n')
+}
+
 export async function buildAdminWhatsAppReply(text: string) {
   const lower = (text || '').toLowerCase().trim()
 
@@ -278,6 +362,16 @@ export async function buildAdminWhatsAppReply(text: string) {
   if (/^admin\s+upgrade\s+/i.test(lower) || /^admin\s+downgrade\s+/i.test(lower)) return await buildAdminPlanChangeReply(text)
 
   const analytics = await getAdminAnalytics()
+
+  if (lower === 'admin institutions' || lower === 'admin pilots') {
+    return (
+      `🏫 *Institution pilots*\n\n` +
+      `Institutions: *${analytics.totals.institutions}*\n` +
+      `Institution users: *${analytics.totals.institutionUsers}*\n` +
+      `Pilot institutions: *${analytics.totals.pilotInstitutions}*\n\n` +
+      formatInstitutionsForWhatsApp(analytics.institutions)
+    )
+  }
 
   if (lower === 'admin payment intents' || lower === 'admin payments') {
     if (!analytics.recentPaymentIntents.length) return `💳 *Payment intents*\n\nNo payment intents captured yet.`
@@ -299,7 +393,8 @@ export async function buildAdminWhatsAppReply(text: string) {
       `👥 *Users*\n\n` +
       `Total: *${analytics.totals.users}*\n` +
       `WhatsApp: ${analytics.totals.whatsappUsers}\n` +
-      `Telegram: ${analytics.totals.telegramUsers}\n\n` +
+      `Telegram: ${analytics.totals.telegramUsers}\n` +
+      `Institution users: ${analytics.totals.institutionUsers}\n\n` +
       `*Plans*\n` +
       `Free: ${analytics.totals.freeUsers}\n` +
       `Starter: ${analytics.totals.starterUsers}\n` +
@@ -313,7 +408,8 @@ export async function buildAdminWhatsAppReply(text: string) {
   return (
     `📊 *AskGogo Admin Dashboard*\n\n` +
     `Users: *${analytics.totals.users}*\n` +
-    `WhatsApp: ${analytics.totals.whatsappUsers} • Telegram: ${analytics.totals.telegramUsers}\n\n` +
+    `WhatsApp: ${analytics.totals.whatsappUsers} • Telegram: ${analytics.totals.telegramUsers}\n` +
+    `Institutions: ${analytics.totals.institutions} • Institution users: ${analytics.totals.institutionUsers}\n\n` +
     `Plans:\n` +
     `Free ${analytics.totals.freeUsers} • Starter ${analytics.totals.starterUsers} • Pro ${analytics.totals.proUsers} • Founder Pro ${analytics.totals.founderProUsers}\n\n` +
     `Active reminders: ${analytics.totals.activeReminders}\n` +
@@ -321,6 +417,7 @@ export async function buildAdminWhatsAppReply(text: string) {
     `Referrals: ${analytics.totals.referrals}\n\n` +
     `Commands:\n` +
     `• admin users\n` +
+    `• admin institutions\n` +
     `• admin payment intents\n` +
     `• admin referrals\n` +
     `• admin find 8884501501\n` +
