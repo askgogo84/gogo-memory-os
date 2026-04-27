@@ -19,6 +19,13 @@ export async function POST(req: NextRequest) {
     const plan = getPlan(body.plan || 'pro')
     const phone = body.phone || body.whatsappId || ''
 
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+      return NextResponse.json(
+        { success: false, error: 'Missing Razorpay env vars in Vercel: RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET' },
+        { status: 500 },
+      )
+    }
+
     if (!phone && !body.telegramId && !body.userId) {
       return NextResponse.json(
         { success: false, error: 'phone, whatsappId, telegramId or userId is required' },
@@ -38,7 +45,12 @@ export async function POST(req: NextRequest) {
 
     if (!paymentUrl) {
       return NextResponse.json(
-        { success: false, error: 'Could not create payment link' },
+        {
+          success: false,
+          error: 'Could not create Razorpay payment link. Check Vercel runtime logs for Razorpay error details.',
+          plan: plan.key,
+          amount: plan.amountInRupees,
+        },
         { status: 500 },
       )
     }
