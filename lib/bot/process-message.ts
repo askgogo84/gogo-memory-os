@@ -69,6 +69,40 @@ async function saveMemory(telegramId: number, content: string) {
   await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content })
 }
 
+function normalizeReminderMessage(message: string) {
+  return (message || '')
+    .toLowerCase()
+    .replace(/^every\s+to\s+/i, '')
+    .replace(/^to\s+/i, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function isCleanerReminderMessage(newMessage: string, oldMessage: string) {
+  const oldLower = (oldMessage || '').toLowerCase().trim()
+  const newLower = (newMessage || '').toLowerCase().trim()
+  if (/^every\s+to\s+/i.test(oldLower)) return true
+  if (newLower.length < oldLower.length && normalizeReminderMessage(newLower) === normalizeReminderMessage(oldLower)) return true
+  return false
+}
+
+async function findDuplicateRecurringReminder(telegramId: number, pattern?: string) {
+  if (!pattern) return null
+
+  const { data } = await supabaseAdmin
+    .from('reminders')
+    .select('id, message, recurring_pattern, remind_at, sent')
+    .eq('telegram_id', telegramId)
+    .eq('sent', false)
+    .eq('is_recurring', true)
+    .eq('recurring_pattern', pattern)
+    .order('created_at', { ascending: true })
+    .limit(5)
+
+  return data?.[0] || null
+}
+
 async function createReminder(
   telegramId: number,
   chatId: number,
@@ -77,6 +111,28 @@ async function createReminder(
   pattern?: string,
   whatsappTo?: string | null
 ) {
+  if (pattern) {
+    const duplicate = await findDuplicateRecurringReminder(telegramId, pattern)
+    if (duplicate?.id) {
+      const updatePayload: any = { remind_at: remindAt, sent: false }
+      if (whatsappTo) updatePayload.whatsapp_to = whatsappTo
+      if (isCleanerReminderMessage(message, duplicate.message)) updatePayload.message = message
+
+      const { error: updateError } = await supabaseAdmin
+        .from('reminders')
+        .update(updatePayload)
+        .eq('id', duplicate.id)
+
+      if (updateError) {
+        console.error('REMINDER DEDUPE UPDATE FAILED:', updateError, updatePayload)
+        throw new Error(`Reminder update failed: ${updateError.message}`)
+      }
+
+      console.log('REMINDER DUPLICATE SKIPPED:', { telegramId, pattern, existingId: duplicate.id })
+      return
+    }
+  }
+
   const payload: any = { telegram_id: telegramId, chat_id: chatId, message, remind_at: remindAt, sent: false }
   if (whatsappTo) payload.whatsapp_to = whatsappTo
   if (pattern) {
