@@ -24,31 +24,22 @@ export function getDirectWhatsappPremiumReply(input: string, userName?: string):
   if (/^(hi|hello|hey|start|\/start|hi askgogo|hello askgogo|hey askgogo|start askgogo|askgogo)$/i.test(lower)) {
     return {
       mediaUrl: envUrl('ASKGOGO_WELCOME_GIF_URL'),
-      text: `Hey ${name}, I’m *AskGogo* 👋
+      text: `👋 Hey ${name}, I’m *AskGogo*.
 
 Your AI assistant inside WhatsApp.
 
-Use me by *typing or sending a voice note*.
+You can *type*, send a *voice note*, or upload a *screenshot/photo*.
 
-I can help you with:
-• reminders
-• recurring reminders
-• calendar planning
-• today briefing
-• memory
-• weather
-• sports updates
-• lists and notes
-• web search
+Try one now:
+• Remind me in 10 mins to drink water
+• Plan my day
+• Save note: call Rahul tomorrow
+• What’s on my calendar today?
+• Meeting notes: we discussed follow-ups
+• Send a screenshot and I’ll read it
 
-Try:
-1. Send a voice note: “Remind me in 10 mins to call Rahul”
-2. Connect calendar
-3. Today
-4. Show my reminders
-5. Invite friends
-
-Built for people who live on WhatsApp.`
+Founder beta is live now.
+Type *help* anytime to see what I can do.`
     }
   }
 
@@ -61,37 +52,45 @@ Built for people who live on WhatsApp.`
     lower === 'features'
   ) {
     return {
-      text: `✨ *AskGogo Menu*
+      text: `✨ *AskGogo Help Menu*
 
-🎙️ *Voice first*
-Send a voice note in English, Hindi, Hinglish, Kannada, Tamil, Telugu or Malayalam.
+Use me by typing naturally, sending voice notes, or uploading screenshots/photos.
 
 ⏰ *Reminders*
 • Remind me in 20 mins to call Rahul
 • Remind me every day at 9 pm to review expenses
 • Show my reminders
-• Cancel water reminder
 • Snooze 10 mins
 • Done
 
 📅 *Calendar*
 • Connect calendar
 • Today
-• What’s on my calendar today?
-• Add meeting tomorrow at 4 pm
+• What’s on my calendar tomorrow?
+• Add meeting with Srinivas tomorrow at 4 pm
+
+📝 *Notes & screenshots*
+• Save note: call Rahul tomorrow
+• My notes
+• Send a screenshot/photo and I’ll read + save it
+
+🎙️ *Meeting notes*
+• Send meeting audio
+• Meeting notes: we discussed Razorpay follow-ups
+• Reply *yes* to create reminders from action items
 
 🧠 *Memory*
 • Remember that I prefer morning meetings
 • What do you remember about me?
 • Forget my office address
 
-🚀 *Beta*
+🎁 *Founder beta*
 • Pricing
 • Usage
-• Notify me
 • Invite friends
+• Share my win
 
-Type or speak naturally. I’ll understand.`
+Try: *Plan my day*`
     }
   }
 
@@ -135,13 +134,16 @@ Built for WhatsApp-first productivity.
 • Today briefing
 • Voice notes
 • Web search: 30/month
+• Meeting notes
 • Quick drafts
 
 *Founder Pro*
 ₹499/month
 • 600 AI actions/month
+• 200 active reminders
 • Priority access
 • Calendar power features
+• Meeting/audio notes
 • Web search: 100/month
 • Best for power users
 
