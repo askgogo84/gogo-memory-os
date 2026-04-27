@@ -10,10 +10,11 @@ import { parseClaudeResponse } from './parse-claude-response'
 import { formatOutgoingText } from './format-response'
 import { searchWeb } from '@/lib/web-search'
 import { buildSportsReplyWithState } from './handlers/sports'
-import { getLatestFollowupState } from './handlers/followup-state'
+import { getLatestFollowupState, saveFollowupState } from './handlers/followup-state'
 import { buildEmailActionReply } from './handlers/email-actions'
 import { styleReplyByIntent } from './handlers/response-style'
 import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
+import { buildAmPmReminderSetReply, buildReminderFromAmPmChoice, isAmPmChoice } from './handlers/reminder-ampm-followup'
 import { editLatestReminder } from './handlers/edit-reminder'
 import { buildMorningBriefing } from './handlers/morning-briefing'
 import { setBriefingTime } from './handlers/briefing-settings'
@@ -161,6 +162,14 @@ function isUsageCommand(text: string) {
   return lower === 'usage' || lower === 'my usage' || lower === 'usage status' || lower === 'plan usage' || lower === 'limits' || lower === 'my limits'
 }
 
+function isFreshFollowupState(state: any, maxMinutes = 10) {
+  if (!state?.created_at && !state?.payload?.created_at) return true
+  const raw = state.created_at || state.payload.created_at
+  const createdAt = new Date(raw).getTime()
+  if (!Number.isFinite(createdAt)) return true
+  return Date.now() - createdAt <= maxMinutes * 60 * 1000
+}
+
 export async function processIncomingMessage(params: ProcessIncomingParams): Promise<ProcessIncomingResult> {
   console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
   const resolvedUser = await resolveUser({ channel: params.channel, externalUserId: params.externalUserId, userName: params.userName })
@@ -174,6 +183,27 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  if (isAmPmChoice(incomingText)) {
+    const latestAmPm = await getLatestFollowupState(resolvedUser.telegramId, 'reminder_ampm')
+    if (latestAmPm?.payload?.originalText && isFreshFollowupState(latestAmPm)) {
+      const parsed = buildReminderFromAmPmChoice(latestAmPm.payload.originalText, incomingText)
+      if (parsed) {
+        await createReminder(
+          resolvedUser.telegramId,
+          resolvedUser.telegramId,
+          parsed.remindAtIso,
+          parsed.message,
+          parsed.kind === 'recurring' ? parsed.pattern : undefined,
+          params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
+        )
+        const reply = styleReplyByIntent('set_reminder', buildAmPmReminderSetReply(parsed))
+        await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
+    }
   }
 
   if (isCalendarConflictMoveCommand(incomingText)) {
@@ -264,6 +294,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (getAmbiguousReminderTime(incomingText) && (intent.type === 'set_reminder' || /\b(remind|wake|alarm|set)\b/i.test(incomingText))) {
     const reply = buildAmPmClarificationReply(incomingText)
+    await saveFollowupState(resolvedUser.telegramId, 'reminder_ampm', {
+      originalText: incomingText,
+      channel: params.channel,
+      created_at: new Date().toISOString(),
+    })
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
