@@ -9,6 +9,19 @@ export type TimeParts = {
   second: number;
 };
 
+const PHONE_TIMEZONE_PREFIXES: Array<{ prefix: string; timezone: string }> = [
+  { prefix: "+91", timezone: "Asia/Kolkata" },
+  { prefix: "+971", timezone: "Asia/Dubai" },
+  { prefix: "+65", timezone: "Asia/Singapore" },
+  { prefix: "+44", timezone: "Europe/London" },
+  { prefix: "+1", timezone: "America/New_York" },
+  { prefix: "+61", timezone: "Australia/Sydney" },
+  { prefix: "+81", timezone: "Asia/Tokyo" },
+  { prefix: "+60", timezone: "Asia/Kuala_Lumpur" },
+  { prefix: "+62", timezone: "Asia/Jakarta" },
+  { prefix: "+66", timezone: "Asia/Bangkok" },
+];
+
 export function isValidTimezone(timezone?: string | null): boolean {
   if (!timezone) return false;
 
@@ -23,6 +36,33 @@ export function isValidTimezone(timezone?: string | null): boolean {
 export function normalizeTimezone(timezone?: string | null): string {
   const clean = timezone?.trim();
   return isValidTimezone(clean) ? clean! : DEFAULT_TIMEZONE;
+}
+
+export function timezoneFromPhone(phone?: string | null): string {
+  if (!phone) return DEFAULT_TIMEZONE;
+
+  const clean = phone.replace(/^whatsapp:/i, "").replace(/[\s()-]/g, "");
+  const match = PHONE_TIMEZONE_PREFIXES
+    .sort((a, b) => b.prefix.length - a.prefix.length)
+    .find((item) => clean.startsWith(item.prefix));
+
+  return match?.timezone || DEFAULT_TIMEZONE;
+}
+
+export function resolveUserTimezone(params: {
+  explicitTimezone?: string | null;
+  savedTimezone?: string | null;
+  phone?: string | null;
+  cityOrTimezone?: string | null;
+}): string {
+  const fromExplicit = params.explicitTimezone || params.cityOrTimezone;
+  const fromCity = timezoneFromCity(fromExplicit);
+
+  if (fromCity) return fromCity;
+  if (isValidTimezone(fromExplicit)) return normalizeTimezone(fromExplicit);
+  if (isValidTimezone(params.savedTimezone)) return normalizeTimezone(params.savedTimezone);
+
+  return timezoneFromPhone(params.phone);
 }
 
 export function getTimezoneOffsetMs(date: Date, timezone?: string | null): number {
@@ -80,6 +120,36 @@ export function zonedLocalTimeToUtc(params: {
   }
 
   return utcDate;
+}
+
+export function getLocalParts(dateInput: Date | string, timezone?: string | null): TimeParts {
+  const zone = normalizeTimezone(timezone);
+  const date = typeof dateInput === "string" ? new Date(dateInput) : dateInput;
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const values: Record<string, number> = {};
+  for (const part of parts) {
+    if (part.type !== "literal") values[part.type] = Number(part.value);
+  }
+
+  return {
+    year: values.year,
+    month: values.month,
+    day: values.day,
+    hour: values.hour === 24 ? 0 : values.hour,
+    minute: values.minute,
+    second: values.second,
+  };
 }
 
 export function parseLocalDateTime(params: {
@@ -167,6 +237,9 @@ export function timezoneFromCity(input?: string | null): string | null {
     sydney: "Australia/Sydney",
     melbourne: "Australia/Melbourne",
     tokyo: "Asia/Tokyo",
+    kuala_lumpur: "Asia/Kuala_Lumpur",
+    jakarta: "Asia/Jakarta",
+    bangkok: "Asia/Bangkok",
   };
 
   const key = clean.replace(/[\s-]+/g, "_");
