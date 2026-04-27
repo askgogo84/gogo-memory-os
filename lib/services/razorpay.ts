@@ -1,6 +1,6 @@
 import crypto from 'crypto'
 
-export type AskGogoPlanKey = 'pro' | 'founder' | 'institution_pilot'
+export type AskGogoPlanKey = 'lite' | 'starter' | 'pro' | 'founder'
 
 export type AskGogoPlan = {
   key: AskGogoPlanKey
@@ -9,37 +9,78 @@ export type AskGogoPlan = {
   amountInPaise: number
   description: string
   validityDays: number
+  limits: {
+    aiActionsPerMonth: number
+    activeReminders: number
+    voiceNotesPerMonth: number
+    webSearchPerMonth?: number
+    calendarIntegration?: boolean
+    priorityAccess?: boolean
+  }
 }
 
 export const ASKGOGO_PLANS: Record<AskGogoPlanKey, AskGogoPlan> = {
+  lite: {
+    key: 'lite',
+    name: 'AskGogo Lite',
+    amountInRupees: 99,
+    amountInPaise: 9900,
+    description: 'AskGogo Lite - casual personal use inside WhatsApp',
+    validityDays: 30,
+    limits: {
+      aiActionsPerMonth: 60,
+      activeReminders: 5,
+      voiceNotesPerMonth: 10,
+    },
+  },
+  starter: {
+    key: 'starter',
+    name: 'AskGogo Starter',
+    amountInRupees: 149,
+    amountInPaise: 14900,
+    description: 'AskGogo Starter - organized daily reminders, notes and memory',
+    validityDays: 30,
+    limits: {
+      aiActionsPerMonth: 100,
+      activeReminders: 10,
+      voiceNotesPerMonth: 30,
+    },
+  },
   pro: {
     key: 'pro',
     name: 'AskGogo Pro',
-    amountInRupees: 10,
-    amountInPaise: 1000,
-    description: 'AskGogo Pro - reminders, notes, voice and meeting actions',
+    amountInRupees: 299,
+    amountInPaise: 29900,
+    description: 'AskGogo Pro - calendar, daily planning, voice and web search',
     validityDays: 30,
+    limits: {
+      aiActionsPerMonth: 250,
+      activeReminders: 50,
+      voiceNotesPerMonth: 100,
+      webSearchPerMonth: 30,
+      calendarIntegration: true,
+    },
   },
   founder: {
     key: 'founder',
     name: 'AskGogo Founder Pro',
     amountInRupees: 499,
     amountInPaise: 49900,
-    description: 'AskGogo Founder Pro - premium early access plan',
-    validityDays: 365,
-  },
-  institution_pilot: {
-    key: 'institution_pilot',
-    name: 'AskGogo Institution Pilot',
-    amountInRupees: 4999,
-    amountInPaise: 499900,
-    description: 'AskGogo Institution Pilot - team access and admin features',
+    description: 'AskGogo Founder Pro - power-user access and priority features',
     validityDays: 30,
+    limits: {
+      aiActionsPerMonth: 600,
+      activeReminders: 200,
+      voiceNotesPerMonth: 300,
+      webSearchPerMonth: 100,
+      calendarIntegration: true,
+      priorityAccess: true,
+    },
   },
 }
 
 export function getPlan(planKey?: string | null): AskGogoPlan {
-  const clean = String(planKey || 'pro').toLowerCase() as AskGogoPlanKey
+  const clean = String(planKey || 'pro').toLowerCase().replace(/founder_pro/g, 'founder') as AskGogoPlanKey
   return ASKGOGO_PLANS[clean] || ASKGOGO_PLANS.pro
 }
 
@@ -123,6 +164,7 @@ export async function createPaymentLink(options: {
           whatsapp_id: options.whatsappId || '',
           user_id: options.userId || '',
           plan: plan.key,
+          plan_name: plan.name,
         },
         expire_by: Math.floor(Date.now() / 1000) + 86400,
       }),
@@ -167,7 +209,7 @@ export function formatPaymentLinkMessage(options: {
   return [
     `Your ${options.planName} payment link is ready.`,
     '',
-    `Amount: Rs.${options.amountInRupees}`,
+    `Amount: Rs.${options.amountInRupees}/month`,
     `Pay here: ${options.paymentUrl}`,
     '',
     'Once payment is complete, your AskGogo access will be updated automatically.',
