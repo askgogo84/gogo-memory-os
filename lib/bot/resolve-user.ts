@@ -1,4 +1,5 @@
 ﻿import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getUserTimeZone } from './handlers/user-timezone'
 
 export type Channel = 'telegram' | 'whatsapp'
 
@@ -11,6 +12,7 @@ export type ResolvedUser = {
   name: string
   tier: string
   platform: Channel
+  timezone: string
   rawUser: any
 }
 
@@ -44,6 +46,7 @@ export async function resolveUser(params: {
           name: userName || 'Friend',
           tier: 'free',
           platform: 'telegram',
+          timezone: 'Asia/Kolkata',
           daily_count: 0,
           last_reset: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }),
         })
@@ -63,6 +66,7 @@ export async function resolveUser(params: {
       name: user?.name || userName || 'Friend',
       tier: user?.tier || 'free',
       platform: 'telegram',
+      timezone: getUserTimeZone(user, user?.whatsapp_id),
       rawUser: user,
     }
   }
@@ -75,6 +79,7 @@ export async function resolveUser(params: {
 
   if (!user) {
     const fallbackTelegramId = generateNegativeTelegramId(externalUserId)
+    const inferredTimezone = getUserTimeZone(null, externalUserId)
 
     const { data: created, error } = await supabaseAdmin
       .from('users')
@@ -84,8 +89,9 @@ export async function resolveUser(params: {
         name: userName || 'Friend',
         tier: 'free',
         platform: 'whatsapp',
+        timezone: inferredTimezone,
         daily_count: 0,
-        last_reset: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }),
+        last_reset: new Date().toLocaleDateString('en-CA', { timeZone: inferredTimezone }),
       })
       .select()
       .single()
@@ -103,6 +109,7 @@ export async function resolveUser(params: {
     name: user?.name || userName || 'Friend',
     tier: user?.tier || 'free',
     platform: 'whatsapp',
+    timezone: getUserTimeZone(user, externalUserId),
     rawUser: user,
   }
 }
