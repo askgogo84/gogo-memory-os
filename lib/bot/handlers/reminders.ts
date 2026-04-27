@@ -70,7 +70,34 @@ function addIstDays(parts: { year: number; month: number; day: number }, daysToA
 }
 
 function parseTimePart(input: string): { hour: number; minute: number } | null {
-  const match = input.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
+  const raw = input || ''
+
+  const compact = raw.match(/\b(\d{3,4})\s*(am|pm)\b/i)
+  if (compact) {
+    const digits = compact[1]
+    const ampm = compact[2].toLowerCase()
+    let hour = parseInt(digits.slice(0, -2), 10)
+    const minute = parseInt(digits.slice(-2), 10)
+
+    if (ampm === 'pm' && hour < 12) hour += 12
+    if (ampm === 'am' && hour === 12) hour = 0
+
+    if (hour <= 23 && minute <= 59) return { hour, minute }
+  }
+
+  const dotTime = raw.match(/\b(\d{1,2})\.(\d{2})\s*(am|pm)?\b/i)
+  if (dotTime) {
+    let hour = parseInt(dotTime[1], 10)
+    const minute = parseInt(dotTime[2], 10)
+    const ampm = dotTime[3]?.toLowerCase()
+
+    if (ampm === 'pm' && hour < 12) hour += 12
+    if (ampm === 'am' && hour === 12) hour = 0
+
+    if (hour <= 23 && minute <= 59) return { hour, minute }
+  }
+
+  const match = raw.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
   if (!match) return null
 
   let hour = parseInt(match[1], 10)
@@ -85,13 +112,22 @@ function parseTimePart(input: string): { hour: number; minute: number } | null {
   return { hour, minute }
 }
 
+function extractListNameFromText(text: string): string {
+  const lower = text.toLowerCase()
+  if (lower.includes('shopping')) return 'shopping'
+  if (lower.includes('todo')) return 'todo'
+  if (lower.includes('to-do')) return 'todo'
+  if (lower.includes('grocery')) return 'grocery'
+  return 'list'
+}
+
 function extractTaskAfterTo(input: string) {
   const match = input.match(/\bto\s+(.+)$/i)
   if (!match) return null
 
   const task = match[1]
-    .replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, '')
-    .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
+    .replace(/\bat\s+\d{1,4}([:.]\d{2})?\s*(am|pm)?\b/gi, '')
+    .replace(/\b\d{1,4}([:.]\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
 
@@ -127,8 +163,8 @@ function cleanMessageText(input: string): string {
     .replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
-    .replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?\b/gi, '')
-    .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
+    .replace(/\bat\s+\d{1,4}([:.]\d{2})?\s*(am|pm)?\b/gi, '')
+    .replace(/\b\d{1,4}([:.]\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\bfrom\s+.+?\s+to\s+.+?(daily)?$/gi, '')
 
     .replace(/[.]+/g, ' ')
