@@ -103,7 +103,8 @@ Try: *Plan my day*`
     lower === '/upgrade' ||
     lower === 'payment' ||
     lower === 'payments' ||
-    lower.includes('razorpay')
+    lower === 'razorpay' ||
+    lower === 'razorpay link'
   ) {
     return {
       mediaUrl: null,
