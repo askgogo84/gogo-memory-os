@@ -4,189 +4,226 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>AskGogo Meeting Recorder</title>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>AskGogo · Meeting Recorder</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{--g:#3AB04A;--b:#080E14;--c:#0F1923;--t:#E2E8F0;--m:#64748B;--r:#EF4444;--a:#F59E0B}
-body{background:var(--b);color:var(--t);font-family:-apple-system,system-ui,sans-serif;min-height:100dvh;display:flex;flex-direction:column;align-items:center}
-.bar{width:100%;background:var(--c);border-bottom:1px solid rgba(255,255,255,.06);padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
-.logo{font-size:17px;font-weight:800}.logo span{color:var(--g)}
-.tag{background:rgba(58,176,74,.15);border:1px solid rgba(58,176,74,.3);color:var(--g);font-size:10px;font-weight:700;padding:4px 10px;border-radius:100px}
-.wrap{width:100%;max-width:400px;padding:28px 20px;display:flex;flex-direction:column;align-items:center;gap:20px;flex:1}
-#idle{display:flex;flex-direction:column;align-items:center;gap:18px;width:100%}
-.mic{width:140px;height:140px;border-radius:50%;background:rgba(58,176,74,.08);border:2px solid rgba(58,176,74,.25);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:52px;flex-shrink:0}
-.mic:active{transform:scale(.96)}
-h2{font-size:19px;font-weight:700;text-align:center}
-p{font-size:13px;color:var(--m);line-height:1.5;text-align:center}
-.btn-g{background:var(--g);color:#fff;border:none;border-radius:16px;padding:18px 40px;font-size:18px;font-weight:700;cursor:pointer;width:100%}
-.tip{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:12px;padding:14px 16px;font-size:12px;color:#F59E0B;line-height:1.6;text-align:center;width:100%}
-#rec{display:none;flex-direction:column;align-items:center;gap:18px;width:100%}
-.pill{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--r);animation:blink 1.1s ease-in-out infinite}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --g:#00E676;--gd:#00C853;--r:#FF1744;--a:#FFB300;
+  --bg:#070A0E;--s1:#0D1117;--s2:#161B22;
+  --bd:rgba(255,255,255,0.07);--t:#F0F6FF;--m:#8B949E
+}
+html{height:100%}
+body{
+  font-family:'Syne',sans-serif;background:var(--bg);color:var(--t);
+  min-height:100dvh;display:flex;flex-direction:column;align-items:center;
+  overflow-x:hidden;position:relative
+}
+body::before{
+  content:'';position:fixed;inset:0;
+  background-image:linear-gradient(rgba(0,230,118,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,230,118,.025) 1px,transparent 1px);
+  background-size:44px 44px;pointer-events:none;z-index90
+	}
+.glow{
+  position:fixed;width:600px;height:600px;border-radius:50%;
+  background:radial-gradient(circle,rgba(0,230,118,.07) 0%transparent 70%);
+  top:-250px;left:50%;transform:translateX(-50%);pointer-events:none;z-index:0;
+  transition:background 1.2s ease
+}
+.glow.rec{background:radial-gradient(circle,rgba(255,23,68,.09) 0%,transparent 70%)}
+.glow.done{background:radial-gradient(circle,rgba(0,230,118,.13) 0%,transparent 70%)}
+.hdr{width:100%;max-width:480px;display:flex;align-items:center;justify-content:space-between;padding:22px 24px 0;position:relative;z-index:1}
+.logo{font-size:19px;font-weight:800;letter-spacing:-.5px}
+.logo em{font-style:normal;color:var(--g)}
+.chip{font-family:'Space Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.14em;color:var(--g);background:rgba(0,230,118,.09);border:1px solid rgba(0,230,118,.22);padding:5px 11px;border-radius:100px;text-transform:uppercase}
+.card{width:calc(100% - 32px);max-width:448px;margin:18px 16px;background:var(--s1);border:1px solid var(--bd);border-radius:26px;padding:26px 22px;position:relative;z-index:1;flex:1;display:flex;flex-direction:column;gap:18px;box-shadow:0 24px 60px rgba(0,0,0,.4)}
+.scr{display:none;flex-direction:column;gap:18px;flex:1}
+.scr.on{display:flex}
+.ic{display:flex;flex-direction:column;align-items:center;gap:22px;flex:1;justify-content:center;padding:10px 0}
+.orb-wrap{position:relative;width:168px;height:168px;cursor:pointer;flex-shrink:0}
+.ring{position:absolute;inset:0;border-radius:50%;border:1.5px solid rgba(0,230,118,.18);animation:ripple 2.6s ease-out infinite}
+.ring:nth-child(2){animation-delay:1.3s}
+@keyframes ripple{0%,transform:scale(.8);opacity:0;40%{opacity:1}100%{transform:scale(1.4);opacity:0}}
+.orb{position:absolute;inset:0;border-radius:50%;background:linear-gradient(145deg,#0a1e11,#071009);border:2px solid rgba(0,230,118,.28);display:flex;align-items:center;justify-content:center;box-shadow:0 0 50px rgba(0,230,118,.1),inset 0 1px 0 rgba(255,255,255,.05);transition:transform .14s ease}
+.orb:active{transform:scale(.93)}
+.orb svg{width:60px;height:60px}
+.it{text-align:center}
+.it h2{(sont-size:26px;font-weight:800;letter-spacing:-.5px;margin-bottom:8px}
+.it p{font-size:13.5px;color:var(--m);line-height:1.6}
+.sbtn{width:100%;background:var(--g);color:#000;border:none;border-radius:16px;padding:19px;font-family:'Syne',sans-serif;font-size:17px;font-weight:800;letter-spacing:-.3px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 4px 28px rgba(0,230,118,.32);transition:transform .13s,opacity .13s}
+.sbtn:active{transform:scale(.96);opacity:.88}
+.tip{background:rgba(255,179,0,.05);border:1px solid rgba(255,179,0,.14);border-radius:14px;padding:13px 15px;font-size:12.5px;color:var(--a);line-height:1.55;display:flex;gap:10px;align-items:flex-start}
+.pw{background:rgba(255,23,68,.06);border:1px solid rgba(255,23,68,.18);border-radius:14px;padding:15px;font-size:13px;color:#FF8AA0;line-height:1.6;display:none}
+.pw.on{display:block}
+.pw strong{display:block;color:var(--r);font-size:14px;margin-bottom:5px}
+.rh{display:flex;align-items:center;justify-content:space-between}
+.rpill{display:flex;align-items:center;gap:8px;background:rgba(255,23,68,.1);border:1px solid rgba(255,23,68,.22);border-radius:100px;padding:7px 14px;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--r)}
+.rdot{width:8px;height:8px;border-radius:50%;background:var(--r);animation:blink 1.1s ease-in-out infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
-.timer{font-size:76px;font-weight:200;letter-spacing:-3px;line-height:1}
-.wf{width:100%;height:70px;display:flex;align-items:center;justify-content:center;gap:3px}
-.wb{width:4px;background:var(--g);border-radius:3px;animation:wv .9s ease-in-out infinite}
-.wb:nth-child(1){animation-delay:.00s;height:14px}.wb:nth-child(2){animation-delay:.08s;height:28px}
-.wb:nth-child(3){animation-delay:.16s;height:44px}.wb:nth-child(4){animation-delay:.24s;height:20px}
-.wb:nth-child(5){animation-delay:.32s;height:36px}.wb:nth-child(6){animation-delay:.24s;height:52px}
-.wb:nth-child(7){animation-delay:.16s;height:36px}.wb:nth-child(8){animation-delay:.08s;height:20px}
-.wb:nth-child(9){animation-delay:.00s;height:44px}
-@keyframes wv{0%,100%{height:6px}50%{height:52px}}
-.mtitle{font-size:16px;font-weight:700;text-align:center}
-.msub{font-size:12px;color:var(--m);text-align:center}
-.lock{background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.2);border-radius:12px;padding:13px 16px;font-size:12px;color:var(--a);text-align:center;line-height:1.55;width:100%}
-.btns{display:grid;grid-template-columns:1fr 1fr;gap:11px;width:100%}
-.btn{background:var(--c);border:1.5px solid rgba(255,255,255,.08);border-radius:14px;padding:16px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;color:var(--t)}
-.btn.pause{border-color:var(--a);color:var(--a)}
-.btn.stop{border-color:var(--r);color:var(--r);background:rgba(239,68,68,.06)}
-#sending{display:none;flex-direction:column;align-items:center;gap:20px;text-align:center}
-.spin{width:64px;height:64px;border-radius:50%;border:3px solid rgba(58,176,74,.2);border-top-color:var(--g);animation:spin 1s linear infinite;margin:8px auto}
+.rdate{font-family:'Space Mono',monospace;font-size:11px;color:var(--m)}
+.timer{font-family:'Space Mono',monospace;font-size:58px;font-weight:700;letter-spacing:-3px;text-align:center;padding:4px 0;line-height:1}
+.wf{display:flex;align-items:center;justify-content:center;gap:4px;height:56px}
+.wb{width:4px;background:var(--g);border-radius:4px;animation:wv .85s ease-in-out infinite;min-height:4px}
+.wb:nth-child(1){animation-delay:.00s}
+.wb:nth-child(2){animation-delay:.09s}
+.wb:nth-child(3){animation-delay:.18s}
+.wb:nth-child(4){animation-delay:.27s}
+.wb:nth-child(5){animation-delay:.36s}
+.wb:nth-child(6){animation-delay:.27s}
+.wb:nth-child(7){animation-delay:.18s}
+.wb:nth-child(8){animation-delay:.09s}
+.wb:nth-child(9){animation-delay:.00s}
+@keyframes wv{0%,100%{height:5px;opacity:.25}50%{height:46px;opacity:1}}
+.wf.paused .wb{animation-play-state:paused;height:5px!important;opacity:.15!important}
+.ri{background:var(--s2);border:1px solid var(--bd);border-radius:13px;padding:13px 15px;font-size:13px;color:var(--m);line-height:1.6;text-align:center}
+.ri strong{color:var(--t)}
+.ra{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.rbtn{border-radius:14px;padding:16px;font-family:'Syne',sans-serif;font-size:14.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;border:1.5px solid;background:transparent;color:inherit;transition:transform .12s,opacity .12s}
+.rbtn:active{transform:scale(.94)}
+ .pbtn{border-color:var(--a);color:var(--a)}
+.pbtn.paused{border-color:var(--g);color:var(--g)}
+.xbtn{border-color:var(--r);color:#fff;background:rgba(255,23,68,.1)}
+.pc{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;flex:1;text-align:center;padding:20px 0}
+.spin{width:72px;height:72px;border-radius:50%;border:3px solid rgba(0,230,118,.12);border-top-color:var(--g);animation:spin .85s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.prog-w{width:100%;background:rgba(255,255,255,.06);border-radius:100px;height:6px;overflow:hidden}
-.prog{height:6px;background:var(--g);border-radius:100px;width:0%;transition:width .4s ease}
-#done{display:none;flex-direction:column;align-items:center;gap:16px;text-align:center;width:100%}
-.done-ic{font-size:64px}
-.done-t{font-size:22px;font-weight:800}
-.done-s{font-size:14px;color:var(--m);line-height:1.6;max-width:320px}
-.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%}
-.stat{background:var(--c);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:14px;text-align:center}
-.sn{font-size:22px;font-weight:800;color:var(--g)}
-.sl{font-size:10px;color:var(--m);text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
-.wa-btn{background:#25D366;color:#fff;border:none;border-radius:14px;padding:16px 24px;font-size:16px;font-weight:700;width:100%;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none}
-.new-btn{background:var(--c);color:var(--m);border:1.5px solid rgba(255,255,255,.08);border-radius:14px;padding:13px;font-size:14px;font-weight:600;width:100%;cursor:pointer}
-#err{display:none;flex-direction:column;align-items:center;gap:16px;text-align:center}
-.err-box{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:14px;padding:18px;font-size:14px;color:#FCA5A5;line-height:1.6;width:100%}
+.pt{font-size:22px;font-weight:800;letter-spacing:-.4px}
+.ps{font-size:13.5px;color:var(--m);line-height:1.6;margin-top:6px}
+.pg-w{width:100%;height:6px;background:rgba(255,255,255,.05);border-radius:100px;overflow:hidden}
+.pg{height:100%;background:linear-gradient(90deg,var(--gd),var(--g));border-radius:100px;width:0%;transition:width .4s ease;box-shadow:0 0 14px rgba(0,230,118,.45)}
+.pl{font-family:'Space Mono',monospace;font-size:10px;color:var(--m);text-align:center;margin-top:9px}
+.dc{display:flex;flex-direction:column;align-items:center;gap:11px;text-align:center}
+.ck{width:80px;height:80px;border-radius:50%;background:rgba(0,230,118,.1);border:2px solid rgba(0,230,118,.28);display:flex;align-items:center;justify-content:center;font-size:36px;animation:pop .4s cubic-bezier(.34,1.56,.64,1)}
+@keyframes pop{from{transform:scale(0);opacity:0}}
+.dt{font-size:24px;font-weight:800;letter-spacing:-.5px;margin-top:4px}
+.ds{font-size:13.5px;color:var(--m);line-height:1.6;max-width:290px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%}
+.sb{background:var(--s2);border:1px solid var(--bd);border-radius:13px;padding:14px;text-align:center}
+.sv{font-family:'Space Mono',monospace;font-size:21px;font-weight:700;color:var(--g);margin-bottom:3px}
+.sl{font-size:10px;color:var(--m);text-transform:uppercase;letter-spacing:.08em}
+.wbtn{width:100%;background:#25D366;color:#fff;border:none;border-radius:15px;padding:18px;font-family:'Syne',sans-serif;font-size:16px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none;box-shadow:0 4px 22px rgba(37,211,102,.25);transition:transform .12s}
+.wbtn:active{transform:scale(.97)}
+.nbtn{width:100%;background:transparent;color:var(--m);border:1.5px solid var(--bd);border-radius:13px;padding:14px;font-family:'Syne',sans-serif;font-size:14px;font-weight:600;cursor:pointer;transition:border-color .2s,color .2s}
+.nbtn:active{border-color:var(--g);color:var(--g)}
+.ec{display:flex;flex-direction:column;align-items:center;gap:15px;text-align:center;flex:1;justify-content:center;padding:20px 0}
+.ei{font-size:52px}
+.et{font-size:21px;font-weight:800}
+.em{font-size:13px;color:#FF8AA0;line-height:1.65;max-width:300px;background:rgba(255,23,68,.06);border:1px solid rgba(255,23,68,.15);border-radius:13px;padding:15px}
+.retbtn{width:100%;background:var(--g);color:#000;border:none;border-radius:15px;padding:17px;font-family:'Syne',sans-serif;font-size:16px;font-weight:800;cursor:pointer;box-shadow:0 4px 24px rgba(0,230,118,.3)}
+.ftr{font-size:10.5px;color:rgba(255,255,255,.15);text-align:center;padding:0 0 20px;font-family:'Space Mono',monospace;letter-spacing:.05em;position:relative;z-index:1}
 </style>
 </head>
 <body>
-<div class="bar">
-  <div class="logo">Ask<span>Gogo</span> AI</div>
-  <div class="tag">🎙️ MEETING RECORDER</div>
+<div class="glow" id="glow"></div>
+<div class="hdr">
+  <div class="logo">Ask<em>Gogo</em> AI</div>
+  <div class="chip">🎙 RECORDED</div>
 </div>
-<div class="wrap">
-<div id="idle">
-  <div class="mic" onclick="start()">🎙️</div>
-  <div><h2 id="t0">Ready to Record</h2><p id="s0">Tap the mic or button below to start.<br>Minutes sent to WhatsApp automatically.</p></div>
-  <button class="btn-g" onclick="start()">▶ Start Recording Now</button>
-  <div class="tip">📲 Locking your phone is fine — recording continues in the browser background.</div>
-</div>
-
-<div id="rec">
-  <div class="pill"><div class="dot"></div><span id="st">RECORDING</span></div>
-  <div class="timer" id="timer">00:00</div>
-  <div class="wf"><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div></div>
-  <div class="mtitle" id="rt">Meeting in progress</div>
-  <div class="msub" id="rs"></div>
-  <div class="lock">Screen will stay awake. If it sleeps, recording still continues — just come back to this tab.</div>
-  <div class="btns">
-    <button class="btn pause" id="pb" onclick="pause()">⏸ Pause</button>
-    <button class="btn stop" onclick="stop()">⏹ End Meeting</button>
+<div class="card">
+  <div class="scr on" id="sIdle">
+    <div class="ic">
+      <div class="orb-wrap" onclick="go()">
+        <div class="ring"></div><div class="ring"></div>
+        <div class="orb">
+          <svg viewBox="0 0 24 24" fill="none">
+            <rect x="9" y="2" width="6" height="12" rx="3" fill="#00E676"/>
+            <path d="M5 10a7 7 0 0014 0" stroke="#00E676" stroke-width="2" stroke-linecap="round"/>
+            <line x1="12" y1="17" x2="12" y2="21" stroke="#00E676" stroke-width="2" stroke-linecap="round"/>
+            <line x1="9" y1="21" x2="15" y2="21" stroke="#00E676" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>
+      </div>
+      <div class="it">
+        <h2 id="idleH">Ready to Record</h2>
+        <p id="idleP">Tap the mic or button below to start.<br>Minutes sent to WhatsApp automatically.</p>
+      </div>
+    </div>
+    <div class="pw" id="pw"><strong>🚫 Microphone Access Needed</strong><span id="pwMsg">Allow mic access when asked, then tap Start again.</span></div>
+    <button class="sbtn" onclick="go()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><polygon points="10,8 16,12 10,16" fill="#000"/></svg>
+      Start Recording Now
+    </button>
+    <div class="tip"><span>📱</span><span>Lock your phone anytime — recording keeps going in the browser background.</span></div>
+  </div>
+  <div class="scr" id="sRec">
+    <div class="rh"><div class="rpill"><div class="rdot"></div><span id="rl">RECORDING</span></div><div class="rdate" id="rd"></div></div>
+    <div class="timer" id="tmr">00:00</div>
+    <div class="wf" id="wf"><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div></div>
+    <div class="ri"><strong id="rtitle">Meeting</strong> — speak clearly, I'm listening</div>
+    <div class="ra">
+      <button class="rbtn pbtn" id="pb" onclick="pause()"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg><span id="pl">Pause</span></button>
+      <button class="rbtn xbtn" onclick="stop()"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>End Meeting</button>
+    </div>
+  </div>
+  <div class="scr" id="sProc">
+    <div class="pc"><div class="spin"></div><div><div class="pt">Processing…</div><div class="ps">Uploading to AskGogo AI.<br>Minutes will arrive on WhatsApp soon.</div></div><div style="width:100%"><div class="pg-w"><div class="pg" id="pgBar"></div></div><div class="pl" id="pgLbl">Preparing…</div></div></div>
+  </div>
+  <div class="scr" id="sDone">
+    <div class="dc"><div class="ck">✅</div><div class="dt">Minutes on the way!</div><div class="ds">Check WhatsApp — transcript, summary &amp; action items arriving shortly.</div></div>
+    <div class="stats"><div class="sb"><div class="sv" id="sdur">0:00</div><div class="sl">Duration</div></div><div class="sb"><div class="sv" id="ssz">0 MB</div><div class="sl">File size</div></div></div>
+    <a id="waL" href="#" class="wbdn" target="_blank"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>Open WhatsApp Chat</a>
+    <button class="nbtn" onclick="reset()">🔄 Record Another Meeting</button>
+  </div>
+  <div class="scr" id="sErr">
+    <div class="ec"><div class="ei">🎤</div><div class="et">Mic Access Denied</div><div class="em" id="em">Allow microphone in browser settings, then reload.<br><br>Chrome: tap 🔒 in address bar → Site settings → Microphone → Allow</div><button class="retbtn" onclick="location.reload()">↺ Reload & Try Again</button></div>
   </div>
 </div>
-
-<div id="sending">
-  <div class="spin"></div>
-  <div style="font-size:20px;font-weight:700">Processing recording…</div>
-  <div style="font-size:14px;color:var(--m)">Uploading to AskGogo.<br>Your minutes will arrive on WhatsApp shortly.</div>
-  <div class="prog-w"><div class="prog" id="prog"></div></div>
-</div>
-
-<div id="done">
-  <div class="done-ic">✅</div>
-  <div class="done-t">Minutes on the way!</div>
-  <div class="done-s">Check WhatsApp — your transcript, summary, and action items will arrive in under a minute.</div>
-  <div class="stats">
-    <div class="stat"><div class="sn" id="sdur">0:00</div><div class="sl">Duration</div></div>
-    <div class="stat"><div class="sn" id="ssz">0 MB</div><div class="sl">File size</div></div>
-  </div>
-  <a id="walink" href="#" class="wa-btn" target="_blank">Open WhatsApp Chat</a>
-  <button class="new-btn" onclick="reset()">🔄 Record Another Meeting</button>
-</div>
-
-<div id="err">
-  <div class="err-box" id="emsg">Microphone access denied.</div>
-  <button class="btn-g" onclick="location.reload()">Reload & Try Again</button>
-</div>
-</div>
-
+<div class="ftr">ASKGOGO.IN · PRIVATE & SECURE</div>
 <script>
-const P=new URLSearchParams(location.search);
-const PHONE=P.get('phone')||'';
-const TITLE=P.get('title')||'Team Meeting';
-const NAMES=P.get('attendees')||'';
-const WA=P.get('wa')||'15797006612';
-document.getElementById('t0').textContent=TITLE||'Ready to Record';
-if(NAMES)document.getElementById('s0').textContent='Attendees: '+NAMES+'\n\nTap the mic to start.';
-
-let mr,chunks=[],secs=0,tiv,paused=false,blob;
-
-async function start(){
+const Q=new URLSearchParams(location.search);
+const PHONE=Q.get('phone')||'';
+const TITLE=Q.get('title')||'Team Meeting';
+const NAMES=Q.get('attendees')||'';
+const WA=Q.get('wa')||'15797006612';
+document.getElementById('idleH').textContent=TITLE||'Ready to Record';
+if(NAMES)document.getElementById('idleP').textContent='Attendees: '+NAMES+'\n\nTap to start.';
+document.getElementById('rtitle').textContent=TITLE;
+document.getElementById('rd').textContent=new Date().toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+let mr,chunks=[],secs=0,tiv,paused=false,blob,wl;
+function show(id){['sIdle','sRec','sProc','sDone','sErr'].forEach(s=>document.getElementById(s).classList.toggle('on',s===id));const g=document.getElementById('glow');g.className='glow'+(id==='sRec'?' rec':id==='sDone'?' done':'');}
+async function go(){
+  document.getElementById('pw').classList.remove('on');
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){document.getElementById('em').textContent='Your browser does not support audio recording. Please use Chrome or Safari.';show('sErr');returo;}
   try{
-    const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+    const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,sampleRate:44100}});
+    try{if('wakeLock'in navigator)wl=await navigator.wakeLock.request('screen');}catch(_){}
     const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].find(t=>MediaRecorder.isTypeSupported(t))||'';
     mr=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:64000}:{});
-    chunks=[];
-    mr.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};
-    mr.onstop=done;
-    mr.start(1000);
-    try{if('wakeLock'in navigator)await navigator.wakeLock.request('screen');}catch(_){}
-    show('rec');
-    document.getElementById('rt').textContent=TITLE;
-    document.getElementById('rs').textContent=NAMES?'With: '+NAMES:'';
-    secs=0;
-    tiv=setInterval(()=>{secs++;document.getElementById('timer').textContent=fmt(secs);},1000);
+    chunks=[];mr.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};mr.onstop=done;mr.start(1000);
+    show('sRec');secs=0;paused=false;
+    document.getElementById('tmr').textContent='00:00';
+    document.getElementById('pl').textContent='Pause';
+    document.getElementById('pb').className='rbtn pbtn';
+    document.getElementById('wf').classList.remove('paused');
+    document.getElementById('rl').textContent='RECORDING';
+    tiv=setInterval(()=>{secs++;document.getElementById('tmr').textContent=fmt(secs);},1000);
   }catch(e){
-    document.getElementById('emsg').textContent=e.name==='NotAllowedError'?'Microphone access denied. Tap Allow when the browser asks, then reload.':'Could not access mic: '+e.message;
-    show('err');
+    if(e.name==='NotAllowedError'||e.name==='PermissionDeniedError'){document.getElementById('pwMsg').textContent='Mic was blocked. Tap the 🔒 in address bar → Site settings → Microphone → Allow.';document.getElementById('pw').classList.add('on');}
+    else{document.getElementById('em').textContent='Could not access mic: '+e.message;show('sErr');}
   }
 }
-
 function pause(){
   if(!mr)return;
-  const b=document.getElementById('pb');
-  if(!paused){mr.pause();clearInterval(tiv);paused=true;b.textContent='▶ Resume';b.className='btn resume';}
-  else{mr.resume();tiv=setInterval(()=>{secs++;document.getElementById('timer').textContent=fmt(secs);},1000);paused=false;b.textContent='⏸ Pause';b.className='btn pause';}
+  const b=document.getElementById('pb');const wf=document.getElementById('wf');
+  if(!paused){mr.pause();clearInterval(tiv);paused=true;document.getElementById('pl').textContent='Resume';b.className='rbtn pbtn paused';document.getElementById('rl').textContent='PAUSED';wf.classList.add('paused');}
+  else{mr.resume();tiv=setInterval(()=>{secs++;document.getElementById('tmr').textContent=fmt(secs);},1000);paused=false;document.getElementById('pl').textContent='Pause';b.className='rbtn pbtn';document.getElementById('rl').textContent='RECORDING';wf.classList.remove('paused');}
 }
-
-function stop(){if(!mr)return;clearInterval(tiv);mr.stop();mr.stream.getTracks().forEach(t=>t.stop());}
-
-async function done(){
-  const mime=mr.mimeType||'audio/webm';
-  blob=new Blob(chunks,{type:mime});
-  const ext=mime.includes('mp4')?'m4a':mime.includes('ogg')?'ogg':'webm';
-  const fn=(TITLE||'meeting').replace(/[^a-z0-9]/gi,'-').toLowerCase()+'-'+new Date().toISOString().slice(0,10)+'.'+ext;
-  show('sending');
-  let w=0;const iv=setInterval(()=>{w=Math.min(w+(w<70?3:.5),92);document.getElementById('prog').style.width=w+'%';if(w>=92)clearInterval(iv);},200);
-  try{
-    const fd=new FormData();
-    fd.append('audio',blob,fn);fd.append('phone',PHONE);fd.append('title',TITLE);fd.append('attendees',NAMES);fd.append('duration',String(secs));
-    const r=await fetch('/api/meeting/upload',{method:'POST',body:fd});
-    if(!r.ok)throw new Error('Upload failed: '+r.status);
-    finish();
-  }catch(e){
-    const url=URL.createObjectURL(buob);const a=document.createElement('a');a.href=url;a.download=fn;a.click();
-    document.getElementById('walink').href='https://wa.me/'+WA+'?text='+encodeURIComponent('meeting notes: s+TITLE+(NAMES?' | Attendees: '+NAMES:'')+' | Duration: '+fmt(secs));
-    document.querySelector('.done-s').textContent='Audio saved to your phone. Open WhatsApp, attach the file and send to AskGogo with caption "meeting notes".';
-    finish();
+function stop(){if(!mr)return;clearInterval(tiv);if(wl)try{wl.release();}catch(_){}mr.stop();mr.stream.getTracks().forEach(t=>t.stop());show('sProc');animProg();}
+function animProg(){let w=0,li=0;const labs=['Preparing audio…','Compressing…','Uploading to AskGogo…','Transcribing with AI…','Almost done…'];const iv=setInterval(()=>{w=Math.min(w+(w<70?2.5:.4),92);document.getElementById('pgBar').style.width=w+'%';const idx=Math.floor(w/20);if(idx!==li&&idx<labs.length){document.getElementById('pgLbl').textContent=labs[li=idx];}if(w>=92)clearInterval(iv);},200);}
+async function done(){const mime=mr.mimeType||'audio/webm';blob=new Blob(chunks,{type:mime});const ext=mime.includes('mp4')?'m4a':mime.includes('ogg')?'ogg':'webm';const fn=(TITLE||'meeting').replace(/[^a-z0-9]/gi,'-').toLowerCase()+'-'+new Date().toISOString().slice(0,10)+'.'+ext;
+  try{const fd=new FormData();fd.append('audio',blob,fn);fd.append('phone',PHONE);fd.append('title',TITLE);fd.append('attendees',NAMES);fd.append('duration',String(secs));const r=await fetch('/api/meeting/upload',{method:'POST',body:fd});if(!r.ok)throw new Error('Upload failed: '+r.status);showDone();}
+  catch(e){
+    const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=fn;a.click();
+    document.getElementById('waL').href='https://wa.me/'+WA+'?text='+encodeURIComponent('meeting notes: '+TITLE+(NAMES?' | Attendees: '+NAMES:''));
+    document.querySelector('.ds').textContent='Audio saved. Open WhatsApp, attach the file and send with caption \"meeting notes\".';
+    showDone();
   }
 }
-
-function finish(){
-  document.getElementById('prog').style.width='100%';
-  setTimeout(()=>{
-    document.getElementById('sdur').textContent=fmt(secs);
-    document.getElementById('ssz').textContent=(blob.size/1024/1024).toFixed(1)+' MB';
-    document.getElementById('walink').href='https://wa.me/'+WA;
-    show('done');
-  },600);
-}
-
+function showDone(){document.getElementById('pgBar').style.width='100%';setTimeout(()=>{document.getElementById('sdur').textContent=fmt(secs);document.getElementById('ssz').textContent=blob?(blob.size/1024/1024).toFixed(1)+' MB':'—';if(document.getElementById('waL').href==='#'||document.getElementById('waL').href.endsWith('#'))document.getElementById('waL').href='https://wa.me/'+WA;show('sDone');},700);}
+function reset(){mr=null;chunks=[];secs=0;paused=false;blob=null;clearInterval(tiv);document.getElementById('tmr').textContent='00:00';document.getElementById('pw').classList.remove('on');document.getElementById('pgBar').style.width='0%';show('sIdle');}
 function fmt(s){return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}
-function show(id){['idle','rec','sending','done','err'].forEach(n=>{document.getElementById(n).style.display=n===id?'flex':'none';});}
-function reset(){mr=null;chunks=[];secs=0;paused=false;blob=null;clearInterval(tiv);document.getElementById('timer').textContent='00:00';show('idle');}
 window.addEventListener('beforeunload',e=>{if(mr&&mr.state==='recording'){e.preventDefault();e.returnValue='';}});
-if(P.get('autostart')==='1')setTimeout(start,800);
+if(Q.get('autostart')==='1')setTimeout(go,700);
 </script>
 </body>
 </html>
