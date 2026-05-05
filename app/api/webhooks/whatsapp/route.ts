@@ -27,6 +27,8 @@ import {
   recordReferralJoinFromText,
 } from '@/lib/bot/handlers/referral-unlock'
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
+import { buildTimezoneCommandReply, getUserTimeZone, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
+import { routeFeatureIntent } from '@/lib/feature-intents'
 import {
   isAudioContentType,
   transcribeTwilioVoiceNote,
@@ -224,6 +226,18 @@ export async function POST(req: NextRequest) {
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    // ── Feature Intent Router (expenses, todos, contacts, news, split, referral, followups, briefing)
+    // For voice notes: also try routing with the raw transcript (before normalization)
+    // This catches cases where Whisper transcribes "record meeting" as "I'll record making" etc.
+    const featureReply = await routeFeatureIntent(from, text) ||
+      (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText) : null)
+    if (featureReply) {
+      await saveConversation(resolvedUser.telegramId, 'user', text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', featureReply)
+      await sendWhatsAppMessage(from, featureReply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     if (isPaymentIntentCommand(text)) {
       const reply = await buildPaymentIntentReply({ telegramId: resolvedUser.telegramId, text, userName: resolvedUser.name })
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
@@ -242,6 +256,17 @@ export async function POST(req: NextRequest) {
     }
 
     const referralResult = await recordReferralJoinFromText({ text, referredTelegramId: resolvedUser.telegramId, referredExternalId: from, referredName: profileName })
+
+    // ── Timezone commands
+    if (isTimezoneCommand(text)) {
+      const reply = await buildTimezoneCommandReply({
+        text,
+        telegramId: resolvedUser.telegramId,
+        currentTimeZone: resolvedUser.timezone || inferTimezoneFromPhone(from),
+      })
+      await sendWhatsAppMessage(from, reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
 
     if (isShareMyWinCommand(text)) {
       const reply = await buildShareMyWinReply(resolvedUser.telegramId)
