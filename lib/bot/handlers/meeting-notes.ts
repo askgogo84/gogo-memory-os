@@ -28,18 +28,24 @@ export function isMeetingNotesCaption(text: string) {
 export function isTypedMeetingNotesCommand(text: string) {
   const lower = (text || '').toLowerCase().trim()
 
+  // Must have actual content (more than just the trigger phrase alone)
+  // "Meeting notes" alone = just a caption label, not typed content to summarize
+  // "Meeting notes: we discussed X" = actual typed meeting notes
+  const hasContent = lower.length > 30
+
   return (
-    lower.startsWith('meeting notes') ||
-    lower.startsWith('call notes') ||
-    lower.startsWith('summarize meeting') ||
-    lower.startsWith('summarise meeting') ||
-    lower.startsWith('summarize this meeting') ||
-    lower.startsWith('summarise this meeting') ||
-    lower.startsWith('transcribe meeting') ||
-    lower.startsWith('meeting summary') ||
-    (lower.includes('we discussed') && (lower.includes('need to') || lower.includes('action') || lower.includes('follow up'))) ||
-    lower.includes('meeting notes.') ||
-    lower.includes('meeting notes:')
+    hasContent && (
+      (lower.startsWith('meeting notes') && lower.length > 20 && !lower.match(/^meeting notes\.?\s*$/i)) ||
+      lower.startsWith('call notes') ||
+      lower.startsWith('summarize meeting') ||
+      lower.startsWith('summarise meeting') ||
+      lower.startsWith('summarize this meeting') ||
+      lower.startsWith('summarise this meeting') ||
+      lower.startsWith('transcribe meeting') ||
+      lower.startsWith('meeting summary') ||
+      (lower.includes('we discussed') && (lower.includes('need to') || lower.includes('action') || lower.includes('follow up'))) ||
+      lower.includes('meeting notes:')
+    )
   )
 }
 
