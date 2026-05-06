@@ -15,13 +15,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .bg-glow.rec{background:radial-gradient(circle,rgba(255,59,48,.09) 0%,transparent 70%)}
 .bg-glow.done{background:radial-gradient(circle,rgba(0,230,118,.13) 0%,transparent 70%)}
 .hdr{width:100%;max-width:430px;display:flex;align-items:center;justify-content:space-between;padding:20px 20px 0}
-.logo{font-size:18px;font-weight:800;letter-spacing:-.5px}
-.logo span{color:var(--g)}
+.logo{font-size:18px;font-weight:800;letter-spacing:-.5px}.logo span{color:var(--g)}
 .badge{font-size:9px;font-weight:700;letter-spacing:.12em;color:var(--g);text-transform:uppercase;border:1px solid rgba(0,230,118,.25);border-radius:100px;padding:5px 10px;background:rgba(0,230,118,.07)}
 .card{width:calc(100% - 28px);max-width:430px;margin:16px 14px 0;background:var(--c1);border:1px solid var(--bd);border-radius:28px;padding:24px 20px;flex:1;display:flex;flex-direction:column;gap:16px;box-shadow:0 32px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.04)}
-.scr{display:none;flex-direction:column;gap:16px;flex:1}
-.scr.on{display:flex}
-
+.scr{display:none;flex-direction:column;gap:16px;flex:1}.scr.on{display:flex}
 /* IDLE */
 .ib{display:flex;flex-direction:column;align-items:center;gap:20px;flex:1;justify-content:center;padding:8px 0}
 .mw{position:relative;width:180px;height:180px;cursor:pointer;flex-shrink:0}
@@ -29,17 +26,13 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .pr:nth-child(2){animation-delay:1.4s}
 @keyframes pulse{0%{transform:scale(.7);opacity:0}30%{opacity:1}100%{transform:scale(1.3);opacity:0}}
 .mo{position:absolute;inset:0;border-radius:50%;background:radial-gradient(145deg at 35% 30%,#0d2419,#061009);border:1.5px solid rgba(0,230,118,.22);display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 1px rgba(0,230,118,.07),0 8px 32px rgba(0,0,0,.5),0 0 60px rgba(0,230,118,.06),inset 0 1px 0 rgba(255,255,255,.06);transition:transform .15s ease}
-.mo:active{transform:scale(.93)}
-.mo svg{width:64px;height:64px;filter:drop-shadow(0 0 14px rgba(0,230,118,.5))}
-.it{font-size:24px;font-weight:800;letter-spacing:-.5px;text-align:center}
-.is{font-size:13px;color:var(--m);line-height:1.6;text-align:center;margin-top:8px}
-.sbtn{width:100%;padding:20px;border:none;border-radius:18px;background:linear-gradient(180deg,#00F070,#00C853);color:#000;font-family:'Inter',sans-serif;font-size:17px;font-weight:800;letter-spacing:-.3px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 4px 30px rgba(0,230,118,.4),inset 0 1px 0 rgba(255,255,255,.3);transition:transform .12s}
+.mo:active{transform:scale(.93)}.mo svg{width:64px;height:64px;filter:drop-shadow(0 0 14px rgba(0,230,118,.5))}
+.it{font-size:24px;font-weight:800;letter-spacing:-.5px;text-align:center}.is{font-size:13px;color:var(--m);line-height:1.6;text-align:center;margin-top:8px}
+.sbtn{width:100%;padding:20px;border:none;border-radius:18px;background:linear-gradient(180deg,#00F070,#00C853);color:#000;font-family:'Inter',sans-serif;font-size:17px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 4px 30px rgba(0,230,118,.4),inset 0 1px 0 rgba(255,255,255,.3);transition:transform .12s}
 .sbtn:active{transform:scale(.96)}
 .tip{display:flex;gap:10px;align-items:flex-start;background:rgba(255,159,10,.06);border:1px solid rgba(255,159,10,.15);border-radius:14px;padding:13px 14px;font-size:12.5px;color:var(--a);line-height:1.55}
-.pw{background:rgba(255,59,48,.07);border:1px solid rgba(255,59,48,.2);border-radius:14px;padding:14px;font-size:13px;color:#FF8A80;line-height:1.6;display:none}
-.pw.on{display:block}
+.pw{background:rgba(255,59,48,.07);border:1px solid rgba(255,59,48,.2);border-radius:14px;padding:14px;font-size:13px;color:#FF8A80;line-height:1.6;display:none}.pw.on{display:block}
 .pw strong{display:block;color:var(--r);font-size:13.5px;margin-bottom:4px}
-
 /* RECORDING */
 .rt{display:flex;align-items:center;justify-content:space-between}
 .rp{display:flex;align-items:center;gap:7px;background:rgba(255,59,48,.1);border:1px solid rgba(255,59,48,.25);border-radius:100px;padding:7px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--r)}
@@ -50,53 +43,45 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .rmw{display:flex;flex-direction:column;align-items:center;gap:12px}
 .rmic{width:100px;height:100px;border-radius:50%;background:radial-gradient(145deg at 35% 30%,#1a0808,#0d0404);border:1.5px solid rgba(255,59,48,.35);display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 0 rgba(255,59,48,.4);animation:mpulse 1.4s ease-in-out infinite}
 @keyframes mpulse{0%{box-shadow:0 0 0 0 rgba(255,59,48,.5),0 0 20px rgba(255,59,48,.15)}70%{box-shadow:0 0 0 22px rgba(255,59,48,0),0 0 30px rgba(255,59,48,.08)}100%{box-shadow:0 0 0 0 rgba(255,59,48,0),0 0 20px rgba(255,59,48,.15)}}
-.rmic.paused{animation:none;border-color:rgba(255,159,10,.3);box-shadow:none}
-.rmic svg{width:36px;height:36px}
+.rmic.paused{animation:none;border-color:rgba(255,159,10,.3);box-shadow:none}.rmic svg{width:36px;height:36px}
 .wave{display:flex;align-items:center;gap:3px;height:40px}
 .wb{width:3px;background:linear-gradient(180deg,var(--g),rgba(0,230,118,.25));border-radius:3px;animation:wanim .7s ease-in-out infinite;min-height:3px}
-.wb:nth-child(1){animation-delay:.00s}.wb:nth-child(2){animation-delay:.07s}.wb:nth-child(3){animation-delay:.14s}
-.wb:nth-child(4){animation-delay:.21s}.wb:nth-child(5){animation-delay:.28s}.wb:nth-child(6){animation-delay:.35s}
-.wb:nth-child(7){animation-delay:.42s}.wb:nth-child(8){animation-delay:.35s}.wb:nth-child(9){animation-delay:.28s}
-.wb:nth-child(10){animation-delay:.21s}.wb:nth-child(11){animation-delay:.14s}.wb:nth-child(12){animation-delay:.07s}
-.wb:nth-child(13){animation-delay:.00s}
+.wb:nth-child(1){animation-delay:.00s}.wb:nth-child(2){animation-delay:.07s}.wb:nth-child(3){animation-delay:.14s}.wb:nth-child(4){animation-delay:.21s}.wb:nth-child(5){animation-delay:.28s}.wb:nth-child(6){animation-delay:.35s}.wb:nth-child(7){animation-delay:.42s}.wb:nth-child(8){animation-delay:.35s}.wb:nth-child(9){animation-delay:.28s}.wb:nth-child(10){animation-delay:.21s}.wb:nth-child(11){animation-delay:.14s}.wb:nth-child(12){animation-delay:.07s}.wb:nth-child(13){animation-delay:.00s}
 @keyframes wanim{0%,100%{height:4px;opacity:.25}50%{height:34px;opacity:1}}
 .wave.paused .wb{animation:none;height:4px;opacity:.15}
-.rlbl{font-size:13px;color:var(--m);font-weight:500;text-align:center}
-.rlbl strong{color:var(--t);font-weight:700}
+.rlbl{font-size:13px;color:var(--m);font-weight:500;text-align:center}.rlbl strong{color:var(--t);font-weight:700}
 .ag{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .ab{padding:22px 12px;border-radius:20px;font-family:'Inter',sans-serif;font-size:16px;font-weight:700;cursor:pointer;border:none;display:flex;flex-direction:column;align-items:center;gap:8px;transition:transform .12s;color:inherit}
-.ab:active{transform:scale(.93)}
-.ab .bi{font-size:30px;line-height:1}
-.pbtn{background:rgba(255,159,10,.1);border:1.5px solid rgba(255,159,10,.3);color:var(--a)}
-.pbtn.paused{background:rgba(0,230,118,.1);border-color:rgba(0,230,118,.3);color:var(--g)}
+.ab:active{transform:scale(.93)}.ab .bi{font-size:30px;line-height:1}
+.pbtn{background:rgba(255,159,10,.1);border:1.5px solid rgba(255,159,10,.3);color:var(--a)}.pbtn.paused{background:rgba(0,230,118,.1);border-color:rgba(0,230,118,.3);color:var(--g)}
 .ebtn{background:rgba(255,59,48,.12);border:1.5px solid rgba(255,59,48,.3);color:#FF6B6B}
 .lh{background:var(--c2);border:1px solid var(--bd);border-radius:12px;padding:12px 14px;font-size:12px;color:var(--m);text-align:center;line-height:1.5}
-
 /* PROCESSING */
 .pc{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;flex:1;text-align:center;padding:20px 0}
-.spin{width:80px;height:80px;border-radius:50%;border:2px solid rgba(0,230,118,.1);border-top-color:var(--g);animation:spin .8s linear infinite;box-shadow:0 0 24px rgba(0,230,118,.1)}
+.spin{width:80px;height:80px;border-radius:50%;border:2px solid rgba(0,230,118,.1);border-top-color:var(--g);animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.pt{font-size:22px;font-weight:800;letter-spacing:-.4px}
-.ps{font-size:13px;color:var(--m);line-height:1.6;margin-top:4px}
+.pt{font-size:22px;font-weight:800;letter-spacing:-.4px}.ps{font-size:13px;color:var(--m);line-height:1.6;margin-top:4px}
 .pgt{width:100%;height:5px;background:rgba(255,255,255,.05);border-radius:100px;overflow:hidden}
 .pg{height:100%;background:linear-gradient(90deg,#00C853,#00E676);border-radius:100px;width:0%;transition:width .4s ease;box-shadow:0 0 12px rgba(0,230,118,.5)}
 .pgl{font-size:10.5px;color:var(--m);text-align:center;margin-top:8px}
-
 /* DONE */
 .dc{display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
 .di{width:88px;height:88px;border-radius:50%;background:rgba(0,230,118,.1);border:1.5px solid rgba(0,230,118,.25);display:flex;align-items:center;justify-content:center;font-size:40px;animation:pop .4s cubic-bezier(.34,1.56,.64,1);box-shadow:0 0 40px rgba(0,230,118,.15)}
 @keyframes pop{from{transform:scale(0);opacity:0}}
-.dt{font-size:24px;font-weight:800;letter-spacing:-.5px;margin-top:4px}
-.ds{font-size:13.5px;color:var(--m);line-height:1.6;max-width:280px}
+.dt{font-size:24px;font-weight:800;letter-spacing:-.5px;margin-top:4px}.ds{font-size:13.5px;color:var(--m);line-height:1.6;max-width:290px}
 .sr{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%}
 .sb{background:var(--c2);border:1px solid var(--bd);border-radius:14px;padding:14px 12px;text-align:center}
-.sn{font-size:22px;font-weight:800;color:var(--g);letter-spacing:-.5px;margin-bottom:3px}
-.sl{font-size:10px;color:var(--m);text-transform:uppercase;letter-spacing:.08em}
+.sn{font-size:22px;font-weight:800;color:var(--g);letter-spacing:-.5px;margin-bottom:3px}.sl{font-size:10px;color:var(--m);text-transform:uppercase;letter-spacing:.08em}
+/* Manual steps box */
+.steps{background:rgba(0,230,118,.05);border:1.5px solid rgba(0,230,118,.2);border-radius:18px;padding:18px;width:100%;display:none}
+.steps-ttl{font-size:14px;font-weight:800;color:var(--g);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.step{display:flex;gap:12px;align-items:flex-start;margin-bottom:11px}.step:last-child{margin-bottom:0}
+.step-n{width:26px;height:26px;border-radius:50%;background:var(--g);color:#000;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.step-t{font-size:13px;color:var(--t);line-height:1.55}.step-t strong{color:var(--g);font-family:monospace;background:rgba(0,230,118,.1);padding:1px 5px;border-radius:4px}
 .wabtn{width:100%;padding:19px;border:none;border-radius:17px;background:linear-gradient(180deg,#2EE077,#25D366);color:#fff;font-family:'Inter',sans-serif;font-size:16px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none;box-shadow:0 4px 24px rgba(37,211,102,.3),inset 0 1px 0 rgba(255,255,255,.2);transition:transform .12s}
 .wabtn:active{transform:scale(.97)}
+.dlbtn{width:100%;padding:16px;border:1.5px solid rgba(0,230,118,.3);border-radius:14px;background:rgba(0,230,118,.07);color:var(--g);font-family:'Inter',sans-serif;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;display:none}
 .agbtn{width:100%;padding:15px;border:1.5px solid var(--bd);border-radius:14px;background:transparent;color:var(--m);font-family:'Inter',sans-serif;font-size:14px;font-weight:600;cursor:pointer}
-.agbtn:active{border-color:var(--g);color:var(--g)}
-
 /* ERROR */
 .ec{display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;flex:1;justify-content:center}
 .ei{font-size:56px}.et{font-size:21px;font-weight:800}
@@ -111,17 +96,13 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 <div class="card">
   <div class="scr on" id="sIdle">
     <div class="ib">
-      <div class="mw" onclick="go()">
-        <div class="pr"></div><div class="pr"></div>
-        <div class="mo"><svg viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" fill="#00E676"/><path d="M5 10a7 7 0 0014 0" stroke="#00E676" stroke-width="2.2" stroke-linecap="round"/><line x1="12" y1="17" x2="12" y2="21" stroke="#00E676" stroke-width="2.2" stroke-linecap="round"/><line x1="9" y1="21" x2="15" y2="21" stroke="#00E676" stroke-width="2.2" stroke-linecap="round"/></svg></div>
-      </div>
+      <div class="mw" onclick="go()"><div class="pr"></div><div class="pr"></div><div class="mo"><svg viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" fill="#00E676"/><path d="M5 10a7 7 0 0014 0" stroke="#00E676" stroke-width="2.2" stroke-linecap="round"/><line x1="12" y1="17" x2="12" y2="21" stroke="#00E676" stroke-width="2.2" stroke-linecap="round"/><line x1="9" y1="21" x2="15" y2="21" stroke="#00E676" stroke-width="2.2" stroke-linecap="round"/></svg></div></div>
       <div><div class="it" id="idleTitle">Ready to Record</div><div class="is" id="idleSub">Tap the mic or button below to start.<br>Minutes sent to WhatsApp automatically.</div></div>
     </div>
-    <div class="pw" id="permWarn"><strong>🚫 Microphone Access Needed</strong><span id="permMsg">Allow mic when asked, then tap Start again.</span></div>
+    <div class="pw" id="permWarn"><strong>🚫 Microphone Access Needed</strong><span id="permMsg">Allow mic access when asked, then tap Start again.</span></div>
     <button class="sbtn" onclick="go()"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="11"/><polygon points="10,7 17,12 10,17" fill="#000"/></svg>Start Recording Now</button>
-    <div class="tip"><span style="font-size:16px;flex-shrink:0">📱</span><span>Lock your phone anytime — recording continues in the browser background automatically.</span></div>
+    <div class="tip"><span style="font-size:16px;flex-shrink:0">📱</span><span>Lock your phone anytime — recording continues in the browser background.</span></div>
   </div>
-
   <div class="scr" id="sRec">
     <div class="rt"><div class="rp"><div class="rd" id="recDot"></div><span id="recLabel">RECORDING</span></div><div class="rdate" id="recDate"></div></div>
     <div class="tmr" id="timer">00:00</div>
@@ -129,49 +110,55 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
       <div class="rmic" id="recMic"><svg viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" fill="#FF3B30"/><path d="M5 10a7 7 0 0014 0" stroke="#FF3B30" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17" x2="12" y2="21" stroke="#FF3B30" stroke-width="2" stroke-linecap="round"/><line x1="9" y1="21" x2="15" y2="21" stroke="#FF3B30" stroke-width="2" stroke-linecap="round"/></svg></div>
       <div class="wave" id="wave"><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div><div class="wb"></div></div>
     </div>
-    <div class="rlbl"><strong id="recTitle">Team Meeting</strong> — speak clearly, I'm listening</div>
+    <div class="rlbl"><strong id="recTitle">Meeting</strong> — speak clearly, I'm listening</div>
     <div class="ag">
       <button class="ab pbtn" id="pauseBtn" onclick="togglePause()"><span class="bi" id="pauseIcon">⏸</span><span id="pauseLabel">Pause</span></button>
       <button class="ab ebtn" onclick="stopRec()"><span class="bi">⏹</span><span>End Meeting</span></button>
     </div>
     <div class="lh">🔒 Screen lock is safe — recording stays active in background</div>
   </div>
-
   <div class="scr" id="sProc">
-    <div class="pc"><div class="spin"></div><div><div class="pt">Processing…</div><div class="ps">Uploading to AskGogo AI.<br>Minutes arriving on WhatsApp soon.</div></div><div style="width:100%"><div class="pgt"><div class="pg" id="progBar"></div></div><div class="pgl" id="progLabel">Preparing audio…</div></div></div>
+    <div class="pc"><div class="spin"></div><div><div class="pt" id="procTitle">Uploading…</div><div class="ps" id="procSub">Sending to AskGogo AI.<br>Your minutes will arrive on WhatsApp shortly.</div></div><div style="width:100%"><div class="pgt"><div class="pg" id="progBar"></div></div><div class="pgl" id="progLabel">Saving audio…</div></div></div>
   </div>
-
   <div class="scr" id="sDone">
-    <div class="dc"><div class="di">✅</div><div class="dt">Minutes on the way!</div><div class="ds">Check WhatsApp — transcript, summary &amp; action items arriving in under a minute.</div></div>
+    <div class="dc"><div class="di" id="doneIcon">✅</div><div class="dt" id="doneTitle">Minutes on the way!</div><div class="ds" id="doneSub">Check WhatsApp — transcript, summary &amp; action items arriving shortly.</div></div>
     <div class="sr"><div class="sb"><div class="sn" id="statDur">0:00</div><div class="sl">Duration</div></div><div class="sb"><div class="sn" id="statSz">0 MB</div><div class="sl">File size</div></div></div>
-    <a id="waLink" href="#" class="wabtn" target="_blank"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>Open WhatsApp Chat</a>
+    <div class="steps" id="manualSteps">
+      <div class="steps-ttl">📎 How to send your recording</div>
+      <div class="step"><div class="step-n">1</div><div class="step-t">Audio saved to your phone — find it in your <strong>Downloads</strong> folder</div></div>
+      <div class="step"><div class="step-n">2</div><div class="step-t">Open WhatsApp → AskGogo chat → tap <strong>📎</strong> → select the audio file</div></div>
+      <div class="step"><div class="step-n">3</div><div class="step-t">Type caption: <strong>meeting notes</strong> then tap Send — minutes arrive in ~60s</div></div>
+    </div>
+    <a id="waLink" href="#" class="wabtn" target="_blank"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg><span id="waBtnTxt">Open WhatsApp Chat</span></a>
+    <button class="dlbtn" id="dlBtn" onclick="downloadAudio()">⬇️ Download Audio Again</button>
     <button class="agbtn" onclick="resetAll()">🔄 Record Another Meeting</button>
   </div>
-
   <div class="scr" id="sErr">
     <div class="ec"><div class="ei">🎤</div><div class="et">Mic Access Denied</div><div class="em" id="errMsg">Allow microphone in browser settings then reload.<br><br>Chrome: tap 🔒 → Site settings → Microphone → Allow</div><button class="rbtn" onclick="location.reload()">↺ Reload & Try Again</button></div>
   </div>
 </div>
 <div class="footer">AskGogo.in · Private &amp; Secure</div>
-
 <script>
 const Q=new URLSearchParams(location.search);
 const PHONE=Q.get('phone')||'';const TITLE=Q.get('title')||'Team Meeting';const NAMES=Q.get('attendees')||'';const WA=Q.get('wa')||'15797006612';
 document.getElementById('idleTitle').textContent=TITLE||'Ready to Record';
-if(NAMES)document.getElementById('idleSub').textContent='Attendees: '+NAMES+'\n\nTap to start.';
+if(NAMES)document.getElementById('idleSub').textContent='Attendees: '+NAMES+'\nTap to start.';
 document.getElementById('recTitle').textContent=TITLE;
 document.getElementById('recDate').textContent=new Date().toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
-let mr,chunks=[],secs=0,tiv,paused=false,blob,wl;
+let mr,chunks=[],secs=0,tiv,paused=false,blob,wl,blobUrl,fname;
 function show(id){['sIdle','sRec','sProc','sDone','sErr'].forEach(s=>document.getElementById(s).classList.toggle('on',s===id));const g=document.getElementById('bgGlow');g.className='bg-glow'+(id==='sRec'?' rec':id==='sDone'?' done':'');}
 async function go(){
   document.getElementById('permWarn').classList.remove('on');
-  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){document.getElementById('errMsg').textContent='Your browser does not support recording. Use Chrome or Safari.';show('sErr');return;}
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){document.getElementById('errMsg').textContent='Browser does not support recording. Use Chrome.';show('sErr');return;}
   try{
-    const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,sampleRate:44100}});
+    const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
     try{if('wakeLock'in navigator)wl=await navigator.wakeLock.request('screen');}catch(_){}
     const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].find(t=>MediaRecorder.isTypeSupported(t))||'';
-    mr=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:64000}:{});
-    chunks=[];mr.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};mr.onstop=onDone;mr.start(1000);
+    mr=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:128000}:{});
+    chunks=[];
+    mr.ondataavailable=e=>{if(e.data&&e.data.size>0){chunks.push(e.data);console.log('[rec] chunk',chunks.length,'size',e.data.size);}};
+    mr.onstop=onDone;
+    mr.start(1000);
     show('sRec');secs=0;paused=false;
     document.getElementById('timer').textContent='00:00';
     document.getElementById('pauseLabel').textContent='Pause';document.getElementById('pauseIcon').textContent='⏸';
@@ -180,7 +167,7 @@ async function go(){
     document.getElementById('recLabel').textContent='RECORDING';document.getElementById('recDot').style.background='var(--r)';
     tiv=setInterval(()=>{secs++;document.getElementById('timer').textContent=fmt(secs);},1000);
   }catch(e){
-    if(e.name==='NotAllowedError'||e.name==='PermissionDeniedError'){document.getElementById('permMsg').textContent='Mic was blocked. Tap 🔒 in address bar → Site settings → Microphone → Allow, then tap Start again.';document.getElementById('permWarn').classList.add('on');}
+    if(e.name==='NotAllowedError'||e.name==='PermissionDeniedError'){document.getElementById('permMsg').textContent='Mic blocked. Tap 🔒 in address bar → Site settings → Microphone → Allow, then tap Start again.';document.getElementById('permWarn').classList.add('on');}
     else if(e.name==='NotFoundError'){document.getElementById('errMsg').textContent='No microphone found. Connect a mic and reload.';show('sErr');}
     else{document.getElementById('errMsg').textContent='Cannot access mic: '+e.message;show('sErr');}
   }
@@ -191,14 +178,69 @@ function togglePause(){
   if(!paused){mr.pause();clearInterval(tiv);paused=true;document.getElementById('pauseLabel').textContent='Resume';document.getElementById('pauseIcon').textContent='▶';btn.className='ab pbtn paused';document.getElementById('recLabel').textContent='PAUSED';document.getElementById('recDot').style.background='var(--a)';wave.classList.add('paused');mic.classList.add('paused');}
   else{mr.resume();tiv=setInterval(()=>{secs++;document.getElementById('timer').textContent=fmt(secs);},1000);paused=false;document.getElementById('pauseLabel').textContent='Pause';document.getElementById('pauseIcon').textContent='⏸';btn.className='ab pbtn';document.getElementById('recLabel').textContent='RECORDING';document.getElementById('recDot').style.background='var(--r)';wave.classList.remove('paused');mic.classList.remove('paused');}
 }
-function stopRec(){if(!mr)return;clearInterval(tiv);if(wl)try{wl.release();}catch(_){}mr.stop();mr.stream.getTracks().forEach(t=>t.stop());show('sProc');animProg();}
-function animProg(){let w=0,li=0;const labs=['Preparing audio…','Compressing file…','Uploading to AskGogo…','Transcribing with Whisper AI…','Almost done…'];const iv=setInterval(()=>{w=Math.min(w+(w<70?2.5:.4),92);document.getElementById('progBar').style.width=w+'%';const idx=Math.floor(w/20);if(idx!==li&&idx<labs.length)document.getElementById('progLabel').textContent=labs[li=idx];if(w>=92)clearInterval(iv);},200);}
-async function onDone(){const mime=mr.mimeType||'audio/webm';blob=new Blob(chunks,{type:mime});const ext=mime.includes('mp4')?'m4a':mime.includes('ogg')?'ogg':'webm';const fn=(TITLE||'meeting').replace(/[^a-z0-9]/gi,'-').toLowerCase()+'-'+new Date().toISOString().slice(0,10)+'.'+ext;
-  try{const fd=new FormData();fd.append('audio',blob,fn);fd.append('phone',PHONE);fd.append('title',TITLE);fd.append('attendees',NAMES);fd.append('duration',String(secs));const r=await fetch('/api/meeting/upload',{method:'POST',body:fd});if(!r.ok)throw new Error('Upload failed '+r.status);showDone();}
-  catch(e){const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=fn;a.click();document.getElementById('waLink').href='https://wa.me/'+WA+'?text='+encodeURIComponent('meeting notes: '+TITLE+(NAMES?' | Attendees: '+NAMES:''));document.querySelector('.ds').textContent='Audio saved. Open WhatsApp, attach the file and send with caption "meeting notes".';showDone();}
+function stopRec(){
+  if(!mr)return;clearInterval(tiv);
+  if(wl)try{wl.release();}catch(_){}
+  mr.stop();mr.stream.getTracks().forEach(t=>t.stop());
+  show('sProc');
 }
-function showDone(){document.getElementById('progBar').style.width='100%';setTimeout(()=>{document.getElementById('statDur').textContent=fmt(secs);document.getElementById('statSz').textContent=blob?(blob.size/1024/1024).toFixed(1)+' MB':'—';if(!document.getElementById('waLink').href||document.getElementById('waLink').href.endsWith('#'))document.getElementById('waLink').href='https://wa.me/'+WA;show('sDone');},700);}
-function resetAll(){mr=null;chunks=[];secs=0;paused=false;blob=null;clearInterval(tiv);document.getElementById('timer').textContent='00:00';document.getElementById('progBar').style.width='0%';document.getElementById('permWarn').classList.remove('on');show('sIdle');}
+async function onDone(){
+  const mime=mr.mimeType||'audio/webm';
+  blob=new Blob(chunks,{type:mime});
+  const ext=mime.includes('mp4')?'m4a':mime.includes('ogg')?'ogg':'webm';
+  fname=(TITLE||'meeting').replace(/[^a-z0-9]/gi,'-').toLowerCase()+'-'+new Date().toISOString().slice(0,10)+'.'+ext;
+  blobUrl=URL.createObjectURL(blob);
+  console.log('[rec] onDone: chunks='+chunks.length+' size='+blob.size+' type='+mime+' file='+fname);
+  document.getElementById('statDur').textContent=fmt(secs);
+  document.getElementById('statSz').textContent=(blob.size/1024/1024).toFixed(2)+' MB';
+  // Animate progress
+  let w=0;const piv=setInterval(()=>{w=Math.min(w+3,90);document.getElementById('progBar').style.width=w+'%';if(w>=90)clearInterval(piv);},150);
+  document.getElementById('progLabel').textContent='Uploading audio to server…';
+  try{
+    if(blob.size<1000)throw new Error('Recording too short or empty ('+blob.size+' bytes)');
+    const fd=new FormData();fd.append('audio',blob,fname);fd.append('phone',PHONE);fd.append('title',TITLE);fd.append('attendees',NAMES);fd.append('duration',String(secs));
+    const ctrl=new AbortController();const to=setTimeout(()=>ctrl.abort(),90000);
+    const r=await fetch('/api/meeting/upload',{method:'POST',body:fd,signal:ctrl.signal});
+    clearTimeout(to);
+    if(!r.ok){const txt=await r.text().catch(()=>'');throw new Error('Server error '+r.status+': '+txt.slice(0,80));}
+    const json=await r.json();
+    if(!json.ok)throw new Error('API error: '+(json.reason||json.error||'unknown'));
+    clearInterval(piv);document.getElementById('progBar').style.width='100%';
+    setTimeout(()=>{
+      document.getElementById('doneIcon').textContent='✅';
+      document.getElementById('doneTitle').textContent='Minutes on the way!';
+      document.getElementById('doneSub').textContent='Check WhatsApp — transcript, summary & action items arriving in under a minute.';
+      document.getElementById('waLink').href='https://wa.me/'+WA;
+      document.getElementById('waBtnTxt').textContent='Open WhatsApp Chat';
+      document.getElementById('manualSteps').style.display='none';
+      document.getElementById('dlBtn').style.display='none';
+      show('sDone');
+    },500);
+  }catch(err){
+    console.error('[rec] Upload error:',err.message);
+    clearInterval(piv);document.getElementById('progBar').style.width='100%';
+    // Auto-download the file
+    const a=document.createElement('a');a.href=blobUrl;a.download=fname;document.body.appendChild(a);a.click();setTimeout(()=>document.body.removeChild(a),1000);
+    setTimeout(()=>{
+      document.getElementById('doneIcon').textContent='⬇️';
+      document.getElementById('doneTitle').textContent='Audio Saved to Phone!';
+      document.getElementById('doneSub').textContent='Auto-upload failed ('+err.message.slice(0,50)+'). Follow these steps:';
+      document.getElementById('waLink').href='https://wa.me/'+WA;
+      document.getElementById('waBtnTxt').textContent='Open AskGogo on WhatsApp';
+      document.getElementById('manualSteps').style.display='block';
+      document.getElementById('dlBtn').style.display='flex';
+      show('sDone');
+    },500);
+  }
+}
+function downloadAudio(){if(blobUrl&&fname){const a=document.createElement('a');a.href=blobUrl;a.download=fname;a.click();}}
+function resetAll(){
+  if(blobUrl)URL.revokeObjectURL(blobUrl);
+  mr=null;chunks=[];secs=0;paused=false;blob=null;blobUrl=null;fname=null;clearInterval(tiv);
+  document.getElementById('timer').textContent='00:00';document.getElementById('progBar').style.width='0%';
+  document.getElementById('permWarn').classList.remove('on');document.getElementById('manualSteps').style.display='none';document.getElementById('dlBtn').style.display='none';
+  show('sIdle');
+}
 function fmt(s){return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}
 window.addEventListener('beforeunload',e=>{if(mr&&mr.state==='recording'){e.preventDefault();e.returnValue='';}});
 if(Q.get('autostart')==='1')setTimeout(go,700);
