@@ -19,7 +19,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'audio and phone required' }, { status: 400 })
     }
 
-    // Normalize to E.164
     const digits = phone.replace(/\D/g, '')
     const e164 = digits.startsWith('91') ? '+' + digits
       : digits.length === 10 ? '+91' + digits
@@ -27,11 +26,10 @@ export async function POST(req: NextRequest) {
 
     const mins = Math.floor(duration / 60), secs = duration % 60
     const durStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
-
     const fileSizeMB = (audio.size / 1024 / 1024).toFixed(1)
+
     console.log(`[meeting-upload] phone=${e164} title=${title} duration=${durStr} size=${fileSizeMB}MB type=${audio.type}`)
 
-    // Immediate acknowledgment
     await sendWhatsAppMessage(e164,
       `🎙️ *Preparing meeting notes...*\n\n` +
       `*${title}*${attendees ? `\nAttendees: ${attendees}` : ''}\n` +
@@ -39,20 +37,19 @@ export async function POST(req: NextRequest) {
       `Transcribing now… your minutes will arrive in ~60 seconds ⏳`
     )
 
-    // Transcribe with Whisper
-    const buffer = Buffer.from(await audio.arrayBuffer())
-    console.log(`[meeting-upload] Buffer size: ${buffer.length} bytes`)
+    const arrayBuffer = await audio.arrayBuffer()
+    console.log(`[meeting-upload] Buffer size: ${arrayBuffer.byteLength} bytes`)
 
     let transcript = ''
     try {
-      transcript = await transcribeWithWhisper(buffer, audio.type || 'audio/webm', audio.name)
+      transcript = await transcribeWithWhisper(arrayBuffer, audio.type || 'audio/webm', audio.name)
       console.log(`[meeting-upload] Transcript length: ${transcript.length} chars, preview: ${transcript.slice(0, 100)}`)
     } catch (transcribeErr: any) {
       console.error(`[meeting-upload] Whisper error:`, transcribeErr?.message)
       await sendWhatsAppMessage(e164,
-        `⚘️ *Could not transcribe your recording*\n\n` +
+        `⚠️ *Could not transcribe your recording*\n\n` +
         `Error: ${transcribeErr?.message?.slice(0, 100) || 'Unknown'}\n\n` +
-        `Please try recording again or send the audio file directly to this chat with caption *meeting notes*.`
+        `Please send the audio file directly to this chat with caption *meeting notes*.`
       )
       return NextResponse.json({ ok: false, reason: 'transcription_error' })
     }
@@ -60,17 +57,13 @@ export async function POST(req: NextRequest) {
     if (!transcript || transcript.trim().length < 20) {
       console.log(`[meeting-upload] Transcript too short: "${transcript}"`)
       await sendWhatsAppMessage(e164,
-        `⚘️ *Recording was too short or unclear*\n\n` +
+        `⚠️ *Recording was too short or unclear*\n\n` +
         `The audio was only ${durStr} — try recording a longer meeting (at least 30 seconds).\n\n` +
-        `Tips for better results:\n` +
-        `• Speak clearly near the phone\n` +
-        `• Record in a quieter space\n` +
-        `• Minimum 30 seconds of speech`
+        `Tips:\n• Speak clearly near the phone\n• Record in a quieter space`
       )
       return NextResponse.json({ ok: false, reason: 'transcription_too_short' })
     }
 
-    // Build meeting notes via existing handler
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: e164 })
     const notes = await buildMeetingNotesReply({
       telegramId: resolvedUser.telegramId,
@@ -89,7 +82,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function transcribeWithWhisper(buffer: Buffer, mimeType: string, originalName: string): Promise<string> {
+async function transcribeWithWhisper(arrayBuffer: ArrayBuffer, mimeType: string, originalName: string): Promise<string> {
   const OpenAI = (await import('openai')).default
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
@@ -99,16 +92,17 @@ async function transcribeWithWhisper(buffer: Buffer, mimeType: string, originalN
     : 'webm'
 
   const filename = originalName || `meeting.${ext}`
-  const file = new File([buffer], filename, { type: mimeType })
+  const uint8Array = new Uint8Array(arrayBuffer)
+  const file = new File([uint8Array], filename, { type: mimeType })
 
-  console.log(`[meeting-upload] Calling Whisper: filename=${filename} size=${buffer.length}`)
+  console.log(`[meeting-upload] Calling Whisper: filename=${filename} size=${uint8Array.length}`)
 
   const response = await openai.audio.transcriptions.create({
     file,
     model: 'whisper-1',
     language: 'en',
     response_format: 'text',
-    prompt: 'This is a meeting recording. Transcribe all speech accurately.'
+    prompt: 'This is a meeting recording. Transcribe all speech accurately including names, decisions, and action items.'
   })
 
   return typeof response === 'string' ? response : (response as any).text || ''
