@@ -270,7 +270,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
       )
 
-      const reply = `✅ *Match reminder set*\n\n${latestSportsFollowup.payload.match_label}\n${lower.includes('2 hours before') ? '2 hours before the match' : '1 hour before the match'}`
+      const reply = `â *Match reminder set*\n\n${latestSportsFollowup.payload.match_label}\n${lower.includes('2 hours before') ? '2 hours before the match' : '1 hour before the match'}`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
@@ -340,6 +340,22 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  // Reminder intent detected but no specific time parsed — ask for time instead of giving unrelated answer
+  if (!eagerReminder && intent.type === 'set_reminder') {
+    const lower = incomingText.toLowerCase()
+    const hasActivity = lower.includes('run') || lower.includes('walk') || lower.includes('gym') ||
+      lower.includes('workout') || lower.includes('exercise') || lower.includes('train') ||
+      lower.includes('marathon') || lower.includes('jog') || lower.includes('yoga') || lower.includes('swim')
+    let reply: string
+    if (hasActivity) {
+      reply = `Got it! 🏃 I'll help you set your training reminders.\n\nWhat time should I remind you? For example:\n• *"Remind me at 6 AM for easy run"*\n• *"Remind me every morning at 7 for training"*\n• *"Remind me daily at 6:30 AM for my marathon prep"*`
+    } else {
+      reply = `Sure! What time should I set this reminder for?\n\nFor example:\n• *"Remind me at 7 AM tomorrow"*\n• *"Remind me at 6 PM every day"*\n• *"Remind me in 2 hours"*`
+    }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
   if (intent.type === 'set_briefing_time') {
     const reply = await setBriefingTime(resolvedUser.telegramId, incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -354,7 +370,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'connect_calendar') {
     const url = getAuthUrl(resolvedUser.telegramId)
-    const reply = `📅 *Connect Google Calendar*\n\nThis lets AskGogo include your schedule in Today briefing and help you plan reminders better.\n\n${url}\n\nAfter connecting, come back and type:\nToday`
+    const reply = `ð *Connect Google Calendar*\n\nThis lets AskGogo include your schedule in Today briefing and help you plan reminders better.\n\n${url}\n\nAfter connecting, come back and type:\nToday`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -374,7 +390,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
     if (!user?.gmail_connected) {
       const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-      const reply = `📬 *Connect Gmail*\n\nTo show unread emails and draft replies, connect Gmail once.\n\n${connectUrl}\n\nAfter connecting, come back and type:\nshow my unread emails`
+      const reply = `ð¬ *Connect Gmail*\n\nTo show unread emails and draft replies, connect Gmail once.\n\n${connectUrl}\n\nAfter connecting, come back and type:\nshow my unread emails`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
@@ -401,7 +417,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
     if (!emails.length) {
       const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-      const reply = `📬 *Gmail needs reconnecting*\n\nI couldn’t fetch your emails right now.\n\nReconnect Gmail here:\n${connectUrl}\n\nThen type:\nshow my unread emails`
+      const reply = `ð¬ *Gmail needs reconnecting*\n\nI couldnât fetch your emails right now.\n\nReconnect Gmail here:\n${connectUrl}\n\nThen type:\nshow my unread emails`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
@@ -420,7 +436,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'connect_gmail') {
     const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-    const reply = `📬 *Connect Gmail*\n\nConnect once to unlock email summaries and reply drafts.\n\n${connectUrl}`
+    const reply = `ð¬ *Connect Gmail*\n\nConnect once to unlock email summaries and reply drafts.\n\n${connectUrl}`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -484,12 +500,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (parsed.type === 'memory') {
     await saveMemory(resolvedUser.telegramId, parsed.fact)
-    finalReply = parsed.replyText || 'Got it — I will remember that.'
+    finalReply = parsed.replyText || 'Got it â I will remember that.'
   }
 
   if (parsed.type === 'reminder') {
     await createReminder(resolvedUser.telegramId, resolvedUser.telegramId, parsed.remindAt, parsed.message, parsed.pattern, params.channel === 'whatsapp' ? resolvedUser.whatsappId : null)
-    finalReply = parsed.replyText || `Done — I have set the reminder for ${parsed.message}.`
+    finalReply = parsed.replyText || `Done â I have set the reminder for ${parsed.message}.`
   }
 
   if (parsed.type === 'list_add') finalReply = parsed.replyText || formatList(parsed.listName, await addToList(resolvedUser.telegramId, parsed.listName, parsed.items))
