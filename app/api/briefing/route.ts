@@ -62,7 +62,6 @@ export async function POST(req: NextRequest) {
   const user = await resolveBriefingUser(phone, name)
   const reply = await buildBriefing(user)
 
-  // For WhatsApp command flow, return reply to caller; direct API usage still sends too if requested later.
   return NextResponse.json({ ok: true, reply })
 }
 
@@ -122,19 +121,70 @@ function firstName(name?: string) {
   return (name || 'there').split(' ')[0] || 'there'
 }
 
-function topJsonItems(items: any[] | null | undefined, options?: { hideGeneral?: boolean }) {
+function isBadMemoryEntity(value: string) {
+  const lower = value.toLowerCase().trim()
+  if (!lower) return true
+  if (lower === 'team') return true
+  if (lower.includes(' tomorrow')) return true
+  if (lower.includes(' today')) return true
+  if (lower.includes(' reminder')) return true
+  if (lower.includes('briefing')) return true
+  if (lower.includes('memory twin')) return true
+  if (lower.length > 40) return true
+  return false
+}
+
+function topJsonItems(
+  items: any[] | null | undefined,
+  options?: { hideGeneral?: boolean; filterEntities?: boolean; limit?: number }
+) {
   const map = new Map<string, number>()
   for (const item of items || []) {
     const value = String(item?.value || item?.name || item?.label || '').trim()
     if (!value) continue
     if (options?.hideGeneral && value.toLowerCase() === 'general') continue
+    if (options?.filterEntities && isBadMemoryEntity(value)) continue
     map.set(value, (map.get(value) || 0) + Number(item?.count || 1))
   }
 
   return Array.from(map.entries())
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 4)
+    .slice(0, options?.limit || 4)
     .map(([value, count]) => `${value}${count ? ` ×${count}` : ''}`)
+}
+
+function cleanNoteForBriefing(text: string) {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!raw) return ''
+
+  const lower = raw.toLowerCase()
+
+  if (lower.includes('medical note / prescription image') || lower.includes('prescription')) {
+    const patient = raw.match(/Patient:\s*([^•\n]+)/i)?.[1]?.trim()
+    const doctor = raw.match(/Doctor\/clinic:\s*([^•\n]+)/i)?.[1]?.trim()
+    const meds = raw.match(/Medicine name:\s*([^•\n]+)/i)?.[1]?.trim()
+    const vitals = ['TG', 'LDL', 'BP']
+      .map((label) => {
+        const match = raw.match(new RegExp(`${label}\\s*[: ]\\s*([^•,;\\n]+)`, 'i'))
+        return match?.[1] ? `${label} ${match[1].trim().split(' ')[0]}` : ''
+      })
+      .filter(Boolean)
+      .join(', ')
+
+    const parts = ['Medical note']
+    if (patient) parts.push(patient.replace(/\.$/, ''))
+    if (vitals) parts.push(vitals)
+    if (meds && !/unclear/i.test(meds)) parts.push(`Medicine: ${meds}`)
+    else parts.push('Medicine: verify')
+    if (doctor) parts.push(doctor.replace(/\.$/, ''))
+
+    return parts.join(' • ').slice(0, 130)
+  }
+
+  return raw
+    .replace(/^Image note —\s*/i, '')
+    .replace(/\s*Text:\s*/i, ' • ')
+    .slice(0, 120)
 }
 
 async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
@@ -260,24 +310,26 @@ function formatTodos(ctx: BriefingContext) {
 
 function formatNotes(ctx: BriefingContext) {
   if (!ctx.notes.length) return ''
-  return `*Recent notes*\n${ctx.notes
+  const lines = ctx.notes
     .slice(0, 3)
-    .map((n: any) => `• ${String(n.text || '').replace(/\n/g, ' ').slice(0, 110)}`)
-    .join('\n')}`
+    .map((n: any) => cleanNoteForBriefing(n.text || ''))
+    .filter(Boolean)
+  if (!lines.length) return ''
+  return `*Recent notes*\n${lines.map((line) => `• ${line}`).join('\n')}`
 }
 
 function formatMemory(ctx: BriefingContext) {
   const profile = ctx.memoryProfile
   if (!profile) return ''
 
-  const contacts = topJsonItems(profile.frequent_contacts)
-  const tasks = topJsonItems(profile.frequent_tasks, { hideGeneral: true })
-  const times = topJsonItems(profile.common_times)
+  const contacts = topJsonItems(profile.frequent_contacts, { filterEntities: true, limit: 3 })
+  const tasks = topJsonItems(profile.frequent_tasks, { hideGeneral: true, limit: 4 })
+  const times = topJsonItems(profile.common_times, { limit: 3 })
 
   const parts: string[] = []
   if (contacts.length) parts.push(`People/entities: ${contacts.join(', ')}`)
   if (tasks.length) parts.push(`Task patterns: ${tasks.join(', ')}`)
-  if (times.length) parts.push(`Usual times: ${times.slice(0, 3).join(', ')}`)
+  if (times.length) parts.push(`Usual times: ${times.join(', ')}`)
 
   if (!parts.length) return ''
   return `*AskGogo Memory*\n${parts.map((p) => `• ${p}`).join('\n')}`
@@ -290,8 +342,8 @@ async function buildBriefing(user: UserRecord) {
 
   let weatherLine = ''
   try {
-    const w = await fetch('https://wttr.in/Bengaluru?format=%C+%t', { signal: AbortSignal.timeout(3000) })
-    const weather = (await w.text()).trim()
+    const w = await fetch('https://wttr.in/Bengaluru?format=%C+%t&m', { signal: AbortSignal.timeout(3000) })
+    const weather = (await w.text()).trim().replace(/^\+/, '')
     if (weather) weatherLine = `🌤 *Weather:* ${weather}`
   } catch {}
 
