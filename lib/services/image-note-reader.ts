@@ -59,6 +59,7 @@ export async function readAndSummarizeImageNote(params: {
   mediaUrl: string
   contentType: string
   userCaption?: string
+  expectedPatientName?: string | null
 }) {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('Missing OPENAI_API_KEY')
@@ -66,6 +67,7 @@ export async function readAndSummarizeImageNote(params: {
 
   const dataUrl = await downloadTwilioMediaAsDataUrl(params)
   const captionMedicalMode = isLikelyMedicalImage(params.userCaption)
+  const expectedName = (params.expectedPatientName || '').trim()
 
   const response = await openai.chat.completions.create({
     // Use stronger vision for all images now because users are sending receipts/prescriptions/handwritten notes.
@@ -86,13 +88,14 @@ export async function readAndSummarizeImageNote(params: {
             type: 'text',
             text:
               `User caption: ${params.userCaption || 'No caption'}\n` +
-              `Caption medical hint: ${captionMedicalMode ? 'yes' : 'no'}\n\n` +
+              `Caption medical hint: ${captionMedicalMode ? 'yes' : 'no'}\n` +
+              `Known user/patient name from WhatsApp profile: ${expectedName || 'unknown'}\n\n` +
               'Read this image carefully. If the image appears to be a doctor prescription, clinic note, lab/health note, medicine note, or has doctor/clinic/medicine/lab values, output exactly this medical format:\n\n' +
               '📝 *Prescription / medical note read*\n\n' +
               '*Important*\n' +
               '• Handwritten prescriptions can be unclear. Please verify medicine names, dosage, and timing with the doctor/pharmacist.\n\n' +
               '*Patient / clinic details*\n' +
-              '• Patient: name and age if visible, otherwise [unclear]\n' +
+              '• Patient: name and age if visible, otherwise [unclear]. If the handwritten patient name is unclear but closely resembles the known WhatsApp profile name, write the known name followed by "(matched with profile; verify)". Do not invent a different name.\n' +
               '• Doctor/clinic: if visible\n' +
               '• Date: if visible\n\n' +
               '*Vitals / test values visible*\n' +
@@ -103,7 +106,7 @@ export async function readAndSummarizeImageNote(params: {
               '• Timing/dosage: [visible timing or unclear]\n' +
               '• Duration: [visible duration or unclear]\n\n' +
               '*Extracted text*\n' +
-              'Line-by-line transcription. Preserve uncertainty with [unclear].\n\n' +
+              'Line-by-line transcription. Preserve uncertainty with [unclear]. For patient name, if the handwriting is unclear and a profile-name match was used, include both: "handwritten name unclear; profile suggests ...".\n\n' +
               '*Next actions*\n' +
               '• Practical next steps only. If medicine/timing is unclear, ask user to send a close-up crop of just the medicine line.\n\n' +
               'If the image is NOT medical, output exactly this normal format:\n\n' +
