@@ -323,7 +323,7 @@ function formatMemory(ctx: BriefingContext) {
   if (!profile) return ''
 
   const contacts = topJsonItems(profile.frequent_contacts, { filterEntities: true, limit: 3 })
-  const tasks = topJsonItems(profile.frequent_tasks, { hideGeneral: true, limit: 4 })
+  const tasks = topJsonItems(profile.frequent_tasks, { hideGeneral: true, hideBriefing: true, limit: 4 })
   const times = topJsonItems(profile.common_times, { limit: 3 })
 
   const parts: string[] = []
@@ -343,7 +343,7 @@ async function buildBriefing(user: UserRecord) {
   let weatherLine = ''
   try {
     const w = await fetch('https://wttr.in/Bengaluru?format=%C+%t&m', { signal: AbortSignal.timeout(3000) })
-    const weather = (await w.text()).trim().replace(/^\+/, '')
+    const weather = (await w.text()).trim().replace(/\+/g, '')
     if (weather) weatherLine = `🌤 *Weather:* ${weather}`
   } catch {}
 
@@ -365,3 +365,4 @@ async function buildBriefing(user: UserRecord) {
 
   return sections.filter(Boolean).join('\n\n')
 }
+
