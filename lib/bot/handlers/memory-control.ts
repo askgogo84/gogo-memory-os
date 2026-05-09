@@ -7,10 +7,22 @@ function cleanMemoryContent(content: string) {
     .trim()
 }
 
+function looksLikeJson(content: string) {
+  const trimmed = (content || '').trim()
+  return trimmed.startsWith('{') || trimmed.startsWith('[')
+}
+
 function isInternalMemory(content: string) {
   const lower = (content || '').toLowerCase().trim()
   return (
+    !lower ||
+    looksLikeJson(content) ||
     lower.startsWith('askgogo_usage:') ||
+    lower.startsWith('askgogo_meeting_notes_created:') ||
+    lower.includes('"type":"followup_state"') ||
+    lower.includes('followup_state') ||
+    lower.includes('meeting_action_items') ||
+    lower.includes('reminder_ampm') ||
     lower.includes('founder pricing / paid plan launch') ||
     lower.includes('calendar_conflict') ||
     lower.includes('day_plan') ||
@@ -122,17 +134,35 @@ function matchesMemory(content: string, query: string) {
   return tokens.length > 0 && tokens.every((t) => c.includes(t))
 }
 
-function formatTopJsonItems(items: any[] | null | undefined, fallback = 'Nothing learned yet') {
-  if (!items?.length) return fallback
-  return items
-    .slice(0, 5)
-    .map((item: any) => {
-      const value = item?.value || item?.name || item?.label
-      const count = item?.count ? ` ×${item.count}` : ''
-      return value ? `${value}${count}` : null
+function normalizeMemoryItems(items: any[] | null | undefined) {
+  const map = new Map<string, { value: string; count: number }>()
+
+  for (const item of items || []) {
+    const rawValue = item?.value || item?.name || item?.label
+    if (!rawValue) continue
+
+    const value = String(rawValue).trim()
+    if (!value || value.toLowerCase() === 'undefined' || value.toLowerCase() === 'null') continue
+
+    const key = value.toLowerCase()
+    const old = map.get(key)
+    map.set(key, {
+      value,
+      count: (old?.count || 0) + Number(item?.count || 1),
     })
-    .filter(Boolean)
-    .join(', ') || fallback
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.count - a.count)
+}
+
+function formatTopJsonItems(items: any[] | null | undefined, fallback = 'Nothing learned yet') {
+  const normalized = normalizeMemoryItems(items)
+  if (!normalized.length) return fallback
+
+  return normalized
+    .slice(0, 5)
+    .map((item) => `${item.value}${item.count ? ` ×${item.count}` : ''}`)
+    .join(', ')
 }
 
 function buildTwinSummary(profile: any, insights: any[], consent: any) {
