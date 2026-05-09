@@ -155,8 +155,12 @@ function normalizeMemoryItems(items: any[] | null | undefined) {
   return Array.from(map.values()).sort((a, b) => b.count - a.count)
 }
 
-function formatTopJsonItems(items: any[] | null | undefined, fallback = 'Nothing learned yet') {
-  const normalized = normalizeMemoryItems(items)
+function formatTopJsonItems(items: any[] | null | undefined, options?: { hideGeneral?: boolean }, fallback = 'Nothing learned yet') {
+  let normalized = normalizeMemoryItems(items)
+  if (options?.hideGeneral && normalized.some((item) => item.value.toLowerCase() !== 'general')) {
+    normalized = normalized.filter((item) => item.value.toLowerCase() !== 'general')
+  }
+
   if (!normalized.length) return fallback
 
   return normalized
@@ -170,17 +174,17 @@ function buildTwinSummary(profile: any, insights: any[], consent: any) {
 
   const memoryStatus = consent?.memory_enabled === false ? 'Off' : 'On'
   const lines = [
-    `\n\n🧬 *Memory Twin*`,
+    `\n\n🧬 *AskGogo Memory*`,
     `Status: ${memoryStatus}`,
   ]
 
   if (profile?.timezone) lines.push(`Timezone: ${profile.timezone}`)
-  if (profile?.common_times?.length) lines.push(`Common times: ${formatTopJsonItems(profile.common_times)}`)
-  if (profile?.frequent_contacts?.length) lines.push(`Frequent contacts/entities: ${formatTopJsonItems(profile.frequent_contacts)}`)
-  if (profile?.frequent_tasks?.length) lines.push(`Frequent task types: ${formatTopJsonItems(profile.frequent_tasks)}`)
+  if (profile?.frequent_contacts?.length) lines.push(`Important people/entities: ${formatTopJsonItems(profile.frequent_contacts)}`)
+  if (profile?.frequent_tasks?.length) lines.push(`Common task types: ${formatTopJsonItems(profile.frequent_tasks, { hideGeneral: true })}`)
+  if (profile?.common_times?.length) lines.push(`Common reminder times: ${formatTopJsonItems(profile.common_times)}`)
 
   if (insights.length) {
-    lines.push(`Insights:`)
+    lines.push(`Useful patterns:`)
     insights.slice(0, 3).forEach((item: any) => lines.push(`• ${item.insight}`))
   }
 
