@@ -33,6 +33,22 @@ function isInternalMemory(content: string) {
   )
 }
 
+function isMemorySearchCommand(text: string) {
+  const lower = (text || '').toLowerCase().trim()
+
+  return (
+    lower.startsWith('what did i save about ') ||
+    lower.startsWith('what have i saved about ') ||
+    lower.startsWith('show notes about ') ||
+    lower.startsWith('show my notes about ') ||
+    lower.startsWith('find my note about ') ||
+    lower.startsWith('find notes about ') ||
+    lower.startsWith('search memory for ') ||
+    lower.startsWith('search my memory for ') ||
+    lower.startsWith('what do you know about ') && lower !== 'what do you know about me'
+  )
+}
+
 export function isMemoryControlCommand(text: string) {
   const lower = (text || '').toLowerCase().trim()
 
@@ -50,6 +66,7 @@ export function isMemoryControlCommand(text: string) {
     lower === 'what do you remember' ||
     lower === 'what do you remember about me' ||
     lower === 'what you remember about me' ||
+    isMemorySearchCommand(text) ||
     lower.startsWith('forget ') ||
     lower.startsWith('delete memory') ||
     lower.startsWith('remove memory') ||
@@ -125,6 +142,22 @@ function extractForgetQuery(text: string) {
     .trim()
 }
 
+function extractSearchQuery(text: string) {
+  return (text || '')
+    .replace(/^what did i save about\s+/i, '')
+    .replace(/^what have i saved about\s+/i, '')
+    .replace(/^show my notes about\s+/i, '')
+    .replace(/^show notes about\s+/i, '')
+    .replace(/^find my note about\s+/i, '')
+    .replace(/^find notes about\s+/i, '')
+    .replace(/^search my memory for\s+/i, '')
+    .replace(/^search memory for\s+/i, '')
+    .replace(/^what do you know about\s+/i, '')
+    .replace(/\?+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function matchesMemory(content: string, query: string) {
   const c = content.toLowerCase()
   const q = query.toLowerCase().trim()
@@ -191,8 +224,97 @@ function buildTwinSummary(profile: any, insights: any[], consent: any) {
   return lines.join('\n')
 }
 
+function eventTextFromPayload(event: any) {
+  const payload = event?.event_payload || {}
+  return String(payload.text || payload.message || payload.entity || '').trim()
+}
+
+function formatDate(value: string) {
+  try {
+    return new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).format(new Date(value))
+  } catch {
+    return ''
+  }
+}
+
+async function buildMemorySearchReply(telegramId: number, text: string) {
+  const query = extractSearchQuery(text)
+  if (!query) {
+    return `Tell me what to search for.\n\nExamples:\n• what did I save about Claude\n• show notes about Dr Gautami\n• search memory for payment`
+  }
+
+  const [memories, remindersResult, eventsResult, twin] = await Promise.all([
+    getUserMemories(telegramId),
+    supabaseAdmin
+      .from('reminders')
+      .select('message, remind_at, created_at, sent')
+      .eq('telegram_id', telegramId)
+      .order('created_at', { ascending: false })
+      .limit(100),
+    supabaseAdmin
+      .from('user_behavior_events')
+      .select('event_type, event_payload, created_at')
+      .eq('telegram_id', telegramId)
+      .order('created_at', { ascending: false })
+      .limit(100),
+    getMemoryTwinProfile(telegramId),
+  ])
+
+  const memoryMatches = memories
+    .filter((m: any) => matchesMemory(m.content, query))
+    .slice(0, 5)
+    .map((m: any) => `• ${m.content}`)
+
+  const reminderMatches = (remindersResult.data || [])
+    .filter((r: any) => matchesMemory(String(r.message || ''), query))
+    .slice(0, 5)
+    .map((r: any) => {
+      const when = r.remind_at ? ` — ${formatDate(r.remind_at)}` : ''
+      return `• ${r.message}${when}`
+    })
+
+  const eventMatches = (eventsResult.data || [])
+    .filter((e: any) => matchesMemory(eventTextFromPayload(e), query))
+    .slice(0, 5)
+    .map((e: any) => {
+      const content = eventTextFromPayload(e)
+      const type = String(e.event_type || '').replace(/_/g, ' ')
+      return `• ${content} (${type})`
+    })
+
+  const profile = twin.profile
+  const entityMatches = normalizeMemoryItems(profile?.frequent_contacts || [])
+    .filter((item) => matchesMemory(item.value, query))
+    .slice(0, 5)
+    .map((item) => `• ${item.value}${item.count ? ` ×${item.count}` : ''}`)
+
+  const sections: string[] = []
+
+  if (memoryMatches.length) sections.push(`*Saved notes*\n${memoryMatches.join('\n')}`)
+  if (entityMatches.length) sections.push(`*Important people/entities*\n${entityMatches.join('\n')}`)
+  if (reminderMatches.length) sections.push(`*Reminders*\n${reminderMatches.join('\n')}`)
+  if (eventMatches.length) sections.push(`*Recent activity*\n${eventMatches.join('\n')}`)
+
+  if (!sections.length) {
+    return `I couldn’t find anything about *${query}* yet.\n\nTry saving it like:\nRemember that ${query} is important\n\nOr ask:\n• my memory\n• show notes about Claude`
+  }
+
+  return `🔎 *Memory search: ${query}*\n\n${sections.join('\n\n')}\n\nYou can say:\n• my memory\n• forget ${query}`
+}
+
 export async function buildMemoryControlReply(telegramId: number, text: string) {
   const lower = (text || '').toLowerCase().trim()
+
+  if (isMemorySearchCommand(text)) {
+    return buildMemorySearchReply(telegramId, text)
+  }
 
   if (lower === 'memory off' || lower === 'turn memory off') {
     const ok = await setMemoryEnabled(telegramId, false)
@@ -261,6 +383,6 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
   return (
     savedMemoryBlock +
     twinSummary +
-    `\n\nYou can say:\n• memory off\n• memory on\n• forget my office address\n• clear my memory`
+    `\n\nYou can say:\n• memory off\n• memory on\n• show notes about Claude\n• clear my memory`
   )
 }
