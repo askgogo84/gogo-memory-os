@@ -7,6 +7,12 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 export async function routeFeatureIntent(phone: string, text: string): Promise<string | null> {
   const t = text.toLowerCase().trim()
 
+  // ── DAILY BRIEFING ────────────────────────────────────────────────
+  // Keep this early so "morning briefing" / "today briefing" does not fall through to the generic assistant.
+  if (/^(morning|good morning|daily briefing|my briefing|briefing|morning briefing|today briefing|today summary|plan my day|help me plan my day|today)$/i.test(t)) {
+    return (await post('/api/briefing', { phone }))?.reply ?? null
+  }
+
   // ── RECORD MEETING ─────────────────────────────────────────────────────
   // Also check original transcript for voice notes (Whisper mishears "record meeting")
   if (/^(record|start recording|record meeting|record the meeting|meeting record|start meeting|begin meeting|take notes|record call|record the call|record making|i.ll record|recording meeting|record a meeting|start record|record this meeting|wanna record|want to record|i want to record)$/i.test(t) ||
@@ -89,11 +95,6 @@ export async function routeFeatureIntent(phone: string, text: string): Promise<s
   }
   if (/^(my splits?|past splits?|split history)$/i.test(t)) {
     return (await get('/api/splitbill', { phone }))?.reply ?? null
-  }
-
-  // ── DAILY BRIEFING ────────────────────────────────────────────────
-  if (/^(morning|good morning|daily briefing|my briefing|briefing)$/i.test(t)) {
-    return (await post('/api/briefing', { phone }))?.reply ?? null
   }
 
   return null // Not matched — fall through to Claude
