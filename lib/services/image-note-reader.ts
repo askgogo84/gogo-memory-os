@@ -65,59 +65,56 @@ export async function readAndSummarizeImageNote(params: {
   }
 
   const dataUrl = await downloadTwilioMediaAsDataUrl(params)
-  const medicalMode = isLikelyMedicalImage(params.userCaption)
-
-  const systemPrompt = medicalMode
-    ? 'You are AskGogo reading a WhatsApp image of a medical prescription or health note. Your job is to carefully transcribe visible text, but you must never guess medicine names, dosage, timing, or diagnosis when handwriting is unclear. Mark unclear words as [unclear]. Give WhatsApp-friendly output. Do not give medical advice. Tell the user to confirm medicines/dosage with the doctor or pharmacist if unclear.'
-    : 'You are AskGogo reading a WhatsApp image. Extract readable text from handwritten notes, diary pages, screenshots, whiteboards, bills, or documents. Then provide a concise useful summary. If text is unclear, say what is unclear instead of guessing. Return plain WhatsApp-friendly text only.'
-
-  const userPrompt = medicalMode
-    ? `User caption: ${params.userCaption || 'No caption'}\n\n` +
-      'This may be a doctor prescription. Read it carefully. Output exactly in this format:\n\n' +
-      '📝 *Prescription / medical note read*\n\n' +
-      '*Important*\n' +
-      '• Handwritten prescriptions can be unclear. Please verify medicine names and dosage with the doctor/pharmacist.\n\n' +
-      '*Patient / clinic details*\n' +
-      '• Patient: name and age if visible, otherwise [unclear]\n' +
-      '• Doctor/clinic: if visible\n' +
-      '• Date: if visible\n\n' +
-      '*Vitals / test values visible*\n' +
-      '• List visible values like TG, LDL, BP exactly as written. Use [unclear] if unsure.\n\n' +
-      '*Medicines / instructions visible*\n' +
-      '• Medicine name: [exact visible text or unclear]\n' +
-      '• Strength: [visible strength or unclear]\n' +
-      '• Timing/dosage: [visible timing or unclear]\n' +
-      '• Duration: [visible duration or unclear]\n\n' +
-      '*Extracted text*\n' +
-      'Line-by-line transcription. Preserve uncertainty with [unclear].\n\n' +
-      '*Next actions*\n' +
-      '• Add practical next steps, including taking a clearer close-up if medicine/timing is unclear.'
-    : `User caption: ${params.userCaption || 'No caption'}\n\n` +
-      'Read this image carefully. Output exactly in this format:\n\n' +
-      '📝 *Image note read*\n\n' +
-      '*Summary*\n' +
-      '• bullet 1\n' +
-      '• bullet 2\n\n' +
-      '*Extracted text*\n' +
-      'short extracted text, or say if text was not readable. Use [unclear] instead of guessing.\n\n' +
-      '*Next actions*\n' +
-      '• action if any'
+  const captionMedicalMode = isLikelyMedicalImage(params.userCaption)
 
   const response = await openai.chat.completions.create({
-    model: medicalMode ? 'gpt-4o' : 'gpt-4o-mini',
+    // Use stronger vision for all images now because users are sending receipts/prescriptions/handwritten notes.
+    // The prompt auto-switches to medical-safe output when it sees a prescription/clinic/medical note.
+    model: 'gpt-4o',
     temperature: 0,
-    max_tokens: medicalMode ? 1200 : 800,
+    max_tokens: 1200,
     messages: [
       {
         role: 'system',
-        content: systemPrompt,
+        content:
+          'You are AskGogo reading a WhatsApp image. First decide whether the image is a medical prescription/health note, a normal note/document, bill/receipt, screenshot, or other image. If it is a prescription or health note, you must never guess medicine names, dosage, timing, diagnosis, or lab values when handwriting is unclear. Mark unclear words as [unclear]. Do not give medical advice. For normal notes, extract readable text and summarize. Return plain WhatsApp-friendly text only.',
       },
       {
         role: 'user',
         content: [
           {
             type: 'text',
-            text: userPrompt,
+            text:
+              `User caption: ${params.userCaption || 'No caption'}\n` +
+              `Caption medical hint: ${captionMedicalMode ? 'yes' : 'no'}\n\n` +
+              'Read this image carefully. If the image appears to be a doctor prescription, clinic note, lab/health note, medicine note, or has doctor/clinic/medicine/lab values, output exactly this medical format:\n\n' +
+              '📝 *Prescription / medical note read*\n\n' +
+              '*Important*\n' +
+              '• Handwritten prescriptions can be unclear. Please verify medicine names, dosage, and timing with the doctor/pharmacist.\n\n' +
+              '*Patient / clinic details*\n' +
+              '• Patient: name and age if visible, otherwise [unclear]\n' +
+              '• Doctor/clinic: if visible\n' +
+              '• Date: if visible\n\n' +
+              '*Vitals / test values visible*\n' +
+              '• List visible values like TG, LDL, BP exactly as written. Use [unclear] if unsure.\n\n' +
+              '*Medicines / instructions visible*\n' +
+              '• Medicine name: [exact visible text or unclear]\n' +
+              '• Strength: [visible strength or unclear]\n' +
+              '• Timing/dosage: [visible timing or unclear]\n' +
+              '• Duration: [visible duration or unclear]\n\n' +
+              '*Extracted text*\n' +
+              'Line-by-line transcription. Preserve uncertainty with [unclear].\n\n' +
+              '*Next actions*\n' +
+              '• Practical next steps only. If medicine/timing is unclear, ask user to send a close-up crop of just the medicine line.\n\n' +
+              'If the image is NOT medical, output exactly this normal format:\n\n' +
+              '📝 *Image note read*\n\n' +
+              '*Summary*\n' +
+              '• bullet 1\n' +
+              '• bullet 2\n\n' +
+              '*Extracted text*\n' +
+              'short extracted text, or say if text was not readable. Use [unclear] instead of guessing.\n\n' +
+              '*Next actions*\n' +
+              '• action if any',
           },
           {
             type: 'image_url',
@@ -135,7 +132,7 @@ export async function readAndSummarizeImageNote(params: {
 
 function extractSection(text: string, heading: string) {
   const plain = text.replace(/\*/g, '')
-  const regex = new RegExp(`${heading}\\s*\\n([\\s\\S]*?)(?=\\n(?:Summary|Patient / clinic details|Vitals / test values visible|Medicines / instructions visible|Extracted text|Next actions)\\s*\\n|$)`, 'i')
+  const regex = new RegExp(`${heading}\\s*\\n([\\s\\S]*?)(?=\\n(?:Important|Summary|Patient / clinic details|Vitals / test values visible|Medicines / instructions visible|Extracted text|Next actions)\\s*\\n|$)`, 'i')
   const match = plain.match(regex)
   return (match?.[1] || '').trim()
 }
