@@ -16,6 +16,11 @@ function normalizeMime(contentType: string) {
   return 'image/jpeg'
 }
 
+function isLikelyMedicalImage(caption?: string) {
+  const text = (caption || '').toLowerCase()
+  return /prescription|doctor|medicine|tablet|pill|clinic|medical|report|bp|cholesterol|ldl|tg|triglyceride|sugar|dose|dosage/i.test(text)
+}
+
 export async function downloadTwilioMediaAsDataUrl(params: {
   mediaUrl: string
   contentType: string
@@ -60,37 +65,63 @@ export async function readAndSummarizeImageNote(params: {
   }
 
   const dataUrl = await downloadTwilioMediaAsDataUrl(params)
+  const medicalMode = isLikelyMedicalImage(params.userCaption)
+
+  const systemPrompt = medicalMode
+    ? 'You are AskGogo reading a WhatsApp image of a medical prescription or health note. Your job is to carefully transcribe visible text, but you must never guess medicine names, dosage, timing, or diagnosis when handwriting is unclear. Mark unclear words as [unclear]. Give WhatsApp-friendly output. Do not give medical advice. Tell the user to confirm medicines/dosage with the doctor or pharmacist if unclear.'
+    : 'You are AskGogo reading a WhatsApp image. Extract readable text from handwritten notes, diary pages, screenshots, whiteboards, bills, or documents. Then provide a concise useful summary. If text is unclear, say what is unclear instead of guessing. Return plain WhatsApp-friendly text only.'
+
+  const userPrompt = medicalMode
+    ? `User caption: ${params.userCaption || 'No caption'}\n\n` +
+      'This may be a doctor prescription. Read it carefully. Output exactly in this format:\n\n' +
+      '📝 *Prescription / medical note read*\n\n' +
+      '*Important*\n' +
+      '• Handwritten prescriptions can be unclear. Please verify medicine names and dosage with the doctor/pharmacist.\n\n' +
+      '*Patient / clinic details*\n' +
+      '• Patient: name and age if visible, otherwise [unclear]\n' +
+      '• Doctor/clinic: if visible\n' +
+      '• Date: if visible\n\n' +
+      '*Vitals / test values visible*\n' +
+      '• List visible values like TG, LDL, BP exactly as written. Use [unclear] if unsure.\n\n' +
+      '*Medicines / instructions visible*\n' +
+      '• Medicine name: [exact visible text or unclear]\n' +
+      '• Strength: [visible strength or unclear]\n' +
+      '• Timing/dosage: [visible timing or unclear]\n' +
+      '• Duration: [visible duration or unclear]\n\n' +
+      '*Extracted text*\n' +
+      'Line-by-line transcription. Preserve uncertainty with [unclear].\n\n' +
+      '*Next actions*\n' +
+      '• Add practical next steps, including taking a clearer close-up if medicine/timing is unclear.'
+    : `User caption: ${params.userCaption || 'No caption'}\n\n` +
+      'Read this image carefully. Output exactly in this format:\n\n' +
+      '📝 *Image note read*\n\n' +
+      '*Summary*\n' +
+      '• bullet 1\n' +
+      '• bullet 2\n\n' +
+      '*Extracted text*\n' +
+      'short extracted text, or say if text was not readable. Use [unclear] instead of guessing.\n\n' +
+      '*Next actions*\n' +
+      '• action if any'
 
   const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    temperature: 0.2,
-    max_tokens: 700,
+    model: medicalMode ? 'gpt-4o' : 'gpt-4o-mini',
+    temperature: 0,
+    max_tokens: medicalMode ? 1200 : 800,
     messages: [
       {
         role: 'system',
-        content:
-          'You are AskGogo reading a WhatsApp image. Extract readable text from handwritten notes, diary pages, screenshots, whiteboards, bills, or documents. Then provide a concise useful summary. If the image is not a note/document, describe it briefly. Return plain WhatsApp-friendly text only.',
+        content: systemPrompt,
       },
       {
         role: 'user',
         content: [
           {
             type: 'text',
-            text:
-              `User caption: ${params.userCaption || 'No caption'}\n\n` +
-              'Read this image carefully. Output exactly in this format:\n\n' +
-              '📝 *Image note read*\n\n' +
-              '*Summary*\n' +
-              '• bullet 1\n' +
-              '• bullet 2\n\n' +
-              '*Extracted text*\n' +
-              'short extracted text, or say if text was not readable\n\n' +
-              '*Next actions*\n' +
-              '• action if any',
+            text: userPrompt,
           },
           {
             type: 'image_url',
-            image_url: { url: dataUrl },
+            image_url: { url: dataUrl, detail: 'high' },
           },
         ],
       },
@@ -104,7 +135,7 @@ export async function readAndSummarizeImageNote(params: {
 
 function extractSection(text: string, heading: string) {
   const plain = text.replace(/\*/g, '')
-  const regex = new RegExp(`${heading}\\s*\\n([\\s\\S]*?)(?=\\n(?:Summary|Extracted text|Next actions)\\s*\\n|$)`, 'i')
+  const regex = new RegExp(`${heading}\\s*\\n([\\s\\S]*?)(?=\\n(?:Summary|Patient / clinic details|Vitals / test values visible|Medicines / instructions visible|Extracted text|Next actions)\\s*\\n|$)`, 'i')
   const match = plain.match(regex)
   return (match?.[1] || '').trim()
 }
@@ -128,15 +159,20 @@ function titleFromSummary(summaryLines: string[]) {
 
 export function compactImageNoteForSaving(text: string) {
   const summary = extractSection(text, 'Summary')
+  const patient = extractSection(text, 'Patient / clinic details')
+  const vitals = extractSection(text, 'Vitals / test values visible')
+  const medicines = extractSection(text, 'Medicines / instructions visible')
   const extracted = extractSection(text, 'Extracted text')
   const actions = extractSection(text, 'Next actions')
 
-  const summaryLines = summary
+  const medicalMode = /Prescription \/ medical note read|Medicines \/ instructions visible|Patient \/ clinic details/i.test(text)
+
+  const summaryLines = (medicalMode ? [patient, vitals, medicines].join('\n') : summary)
     .split('\n')
     .map(cleanBulletLine)
     .filter(Boolean)
     .filter((line) => !/^none$/i.test(line))
-    .slice(0, 3)
+    .slice(0, medicalMode ? 8 : 3)
 
   const actionLines = actions
     .split('\n')
@@ -147,16 +183,16 @@ export function compactImageNoteForSaving(text: string) {
 
   const readableExtract = extracted && !/not readable|not clearly readable|no readable text/i.test(extracted)
   const compactParts: string[] = []
-  compactParts.push(titleFromSummary(summaryLines))
+  compactParts.push(medicalMode ? 'Medical note / prescription image' : titleFromSummary(summaryLines))
 
   if (summaryLines.length) compactParts.push(...summaryLines.map((line) => `• ${line}`))
 
   if (readableExtract) {
-    const shortExtract = extracted.replace(/\s+/g, ' ').trim().slice(0, 220)
-    compactParts.push(`Text: ${shortExtract}${extracted.length > 220 ? '...' : ''}`)
+    const shortExtract = extracted.replace(/\s+/g, ' ').trim().slice(0, medicalMode ? 360 : 220)
+    compactParts.push(`Text: ${shortExtract}${extracted.length > (medicalMode ? 360 : 220) ? '...' : ''}`)
   }
 
   if (actionLines.length) compactParts.push(...actionLines.map((line) => `Action: ${line}`))
 
-  return compactParts.join('\n').trim().slice(0, 900)
+  return compactParts.join('\n').trim().slice(0, medicalMode ? 1400 : 900)
 }
