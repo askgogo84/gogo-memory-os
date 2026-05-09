@@ -32,7 +32,9 @@ type BriefingContext = {
 
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get('secret')
-  if (secret !== process.env.CRON_SECRET) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (secret !== process.env.CRON_SECRET) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
   const { data: users } = await supabase
     .from('users')
@@ -72,7 +74,11 @@ async function resolveBriefingUser(phone: string, fallbackName?: string): Promis
     .eq('whatsapp_id', phone)
     .maybeSingle()
 
-  return data || { whatsapp_id: phone, name: fallbackName || 'there', timezone: 'Asia/Kolkata' }
+  return data || {
+    whatsapp_id: phone,
+    name: fallbackName || 'there',
+    timezone: 'Asia/Kolkata',
+  }
 }
 
 function getDayWindowUtc(timezone: string) {
@@ -85,6 +91,8 @@ function getDayWindowUtc(timezone: string) {
   })
 
   const today = formatter.format(now)
+
+  // Current production app is India-first. Keep this stable for now.
   const todayStartLocal = new Date(`${today}T00:00:00+05:30`)
   const tomorrowStartLocal = new Date(todayStartLocal.getTime() + 24 * 60 * 60 * 1000)
 
@@ -123,6 +131,7 @@ function firstName(name?: string) {
 
 function isBadMemoryEntity(value: string) {
   const lower = value.toLowerCase().trim()
+
   if (!lower) return true
   if (lower === 'team') return true
   if (lower.includes(' tomorrow')) return true
@@ -131,23 +140,61 @@ function isBadMemoryEntity(value: string) {
   if (lower.includes('briefing')) return true
   if (lower.includes('memory twin')) return true
   if (lower.length > 40) return true
+
   return false
+}
+
+function mergeSimilarEntities(entries: Array<[string, number]>) {
+  const sorted = [...entries].sort((a, b) => b[0].length - a[0].length)
+  const result: Array<[string, number]> = []
+
+  for (const [value, count] of sorted) {
+    const lower = value.toLowerCase()
+
+    const existing = result.find(([existingValue]) => {
+      const existingLower = existingValue.toLowerCase()
+      return existingLower.includes(lower) || lower.includes(existingLower)
+    })
+
+    if (existing) {
+      existing[1] += count
+    } else {
+      result.push([value, count])
+    }
+  }
+
+  return result
 }
 
 function topJsonItems(
   items: any[] | null | undefined,
-  options?: { hideGeneral?: boolean; filterEntities?: boolean; limit?: number }
+  options?: {
+    hideGeneral?: boolean
+    hideBriefing?: boolean
+    filterEntities?: boolean
+    limit?: number
+  }
 ) {
   const map = new Map<string, number>()
+
   for (const item of items || []) {
     const value = String(item?.value || item?.name || item?.label || '').trim()
     if (!value) continue
-    if (options?.hideGeneral && value.toLowerCase() === 'general') continue
+
+    const lower = value.toLowerCase()
+
+    if (options?.hideGeneral && lower === 'general') continue
+    if (options?.hideBriefing && lower === 'briefing') continue
     if (options?.filterEntities && isBadMemoryEntity(value)) continue
+
     map.set(value, (map.get(value) || 0) + Number(item?.count || 1))
   }
 
-  return Array.from(map.entries())
+  const entries = options?.filterEntities
+    ? mergeSimilarEntities(Array.from(map.entries()))
+    : Array.from(map.entries())
+
+  return entries
     .sort((a, b) => b[1] - a[1])
     .slice(0, options?.limit || 4)
     .map(([value, count]) => `${value}${count ? ` ×${count}` : ''}`)
@@ -159,10 +206,16 @@ function cleanNoteForBriefing(text: string) {
 
   const lower = raw.toLowerCase()
 
+  // Hide older low-quality OCR notes created before the improved medical reader.
+  if (lower.startsWith('image note') && lower.includes('patient name:')) {
+    return ''
+  }
+
   if (lower.includes('medical note / prescription image') || lower.includes('prescription')) {
     const patient = raw.match(/Patient:\s*([^•\n]+)/i)?.[1]?.trim()
     const doctor = raw.match(/Doctor\/clinic:\s*([^•\n]+)/i)?.[1]?.trim()
     const meds = raw.match(/Medicine name:\s*([^•\n]+)/i)?.[1]?.trim()
+
     const vitals = ['TG', 'LDL', 'BP']
       .map((label) => {
         const match = raw.match(new RegExp(`${label}\\s*[: ]\\s*([^•,;\\n]+)`, 'i'))
@@ -172,10 +225,16 @@ function cleanNoteForBriefing(text: string) {
       .join(', ')
 
     const parts = ['Medical note']
+
     if (patient) parts.push(patient.replace(/\.$/, ''))
     if (vitals) parts.push(vitals)
-    if (meds && !/unclear/i.test(meds)) parts.push(`Medicine: ${meds}`)
-    else parts.push('Medicine: verify')
+
+    if (meds && !/unclear/i.test(meds)) {
+      parts.push(`Medicine: ${meds}`)
+    } else {
+      parts.push('Medicine: verify')
+    }
+
     if (doctor) parts.push(doctor.replace(/\.$/, ''))
 
     return parts.join(' • ').slice(0, 130)
@@ -193,7 +252,14 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
   const telegramId = user.telegram_id
   const phone = user.whatsapp_id
 
-  const [remindersResult, overdueResult, todosResult, followupsResult, notesResult, memoryResult] = await Promise.all([
+  const [
+    remindersResult,
+    overdueResult,
+    todosResult,
+    followupsResult,
+    notesResult,
+    memoryResult,
+  ] = await Promise.all([
     telegramId
       ? supabase
           .from('reminders')
@@ -205,6 +271,7 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
           .order('remind_at', { ascending: true })
           .limit(8)
       : Promise.resolve({ data: [] as any[] }),
+
     telegramId
       ? supabase
           .from('reminders')
@@ -215,6 +282,7 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
           .order('remind_at', { ascending: false })
           .limit(5)
       : Promise.resolve({ data: [] as any[] }),
+
     phone
       ? supabase
           .from('todos')
@@ -224,6 +292,7 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
           .order('created_at', { ascending: true })
           .limit(6)
       : Promise.resolve({ data: [] as any[] }),
+
     phone
       ? supabase
           .from('followups')
@@ -234,6 +303,7 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
           .order('check_at', { ascending: true })
           .limit(5)
       : Promise.resolve({ data: [] as any[] }),
+
     telegramId
       ? supabase
           .from('lists')
@@ -242,6 +312,7 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
           .eq('list_name', 'notes')
           .maybeSingle()
       : Promise.resolve({ data: null as any }),
+
     telegramId
       ? supabase
           .from('user_memory_profile')
@@ -253,7 +324,7 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
 
   const notes = ((notesResult as any).data?.items || [])
     .filter((item: any) => item && !item.done)
-    .slice(-3)
+    .slice(-5)
     .reverse()
 
   return {
@@ -272,19 +343,34 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
 
 function buildPriorityLine(ctx: BriefingContext) {
   const firstReminder = ctx.reminders[0]
-  if (firstReminder) return `Top priority: ${formatTime(firstReminder.remind_at, ctx.timezone)} — ${firstReminder.message}`
-  if (ctx.followups[0]) return `Top priority: follow up with ${ctx.followups[0].contact_name}`
-  if (ctx.todos[0]) return `Top priority: ${ctx.todos[0].text}`
+
+  if (firstReminder) {
+    return `Top priority: ${formatTime(firstReminder.remind_at, ctx.timezone)} — ${firstReminder.message}`
+  }
+
+  if (ctx.followups[0]) {
+    return `Top priority: follow up with ${ctx.followups[0].contact_name}`
+  }
+
+  if (ctx.todos[0]) {
+    return `Top priority: ${ctx.todos[0].text}`
+  }
+
   return 'Top priority: keep the day light and focused.'
 }
 
 function formatReminderBlock(ctx: BriefingContext) {
-  if (!ctx.reminders.length && !ctx.overdueReminders.length) return '✅ No scheduled reminders for today.'
+  if (!ctx.reminders.length && !ctx.overdueReminders.length) {
+    return '✅ No scheduled reminders for today.'
+  }
 
   const lines: string[] = []
+
   if (ctx.reminders.length) {
     lines.push('*Today’s reminders*')
-    ctx.reminders.slice(0, 6).forEach((r) => lines.push(`• ${formatTime(r.remind_at, ctx.timezone)} — ${r.message}`))
+    ctx.reminders
+      .slice(0, 6)
+      .forEach((r) => lines.push(`• ${formatTime(r.remind_at, ctx.timezone)} — ${r.message}`))
   }
 
   if (ctx.overdueReminders.length) {
@@ -297,6 +383,7 @@ function formatReminderBlock(ctx: BriefingContext) {
 
 function formatFollowups(ctx: BriefingContext) {
   if (!ctx.followups.length) return ''
+
   return `*Follow-ups*\n${ctx.followups
     .slice(0, 4)
     .map((f) => `• ${f.contact_name}${f.context ? ` — ${String(f.context).slice(0, 80)}` : ''}`)
@@ -305,16 +392,23 @@ function formatFollowups(ctx: BriefingContext) {
 
 function formatTodos(ctx: BriefingContext) {
   if (!ctx.todos.length) return ''
-  return `*Open tasks*\n${ctx.todos.slice(0, 5).map((t) => `• ${t.text}`).join('\n')}`
+
+  return `*Open tasks*\n${ctx.todos
+    .slice(0, 5)
+    .map((t) => `• ${t.text}`)
+    .join('\n')}`
 }
 
 function formatNotes(ctx: BriefingContext) {
   if (!ctx.notes.length) return ''
+
   const lines = ctx.notes
-    .slice(0, 3)
     .map((n: any) => cleanNoteForBriefing(n.text || ''))
     .filter(Boolean)
+    .slice(0, 3)
+
   if (!lines.length) return ''
+
   return `*Recent notes*\n${lines.map((line) => `• ${line}`).join('\n')}`
 }
 
@@ -322,16 +416,29 @@ function formatMemory(ctx: BriefingContext) {
   const profile = ctx.memoryProfile
   if (!profile) return ''
 
-  const contacts = topJsonItems(profile.frequent_contacts, { filterEntities: true, limit: 3 })
-  const tasks = topJsonItems(profile.frequent_tasks, { hideGeneral: true, hideBriefing: true, limit: 4 })
-  const times = topJsonItems(profile.common_times, { limit: 3 })
+  const contacts = topJsonItems(profile.frequent_contacts, {
+    filterEntities: true,
+    limit: 3,
+  })
+
+  const tasks = topJsonItems(profile.frequent_tasks, {
+    hideGeneral: true,
+    hideBriefing: true,
+    limit: 4,
+  })
+
+  const times = topJsonItems(profile.common_times, {
+    limit: 3,
+  })
 
   const parts: string[] = []
+
   if (contacts.length) parts.push(`People/entities: ${contacts.join(', ')}`)
   if (tasks.length) parts.push(`Task patterns: ${tasks.join(', ')}`)
   if (times.length) parts.push(`Usual times: ${times.join(', ')}`)
 
   if (!parts.length) return ''
+
   return `*AskGogo Memory*\n${parts.map((p) => `• ${p}`).join('\n')}`
 }
 
@@ -341,8 +448,12 @@ async function buildBriefing(user: UserRecord) {
   const dateStr = formatDateHeader(ctx.timezone)
 
   let weatherLine = ''
+
   try {
-    const w = await fetch('https://wttr.in/Bengaluru?format=%C+%t&m', { signal: AbortSignal.timeout(3000) })
+    const w = await fetch('https://wttr.in/Bengaluru?format=%C+%t&m', {
+      signal: AbortSignal.timeout(3000),
+    })
+
     const weather = (await w.text()).trim().replace(/\+/g, '')
     if (weather) weatherLine = `🌤 *Weather:* ${weather}`
   } catch {}
@@ -365,4 +476,3 @@ async function buildBriefing(user: UserRecord) {
 
   return sections.filter(Boolean).join('\n\n')
 }
-
