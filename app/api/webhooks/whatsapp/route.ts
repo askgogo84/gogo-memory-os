@@ -158,7 +158,12 @@ export async function POST(req: NextRequest) {
     if (numMedia > 0 && firstMediaUrl && isImageContentType(firstMediaType)) {
       try {
         await sendWhatsAppMessage(from, '🧘 Reading your note…')
-        const imageReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
+        const imageReply = await readAndSummarizeImageNote({
+          mediaUrl: firstMediaUrl,
+          contentType: firstMediaType,
+          userCaption: bodyText,
+          expectedPatientName: resolvedUser.name || profileName,
+        })
         const savedNote = compactImageNoteForSaving(imageReply)
         await addToList(resolvedUser.telegramId, 'notes', [savedNote])
         await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image note]')
