@@ -30,6 +30,11 @@ export function isMemoryControlCommand(text: string) {
     lower === 'memories' ||
     lower === 'show memory' ||
     lower === 'show my memory' ||
+    lower === 'memory on' ||
+    lower === 'memory off' ||
+    lower === 'turn memory on' ||
+    lower === 'turn memory off' ||
+    lower === 'what do you know about me' ||
     lower === 'what do you remember' ||
     lower === 'what do you remember about me' ||
     lower === 'what you remember about me' ||
@@ -55,6 +60,51 @@ async function getUserMemories(telegramId: number) {
     .filter((m: any) => m.content && !isInternalMemory(m.content))
 }
 
+async function getMemoryTwinProfile(telegramId: number) {
+  const [{ data: profile }, { data: insights }, { data: consent }] = await Promise.all([
+    supabaseAdmin
+      .from('user_memory_profile')
+      .select('*')
+      .eq('telegram_id', telegramId)
+      .maybeSingle(),
+    supabaseAdmin
+      .from('user_insights')
+      .select('*')
+      .eq('telegram_id', telegramId)
+      .eq('status', 'active')
+      .order('confidence', { ascending: false })
+      .limit(5),
+    supabaseAdmin
+      .from('user_consent_settings')
+      .select('*')
+      .eq('telegram_id', telegramId)
+      .maybeSingle(),
+  ])
+
+  return { profile, insights: insights || [], consent }
+}
+
+async function setMemoryEnabled(telegramId: number, enabled: boolean) {
+  const { error } = await supabaseAdmin
+    .from('user_consent_settings')
+    .upsert(
+      {
+        telegram_id: telegramId,
+        memory_enabled: enabled,
+        proactive_suggestions_enabled: enabled,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'telegram_id' }
+    )
+
+  if (error) {
+    console.error('[memory-control] failed to update consent:', error.message)
+    return false
+  }
+
+  return true
+}
+
 function extractForgetQuery(text: string) {
   return (text || '')
     .replace(/^(forget|delete memory|remove memory)\s+/i, '')
@@ -72,17 +122,73 @@ function matchesMemory(content: string, query: string) {
   return tokens.length > 0 && tokens.every((t) => c.includes(t))
 }
 
+function formatTopJsonItems(items: any[] | null | undefined, fallback = 'Nothing learned yet') {
+  if (!items?.length) return fallback
+  return items
+    .slice(0, 5)
+    .map((item: any) => {
+      const value = item?.value || item?.name || item?.label
+      const count = item?.count ? ` ×${item.count}` : ''
+      return value ? `${value}${count}` : null
+    })
+    .filter(Boolean)
+    .join(', ') || fallback
+}
+
+function buildTwinSummary(profile: any, insights: any[], consent: any) {
+  if (!profile && !insights.length) return ''
+
+  const memoryStatus = consent?.memory_enabled === false ? 'Off' : 'On'
+  const lines = [
+    `\n\n🧬 *Memory Twin*`,
+    `Status: ${memoryStatus}`,
+  ]
+
+  if (profile?.timezone) lines.push(`Timezone: ${profile.timezone}`)
+  if (profile?.common_times?.length) lines.push(`Common times: ${formatTopJsonItems(profile.common_times)}`)
+  if (profile?.frequent_contacts?.length) lines.push(`Frequent contacts/entities: ${formatTopJsonItems(profile.frequent_contacts)}`)
+  if (profile?.frequent_tasks?.length) lines.push(`Frequent task types: ${formatTopJsonItems(profile.frequent_tasks)}`)
+
+  if (insights.length) {
+    lines.push(`Insights:`)
+    insights.slice(0, 3).forEach((item: any) => lines.push(`• ${item.insight}`))
+  }
+
+  return lines.join('\n')
+}
+
 export async function buildMemoryControlReply(telegramId: number, text: string) {
   const lower = (text || '').toLowerCase().trim()
 
+  if (lower === 'memory off' || lower === 'turn memory off') {
+    const ok = await setMemoryEnabled(telegramId, false)
+    return ok
+      ? `🧠 *Memory turned off*\n\nI’ll stop learning new personal patterns from your messages. Existing saved reminders and notes are not affected.\n\nYou can turn it back on anytime by saying: *memory on*`
+      : `I could not turn memory off right now. Please try again.`
+  }
+
+  if (lower === 'memory on' || lower === 'turn memory on') {
+    const ok = await setMemoryEnabled(telegramId, true)
+    return ok
+      ? `🧠 *Memory turned on*\n\nAskGogo will learn useful patterns like your common reminder times, frequent task types, and important contacts.\n\nSay *my memory* anytime to review it.`
+      : `I could not turn memory on right now. Please try again.`
+  }
+
   if (lower === 'clear my memory' || lower === 'forget everything') {
     const memories = await getUserMemories(telegramId)
-    if (!memories.length) return `🧠 *Memory*\n\nI don’t have any saved personal memories yet.`
-
     const ids = memories.map((m: any) => m.id)
-    await supabaseAdmin.from('memories').delete().in('id', ids)
 
-    return `🧠 *Memory cleared*\n\nI deleted ${ids.length} saved personal memories. Usage and system logs were not touched.`
+    if (ids.length) await supabaseAdmin.from('memories').delete().in('id', ids)
+
+    await Promise.all([
+      supabaseAdmin.from('user_insights').update({ status: 'deleted' }).eq('telegram_id', telegramId),
+      supabaseAdmin
+        .from('user_memory_profile')
+        .update({ common_times: [], frequent_contacts: [], frequent_tasks: [], preferences: {}, last_updated: new Date().toISOString() })
+        .eq('telegram_id', telegramId),
+    ])
+
+    return `🧠 *Memory cleared*\n\nI deleted saved personal memories and reset your Memory Twin patterns. Usage/system logs were not touched.`
   }
 
   if (lower.startsWith('forget ') || lower.startsWith('delete memory') || lower.startsWith('remove memory')) {
@@ -91,7 +197,7 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
     const matched = memories.filter((m: any) => matchesMemory(m.content, query))
 
     if (!matched.length) {
-      return `I couldn’t find a memory matching *${query || 'that'}*.\n\nTry:\n• what do you remember about me\n• forget my office address\n• clear my memory`
+      return `I couldn’t find a saved memory matching *${query || 'that'}*.\n\nTry:\n• my memory\n• forget my office address\n• clear my memory`
     }
 
     await supabaseAdmin.from('memories').delete().in('id', matched.map((m: any) => m.id))
@@ -103,15 +209,24 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
     )
   }
 
-  const memories = await getUserMemories(telegramId)
+  const [memories, twin] = await Promise.all([
+    getUserMemories(telegramId),
+    getMemoryTwinProfile(telegramId),
+  ])
 
-  if (!memories.length) {
+  const twinSummary = buildTwinSummary(twin.profile, twin.insights, twin.consent)
+
+  if (!memories.length && !twinSummary) {
     return `🧠 *Memory*\n\nI don’t have any saved personal memories yet.\n\nTry saying:\nRemember that my office is in Indiranagar\nRemember that I prefer morning meetings`
   }
 
+  const savedMemoryBlock = memories.length
+    ? `🧠 *Saved memories*\n\n${memories.slice(0, 10).map((m: any, idx: number) => `${idx + 1}. ${m.content}`).join('\n')}`
+    : `🧠 *Saved memories*\n\nNo manually saved memories yet.`
+
   return (
-    `🧠 *What I remember about you*\n\n` +
-    memories.slice(0, 10).map((m: any, idx: number) => `${idx + 1}. ${m.content}`).join('\n') +
-    `\n\nYou can say:\n• forget my office address\n• clear my memory`
+    savedMemoryBlock +
+    twinSummary +
+    `\n\nYou can say:\n• memory off\n• memory on\n• forget my office address\n• clear my memory`
   )
 }
