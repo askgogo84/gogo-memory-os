@@ -67,6 +67,10 @@ async function saveMemory(telegramId: number, content: string) {
   await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content })
 }
 
+function getReplyText(reply: any) {
+  return typeof reply === 'string' ? reply : String(reply?.text || '')
+}
+
 function recentImageMarker(params: { mediaUrl: string; contentType: string }) {
   return `[image_media] ${JSON.stringify({
     mediaUrl: params.mediaUrl,
@@ -265,9 +269,14 @@ export async function POST(req: NextRequest) {
 
     const skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
     if (skinTextReply) {
+      const replyText = getReplyText(skinTextReply)
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
-      await saveConversation(resolvedUser.telegramId, 'assistant', skinTextReply)
-      await sendWhatsAppMessage(from, skinTextReply)
+      await saveConversation(resolvedUser.telegramId, 'assistant', replyText)
+      if (typeof skinTextReply === 'object' && skinTextReply.mediaUrl) {
+        await sendWhatsAppMediaMessage(from, replyText, skinTextReply.mediaUrl)
+      } else {
+        await sendWhatsAppMessage(from, replyText)
+      }
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
