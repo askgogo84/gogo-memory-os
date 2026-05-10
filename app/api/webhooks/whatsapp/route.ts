@@ -13,6 +13,10 @@ import { buildAdminWhatsAppReply, isAdminCommand, isAdminPhone } from '@/lib/bot
 import { buildFirstValueReferralNudge } from '@/lib/bot/handlers/first-value-nudge'
 import { getLatestFollowupState } from '@/lib/bot/handlers/followup-state'
 import {
+  buildSaveLastContextReply,
+  isSaveLastContextCommand,
+} from '@/lib/bot/handlers/save-last-context'
+import {
   buildMeetingNotesReply,
   cleanTypedMeetingNotesText,
   isTypedMeetingNotesCommand,
@@ -188,6 +192,14 @@ export async function POST(req: NextRequest) {
 
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nSend a short voice note, type your request, or upload a photo/screenshot of your notes.`)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    if (isSaveLastContextCommand(text)) {
+      const reply = await buildSaveLastContextReply({ telegramId: resolvedUser.telegramId, text })
+      await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply })
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
