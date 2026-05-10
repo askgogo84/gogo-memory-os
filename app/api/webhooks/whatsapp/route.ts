@@ -23,6 +23,11 @@ import {
   shouldTreatAudioAsMeeting,
 } from '@/lib/bot/handlers/meeting-notes'
 import {
+  buildSkinCheckFromImage,
+  buildSkinTextCommandReply,
+  isSkinCheckCaption,
+} from '@/lib/bot/handlers/skin-check'
+import {
   buildReferralUnlockReply,
   buildReferralWelcomeNote,
   buildShareMyWinReply,
@@ -42,11 +47,6 @@ import {
   isImageContentType,
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
-import {
-  buildSkinCheckReport,
-  compactSkinCheckForSaving,
-  isSkinCheckCaption,
-} from '@/lib/services/skin-check-reader'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -217,17 +217,16 @@ export async function POST(req: NextRequest) {
 
         if (isSkinCheckCaption(bodyText)) {
           await sendWhatsAppMessage(from, '✨ Running AskGogo Skin Check…')
-          const skinReply = await buildSkinCheckReport({
+          const result = await buildSkinCheckFromImage({
+            telegramId: resolvedUser.telegramId,
             mediaUrl: firstMediaUrl,
             contentType: firstMediaType,
             userCaption: bodyText,
             userName: resolvedUser.name || profileName,
           })
-          const savedSkinNote = compactSkinCheckForSaving(skinReply)
-          await addToList(resolvedUser.telegramId, 'notes', [savedSkinNote])
           await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || ''}`.trim())
-          await saveConversation(resolvedUser.telegramId, 'assistant', skinReply)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: `${skinReply}\n\n✅ Saved to *my notes*.` })
+          await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
         } else {
           await sendWhatsAppMessage(from, '🧘 Reading your note…')
           const imageReply = await readAndSummarizeImageNote({
@@ -264,6 +263,14 @@ export async function POST(req: NextRequest) {
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    const skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
+    if (skinTextReply) {
+      await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', skinTextReply)
+      await sendWhatsAppMessage(from, skinTextReply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     if (isSkinCheckCaption(text)) {
       const recentImage = await getRecentImageContext(resolvedUser.telegramId)
 
@@ -277,17 +284,16 @@ export async function POST(req: NextRequest) {
 
       try {
         await sendWhatsAppMessage(from, '✨ Running AskGogo Skin Check…')
-        const skinReply = await buildSkinCheckReport({
+        const result = await buildSkinCheckFromImage({
+          telegramId: resolvedUser.telegramId,
           mediaUrl: recentImage.mediaUrl,
           contentType: recentImage.contentType,
           userCaption: text,
           userName: resolvedUser.name || profileName,
         })
-        const savedSkinNote = compactSkinCheckForSaving(skinReply)
-        await addToList(resolvedUser.telegramId, 'notes', [savedSkinNote])
         await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
-        await saveConversation(resolvedUser.telegramId, 'assistant', skinReply)
-        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: `${skinReply}\n\n✅ Saved to *my notes*.` })
+        await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: result.reply })
       } catch (error: any) {
         console.error('WHATSAPP_SKIN_CHECK_RECENT_IMAGE_FAILED:', error?.message || error)
         await sendWhatsAppMessage(from, `I couldn't run Skin Check on the previous image.\n\nPlease resend the selfie with caption: *skin check*.`)
