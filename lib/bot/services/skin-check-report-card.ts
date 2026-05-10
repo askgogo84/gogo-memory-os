@@ -20,7 +20,7 @@ function esc(value: any) {
     .replace(/"/g, '&quot;')
 }
 
-function score(report: any, key: string, fallback = '-') {
+function score(report: any, key: string, fallback: string | number = '-') {
   return report?.scores_json?.[key] ?? fallback
 }
 
