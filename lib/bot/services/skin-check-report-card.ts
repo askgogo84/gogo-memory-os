@@ -169,6 +169,7 @@ export async function buildSkinReportCardReply(telegramId?: number) {
     text:
       `✨ *Skin Report Card ready*\n\n` +
       `I created a premium visual summary of your latest Skin Check.\n\n` +
+      `Open card:\n${mediaUrl}\n\n` +
       `Tip: take your next selfie in similar lighting for cleaner progress tracking.`,
     mediaUrl,
   }
