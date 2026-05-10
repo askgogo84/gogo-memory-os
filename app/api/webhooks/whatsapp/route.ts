@@ -79,6 +79,32 @@ function recentImageMarker(params: { mediaUrl: string; contentType: string }) {
   })}`
 }
 
+function pendingSkinCheckMarker() {
+  return `[pending_skin_check] ${JSON.stringify({ createdAt: new Date().toISOString() })}`
+}
+
+async function savePendingSkinCheckRequest(telegramId: number) {
+  await saveConversation(telegramId, 'user', pendingSkinCheckMarker())
+}
+
+async function getRecentPendingSkinCheckRequest(telegramId: number) {
+  const { data } = await supabaseAdmin
+    .from('conversations')
+    .select('content, created_at')
+    .eq('telegram_id', telegramId)
+    .eq('role', 'user')
+    .like('content', '[pending_skin_check]%')
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  const latest = data?.[0]
+  if (!latest?.content) return false
+
+  const createdAt = new Date(latest.created_at).getTime()
+  const ageMinutes = (Date.now() - createdAt) / (1000 * 60)
+  return ageMinutes <= 20
+}
+
 async function saveRecentImageContext(params: {
   telegramId: number
   mediaUrl: string
@@ -218,17 +244,18 @@ export async function POST(req: NextRequest) {
     if (numMedia > 0 && firstMediaUrl && isImageContentType(firstMediaType)) {
       try {
         await saveRecentImageContext({ telegramId: resolvedUser.telegramId, mediaUrl: firstMediaUrl, contentType: firstMediaType })
+        const hasPendingSkinCheck = await getRecentPendingSkinCheckRequest(resolvedUser.telegramId)
 
-        if (isSkinCheckCaption(bodyText)) {
+        if (isSkinCheckCaption(bodyText) || hasPendingSkinCheck) {
           await sendWhatsAppMessage(from, '✨ Running AskGogo Skin Check…')
           const result = await buildSkinCheckFromImage({
             telegramId: resolvedUser.telegramId,
             mediaUrl: firstMediaUrl,
             contentType: firstMediaType,
-            userCaption: bodyText,
+            userCaption: bodyText || 'skin check',
             userName: resolvedUser.name || profileName,
           })
-          await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || ''}`.trim())
+          await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || 'skin check'}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
         } else {
@@ -284,7 +311,8 @@ export async function POST(req: NextRequest) {
       const recentImage = await getRecentImageContext(resolvedUser.telegramId)
 
       if (!recentImage) {
-        const reply = `✨ *AskGogo Skin Check*\n\nPlease send a clear front-facing selfie with caption: *skin check*.\n\nFor best results:\n• natural light\n• no heavy filter\n• face visible clearly\n• no medical diagnosis — skincare observation only`
+        await savePendingSkinCheckRequest(resolvedUser.telegramId)
+        const reply = `✨ *AskGogo Skin Check*\n\nGot it. Send a clear front-facing selfie now and I’ll run Skin Check automatically.\n\nFor best results:\n• natural light\n• no heavy filter\n• face visible clearly\n• no medical diagnosis — skincare observation only`
         await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         await sendWhatsAppMessage(from, reply)
