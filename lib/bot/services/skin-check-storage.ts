@@ -15,13 +15,35 @@ type ParsedSkinReport = {
   progress_tip?: string
 }
 
+const SECTION_HEADINGS = [
+  'Important',
+  'Photo quality',
+  'Face map',
+  'Face-zone observations',
+  'Key observations',
+  'Visible observations',
+  'Skin type indicator',
+  'Possible skin type indicators',
+  'Skin scores',
+  'Personalized AM',
+  'Suggested AM routine',
+  'Personalized PM',
+  'Suggested PM routine',
+  'Avoid this week',
+  'Avoid / caution',
+  'Choose your goal',
+  'Next',
+  'Progress tip',
+]
+
 function stripMarkdown(text: string) {
   return String(text || '').replace(/\*/g, '').trim()
 }
 
 function extractSection(text: string, heading: string) {
   const plain = stripMarkdown(text)
-  const regex = new RegExp(`${heading}\\s*\\n([\\s\\S]*?)(?=\\n(?:Important|Photo quality|Face-zone observations|Visible observations|Possible skin type indicators|Skin scores|Suggested AM routine|Suggested PM routine|Avoid / caution|Progress tip)\\s*\\n|$)`, 'i')
+  const escaped = SECTION_HEADINGS.map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  const regex = new RegExp(`${heading}\\s*\\n([\\s\\S]*?)(?=\\n(?:${escaped})\\s*\\n|$)`, 'i')
   const match = plain.match(regex)
   return (match?.[1] || '').trim()
 }
@@ -80,16 +102,41 @@ function parseScores(section: string) {
   return scores
 }
 
+function firstNonEmpty(...values: string[]) {
+  return values.find((value) => value && value.trim()) || ''
+}
+
 export function parseSkinCheckReport(rawReport: string): ParsedSkinReport {
   const photo = parsePhotoQuality(extractSection(rawReport, 'Photo quality'))
-  const faceZones = parseFaceZones(extractSection(rawReport, 'Face-zone observations'))
-  const observations = listLines(extractSection(rawReport, 'Visible observations')).slice(0, 8)
-  const skinType = cleanLine(extractSection(rawReport, 'Possible skin type indicators'))
+  const faceZones = parseFaceZones(firstNonEmpty(
+    extractSection(rawReport, 'Face map'),
+    extractSection(rawReport, 'Face-zone observations')
+  ))
+  const observations = listLines(firstNonEmpty(
+    extractSection(rawReport, 'Key observations'),
+    extractSection(rawReport, 'Visible observations')
+  )).slice(0, 8)
+  const skinType = cleanLine(firstNonEmpty(
+    extractSection(rawReport, 'Skin type indicator'),
+    extractSection(rawReport, 'Possible skin type indicators')
+  ))
   const scores = parseScores(extractSection(rawReport, 'Skin scores'))
-  const amRoutine = listLines(extractSection(rawReport, 'Suggested AM routine')).slice(0, 8)
-  const pmRoutine = listLines(extractSection(rawReport, 'Suggested PM routine')).slice(0, 8)
-  const cautions = listLines(extractSection(rawReport, 'Avoid / caution')).slice(0, 8)
-  const progressTip = cleanLine(extractSection(rawReport, 'Progress tip'))
+  const amRoutine = listLines(firstNonEmpty(
+    extractSection(rawReport, 'Personalized AM'),
+    extractSection(rawReport, 'Suggested AM routine')
+  )).slice(0, 8)
+  const pmRoutine = listLines(firstNonEmpty(
+    extractSection(rawReport, 'Personalized PM'),
+    extractSection(rawReport, 'Suggested PM routine')
+  )).slice(0, 8)
+  const cautions = listLines(firstNonEmpty(
+    extractSection(rawReport, 'Avoid this week'),
+    extractSection(rawReport, 'Avoid / caution')
+  )).slice(0, 8)
+  const progressTip = cleanLine(firstNonEmpty(
+    extractSection(rawReport, 'Next'),
+    extractSection(rawReport, 'Progress tip')
+  ))
 
   const summaryParts = []
   if (skinType) summaryParts.push(skinType)
