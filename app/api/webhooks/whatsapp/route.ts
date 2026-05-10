@@ -67,6 +67,53 @@ async function saveMemory(telegramId: number, content: string) {
   await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content })
 }
 
+function recentImageMarker(params: { mediaUrl: string; contentType: string }) {
+  return `[image_media] ${JSON.stringify({
+    mediaUrl: params.mediaUrl,
+    contentType: params.contentType,
+    createdAt: new Date().toISOString(),
+  })}`
+}
+
+async function saveRecentImageContext(params: {
+  telegramId: number
+  mediaUrl: string
+  contentType: string
+}) {
+  await saveConversation(
+    params.telegramId,
+    'user',
+    recentImageMarker({ mediaUrl: params.mediaUrl, contentType: params.contentType })
+  )
+}
+
+async function getRecentImageContext(telegramId: number) {
+  const { data } = await supabaseAdmin
+    .from('conversations')
+    .select('content, created_at')
+    .eq('telegram_id', telegramId)
+    .eq('role', 'user')
+    .like('content', '[image_media]%')
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  const latest = data?.[0]
+  if (!latest?.content) return null
+
+  const createdAt = new Date(latest.created_at).getTime()
+  const ageMinutes = (Date.now() - createdAt) / (1000 * 60)
+  if (ageMinutes > 20) return null
+
+  try {
+    const jsonText = String(latest.content).replace(/^\[image_media\]\s*/, '')
+    const parsed = JSON.parse(jsonText)
+    if (!parsed?.mediaUrl || !parsed?.contentType) return null
+    return parsed as { mediaUrl: string; contentType: string; createdAt?: string }
+  } catch {
+    return null
+  }
+}
+
 async function createReminder(params: { telegramId: number; message: string; remindAtIso: string; whatsappTo?: string | null }) {
   const payload: any = { telegram_id: params.telegramId, chat_id: params.telegramId, message: params.message, remind_at: params.remindAtIso, sent: false }
   if (params.whatsappTo) payload.whatsapp_to = params.whatsappTo
@@ -166,6 +213,8 @@ export async function POST(req: NextRequest) {
 
     if (numMedia > 0 && firstMediaUrl && isImageContentType(firstMediaType)) {
       try {
+        await saveRecentImageContext({ telegramId: resolvedUser.telegramId, mediaUrl: firstMediaUrl, contentType: firstMediaType })
+
         if (isSkinCheckCaption(bodyText)) {
           await sendWhatsAppMessage(from, '✨ Running AskGogo Skin Check…')
           const skinReply = await buildSkinCheckReport({
@@ -212,6 +261,38 @@ export async function POST(req: NextRequest) {
 
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nFor Skin Check, send a clear selfie with caption: *skin check*.\nYou can also send a short voice note, type your request, or upload a photo/screenshot of your notes.`)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    if (isSkinCheckCaption(text)) {
+      const recentImage = await getRecentImageContext(resolvedUser.telegramId)
+
+      if (!recentImage) {
+        const reply = `✨ *AskGogo Skin Check*\n\nPlease send a clear front-facing selfie with caption: *skin check*.\n\nFor best results:\n• natural light\n• no heavy filter\n• face visible clearly\n• no medical diagnosis — skincare observation only`
+        await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWhatsAppMessage(from, reply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+
+      try {
+        await sendWhatsAppMessage(from, '✨ Running AskGogo Skin Check…')
+        const skinReply = await buildSkinCheckReport({
+          mediaUrl: recentImage.mediaUrl,
+          contentType: recentImage.contentType,
+          userCaption: text,
+          userName: resolvedUser.name || profileName,
+        })
+        const savedSkinNote = compactSkinCheckForSaving(skinReply)
+        await addToList(resolvedUser.telegramId, 'notes', [savedSkinNote])
+        await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', skinReply)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: `${skinReply}\n\n✅ Saved to *my notes*.` })
+      } catch (error: any) {
+        console.error('WHATSAPP_SKIN_CHECK_RECENT_IMAGE_FAILED:', error?.message || error)
+        await sendWhatsAppMessage(from, `I couldn't run Skin Check on the previous image.\n\nPlease resend the selfie with caption: *skin check*.`)
+      }
+
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
