@@ -42,6 +42,11 @@ import {
   isImageContentType,
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
+import {
+  buildSkinCheckReport,
+  compactSkinCheckForSaving,
+  isSkinCheckCaption,
+} from '@/lib/services/skin-check-reader'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -161,21 +166,36 @@ export async function POST(req: NextRequest) {
 
     if (numMedia > 0 && firstMediaUrl && isImageContentType(firstMediaType)) {
       try {
-        await sendWhatsAppMessage(from, '🧘 Reading your note…')
-        const imageReply = await readAndSummarizeImageNote({
-          mediaUrl: firstMediaUrl,
-          contentType: firstMediaType,
-          userCaption: bodyText,
-          expectedPatientName: resolvedUser.name || profileName,
-        })
-        const savedNote = compactImageNoteForSaving(imageReply)
-        await addToList(resolvedUser.telegramId, 'notes', [savedNote])
-        await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image note]')
-        await saveConversation(resolvedUser.telegramId, 'assistant', imageReply)
-        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image note]', reply: `${imageReply}\n\n✅ Saved to *my notes*.` })
+        if (isSkinCheckCaption(bodyText)) {
+          await sendWhatsAppMessage(from, '✨ Running AskGogo Skin Check…')
+          const skinReply = await buildSkinCheckReport({
+            mediaUrl: firstMediaUrl,
+            contentType: firstMediaType,
+            userCaption: bodyText,
+            userName: resolvedUser.name || profileName,
+          })
+          const savedSkinNote = compactSkinCheckForSaving(skinReply)
+          await addToList(resolvedUser.telegramId, 'notes', [savedSkinNote])
+          await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || ''}`.trim())
+          await saveConversation(resolvedUser.telegramId, 'assistant', skinReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: `${skinReply}\n\n✅ Saved to *my notes*.` })
+        } else {
+          await sendWhatsAppMessage(from, '🧘 Reading your note…')
+          const imageReply = await readAndSummarizeImageNote({
+            mediaUrl: firstMediaUrl,
+            contentType: firstMediaType,
+            userCaption: bodyText,
+            expectedPatientName: resolvedUser.name || profileName,
+          })
+          const savedNote = compactImageNoteForSaving(imageReply)
+          await addToList(resolvedUser.telegramId, 'notes', [savedNote])
+          await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image note]')
+          await saveConversation(resolvedUser.telegramId, 'assistant', imageReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image note]', reply: `${imageReply}\n\n✅ Saved to *my notes*.` })
+        }
       } catch (error: any) {
-        console.error('WHATSAPP_IMAGE_NOTE_FAILED:', error?.message || error)
-        await sendWhatsAppMessage(from, `I couldn’t read that image clearly.\n\nTry sending a clearer photo of the note, diary page, screenshot, or document.`)
+        console.error('WHATSAPP_IMAGE_PROCESSING_FAILED:', error?.message || error)
+        await sendWhatsAppMessage(from, `I couldn’t read that image clearly.\n\nFor skin check, send a clear front-facing selfie with caption: *skin check*.\nFor notes, send a clearer photo of the note, diary page, screenshot, or document.`)
       }
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
@@ -191,7 +211,7 @@ export async function POST(req: NextRequest) {
     const text = incoming.wasVoice ? normalizeVoicePromptForBot(originalText) : originalText
 
     if (!text) {
-      await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nSend a short voice note, type your request, or upload a photo/screenshot of your notes.`)
+      await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nFor Skin Check, send a clear selfie with caption: *skin check*.\nYou can also send a short voice note, type your request, or upload a photo/screenshot of your notes.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
@@ -243,9 +263,6 @@ export async function POST(req: NextRequest) {
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
-    // ── Feature Intent Router (expenses, todos, contacts, news, split, referral, followups, briefing)
-    // For voice notes: also try routing with the raw transcript (before normalization)
-    // This catches cases where Whisper transcribes "record meeting" as "I'll record making" etc.
     const featureReply = await routeFeatureIntent(from, text) ||
       (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText) : null)
     if (featureReply) {
@@ -274,7 +291,6 @@ export async function POST(req: NextRequest) {
 
     const referralResult = await recordReferralJoinFromText({ text, referredTelegramId: resolvedUser.telegramId, referredExternalId: from, referredName: profileName })
 
-    // ── Timezone commands
     if (isTimezoneCommand(text)) {
       const reply = await buildTimezoneCommandReply({
         text,
