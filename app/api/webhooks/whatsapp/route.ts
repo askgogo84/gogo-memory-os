@@ -47,6 +47,13 @@ import {
   isImageContentType,
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
+import {
+  buildReceiptSummary,
+  extractReceiptGroupName,
+  isSplitReceiptCaption,
+  scanReceiptFromImage,
+} from '@/lib/splitwise/receipt-reader'
+import { handleSplitCommand } from '@/lib/splitwise/split-service'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -186,6 +193,11 @@ async function sendThinkingIfNeeded(from: string, text: string) {
   try { await sendWhatsAppMessage(from, 'Working on it...') } catch (error: any) { console.error('WHATSAPP_THINKING_TEXT_FAILED:', { error: error?.message || error }) }
 }
 
+function buildReceiptSplitCommand(receipt: { total: number; merchant: string }, groupName?: string) {
+  const description = receipt.merchant || 'Receipt'
+  return `Add expense ${receipt.total} ${description} paid by me${groupName ? ` in ${groupName}` : ''} split equally`
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const mode = url.searchParams.get('hub.mode')
@@ -231,7 +243,16 @@ export async function POST(req: NextRequest) {
         await saveRecentImageContext({ telegramId: resolvedUser.telegramId, mediaUrl: firstMediaUrl, contentType: firstMediaType })
         const hasPendingSkinCheck = await getRecentPendingSkinCheckRequest(resolvedUser.telegramId)
 
-        if (isSkinCheckCaption(bodyText) || hasPendingSkinCheck) {
+        if (isSplitReceiptCaption(bodyText)) {
+          await sendWhatsAppMessage(from, 'Scanning receipt for AskGogo Split...')
+          const receipt = await scanReceiptFromImage({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
+          const groupName = extractReceiptGroupName(bodyText)
+          const splitReply = await handleSplitCommand(from, buildReceiptSplitCommand(receipt, groupName))
+          const reply = `${buildReceiptSummary(receipt)}\n\n✅ *Saved to AskGogo Split*\n\n${splitReply || 'Receipt saved.'}\n\nNext: send *itemize receipt* to assign items to people.`
+          await saveConversation(resolvedUser.telegramId, 'user', `[split receipt image] ${bodyText}`.trim())
+          await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[split receipt image]', reply })
+        } else if (isSkinCheckCaption(bodyText) || hasPendingSkinCheck) {
           await sendWhatsAppMessage(from, 'Running AskGogo Skin Check...')
           const result = await buildSkinCheckFromImage({
             telegramId: resolvedUser.telegramId,
@@ -260,7 +281,7 @@ export async function POST(req: NextRequest) {
         }
       } catch (error: any) {
         console.error('WHATSAPP_IMAGE_PROCESSING_FAILED:', error?.message || error)
-        await sendWhatsAppMessage(from, `I couldn't read that image clearly.\n\nFor skin check, send a clear front-facing selfie with caption: *skin check*.\nFor notes, send a clearer photo of the note, diary page, screenshot, or document.`)
+        await sendWhatsAppMessage(from, `I couldn't read that image clearly.\n\nFor split receipts, send a clear bill photo with caption: *split receipt Goa Test*.\nFor skin check, send a clear front-facing selfie with caption: *skin check*.\nFor notes, send a clearer photo of the note, diary page, screenshot, or document.`)
       }
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
@@ -276,7 +297,7 @@ export async function POST(req: NextRequest) {
     const text = incoming.wasVoice ? normalizeVoicePromptForBot(originalText) : originalText
 
     if (!text) {
-      await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nFor Skin Check, send a clear selfie with caption: *skin check*.\nYou can also send a short voice note, type your request, or upload a photo/screenshot of your notes.`)
+      await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.\nYou can also send a short voice note, type your request, or upload a photo/screenshot of your notes.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
