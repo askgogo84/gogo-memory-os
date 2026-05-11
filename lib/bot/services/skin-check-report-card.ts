@@ -4,13 +4,30 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getLatestSkinChecks } from '@/lib/bot/services/skin-check-storage'
 
 export function isSkinReportCardCommand(text: string) {
-  const lower = (text || '').toLowerCase().trim()
+  const lower = (text || '')
+    .toLowerCase()
+    .replace(/[*_~`]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const compact = lower.replace(/\s+/g, '')
+
   return (
     lower === 'skin report card' ||
     lower === 'create skin report card' ||
     lower === 'generate skin report card' ||
     lower === 'share skin report' ||
-    lower === 'visual skin report'
+    lower === 'visual skin report' ||
+    lower.includes('create skin report card') ||
+    lower.includes('generate skin report card') ||
+    lower.includes('skin report card') ||
+    lower.includes('visual skin report') ||
+    lower.includes('share skin report') ||
+    compact.includes('createskinreportcard') ||
+    compact.includes('generateskinreportcard') ||
+    compact.includes('skinreportcard') ||
+    compact.includes('visualskinreport')
   )
 }
 
@@ -49,10 +66,6 @@ function levelPercent(value: any, fallback = 55) {
   if (lower.includes('moderate') || lower.includes('mild')) return 52
   if (lower.includes('low') || lower.includes('smooth') || lower.includes('clear')) return 28
   return fallback
-}
-
-function cx(...items: Array<string | false | null | undefined>) {
-  return items.filter(Boolean).join(' ')
 }
 
 async function getImageDataUrl(url?: string | null) {
