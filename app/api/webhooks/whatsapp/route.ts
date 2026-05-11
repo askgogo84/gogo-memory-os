@@ -36,7 +36,7 @@ import {
   recordReferralJoinFromText,
 } from '@/lib/bot/handlers/referral-unlock'
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
-import { buildTimezoneCommandReply, getUserTimeZone, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
+import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import {
   isAudioContentType,
@@ -117,33 +117,6 @@ async function saveRecentImageContext(params: {
   )
 }
 
-async function getRecentImageContext(telegramId: number) {
-  const { data } = await supabaseAdmin
-    .from('conversations')
-    .select('content, created_at')
-    .eq('telegram_id', telegramId)
-    .eq('role', 'user')
-    .like('content', '[image_media]%')
-    .order('created_at', { ascending: false })
-    .limit(1)
-
-  const latest = data?.[0]
-  if (!latest?.content) return null
-
-  const createdAt = new Date(latest.created_at).getTime()
-  const ageMinutes = (Date.now() - createdAt) / (1000 * 60)
-  if (ageMinutes > 20) return null
-
-  try {
-    const jsonText = String(latest.content).replace(/^\[image_media\]\s*/, '')
-    const parsed = JSON.parse(jsonText)
-    if (!parsed?.mediaUrl || !parsed?.contentType) return null
-    return parsed as { mediaUrl: string; contentType: string; createdAt?: string }
-  } catch {
-    return null
-  }
-}
-
 async function createReminder(params: { telegramId: number; message: string; remindAtIso: string; whatsappTo?: string | null }) {
   const payload: any = { telegram_id: params.telegramId, chat_id: params.telegramId, message: params.message, remind_at: params.remindAtIso, sent: false }
   if (params.whatsappTo) payload.whatsapp_to = params.whatsappTo
@@ -161,9 +134,9 @@ async function createMeetingActionReminders(params: { telegramId: number; whatsa
   }
 
   return (
-    `✅ *Meeting action reminders created*\n\n` +
+    `OK - Meeting action reminders created\n\n` +
     items.slice(0, 5).map((item: any, index: number) => `${index + 1}. ${item.message}`).join('\n') +
-    `\n\nI’ll remind you tomorrow through the day.`
+    `\n\nI'll remind you tomorrow through the day.`
   )
 }
 
@@ -188,7 +161,7 @@ async function getTextFromIncomingWhatsApp(formData: FormData) {
 
 function addVoicePrefix(reply: string, transcript: string) {
   const cleanTranscript = transcript.length > 120 ? transcript.slice(0, 117).trim() + '...' : transcript
-  return `🎙️ *Heard you via voice note*\n“${cleanTranscript}”\n\n${reply}`
+  return `Voice note heard:\n"${cleanTranscript}"\n\n${reply}`
 }
 
 function shouldSendThinkingMedia(text: string) {
@@ -198,7 +171,7 @@ function shouldSendThinkingMedia(text: string) {
 
 async function sendThinkingIfNeeded(from: string, text: string) {
   if (!shouldSendThinkingMedia(text)) return
-  try { await sendWhatsAppMessage(from, '🧘 Working on it…') } catch (error: any) { console.error('WHATSAPP_THINKING_TEXT_FAILED:', { error: error?.message || error }) }
+  try { await sendWhatsAppMessage(from, 'Working on it...') } catch (error: any) { console.error('WHATSAPP_THINKING_TEXT_FAILED:', { error: error?.message || error }) }
 }
 
 export async function GET(req: NextRequest) {
@@ -247,7 +220,7 @@ export async function POST(req: NextRequest) {
         const hasPendingSkinCheck = await getRecentPendingSkinCheckRequest(resolvedUser.telegramId)
 
         if (isSkinCheckCaption(bodyText) || hasPendingSkinCheck) {
-          await sendWhatsAppMessage(from, '✨ Running AskGogo Skin Check…')
+          await sendWhatsAppMessage(from, 'Running AskGogo Skin Check...')
           const result = await buildSkinCheckFromImage({
             telegramId: resolvedUser.telegramId,
             mediaUrl: firstMediaUrl,
@@ -259,7 +232,7 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
         } else {
-          await sendWhatsAppMessage(from, '🧘 Reading your note…')
+          await sendWhatsAppMessage(from, 'Reading your note...')
           const imageReply = await readAndSummarizeImageNote({
             mediaUrl: firstMediaUrl,
             contentType: firstMediaType,
@@ -270,11 +243,11 @@ export async function POST(req: NextRequest) {
           await addToList(resolvedUser.telegramId, 'notes', [savedNote])
           await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image note]')
           await saveConversation(resolvedUser.telegramId, 'assistant', imageReply)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image note]', reply: `${imageReply}\n\n✅ Saved to *my notes*.` })
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image note]', reply: `${imageReply}\n\nSaved to *my notes*.` })
         }
       } catch (error: any) {
         console.error('WHATSAPP_IMAGE_PROCESSING_FAILED:', error?.message || error)
-        await sendWhatsAppMessage(from, `I couldn’t read that image clearly.\n\nFor skin check, send a clear front-facing selfie with caption: *skin check*.\nFor notes, send a clearer photo of the note, diary page, screenshot, or document.`)
+        await sendWhatsAppMessage(from, `I couldn't read that image clearly.\n\nFor skin check, send a clear front-facing selfie with caption: *skin check*.\nFor notes, send a clearer photo of the note, diary page, screenshot, or document.`)
       }
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
@@ -282,7 +255,7 @@ export async function POST(req: NextRequest) {
     let incoming
     try { incoming = await getTextFromIncomingWhatsApp(formData) } catch (error: any) {
       console.error('WhatsApp voice transcription failed:', error)
-      await sendWhatsAppMessage(from, `I couldn’t understand that voice note clearly.\n\nPlease try again with a shorter voice note, or type the message once.`)
+      await sendWhatsAppMessage(from, `I couldn't understand that voice note clearly.\n\nPlease try again with a shorter voice note, or type the message once.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
@@ -310,15 +283,7 @@ export async function POST(req: NextRequest) {
     if (isSkinCheckCaption(text)) {
       await savePendingSkinCheckRequest(resolvedUser.telegramId)
 
-      const reply = `? *AskGogo Skin Check*
-
-Please upload a fresh selfie now. I�ll run Skin Check on the new photo only.
-
-For best results:
-� natural light
-� no heavy filter
-� face visible clearly
-� no medical diagnosis � skincare observation only`
+      const reply = `*AskGogo Skin Check*\n\nPlease upload a fresh selfie now. I'll run Skin Check on the new photo only.\n\nFor best results:\n- natural light\n- no heavy filter\n- face visible clearly\n- no medical diagnosis - skincare observation only`
 
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -348,7 +313,7 @@ For best results:
 
     if (!incoming.wasVoice && isTypedMeetingNotesCommand(text)) {
       try {
-        await sendWhatsAppMessage(from, '🧘 Preparing meeting notes…')
+        await sendWhatsAppMessage(from, 'Preparing meeting notes...')
         const transcript = cleanTypedMeetingNotesText(text)
         const reply = await buildMeetingNotesReply({ telegramId: resolvedUser.telegramId, transcript, caption: 'Typed meeting notes' })
         await saveConversation(resolvedUser.telegramId, 'user', `[typed meeting notes] ${transcript.slice(0, 500)}`)
@@ -356,21 +321,21 @@ For best results:
         await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply })
       } catch (error: any) {
         console.error('WHATSAPP_TYPED_MEETING_NOTES_FAILED:', error?.message || error)
-        await sendWhatsAppMessage(from, `I couldn’t turn that into meeting notes.\n\nTry starting with: *Meeting notes:* followed by the discussion and action items.`)
+        await sendWhatsAppMessage(from, `I couldn't turn that into meeting notes.\n\nTry starting with: *Meeting notes:* followed by the discussion and action items.`)
       }
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
     if (incoming.wasVoice && shouldTreatAudioAsMeeting({ caption: bodyText, transcript: originalText })) {
       try {
-        await sendWhatsAppMessage(from, '🧘 Transcribing your meeting…')
+        await sendWhatsAppMessage(from, 'Transcribing your meeting...')
         const reply = await buildMeetingNotesReply({ telegramId: resolvedUser.telegramId, transcript: originalText, caption: bodyText })
         await saveConversation(resolvedUser.telegramId, 'user', `[meeting audio] ${bodyText || originalText.slice(0, 300)}`)
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[meeting audio]', reply })
       } catch (error: any) {
         console.error('WHATSAPP_MEETING_NOTES_FAILED:', error?.message || error)
-        await sendWhatsAppMessage(from, `I couldn’t summarize that meeting audio clearly.\n\nTry a shorter recording, or add caption: *meeting notes* when sending the audio.`)
+        await sendWhatsAppMessage(from, `I couldn't summarize that meeting audio clearly.\n\nTry a shorter recording, or add caption: *meeting notes* when sending the audio.`)
       }
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
@@ -479,6 +444,3 @@ For best results:
     return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
   }
 }
-
-
-
