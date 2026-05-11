@@ -19,7 +19,7 @@ function isRefusalText(text: string) {
   )
 }
 
-function buildSafeFallbackSkinCheckReport() {
+export function buildSafeFallbackSkinCheckReport() {
   return (
     `✨ *AskGogo Skin Check*\n\n` +
     `*Important*\n` +
@@ -81,47 +81,53 @@ export async function analyzeSkinCheckImage(params: {
   userName?: string | null
 }) {
   if (!process.env.OPENAI_API_KEY) {
-    throw new Error('Missing OPENAI_API_KEY')
-  }
-
-  const dataUrl = await downloadTwilioMediaAsDataUrl({
-    mediaUrl: params.mediaUrl,
-    contentType: params.contentType,
-  })
-
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    temperature: 0.2,
-    max_tokens: 1400,
-    messages: [
-      {
-        role: 'system',
-        content: buildSkinCheckSystemPrompt(),
-      },
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: buildSkinCheckUserPrompt({
-              userCaption: params.userCaption,
-              userName: params.userName,
-            }),
-          },
-          {
-            type: 'image_url',
-            image_url: { url: dataUrl, detail: 'high' },
-          },
-        ],
-      },
-    ],
-  })
-
-  const text = response.choices?.[0]?.message?.content?.trim() || ''
-  if (isRefusalText(text)) {
-    console.warn('[skin-check] OpenAI returned refusal/empty response; using safe fallback report')
+    console.error('[skin-check] Missing OPENAI_API_KEY; using safe fallback report')
     return buildSafeFallbackSkinCheckReport()
   }
 
-  return text
+  try {
+    const dataUrl = await downloadTwilioMediaAsDataUrl({
+      mediaUrl: params.mediaUrl,
+      contentType: params.contentType,
+    })
+
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      temperature: 0.2,
+      max_tokens: 1400,
+      messages: [
+        {
+          role: 'system',
+          content: buildSkinCheckSystemPrompt(),
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: buildSkinCheckUserPrompt({
+                userCaption: params.userCaption,
+                userName: params.userName,
+              }),
+            },
+            {
+              type: 'image_url',
+              image_url: { url: dataUrl, detail: 'high' },
+            },
+          ],
+        },
+      ],
+    })
+
+    const text = response.choices?.[0]?.message?.content?.trim() || ''
+    if (isRefusalText(text)) {
+      console.warn('[skin-check] OpenAI returned refusal/empty response; using safe fallback report')
+      return buildSafeFallbackSkinCheckReport()
+    }
+
+    return text
+  } catch (error: any) {
+    console.error('[skin-check] analysis failed; using safe fallback report:', error?.message || error)
+    return buildSafeFallbackSkinCheckReport()
+  }
 }
