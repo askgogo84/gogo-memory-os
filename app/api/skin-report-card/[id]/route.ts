@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { downloadTwilioMediaAsDataUrl } from '@/lib/services/image-note-reader'
+import { cropFacePortraitFromMediaUrl } from '@/lib/services/face-crop'
 
 export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
 
 function clean(value: any, fallback = '-') {
   const output = String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -83,10 +84,11 @@ function faceImage(id: string, href: string | null, x: number, y: number, w: num
 
 async function getImageDataUrl(report: any) {
   if (!report?.image_url) return null
+
   try {
-    return await downloadTwilioMediaAsDataUrl({ mediaUrl: report.image_url, contentType: 'image/jpeg' })
+    return await cropFacePortraitFromMediaUrl(report.image_url)
   } catch (error: any) {
-    console.error('[skin-report-card] selfie image embed failed:', error?.message || error)
+    console.error('[skin-report-card] face-focused image build failed:', error?.message || error)
     return null
   }
 }
