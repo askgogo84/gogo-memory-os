@@ -1,22 +1,62 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { handleSplitCommand } from '@/lib/splitwise/split-service'
+
 export const dynamic = 'force-dynamic'
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
 export async function POST(req: NextRequest) {
-  const { phone, amount, people, description } = await req.json()
-  if (!phone || !amount || !people?.length) return NextResponse.json({ error: 'phone, amount, people required' }, { status: 400 })
-  const total = parseFloat(amount)
-  const pp = total / people.length
-  await supabase.from('bill_splits').insert({ whatsapp_id: phone, total_amount: total, description: description || 'Bill', people, per_person: pp, created_at: new Date().toISOString() })
-  const lines = people.map((n: string) => '- ' + n + ': ' + (/^me$/i.test(n) ? '(paid)' : 'Rs.' + pp.toFixed(0))).join('\n')
-  return NextResponse.json({ ok: true, perPerson: pp.toFixed(0), reply: 'Bill Split: ' + (description || 'Bill') + '\nTotal: Rs.' + total + ' | Per person: Rs.' + pp.toFixed(0) + '\n\n' + lines })
+  try {
+    const body = await req.json()
+    const phone = String(body.phone || '').trim()
+
+    if (!phone) {
+      return NextResponse.json({ error: 'phone required' }, { status: 400 })
+    }
+
+    const legacyText = body.text || buildLegacySplitText(body)
+    if (!legacyText) {
+      return NextResponse.json({
+        reply:
+          `AskGogo Split\n\n` +
+          `Try:\n` +
+          `Create trip Goa with Rahul, Priya, Meera\n` +
+          `Add expense 2400 hotel paid by me in Goa split equally\n` +
+          `Show balance Goa\n` +
+          `Simplify Goa`,
+      })
+    }
+
+    const reply = await handleSplitCommand(phone, String(legacyText))
+    return NextResponse.json({ ok: true, reply: reply || 'I could not understand that split command yet.' })
+  } catch (error: any) {
+    console.error('[splitbill] POST failed:', error?.message || error)
+    return NextResponse.json({ error: 'splitbill failed', reply: 'I could not save that split. Please try again.' }, { status: 500 })
+  }
 }
 
 export async function GET(req: NextRequest) {
-  const phone = req.nextUrl.searchParams.get('phone')
-  if (!phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })
-  const { data: splits } = await supabase.from('bill_splits').select('total_amount, description, people, per_person').eq('whatsapp_id', phone).order('created_at', { ascending: false }).limit(5)
-  if (!splits?.length) return NextResponse.json({ reply: 'No splits yet. Say "Split 1200 among me, Rahul, Priya" to split a bill.' })
-  return NextResponse.json({ reply: 'Recent Splits:\n' + splits.map(s => '- Rs.' + s.total_amount + ' for ' + s.description + ' (' + s.people?.length + ' people, Rs.' + Math.round(s.per_person) + '/each)').join('\n') })
+  try {
+    const phone = req.nextUrl.searchParams.get('phone') || ''
+    const group = req.nextUrl.searchParams.get('group') || ''
+    const action = req.nextUrl.searchParams.get('action') || 'history'
+
+    if (!phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })
+
+    const text = action === 'balance'
+      ? `show balance ${group}`
+      : action === 'simplify'
+        ? `simplify ${group}`
+        : 'split history'
+
+    const reply = await handleSplitCommand(phone, text)
+    return NextResponse.json({ ok: true, reply })
+  } catch (error: any) {
+    console.error('[splitbill] GET failed:', error?.message || error)
+    return NextResponse.json({ error: 'splitbill failed', reply: 'I could not fetch your split history.' }, { status: 500 })
+  }
+}
+
+function buildLegacySplitText(body: any) {
+  if (!body.amount || !Array.isArray(body.people) || !body.people.length) return ''
+  const description = body.description || 'Bill'
+  return `Add expense ${body.amount} ${description} paid by me split with ${body.people.join(', ')}`
 }
