@@ -97,7 +97,7 @@ ${lines.map((line, i) => `<text x="${x + 41}" y="${y + 76 + i * 12}" text-anchor
 
 function faceImage(id: string, href: string | null, x: number, y: number, w: number, h: number, overlay = false) {
   const image = href
-    ? `<image href="${href}" x="${x - w * 0.18}" y="${y - h * 0.20}" width="${w * 1.36}" height="${h * 1.45}" preserveAspectRatio="xMidYMin slice" clip-path="url(#${id})"/>`
+    ? `<image href="${href}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${id})"/>`
     : `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="#231b16"/><text x="${x + w / 2}" y="${y + h / 2}" text-anchor="middle" class="body" fill="#c99a5d">SELFIE</text>`
 
   const overlayShapes = overlay ? `<ellipse cx="${x + w * .50}" cy="${y + h * .22}" rx="${w * .25}" ry="${h * .075}" fill="#d9a259" opacity=".30" stroke="#e2bf85"/>
