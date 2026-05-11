@@ -59,14 +59,28 @@ async function getLatestGroup(phone: string): Promise<Group | null> {
 async function findGroup(phone: string, groupName?: string): Promise<Group | null> {
   const memberGroupIds = await groupIdsForPhone(phone)
   if (!groupName) return getLatestGroup(phone)
-  const { data } = await supabaseAdmin
+
+  // If multiple trips have the same name, prefer the newest exact-created group.
+  // This avoids old trips being reused just because they had a recent update.
+  const exact = await supabaseAdmin
+    .from('split_groups')
+    .select('id,name,owner_phone,currency')
+    .or(`owner_phone.eq.${phone},id.in.(${memberGroupIds})`)
+    .ilike('name', groupName)
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  if (exact.data?.[0]) return exact.data[0] as Group
+
+  const fuzzy = await supabaseAdmin
     .from('split_groups')
     .select('id,name,owner_phone,currency')
     .or(`owner_phone.eq.${phone},id.in.(${memberGroupIds})`)
     .ilike('name', `%${groupName}%`)
-    .order('updated_at', { ascending: false })
+    .order('created_at', { ascending: false })
     .limit(1)
-  return (data?.[0] as Group) || null
+
+  return (fuzzy.data?.[0] as Group) || null
 }
 
 async function nextFreshGroupName(phone: string, requestedName: string) {
