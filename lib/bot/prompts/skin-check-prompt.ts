@@ -59,8 +59,10 @@ export function buildSkinCheckUserPrompt(params: {
     '3. Glow\n' +
     '4. Pores\n' +
     '5. Anti-aging\n\n' +
-    '*Next*\n' +
-    '• Say *create skin report card* for a shareable visual card.\n' +
-    '• Say *remind me to do skin check after 2 weeks* to track progress.'
+    '*Next steps*\n' +
+    '• Say *skin report card* to create your shareable visual card.\n' +
+    '• Say *compare with last skin check* to track visible progress.\n' +
+    '• Say *skin history* to see your past checks.\n' +
+    '• Say *remind me to do skin check after 2 weeks* to build a progress habit.'
   )
 }
