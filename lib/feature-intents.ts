@@ -2,6 +2,8 @@
 // Plugged into /app/api/webhooks/whatsapp/route.ts
 // Returns a reply string if handled, null to fall through to Claude
 
+import { parseSplitIntent } from '@/lib/splitwise/split-parser'
+
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
 export async function routeFeatureIntent(phone: string, text: string): Promise<string | null> {
@@ -34,6 +36,12 @@ export async function routeFeatureIntent(phone: string, text: string): Promise<s
   // Also handle "end meeting" / "stop recording" — remind them to use the recorder page
   if (/^(end meeting|stop recording|stop meeting|meeting ended|meeting done)$/i.test(t)) {
     return `To stop recording, tap *End Meeting* in the AskGogo Recorder tab you opened earlier.\n\nIf you closed it accidentally, your minutes may not have been sent — you can re-open and record again.`
+  }
+
+  // ── ASK GOGO SPLIT ────────────────────────────────────────────────
+  // WhatsApp-first Splitwise style groups, expenses, balances, settlement and charts.
+  if (parseSplitIntent(text)) {
+    return (await post('/api/splitbill', { phone, text }))?.reply ?? null
   }
 
   // ── EXPENSES ─────────────────────────────────────────────────────
@@ -84,17 +92,6 @@ export async function routeFeatureIntent(phone: string, text: string): Promise<s
   if (/^(news|headlines?|digest)(\s+(tech|market|cricket|startup|world|politics))?$/i.test(t)) {
     const tm = t.match(/\b(tech|market|cricket|startup|world|politics)\b/)
     return (await post('/api/news', { phone, topics: tm ? [tm[1]] : undefined }))?.reply ?? null
-  }
-
-  // ── BILL SPLIT ────────────────────────────────────────────────────
-  const splitMatch = text.match(/split\s+(?:rs\.?|inr)?(\d+(?:\.\d+)?)\s+(?:among|between|with)\s+(.+?)(?:\s+for\s+(.+))?$/i)
-  if (splitMatch) {
-    const people = splitMatch[2].split(/,\s*|\s+and\s+/i).map((p: string) => p.trim()).filter(Boolean)
-    if (!people.some((p: string) => /^me$/i.test(p))) people.unshift('Me')
-    return (await post('/api/splitbill', { phone, amount: parseFloat(splitMatch[1]), people, description: splitMatch[3] || 'Bill' }))?.reply ?? null
-  }
-  if (/^(my splits?|past splits?|split history)$/i.test(t)) {
-    return (await get('/api/splitbill', { phone }))?.reply ?? null
   }
 
   return null // Not matched — fall through to Claude
