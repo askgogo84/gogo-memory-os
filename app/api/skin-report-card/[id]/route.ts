@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import {
-  buildSkinReportCardImageResponse,
-  buildSkinReportCardSafeFallbackImageResponse,
-  getSkinCheckReportById,
-} from '@/lib/bot/services/skin-check-report-card'
+import { buildSkinReportCardSvg, getSkinCheckReportById } from '@/lib/bot/services/skin-check-report-card'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,24 +7,25 @@ export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await context.params
-  const report = await getSkinCheckReportById(id)
-
-  if (!report) {
-    return new NextResponse('Skin report not found', { status: 404 })
-  }
-
   try {
-    const response = await buildSkinReportCardImageResponse(report)
-    response.headers.set('Content-Type', 'image/png')
-    response.headers.set('Cache-Control', 'public, max-age=3600')
-    return response
-  } catch (error: any) {
-    console.error('[skin-report-card] premium render failed:', error?.message || error)
+    const { id } = await context.params
+    const report = await getSkinCheckReportById(id)
 
-    const fallback = await buildSkinReportCardSafeFallbackImageResponse(report)
-    fallback.headers.set('Content-Type', 'image/png')
-    fallback.headers.set('Cache-Control', 'public, max-age=3600')
-    return fallback
+    if (!report) {
+      return new NextResponse('Skin report not found', { status: 404 })
+    }
+
+    const svg = buildSkinReportCardSvg(report)
+
+    return new NextResponse(svg, {
+      status: 200,
+      headers: {
+        'Content-Type': 'image/svg+xml; charset=utf-8',
+        'Cache-Control': 'no-store, max-age=0',
+      },
+    })
+  } catch (error: any) {
+    console.error('[skin-report-card] route failed:', error?.message || error)
+    return new NextResponse('Skin report failed to render', { status: 500 })
   }
 }
