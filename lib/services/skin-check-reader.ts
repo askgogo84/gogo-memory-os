@@ -8,6 +8,22 @@ const openai = new OpenAI({
 export function isSkinCheckCaption(text: string | null | undefined) {
   const lower = (text || '').toLowerCase().trim().replace(/\s+/g, ' ')
 
+  if (!lower) return false
+
+  // Important: reminders like "remind me to do skin check after 2 weeks"
+  // must go to the reminder engine, not start a new pending Skin Check flow.
+  if (
+    lower.startsWith('remind ') ||
+    lower.startsWith('reminder ') ||
+    lower.includes('remind me') ||
+    lower.includes('after 2 weeks') ||
+    lower.includes('after two weeks') ||
+    lower.includes('next week') ||
+    lower.includes('tomorrow')
+  ) {
+    return false
+  }
+
   return (
     lower === 'skin' ||
     lower === 'skin check' ||
