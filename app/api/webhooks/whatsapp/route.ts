@@ -273,7 +273,15 @@ export async function POST(req: NextRequest) {
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
       await saveConversation(resolvedUser.telegramId, 'assistant', replyText)
       if (typeof skinTextReply === 'object' && skinTextReply.mediaUrl) {
-        await sendWhatsAppMediaMessage(from, replyText, skinTextReply.mediaUrl)
+        await sendWhatsAppMessage(from, replyText)
+        try {
+          await sendWhatsAppMediaMessage(from, 'Skin Report Card', skinTextReply.mediaUrl)
+        } catch (mediaError: any) {
+          console.error('WHATSAPP_SKIN_REPORT_CARD_MEDIA_FAILED:', {
+            mediaUrl: skinTextReply.mediaUrl,
+            error: mediaError?.message || mediaError,
+          })
+        }
       } else {
         await sendWhatsAppMessage(from, replyText)
       }
