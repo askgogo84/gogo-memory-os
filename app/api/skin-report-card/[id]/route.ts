@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   buildSkinReportCardImageResponse,
+  buildSkinReportCardSafeFallbackImageResponse,
   getSkinCheckReportById,
 } from '@/lib/bot/services/skin-check-report-card'
 
@@ -17,9 +18,17 @@ export async function GET(
     return new NextResponse('Skin report not found', { status: 404 })
   }
 
-  const response = await buildSkinReportCardImageResponse(report)
-  response.headers.set('Content-Type', 'image/png')
-  response.headers.set('Cache-Control', 'public, max-age=3600')
+  try {
+    const response = await buildSkinReportCardImageResponse(report)
+    response.headers.set('Content-Type', 'image/png')
+    response.headers.set('Cache-Control', 'public, max-age=3600')
+    return response
+  } catch (error: any) {
+    console.error('[skin-report-card] premium render failed:', error?.message || error)
 
-  return response
+    const fallback = await buildSkinReportCardSafeFallbackImageResponse(report)
+    fallback.headers.set('Content-Type', 'image/png')
+    fallback.headers.set('Cache-Control', 'public, max-age=3600')
+    return fallback
+  }
 }
