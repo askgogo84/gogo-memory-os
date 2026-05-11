@@ -9,6 +9,16 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 export async function routeFeatureIntent(phone: string, text: string): Promise<string | null> {
   const t = text.toLowerCase().trim()
 
+  // ── SKIN CHECK FOLLOW-UP REMINDER ────────────────────────────────
+  // Avoid asking for a time. For Skin Check progress tracking, default to 9 AM after 14 days.
+  if (
+    /\bremind\b/i.test(t) &&
+    /\bskin\s*check\b/i.test(t) &&
+    (/\b2\s*weeks?\b/i.test(t) || /\btwo\s*weeks?\b/i.test(t) || /\b14\s*days?\b/i.test(t))
+  ) {
+    return (await post('/api/skin-reminder', { phone, text }))?.reply ?? null
+  }
+
   // ── DAILY BRIEFING ────────────────────────────────────────────────
   // Keep this early so "morning briefing" / "today briefing" does not fall through to the generic assistant.
   if (/^(morning|good morning|daily briefing|my briefing|briefing|morning briefing|today briefing|today summary|plan my day|help me plan my day|today)$/i.test(t)) {
