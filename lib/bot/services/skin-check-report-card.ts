@@ -1,3 +1,86 @@
+import React from 'react'
+import { ImageResponse } from 'next/og'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getLatestSkinChecks } from '@/lib/bot/services/skin-check-storage'
+
+export function isSkinReportCardCommand(text: string) {
+  const lower = (text || '')
+    .toLowerCase()
+    .replace(/[*_~`]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const compact = lower.replace(/\s+/g, '')
+
+  return (
+    lower.includes('skin report card') ||
+    lower.includes('create skin report card') ||
+    lower.includes('generate skin report card') ||
+    lower.includes('visual skin report') ||
+    lower.includes('share skin report') ||
+    compact.includes('skinreportcard') ||
+    compact.includes('createskinreportcard') ||
+    compact.includes('generateskinreportcard') ||
+    compact.includes('visualskinreport')
+  )
+}
+
+function clean(value: any, fallback = '-') {
+  const output = String(value ?? '').replace(/\s+/g, ' ').trim()
+  return output || fallback
+}
+
+function short(value: any, max = 42, fallback = '-') {
+  const output = clean(value, fallback)
+  return output.length > max ? `${output.slice(0, max - 1).trim()}...` : output
+}
+
+function score(report: any, key: string, fallback: string | number = '-') {
+  return report?.scores_json?.[key] ?? fallback
+}
+
+function scorePercent(value: any, fallback = 65) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(0, Math.min(100, parsed))
+}
+
+function list(items: any[], limit: number, fallback: string[] = []) {
+  const values = (items || [])
+    .map((item) => clean(item, ''))
+    .filter(Boolean)
+    .slice(0, limit)
+  return values.length ? values : fallback.slice(0, limit)
+}
+
+function box(children: React.ReactNode, style: React.CSSProperties) {
+  return React.createElement('div', { style }, children)
+}
+
+function Txt(props: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return React.createElement('div', { style: props.style }, props.children)
+}
+
+export async function getSkinCheckReportById(id: string) {
+  const { data, error } = await supabaseAdmin
+    .from('skin_check_reports')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[skin-report-card] fetch failed:', error.message)
+    return null
+  }
+
+  return data
+}
+
+export async function buildSkinReportCardImageResponse(report: any) {
+  return buildSkinReportCardSafeFallbackImageResponse(report)
+}
+
 export async function buildSkinReportCardSafeFallbackImageResponse(report: any) {
   const hydration = score(report, 'hydration', 70)
   const barrier = score(report, 'barrier_support', 65)
@@ -34,6 +117,28 @@ export async function buildSkinReportCardSafeFallbackImageResponse(report: any) 
     ? new Date(report.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
     : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
 
+  const panelStyle: React.CSSProperties = {
+    borderRadius: 28,
+    background: '#f2e4c7',
+    padding: 30,
+    display: 'flex',
+    flexDirection: 'column',
+  }
+
+  const titleStyle: React.CSSProperties = {
+    color: '#173a31',
+    fontSize: 24,
+    fontWeight: 900,
+  }
+
+  const lineStyle: React.CSSProperties = {
+    marginTop: 12,
+    color: '#173a31',
+    fontSize: 20,
+    fontWeight: 700,
+    lineHeight: 1.25,
+  }
+
   const element = box(
     [
       box(null, {
@@ -41,7 +146,6 @@ export async function buildSkinReportCardSafeFallbackImageResponse(report: any) 
         inset: 0,
         background: 'linear-gradient(135deg, #071d18 0%, #102620 52%, #050908 100%)',
       }),
-
       Txt({
         children: 'ASKGOGO SKIN CHECK',
         style: {
@@ -54,7 +158,6 @@ export async function buildSkinReportCardSafeFallbackImageResponse(report: any) 
           letterSpacing: 2,
         },
       }),
-
       Txt({
         children: 'VISUAL SKIN ANALYSIS',
         style: {
@@ -67,7 +170,6 @@ export async function buildSkinReportCardSafeFallbackImageResponse(report: any) 
           letterSpacing: 4,
         },
       }),
-
       Txt({
         children: dateLabel,
         style: {
@@ -79,150 +181,47 @@ export async function buildSkinReportCardSafeFallbackImageResponse(report: any) 
           fontWeight: 700,
         },
       }),
-
       box(
         [
-          Txt({ children: 'AT A GLANCE', style: { color: '#173a31', fontSize: 24, fontWeight: 900 } }),
-          Txt({ children: `Skin Type: ${skinType}`, style: { marginTop: 18, color: '#173a31', fontSize: 20, fontWeight: 700 } }),
-          Txt({ children: `Hydration: ${scorePercent(hydration, 70)} / 100`, style: { marginTop: 10, color: '#173a31', fontSize: 20, fontWeight: 700 } }),
-          Txt({ children: `Barrier Support: ${scorePercent(barrier, 65)} / 100`, style: { marginTop: 10, color: '#173a31', fontSize: 20, fontWeight: 700 } }),
-          Txt({ children: `Oiliness: ${oiliness}`, style: { marginTop: 10, color: '#173a31', fontSize: 20, fontWeight: 700 } }),
-          Txt({ children: `Texture: ${texture}`, style: { marginTop: 10, color: '#173a31', fontSize: 20, fontWeight: 700 } }),
+          Txt({ children: 'AT A GLANCE', style: titleStyle }),
+          Txt({ children: `Skin Type: ${skinType}`, style: lineStyle }),
+          Txt({ children: `Hydration: ${scorePercent(hydration, 70)} / 100`, style: lineStyle }),
+          Txt({ children: `Barrier Support: ${scorePercent(barrier, 65)} / 100`, style: lineStyle }),
+          Txt({ children: `Oiliness: ${oiliness}`, style: lineStyle }),
+          Txt({ children: `Texture: ${texture}`, style: lineStyle }),
         ],
-        {
-          position: 'absolute',
-          top: 170,
-          left: 60,
-          width: 450,
-          height: 320,
-          borderRadius: 28,
-          background: '#f2e4c7',
-          padding: 30,
-          display: 'flex',
-          flexDirection: 'column',
-        }
+        { ...panelStyle, position: 'absolute', top: 170, left: 60, width: 450, height: 320 }
       ),
-
       box(
         [
-          Txt({ children: 'KEY OBSERVATIONS', style: { color: '#173a31', fontSize: 24, fontWeight: 900 } }),
-          ...observations.map((item) =>
-            Txt({
-              children: `• ${item}`,
-              style: {
-                marginTop: 16,
-                color: '#173a31',
-                fontSize: 20,
-                fontWeight: 700,
-                lineHeight: 1.25,
-              },
-            })
-          ),
+          Txt({ children: 'KEY OBSERVATIONS', style: titleStyle }),
+          ...observations.map((item) => Txt({ children: `- ${item}`, style: lineStyle })),
         ],
-        {
-          position: 'absolute',
-          top: 170,
-          right: 60,
-          width: 510,
-          height: 320,
-          borderRadius: 28,
-          background: '#f2e4c7',
-          padding: 30,
-          display: 'flex',
-          flexDirection: 'column',
-        }
+        { ...panelStyle, position: 'absolute', top: 170, right: 60, width: 510, height: 320 }
       ),
-
       box(
         [
-          Txt({ children: 'AM ROUTINE', style: { color: '#173a31', fontSize: 24, fontWeight: 900 } }),
-          ...am.map((item, i) =>
-            Txt({
-              children: `${i + 1}. ${item}`,
-              style: {
-                marginTop: 16,
-                color: '#173a31',
-                fontSize: 20,
-                fontWeight: 700,
-              },
-            })
-          ),
+          Txt({ children: 'AM ROUTINE', style: titleStyle }),
+          ...am.map((item, i) => Txt({ children: `${i + 1}. ${item}`, style: lineStyle })),
         ],
-        {
-          position: 'absolute',
-          top: 540,
-          left: 60,
-          width: 450,
-          height: 280,
-          borderRadius: 28,
-          background: '#f2e4c7',
-          padding: 30,
-          display: 'flex',
-          flexDirection: 'column',
-        }
+        { ...panelStyle, position: 'absolute', top: 540, left: 60, width: 450, height: 280 }
       ),
-
       box(
         [
-          Txt({ children: 'PM ROUTINE', style: { color: '#173a31', fontSize: 24, fontWeight: 900 } }),
-          ...pm.map((item, i) =>
-            Txt({
-              children: `${i + 1}. ${item}`,
-              style: {
-                marginTop: 16,
-                color: '#173a31',
-                fontSize: 20,
-                fontWeight: 700,
-              },
-            })
-          ),
+          Txt({ children: 'PM ROUTINE', style: titleStyle }),
+          ...pm.map((item, i) => Txt({ children: `${i + 1}. ${item}`, style: lineStyle })),
         ],
-        {
-          position: 'absolute',
-          top: 540,
-          right: 60,
-          width: 510,
-          height: 280,
-          borderRadius: 28,
-          background: '#f2e4c7',
-          padding: 30,
-          display: 'flex',
-          flexDirection: 'column',
-        }
+        { ...panelStyle, position: 'absolute', top: 540, right: 60, width: 510, height: 280 }
       ),
-
       box(
         [
-          Txt({ children: 'AVOID THIS WEEK', style: { color: '#173a31', fontSize: 24, fontWeight: 900 } }),
-          ...cautions.map((item) =>
-            Txt({
-              children: `• ${item}`,
-              style: {
-                marginTop: 16,
-                color: '#173a31',
-                fontSize: 20,
-                fontWeight: 700,
-              },
-            })
-          ),
+          Txt({ children: 'AVOID THIS WEEK', style: titleStyle }),
+          ...cautions.map((item) => Txt({ children: `- ${item}`, style: lineStyle })),
         ],
-        {
-          position: 'absolute',
-          top: 870,
-          left: 60,
-          right: 60,
-          height: 210,
-          borderRadius: 28,
-          background: '#f2e4c7',
-          padding: 30,
-          display: 'flex',
-          flexDirection: 'column',
-        }
+        { ...panelStyle, position: 'absolute', top: 870, left: 60, right: 60, height: 210 }
       ),
-
       Txt({
-        children:
-          'Not medical advice. For painful acne, infection, irritation, rashes, or changing moles, consult a dermatologist.',
+        children: 'Not medical advice. For painful acne, infection, irritation, rashes, or changing moles, consult a dermatologist.',
         style: {
           position: 'absolute',
           left: 60,
@@ -249,4 +248,27 @@ export async function buildSkinReportCardSafeFallbackImageResponse(report: any) 
     width: 1080,
     height: 1350,
   })
+}
+
+export async function buildSkinReportCardReply(telegramId?: number) {
+  if (!telegramId) {
+    return `Skin Report Card\n\nRun skin check first, then say create skin report card.`
+  }
+
+  const [latest] = await getLatestSkinChecks(telegramId, 1)
+  if (!latest) {
+    return `Skin Report Card\n\nNo skin check found yet. Send a clear selfie and type skin check first.`
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
+  const mediaUrl = `${appUrl}/api/skin-report-card/${latest.id}`
+
+  return {
+    text:
+      `Skin Report Card ready\n\n` +
+      `I created your visual Skin Check card.\n\n` +
+      `Open card:\n${mediaUrl}\n\n` +
+      `Tip: take your next selfie in similar lighting for cleaner progress tracking.`,
+    mediaUrl,
+  }
 }
