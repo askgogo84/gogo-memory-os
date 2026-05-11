@@ -102,15 +102,21 @@ function parseAllocationSegments(text: string) {
 }
 
 function extractDescription(text: string) {
-  const cleaned = text
+  let cleaned = text.trim()
+
+  // Keep only the part before allocation details after the first comma.
+  if (cleaned.includes(',')) cleaned = cleaned.split(',')[0]
+
+  cleaned = cleaned
     .replace(/(?:rs\.?|inr|₹)?\s*\d+(?:\.\d+)?/i, '')
-    .replace(/paid\s+by\s+[a-zA-Z][\w\s]*/i, '')
+    .replace(/paid\s+by\s+[a-zA-Z][\w\s]*?(?=\s+in\s+|\s+split\s+|$)/i, '')
+    .replace(/\s+in\s+[a-zA-Z][\w\s-]*$/i, '')
     .replace(/split\s+(?:equally\s+)?(?:with|among|between|as|by).*/i, '')
-    .replace(/,\s*(me|[a-zA-Z][\w\s]*?)\s+(?:rs\.?|inr|₹)?\s*\d+(?:\.\d+)?\s*%?/gi, '')
-    .replace(/,\s*(me|[a-zA-Z][\w\s]*?)\s+\d+(?:\.\d+)?\s*shares?/gi, '')
-    .replace(/\s+in\s+[a-zA-Z][\w\s-]*/i, '')
     .replace(/^(add expense|expense|spent|paid|split|bill)\s*/i, '')
+    .replace(/\bshares?\b/gi, '')
+    .replace(/\s+/g, ' ')
     .trim()
+
   return cleaned || 'Expense'
 }
 
