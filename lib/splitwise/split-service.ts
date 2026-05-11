@@ -69,26 +69,51 @@ async function findGroup(phone: string, groupName?: string): Promise<Group | nul
   return (data?.[0] as Group) || null
 }
 
+async function nextFreshGroupName(phone: string, requestedName: string) {
+  const { data } = await supabaseAdmin
+    .from('split_groups')
+    .select('name')
+    .eq('owner_phone', phone)
+    .ilike('name', `${requestedName}%`)
+
+  const existing = new Set((data || []).map((row: any) => String(row.name || '').toLowerCase()))
+  if (!existing.has(requestedName.toLowerCase())) return requestedName
+
+  let index = 2
+  while (existing.has(`${requestedName} #${index}`.toLowerCase())) index++
+  return `${requestedName} #${index}`
+}
+
+async function insertGroup(phone: string, groupName: string, members: string[] = []) {
+  const { data, error } = await supabaseAdmin
+    .from('split_groups')
+    .insert({ owner_phone: phone, name: groupName, currency: 'INR' })
+    .select('id,name,owner_phone,currency')
+    .single()
+  if (error) throw error
+  const group = data as Group
+  await upsertMembers(group.id, phone, members)
+  return group
+}
+
+async function createFreshGroup(phone: string, groupName: string, members: string[] = []) {
+  const freshName = await nextFreshGroupName(phone, groupName)
+  return insertGroup(phone, freshName, members)
+}
+
+async function upsertMembers(groupId: string, phone: string, members: string[] = []) {
+  const normalized = Array.from(new Set(['Me', ...members.map(normalizeMemberName).filter(Boolean)]))
+  if (!normalized.length) return
+  await supabaseAdmin.from('split_group_members').upsert(
+    normalized.map((name) => ({ group_id: groupId, name, phone: name === 'Me' ? phone : null })),
+    { onConflict: 'group_id,name' }
+  )
+}
+
 async function ensureGroup(phone: string, groupName?: string, members: string[] = []) {
   let group = await findGroup(phone, groupName)
-  if (!group) {
-    const name = groupName || 'My Split Group'
-    const { data, error } = await supabaseAdmin
-      .from('split_groups')
-      .insert({ owner_phone: phone, name, currency: 'INR' })
-      .select('id,name,owner_phone,currency')
-      .single()
-    if (error) throw error
-    group = data as Group
-  }
-
-  const normalized = Array.from(new Set(['Me', ...members.map(normalizeMemberName).filter(Boolean)]))
-  if (normalized.length) {
-    await supabaseAdmin.from('split_group_members').upsert(
-      normalized.map((name) => ({ group_id: group!.id, name, phone: name === 'Me' ? phone : null })),
-      { onConflict: 'group_id,name' }
-    )
-  }
+  if (!group) group = await insertGroup(phone, groupName || 'My Split Group', members)
+  else await upsertMembers(group.id, phone, members)
 
   await supabaseAdmin.from('split_groups').update({ updated_at: new Date().toISOString() }).eq('id', group.id)
   return group
@@ -219,7 +244,7 @@ export async function handleSplitCommand(phone: string, text: string) {
   }
 
   if (intent.type === 'create_group') {
-    const group = await ensureGroup(phone, intent.groupName, intent.members)
+    const group = await createFreshGroup(phone, intent.groupName, intent.members)
     const members = await getMembers(group.id)
     return `✅ *AskGogo Split created*\n\n*${group.name}*\nMembers: ${members.map((m) => m.name).join(', ')}\n\nAdd your first expense like:\n_Add expense 2400 hotel paid by me in ${group.name} split equally_\n\nInvite friends like:\n_Invite Rahul 9876543210 to ${group.name}_`
   }
