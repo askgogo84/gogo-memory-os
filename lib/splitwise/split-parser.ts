@@ -1,6 +1,24 @@
+export type SplitAllocation = {
+  member: string
+  value: number
+}
+
+export type SplitMode = 'equal' | 'unequal' | 'percent' | 'shares'
+
 export type SplitIntent =
   | { type: 'create_group'; groupName: string; members: string[] }
-  | { type: 'add_equal_expense'; groupName?: string; amount: number; description: string; paidBy: string; members: string[]; rawText: string }
+  | { type: 'join'; inviteCode: string }
+  | {
+      type: 'add_equal_expense'
+      groupName?: string
+      amount: number
+      description: string
+      paidBy: string
+      members: string[]
+      splitMode: SplitMode
+      allocations: SplitAllocation[]
+      rawText: string
+    }
   | { type: 'show_balance'; groupName?: string }
   | { type: 'simplify'; groupName?: string }
   | { type: 'settle'; groupName?: string; from: string; to: string; amount: number; rawText: string }
@@ -43,11 +61,67 @@ function cleanGroupName(value?: string) {
   return clean || undefined
 }
 
+function parseAllocationSegments(text: string) {
+  const afterComma = text.includes(',') ? text.split(',').slice(1).join(',') : ''
+  const afterSplit = text.match(/\bsplit\s+(?:as|by|between|among|with)?\s*(.+)$/i)?.[1] || ''
+  const allocationText = afterComma || afterSplit
+
+  const segments = allocationText
+    .split(/,|\band\b|\+/i)
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .filter((segment) => !/paid\s+by|\bin\s+[a-z]/i.test(segment))
+
+  const percent: SplitAllocation[] = []
+  const shares: SplitAllocation[] = []
+  const unequal: SplitAllocation[] = []
+
+  for (const segment of segments) {
+    const percentMatch = segment.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*%$/i)
+    if (percentMatch) {
+      percent.push({ member: normalizeMemberName(percentMatch[1]), value: Number(percentMatch[2]) })
+      continue
+    }
+
+    const shareMatch = segment.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*shares?$/i)
+    if (shareMatch) {
+      shares.push({ member: normalizeMemberName(shareMatch[1]), value: Number(shareMatch[2]) })
+      continue
+    }
+
+    const amountMatch = segment.match(/^(.+?)\s+(?:rs\.?|inr|₹)?\s*(\d+(?:\.\d+)?)$/i)
+    if (amountMatch) {
+      unequal.push({ member: normalizeMemberName(amountMatch[1]), value: Number(amountMatch[2]) })
+    }
+  }
+
+  if (percent.length) return { splitMode: 'percent' as SplitMode, allocations: percent.filter((a) => a.member) }
+  if (shares.length) return { splitMode: 'shares' as SplitMode, allocations: shares.filter((a) => a.member) }
+  if (unequal.length) return { splitMode: 'unequal' as SplitMode, allocations: unequal.filter((a) => a.member) }
+  return { splitMode: 'equal' as SplitMode, allocations: [] }
+}
+
+function extractDescription(text: string) {
+  const cleaned = text
+    .replace(/(?:rs\.?|inr|₹)?\s*\d+(?:\.\d+)?/i, '')
+    .replace(/paid\s+by\s+[a-zA-Z][\w\s]*/i, '')
+    .replace(/split\s+(?:equally\s+)?(?:with|among|between|as|by).*/i, '')
+    .replace(/,\s*(me|[a-zA-Z][\w\s]*?)\s+(?:rs\.?|inr|₹)?\s*\d+(?:\.\d+)?\s*%?/gi, '')
+    .replace(/,\s*(me|[a-zA-Z][\w\s]*?)\s+\d+(?:\.\d+)?\s*shares?/gi, '')
+    .replace(/\s+in\s+[a-zA-Z][\w\s-]*/i, '')
+    .replace(/^(add expense|expense|spent|paid|split|bill)\s*/i, '')
+    .trim()
+  return cleaned || 'Expense'
+}
+
 export function parseSplitIntent(input: string): SplitIntent {
   const text = String(input || '').trim()
   const lower = text.toLowerCase().trim()
 
   if (!text) return null
+
+  const joinMatch = text.match(/^(?:join|accept)\s+(?:split\s+)?([a-f0-9]{8,32})$/i)
+  if (joinMatch) return { type: 'join', inviteCode: joinMatch[1] }
 
   const createMatch = text.match(/^(?:create|start|new)\s+(?:group|trip|event)\s+(.+?)(?:\s+with\s+(.+))?$/i)
   if (createMatch) {
@@ -100,30 +174,33 @@ export function parseSplitIntent(input: string): SplitIntent {
   if (reverseChartMatch) return { type: 'share_chart', groupName: cleanGroupName(reverseChartMatch[1]) }
 
   const amount = parseAmount(text)
-  const expenseLike = /\b(split|expense|paid|spent|add expense|bill|cab|hotel|dinner|lunch|breakfast|fuel|stay|tickets?)\b/i.test(text)
+  const expenseLike = /\b(split|expense|paid|spent|add expense|bill|cab|hotel|dinner|lunch|breakfast|fuel|stay|tickets?|rent)\b/i.test(text)
   if (amount && expenseLike) {
-    const paidMatch = text.match(/paid\s+by\s+([a-zA-Z][\w\s]*?)(?:\s+(?:split|with|among|between|in|for)|$)/i)
+    const paidMatch = text.match(/paid\s+by\s+([a-zA-Z][\w\s]*?)(?:\s+(?:split|with|among|between|in|for)|,|$)/i)
     const paidBy = normalizeMemberName(paidMatch?.[1] || (/\bpaid\b/i.test(text) ? 'Me' : 'Me'))
 
-    const inMatch = text.match(/\s+in\s+([a-zA-Z][\w\s-]*?)(?:\s+split|\s+with|\s+among|\s+between|$)/i)
+    const inMatch = text.match(/\s+in\s+([a-zA-Z][\w\s-]*?)(?:\s+split|\s+with|\s+among|\s+between|,|$)/i)
     const groupName = cleanGroupName(inMatch?.[1])
 
+    const allocationResult = parseAllocationSegments(text)
     const membersMatch = text.match(/(?:split\s+(?:equally\s+)?(?:with|among|between)|with|among|between)\s+(.+?)(?:\s+for\s+|\s+in\s+|$)/i)
     let members = splitMembers(membersMatch?.[1] || '')
+
+    if (allocationResult.allocations.length) members = allocationResult.allocations.map((a) => a.member)
     if (!members.length || /\ball\b/i.test(membersMatch?.[1] || '')) members = []
-    if (members.length && !members.some((m) => m.toLowerCase() === paidBy.toLowerCase())) members.unshift(paidBy)
+    if (allocationResult.splitMode === 'equal' && members.length && !members.some((m) => m.toLowerCase() === paidBy.toLowerCase())) members.unshift(paidBy)
 
-    let description = text
-      .replace(/(?:rs\.?|inr|₹)?\s*\d+(?:\.\d+)?/i, '')
-      .replace(/paid\s+by\s+[a-zA-Z][\w\s]*/i, '')
-      .replace(/split\s+(?:equally\s+)?(?:with|among|between).*/i, '')
-      .replace(/\s+in\s+[a-zA-Z][\w\s-]*/i, '')
-      .replace(/^(add expense|expense|spent|paid|split|bill)\s*/i, '')
-      .trim()
-
-    if (!description) description = 'Expense'
-
-    return { type: 'add_equal_expense', amount, description, paidBy, members, groupName, rawText: text }
+    return {
+      type: 'add_equal_expense',
+      amount,
+      description: extractDescription(text),
+      paidBy,
+      members,
+      groupName,
+      splitMode: allocationResult.splitMode,
+      allocations: allocationResult.allocations,
+      rawText: text,
+    }
   }
 
   return null
