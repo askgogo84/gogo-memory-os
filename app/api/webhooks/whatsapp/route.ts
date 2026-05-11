@@ -308,33 +308,21 @@ export async function POST(req: NextRequest) {
     }
 
     if (isSkinCheckCaption(text)) {
-      const recentImage = await getRecentImageContext(resolvedUser.telegramId)
+      await savePendingSkinCheckRequest(resolvedUser.telegramId)
 
-      if (!recentImage) {
-        await savePendingSkinCheckRequest(resolvedUser.telegramId)
-        const reply = `âœ¨ *AskGogo Skin Check*\n\nGot it. Send a clear front-facing selfie now and Iâ€™ll run Skin Check automatically.\n\nFor best results:\nâ€¢ natural light\nâ€¢ no heavy filter\nâ€¢ face visible clearly\nâ€¢ no medical diagnosis â€” skincare observation only`
-        await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
-        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-        await sendWhatsAppMessage(from, reply)
-        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
-      }
+      const reply = `? *AskGogo Skin Check*
 
-      try {
-        await sendWhatsAppMessage(from, 'âœ¨ Running AskGogo Skin Checkâ€¦')
-        const result = await buildSkinCheckFromImage({
-          telegramId: resolvedUser.telegramId,
-          mediaUrl: recentImage.mediaUrl,
-          contentType: recentImage.contentType,
-          userCaption: text,
-          userName: resolvedUser.name || profileName,
-        })
-        await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
-        await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
-        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: result.reply })
-      } catch (error: any) {
-        console.error('WHATSAPP_SKIN_CHECK_RECENT_IMAGE_FAILED:', error?.message || error)
-        await sendWhatsAppMessage(from, `I couldn't run Skin Check on the previous image.\n\nPlease resend the selfie with caption: *skin check*.`)
-      }
+Please upload a fresh selfie now. I’ll run Skin Check on the new photo only.
+
+For best results:
+• natural light
+• no heavy filter
+• face visible clearly
+• no medical diagnosis — skincare observation only`
+
+      await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, reply)
 
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
@@ -491,4 +479,6 @@ export async function POST(req: NextRequest) {
     return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
   }
 }
+
+
 
