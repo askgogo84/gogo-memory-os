@@ -53,7 +53,7 @@ import {
   isSplitReceiptCaption,
   scanReceiptFromImage,
 } from '@/lib/splitwise/receipt-reader'
-import { handleSplitCommand } from '@/lib/splitwise/split-service'
+import { addScannedReceiptToSplit, handleReceiptItemizeCommand, isReceiptItemizeCommand } from '@/lib/splitwise/receipt-itemizer'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -193,11 +193,6 @@ async function sendThinkingIfNeeded(from: string, text: string) {
   try { await sendWhatsAppMessage(from, 'Working on it...') } catch (error: any) { console.error('WHATSAPP_THINKING_TEXT_FAILED:', { error: error?.message || error }) }
 }
 
-function buildReceiptSplitCommand(receipt: { total: number; merchant: string }, groupName?: string) {
-  const description = receipt.merchant || 'Receipt'
-  return `Add expense ${receipt.total} ${description} paid by me${groupName ? ` in ${groupName}` : ''} split equally`
-}
-
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const mode = url.searchParams.get('hub.mode')
@@ -247,8 +242,8 @@ export async function POST(req: NextRequest) {
           await sendWhatsAppMessage(from, 'Scanning receipt for AskGogo Split...')
           const receipt = await scanReceiptFromImage({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
           const groupName = extractReceiptGroupName(bodyText)
-          const splitReply = await handleSplitCommand(from, buildReceiptSplitCommand(receipt, groupName))
-          const reply = `${buildReceiptSummary(receipt)}\n\n✅ *Saved to AskGogo Split*\n\n${splitReply || 'Receipt saved.'}\n\nNext: send *itemize receipt* to assign items to people.`
+          const saved = await addScannedReceiptToSplit({ ownerPhone: from, groupName, receipt, rawCaption: bodyText })
+          const reply = `${buildReceiptSummary(receipt)}\n\n${saved.reply}\n\nNext: send *itemize receipt Rahul had pizza, Priya had pasta* to assign items to people.`
           await saveConversation(resolvedUser.telegramId, 'user', `[split receipt image] ${bodyText}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', reply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[split receipt image]', reply })
@@ -299,6 +294,16 @@ export async function POST(req: NextRequest) {
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.\nYou can also send a short voice note, type your request, or upload a photo/screenshot of your notes.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    if (isReceiptItemizeCommand(text)) {
+      const reply = await handleReceiptItemizeCommand(from, text)
+      if (reply) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWhatsAppMessage(from, reply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
     }
 
     const skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
