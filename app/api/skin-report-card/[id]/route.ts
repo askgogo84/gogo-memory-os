@@ -41,40 +41,73 @@ function list(items: any[], limit: number, fallback: string[] = []) {
   return values.length ? values : fallback.slice(0, limit)
 }
 
-function bullet(items: string[], x: number, y: number, maxLen = 50, color = '#dfd3bc') {
+function splitLine(text: string, max = 34) {
+  const value = short(text, max)
+  const words = value.split(' ')
+  const lines: string[] = []
+  let current = ''
+  for (const word of words) {
+    if ((current + ' ' + word).trim().length > Math.floor(max / 2) && current) {
+      lines.push(current)
+      current = word
+    } else {
+      current = (current + ' ' + word).trim()
+    }
+  }
+  if (current) lines.push(current)
+  return lines.slice(0, 2)
+}
+
+function bulletText(items: string[], x: number, y: number, maxLen = 42, gap = 26, color = '#d8c5a7') {
   return items.map((item, index) => {
-    const yy = y + index * 34
-    return `<circle cx="${x}" cy="${yy - 6}" r="4" fill="#c59a60"/><text x="${x + 16}" y="${yy}" class="body" fill="${color}">${esc(short(item, maxLen))}</text>`
+    const yy = y + index * gap
+    return `<circle cx="${x}" cy="${yy - 5}" r="4" fill="#c99a5d"/><text x="${x + 14}" y="${yy}" class="body" fill="${color}">${esc(short(item, maxLen))}</text>`
   }).join('')
 }
 
-function metric(label: string, value: string, x: number, y: number, w = 132) {
-  return `<rect x="${x}" y="${y}" width="${w}" height="90" rx="16" fill="#151614" stroke="#353027"/>
-<text x="${x + w / 2}" y="${y + 30}" text-anchor="middle" class="tiny" fill="#9b8b74">${esc(label)}</text>
-<text x="${x + w / 2}" y="${y + 64}" text-anchor="middle" class="metric" fill="#f0dfc2">${esc(short(value, 15))}</text>`
+function metric(label: string, value: string, x: number, y: number, w: number) {
+  return `<rect x="${x}" y="${y}" width="${w}" height="78" rx="12" fill="#151614" stroke="#343027"/>
+<text x="${x + w / 2}" y="${y + 24}" text-anchor="middle" class="tiny" fill="#9b8b74">${esc(label)}</text>
+<text x="${x + w / 2}" y="${y + 55}" text-anchor="middle" class="metric" fill="#f1dfc1">${esc(short(value, 15))}</text>`
 }
 
-function bar(label: string, value: number, x: number, y: number, color: string) {
-  const width = Math.max(12, Math.min(210, Math.round((value / 100) * 210)))
-  return `<text x="${x}" y="${y}" class="body" fill="#dfd3bc">${esc(label)}</text>
-<rect x="${x + 145}" y="${y - 15}" width="210" height="15" rx="8" fill="#34322d"/>
-<rect x="${x + 145}" y="${y - 15}" width="${width}" height="15" rx="8" fill="${color}"/>
-<text x="${x + 370}" y="${y}" class="body" fill="#c9ad78">${value}%</text>`
+function concern(label: string, x: number, y: number, active = true) {
+  return `<circle cx="${x}" cy="${y}" r="23" fill="${active ? '#211b15' : '#131513'}" stroke="${active ? '#b88a55' : '#393a35'}"/>
+<text x="${x}" y="${y + 7}" text-anchor="middle" font-size="18" font-weight="900" fill="${active ? '#c99a5d' : '#777'}">${esc(label[0])}</text>
+<text x="${x}" y="${y + 42}" text-anchor="middle" class="micro" fill="${active ? '#c9ad82' : '#777'}">${esc(label)}</text>`
+}
+
+function slider(label: string, percent: number, x: number, y: number, color: string) {
+  const knob = x + Math.round((150 * Math.max(0, Math.min(100, percent))) / 100)
+  return `<text x="${x + 75}" y="${y}" text-anchor="middle" class="tiny" fill="#b88a55">${esc(label)}</text>
+<line x1="${x}" y1="${y + 22}" x2="${x + 150}" y2="${y + 22}" stroke="#545047" stroke-width="4" stroke-linecap="round"/>
+<circle cx="${knob}" cy="${y + 22}" r="8" fill="${color}"/>
+<text x="${x}" y="${y + 44}" class="micro" fill="#77736c">LOW</text>
+<text x="${x + 128}" y="${y + 44}" class="micro" fill="#77736c">HIGH</text>`
+}
+
+function routineStep(title: string, tag: string, x: number, y: number) {
+  const lines = splitLine(title, 24)
+  return `<rect x="${x + 18}" y="${y}" width="46" height="58" rx="12" fill="#ded5c2" stroke="#a9987a"/>
+<path d="M${x + 26} ${y + 8} h30" stroke="#f6efe2" stroke-width="3" opacity=".55"/>
+${lines.map((line, i) => `<text x="${x + 41}" y="${y + 76 + i * 12}" text-anchor="middle" class="micro" fill="#ded2bc">${esc(line)}</text>`).join('')}
+<rect x="${x}" y="${y + 104}" width="82" height="18" rx="9" fill="#b99158"/>
+<text x="${x + 41}" y="${y + 117}" text-anchor="middle" class="tag">${esc(tag)}</text>`
 }
 
 function faceImage(id: string, href: string | null, x: number, y: number, w: number, h: number, overlay = false) {
-  const img = href
-    ? `<image href="${href}" x="${x - w * 0.30}" y="${y - h * 0.18}" width="${w * 1.60}" height="${h * 1.60}" preserveAspectRatio="xMidYMin slice" clip-path="url(#${id})"/>`
-    : `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="22" fill="#211a16"/><text x="${x + w / 2}" y="${y + h / 2}" text-anchor="middle" class="body" fill="#c9a66f">SELFIE</text>`
+  const image = href
+    ? `<image href="${href}" x="${x - w * 0.18}" y="${y - h * 0.20}" width="${w * 1.36}" height="${h * 1.45}" preserveAspectRatio="xMidYMin slice" clip-path="url(#${id})"/>`
+    : `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="#231b16"/><text x="${x + w / 2}" y="${y + h / 2}" text-anchor="middle" class="body" fill="#c99a5d">SELFIE</text>`
 
-  const overlays = overlay ? `<ellipse cx="${x + w * .50}" cy="${y + h * .24}" rx="${w * .23}" ry="${h * .075}" fill="#d9a259" opacity=".30" stroke="#e2bf85"/>
-<ellipse cx="${x + w * .35}" cy="${y + h * .46}" rx="${w * .16}" ry="${h * .10}" fill="#7da8c8" opacity=".24" stroke="#a9bfca"/>
-<ellipse cx="${x + w * .65}" cy="${y + h * .46}" rx="${w * .16}" ry="${h * .10}" fill="#7da8c8" opacity=".24" stroke="#a9bfca"/>
-<rect x="${x + w * .43}" y="${y + h * .35}" width="${w * .14}" height="${h * .30}" rx="20" fill="#c99a5d" opacity=".20"/>
-<ellipse cx="${x + w * .50}" cy="${y + h * .82}" rx="${w * .25}" ry="${h * .07}" fill="#7d9f66" opacity=".25" stroke="#8aa36c"/>` : ''
+  const overlayShapes = overlay ? `<ellipse cx="${x + w * .50}" cy="${y + h * .22}" rx="${w * .25}" ry="${h * .075}" fill="#d9a259" opacity=".30" stroke="#e2bf85"/>
+<ellipse cx="${x + w * .33}" cy="${y + h * .44}" rx="${w * .15}" ry="${h * .10}" fill="#7da8c8" opacity=".25" stroke="#a9bfca"/>
+<ellipse cx="${x + w * .67}" cy="${y + h * .44}" rx="${w * .15}" ry="${h * .10}" fill="#7da8c8" opacity=".25" stroke="#a9bfca"/>
+<rect x="${x + w * .43}" y="${y + h * .35}" width="${w * .14}" height="${h * .30}" rx="18" fill="#c99a5d" opacity=".20"/>
+<ellipse cx="${x + w * .50}" cy="${y + h * .82}" rx="${w * .25}" ry="${h * .07}" fill="#7d9f66" opacity=".26" stroke="#8aa36c"/>` : ''
 
-  return `<clipPath id="${id}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="22"/></clipPath>
-<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="22" fill="#111210" stroke="#5a4430"/>${img}${overlays}`
+  return `<clipPath id="${id}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14"/></clipPath>
+<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="#111210" stroke="#5a4430"/>${image}${overlayShapes}`
 }
 
 async function getImageDataUrl(report: any) {
@@ -96,45 +129,72 @@ async function buildSvg(report: any) {
   const sensitivity = short(score(report, 'sensitivity', 'low'), 16)
   const skinType = short(report.skin_type || 'Combination', 22)
   const confidence = short(report.confidence_level || 'medium', 14)
+  const observations = list(report.observations_json || [], 4, ['Slight shine on forehead and T-zone', 'Mild darkness under eyes', 'Overall even skin tone', 'Texture appears smooth'])
+  const am = list(report.am_routine_json || [], 5, ['Gentle cleanser', 'Hydrating serum', 'Niacinamide serum', 'Light moisturiser', 'SPF 50 sunscreen'])
+  const pm = list(report.pm_routine_json || [], 4, ['Gentle cleanser', 'Niacinamide serum', 'Barrier serum', 'Light moisturiser'])
+  const cautions = list(report.cautions_json || [], 4, ['Heavy creams on T-zone', 'Skipping sunscreen', 'Over-exfoliating', 'Harsh scrubs'])
 
-  const observations = list(report.observations_json || [], 5, ['T-zone shine visible', 'Mild under-eye darkness', 'Even overall tone', 'Skin barrier appears stable'])
-  const am = list(report.am_routine_json || [], 4, ['Gentle cleanser', 'Hydrating serum', 'Light moisturizer', 'SPF 50 sunscreen'])
-  const pm = list(report.pm_routine_json || [], 4, ['Gentle cleanser', 'Repair treatment', 'Barrier serum', 'Light moisturizer'])
-  const cautions = list(report.cautions_json || [], 4, ['Avoid harsh exfoliation', 'Avoid skipping sunscreen', 'Avoid heavy fragrance', 'Avoid too many actives'])
-
-  const forehead = short(zone(report, 'forehead', 'Slight shine visible'), 35)
-  const underEye = short(zone(report, 'under-eye') || zone(report, 'under_eye') || 'Mild darkness visible', 35)
-  const cheeks = short(zone(report, 'cheeks', 'Even tone observed'), 35)
-  const tzone = short(zone(report, 'nose_t-zone') || zone(report, 'nose___t-zone') || zone(report, 'nose__t-zone') || 'Mild oiliness visible', 35)
-  const chin = short(zone(report, 'chin') || zone(report, 'jawline') || 'Balanced / even texture', 35)
+  const forehead = short(zone(report, 'forehead', 'Slight shine visible'), 28)
+  const underEye = short(zone(report, 'under-eye') || zone(report, 'under_eye') || 'Mild darkness visible', 28)
+  const cheeks = short(zone(report, 'cheeks', 'Even tone observed'), 28)
+  const tzone = short(zone(report, 'nose_t-zone') || zone(report, 'nose___t-zone') || zone(report, 'nose__t-zone') || 'Mild oiliness visible', 28)
+  const chin = short(zone(report, 'chin') || zone(report, 'jawline') || 'Balanced / smooth', 28)
   const dateLabel = report?.created_at ? new Date(report.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1600" viewBox="0 0 1080 1600">
-<defs><style>.title{font:700 42px Georgia,serif;letter-spacing:4px;fill:#c49a61}.sub{font:800 15px Arial,sans-serif;letter-spacing:5px;fill:#8b8f89}.section{font:900 20px Arial,sans-serif;letter-spacing:1.4px;fill:#c59a60}.tiny{font:900 10px Arial,sans-serif;letter-spacing:.8px}.metric{font:900 17px Arial,sans-serif}.body{font:700 14px Arial,sans-serif}.note{font:900 14px Arial,sans-serif;fill:#baa37f}</style></defs>
-<rect width="1080" height="1600" fill="#080a09"/><circle cx="940" cy="80" r="310" fill="#123d30" opacity=".45"/><circle cx="110" cy="1500" r="330" fill="#143126" opacity=".42"/>
-<text x="540" y="78" text-anchor="middle" class="title">SKIN ANALYSIS &amp; CONSULTATION</text><text x="540" y="116" text-anchor="middle" class="sub">PERSONALIZED SKIN INSIGHTS</text><text x="1000" y="64" text-anchor="end" class="body" fill="#ceb386">${esc(dateLabel)}</text>
+  const oilPercent = oiliness.toLowerCase().includes('high') ? 75 : oiliness.toLowerCase().includes('moderate') ? 55 : 35
+  const texturePercent = texture.toLowerCase().includes('smooth') ? 28 : texture.toLowerCase().includes('mild') ? 48 : 60
+  const sensitivityPercent = sensitivity.toLowerCase().includes('low') ? 28 : sensitivity.toLowerCase().includes('moderate') ? 52 : 72
 
-<rect x="38" y="150" width="430" height="505" rx="26" fill="#111210" stroke="#2b2d29"/><text x="62" y="188" class="section">SELFIE PREVIEW</text>${faceImage('mainFace', img, 68, 215, 370, 400, false)}
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
+<defs><style>.title{font:700 43px Georgia,serif;letter-spacing:4px;fill:#c49a61}.sub{font:800 15px Arial,sans-serif;letter-spacing:5px;fill:#8b8f89}.section{font:900 17px Arial,sans-serif;letter-spacing:1.2px;fill:#c59a60}.tiny{font:900 9px Arial,sans-serif;letter-spacing:.6px}.metric{font:900 15px Arial,sans-serif}.body{font:700 12px Arial,sans-serif}.micro{font:700 8px Arial,sans-serif}.tag{font:900 8px Arial,sans-serif;fill:#121411}.note{font:900 13px Arial,sans-serif;fill:#baa37f}</style></defs>
+<rect width="1080" height="1350" fill="#080a09"/><circle cx="970" cy="80" r="310" fill="#123d30" opacity=".42"/>
+<text x="540" y="70" text-anchor="middle" class="title">SKIN ANALYSIS &amp; CONSULTATION</text>
+<text x="540" y="104" text-anchor="middle" class="sub">PERSONALIZED SKIN INSIGHTS</text>
+<text x="1010" y="58" text-anchor="end" class="body" fill="#ceb386">${esc(dateLabel)}</text>
 
-<rect x="492" y="150" width="550" height="505" rx="26" fill="#111210" stroke="#2b2d29"/><text x="516" y="188" class="section">FACIAL MAP</text>${faceImage('mapFace', img, 520, 215, 240, 305, true)}
-${bullet([`Forehead: ${forehead}`, `Under-eye: ${underEye}`, `Cheeks: ${cheeks}`, `Nose / T-zone: ${tzone}`, `Chin / Jawline: ${chin}`], 790, 245, 34)}
-<text x="516" y="570" class="section">KEY OBSERVATIONS</text>${bullet(observations.slice(0, 4), 528, 605, 52)}
+<rect x="38" y="128" width="420" height="348" rx="18" fill="#111210" stroke="#2b2d29"/>
+${faceImage('main', img, 58, 152, 380, 300, false)}
 
-<rect x="38" y="680" width="1004" height="155" rx="26" fill="#111210" stroke="#2b2d29"/><text x="62" y="718" class="section">AT A GLANCE</text>
-${metric('SKIN TYPE', skinType, 64, 735, 130)}${metric('OILINESS', oiliness, 210, 735, 120)}${metric('TEXTURE', texture, 346, 735, 120)}${metric('HYDRATION', `${hydration}%`, 482, 735, 120)}${metric('BARRIER', `${barrier}%`, 618, 735, 120)}${metric('SENSITIVITY', sensitivity, 754, 735, 130)}${metric('CONFIDENCE', confidence, 900, 735, 110)}
+<rect x="478" y="128" width="564" height="348" rx="18" fill="#111210" stroke="#2b2d29"/>
+<text x="500" y="160" class="section">FACIAL MAP</text>
+${faceImage('map', img, 500, 178, 230, 225, true)}
+${bulletText([`FOREHEAD  ${forehead}`, `UNDER-EYE  ${underEye}`, `CHEEKS  ${cheeks}`, `NOSE / T-ZONE  ${tzone}`, `CHIN / JAWLINE  ${chin}`], 762, 200, 30, 28)}
+<text x="500" y="442" class="section">AT A GLANCE</text>
+${metric('SKIN TYPE', skinType, 500, 456, 95)}${metric('OILINESS', oiliness, 604, 456, 95)}${metric('TEXTURE', texture, 708, 456, 95)}${metric('HYDRATION', `${hydration}%`, 812, 456, 95)}${metric('BARRIER', `${barrier}%`, 916, 456, 95)}
 
-<rect x="38" y="860" width="1004" height="165" rx="26" fill="#111210" stroke="#2b2d29"/><text x="62" y="898" class="section">SKIN METRICS</text>
-${bar('Hydration', hydration, 72, 945, '#2f9b80')}${bar('Barrier support', barrier, 72, 990, '#c69b50')}${bar('Oiliness', oiliness.toLowerCase().includes('moderate') ? 55 : oiliness.toLowerCase().includes('high') ? 75 : 35, 560, 945, '#6485b2')}${bar('Texture', texture.toLowerCase().includes('smooth') ? 28 : 55, 560, 990, '#c36d67')}
+<rect x="38" y="495" width="1004" height="122" rx="18" fill="#111210" stroke="#2b2d29"/>
+<text x="60" y="526" class="section">CONCERNS</text>
+${concern('TEXTURE', 80, 565, true)}${concern('REDNESS', 172, 565, false)}${concern('DEHYDRATION', 264, 565, true)}${concern('FINE LINES', 356, 565, false)}${concern('PORES', 448, 565, true)}
+${slider('TEXTURE', texturePercent, 568, 542, '#c59a60')}${slider('PORES', oilPercent, 746, 542, '#6485b2')}${slider('SENSITIVITY', sensitivityPercent, 924, 542, '#c36d67')}
 
-<rect x="38" y="1050" width="654" height="250" rx="26" fill="#111210" stroke="#2b2d29"/><text x="62" y="1088" class="section">CURRENT VS TARGET BALANCE</text>
-${faceImage('currentFace', img, 68, 1120, 150, 140, false)}${bullet(observations.slice(0, 4), 245, 1145, 34)}<text x="410" y="1210" font-size="42" font-weight="900" fill="#c89a58">&gt;</text>${faceImage('targetFace', img, 462, 1120, 150, 140, true)}${bullet(['Smoother visible texture', 'Hydrated glow', 'Calmer tone', 'Stronger skin barrier'], 635, 1145, 28)}
+<rect x="38" y="636" width="730" height="200" rx="18" fill="#111210" stroke="#2b2d29"/>
+<text x="60" y="668" class="section">CURRENT VS TARGET BALANCE</text>
+${faceImage('current', img, 62, 692, 142, 112, false)}
+${bulletText(observations.slice(0, 4), 232, 704, 28, 24)}
+<text x="425" y="764" font-size="38" font-weight="900" fill="#c89a58">&gt;</text>
+${faceImage('target', img, 468, 692, 142, 112, true)}
+${bulletText(['Smoother texture', 'Hydrated glow', 'Calmer tone', 'Stronger barrier'], 635, 704, 24, 24)}
 
-<rect x="714" y="1050" width="328" height="250" rx="26" fill="#111210" stroke="#3b2b29"/><text x="738" y="1088" class="section">AVOID / CAUTION</text>${cautions.slice(0,4).map((item,i)=>`<circle cx="750" cy="${1125+i*40}" r="14" fill="none" stroke="#6e322f"/><text x="750" y="${1131+i*40}" text-anchor="middle" font-size="18" font-weight="900" fill="#d16c60">!</text><text x="775" y="${1131+i*40}" class="body" fill="#cf8478">${esc(short(item,28))}</text>`).join('')}
+<rect x="790" y="636" width="252" height="200" rx="18" fill="#111210" stroke="#3b2b29"/>
+<text x="812" y="668" class="section">AVOID / CAUTION</text>
+${cautions.slice(0,4).map((item,i)=>`<circle cx="824" cy="${704+i*34}" r="13" fill="none" stroke="#6e322f"/><text x="824" y="${710+i*34}" text-anchor="middle" font-size="17" font-weight="900" fill="#d16c60">!</text><text x="848" y="${710+i*34}" class="body" fill="#cf8478">${esc(short(item,22))}</text>`).join('')}
 
-<rect x="38" y="1325" width="489" height="190" rx="26" fill="#111210" stroke="#2b2d29"/><text x="62" y="1363" class="section">AM ROUTINE</text>${am.slice(0,4).map((item,i)=>`<text x="78" y="${1405+i*30}" class="body" fill="#e6d8c0">${i+1}. ${esc(short(item,48))}</text>`).join('')}
-<rect x="553" y="1325" width="489" height="190" rx="26" fill="#111210" stroke="#2b2d29"/><text x="577" y="1363" class="section">PM ROUTINE</text>${pm.slice(0,4).map((item,i)=>`<text x="593" y="${1405+i*30}" class="body" fill="#e6d8c0">${i+1}. ${esc(short(item,48))}</text>`).join('')}
+<rect x="38" y="856" width="730" height="226" rx="18" fill="#111210" stroke="#2b2d29"/>
+<text x="60" y="888" class="section">PERSONALIZED ROUTINE</text>
+<text x="70" y="946" class="section" fill="#d5b279">AM</text>
+${routineStep(am[0] || 'Gentle cleanser', 'CLEANSE', 135, 910)}${routineStep(am[1] || 'Hydrating serum', 'HYDRATE', 245, 910)}${routineStep(am[2] || 'Niacinamide serum', 'BALANCE', 355, 910)}${routineStep(am[3] || 'Light moisturiser', 'REPAIR', 465, 910)}${routineStep(am[4] || 'SPF 50 sunscreen', 'PROTECT', 575, 910)}
+<text x="70" y="1038" class="section" fill="#8da6d8">PM</text>
+${routineStep(pm[0] || 'Gentle cleanser', 'CLEANSE', 135, 1000)}${routineStep(pm[1] || 'Niacinamide serum', 'RENEW', 245, 1000)}${routineStep(pm[2] || 'Barrier serum', 'SOOTHE', 355, 1000)}${routineStep(pm[3] || 'Light moisturiser', 'REPAIR', 465, 1000)}
 
-<rect x="38" y="1540" width="1004" height="40" rx="12" fill="#111210" stroke="#2b2d29"/><text x="64" y="1566" class="note" fill="#d4a66d">EXPERT NOTES</text><text x="220" y="1566" class="note">BARRIER FIRST</text><text x="390" y="1566" class="note">HYDRATE DAILY</text><text x="560" y="1566" class="note">PROTECT AM</text><text x="720" y="1566" class="note">CONSISTENCY WINS</text>
+<rect x="790" y="856" width="252" height="226" rx="18" fill="#111210" stroke="#2b2d29"/>
+<text x="812" y="888" class="section">EXPERT NOTES</text>
+${bulletText(['Barrier first', 'Hydrate daily', 'Protect every AM', 'Consistency wins'], 814, 928, 24, 28)}
+<text x="812" y="1060" class="micro" fill="#8d8370">Visual skincare observation only. Not medical advice.</text>
+
+<rect x="38" y="1102" width="1004" height="212" rx="18" fill="#111210" stroke="#2b2d29"/>
+<text x="60" y="1136" class="section">COMPLETE ANALYSIS</text>
+${bulletText([...observations.slice(0,4), `Skin type indicator: ${skinType}`, `Hydration: ${hydration}/100`, `Barrier support: ${barrier}/100`], 68, 1174, 76, 24)}
+<text x="68" y="1292" class="micro" fill="#8d8370">Generated by AskGogo Skin Check. For irritation, painful acne, rashes, bleeding, infection, sudden pigmentation or changing moles, consult a dermatologist.</text>
 </svg>`
 }
 
