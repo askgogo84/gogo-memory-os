@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  buildSkinReportCardSvg,
+  buildSkinReportCardImageResponse,
   getSkinCheckReportById,
 } from '@/lib/bot/services/skin-check-report-card'
 
@@ -17,13 +17,9 @@ export async function GET(
     return new NextResponse('Skin report not found', { status: 404 })
   }
 
-  const svg = buildSkinReportCardSvg(report)
+  const response = buildSkinReportCardImageResponse(report)
+  response.headers.set('Content-Type', 'image/png')
+  response.headers.set('Cache-Control', 'public, max-age=3600')
 
-  return new NextResponse(svg, {
-    status: 200,
-    headers: {
-      'Content-Type': 'image/svg+xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=3600',
-    },
-  })
+  return response
 }
