@@ -83,22 +83,34 @@ function pendingSkinCheckMarker() {
   return `[pending_skin_check] ${JSON.stringify({ createdAt: new Date().toISOString() })}`
 }
 
+function completedSkinCheckMarker() {
+  return `[completed_skin_check] ${JSON.stringify({ createdAt: new Date().toISOString() })}`
+}
+
 async function savePendingSkinCheckRequest(telegramId: number) {
   await saveConversation(telegramId, 'user', pendingSkinCheckMarker())
 }
 
-async function getRecentPendingSkinCheckRequest(telegramId: number) {
+async function clearPendingSkinCheckRequest(telegramId: number) {
+  await saveConversation(telegramId, 'user', completedSkinCheckMarker())
+}
+
+async function getLatestSkinCheckState(telegramId: number) {
   const { data } = await supabaseAdmin
     .from('conversations')
     .select('content, created_at')
     .eq('telegram_id', telegramId)
     .eq('role', 'user')
-    .like('content', '[pending_skin_check]%')
+    .or('content.like.[pending_skin_check]%,content.like.[completed_skin_check]%')
     .order('created_at', { ascending: false })
     .limit(1)
 
-  const latest = data?.[0]
-  if (!latest?.content) return false
+  return data?.[0] || null
+}
+
+async function getRecentPendingSkinCheckRequest(telegramId: number) {
+  const latest = await getLatestSkinCheckState(telegramId)
+  if (!latest?.content?.startsWith('[pending_skin_check]')) return false
 
   const createdAt = new Date(latest.created_at).getTime()
   const ageMinutes = (Date.now() - createdAt) / (1000 * 60)
@@ -228,6 +240,7 @@ export async function POST(req: NextRequest) {
             userCaption: bodyText || 'skin check',
             userName: resolvedUser.name || profileName,
           })
+          await clearPendingSkinCheckRequest(resolvedUser.telegramId)
           await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || 'skin check'}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
