@@ -32,7 +32,14 @@ function parseAmount(text: string) {
 }
 
 function cleanGroupName(value?: string) {
-  const clean = String(value || '').trim().replace(/^in\s+/i, '').replace(/\s+/g, ' ')
+  const clean = String(value || '')
+    .trim()
+    .replace(/^in\s+/i, '')
+    .replace(/^for\s+/i, '')
+    .replace(/^of\s+/i, '')
+    .replace(/^trip\s+/i, '')
+    .replace(/^group\s+/i, '')
+    .replace(/\s+/g, ' ')
   return clean || undefined
 }
 
@@ -74,14 +81,23 @@ export function parseSplitIntent(input: string): SplitIntent {
 
   if (/^(my splits?|past splits?|split history|recent splits?)$/i.test(lower)) return { type: 'history' }
 
-  const balanceMatch = text.match(/^(?:show\s+)?(?:balance|balances|who owes who|who owes whom)(?:\s+(?:for|in)\s+(.+))?$/i)
+  const balanceMatch = text.match(/^(?:show\s+)?(?:balance|balances|who owes who|who owes whom)(?:\s+(?:(?:for|in|of)\s+)?(.+))?$/i)
   if (balanceMatch) return { type: 'show_balance', groupName: cleanGroupName(balanceMatch[1]) }
 
-  const simplifyMatch = text.match(/^(?:simplify|settlement|settlements|simplify settlement|simplify debts)(?:\s+(?:for|in)\s+(.+))?$/i)
+  const reverseBalanceMatch = text.match(/^(.+?)\s+(?:balance|balances)$/i)
+  if (reverseBalanceMatch) return { type: 'show_balance', groupName: cleanGroupName(reverseBalanceMatch[1]) }
+
+  const simplifyMatch = text.match(/^(?:simplify|settlement|settlements|simplify settlement|simplify debts)(?:\s+(?:(?:for|in|of)\s+)?(.+))?$/i)
   if (simplifyMatch) return { type: 'simplify', groupName: cleanGroupName(simplifyMatch[1]) }
 
-  const chartMatch = text.match(/^(?:share|show|create|generate)?\s*(?:expense\s*)?(?:chart|summary card|split chart)(?:\s+(?:for|in)\s+(.+))?$/i)
+  const reverseSimplifyMatch = text.match(/^(.+?)\s+(?:settlement|settlements|simplify|simplified settlement)$/i)
+  if (reverseSimplifyMatch) return { type: 'simplify', groupName: cleanGroupName(reverseSimplifyMatch[1]) }
+
+  const chartMatch = text.match(/^(?:share|show|create|generate)?\s*(?:expense\s*)?(?:chart|summary card|split chart)(?:\s+(?:(?:for|in|of)\s+)?(.+))?$/i)
   if (chartMatch) return { type: 'share_chart', groupName: cleanGroupName(chartMatch[1]) }
+
+  const reverseChartMatch = text.match(/^(.+?)\s+(?:chart|summary card|split chart)$/i)
+  if (reverseChartMatch) return { type: 'share_chart', groupName: cleanGroupName(reverseChartMatch[1]) }
 
   const amount = parseAmount(text)
   const expenseLike = /\b(split|expense|paid|spent|add expense|bill|cab|hotel|dinner|lunch|breakfast|fuel|stay|tickets?)\b/i.test(text)
