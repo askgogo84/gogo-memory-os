@@ -6,19 +6,36 @@ const openai = new OpenAI({
 })
 
 export function isSkinCheckCaption(text: string | null | undefined) {
-  const lower = (text || '').toLowerCase().trim()
+  const lower = (text || '').toLowerCase().trim().replace(/\s+/g, ' ')
 
   return (
+    lower === 'skin' ||
     lower === 'skin check' ||
+    lower === 'check skin' ||
+    lower === 'skin scan' ||
+    lower === 'scan skin' ||
+    lower === 'scan my skin' ||
     lower === 'skin analysis' ||
     lower === 'face analysis' ||
+    lower === 'face check' ||
+    lower === 'check face' ||
+    lower === 'skin selfie' ||
+    lower === 'selfie skin check' ||
     lower === 'analyse my skin' ||
     lower === 'analyze my skin' ||
     lower === 'check my skin' ||
     lower === 'skincare check' ||
     lower.includes('skin check') ||
+    lower.includes('check skin') ||
+    lower.includes('skin scan') ||
+    lower.includes('scan skin') ||
+    lower.includes('scan my skin') ||
     lower.includes('skin analysis') ||
     lower.includes('face analysis') ||
+    lower.includes('face check') ||
+    lower.includes('check face') ||
+    lower.includes('skin selfie') ||
+    lower.includes('selfie skin') ||
     lower.includes('skincare')
   )
 }
