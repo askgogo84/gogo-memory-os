@@ -17,7 +17,7 @@ export async function GET(
     return new NextResponse('Skin report not found', { status: 404 })
   }
 
-  const response = buildSkinReportCardImageResponse(report)
+  const response = await buildSkinReportCardImageResponse(report)
   response.headers.set('Content-Type', 'image/png')
   response.headers.set('Cache-Control', 'public, max-age=3600')
 
