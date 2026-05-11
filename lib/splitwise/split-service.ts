@@ -37,6 +37,15 @@ function waDeepLink(message: string) {
   return cleanNumber ? `https://wa.me/${cleanNumber}?text=${encoded}` : `https://wa.me/?text=${encoded}`
 }
 
+async function groupIdsForPhone(phone: string) {
+  const { data } = await supabaseAdmin
+    .from('split_group_members')
+    .select('group_id')
+    .eq('phone', phone)
+  const ids = (data || []).map((row: any) => row.group_id).filter(Boolean)
+  return ids.length ? ids.join(',') : '00000000-0000-0000-0000-000000000000'
+}
+
 async function getLatestGroup(phone: string): Promise<Group | null> {
   const { data } = await supabaseAdmin
     .from('split_groups')
@@ -45,15 +54,6 @@ async function getLatestGroup(phone: string): Promise<Group | null> {
     .order('updated_at', { ascending: false })
     .limit(1)
   return (data?.[0] as Group) || null
-}
-
-async function groupIdsForPhone(phone: string) {
-  const { data } = await supabaseAdmin
-    .from('split_group_members')
-    .select('group_id')
-    .eq('phone', phone)
-  const ids = (data || []).map((row: any) => row.group_id).filter(Boolean)
-  return ids.length ? ids.join(',') : '00000000-0000-0000-0000-000000000000'
 }
 
 async function findGroup(phone: string, groupName?: string): Promise<Group | null> {
@@ -153,17 +153,13 @@ function computeShares(params: {
 
   if (params.splitMode === 'unequal') {
     const total = roundMoney(params.allocations.reduce((sum, item) => sum + Number(item.value || 0), 0))
-    if (Math.abs(total - params.amount) > 1) {
-      throw new Error(`Unequal split total is ${money(total)}, but expense is ${money(params.amount)}.`)
-    }
+    if (Math.abs(total - params.amount) > 1) throw new Error(`Unequal split total is ${money(total)}, but expense is ${money(params.amount)}.`)
     return params.allocations.map((item) => ({ member: normalizeMemberName(item.member), owedAmount: roundMoney(Number(item.value)) }))
   }
 
   if (params.splitMode === 'percent') {
     const totalPercent = roundMoney(params.allocations.reduce((sum, item) => sum + Number(item.value || 0), 0))
-    if (Math.abs(totalPercent - 100) > 0.5) {
-      throw new Error(`Percentage split totals ${totalPercent}%, but should be 100%.`)
-    }
+    if (Math.abs(totalPercent - 100) > 0.5) throw new Error(`Percentage split totals ${totalPercent}%, but should be 100%.`)
     return params.allocations.map((item) => ({ member: normalizeMemberName(item.member), owedAmount: roundMoney((params.amount * Number(item.value)) / 100) }))
   }
 
@@ -183,6 +179,22 @@ async function notifyLinkedMembers(groupId: string, actorPhone: string, message:
   await Promise.allSettled(phones.map((phone) => sendWhatsAppMessage(phone, message)))
 }
 
+async function createInvite(groupId: string, invitedName: string, phone?: string | null) {
+  const { data, error } = await supabaseAdmin
+    .from('split_invites')
+    .insert({ group_id: groupId, invited_name: invitedName, invited_phone: phone || null })
+    .select('invite_code')
+    .single()
+  if (error) throw error
+  return data?.invite_code as string
+}
+
+function memberNameForJoin(invitedName: string, phone: string) {
+  const normalized = normalizeMemberName(invitedName)
+  if (!normalized || /^(friend|guest|member)$/i.test(normalized)) return `Member ${phone.slice(-4)}`
+  return normalized
+}
+
 export async function handleSplitCommand(phone: string, text: string) {
   const intent = parseSplitIntent(text)
   if (!intent) return null
@@ -196,19 +208,12 @@ export async function handleSplitCommand(phone: string, text: string) {
 
     if (!invite) return `Invite not found. Ask the trip owner to send the AskGogo Split invite again.`
 
-    await supabaseAdmin
-      .from('split_group_members')
-      .upsert({ group_id: invite.group_id, name: invite.invited_name, phone }, { onConflict: 'group_id,name' })
-
+    const memberName = memberNameForJoin(invite.invited_name, phone)
+    await supabaseAdmin.from('split_group_members').upsert({ group_id: invite.group_id, name: memberName, phone }, { onConflict: 'group_id,name' })
     await supabaseAdmin.from('split_invites').update({ status: 'joined', invited_phone: phone }).eq('id', invite.id)
 
-    const { data: group } = await supabaseAdmin
-      .from('split_groups')
-      .select('id,name')
-      .eq('id', invite.group_id)
-      .single()
-
-    await notifyLinkedMembers(invite.group_id, phone, `🔔 *${invite.invited_name} joined ${group?.name || 'the split'}*\n\nThey can now add expenses and see balances from their own WhatsApp.`)
+    const { data: group } = await supabaseAdmin.from('split_groups').select('id,name').eq('id', invite.group_id).single()
+    await notifyLinkedMembers(invite.group_id, phone, `🔔 *${memberName} joined ${group?.name || 'the split'}*\n\nThey can now add expenses and see balances from their own WhatsApp.`)
 
     return `✅ *Joined ${group?.name || 'split group'}*\n\nYou can now add expenses here.\nTry: *Add expense 500 lunch paid by me split equally*`
   }
@@ -228,22 +233,12 @@ export async function handleSplitCommand(phone: string, text: string) {
 
     const { data: expense, error } = await supabaseAdmin
       .from('split_expenses')
-      .insert({
-        group_id: group.id,
-        description: intent.description,
-        total_amount: intent.amount,
-        paid_by: intent.paidBy,
-        category: guessCategory(intent.description),
-        currency: 'INR',
-        raw_text: intent.rawText,
-      })
+      .insert({ group_id: group.id, description: intent.description, total_amount: intent.amount, paid_by: intent.paidBy, category: guessCategory(intent.description), currency: 'INR', raw_text: intent.rawText })
       .select('id')
       .single()
     if (error) throw error
 
-    await supabaseAdmin.from('split_expense_shares').insert(
-      shareRows.map((row) => ({ expense_id: expense.id, group_id: group.id, member_name: row.member, owed_amount: row.owedAmount }))
-    )
+    await supabaseAdmin.from('split_expense_shares').insert(shareRows.map((row) => ({ expense_id: expense.id, group_id: group.id, member_name: row.member, owed_amount: row.owedAmount })))
 
     const { balances } = await calculateBalances(group.id)
     const summary = Object.entries(balances).map(([name, balance]) => `${name}: ${balance >= 0 ? 'gets' : 'owes'} ${money(Math.abs(balance))}`).join('\n')
@@ -261,8 +256,9 @@ export async function handleSplitCommand(phone: string, text: string) {
     const { balances, expenses } = await calculateBalances(group.id)
 
     if (intent.type === 'share_chart') {
-      const inviteText = `Join AskGogo Split ${group.name}: ${waDeepLink(`join split ${group.id}`)}`
-      return `📊 *${group.name} expense chart*\n\nOpen/share this card:\n${APP_URL}/api/splitbill/chart/${group.id}\n\nInvite friends through AskGogo WhatsApp:\n${inviteText}\n\nSay *show balance ${group.name}* for details.`
+      const inviteCode = await createInvite(group.id, 'Guest')
+      const askGogoLink = waDeepLink(`join split ${inviteCode}`)
+      return `📊 *${group.name} expense chart*\n\nOpen/share this card:\n${APP_URL}/api/splitbill/chart/${group.id}\n\nInvite friends through AskGogo WhatsApp:\n${askGogoLink}\n\nAnyone who joins can add expenses to the same tracker from their WhatsApp.`
     }
 
     if (intent.type === 'history') {
@@ -271,11 +267,7 @@ export async function handleSplitCommand(phone: string, text: string) {
       return `🧾 *Recent split expenses*\n\n*${group.name}*\n${recent}`
     }
 
-    const balanceLines = Object.entries(balances)
-      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
-      .map(([name, balance]) => `${name}: ${balance >= 0 ? 'gets' : 'owes'} ${money(Math.abs(balance))}`)
-      .join('\n') || 'All settled.'
-
+    const balanceLines = Object.entries(balances).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).map(([name, balance]) => `${name}: ${balance >= 0 ? 'gets' : 'owes'} ${money(Math.abs(balance))}`).join('\n') || 'All settled.'
     if (intent.type === 'show_balance') return `💸 *${group.name} balance*\n\n${balanceLines}\n\nSay: *simplify ${group.name}*`
 
     const suggestions = simplifyDebts(balances)
@@ -297,18 +289,11 @@ export async function handleSplitCommand(phone: string, text: string) {
     const group = await findGroup(phone, intent.groupName)
     if (!group) return `No split group found. Say: *Create trip Goa with Rahul, Priya, Meera*`
     await ensureGroup(phone, group.name, [intent.name])
-    const { data } = await supabaseAdmin
-      .from('split_invites')
-      .insert({ group_id: group.id, invited_name: intent.name, invited_phone: intent.phone || null })
-      .select('invite_code')
-      .single()
-    const joinCommand = `join split ${data?.invite_code}`
-    const askGogoLink = waDeepLink(joinCommand)
+    const inviteCode = await createInvite(group.id, intent.name, intent.phone || null)
+    const askGogoLink = waDeepLink(`join split ${inviteCode}`)
     const directMessage = `Hey ${intent.name}, join our *${group.name}* expense tracker on AskGogo:\n${askGogoLink}\n\nOnce it opens, just send the prefilled message.`
 
-    if (intent.phone) {
-      await sendWhatsAppMessage(intent.phone, directMessage).catch((error: any) => console.error('[split-invite] direct send failed:', error?.message || error))
-    }
+    if (intent.phone) await sendWhatsAppMessage(intent.phone, directMessage).catch((error: any) => console.error('[split-invite] direct send failed:', error?.message || error))
 
     return `✉️ *Invite ready*\n\nInvite ${intent.name} to *${group.name}*:\n${askGogoLink}\n\n${intent.phone ? 'I also tried sending it directly on WhatsApp.' : 'Forward this link to them on WhatsApp.'}\n\nAfter joining, their expenses will update the same tracker and linked members will get updates.`
   }
