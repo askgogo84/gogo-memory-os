@@ -10,7 +10,7 @@ function getOpenAIClient() {
 export async function transcribeVoice(fileBuffer: Buffer): Promise<string> {
   const openai = getOpenAIClient()
   const file = await toFile(fileBuffer, 'voice.ogg', { type: 'audio/ogg' })
-  // No language specified = auto-detect (Tamil, Kannada, Hindi, English etc.)
+  // No language = auto-detect: Tamil, Kannada, Hindi, English, 96+ languages
   const transcription = await openai.audio.transcriptions.create({
     file,
     model: 'whisper-1',
