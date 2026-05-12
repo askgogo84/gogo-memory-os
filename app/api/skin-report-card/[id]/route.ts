@@ -1,23 +1,21 @@
+import React from 'react'
+import { ImageResponse } from 'next/og'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { downloadTwilioMediaAsDataUrl } from '@/lib/services/image-note-reader'
 
 export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
+const CARD_WIDTH = 1080
+const CARD_HEIGHT = 1350
 
 function clean(value: any, fallback = '-') {
   const output = String(value ?? '').replace(/\s+/g, ' ').trim()
   return output || fallback
 }
 
-function esc(value: any) {
-  return clean(value, '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-function short(value: any, max = 42, fallback = '-') {
+function short(value: any, max = 52, fallback = '-') {
   const output = clean(value, fallback)
   return output.length > max ? `${output.slice(0, max - 3).trim()}...` : output
 }
@@ -26,73 +24,202 @@ function score(report: any, key: string, fallback: string | number = '-') {
   return report?.scores_json?.[key] ?? fallback
 }
 
-function zone(report: any, key: string, fallback = '-') {
-  return report?.face_zones_json?.[key] ?? fallback
-}
-
 function scorePercent(value: any, fallback = 65) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return fallback
   return Math.max(0, Math.min(100, parsed))
 }
 
+function zone(report: any, key: string, fallback = '-') {
+  return report?.face_zones_json?.[key] ?? fallback
+}
+
 function list(items: any[], limit: number, fallback: string[] = []) {
-  const values = (items || []).map((item) => clean(item, '')).filter(Boolean).slice(0, limit)
+  const values = (items || [])
+    .map((item) => clean(item, ''))
+    .filter(Boolean)
+    .slice(0, limit)
+
   return values.length ? values : fallback.slice(0, limit)
 }
 
-function bulletText(items: string[], x: number, y: number, maxLen = 58, gap = 28, color = '#173a31') {
-  return items.map((item, index) => {
-    const yy = y + index * gap
-    return `<circle cx="${x}" cy="${yy - 5}" r="4" fill="#c69a50"/><text x="${x + 14}" y="${yy}" class="body" fill="${color}">${esc(short(item, maxLen))}</text>`
-  }).join('')
+function h(type: string, props: any, ...children: React.ReactNode[]) {
+  return React.createElement(type, props, ...children)
 }
 
-function metric(label: string, value: string, x: number, y: number, w: number) {
-  return `<rect x="${x}" y="${y}" width="${w}" height="78" rx="16" fill="#fffaf0" stroke="#d7c49d"/>
-<text x="${x + w / 2}" y="${y + 25}" text-anchor="middle" class="tiny" fill="#8b7650">${esc(label)}</text>
-<text x="${x + w / 2}" y="${y + 58}" text-anchor="middle" class="metric" fill="#173a31">${esc(short(value, 15))}</text>`
+function text(value: React.ReactNode, style: React.CSSProperties = {}) {
+  return h('div', { style }, value)
 }
 
-function bar(label: string, percent: number, x: number, y: number, color: string) {
-  const width = Math.max(12, Math.min(210, Math.round((percent / 100) * 210)))
-  return `<text x="${x}" y="${y}" class="body" fill="#173a31">${esc(label)}</text>
-<rect x="${x + 145}" y="${y - 15}" width="210" height="15" rx="8" fill="#e4d7bc"/>
-<rect x="${x + 145}" y="${y - 15}" width="${width}" height="15" rx="8" fill="${color}"/>
-<text x="${x + 370}" y="${y}" class="body" fill="#173a31">${percent}%</text>`
+function card(title: string, style: React.CSSProperties, children: React.ReactNode) {
+  return h(
+    'div',
+    {
+      style: {
+        position: 'absolute',
+        borderRadius: 28,
+        background: '#ffffff',
+        border: '1px solid #d8c28e',
+        padding: 26,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        ...style,
+      },
+    },
+    text(title, {
+      color: '#173a31',
+      fontSize: 22,
+      fontWeight: 900,
+      letterSpacing: 1.1,
+      marginBottom: 16,
+    }),
+    children
+  )
 }
 
-function routineLine(index: number, text: string, x: number, y: number) {
-  return `<text x="${x}" y="${y}" class="body" fill="#173a31">${index}. ${esc(short(text, 54))}</text>`
+function bullet(value: string, color = '#173a31') {
+  return h(
+    'div',
+    {
+      style: {
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        marginBottom: 12,
+        width: '100%',
+      },
+    },
+    h('div', {
+      style: {
+        width: 8,
+        height: 8,
+        borderRadius: 99,
+        background: '#c69a50',
+        marginTop: 9,
+        marginRight: 12,
+        flexShrink: 0,
+      },
+    }),
+    text(short(value, 58), {
+      color,
+      fontSize: 19,
+      fontWeight: 700,
+      lineHeight: 1.25,
+    })
+  )
 }
 
-function faceImage(id: string, href: string | null, x: number, y: number, w: number, h: number, overlay = false) {
-  const image = href
-    ? `<image href="${href}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${id})"/>`
-    : `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="18" fill="#efe2c4"/><text x="${x + w / 2}" y="${y + h / 2}" text-anchor="middle" class="body" fill="#8b7650">SELFIE</text>`
+function metric(label: string, value: string) {
+  return h(
+    'div',
+    {
+      style: {
+        width: 128,
+        height: 86,
+        borderRadius: 18,
+        background: '#fff8ea',
+        border: '1px solid #dcc99d',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 8,
+      },
+    },
+    text(label, {
+      color: '#8b7650',
+      fontSize: 11,
+      fontWeight: 900,
+      letterSpacing: 0.7,
+      textAlign: 'center',
+    }),
+    text(short(value, 16), {
+      color: '#173a31',
+      fontSize: 18,
+      fontWeight: 900,
+      textAlign: 'center',
+      marginTop: 8,
+      lineHeight: 1.1,
+    })
+  )
+}
 
-  const overlayShapes = overlay ? `<ellipse cx="${x + w * .50}" cy="${y + h * .22}" rx="${w * .25}" ry="${h * .075}" fill="#e0a54e" opacity=".28" stroke="#b88a4a"/>
-<ellipse cx="${x + w * .33}" cy="${y + h * .44}" rx="${w * .15}" ry="${h * .10}" fill="#79a7c7" opacity=".24" stroke="#5e8ead"/>
-<ellipse cx="${x + w * .67}" cy="${y + h * .44}" rx="${w * .15}" ry="${h * .10}" fill="#79a7c7" opacity=".24" stroke="#5e8ead"/>
-<rect x="${x + w * .43}" y="${y + h * .35}" width="${w * .14}" height="${h * .30}" rx="18" fill="#c99a5d" opacity=".18"/>
-<ellipse cx="${x + w * .50}" cy="${y + h * .82}" rx="${w * .25}" ry="${h * .07}" fill="#7d9f66" opacity=".24" stroke="#6f8f5d"/>` : ''
+function bar(label: string, percent: number) {
+  return h(
+    'div',
+    {
+      style: {
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 18,
+        width: '100%',
+      },
+    },
+    text(label, {
+      color: '#173a31',
+      fontSize: 19,
+      fontWeight: 800,
+      width: 180,
+    }),
+    h('div', {
+      style: {
+        width: 250,
+        height: 17,
+        borderRadius: 99,
+        background: '#e5d7bc',
+        overflow: 'hidden',
+      },
+    }, h('div', {
+      style: {
+        width: Math.max(12, Math.round((percent / 100) * 250)),
+        height: 17,
+        borderRadius: 99,
+        background: '#2f9b80',
+      },
+    })),
+    text(`${percent}%`, {
+      color: '#173a31',
+      fontSize: 19,
+      fontWeight: 900,
+      marginLeft: 16,
+    })
+  )
+}
 
-  return `<clipPath id="${id}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="18"/></clipPath>
-<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="18" fill="#efe2c4" stroke="#c7ad75"/>${image}${overlayShapes}`
+function routine(items: string[]) {
+  return h(
+    'div',
+    { style: { display: 'flex', flexDirection: 'column' } },
+    ...items.slice(0, 4).map((item, index) =>
+      text(`${index + 1}. ${short(item, 42)}`, {
+        color: '#173a31',
+        fontSize: 19,
+        fontWeight: 750,
+        lineHeight: 1.25,
+        marginBottom: 10,
+      })
+    )
+  )
 }
 
 async function getImageDataUrl(report: any) {
   if (!report?.image_url) return null
+
   try {
-    return await downloadTwilioMediaAsDataUrl({ mediaUrl: report.image_url, contentType: 'image/jpeg' })
+    return await downloadTwilioMediaAsDataUrl({
+      mediaUrl: report.image_url,
+      contentType: 'image/jpeg',
+    })
   } catch (error: any) {
     console.error('[skin-report-card] selfie image embed failed:', error?.message || error)
     return null
   }
 }
 
-async function buildSvg(report: any) {
-  const img = await getImageDataUrl(report)
+async function buildPngCard(report: any) {
+  const selfie = await getImageDataUrl(report)
   const hydration = scorePercent(score(report, 'hydration', 70), 70)
   const barrier = scorePercent(score(report, 'barrier_support', 65), 65)
   const oiliness = short(score(report, 'oiliness', 'moderate'), 18)
@@ -100,78 +227,223 @@ async function buildSvg(report: any) {
   const sensitivity = short(score(report, 'sensitivity', 'low'), 16)
   const skinType = short(report.skin_type || 'Combination', 22)
   const confidence = short(report.confidence_level || 'medium', 14)
-  const observations = list(report.observations_json || [], 4, ['Slight shine on forehead and T-zone', 'Mild darkness under eyes', 'Overall even skin tone', 'Texture appears smooth'])
-  const am = list(report.am_routine_json || [], 4, ['Gentle cleanser', 'Hydrating serum', 'Light moisturiser', 'SPF 50 sunscreen'])
-  const pm = list(report.pm_routine_json || [], 4, ['Gentle cleanser', 'Niacinamide serum', 'Barrier serum', 'Light moisturiser'])
-  const cautions = list(report.cautions_json || [], 4, ['Heavy creams on T-zone', 'Skipping sunscreen', 'Over-exfoliating', 'Harsh scrubs'])
 
-  const forehead = short(zone(report, 'forehead', 'Slight shine visible'), 32)
-  const underEye = short(zone(report, 'under-eye') || zone(report, 'under_eye') || 'Mild darkness visible', 32)
-  const cheeks = short(zone(report, 'cheeks', 'Even tone observed'), 32)
-  const tzone = short(zone(report, 'nose_t-zone') || zone(report, 'nose___t-zone') || zone(report, 'nose__t-zone') || 'Mild oiliness visible', 32)
-  const chin = short(zone(report, 'chin') || zone(report, 'jawline') || 'Balanced / smooth', 32)
-  const dateLabel = report?.created_at ? new Date(report.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+  const observations = list(report.observations_json || [], 4, [
+    'Slight shine visible on forehead and T-zone',
+    'Mild darkness visible under the eyes',
+    'Overall skin tone appears even',
+    'Skin barrier appears reasonably stable',
+  ])
 
-  const oilPercent = oiliness.toLowerCase().includes('high') ? 75 : oiliness.toLowerCase().includes('moderate') ? 55 : 35
-  const texturePercent = texture.toLowerCase().includes('smooth') ? 28 : texture.toLowerCase().includes('mild') ? 48 : 60
-  const sensitivityPercent = sensitivity.toLowerCase().includes('low') ? 28 : sensitivity.toLowerCase().includes('moderate') ? 52 : 72
+  const cautions = list(report.cautions_json || [], 4, [
+    'Avoid harsh scrubs',
+    'Avoid over-exfoliating',
+    'Avoid skipping sunscreen',
+    'Avoid heavy fragrance this week',
+  ])
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
-<defs><style>.title{font:800 44px Georgia,serif;letter-spacing:3px;fill:#173a31}.sub{font:800 15px Arial,sans-serif;letter-spacing:5px;fill:#8b7650}.section{font:900 20px Arial,sans-serif;letter-spacing:1.2px;fill:#173a31}.tiny{font:900 10px Arial,sans-serif;letter-spacing:.6px}.metric{font:900 17px Arial,sans-serif}.body{font:700 17px Arial,sans-serif}.small{font:700 14px Arial,sans-serif}.micro{font:700 10px Arial,sans-serif}.note{font:900 13px Arial,sans-serif;fill:#8b7650}</style></defs>
-<rect width="1080" height="1350" fill="#f7f0df"/>
-<circle cx="960" cy="110" r="310" fill="#d9c79d" opacity=".32"/>
-<circle cx="90" cy="1260" r="320" fill="#d9c79d" opacity=".26"/>
-<text x="72" y="78" class="title">ASKGOGO SKIN CHECK</text>
-<text x="74" y="112" class="sub">VISUAL SKINCARE OBSERVATION</text>
-<text x="1008" y="78" text-anchor="end" class="body" fill="#173a31">${esc(dateLabel)}</text>
+  const am = list(report.am_routine_json || [], 4, [
+    'Gentle cleanser',
+    'Hydrating serum',
+    'Light moisturiser',
+    'SPF 50 sunscreen',
+  ])
 
-<rect x="54" y="150" width="396" height="392" rx="28" fill="#ffffff" stroke="#d5bf8d"/>
-<text x="84" y="190" class="section">Selfie preview</text>
-${faceImage('main', img, 84, 212, 336, 290, false)}
+  const pm = list(report.pm_routine_json || [], 4, [
+    'Gentle cleanser',
+    'Niacinamide serum',
+    'Barrier serum',
+    'Light moisturiser',
+  ])
 
-<rect x="474" y="150" width="552" height="392" rx="28" fill="#ffffff" stroke="#d5bf8d"/>
-<text x="504" y="190" class="section">Facial map</text>
-${faceImage('map', img, 504, 212, 210, 230, true)}
-${bulletText([`Forehead: ${forehead}`, `Under-eye: ${underEye}`, `Cheeks: ${cheeks}`, `Nose / T-zone: ${tzone}`, `Chin / Jawline: ${chin}`], 748, 238, 35, 31)}
+  const forehead = short(zone(report, 'forehead', 'Slight shine visible'), 30)
+  const underEye = short(zone(report, 'under-eye') || zone(report, 'under_eye') || 'Mild darkness visible', 30)
+  const cheeks = short(zone(report, 'cheeks', 'Even tone observed'), 30)
+  const tzone = short(zone(report, 'nose_t-zone') || zone(report, 'nose___t-zone') || zone(report, 'nose__t-zone') || 'Mild oiliness visible', 30)
+  const chin = short(zone(report, 'chin') || zone(report, 'jawline') || 'Balanced / smooth', 30)
 
-<rect x="54" y="570" width="972" height="140" rx="28" fill="#ffffff" stroke="#d5bf8d"/>
-<text x="84" y="610" class="section">At a glance</text>
-${metric('SKIN TYPE', skinType, 84, 628, 128)}${metric('OILINESS', oiliness, 226, 628, 120)}${metric('TEXTURE', texture, 360, 628, 120)}${metric('HYDRATION', `${hydration}%`, 494, 628, 120)}${metric('BARRIER', `${barrier}%`, 628, 628, 120)}${metric('SENSITIVITY', sensitivity, 762, 628, 126)}${metric('CONFIDENCE', confidence, 902, 628, 96)}
+  const dateLabel = report?.created_at
+    ? new Date(report.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+    : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
 
-<rect x="54" y="735" width="972" height="155" rx="28" fill="#ffffff" stroke="#d5bf8d"/>
-<text x="84" y="775" class="section">Skin metrics</text>
-${bar('Hydration', hydration, 92, 825, '#2f9b80')}${bar('Barrier support', barrier, 92, 866, '#c99a50')}${bar('Oiliness', oilPercent, 560, 825, '#6485b2')}${bar('Texture', texturePercent, 560, 866, '#c36d67')}
+  const root = h(
+    'div',
+    {
+      style: {
+        position: 'relative',
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+        display: 'flex',
+        background: '#f7f0df',
+        fontFamily: 'Arial, sans-serif',
+        overflow: 'hidden',
+      },
+    },
+    h('div', { style: { position: 'absolute', width: 620, height: 620, borderRadius: 999, right: -260, top: -260, background: '#dfd0a8', opacity: 0.55 } }),
+    h('div', { style: { position: 'absolute', width: 520, height: 520, borderRadius: 999, left: -260, bottom: -250, background: '#dfd0a8', opacity: 0.45 } }),
 
-<rect x="54" y="915" width="612" height="188" rx="28" fill="#ffffff" stroke="#d5bf8d"/>
-<text x="84" y="955" class="section">Key observations</text>
-${bulletText(observations.slice(0, 4), 92, 994, 60, 28)}
+    text('ASKGOGO SKIN CHECK', {
+      position: 'absolute',
+      left: 64,
+      top: 48,
+      color: '#173a31',
+      fontSize: 46,
+      fontWeight: 900,
+      letterSpacing: 2.5,
+    }),
+    text('VISUAL SKINCARE OBSERVATION', {
+      position: 'absolute',
+      left: 66,
+      top: 104,
+      color: '#8b7650',
+      fontSize: 15,
+      fontWeight: 900,
+      letterSpacing: 4,
+    }),
+    text(dateLabel, {
+      position: 'absolute',
+      right: 72,
+      top: 56,
+      color: '#173a31',
+      fontSize: 22,
+      fontWeight: 900,
+    }),
 
-<rect x="690" y="915" width="336" height="188" rx="28" fill="#fff7f3" stroke="#d7b6a9"/>
-<text x="720" y="955" class="section">Avoid this week</text>
-${bulletText(cautions.slice(0, 4), 728, 994, 32, 28, '#6e322f')}
+    card('Selfie preview', { left: 54, top: 150, width: 396, height: 392 },
+      selfie
+        ? h('img', {
+            src: selfie,
+            style: {
+              width: 336,
+              height: 292,
+              borderRadius: 22,
+              objectFit: 'cover',
+              border: '1px solid #c7ad75',
+            },
+          })
+        : h('div', {
+            style: {
+              width: 336,
+              height: 292,
+              borderRadius: 22,
+              background: '#efe2c4',
+              border: '1px solid #c7ad75',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#8b7650',
+              fontSize: 24,
+              fontWeight: 900,
+            },
+          }, 'SELFIE')
+    ),
 
-<rect x="54" y="1128" width="472" height="160" rx="28" fill="#ffffff" stroke="#d5bf8d"/>
-<text x="84" y="1168" class="section">Personalized AM</text>
-${am.slice(0,4).map((item,i)=>routineLine(i+1,item,92,1204+i*27)).join('')}
+    card('Facial map', { left: 474, top: 150, width: 552, height: 392 },
+      h('div', { style: { display: 'flex', flexDirection: 'row' } },
+        h('div', {
+          style: {
+            width: 198,
+            height: 260,
+            borderRadius: 22,
+            background: '#efe2c4',
+            border: '1px solid #c7ad75',
+            position: 'relative',
+            overflow: 'hidden',
+          },
+        },
+          selfie && h('img', { src: selfie, style: { width: 198, height: 260, objectFit: 'cover', opacity: 0.88 } }),
+          h('div', { style: { position: 'absolute', left: 52, top: 35, width: 96, height: 34, borderRadius: 99, background: 'rgba(224,165,78,.30)', border: '1px solid rgba(184,138,74,.6)' } }),
+          h('div', { style: { position: 'absolute', left: 26, top: 112, width: 58, height: 44, borderRadius: 99, background: 'rgba(121,167,199,.28)' } }),
+          h('div', { style: { position: 'absolute', right: 26, top: 112, width: 58, height: 44, borderRadius: 99, background: 'rgba(121,167,199,.28)' } }),
+          h('div', { style: { position: 'absolute', left: 78, top: 90, width: 42, height: 112, borderRadius: 99, background: 'rgba(201,154,93,.20)' } })
+        ),
+        h('div', { style: { display: 'flex', flexDirection: 'column', marginLeft: 22, marginTop: 2 } },
+          bullet(`Forehead: ${forehead}`),
+          bullet(`Under-eye: ${underEye}`),
+          bullet(`Cheeks: ${cheeks}`),
+          bullet(`Nose / T-zone: ${tzone}`),
+          bullet(`Chin / Jawline: ${chin}`)
+        )
+      )
+    ),
 
-<rect x="554" y="1128" width="472" height="160" rx="28" fill="#ffffff" stroke="#d5bf8d"/>
-<text x="584" y="1168" class="section">Personalized PM</text>
-${pm.slice(0,4).map((item,i)=>routineLine(i+1,item,592,1204+i*27)).join('')}
+    card('At a glance', { left: 54, top: 570, width: 972, height: 140 },
+      h('div', { style: { display: 'flex', flexDirection: 'row', justifyContent: 'space-between', width: '100%' } },
+        metric('SKIN TYPE', skinType),
+        metric('OILINESS', oiliness),
+        metric('TEXTURE', texture),
+        metric('HYDRATION', `${hydration}%`),
+        metric('BARRIER', `${barrier}%`),
+        metric('SENSITIVITY', sensitivity),
+        metric('CONFIDENCE', confidence)
+      )
+    ),
 
-<text x="74" y="1320" class="note">Not medical advice. For painful acne, irritation, rashes, infection, sudden pigmentation, bleeding or changing moles, consult a dermatologist.</text>
-</svg>`
+    card('Skin metrics', { left: 54, top: 735, width: 972, height: 155 },
+      h('div', { style: { display: 'flex', flexDirection: 'row', gap: 60 } },
+        h('div', { style: { display: 'flex', flexDirection: 'column', width: 450 } },
+          bar('Hydration', hydration),
+          bar('Barrier support', barrier)
+        ),
+        h('div', { style: { display: 'flex', flexDirection: 'column', width: 390 } },
+          bar('Oil balance', oiliness.toLowerCase().includes('high') ? 75 : oiliness.toLowerCase().includes('moderate') ? 55 : 35),
+          bar('Sensitivity', sensitivity.toLowerCase().includes('high') ? 75 : sensitivity.toLowerCase().includes('moderate') ? 52 : 28)
+        )
+      )
+    ),
+
+    card('Key observations', { left: 54, top: 915, width: 612, height: 188 },
+      h('div', { style: { display: 'flex', flexDirection: 'column' } }, ...observations.map((item) => bullet(item)))
+    ),
+
+    card('Avoid this week', { left: 690, top: 915, width: 336, height: 188, background: '#fff7f3', border: '1px solid #d7b6a9' },
+      h('div', { style: { display: 'flex', flexDirection: 'column' } }, ...cautions.map((item) => bullet(item, '#6e322f')))
+    ),
+
+    card('Personalized AM', { left: 54, top: 1128, width: 472, height: 160 }, routine(am)),
+    card('Personalized PM', { left: 554, top: 1128, width: 472, height: 160 }, routine(pm)),
+
+    text('Not medical advice. For painful acne, irritation, rashes, infection, sudden pigmentation, bleeding or changing moles, consult a dermatologist.', {
+      position: 'absolute',
+      left: 74,
+      right: 74,
+      bottom: 28,
+      color: '#8b7650',
+      fontSize: 14,
+      fontWeight: 900,
+      lineHeight: 1.25,
+    })
+  )
+
+  return new ImageResponse(root, {
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
+    headers: {
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=300, s-maxage=300',
+    },
+  })
 }
 
 export async function GET(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params
-    const { data: report, error } = await supabaseAdmin.from('skin_check_reports').select('*').eq('id', id).maybeSingle()
+    const { data: report, error } = await supabaseAdmin
+      .from('skin_check_reports')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+
     if (error) {
       console.error('[skin-report-card] fetch failed:', error.message)
       return new NextResponse('Skin report failed to load', { status: 500 })
     }
-    if (!report) return new NextResponse('Skin report not found', { status: 404 })
-    return new NextResponse(await buildSvg(report), { status: 200, headers: { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'no-store, max-age=0' } })
+
+    if (!report) {
+      return new NextResponse('Skin report not found', { status: 404 })
+    }
+
+    return await buildPngCard(report)
   } catch (error: any) {
     console.error('[skin-report-card] route failed:', error?.message || error)
     return new NextResponse('Skin report failed to render', { status: 500 })
