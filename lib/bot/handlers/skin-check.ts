@@ -1,5 +1,5 @@
 import { addToList } from '@/lib/lists'
-import { analyzeSkinCheckImage } from '@/lib/bot/services/skin-check-analyzer'
+import { analyzeSkinCheckImage, buildSafeFallbackSkinCheckReport } from '@/lib/bot/services/skin-check-analyzer'
 import { saveSkinCheckReport } from '@/lib/bot/services/skin-check-storage'
 import {
   buildSkinCompareReply,
