@@ -8,15 +8,33 @@ const openai = new OpenAI({
 
 function isRefusalText(text: string) {
   const lower = String(text || '').toLowerCase().trim()
-  return (
-    !lower ||
-    lower.includes("i'm sorry, i can't assist") ||
-    lower.includes('i am sorry, i cannot assist') ||
-    lower.includes("i can't assist with that") ||
-    lower.includes('i cannot assist with that') ||
-    lower.includes("can't help with that") ||
-    lower.includes('cannot help with that')
-  )
+  if (!lower) return true
+  // Catch all common OpenAI refusal patterns
+  const refusalPhrases = [
+    "i'm sorry, i can't",
+    "i am sorry, i cannot",
+    "i can't assist",
+    "i cannot assist",
+    "can't help with",
+    "cannot help with",
+    "i'm not able to",
+    "i am not able to",
+    "unable to analyze",
+    "unable to provide",
+    "i don't feel comfortable",
+    "i won't be able to",
+    "not appropriate for me",
+    "i'm unable to",
+    "i cannot provide",
+    "i can't provide",
+    "not something i can",
+    "this request",
+    "privacy concerns",
+    "identify individuals",
+    "i apologize, but",
+    "i'm afraid i can't",
+  ]
+  return refusalPhrases.some(phrase => lower.includes(phrase))
 }
 
 export function buildSafeFallbackSkinCheckReport() {

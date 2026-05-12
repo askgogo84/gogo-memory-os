@@ -58,12 +58,19 @@ export async function buildSkinCheckFromImage(params: {
   userCaption?: string
   userName?: string | null
 }) {
-  const report = await analyzeSkinCheckImage({
-    mediaUrl: params.mediaUrl,
-    contentType: params.contentType,
-    userCaption: params.userCaption,
-    userName: params.userName,
-  })
+  // Wrap entire function - always return a result, never throw to outer handler
+  let report: string
+  try {
+    report = await analyzeSkinCheckImage({
+      mediaUrl: params.mediaUrl,
+      contentType: params.contentType,
+      userCaption: params.userCaption,
+      userName: params.userName,
+    })
+  } catch (analyzeError: any) {
+    console.error('[skin-check] analyzeSkinCheckImage threw unexpectedly:', analyzeError?.message)
+    report = buildSafeFallbackSkinCheckReport()
+  }
 
   let savedReport: any = null
   let savedHistory = false
