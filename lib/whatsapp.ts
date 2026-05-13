@@ -26,31 +26,83 @@ function normalizeWhatsAppAddress(value: string): string {
   return `whatsapp:${normalized}`
 }
 
+const WA_MAX_CHARS = 1550
+
+function splitIntoChunks(text: string): string[] {
+  if (text.length <= WA_MAX_CHARS) return [text]
+  
+  const chunks: string[] = []
+  // Split on double newlines (section breaks) to keep sections together
+  const sections = text.split(/\n\n/)
+  let current = ''
+  
+  for (const section of sections) {
+    const candidate = current ? current + '\n\n' + section : section
+    if (candidate.length <= WA_MAX_CHARS) {
+      current = candidate
+    } else {
+      if (current) chunks.push(current)
+      // If single section is too long, split on single newlines
+      if (section.length > WA_MAX_CHARS) {
+        const lines = section.split('\n')
+        let lineChunk = ''
+        for (const line of lines) {
+          const c = lineChunk ? lineChunk + '\n' + line : line
+          if (c.length <= WA_MAX_CHARS) {
+            lineChunk = c
+          } else {
+            if (lineChunk) chunks.push(lineChunk)
+            lineChunk = line
+          }
+        }
+        if (lineChunk) current = lineChunk
+        else current = ''
+      } else {
+        current = section
+      }
+    }
+  }
+  if (current) chunks.push(current)
+  return chunks.filter(c => c.trim())
+}
+
 export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: string | null) {
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
 
-  const payload: any = {
-    body: text,
-    from,
-    to,
+  const chunks = splitIntoChunks(text || '')
+  let lastMessage: any = null
+
+  for (let i = 0; i < chunks.length; i++) {
+    const payload: any = {
+      body: chunks[i],
+      from,
+      to,
+    }
+    // Only attach media to first chunk
+    if (i === 0 && mediaUrl && mediaUrl.trim()) {
+      payload.mediaUrl = [mediaUrl.trim()]
+    }
+
+    const message = await client.messages.create(payload)
+    lastMessage = message
+
+    console.log('WHATSAPP_SENT:', {
+      sid: message.sid,
+      from,
+      to,
+      status: message.status,
+      chunk: chunks.length > 1 ? `${i + 1}/${chunks.length}` : undefined,
+      hasMedia: i === 0 && Boolean(mediaUrl),
+    })
+
+    // Small delay between chunks to preserve order
+    if (i < chunks.length - 1) {
+      await new Promise(r => setTimeout(r, 300))
+    }
   }
 
-  if (mediaUrl && mediaUrl.trim()) {
-    payload.mediaUrl = [mediaUrl.trim()]
-  }
-
-  const message = await client.messages.create(payload)
-
-  console.log('WHATSAPP_SENT:', {
-    sid: message.sid,
-    from,
-    to,
-    status: message.status,
-    hasMedia: Boolean(mediaUrl),
-  })
-
-  return message
+  return lastMessage
 }
 
 export async function sendWhatsAppTypingIndicator(messageSid?: string | null) {
