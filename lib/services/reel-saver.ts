@@ -20,6 +20,19 @@ export type ReelSaveResult = {
   savedNote: string
 }
 
+// Detect Instagram link preview card (WhatsApp forward without full URL)
+// Format: "Name on Instagram: "caption text...""
+export function detectInstagramPreviewCard(text: string): boolean {
+  const t = (text || '').trim()
+  return (
+    /on instagram:\s*[""]/.test(t.toLowerCase()) ||
+    /on instagram\.?\s*$/.test(t.toLowerCase()) ||
+    /instagram\.com\/reel/i.test(t) ||
+    /instagram\.com\/p\//i.test(t) ||
+    (/instagram/i.test(t) && /reel/i.test(t))
+  )
+}
+
 // Detect social video URLs
 export function detectReelUrl(text: string): string | null {
   const patterns = [

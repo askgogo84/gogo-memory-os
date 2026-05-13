@@ -3,13 +3,35 @@
 // Returns a reply string if handled, null to fall through to Claude
 
 import { parseSplitIntent } from '@/lib/splitwise/split-parser'
-import { detectReelUrl, saveReel } from '@/lib/services/reel-saver'
+import { detectReelUrl, detectInstagramPreviewCard, saveReel } from '@/lib/services/reel-saver'
 import { addToList } from '@/lib/lists'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
 export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string }): Promise<string | null> {
   // ── Detect Instagram Reel / YouTube Short / TikTok ──────────
+  // Case 1: User forwarded IG reel as link preview card (no URL in body)
+  // WhatsApp forwards show "Name on Instagram: caption" — detect and guide user
+  if (detectInstagramPreviewCard(text)) {
+    return (
+      `📱 *Instagram Reel detected!*
+
+` +
+      `To save this reel to AskGogo, share the actual link:
+
+` +
+      `1️⃣ Open Instagram
+` +
+      `2️⃣ Tap the reel → ⋯ (3 dots) → *Copy Link*
+` +
+      `3️⃣ Paste the link here on WhatsApp
+
+` +
+      `I'll transcribe it, summarize it and save it to your notes automatically! 🎬`
+    )
+  }
+
+  // Case 2: Full URL shared directly
   const reelUrl = detectReelUrl(text)
   if (reelUrl) {
     try {
