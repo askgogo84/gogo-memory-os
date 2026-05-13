@@ -5,17 +5,17 @@ import { createClient } from '@supabase/supabase-js'
 export const dynamic = 'force-dynamic'
 export const runtime = 'edge'
 
+// Exact portrait dimensions — fills perfectly
 const W = 1080
 const H = 1920
 
 function db() {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 }
-
 function cl(v: any, fb = '-') { return String(v ?? '').replace(/\s+/g, ' ').trim() || fb }
 function sh(v: any, max = 36, fb = '-') { const s = cl(v, fb); return s.length > max ? s.slice(0, max - 2) + '..' : s }
 function pct(v: any, d = 65) { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : d }
-function zn(r: any, ...keys: string[]) { for (const k of keys) { const v = r?.face_zones_json?.[k]; if (v) return sh(v, 26) } return null }
+function zn(r: any, ...keys: string[]) { for (const k of keys) { const v = r?.face_zones_json?.[k]; if (v && String(v).trim() && String(v).trim() !== '-') return sh(v, 28) } return null }
 function ls(items: any[], limit: number, fb: string[]) {
   const v = (items || []).map((i: any) => cl(i, '')).filter(Boolean).slice(0, limit)
   return v.length ? v : fb.slice(0, limit)
@@ -35,26 +35,29 @@ async function getSelfie(r: any): Promise<string | null> {
   } catch { return null }
 }
 
-// ── Tokens ────────────────────────────────────────────
-const BG      = '#f2ebe0'   // warm parchment
-const HERO_BG = '#1c3429'   // deep forest green
-const CARD    = '#fdfaf5'   // off-white card
-const GOLD    = '#c8a84b'   // warm gold
-const LGOLD   = '#e8c96e'   // light gold
-const GREEN   = '#1c3429'   // dark green text
-const TEAL    = '#2d7d5f'   // accent teal
-const MUTED   = '#7a6e5a'
-const LINE    = '#e0d8cc'
-const RED     = '#8b2e1a'
-const REDBG   = '#fdf3f1'
-const GREENBG = '#f1f7f4'
+// ── Tokens ──────────────────────────────────────────
+const BG     = '#f2ebe0'
+const HERO   = '#1c3429'
+const CARD   = '#fdfaf5'
+const GOLD   = '#c9a84c'
+const LGOLD  = '#e8cf80'
+const GREEN  = '#1c3429'
+const TEAL   = '#2d7d5f'
+const MUTED  = '#7a6e5a'
+const LMUTED = '#b0a494'
+const LINE   = '#e2dace'
+const RED    = '#8b2e1a'
+const REDBG  = '#fdf3f1'
+const REDBDR = '#e8c0b8'
+const GBG    = '#f1f7f4'
+const GBDR   = '#b0d0c0'
 
-// ── All display:flex helpers ──────────────────────────
+// ── Helpers (all display:flex) ───────────────────────
 function d(style: any, children?: any): any {
   return { type: 'div', props: { style: { display: 'flex', ...style }, children } }
 }
 function t(content: any, style: any = {}): any {
-  return d({ fontSize: 16, color: GREEN, fontWeight: 500, ...style }, content)
+  return d({ fontSize: 15, color: GREEN, fontWeight: 500, lineHeight: 1.35, ...style }, content)
 }
 function row(children: any, style: any = {}): any {
   return d({ flexDirection: 'row', alignItems: 'center', ...style }, children)
@@ -62,82 +65,74 @@ function row(children: any, style: any = {}): any {
 function col(children: any, style: any = {}): any {
   return d({ flexDirection: 'column', ...style }, children)
 }
-
-// Horizontal rule
 function hr(style: any = {}): any {
-  return d({ width: '100%', height: 1, background: LINE, ...style }, null)
+  return d({ width: '100%', height: 1, background: LINE, flexShrink: 0, ...style }, null)
 }
 
-// Section title — gold left border + caps label
-function stitle(label: string, light = false): any {
+// Section label with gold left bar
+function slabel(text: string, light = false): any {
   return row([
-    d({ width: 4, height: 26, borderRadius: 2, background: GOLD, marginRight: 14, flexShrink: 0 }, null),
-    t(label, { fontSize: 13, fontWeight: 900, letterSpacing: 2.5, color: light ? GOLD : GREEN, textTransform: 'uppercase' })
-  ], { marginBottom: 24 })
-}
-
-// Score bar with big number
-function scorebar(label: string, val: number, color: string, trackW = 380): any {
-  const filled = Math.max(8, Math.round((val / 100) * trackW))
-  return col([
-    row([
-      t(label, { fontSize: 15, fontWeight: 700, flex: 1, color: GREEN }),
-      t(String(val), { fontSize: 28, fontWeight: 900, color }),
-      t('%', { fontSize: 13, color: MUTED, marginLeft: 2, marginTop: 10 })
-    ], { marginBottom: 6 }),
-    d({ width: trackW, height: 8, borderRadius: 999, background: '#e2dbd0' }, [
-      d({ width: filled, height: 8, borderRadius: 999, background: color }, null)
-    ])
-  ], { marginBottom: 20 })
-}
-
-// Face zone row with dot + dashed line
-function zrow(label: string, value: string | null): any {
-  if (!value) return null
-  return row([
-    d({ width: 7, height: 7, borderRadius: 999, background: GOLD, marginRight: 12, flexShrink: 0 }, null),
-    t(label, { fontSize: 12, fontWeight: 900, color: GOLD, letterSpacing: 1.5, textTransform: 'uppercase', width: 130, flexShrink: 0 }),
-    t(sh(value, 28), { fontSize: 14, fontWeight: 600, color: GREEN, flex: 1 })
-  ], { marginBottom: 13 })
+    d({ width: 4, height: 22, borderRadius: 2, background: light ? LGOLD : GOLD, marginRight: 12, flexShrink: 0 }, null),
+    t(text, { fontSize: 12, fontWeight: 900, letterSpacing: 2.5, color: light ? LGOLD : GREEN, textTransform: 'uppercase' })
+  ], { marginBottom: 18 })
 }
 
 // Pill badge
-function badge(label: string, bg = CARD, bdr = LINE, color = GREEN): any {
-  return d({ borderRadius: 999, background: bg, border: `1.5px solid ${bdr}`, padding: '9px 22px', marginRight: 10, marginBottom: 10, alignItems: 'center' },
-    t(label, { fontSize: 14, fontWeight: 700, color })
+function badge(label: string): any {
+  return d({ borderRadius: 999, background: CARD, border: `1.5px solid ${LINE}`, padding: '8px 20px', marginRight: 10, marginBottom: 0, alignItems: 'center', flexShrink: 0 },
+    t(label, { fontSize: 14, fontWeight: 700, color: GREEN })
   )
+}
+
+// Score bar
+function sbar(label: string, val: number, color: string, tw = 340): any {
+  const f = Math.max(6, Math.round((val / 100) * tw))
+  return col([
+    row([
+      t(label, { fontSize: 14, fontWeight: 700, flex: 1, color: GREEN }),
+      t(String(val), { fontSize: 26, fontWeight: 900, color }),
+      t('%', { fontSize: 12, color: MUTED, marginLeft: 2, marginTop: 9 })
+    ], { marginBottom: 6 }),
+    d({ width: tw, height: 8, borderRadius: 999, background: '#e2dace', flexShrink: 0 }, [
+      d({ width: f, height: 8, borderRadius: 999, background: color }, null)
+    ])
+  ], { marginBottom: 18 })
+}
+
+// Zone row
+function zrow(label: string, value: string | null): any {
+  if (!value) return null as any
+  return row([
+    d({ width: 6, height: 6, borderRadius: 999, background: GOLD, marginRight: 10, flexShrink: 0 }, null),
+    t(label, { fontSize: 11, fontWeight: 900, color: GOLD, letterSpacing: 1.2, textTransform: 'uppercase', width: 118, flexShrink: 0 }),
+    t(sh(value, 26), { fontSize: 13, fontWeight: 600, color: GREEN, flex: 1 })
+  ], { marginBottom: 11 })
 }
 
 // Bullet
-function bul(text: string, dotColor = GOLD, txtColor = GREEN): any {
+function bul(text: string, dotColor = GOLD, color = GREEN): any {
   return row([
-    d({ width: 6, height: 6, borderRadius: 999, background: dotColor, marginRight: 12, marginTop: 8, flexShrink: 0 }, null),
-    t(sh(text, 48), { fontSize: 15, fontWeight: 600, color: txtColor, lineHeight: 1.4, flex: 1 })
-  ], { alignItems: 'flex-start', marginBottom: 11 })
+    d({ width: 5, height: 5, borderRadius: 999, background: dotColor, marginRight: 10, marginTop: 7, flexShrink: 0 }, null),
+    t(sh(text, 42), { fontSize: 14, fontWeight: 600, color, lineHeight: 1.35, flex: 1 })
+  ], { alignItems: 'flex-start', marginBottom: 10 })
 }
 
-// Routine step block
+// Routine step
 function rstep(num: number, label: string, tag: string, tagBg: string): any {
   return col([
-    d({ width: 56, height: 56, borderRadius: 999, border: `1.5px solid ${LINE}`, background: CARD, alignItems: 'center', justifyContent: 'center', marginBottom: 8, flexShrink: 0 },
-      t(String(num), { fontSize: 24, fontWeight: 900, color: GREEN })
+    d({ width: 52, height: 52, borderRadius: 999, border: `1.5px solid ${LINE}`, background: CARD, alignItems: 'center', justifyContent: 'center', marginBottom: 7, flexShrink: 0 },
+      t(String(num), { fontSize: 22, fontWeight: 900, color: GREEN })
     ),
-    t(sh(label, 16), { fontSize: 11, fontWeight: 700, color: GREEN, textAlign: 'center', lineHeight: 1.2, marginBottom: 6 }),
-    d({ borderRadius: 999, background: tagBg, padding: '3px 10px', alignItems: 'center' },
-      t(tag, { fontSize: 9, fontWeight: 900, color: '#fff', letterSpacing: 0.8 })
+    t(sh(label, 14), { fontSize: 10, fontWeight: 700, color: GREEN, textAlign: 'center', lineHeight: 1.2, marginBottom: 5 }),
+    d({ borderRadius: 999, background: tagBg, padding: '2px 8px', alignItems: 'center', justifyContent: 'center' },
+      t(tag, { fontSize: 8, fontWeight: 900, color: '#fff', letterSpacing: 0.5 })
     )
-  ], { alignItems: 'center', width: 86 })
+  ], { alignItems: 'center', width: 76, flexShrink: 0 })
 }
-
 function rarrow(): any {
-  return d({ alignItems: 'center', justifyContent: 'center', marginBottom: 20, flexShrink: 0 },
-    t('›', { fontSize: 30, color: MUTED, fontWeight: 200 })
+  return d({ alignItems: 'center', justifyContent: 'center', width: 20, flexShrink: 0 },
+    t('›', { fontSize: 24, color: LMUTED, fontWeight: 200 })
   )
-}
-
-// White card panel
-function panel(children: any, style: any = {}): any {
-  return d({ flexDirection: 'column', background: CARD, border: `1px solid ${LINE}`, borderRadius: 22, padding: '32px 36px', ...style }, children)
 }
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -149,30 +144,36 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 
     const selfie = await getSelfie(r)
     const dateStr = r?.created_at
-      ? new Date(r.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
-      : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
+      ? new Date(r.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+      : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 
-    const hydration  = pct(r?.scores_json?.hydration ?? r?.scores_json?.Hydration, 72)
-    const barrier    = pct(r?.scores_json?.barrier_support ?? r?.scores_json?.['Barrier support'], 68)
-    const oilNum     = (() => { const o = cl(r?.scores_json?.oiliness ?? 'moderate').toLowerCase(); return o.includes('high') ? 78 : o.includes('mod') ? 52 : 30 })()
-    const sensNum    = (() => { const s = cl(r?.scores_json?.sensitivity ?? 'low').toLowerCase(); return s.includes('high') ? 72 : s.includes('mod') ? 46 : 22 })()
-    const skinType   = sh(r?.skin_type ?? 'Combination', 28)
-    const oilLabel   = sh(r?.scores_json?.oiliness ?? 'Moderate', 14)
-    const sensLabel  = sh(r?.scores_json?.sensitivity ?? 'Low', 14)
-    const texLabel   = sh(r?.scores_json?.texture ?? 'Smooth', 14)
-    const conf       = sh(r?.confidence_level ?? 'High', 10)
+    const hydration = pct(r?.scores_json?.hydration ?? r?.scores_json?.Hydration ?? r?.scores_json?.['Hydration'], 72)
+    const barrier   = pct(r?.scores_json?.barrier_support ?? r?.scores_json?.['Barrier support'] ?? r?.scores_json?.barrier, 68)
+    const oilNum    = (() => { const o = cl(r?.scores_json?.oiliness ?? r?.scores_json?.Oiliness ?? 'moderate').toLowerCase(); return o.includes('high') ? 78 : o.includes('mod') ? 52 : 30 })()
+    const sensNum   = (() => { const s = cl(r?.scores_json?.sensitivity ?? r?.scores_json?.['Sensitivity signs'] ?? 'low').toLowerCase(); return s.includes('high') ? 72 : s.includes('mod') ? 46 : 22 })()
+    const skinType  = sh(r?.skin_type ?? 'Combination', 30)
+    const oilLabel  = sh(r?.scores_json?.oiliness ?? r?.scores_json?.Oiliness ?? 'Moderate', 14)
+    const sensLabel = sh(r?.scores_json?.sensitivity ?? r?.scores_json?.['Sensitivity signs'] ?? 'Low', 14)
+    const texLabel  = sh(r?.scores_json?.texture ?? r?.scores_json?.Texture ?? 'Smooth', 14)
+    const conf      = sh(r?.confidence_level ?? r?.scores_json?.confidence ?? 'High', 10)
 
     const obs      = ls(r?.observations_json, 4, ['T-zone shine visible', 'Mild under-eye darkness', 'Even cheek tone', 'Smooth texture overall'])
-    const cautions = ls(r?.cautions_json, 3, ['Avoid heavy creams', "Don't skip sunscreen", 'Avoid over-exfoliating'])
-    const am       = ls(r?.am_routine_json, 4, ['Gentle gel cleanser', 'Hyaluronic serum', 'Niacinamide 10%', 'SPF 50+'])
+    const cautions = ls(r?.cautions_json, 3, ['Avoid heavy creams on T-zone', "Don't skip sunscreen", 'Avoid over-exfoliating'])
+    const am       = ls(r?.am_routine_json, 4, ['Gentle gel cleanser', 'Hyaluronic serum', 'Niacinamide 10%', 'SPF 50+ sunscreen'])
     const pm       = ls(r?.pm_routine_json, 4, ['Foam cleanser', 'Peptide serum', 'Centella extract', 'Ceramide cream'])
 
-    const forehead = zn(r, 'forehead', 'Forehead')
-    const undereye = zn(r, 'under-eye', 'under_eye', 'Under-eye', 'Under eye')
-    const cheeks   = zn(r, 'cheeks', 'Cheeks')
-    const tzone    = zn(r, 'nose_t-zone', 'nose / t-zone', 'Nose / T-zone', 'T-zone', 't-zone')
-    const chin     = zn(r, 'chin', 'chin / jawline', 'Chin / Jawline', 'jawline')
+    // Try all possible key formats for zones
+    const forehead = zn(r, 'forehead', 'Forehead', 'FOREHEAD')
+    const undereye = zn(r, 'under-eye', 'under_eye', 'Under-eye', 'Under eye', 'undereye', 'UNDER_EYE')
+    const cheeks   = zn(r, 'cheeks', 'Cheeks', 'CHEEKS')
+    const tzone    = zn(r, 'nose_t-zone', 'nose / t-zone', 'Nose / T-zone', 't-zone', 'T-zone', 'nose/t-zone', 'noset-zone', 'Nose/T-zone', 'nose_tzone')
+    const chin     = zn(r, 'chin', 'chin / jawline', 'Chin / Jawline', 'jawline', 'Jawline', 'CHIN')
 
+    // Debug: log what zones we found
+    console.log('[skin-report-card] zones:', { forehead, undereye, cheeks, tzone, chin })
+    console.log('[skin-report-card] face_zones_json keys:', Object.keys(r?.face_zones_json || {}))
+
+    // Concerns
     const rawText = (obs.join(' ') + skinType + oilLabel).toLowerCase()
     const concerns: string[] = []
     if (rawText.includes('oil') || rawText.includes('shine')) concerns.push('Oiliness')
@@ -183,159 +184,141 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     if (rawText.includes('dry') || rawText.includes('dehydr')) concerns.push('Dehydration')
     if (concerns.length === 0) concerns.push('Oiliness', 'Pores', 'Hydration')
 
-    const amTags = [['CLEANSE','#2d7d5f'],['HYDRATE','#2776b5'],['BALANCE','#a07c20'],['PROTECT','#2d7d5f']]
-    const pmTags = [['CLEANSE','#2d7d5f'],['RENEW','#7b3d9e'],['SOOTHE','#2776b5'],['REPAIR','#c05c1a']]
+    const amTags: [string, string][] = [['CLEANSE','#2d7d5f'],['HYDRATE','#2776b5'],['BALANCE','#a07c20'],['PROTECT','#2d7d5f']]
+    const pmTags: [string, string][] = [['CLEANSE','#2d7d5f'],['RENEW','#7b3d9e'],['SOOTHE','#2776b5'],['REPAIR','#c05c1a']]
 
     const selfieEl = selfie
-      ? d({ width: 260, height: 300, borderRadius: 20, border: `2.5px solid rgba(200,168,75,0.4)`, flexShrink: 0 }, [
-          { type: 'img', props: { src: selfie, width: 260, height: 300, style: { borderRadius: 17 } } }
+      ? d({ width: 310, height: 360, borderRadius: 22, border: `2px solid rgba(201,168,76,0.35)`, flexShrink: 0 }, [
+          { type: 'img', props: { src: selfie, width: 310, height: 360, style: { borderRadius: 20 } } }
         ])
-      : d({ width: 260, height: 300, borderRadius: 20, background: '#2d4535', border: `2px solid ${GOLD}`, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+      : d({ width: 310, height: 360, borderRadius: 22, background: '#2a4035', border: `2px solid ${GOLD}`, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
           t('✦', { fontSize: 56, color: GOLD })
         )
 
-    // ── TREE ─────────────────────────────────────────────
-    const tree = d({ flexDirection: 'column', width: W, height: H, background: BG }, [
+    // ── FULL LAYOUT: all sections sized to exactly fill H=1920 ──────────
+    const tree = d({
+      flexDirection: 'column',
+      width: W,
+      height: H,
+      background: BG,
+      // No auto margins — everything is explicitly sized
+    }, [
 
-      // ══ HERO ══════════════════════════════════════════
-      d({ flexDirection: 'column', background: HERO_BG, padding: '0 0 50px 0' }, [
-        // top strip
-        d({ flexDirection: 'row', padding: '40px 64px 0 64px', alignItems: 'center', justifyContent: 'space-between' }, [
+      // ══ HERO: 460px ════════════════════════════════════════
+      d({ flexDirection: 'column', width: W, height: 460, background: HERO, flexShrink: 0 }, [
+        // top bar: 60px padding-top
+        row([
           row([
-            d({ width: 36, height: 1.5, background: GOLD, marginRight: 14 }, null),
+            d({ width: 32, height: 1.5, background: GOLD, marginRight: 12 }, null),
             t('ASKGOGO · SKIN ANALYSIS', { fontSize: 11, fontWeight: 900, color: GOLD, letterSpacing: 3 })
           ], {}),
-          t(dateStr, { fontSize: 12, fontWeight: 600, color: 'rgba(200,168,75,0.7)' })
-        ]),
+          t(dateStr, { fontSize: 12, fontWeight: 600, color: 'rgba(201,168,76,0.65)' })
+        ], { justifyContent: 'space-between', padding: '52px 64px 0 64px' }),
 
-        // big title
-        d({ flexDirection: 'column', padding: '40px 64px 0 64px' }, [
-          t('Skin Analysis', { fontSize: 70, fontWeight: 900, color: '#f5efe3', letterSpacing: -2, lineHeight: 1 }),
-          t('& Consultation', { fontSize: 70, fontWeight: 200, color: '#f5efe3', letterSpacing: -2, lineHeight: 1, fontStyle: 'italic', marginBottom: 20 }),
-          t('Personalised visual skincare insights · Not a medical diagnosis', { fontSize: 14, fontWeight: 500, color: 'rgba(200,168,75,0.75)', letterSpacing: 0.3 })
-        ]),
+        // Title
+        col([
+          t('Skin Analysis', { fontSize: 68, fontWeight: 900, color: '#f5efe3', letterSpacing: -1.5, lineHeight: 1 }),
+          t('& Consultation', { fontSize: 68, fontWeight: 200, color: '#f5efe3', letterSpacing: -1.5, lineHeight: 1, fontStyle: 'italic', marginBottom: 16 }),
+          t('Personalised visual skincare insights · Not a medical diagnosis', { fontSize: 13, fontWeight: 500, color: 'rgba(201,168,76,0.65)', letterSpacing: 0.2 })
+        ], { padding: '28px 64px 0 64px' }),
 
-        // stat chips
-        d({ flexDirection: 'row', padding: '40px 64px 0 64px', alignItems: 'flex-end' }, [
+        // Stat chips
+        row([
           col([
-            t(String(hydration) + '%', { fontSize: 44, fontWeight: 900, color: LGOLD, lineHeight: 1 }),
-            t('HYDRATION', { fontSize: 10, fontWeight: 800, color: 'rgba(200,168,75,0.65)', letterSpacing: 2.5, marginTop: 6 })
-          ], { marginRight: 44 }),
-          d({ width: 1, height: 50, background: 'rgba(200,168,75,0.25)', marginRight: 44 }, null),
+            t(`${hydration}%`, { fontSize: 42, fontWeight: 900, color: LGOLD, lineHeight: 1 }),
+            t('HYDRATION', { fontSize: 9, fontWeight: 800, color: 'rgba(201,168,76,0.55)', letterSpacing: 2.5, marginTop: 5 })
+          ], { marginRight: 36 }),
+          d({ width: 1, height: 44, background: 'rgba(201,168,76,0.2)', marginRight: 36 }, null),
           col([
-            t(String(barrier) + '%', { fontSize: 44, fontWeight: 900, color: LGOLD, lineHeight: 1 }),
-            t('BARRIER', { fontSize: 10, fontWeight: 800, color: 'rgba(200,168,75,0.65)', letterSpacing: 2.5, marginTop: 6 })
-          ], { marginRight: 44 }),
-          d({ width: 1, height: 50, background: 'rgba(200,168,75,0.25)', marginRight: 44 }, null),
+            t(`${barrier}%`, { fontSize: 42, fontWeight: 900, color: LGOLD, lineHeight: 1 }),
+            t('BARRIER', { fontSize: 9, fontWeight: 800, color: 'rgba(201,168,76,0.55)', letterSpacing: 2.5, marginTop: 5 })
+          ], { marginRight: 36 }),
+          d({ width: 1, height: 44, background: 'rgba(201,168,76,0.2)', marginRight: 36 }, null),
           col([
-            t(conf, { fontSize: 44, fontWeight: 900, color: LGOLD, lineHeight: 1 }),
-            t('CONFIDENCE', { fontSize: 10, fontWeight: 800, color: 'rgba(200,168,75,0.65)', letterSpacing: 2.5, marginTop: 6 })
+            t(conf, { fontSize: 42, fontWeight: 900, color: LGOLD, lineHeight: 1 }),
+            t('CONFIDENCE', { fontSize: 9, fontWeight: 800, color: 'rgba(201,168,76,0.55)', letterSpacing: 2.5, marginTop: 5 })
           ], {})
-        ])
+        ], { padding: '28px 64px 0 64px' })
       ]),
 
-      // ══ SECTION 1: FACIAL MAP ═════════════════════════
-      d({ flexDirection: 'column', padding: '44px 56px 0 56px' }, [
-        stitle('Facial Map & Observations'),
+      // ══ SECTION 1: FACIAL MAP — 430px ══════════════════════
+      d({ flexDirection: 'column', width: W, height: 430, flexShrink: 0, padding: '32px 56px 0 56px' }, [
+        slabel('Facial Map & Observations'),
         row([
-          // selfie
+          // Selfie + skin type chip below
           col([
             selfieEl,
-            // skin type under selfie
-            d({ flexDirection: 'column', marginTop: 16, background: HERO_BG, borderRadius: 14, padding: '14px 20px', width: 260, alignItems: 'center' }, [
-              t('SKIN TYPE', { fontSize: 10, fontWeight: 900, color: GOLD, letterSpacing: 2, marginBottom: 5 }),
-              t(skinType, { fontSize: 16, fontWeight: 800, color: '#f5efe3', textAlign: 'center' })
+            d({ width: 310, height: 46, background: HERO, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 10, flexShrink: 0 }, [
+              t('SKIN TYPE: ', { fontSize: 10, fontWeight: 800, color: GOLD, letterSpacing: 1.5, marginRight: 6 }),
+              t(sh(skinType, 22), { fontSize: 14, fontWeight: 800, color: '#f5efe3' })
             ])
           ], { flexShrink: 0 }),
 
-          // zones
-          d({ flexDirection: 'column', flex: 1, marginLeft: 40 }, [
-            ...[
+          // Zones + stats
+          col([
+            ...([
               ['FOREHEAD', forehead],
               ['UNDER-EYE', undereye],
               ['CHEEKS', cheeks],
-              ['NOSE / T-ZONE', tzone],
-              ['CHIN / JAWLINE', chin],
-            ].filter(([, v]) => v).map(([l, v]) => zrow(l as string, v as string)),
-            hr({ marginTop: 12, marginBottom: 20 }),
-            // mini stat row
+              ['NOSE/T-ZONE', tzone],
+              ['CHIN/JAWLINE', chin],
+            ] as [string, string | null][]).filter(([, v]) => v !== null).map(([l, v]) => zrow(l, v)),
+            hr({ margin: '8px 0 14px 0' }),
             row([
-              col([
-                t('OILINESS', { fontSize: 9, fontWeight: 900, color: MUTED, letterSpacing: 1.5, marginBottom: 5 }),
-                t(oilLabel, { fontSize: 15, fontWeight: 800, color: GREEN })
-              ], { marginRight: 32 }),
-              col([
-                t('TEXTURE', { fontSize: 9, fontWeight: 900, color: MUTED, letterSpacing: 1.5, marginBottom: 5 }),
-                t(texLabel, { fontSize: 15, fontWeight: 800, color: GREEN })
-              ], { marginRight: 32 }),
-              col([
-                t('SENSITIVITY', { fontSize: 9, fontWeight: 900, color: MUTED, letterSpacing: 1.5, marginBottom: 5 }),
-                t(sensLabel, { fontSize: 15, fontWeight: 800, color: GREEN })
-              ], {})
+              col([t('OILINESS', { fontSize: 9, fontWeight: 900, color: LMUTED, letterSpacing: 1.5, marginBottom: 4 }), t(oilLabel, { fontSize: 14, fontWeight: 800, color: GREEN })], { marginRight: 28 }),
+              col([t('TEXTURE', { fontSize: 9, fontWeight: 900, color: LMUTED, letterSpacing: 1.5, marginBottom: 4 }), t(texLabel, { fontSize: 14, fontWeight: 800, color: GREEN })], { marginRight: 28 }),
+              col([t('SENSITIVITY', { fontSize: 9, fontWeight: 900, color: LMUTED, letterSpacing: 1.5, marginBottom: 4 }), t(sensLabel, { fontSize: 14, fontWeight: 800, color: GREEN })], {})
             ], {})
-          ])
+          ], { flex: 1, marginLeft: 32 })
         ])
       ]),
 
-      // ══ SECTION 2: KEY CONCERNS ═══════════════════════
-      d({ flexDirection: 'column', padding: '40px 56px 0 56px' }, [
-        stitle('Key Concerns'),
-        d({ flexDirection: 'row', flexWrap: 'wrap' },
-          concerns.map(c => badge(c))
-        )
+      // ══ SECTION 2: KEY CONCERNS — 100px ═══════════════════
+      d({ flexDirection: 'column', width: W, height: 100, flexShrink: 0, padding: '14px 56px 0 56px' }, [
+        slabel('Key Concerns'),
+        row(concerns.map(c => badge(c)), { flexWrap: 'nowrap' })
       ]),
 
-      // ══ SECTION 3: SKIN METRICS ═══════════════════════
-      d({ flexDirection: 'column', padding: '40px 56px 0 56px' }, [
-        stitle('Skin Metrics'),
-        panel([
+      // ══ SECTION 3: SKIN METRICS — 250px ═══════════════════
+      d({ flexDirection: 'column', width: W, height: 250, flexShrink: 0, padding: '20px 56px 0 56px' }, [
+        slabel('Skin Metrics'),
+        d({ flexDirection: 'column', background: CARD, border: `1px solid ${LINE}`, borderRadius: 18, padding: '24px 28px' }, [
           row([
             col([
-              scorebar('Hydration', hydration, TEAL, 340),
-              scorebar('Barrier health', barrier, TEAL, 340),
-            ], { flex: 1, marginRight: 48 }),
+              sbar('Hydration', hydration, TEAL, 310),
+              sbar('Barrier health', barrier, TEAL, 310),
+            ], { flex: 1, marginRight: 40 }),
             col([
-              scorebar('Oil balance', oilNum, GOLD, 340),
-              scorebar('Sensitivity', sensNum, GOLD, 340),
+              sbar('Oil balance', oilNum, GOLD, 310),
+              sbar('Sensitivity', sensNum, GOLD, 310),
             ], { flex: 1 })
           ])
         ])
       ]),
 
-      // ══ SECTION 4: CURRENT vs TARGET ══════════════════
-      d({ flexDirection: 'column', padding: '40px 56px 0 56px' }, [
-        stitle('Current vs Target Balance'),
+      // ══ SECTION 4: CURRENT vs TARGET — 210px ══════════════
+      d({ flexDirection: 'column', width: W, height: 210, flexShrink: 0, padding: '18px 56px 0 56px' }, [
+        slabel('Current vs Target Balance'),
         row([
-          d({ flexDirection: 'column', flex: 1, background: '#fdf8f0', border: `1px solid ${LINE}`, borderRadius: 18, padding: '24px 26px' }, [
-            row([
-              d({ width: 7, height: 7, borderRadius: 999, background: GOLD, marginRight: 10, flexShrink: 0 }, null),
-              t('CURRENT', { fontSize: 10, fontWeight: 900, color: MUTED, letterSpacing: 2 })
-            ], { marginBottom: 16 }),
-            ...obs.slice(0, 3).map(o => bul(sh(o, 34)))
+          d({ flexDirection: 'column', flex: 1, background: '#fdf8f0', border: `1px solid ${LINE}`, borderRadius: 16, padding: '18px 22px' }, [
+            row([d({ width: 6, height: 6, borderRadius: 999, background: GOLD, marginRight: 8, flexShrink: 0 }, null), t('CURRENT', { fontSize: 9, fontWeight: 900, color: MUTED, letterSpacing: 2 })], { marginBottom: 13 }),
+            ...obs.slice(0, 3).map(o => bul(sh(o, 30), GOLD))
           ]),
-          d({ width: 52, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-            t('→', { fontSize: 34, fontWeight: 100, color: GOLD })
-          ),
-          d({ flexDirection: 'column', flex: 1, background: GREENBG, border: `1px solid #b8d8c8`, borderRadius: 18, padding: '24px 26px' }, [
-            row([
-              d({ width: 7, height: 7, borderRadius: 999, background: TEAL, marginRight: 10, flexShrink: 0 }, null),
-              t('TARGET', { fontSize: 10, fontWeight: 900, color: TEAL, letterSpacing: 2 })
-            ], { marginBottom: 16 }),
-            ...['Calmer even skin tone', 'Visible hydrated glow', 'Refined pores & barrier'].map(s => bul(s, TEAL, GREEN))
+          d({ width: 44, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }, t('→', { fontSize: 28, color: GOLD, fontWeight: 200 })),
+          d({ flexDirection: 'column', flex: 1, background: GBG, border: `1px solid ${GBDR}`, borderRadius: 16, padding: '18px 22px' }, [
+            row([d({ width: 6, height: 6, borderRadius: 999, background: TEAL, marginRight: 8, flexShrink: 0 }, null), t('TARGET', { fontSize: 9, fontWeight: 900, color: TEAL, letterSpacing: 2 })], { marginBottom: 13 }),
+            ...['Calmer even skin tone', 'Visible hydrated glow', 'Refined pores & barrier'].map(s => bul(s, TEAL))
           ])
         ])
       ]),
 
-      // ══ SECTION 5: ROUTINE ════════════════════════════
-      d({ flexDirection: 'column', padding: '40px 56px 0 56px' }, [
-        stitle('Personalized Routine'),
-        panel([
+      // ══ SECTION 5: ROUTINE — 290px ═════════════════════════
+      d({ flexDirection: 'column', width: W, height: 290, flexShrink: 0, padding: '18px 56px 0 56px' }, [
+        slabel('Personalized Routine'),
+        d({ flexDirection: 'column', background: CARD, border: `1px solid ${LINE}`, borderRadius: 18, padding: '20px 24px' }, [
           // AM
-          d({ flexDirection: 'column', background: '#f6fbf8', borderRadius: 16, padding: '22px 26px', marginBottom: 14 }, [
-            row([
-              t('☀', { fontSize: 24, marginRight: 12 }),
-              t('MORNING', { fontSize: 12, fontWeight: 900, color: TEAL, letterSpacing: 2.5 })
-            ], { marginBottom: 20 }),
+          d({ flexDirection: 'column', background: '#f4fbf8', borderRadius: 12, padding: '16px 18px', marginBottom: 10 }, [
+            row([t('☀', { fontSize: 18, marginRight: 8 }), t('MORNING', { fontSize: 11, fontWeight: 900, color: TEAL, letterSpacing: 2 })], { marginBottom: 14 }),
             row([
               ...am.slice(0, 4).flatMap((s, i) => [
                 rstep(i + 1, s, amTags[i]?.[0] ?? 'STEP', amTags[i]?.[1] ?? TEAL),
@@ -344,11 +327,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
             ], { alignItems: 'flex-start' })
           ]),
           // PM
-          d({ flexDirection: 'column', background: '#f8f5fc', borderRadius: 16, padding: '22px 26px' }, [
-            row([
-              t('🌙', { fontSize: 24, marginRight: 12 }),
-              t('NIGHT', { fontSize: 12, fontWeight: 900, color: '#7b3d9e', letterSpacing: 2.5 })
-            ], { marginBottom: 20 }),
+          d({ flexDirection: 'column', background: '#f7f4fc', borderRadius: 12, padding: '16px 18px' }, [
+            row([t('🌙', { fontSize: 18, marginRight: 8 }), t('NIGHT', { fontSize: 11, fontWeight: 900, color: '#7b3d9e', letterSpacing: 2 })], { marginBottom: 14 }),
             row([
               ...pm.slice(0, 4).flatMap((s, i) => [
                 rstep(i + 1, s, pmTags[i]?.[0] ?? 'STEP', pmTags[i]?.[1] ?? '#7b3d9e'),
@@ -359,44 +339,27 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
         ])
       ]),
 
-      // ══ SECTION 6: AVOID + EXPERT ═════════════════════
-      d({ flexDirection: 'row', padding: '40px 56px 0 56px', gap: 18 }, [
-        d({ flexDirection: 'column', flex: 1, background: REDBG, border: `1px solid #e8c4bc`, borderRadius: 18, padding: '26px 26px' }, [
-          row([
-            d({ width: 4, height: 22, borderRadius: 2, background: RED, marginRight: 12, flexShrink: 0 }, null),
-            t('AVOID', { fontSize: 12, fontWeight: 900, color: RED, letterSpacing: 2.5 })
-          ], { marginBottom: 18 }),
-          ...cautions.map(c => bul(c, RED, RED))
+      // ══ SECTION 6: AVOID + EXPERT — 150px ══════════════════
+      d({ flexDirection: 'row', width: W, height: 150, flexShrink: 0, padding: '12px 56px 0 56px', gap: 16 }, [
+        d({ flexDirection: 'column', flex: 1, background: REDBG, border: `1px solid ${REDBDR}`, borderRadius: 16, padding: '18px 20px' }, [
+          row([d({ width: 3, height: 18, borderRadius: 2, background: RED, marginRight: 10, flexShrink: 0 }, null), t('AVOID', { fontSize: 11, fontWeight: 900, color: RED, letterSpacing: 2 })], { marginBottom: 12 }),
+          ...cautions.map(c => bul(sh(c, 35), RED, RED))
         ]),
-        d({ flexDirection: 'column', flex: 1, background: CARD, border: `1px solid ${LINE}`, borderRadius: 18, padding: '26px 26px' }, [
-          row([
-            d({ width: 4, height: 22, borderRadius: 2, background: GOLD, marginRight: 12, flexShrink: 0 }, null),
-            t('EXPERT NOTES', { fontSize: 12, fontWeight: 900, color: GREEN, letterSpacing: 2.5 })
-          ], { marginBottom: 18 }),
-          ...[
-            ['🛡', 'Barrier First', 'Build resilience daily'],
-            ['💧', 'Layer Hydration', 'Hyaluronic + lock-in'],
-            ['☀', 'SPF Always', 'Every morning, indoors too'],
-            ['✓', 'Stay Consistent', '4–6 weeks for results'],
-          ].map(([ic, title, sub]) => row([
-            t(ic as string, { fontSize: 18, width: 28, flexShrink: 0 }),
-            col([
-              t(title as string, { fontSize: 13, fontWeight: 800, color: GREEN }),
-              t(sub as string, { fontSize: 11, fontWeight: 500, color: MUTED, marginTop: 2 })
-            ], {})
-          ], { alignItems: 'flex-start', marginBottom: 13 }))
+        d({ flexDirection: 'column', flex: 1, background: CARD, border: `1px solid ${LINE}`, borderRadius: 16, padding: '18px 20px' }, [
+          row([d({ width: 3, height: 18, borderRadius: 2, background: GOLD, marginRight: 10, flexShrink: 0 }, null), t('EXPERT NOTES', { fontSize: 11, fontWeight: 900, color: GREEN, letterSpacing: 2 })], { marginBottom: 12 }),
+          ...([['🛡','Barrier First'],['💧','Layer Hydration'],['☀','SPF Always'],['✓','Stay Consistent']] as [string,string][]).map(([ic,lb]) =>
+            row([t(ic, { fontSize: 15, width: 24, flexShrink: 0 }), t(lb, { fontSize: 13, fontWeight: 700, color: GREEN })], { marginBottom: 8 })
+          )
         ])
       ]),
 
-      // ══ FOOTER ════════════════════════════════════════
-      d({ flexDirection: 'column', padding: '36px 64px 44px 64px' }, [
-        hr({ marginBottom: 22 }),
-        row([
-          t('AskGogo Skin Check', { fontSize: 15, fontWeight: 900, color: GREEN }),
-          t(' · app.askgogo.in', { fontSize: 13, fontWeight: 500, color: MUTED })
-        ], { marginBottom: 10 }),
-        t('Visual cosmetic observation only — not a medical diagnosis. Consult a dermatologist for any skin concerns.',
-          { fontSize: 12, fontWeight: 500, color: MUTED, lineHeight: 1.5 })
+      // ══ FOOTER — 30px ══════════════════════════════════════
+      d({ flexDirection: 'column', width: W, height: 30, flexShrink: 0, padding: '0 64px', justifyContent: 'center' }, [
+        hr({ marginBottom: 0 }),
+      ]),
+      d({ flexDirection: 'row', width: W, flexShrink: 0, padding: '0 64px', height: 50, alignItems: 'center', justifyContent: 'space-between' }, [
+        row([t('AskGogo Skin Check', { fontSize: 13, fontWeight: 900, color: GREEN }), t(' · app.askgogo.in', { fontSize: 11, fontWeight: 500, color: MUTED })], {}),
+        t('Visual observation only — consult a dermatologist for skin concerns', { fontSize: 11, fontWeight: 500, color: LMUTED })
       ])
     ])
 
