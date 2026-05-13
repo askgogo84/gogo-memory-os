@@ -1,7 +1,12 @@
-import React from 'react'
 import { ImageResponse } from 'next/og'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+
+export const dynamic = 'force-dynamic'
+export const runtime = 'edge'
+
+const W = 1080
+const H = 1350
 
 function getSupabase() {
   return createClient(
@@ -10,462 +15,346 @@ function getSupabase() {
   )
 }
 
-export const dynamic = 'force-dynamic'
-export const runtime = 'edge'
-
-const CARD_WIDTH = 1080
-const CARD_HEIGHT = 1350
-
-function clean(value: any, fallback = '-') {
-  const output = String(value ?? '').replace(/\s+/g, ' ').trim()
-  return output || fallback
+function cl(val: any, fallback = '-') {
+  return String(val ?? '').replace(/\s+/g, ' ').trim() || fallback
 }
 
-function short(value: any, max = 52, fallback = '-') {
-  const output = clean(value, fallback)
-  return output.length > max ? `${output.slice(0, max - 3).trim()}...` : output
+function sh(val: any, max = 40, fallback = '-') {
+  const s = cl(val, fallback)
+  return s.length > max ? s.slice(0, max - 2) + '..' : s
 }
 
-function score(report: any, key: string, fallback: string | number = '-') {
-  return report?.scores_json?.[key] ?? fallback
+function pct(val: any, def = 65) {
+  const n = Number(val)
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : def
 }
 
-function scorePercent(value: any, fallback = 65) {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed)) return fallback
-  return Math.max(0, Math.min(100, parsed))
-}
-
-function zone(report: any, key: string, fallback = '-') {
-  return report?.face_zones_json?.[key] ?? fallback
-}
-
-function list(items: any[], limit: number, fallback: string[] = []) {
-  const values = (items || [])
-    .map((item) => clean(item, ''))
-    .filter(Boolean)
-    .slice(0, limit)
-
-  return values.length ? values : fallback.slice(0, limit)
-}
-
-function h(type: string, props: any, ...children: React.ReactNode[]) {
-  return React.createElement(type, props, ...children)
-}
-
-function text(value: React.ReactNode, style: React.CSSProperties = {}) {
-  return h('div', { style }, value)
-}
-
-function card(title: string, style: React.CSSProperties, children: React.ReactNode) {
-  return h(
-    'div',
-    {
-      style: {
-        position: 'absolute',
-        borderRadius: 28,
-        background: '#ffffff',
-        border: '1px solid #d8c28e',
-        padding: 26,
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        ...style,
-      },
-    },
-    text(title, {
-      color: '#173a31',
-      fontSize: 22,
-      fontWeight: 900,
-      letterSpacing: 1.1,
-      marginBottom: 16,
-    }),
-    children
-  )
-}
-
-function bullet(value: string, color = '#173a31') {
-  return h(
-    'div',
-    {
-      style: {
-        display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        marginBottom: 12,
-        width: '100%',
-      },
-    },
-    h('div', {
-      style: {
-        width: 8,
-        height: 8,
-        borderRadius: 99,
-        background: '#c69a50',
-        marginTop: 9,
-        marginRight: 12,
-        flexShrink: 0,
-      },
-    }),
-    text(short(value, 58), {
-      color,
-      fontSize: 19,
-      fontWeight: 700,
-      lineHeight: 1.25,
-    })
-  )
-}
-
-function metric(label: string, value: string) {
-  return h(
-    'div',
-    {
-      style: {
-        width: 128,
-        height: 86,
-        borderRadius: 18,
-        background: '#fff8ea',
-        border: '1px solid #dcc99d',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 8,
-      },
-    },
-    text(label, {
-      color: '#8b7650',
-      fontSize: 11,
-      fontWeight: 900,
-      letterSpacing: 0.7,
-      textAlign: 'center',
-    }),
-    text(short(value, 16), {
-      color: '#173a31',
-      fontSize: 18,
-      fontWeight: 900,
-      textAlign: 'center',
-      marginTop: 8,
-      lineHeight: 1.1,
-    })
-  )
-}
-
-function bar(label: string, percent: number) {
-  return h(
-    'div',
-    {
-      style: {
-        display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 18,
-        width: '100%',
-      },
-    },
-    text(label, {
-      color: '#173a31',
-      fontSize: 19,
-      fontWeight: 800,
-      width: 180,
-    }),
-    h('div', {
-      style: {
-        width: 250,
-        height: 17,
-        borderRadius: 99,
-        background: '#e5d7bc',
-        overflow: 'hidden',
-      },
-    }, h('div', {
-      style: {
-        width: Math.max(12, Math.round((percent / 100) * 250)),
-        height: 17,
-        borderRadius: 99,
-        background: '#2f9b80',
-      },
-    })),
-    text(`${percent}%`, {
-      color: '#173a31',
-      fontSize: 19,
-      fontWeight: 900,
-      marginLeft: 16,
-    })
-  )
-}
-
-function routine(items: string[]) {
-  return h(
-    'div',
-    { style: { display: 'flex', flexDirection: 'column' } },
-    ...items.slice(0, 4).map((item, index) =>
-      text(`${index + 1}. ${short(item, 42)}`, {
-        color: '#173a31',
-        fontSize: 19,
-        fontWeight: 750,
-        lineHeight: 1.25,
-        marginBottom: 10,
-      })
-    )
-  )
-}
-
-async function getImageDataUrl(report: any) {
-  if (!report?.image_url) return null
-
-  try {
-    const accountSid = process.env.TWILIO_ACCOUNT_SID
-    const authToken = process.env.TWILIO_AUTH_TOKEN
-    if (!accountSid || !authToken) return null
-
-    const auth = btoa(`${accountSid}:${authToken}`)
-    const res = await fetch(report.image_url, {
-      headers: { Authorization: `Basic ${auth}` },
-    })
-    if (!res.ok) {
-      console.warn('[skin-report-card] selfie fetch failed:', res.status, '- using placeholder')
-      return null
-    }
-    const arrayBuffer = await res.arrayBuffer()
-    const bytes = new Uint8Array(arrayBuffer)
-    let binary = ''
-    bytes.forEach(b => binary += String.fromCharCode(b))
-    const b64 = btoa(binary)
-    return `data:image/jpeg;base64,${b64}`
-  } catch (error: any) {
-    console.error('[skin-report-card] selfie embed failed:', error?.message || error)
-    return null
+function zn(r: any, ...keys: string[]) {
+  for (const k of keys) {
+    const v = r?.face_zones_json?.[k]
+    if (v) return sh(v, 28)
   }
+  return '-'
 }
 
-async function buildPngCard(report: any) {
-  const selfie = await getImageDataUrl(report)
-  const hydration = scorePercent(score(report, 'hydration', 70), 70)
-  const barrier = scorePercent(score(report, 'barrier_support', 65), 65)
-  const oiliness = short(score(report, 'oiliness', 'moderate'), 18)
-  const texture = short(score(report, 'texture', 'smooth'), 18)
-  const sensitivity = short(score(report, 'sensitivity', 'low'), 16)
-  const skinType = short(report.skin_type || 'Combination', 22)
-  const confidence = short(report.confidence_level || 'medium', 14)
-
-  const observations = list(report.observations_json || [], 4, [
-    'Slight shine visible on forehead and T-zone',
-    'Mild darkness visible under the eyes',
-    'Overall skin tone appears even',
-    'Skin barrier appears reasonably stable',
-  ])
-
-  const cautions = list(report.cautions_json || [], 4, [
-    'Avoid harsh scrubs',
-    'Avoid over-exfoliating',
-    'Avoid skipping sunscreen',
-    'Avoid heavy fragrance this week',
-  ])
-
-  const am = list(report.am_routine_json || [], 4, [
-    'Gentle cleanser',
-    'Hydrating serum',
-    'Light moisturiser',
-    'SPF 50 sunscreen',
-  ])
-
-  const pm = list(report.pm_routine_json || [], 4, [
-    'Gentle cleanser',
-    'Niacinamide serum',
-    'Barrier serum',
-    'Light moisturiser',
-  ])
-
-  const forehead = short(zone(report, 'forehead', 'Slight shine visible'), 30)
-  const underEye = short(zone(report, 'under-eye') || zone(report, 'under_eye') || 'Mild darkness visible', 30)
-  const cheeks = short(zone(report, 'cheeks', 'Even tone observed'), 30)
-  const tzone = short(zone(report, 'nose_t-zone') || zone(report, 'nose___t-zone') || zone(report, 'nose__t-zone') || 'Mild oiliness visible', 30)
-  const chin = short(zone(report, 'chin') || zone(report, 'jawline') || 'Balanced / smooth', 30)
-
-  const dateLabel = report?.created_at
-    ? new Date(report.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
-    : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
-
-  const root = h(
-    'div',
-    {
-      style: {
-        position: 'relative',
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
-        display: 'flex',
-        background: '#f7f0df',
-        fontFamily: 'Arial, sans-serif',
-        overflow: 'hidden',
-      },
-    },
-    h('div', { style: { position: 'absolute', width: 620, height: 620, borderRadius: 999, right: -260, top: -260, background: '#dfd0a8', opacity: 0.55 } }),
-    h('div', { style: { position: 'absolute', width: 520, height: 520, borderRadius: 999, left: -260, bottom: -250, background: '#dfd0a8', opacity: 0.45 } }),
-
-    text('ASKGOGO SKIN CHECK', {
-      position: 'absolute',
-      left: 64,
-      top: 48,
-      color: '#173a31',
-      fontSize: 46,
-      fontWeight: 900,
-      letterSpacing: 2.5,
-    }),
-    text('VISUAL SKINCARE OBSERVATION', {
-      position: 'absolute',
-      left: 66,
-      top: 104,
-      color: '#8b7650',
-      fontSize: 15,
-      fontWeight: 900,
-      letterSpacing: 4,
-    }),
-    text(dateLabel, {
-      position: 'absolute',
-      right: 72,
-      top: 56,
-      color: '#173a31',
-      fontSize: 22,
-      fontWeight: 900,
-    }),
-
-    card('Selfie preview', { left: 54, top: 150, width: 396, height: 392 },
-      selfie
-        ? h('img', {
-            src: selfie,
-            style: {
-              width: 336,
-              height: 292,
-              borderRadius: 22,
-              objectFit: 'cover',
-              border: '1px solid #c7ad75',
-            },
-          })
-        : h('div', {
-            style: {
-              width: 336,
-              height: 292,
-              borderRadius: 22,
-              background: '#efe2c4',
-              border: '1px solid #c7ad75',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#8b7650',
-              fontSize: 24,
-              fontWeight: 900,
-            },
-          }, 'SELFIE')
-    ),
-
-    card('Facial map', { left: 474, top: 150, width: 552, height: 392 },
-      h('div', { style: { display: 'flex', flexDirection: 'row' } },
-        h('div', {
-          style: {
-            width: 198,
-            height: 260,
-            borderRadius: 22,
-            background: '#efe2c4',
-            border: '1px solid #c7ad75',
-            position: 'relative',
-            overflow: 'hidden',
-          },
-        },
-          selfie && h('img', { src: selfie, style: { width: 198, height: 260, objectFit: 'cover', opacity: 0.88 } }),
-          h('div', { style: { position: 'absolute', left: 52, top: 35, width: 96, height: 34, borderRadius: 99, background: 'rgba(224,165,78,.30)', border: '1px solid rgba(184,138,74,.6)' } }),
-          h('div', { style: { position: 'absolute', left: 26, top: 112, width: 58, height: 44, borderRadius: 99, background: 'rgba(121,167,199,.28)' } }),
-          h('div', { style: { position: 'absolute', right: 26, top: 112, width: 58, height: 44, borderRadius: 99, background: 'rgba(121,167,199,.28)' } }),
-          h('div', { style: { position: 'absolute', left: 78, top: 90, width: 42, height: 112, borderRadius: 99, background: 'rgba(201,154,93,.20)' } })
-        ),
-        h('div', { style: { display: 'flex', flexDirection: 'column', marginLeft: 22, marginTop: 2 } },
-          bullet(`Forehead: ${forehead}`),
-          bullet(`Under-eye: ${underEye}`),
-          bullet(`Cheeks: ${cheeks}`),
-          bullet(`Nose / T-zone: ${tzone}`),
-          bullet(`Chin / Jawline: ${chin}`)
-        )
-      )
-    ),
-
-    card('At a glance', { left: 54, top: 570, width: 972, height: 140 },
-      h('div', { style: { display: 'flex', flexDirection: 'row', justifyContent: 'space-between', width: '100%' } },
-        metric('SKIN TYPE', skinType),
-        metric('OILINESS', oiliness),
-        metric('TEXTURE', texture),
-        metric('HYDRATION', `${hydration}%`),
-        metric('BARRIER', `${barrier}%`),
-        metric('SENSITIVITY', sensitivity),
-        metric('CONFIDENCE', confidence)
-      )
-    ),
-
-    card('Skin metrics', { left: 54, top: 735, width: 972, height: 155 },
-      h('div', { style: { display: 'flex', flexDirection: 'row', gap: 60 } },
-        h('div', { style: { display: 'flex', flexDirection: 'column', width: 450 } },
-          bar('Hydration', hydration),
-          bar('Barrier support', barrier)
-        ),
-        h('div', { style: { display: 'flex', flexDirection: 'column', width: 390 } },
-          bar('Oil balance', oiliness.toLowerCase().includes('high') ? 75 : oiliness.toLowerCase().includes('moderate') ? 55 : 35),
-          bar('Sensitivity', sensitivity.toLowerCase().includes('high') ? 75 : sensitivity.toLowerCase().includes('moderate') ? 52 : 28)
-        )
-      )
-    ),
-
-    card('Key observations', { left: 54, top: 915, width: 612, height: 188 },
-      h('div', { style: { display: 'flex', flexDirection: 'column' } }, ...observations.map((item) => bullet(item)))
-    ),
-
-    card('Avoid this week', { left: 690, top: 915, width: 336, height: 188, background: '#fff7f3', border: '1px solid #d7b6a9' },
-      h('div', { style: { display: 'flex', flexDirection: 'column' } }, ...cautions.map((item) => bullet(item, '#6e322f')))
-    ),
-
-    card('Personalized AM', { left: 54, top: 1128, width: 472, height: 160 }, routine(am)),
-    card('Personalized PM', { left: 554, top: 1128, width: 472, height: 160 }, routine(pm)),
-
-    text('Not medical advice. For painful acne, irritation, rashes, infection, sudden pigmentation, bleeding or changing moles, consult a dermatologist.', {
-      position: 'absolute',
-      left: 74,
-      right: 74,
-      bottom: 28,
-      color: '#8b7650',
-      fontSize: 14,
-      fontWeight: 900,
-      lineHeight: 1.25,
-    })
-  )
-
-  return new ImageResponse(root, {
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
-    headers: {
-      'Content-Type': 'image/png',
-      'Cache-Control': 'public, max-age=300, s-maxage=300',
-    },
-  })
+function ls(items: any[], limit: number, fallback: string[]) {
+  const v = (items || []).map(i => cl(i, '')).filter(Boolean).slice(0, limit)
+  return v.length ? v : fallback.slice(0, limit)
 }
 
-export async function GET(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function getSelfie(report: any): Promise<string | null> {
+  if (!report?.image_url) return null
   try {
-    const { id } = await context.params
-    const { data: report, error } = await getSupabase()
+    const sid = process.env.TWILIO_ACCOUNT_SID
+    const tok = process.env.TWILIO_AUTH_TOKEN
+    if (!sid || !tok) return null
+    const res = await fetch(report.image_url, {
+      headers: { Authorization: `Basic ${btoa(`${sid}:${tok}`)}` }
+    })
+    if (!res.ok) return null
+    const buf = await res.arrayBuffer()
+    const bytes = new Uint8Array(buf)
+    let b = ''
+    bytes.forEach(x => b += String.fromCharCode(x))
+    return `data:image/jpeg;base64,${btoa(b)}`
+  } catch { return null }
+}
+
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await ctx.params
+    const { data: r, error } = await getSupabase()
       .from('skin_check_reports')
       .select('*')
       .eq('id', id)
       .maybeSingle()
 
-    if (error) {
-      console.error('[skin-report-card] fetch failed:', error.message)
-      return new NextResponse('Skin report failed to load', { status: 500 })
+    if (error || !r) {
+      return new NextResponse(error ? 'DB error' : 'Not found', { status: error ? 500 : 404 })
     }
 
-    if (!report) {
-      return new NextResponse('Skin report not found', { status: 404 })
+    const selfie = await getSelfie(r)
+    const hydration = pct(r?.scores_json?.hydration ?? r?.scores_json?.Hydration, 70)
+    const barrier = pct(r?.scores_json?.barrier_support ?? r?.scores_json?.['Barrier support'], 65)
+    const oiliness = sh(r?.scores_json?.oiliness ?? r?.scores_json?.Oiliness ?? 'Moderate', 14)
+    const texture = sh(r?.scores_json?.texture ?? r?.scores_json?.Texture ?? 'Smooth', 14)
+    const sensitivity = sh(r?.scores_json?.sensitivity ?? r?.scores_json?.['Sensitivity signs'] ?? 'Low', 14)
+    const skinType = sh(r?.skin_type ?? 'Combination', 30)
+    const confidence = sh(r?.confidence_level ?? 'Medium', 12)
+
+    const obs = ls(r?.observations_json, 4, ['Visible shine on T-zone', 'Mild under-eye darkness', 'Even cheek tone', 'Smooth overall texture'])
+    const cautions = ls(r?.cautions_json, 3, ['Avoid heavy creams', 'Don\'t skip sunscreen', 'Avoid over-exfoliating'])
+    const am = ls(r?.am_routine_json, 3, ['Gentle gel cleanser', 'Lightweight hydrating serum', 'SPF 50 sunscreen'])
+    const pm = ls(r?.pm_routine_json, 3, ['Gentle foaming cleanser', 'Niacinamide serum', 'Light gel moisturiser'])
+
+    const forehead = zn(r, 'forehead', 'Forehead')
+    const undereye = zn(r, 'under-eye', 'under_eye', 'Under-eye', 'Under eye')
+    const cheeks = zn(r, 'cheeks', 'Cheeks')
+    const tzone = zn(r, 'nose_t-zone', 'nose / t-zone', 'Nose / T-zone', 't-zone', 'T-zone')
+    const chin = zn(r, 'chin', 'chin / jawline', 'Chin / Jawline', 'jawline')
+
+    const dateStr = r?.created_at
+      ? new Date(r.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+      : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+
+    const BG = '#f7f0df'
+    const CARD = '#ffffff'
+    const GREEN = '#173a31'
+    const GOLD = '#c69a50'
+    const LIGHT = '#fff8ea'
+    const BORDER = '#d8c28e'
+    const MUTED = '#8b7650'
+    const TEAL = '#2f9b80'
+    const BARTRACK = '#e5d7bc'
+
+    // Helper: score bar row
+    function barRow(label: string, percent: number) {
+      const filled = Math.max(8, Math.round((percent / 100) * 220))
+      return {
+        type: 'div',
+        props: {
+          style: { display: 'flex', flexDirection: 'row', alignItems: 'center', marginBottom: 14, width: '100%' },
+          children: [
+            { type: 'div', props: { style: { display: 'flex', width: 160, fontSize: 17, fontWeight: 700, color: GREEN }, children: label } },
+            { type: 'div', props: {
+              style: { display: 'flex', width: 220, height: 14, borderRadius: 99, background: BARTRACK },
+              children: { type: 'div', props: { style: { display: 'flex', width: filled, height: 14, borderRadius: 99, background: TEAL } } }
+            }},
+            { type: 'div', props: { style: { display: 'flex', marginLeft: 12, fontSize: 17, fontWeight: 800, color: GREEN }, children: `${percent}%` } }
+          ]
+        }
+      }
     }
 
-    return await buildPngCard(report)
-  } catch (error: any) {
-    console.error('[skin-report-card] route failed:', error?.message || error)
-    return new NextResponse('Skin report failed to render', { status: 500 })
+    // Helper: metric box
+    function metricBox(label: string, value: string) {
+      return {
+        type: 'div',
+        props: {
+          style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: 120, height: 76, borderRadius: 16, background: LIGHT, border: `1px solid ${BORDER}`, padding: 6 },
+          children: [
+            { type: 'div', props: { style: { display: 'flex', fontSize: 10, fontWeight: 800, color: MUTED, letterSpacing: 0.5 }, children: label } },
+            { type: 'div', props: { style: { display: 'flex', fontSize: 16, fontWeight: 900, color: GREEN, marginTop: 6 }, children: value } }
+          ]
+        }
+      }
+    }
+
+    // Helper: bullet
+    function bul(text: string, color = GREEN) {
+      return {
+        type: 'div',
+        props: {
+          style: { display: 'flex', flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
+          children: [
+            { type: 'div', props: { style: { display: 'flex', width: 7, height: 7, borderRadius: 99, background: GOLD, marginTop: 8, marginRight: 10, flexShrink: 0 } } },
+            { type: 'div', props: { style: { display: 'flex', fontSize: 17, fontWeight: 700, color, lineHeight: 1.3 }, children: sh(text, 55) } }
+          ]
+        }
+      }
+    }
+
+    // Helper: section card
+    function sectionCard(title: string, x: number, y: number, w: number, h: number, children: any) {
+      return {
+        type: 'div',
+        props: {
+          style: { display: 'flex', flexDirection: 'column', position: 'absolute', left: x, top: y, width: w, height: h, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 24, padding: 22 },
+          children: [
+            { type: 'div', props: { style: { display: 'flex', fontSize: 19, fontWeight: 900, color: GREEN, letterSpacing: 1, marginBottom: 14 }, children: title } },
+            children
+          ]
+        }
+      }
+    }
+
+    const imageEl = selfie
+      ? { type: 'img', props: { src: selfie, width: 330, height: 290, style: { borderRadius: 18, border: `1px solid ${BORDER}` } } }
+      : { type: 'div', props: { style: { display: 'flex', width: 330, height: 290, borderRadius: 18, background: '#efe2c4', border: `1px solid ${BORDER}`, alignItems: 'center', justifyContent: 'center' }, children: { type: 'div', props: { style: { display: 'flex', fontSize: 22, color: MUTED, fontWeight: 800 }, children: 'SELFIE' } } } }
+
+    const root = {
+      type: 'div',
+      props: {
+        style: { display: 'flex', flexDirection: 'column', width: W, height: H, background: BG, position: 'relative' },
+        children: [
+          // Header
+          { type: 'div', props: {
+            style: { display: 'flex', flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', padding: '44px 64px 0 64px' },
+            children: [
+              { type: 'div', props: {
+                style: { display: 'flex', flexDirection: 'column' },
+                children: [
+                  { type: 'div', props: { style: { display: 'flex', fontSize: 42, fontWeight: 900, color: GREEN, letterSpacing: 2 }, children: 'ASKGOGO SKIN CHECK' } },
+                  { type: 'div', props: { style: { display: 'flex', fontSize: 13, fontWeight: 900, color: MUTED, letterSpacing: 4, marginTop: 4 }, children: 'VISUAL SKINCARE OBSERVATION' } }
+                ]
+              }},
+              { type: 'div', props: { style: { display: 'flex', fontSize: 20, fontWeight: 900, color: GREEN }, children: dateStr } }
+            ]
+          }},
+
+          // Row 1: selfie + face map
+          { type: 'div', props: {
+            style: { display: 'flex', flexDirection: 'row', padding: '18px 54px 0 54px', gap: 20 },
+            children: [
+              // Selfie card
+              { type: 'div', props: {
+                style: { display: 'flex', flexDirection: 'column', width: 390, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 24, padding: 22 },
+                children: [
+                  { type: 'div', props: { style: { display: 'flex', fontSize: 19, fontWeight: 900, color: GREEN, marginBottom: 14 }, children: 'Selfie preview' } },
+                  imageEl
+                ]
+              }},
+              // Face map card
+              { type: 'div', props: {
+                style: { display: 'flex', flexDirection: 'column', flex: 1, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 24, padding: 22 },
+                children: [
+                  { type: 'div', props: { style: { display: 'flex', fontSize: 19, fontWeight: 900, color: GREEN, marginBottom: 14 }, children: 'Face map' } },
+                  { type: 'div', props: {
+                    style: { display: 'flex', flexDirection: 'column', gap: 10 },
+                    children: [
+                      { type: 'div', props: { style: { display: 'flex', flexDirection: 'row', gap: 8 },
+                        children: [
+                          { type: 'div', props: { style: { display: 'flex', fontSize: 14, fontWeight: 800, color: GOLD, width: 130 }, children: 'FOREHEAD' } },
+                          { type: 'div', props: { style: { display: 'flex', fontSize: 14, fontWeight: 700, color: GREEN }, children: forehead } }
+                        ]
+                      }},
+                      { type: 'div', props: { style: { display: 'flex', flexDirection: 'row', gap: 8 },
+                        children: [
+                          { type: 'div', props: { style: { display: 'flex', fontSize: 14, fontWeight: 800, color: GOLD, width: 130 }, children: 'UNDER-EYE' } },
+                          { type: 'div', props: { style: { display: 'flex', fontSize: 14, fontWeight: 700, color: GREEN }, children: undereye } }
+                        ]
+                      }},
+                      { type: 'div', props: { style: { display: 'flex', flexDirection: 'row', gap: 8 },
+                        children: [
+                          { type: 'div', props: { style: { display: 'flex', fontSize: 14, fontWeight: 800, color: GOLD, width: 130 }, children: 'CHEEKS' } },
+                          { type: 'div', props: { style: { display: 'flex', fontSize: 14, fontWeight: 700, color: GREEN }, children: cheeks } }
+                        ]
+                      }},
+                      { type: 'div', props: { style: { display: 'flex', flexDirection: 'row', gap: 8 },
+                        children: [
+                          { type: 'div', props: { style: { display: 'flex', fontSize: 14, fontWeight: 800, color: GOLD, width: 130 }, children: 'NOSE/T-ZONE' } },
+                          { type: 'div', props: { style: { display: 'flex', fontSize: 14, fontWeight: 700, color: GREEN }, children: tzone } }
+                        ]
+                      }},
+                      { type: 'div', props: { style: { display: 'flex', flexDirection: 'row', gap: 8 },
+                        children: [
+                          { type: 'div', props: { style: { display: 'flex', fontSize: 14, fontWeight: 800, color: GOLD, width: 130 }, children: 'CHIN/JAWLINE' } },
+                          { type: 'div', props: { style: { display: 'flex', fontSize: 14, fontWeight: 700, color: GREEN }, children: chin } }
+                        ]
+                      }}
+                    ]
+                  }}
+                ]
+              }}
+            ]
+          }},
+
+          // Row 2: At a glance metrics
+          { type: 'div', props: {
+            style: { display: 'flex', flexDirection: 'row', padding: '14px 54px 0 54px' },
+            children: { type: 'div', props: {
+              style: { display: 'flex', flexDirection: 'column', width: '100%', background: CARD, border: `1px solid ${BORDER}`, borderRadius: 24, padding: 22 },
+              children: [
+                { type: 'div', props: { style: { display: 'flex', fontSize: 19, fontWeight: 900, color: GREEN, marginBottom: 14 }, children: 'At a glance' } },
+                { type: 'div', props: {
+                  style: { display: 'flex', flexDirection: 'row', justifyContent: 'space-between' },
+                  children: [
+                    metricBox('SKIN TYPE', skinType),
+                    metricBox('OILINESS', oiliness),
+                    metricBox('TEXTURE', texture),
+                    metricBox('HYDRATION', `${hydration}%`),
+                    metricBox('BARRIER', `${barrier}%`),
+                    metricBox('SENSITIVITY', sensitivity),
+                    metricBox('CONFIDENCE', confidence),
+                  ]
+                }}
+              ]
+            }}
+          }},
+
+          // Row 3: Metrics bars
+          { type: 'div', props: {
+            style: { display: 'flex', flexDirection: 'row', padding: '14px 54px 0 54px' },
+            children: { type: 'div', props: {
+              style: { display: 'flex', flexDirection: 'column', width: '100%', background: CARD, border: `1px solid ${BORDER}`, borderRadius: 24, padding: 22 },
+              children: [
+                { type: 'div', props: { style: { display: 'flex', fontSize: 19, fontWeight: 900, color: GREEN, marginBottom: 14 }, children: 'Skin metrics' } },
+                { type: 'div', props: {
+                  style: { display: 'flex', flexDirection: 'row', gap: 60 },
+                  children: [
+                    { type: 'div', props: { style: { display: 'flex', flexDirection: 'column', flex: 1 }, children: [barRow('Hydration', hydration), barRow('Barrier', barrier)] } },
+                    { type: 'div', props: { style: { display: 'flex', flexDirection: 'column', flex: 1 }, children: [
+                      barRow('Oil balance', oiliness.toLowerCase().includes('high') ? 78 : oiliness.toLowerCase().includes('mod') ? 54 : 32),
+                      barRow('Sensitivity', sensitivity.toLowerCase().includes('high') ? 75 : sensitivity.toLowerCase().includes('mod') ? 50 : 25)
+                    ]}}
+                  ]
+                }}
+              ]
+            }}
+          }},
+
+          // Row 4: Observations + Cautions
+          { type: 'div', props: {
+            style: { display: 'flex', flexDirection: 'row', padding: '14px 54px 0 54px', gap: 20 },
+            children: [
+              { type: 'div', props: {
+                style: { display: 'flex', flexDirection: 'column', flex: 2, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 24, padding: 22 },
+                children: [
+                  { type: 'div', props: { style: { display: 'flex', fontSize: 19, fontWeight: 900, color: GREEN, marginBottom: 12 }, children: 'Key observations' } },
+                  { type: 'div', props: { style: { display: 'flex', flexDirection: 'column' }, children: obs.map(o => bul(o)) } }
+                ]
+              }},
+              { type: 'div', props: {
+                style: { display: 'flex', flexDirection: 'column', flex: 1, background: '#fff7f3', border: '1px solid #d7b6a9', borderRadius: 24, padding: 22 },
+                children: [
+                  { type: 'div', props: { style: { display: 'flex', fontSize: 19, fontWeight: 900, color: '#6e322f', marginBottom: 12 }, children: 'Avoid this week' } },
+                  { type: 'div', props: { style: { display: 'flex', flexDirection: 'column' }, children: cautions.map(c => bul(c, '#6e322f')) } }
+                ]
+              }}
+            ]
+          }},
+
+          // Row 5: AM + PM routine
+          { type: 'div', props: {
+            style: { display: 'flex', flexDirection: 'row', padding: '14px 54px 0 54px', gap: 20 },
+            children: [
+              { type: 'div', props: {
+                style: { display: 'flex', flexDirection: 'column', flex: 1, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 24, padding: 22 },
+                children: [
+                  { type: 'div', props: { style: { display: 'flex', fontSize: 19, fontWeight: 900, color: GREEN, marginBottom: 12 }, children: 'Personalized AM' } },
+                  { type: 'div', props: { style: { display: 'flex', flexDirection: 'column' }, children: am.map((a, i) => ({ type: 'div', props: { style: { display: 'flex', fontSize: 16, fontWeight: 700, color: GREEN, marginBottom: 8 }, children: `${i + 1}. ${sh(a, 45)}` } })) } }
+                ]
+              }},
+              { type: 'div', props: {
+                style: { display: 'flex', flexDirection: 'column', flex: 1, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 24, padding: 22 },
+                children: [
+                  { type: 'div', props: { style: { display: 'flex', fontSize: 19, fontWeight: 900, color: GREEN, marginBottom: 12 }, children: 'Personalized PM' } },
+                  { type: 'div', props: { style: { display: 'flex', flexDirection: 'column' }, children: pm.map((p, i) => ({ type: 'div', props: { style: { display: 'flex', fontSize: 16, fontWeight: 700, color: GREEN, marginBottom: 8 }, children: `${i + 1}. ${sh(p, 45)}` } })) } }
+                ]
+              }}
+            ]
+          }},
+
+          // Footer
+          { type: 'div', props: {
+            style: { display: 'flex', padding: '14px 74px 0 74px', fontSize: 13, fontWeight: 700, color: MUTED, lineHeight: 1.3 },
+            children: 'Not medical advice. For painful acne, rashes, infection, sudden pigmentation, or changing moles — consult a dermatologist.'
+          }}
+        ]
+      }
+    }
+
+    return new ImageResponse(root as any, {
+      width: W,
+      height: H,
+      headers: {
+        'Content-Type': 'image/png',
+        'Cache-Control': 'public, max-age=300, s-maxage=300',
+      },
+    })
+
+  } catch (err: any) {
+    console.error('[skin-report-card] failed:', err?.message)
+    return new NextResponse('Failed: ' + err?.message, { status: 500 })
   }
 }
