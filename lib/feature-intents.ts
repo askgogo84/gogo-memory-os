@@ -10,28 +10,30 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
 export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string }): Promise<string | null> {
   // ── Detect Instagram Reel / YouTube Short / TikTok ──────────
-  // Case 1: User forwarded IG reel as link preview card (no URL in body)
-  // WhatsApp forwards show "Name on Instagram: caption" — detect and guide user
+  // ── Instagram / Social Link Preview (text only, no thumbnail) ──────────
+  // When user forwards a reel, sometimes WhatsApp sends only the title text (no image)
+  // In that case: save it as a note using just the title + creator info we have
   if (detectInstagramPreviewCard(text)) {
+    const creatorMatch = text.match(/^(.+?)\s+on\s+instagram/i)
+    const creator = creatorMatch?.[1]?.trim() || ''
+    const captionMatch = text.match(/on instagram:\s*[\u201c\u201d""](.+?)["\u201c\u201d"]?$/i)
+    const caption = captionMatch?.[1]?.trim() || text.slice(0, 80)
+    const creatorTag = creator ? `@${creator.replace(/\s+/g, '').toLowerCase()}` : ''
+    const noteText = `REEL: ${caption} ${creatorTag}`.trim()
+    if (extra?.telegramId) {
+      await addToList(extra.telegramId, 'notes', [noteText])
+    }
     return (
-      `📱 *Instagram Reel detected!*
-
-` +
-      `To save this reel to AskGogo, share the actual link:
-
-` +
-      `1️⃣ Open Instagram
-` +
-      `2️⃣ Tap the reel → ⋯ (3 dots) → *Copy Link*
-` +
-      `3️⃣ Paste the link here on WhatsApp
-
-` +
-      `I'll transcribe it, summarize it and save it to your notes automatically! 🎬`
+      `📱 *Instagram content saved!*${creator ? `\n*By:* @${creator}` : ''}\n\n` +
+      `*"${caption.slice(0, 100)}"*\n\n` +
+      `Saved to your notes ✅\n\n` +
+      `💡 *Tip:* To get a full AI summary of the reel content, paste the link directly:\n` +
+      `1. Open Instagram → tap reel → ⋯ → *Copy Link*\n` +
+      `2. Paste here — I'll give you a complete breakdown!`
     )
   }
 
-  // Case 2: Full URL shared directly
+  // Case: Full URL pasted directly
   const reelUrl = detectReelUrl(text)
   if (reelUrl) {
     try {
