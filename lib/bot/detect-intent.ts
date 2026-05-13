@@ -23,6 +23,8 @@ export type IntentType =
   | 'upgrade_plan'
   | 'save_memory'
   | 'web_search'
+  | 'nutrition_log'
+  | 'nutrition_query'
   | 'general_chat'
 
 export type DetectedIntent = {
@@ -104,6 +106,11 @@ export function detectIntent(text: string): DetectedIntent {
   if (lower.startsWith('clear ') || lower.startsWith('delete list ') || lower.startsWith('remove list ')) return { type: 'list_clear', confidence: 'medium' }
   if (lower.startsWith('remember ') || lower.includes('remember that ') || lower.includes('save this memory')) return { type: 'save_memory', confidence: 'high' }
   if (SEARCH_HINTS.some((k) => lower.includes(k))) return { type: 'web_search', confidence: 'medium' }
+
+  // Nutrition commands
+  if (/^(nutrition|nutrition today|calories today|my calories|food today|what did i eat|nutrition report|nutrition week|nutrition summary|nutrition goal|set nutrition goal|set calorie goal|nutrition help|calorie help|food help)$/i.test(lower)) return { type: 'nutrition_query', confidence: 'high' }
+  if (/^(log |track )/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
+  if (/^(had |ate |just had |just ate |breakfast:|lunch:|dinner:|snack:)/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
 
   return { type: 'general_chat', confidence: 'low' }
 }

@@ -48,6 +48,7 @@ import {
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
 import { isInstagramReelPreview, analyseInstagramThumbnail } from '@/lib/services/reel-saver'
+import { handleNutritionPhoto, isNutritionPhotoCaption } from '@/lib/bot/handlers/nutrition'
 
 // Detect WhatsApp link preview cards (any website shared as a card)
 // These come as: Body = "Site Title | Site Name" + MediaUrl0 = thumbnail
@@ -267,6 +268,18 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', `[split receipt image] ${bodyText}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', reply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[split receipt image]', reply })
+        } else if (isNutritionPhotoCaption(bodyText) && !isSkinCheckCaption(bodyText) && !hasPendingSkinCheck) {
+          // ── Food photo → nutrition log ──────────────────────────
+          await sendWhatsAppMessage(from, '🥗 Analysing your meal...')
+          const nutritionReply = await handleNutritionPhoto({
+            telegramId: resolvedUser.telegramId,
+            mediaUrl: firstMediaUrl,
+            contentType: firstMediaType,
+            caption: bodyText
+          })
+          await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[food photo] ${bodyText}` : '[food photo]')
+          await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[food photo]', reply: nutritionReply })
         } else if (isSkinCheckCaption(bodyText) || hasPendingSkinCheck) {
           await sendWhatsAppMessage(from, 'Running AskGogo Skin Check...')
           const result = await buildSkinCheckFromImage({
