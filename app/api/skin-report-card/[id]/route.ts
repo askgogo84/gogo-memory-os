@@ -1,11 +1,17 @@
 import React from 'react'
 import { ImageResponse } from 'next/og'
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase-admin'
-import { downloadTwilioMediaAsDataUrl } from '@/lib/services/image-note-reader'
+import { createClient } from '@supabase/supabase-js'
+
+function getSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
+}
 
 export const dynamic = 'force-dynamic'
-export const runtime = 'nodejs'
+export const runtime = 'edge'
 
 const CARD_WIDTH = 1080
 const CARD_HEIGHT = 1350
@@ -208,12 +214,26 @@ async function getImageDataUrl(report: any) {
   if (!report?.image_url) return null
 
   try {
-    return await downloadTwilioMediaAsDataUrl({
-      mediaUrl: report.image_url,
-      contentType: 'image/jpeg',
+    const accountSid = process.env.TWILIO_ACCOUNT_SID
+    const authToken = process.env.TWILIO_AUTH_TOKEN
+    if (!accountSid || !authToken) return null
+
+    const auth = btoa(`${accountSid}:${authToken}`)
+    const res = await fetch(report.image_url, {
+      headers: { Authorization: `Basic ${auth}` },
     })
+    if (!res.ok) {
+      console.warn('[skin-report-card] selfie fetch failed:', res.status, '- using placeholder')
+      return null
+    }
+    const arrayBuffer = await res.arrayBuffer()
+    const bytes = new Uint8Array(arrayBuffer)
+    let binary = ''
+    bytes.forEach(b => binary += String.fromCharCode(b))
+    const b64 = btoa(binary)
+    return `data:image/jpeg;base64,${b64}`
   } catch (error: any) {
-    console.error('[skin-report-card] selfie image embed failed:', error?.message || error)
+    console.error('[skin-report-card] selfie embed failed:', error?.message || error)
     return null
   }
 }
@@ -428,7 +448,7 @@ async function buildPngCard(report: any) {
 export async function GET(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params
-    const { data: report, error } = await supabaseAdmin
+    const { data: report, error } = await getSupabase()
       .from('skin_check_reports')
       .select('*')
       .eq('id', id)
