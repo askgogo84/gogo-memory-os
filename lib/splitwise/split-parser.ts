@@ -25,6 +25,11 @@ export type SplitIntent =
   | { type: 'share_chart'; groupName?: string }
   | { type: 'invite'; groupName?: string; name: string; phone?: string }
   | { type: 'history'; groupName?: string }
+  | { type: 'trip_summary'; groupName?: string }
+  | { type: 'remind_debtors'; groupName?: string }
+  | { type: 'set_budget'; groupName?: string; perPerson: number }
+  | { type: 'who_owes_me'; groupName?: string }
+  | { type: 'scan_receipt'; groupName?: string }
   | null
 
 export function normalizeMemberName(value: string) {
@@ -207,6 +212,36 @@ export function parseSplitIntent(input: string): SplitIntent {
       allocations: allocationResult.allocations,
       rawText: text,
     }
+  }
+
+  // Trip summary
+  if (/^(trip summary|expense summary|category breakdown|show categories|spending breakdown)(?:\s+(.+))?$/i.test(lower)) {
+    const m = lower.match(/(?:trip summary|expense summary|category breakdown|show categories|spending breakdown)(?:\s+(.+))?$/i)
+    return { type: 'trip_summary', groupName: cleanGroupName(m?.[1]) }
+  }
+
+  // Remind debtors
+  if (/^(remind|nudge|ping)\s+(everyone|all|debtors|members)(?:\s+(?:in|for|about)\s+(.+))?$/i.test(lower)) {
+    const m = lower.match(/(?:remind|nudge|ping)\s+(?:everyone|all|debtors|members)(?:\s+(?:in|for|about)\s+(.+))?$/i)
+    return { type: 'remind_debtors', groupName: cleanGroupName(m?.[1]) }
+  }
+
+  // Set budget
+  const budgetMatch = lower.match(/^(?:set\s+)?budget\s+(?:rs\.?|inr|₹)?(\d+(?:\.\d+)?)(?:\s+(?:per\s+person)?)?(?:\s+(?:in|for)\s+(.+))?$/i)
+  if (budgetMatch) {
+    return { type: 'set_budget', perPerson: Number(budgetMatch[1]), groupName: cleanGroupName(budgetMatch[2]) }
+  }
+
+  // Who owes me
+  if (/^(who owes me|my receivables?|owed to me)(?:\s+(?:in|for)\s+(.+))?$/i.test(lower)) {
+    const m = lower.match(/(?:who owes me|my receivables?|owed to me)(?:\s+(?:in|for)\s+(.+))?$/i)
+    return { type: 'who_owes_me', groupName: cleanGroupName(m?.[1]) }
+  }
+
+  // Scan receipt
+  if (/^(scan receipt|read receipt|add receipt)(?:\s+(?:in|for)\s+(.+))?$/i.test(lower)) {
+    const m = lower.match(/(?:scan receipt|read receipt|add receipt)(?:\s+(?:in|for)\s+(.+))?$/i)
+    return { type: 'scan_receipt', groupName: cleanGroupName(m?.[1]) }
   }
 
   return null

@@ -3,10 +3,32 @@
 // Returns a reply string if handled, null to fall through to Claude
 
 import { parseSplitIntent } from '@/lib/splitwise/split-parser'
+import { detectReelUrl, saveReel } from '@/lib/services/reel-saver'
+import { addToList } from '@/lib/lists'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
-export async function routeFeatureIntent(phone: string, text: string): Promise<string | null> {
+export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string }): Promise<string | null> {
+  // ── Detect Instagram Reel / YouTube Short / TikTok ──────────
+  const reelUrl = detectReelUrl(text)
+  if (reelUrl) {
+    try {
+      const result = await saveReel({ url: reelUrl, userCaption: extra?.caption })
+      // Save to notes if we have a telegramId
+      if (extra?.telegramId) {
+        const noteText = `REEL: ${result.title || reelUrl} | ${result.author ? '@' + result.author : ''} | ${reelUrl}`
+        await addToList(extra.telegramId, 'notes', [noteText])
+      }
+      return result.savedNote + '
+
+✅ Saved to *my notes*.
+Say *my saved reels* to see all saved videos.'
+    } catch (err: any) {
+      console.error('[reel-saver] failed:', err?.message)
+      // Don't block — fall through
+    }
+  }
+
   const t = text.toLowerCase().trim()
 
   // ── SKIN CHECK FOLLOW-UP REMINDER ────────────────────────────────
@@ -49,6 +71,12 @@ export async function routeFeatureIntent(phone: string, text: string): Promise<s
   }
 
   // ── ASK GOGO SPLIT ────────────────────────────────────────────────
+  // Saved reels query
+  if (/^(my saved reels?|saved reels?|saved videos?|my reels?)$/.test(t)) {
+    // Return from notes filtered by REEL prefix
+    return null // Falls through to Claude which searches notes
+  }
+
   // WhatsApp-first Splitwise style groups, expenses, balances, settlement and charts.
   if (parseSplitIntent(text)) {
     return (await post('/api/splitbill', { phone, text }))?.reply ?? null

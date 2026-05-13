@@ -387,8 +387,8 @@ export async function POST(req: NextRequest) {
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
-    const featureReply = await routeFeatureIntent(from, text) ||
-      (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText) : null)
+    const featureReply = await routeFeatureIntent(from, text, { telegramId: resolvedUser.telegramId, caption: bodyText }) ||
+      (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText, { telegramId: resolvedUser.telegramId }) : null)
     if (featureReply) {
       await saveConversation(resolvedUser.telegramId, 'user', text)
       await saveConversation(resolvedUser.telegramId, 'assistant', featureReply)
