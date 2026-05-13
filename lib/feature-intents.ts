@@ -15,7 +15,10 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   const reelUrl = detectReelUrl(text)
   if (reelUrl) {
     try {
-      const result = await saveReel({ url: reelUrl, userCaption: extra?.caption })
+      // Extract title/creator from the WhatsApp body text (e.g. "Taki Wong | AI Builder on Instagram: "Had to give..."")
+      // This is far more reliable than oEmbed which needs FB app token
+      const bodyContext = text.replace(reelUrl, '').trim()
+      const result = await saveReel({ url: reelUrl, userCaption: bodyContext || extra?.caption })
       // Save structured note
       if (extra?.telegramId) {
         const noteText = [

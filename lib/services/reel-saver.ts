@@ -80,6 +80,25 @@ async function fetchYouTubeMeta(url: string): Promise<{ title: string; author: s
 }
 
 // Use Claude to create a useful note from what we know about the URL
+function parseWhatsAppBodyContext(bodyText: string): { creator: string; caption: string } {
+  if (!bodyText) return { creator: '', caption: '' }
+  
+  // Format 1: "Name | Role on Instagram: "caption text""
+  const fullMatch = bodyText.match(/^(.+?)\s+on\s+instagram:\s*["“”](.+?)["“”]?$/i)
+  if (fullMatch) {
+    return { creator: fullMatch[1].trim(), caption: fullMatch[2].trim() }
+  }
+  
+  // Format 2: "Name on Instagram: "caption"" (no role)
+  const simpleMatch = bodyText.match(/^(.+?)\s+on\s+instagram[^:]*:\s*["“”]?(.+)/i)
+  if (simpleMatch) {
+    return { creator: simpleMatch[1].trim(), caption: simpleMatch[2].replace(/["“”]+$/, '').trim() }
+  }
+  
+  // Format 3: just the text without Instagram pattern
+  return { creator: '', caption: bodyText.slice(0, 120).trim() }
+}
+
 async function buildReelNote(params: {
   url: string
   platform: string
@@ -92,31 +111,32 @@ async function buildReelNote(params: {
 
   const openai = new OpenAI({ apiKey })
 
-  const contextLines = [
-    `Platform: ${params.platform}`,
-    `URL: ${params.url}`,
-    params.title ? `Title: ${params.title}` : null,
-    params.author ? `Author/Creator: @${params.author}` : null,
-    params.userCaption ? `User caption: ${params.userCaption}` : null,
-  ].filter(Boolean).join('\n')
+  // Parse the body text to get real creator + caption data
+  const parsed = parseWhatsAppBodyContext(params.userCaption || '')
+  const creator = parsed.creator || params.author || ''
+  const caption = parsed.caption || params.title || ''
+
+  if (!creator && !caption) {
+    return `${params.platform} content saved.`
+  }
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
-    max_tokens: 300,
-    temperature: 0.3,
+    max_tokens: 150,
+    temperature: 0.2,
     messages: [
       {
         role: 'system',
-        content: 'You create concise, useful notes from social media video metadata. Be specific, practical, and helpful. Extract what this content is about and why someone would want to save it. Format for WhatsApp (no markdown headers). Keep it under 5 lines.'
+        content: 'You create one-paragraph notes from Instagram reel metadata. Use ONLY the creator name and caption text provided — do NOT guess or hallucinate content. If the caption is truncated, say what you know and note it is truncated. Be specific and accurate. No markdown. Under 60 words.'
       },
       {
         role: 'user',
-        content: `Create a useful note for this saved ${params.platform} video:\n\n${contextLines}\n\nWhat is this video likely about, and what key info should the user remember?`
+        content: `Creator: ${creator || 'unknown'}\nCaption: "${caption}"\n\nWrite a useful one-paragraph note about what this reel is about based ONLY on the caption and creator name.`
       }
     ]
   })
 
-  return response.choices[0]?.message?.content?.trim() || ''
+  return response.choices[0]?.message?.content?.trim() || caption
 }
 
 export async function saveReel(params: {
@@ -147,11 +167,16 @@ export async function saveReel(params: {
   }
 
   const platformLabel = platform === 'instagram' ? 'Instagram' : platform === 'youtube' ? 'YouTube' : platform === 'tiktok' ? 'TikTok' : 'Video'
-  const creatorLine = author ? `\n*Creator:* @${author}` : ''
-  const titleLine = title ? `\n*Caption:* ${title.slice(0, 120)}` : ''
-  const linkLine = `\n*Link:* ${params.url}`
-
-  const savedNote = `📱 *${platformLabel} saved!*${creatorLine}${titleLine}\n\n${summary}${linkLine}\n\n✅ Saved to *my notes*.`
+  
+  // Parse creator + caption from body text for display
+  const parsed = parseWhatsAppBodyContext(params.userCaption || '')
+  const displayCreator = parsed.creator || author || ''
+  const displayCaption = parsed.caption || title || ''
+  
+  const creatorLine = displayCreator ? `\n*By:* ${displayCreator}` : ''
+  const captionLine = displayCaption ? `\n*"${displayCaption.slice(0, 100)}${displayCaption.length > 100 ? '...' : ''}"*` : ''
+  
+  const savedNote = `📱 *${platformLabel} reel saved!*${creatorLine}${captionLine}\n\n${summary}\n\n✅ Saved to *my notes*.\nSay *my notes* to find it later.`
 
   return { url: params.url, platform, title, author, summary, savedNote }
 }
