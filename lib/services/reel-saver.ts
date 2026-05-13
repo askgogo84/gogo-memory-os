@@ -131,7 +131,7 @@ async function buildReelNote(params: {
       },
       {
         role: 'user',
-        content: `Creator: ${creator || 'unknown'}\nCaption: "${caption}"\n\nWrite a useful one-paragraph note about what this reel is about based ONLY on the caption and creator name.`
+        content: `Creator: ${creator || 'unknown creator'}\nCaption: "${caption}"\nPlatform: ${params.platform}\n\nWrite a short useful note (2-3 sentences) about this reel. If the caption is truncated or unclear, describe what you can infer from the creator name and available text. Never say you cannot determine the content — always make a useful observation.`
       }
     ]
   })
@@ -174,7 +174,9 @@ export async function saveReel(params: {
   const displayCaption = parsed.caption || title || ''
   
   const creatorLine = displayCreator ? `\n*By:* ${displayCreator}` : ''
-  const captionLine = displayCaption ? `\n*"${displayCaption.slice(0, 100)}${displayCaption.length > 100 ? '...' : ''}"*` : ''
+  // Only show caption if it's meaningful (not just a URL fragment or empty)
+  const isUsefulCaption = displayCaption && displayCaption.length > 5 && !displayCaption.startsWith('/?') && !displayCaption.startsWith('?igsh')
+  const captionLine = isUsefulCaption ? `\n*"${displayCaption.slice(0, 100)}${displayCaption.length > 100 ? '...' : ''}"*` : ''
   
   const savedNote = `📱 *${platformLabel} reel saved!*${creatorLine}${captionLine}\n\n${summary}\n\n✅ Saved to *my notes*.\nSay *my notes* to find it later.`
 

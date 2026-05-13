@@ -17,7 +17,12 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     try {
       // Extract title/creator from the WhatsApp body text (e.g. "Taki Wong | AI Builder on Instagram: "Had to give..."")
       // This is far more reliable than oEmbed which needs FB app token
-      const bodyContext = text.replace(reelUrl, '').trim()
+      // Strip the full URL including query params (?igsh=...) from body text
+      // Then extract the creator name + caption from the remaining text
+      const bodyContext = text
+        .replace(/https?:\/\/\S+/g, '')  // remove ALL URLs including ?igsh= fragments
+        .replace(/^\s*\/\?[^\s]+/gm, '') // remove leftover URL query fragments
+        .trim()
       const result = await saveReel({ url: reelUrl, userCaption: bodyContext || extra?.caption })
       // Save structured note
       if (extra?.telegramId) {
