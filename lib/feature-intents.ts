@@ -41,10 +41,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
         const noteText = `REEL: ${result.title || reelUrl} | ${result.author ? '@' + result.author : ''} | ${reelUrl}`
         await addToList(extra.telegramId, 'notes', [noteText])
       }
-      return result.savedNote + '
-
-✅ Saved to *my notes*.
-Say *my saved reels* to see all saved videos.'
+      return result.savedNote + '\n\n✅ Saved to *my notes*.\nSay *my saved reels* to see all saved videos.'
     } catch (err: any) {
       console.error('[reel-saver] failed:', err?.message)
       // Don't block — fall through

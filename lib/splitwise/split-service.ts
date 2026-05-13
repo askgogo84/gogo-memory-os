@@ -375,16 +375,8 @@ _Add expense 2400 hotel paid by me split equally_`
         return `${icons[cat] || '📦'} ${cat.charAt(0).toUpperCase() + cat.slice(1)}: ${money(amt)} (${pct}%)`
       })
     const members = await getMembers(group.id)
-    const perPerson = members.length > 1 ? `
-Per person avg: ${money(roundMoney(total / members.length))}` : ''
-    return `📊 *${group.name} · Trip Summary*
-
-${lines.join('
-')}
-
-💰 *Total spent: ${money(total)}*${perPerson}
-
-For settlement: *simplify ${group.name}*`
+    const perPerson = members.length > 1 ? `\nPer person avg: ${money(roundMoney(total / members.length))}` : ''
+    return `📊 *${group.name} · Trip Summary*\n\n${lines.join('\n')}\n\n💰 *Total spent: ${money(total)}*${perPerson}\n\nFor settlement: *simplify ${group.name}*`
   }
 
   // ── Remind debtors via WhatsApp ────────────────────────────────
@@ -400,23 +392,13 @@ For settlement: *simplify ${group.name}*`
       const member = members.find(m => m.name.toLowerCase() === name.toLowerCase())
       if (member?.phone && member.phone !== phone) {
         await sendWhatsAppMessage(member.phone,
-          `💰 *${group.name} · Settlement Reminder*
-
-Hey ${name}! You owe ${money(Math.abs(balance))} in the *${group.name}* split.
-
-Send it to the person you owe and mark it settled:
-*${name} paid [person] ₹[amount] in ${group.name}*`
+          `💰 *${group.name} · Settlement Reminder*\n\nHey ${name}! You owe ${money(Math.abs(balance))} in the *${group.name}* split.\n\nSend it to the person you owe and mark it settled:\n*${name} paid [person] ₹[amount] in ${group.name}*`
         )
         notified++
       }
     }
-    const debtorList = debtors.map(([n, b]) => `• ${n}: owes ${money(Math.abs(b))}`).join('
-')
-    return `🔔 *Reminders sent in ${group.name}*
-
-${debtorList}
-
-${notified} member${notified !== 1 ? 's' : ''} notified on WhatsApp.`
+    const debtorList = debtors.map(([n, b]) => `• ${n}: owes ${money(Math.abs(b))}`).join('\n')
+    return `🔔 *Reminders sent in ${group.name}*\n\n${debtorList}\n\n${notified} member${notified !== 1 ? 's' : ''} notified on WhatsApp.`
   }
 
   // ── Set budget per person ──────────────────────────────────────
@@ -430,11 +412,7 @@ ${notified} member${notified !== 1 ? 's' : ''} notified on WhatsApp.`
     const spentPerPerson = members.length > 0 ? roundMoney(totalSpent / members.length) : 0
     const remaining = roundMoney(intent.perPerson - spentPerPerson)
     const pct = intent.perPerson > 0 ? Math.round((spentPerPerson / intent.perPerson) * 100) : 0
-    return `🎯 *Budget set for ${group.name}*
-
-Budget per person: ${money(intent.perPerson)}
-Spent per person so far: ${money(spentPerPerson)} (${pct}%)
-${remaining >= 0 ? `✅ Remaining: ${money(remaining)} per person` : `⚠️ Over budget by: ${money(Math.abs(remaining))} per person`}`
+    return `🎯 *Budget set for ${group.name}*\n\nBudget per person: ${money(intent.perPerson)}\nSpent per person so far: ${money(spentPerPerson)} (${pct}%)\n${remaining >= 0 ? `✅ Remaining: ${money(remaining)} per person` : `⚠️ Over budget by: ${money(Math.abs(remaining))} per person`}`
   }
 
   // ── Who owes me ───────────────────────────────────────────────
@@ -450,25 +428,14 @@ ${remaining >= 0 ? `✅ Remaining: ${money(remaining)} per person` : `⚠️ Ove
     if (!owedToMe.length) return `✅ Nobody owes you anything in *${group.name}* right now.`
     const lines = owedToMe.map(s => `• ${s.from} owes you *${money(s.amount)}*`)
     const total = roundMoney(owedToMe.reduce((s, x) => s + x.amount, 0))
-    return `💰 *Who owes you in ${group.name}*
-
-${lines.join('
-')}
-
-Total owed to you: *${money(total)}*
-
-To remind them: *remind everyone in ${group.name}*`
+    return `💰 *Who owes you in ${group.name}*\n\n${lines.join('\n')}\n\nTotal owed to you: *${money(total)}*\n\nTo remind them: *remind everyone in ${group.name}*`
   }
 
   // ── Scan receipt prompt ───────────────────────────────────────
   if (intent.type === 'scan_receipt') {
     const group = await findGroup(phone, intent.groupName)
     const groupHint = group ? ` for *${group.name}*` : ''
-    return `📸 *Scan Receipt${groupHint}*
-
-Send a clear photo of the bill/receipt and I'll read it and split it automatically.
-
-Add caption: *receipt ${group?.name || 'Goa'}* when you send the photo.`
+    return `📸 *Scan Receipt${groupHint}*\n\nSend a clear photo of the bill/receipt and I'll read it and split it automatically.\n\nAdd caption: *receipt ${group?.name || 'Goa'}* when you send the photo.`
   }
 
   return null
