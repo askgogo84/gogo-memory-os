@@ -166,3 +166,114 @@ export async function saveReel(params: {
 
   return { url: params.url, platform, title, author, summary, savedNote }
 }
+
+// ─────────────────────────────────────────────────────────────
+// Instagram thumbnail analyser — works when user forwards reel
+// (Twilio sends thumbnail as MediaUrl0 + caption as Body text)
+// ─────────────────────────────────────────────────────────────
+
+export function isInstagramReelPreview(bodyText: string): boolean {
+  const t = (bodyText || '').trim()
+  return (
+    // "Name on Instagram: "caption"" pattern
+    /on instagram:\s*["""]/i.test(t) ||
+    /on instagram\s*$/i.test(t) ||
+    // Contains instagram.com domain reference
+    /instagram\.com/i.test(t) ||
+    // Magnetic Shark / business accounts pattern
+    (/instagram/i.test(t) && t.length > 10)
+  )
+}
+
+export async function analyseInstagramThumbnail(params: {
+  mediaUrl: string
+  contentType: string
+  captionText: string
+}): Promise<string> {
+  const OpenAI = (await import('openai')).default
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+
+  // Download thumbnail with Twilio auth
+  const sid = process.env.TWILIO_ACCOUNT_SID
+  const tok = process.env.TWILIO_AUTH_TOKEN
+  let imageDataUrl: string | null = null
+
+  if (sid && tok) {
+    try {
+      const res = await fetch(params.mediaUrl, {
+        headers: { Authorization: `Basic ${btoa(`${sid}:${tok}`)}` }
+      })
+      if (res.ok) {
+        const buf = await res.arrayBuffer()
+        const bytes = new Uint8Array(buf)
+        let b = ''
+        bytes.forEach(x => b += String.fromCharCode(x))
+        imageDataUrl = `data:image/jpeg;base64,${btoa(b)}`
+      }
+    } catch { /* fall through to text-only mode */ }
+  }
+
+  // Extract creator name from caption text
+  // Format: "Creator Name on Instagram: "caption text""
+  const creatorMatch = params.captionText.match(/^(.+?)\s+on\s+instagram/i)
+  const creator = creatorMatch?.[1]?.trim() || ''
+
+  // Extract caption snippet
+  const captionMatch = params.captionText.match(/on instagram:\s*["""](.*?)["""]/i)
+  const captionSnippet = captionMatch?.[1]?.trim() || params.captionText.slice(0, 100)
+
+  const messages: any[] = [
+    {
+      role: 'system',
+      content: `You are AskGogo, helping users save and understand Instagram content they forward on WhatsApp. 
+      Analyse the thumbnail image and caption text to create a useful summary note.
+      Be specific about what the content shows/teaches. Format for WhatsApp.
+      Keep response under 200 words. End with the caption text as a quote.`
+    },
+    {
+      role: 'user',
+      content: imageDataUrl
+        ? [
+            {
+              type: 'image_url',
+              image_url: { url: imageDataUrl, detail: 'low' }
+            },
+            {
+              type: 'text',
+              text: `This is a forwarded Instagram post${creator ? ` by @${creator}` : ''}.
+Caption: "${captionSnippet}"
+
+Analyse the thumbnail image and caption. Create a useful note that captures:
+1. What this content is about (be specific from the image)
+2. The key insight or tip (if it's educational/informational)
+3. Why someone would want to save it
+
+Then confirm it's saved.`
+            }
+          ]
+        : [
+            {
+              type: 'text',
+              text: `Forwarded Instagram post${creator ? ` by @${creator}` : ''}.
+Caption: "${captionSnippet}"
+
+Full text: ${params.captionText}
+
+Create a useful note from this Instagram content.`
+            }
+          ]
+    }
+  ]
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    max_tokens: 400,
+    temperature: 0.3,
+    messages
+  })
+
+  const analysis = response.choices[0]?.message?.content?.trim() || ''
+  const creatorLine = creator ? `\n*By:* @${creator}` : ''
+
+  return `📱 *Instagram content saved!*${creatorLine}\n\n${analysis}\n\n✅ Saved to *my notes*.\nSay *my saved reels* to see all saved posts.`
+}

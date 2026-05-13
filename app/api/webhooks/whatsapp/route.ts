@@ -47,6 +47,7 @@ import {
   isImageContentType,
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
+import { isInstagramReelPreview, analyseInstagramThumbnail } from '@/lib/services/reel-saver'
 import {
   buildReceiptSummary,
   extractReceiptGroupName,
@@ -260,6 +261,21 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || 'skin check'}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
+        } else if (isInstagramReelPreview(bodyText)) {
+          // ── Forwarded Instagram Reel / Post ──────────────────────
+          // Twilio sends the thumbnail as MediaUrl0 + caption text as Body
+          // Use GPT-4o vision to analyse the thumbnail + extract context from caption
+          await sendWhatsAppMessage(from, '📱 Saving Instagram content...')
+          const reelNote = await analyseInstagramThumbnail({
+            mediaUrl: firstMediaUrl,
+            contentType: firstMediaType,
+            captionText: bodyText,
+          })
+          const saveText = `REEL: ${bodyText.slice(0, 120)} | Thumbnail analysis: ${reelNote.slice(0, 200)}`
+          await addToList(resolvedUser.telegramId, 'notes', [saveText])
+          await saveConversation(resolvedUser.telegramId, 'user', `[instagram reel] ${bodyText}`.trim())
+          await saveConversation(resolvedUser.telegramId, 'assistant', reelNote)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[instagram reel]', reply: reelNote })
         } else {
           await sendWhatsAppMessage(from, 'Reading your note...')
           const imageReply = await readAndSummarizeImageNote({
