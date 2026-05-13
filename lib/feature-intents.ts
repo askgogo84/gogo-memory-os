@@ -10,44 +10,44 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
 export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string }): Promise<string | null> {
   // ── Detect Instagram Reel / YouTube Short / TikTok ──────────
-  // ── Instagram / Social Link Preview (text only, no thumbnail) ──────────
-  // When user forwards a reel, sometimes WhatsApp sends only the title text (no image)
-  // In that case: save it as a note using just the title + creator info we have
-  if (detectInstagramPreviewCard(text)) {
-    const creatorMatch = text.match(/^(.+?)\s+on\s+instagram/i)
-    const creator = creatorMatch?.[1]?.trim() || ''
-    const captionMatch = text.match(/on instagram:\s*[\u201c\u201d""](.+?)["\u201c\u201d"]?$/i)
-    const caption = captionMatch?.[1]?.trim() || text.slice(0, 80)
-    const creatorTag = creator ? `@${creator.replace(/\s+/g, '').toLowerCase()}` : ''
-    const noteText = `REEL: ${caption} ${creatorTag}`.trim()
-    if (extra?.telegramId) {
-      await addToList(extra.telegramId, 'notes', [noteText])
-    }
-    return (
-      `📱 *Instagram content saved!*${creator ? `\n*By:* @${creator}` : ''}\n\n` +
-      `*"${caption.slice(0, 100)}"*\n\n` +
-      `Saved to your notes ✅\n\n` +
-      `💡 *Tip:* To get a full AI summary of the reel content, paste the link directly:\n` +
-      `1. Open Instagram → tap reel → ⋯ → *Copy Link*\n` +
-      `2. Paste here — I'll give you a complete breakdown!`
-    )
-  }
-
-  // Case: Full URL pasted directly
+  // ── Instagram / YouTube / TikTok URL ──────────────────────────
+  // Check for full URL FIRST before preview card detection
   const reelUrl = detectReelUrl(text)
   if (reelUrl) {
     try {
       const result = await saveReel({ url: reelUrl, userCaption: extra?.caption })
-      // Save to notes if we have a telegramId
+      // Save structured note
       if (extra?.telegramId) {
-        const noteText = `REEL: ${result.title || reelUrl} | ${result.author ? '@' + result.author : ''} | ${reelUrl}`
+        const noteText = [
+          'REEL:',
+          result.author ? `@${result.author}` : null,
+          result.title ? result.title.slice(0, 80) : null,
+          result.url,
+        ].filter(Boolean).join(' | ')
         await addToList(extra.telegramId, 'notes', [noteText])
       }
-      return result.savedNote + '\n\n✅ Saved to *my notes*.\nSay *my saved reels* to see all saved videos.'
+      return result.savedNote
     } catch (err: any) {
       console.error('[reel-saver] failed:', err?.message)
-      // Don't block — fall through
+      // Fall through
     }
+  }
+  
+  // ── Instagram card preview (no full URL) ─────────────────────
+  if (detectInstagramPreviewCard(text)) {
+    const creatorMatch = text.match(/^(.+?)\s+on\s+instagram/i)
+    const creator = creatorMatch?.[1]?.trim() || ''
+    const captionMatch = text.match(/on instagram:\s*[\u201c\u201d""](.+?)[\u201c\u201d""]?$/i)
+    const caption = captionMatch?.[1]?.trim() || text.slice(0, 100)
+    const noteText = ['REEL:', creator ? `@${creator}` : null, caption].filter(Boolean).join(' | ')
+    if (extra?.telegramId) {
+      await addToList(extra.telegramId, 'notes', [noteText])
+    }
+    return (
+      `📱 *Instagram reel saved!*${creator ? `\n*By:* @${creator}` : ''}\n` +
+      `*"${caption.slice(0, 100)}"*\n\n` +
+      `✅ Saved to your notes.`
+    )
   }
 
   const t = text.toLowerCase().trim()

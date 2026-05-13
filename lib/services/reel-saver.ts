@@ -127,7 +127,7 @@ export async function saveReel(params: {
   let title = ''
   let author = ''
 
-  // Try to get metadata
+  // Try to get metadata via oEmbed
   if (platform === 'instagram') {
     const meta = await fetchInstagramMeta(params.url)
     title = meta?.title || ''
@@ -138,31 +138,20 @@ export async function saveReel(params: {
     author = meta?.author || ''
   }
 
-  // If no title from oEmbed, extract from URL slug
-  if (!title) {
-    const slug = params.url.split('/').filter(Boolean).pop() || ''
-    title = slug.replace(/[-_]/g, ' ').slice(0, 60)
-  }
-
-  // Build the note
+  // Build rich summary using Claude with everything we know
   let summary = ''
   try {
     summary = await buildReelNote({ url: params.url, platform, title, author, userCaption: params.userCaption })
   } catch {
-    summary = `${platform.charAt(0).toUpperCase() + platform.slice(1)} ${title ? `— ${title}` : 'video'} by ${author || 'unknown creator'}`
+    summary = title || `${platform} content by ${author || 'unknown creator'}`
   }
 
-  const platformLabel = platform === 'instagram' ? 'Instagram Reel' : platform === 'youtube' ? 'YouTube Short' : platform === 'tiktok' ? 'TikTok' : 'Video'
-  const savedNote = [
-    `📱 *${platformLabel} saved*`,
-    author ? `@${author}` : null,
-    title ? title : null,
-    '',
-    summary,
-    '',
-    `🔗 ${params.url}`,
-    params.userCaption ? `💬 "${params.userCaption}"` : null
-  ].filter(s => s !== null).join('\n')
+  const platformLabel = platform === 'instagram' ? 'Instagram' : platform === 'youtube' ? 'YouTube' : platform === 'tiktok' ? 'TikTok' : 'Video'
+  const creatorLine = author ? `\n*Creator:* @${author}` : ''
+  const titleLine = title ? `\n*Caption:* ${title.slice(0, 120)}` : ''
+  const linkLine = `\n*Link:* ${params.url}`
+
+  const savedNote = `📱 *${platformLabel} saved!*${creatorLine}${titleLine}\n\n${summary}${linkLine}\n\n✅ Saved to *my notes*.`
 
   return { url: params.url, platform, title, author, summary, savedNote }
 }
