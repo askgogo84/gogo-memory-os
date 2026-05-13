@@ -3,65 +3,64 @@
 // Returns a reply string if handled, null to fall through to Claude
 
 import { parseSplitIntent } from '@/lib/splitwise/split-parser'
-import { detectReelUrl, detectInstagramPreviewCard, saveReel } from '@/lib/services/reel-saver'
+import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard, saveReel } from '@/lib/services/reel-saver'
 import { addToList } from '@/lib/lists'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
 export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string }): Promise<string | null> {
-  // ── Detect Instagram Reel / YouTube Short / TikTok ──────────
-  // ── Instagram / YouTube / TikTok URL ──────────────────────────
+
+  // ── Detect Instagram / YouTube / TikTok / LinkedIn URL ─────────────────
   // Check for full URL FIRST before preview card detection
   const reelUrl = detectReelUrl(text)
   if (reelUrl) {
     try {
-      // Extract title/creator from the WhatsApp body text (e.g. "Taki Wong | AI Builder on Instagram: "Had to give..."")
-      // This is far more reliable than oEmbed which needs FB app token
-      // Strip the full URL including query params (?igsh=...) from body text
-      // Then extract the creator name + caption from the remaining text
+      // Strip ALL URLs + leftover query fragments to get clean creator+caption text
       const bodyContext = text
-        .replace(/https?:\/\/\S+/g, '')  // remove ALL URLs including ?igsh= fragments
-        .replace(/^\s*\/\?[^\s]+/gm, '') // remove leftover URL query fragments
+        .replace(/https?:\/\/\S+/g, '')
+        .replace(/\/\?\S+/g, '')
         .trim()
       const result = await saveReel({ url: reelUrl, userCaption: bodyContext || extra?.caption })
-      // Save structured note
       if (extra?.telegramId) {
-        const noteText = [
-          'REEL:',
-          result.author ? `@${result.author}` : null,
-          result.title ? result.title.slice(0, 80) : null,
-          result.url,
-        ].filter(Boolean).join(' | ')
+        const noteText = ['REEL:', result.author, result.title?.slice(0, 80), result.url].filter(Boolean).join(' | ')
         await addToList(extra.telegramId, 'notes', [noteText])
       }
       return result.savedNote
     } catch (err: any) {
       console.error('[reel-saver] failed:', err?.message)
-      // Fall through
     }
   }
-  
-  // ── Instagram card preview (no full URL) ─────────────────────
-  if (detectInstagramPreviewCard(text)) {
-    const creatorMatch = text.match(/^(.+?)\s+on\s+instagram/i)
-    const creator = creatorMatch?.[1]?.trim() || ''
-    const captionMatch = text.match(/on instagram:\s*[\u201c\u201d""](.+?)[\u201c\u201d""]?$/i)
-    const caption = captionMatch?.[1]?.trim() || text.slice(0, 100)
-    const noteText = ['REEL:', creator ? `@${creator}` : null, caption].filter(Boolean).join(' | ')
+
+  // ── Instagram / LinkedIn card preview (forwarded link, no full URL) ────
+  const isIGCard = detectInstagramPreviewCard(text)
+  const isLICard = detectLinkedInPreviewCard(text)
+  if (isIGCard || isLICard) {
+    const isLI = isLICard
+    const emoji = isLI ? '💼' : '📱'
+    const label = isLI ? 'LinkedIn post' : 'Instagram reel'
+    const platformWord = isLI ? 'linkedin' : 'instagram'
+    const cleanText = text.replace(/https?:\/\/\S+/g, '').replace(/\/\?\S+/g, '').trim()
+    const creatorRegex = new RegExp('^([^\\n]+?)\\s+on\\s+' + platformWord, 'i')
+    const creatorMatch = cleanText.match(creatorRegex)
+    const creator = creatorMatch ? creatorMatch[1].trim() : ''
+    const caption = cleanText
+      .replace(new RegExp('.*on\\s+' + platformWord + '[^:]*:\\s*', 'i'), '')
+      .replace(/^["""]+|["""]+$/g, '').trim().slice(0, 100)
     if (extra?.telegramId) {
+      const noteText = [(isLI ? 'LINKEDIN' : 'REEL'), creator, caption].filter(Boolean).join(' | ')
       await addToList(extra.telegramId, 'notes', [noteText])
     }
     return (
-      `📱 *Instagram reel saved!*${creator ? `\n*By:* @${creator}` : ''}\n` +
-      `*"${caption.slice(0, 100)}"*\n\n` +
-      `✅ Saved to your notes.`
+      emoji + ' *' + label + ' saved!*' +
+      (creator ? '\n*By:* ' + creator : '') +
+      (caption.length > 3 ? '\n*"' + caption + '"*\n\n' : '\n\n') +
+      '✅ Saved to your notes.\nSay *my notes* to find it later.'
     )
   }
 
   const t = text.toLowerCase().trim()
 
-  // ── SKIN CHECK FOLLOW-UP REMINDER ────────────────────────────────
-  // Avoid asking for a time. For Skin Check progress tracking, default to 9 AM after 14 days.
+  // ── SKIN CHECK FOLLOW-UP REMINDER ──────────────────────────────────────
   if (
     /\bremind\b/i.test(t) &&
     /\bskin\s*check\b/i.test(t) &&
@@ -70,14 +69,12 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     return (await post('/api/skin-reminder', { phone, text }))?.reply ?? null
   }
 
-  // ── DAILY BRIEFING ────────────────────────────────────────────────
-  // Keep this early so "morning briefing" / "today briefing" does not fall through to the generic assistant.
+  // ── DAILY BRIEFING ─────────────────────────────────────────────────────
   if (/^(morning|good morning|daily briefing|my briefing|briefing|morning briefing|today briefing|today summary|plan my day|help me plan my day|today)$/i.test(t)) {
     return (await post('/api/briefing', { phone }))?.reply ?? null
   }
 
   // ── RECORD MEETING ─────────────────────────────────────────────────────
-  // Also check original transcript for voice notes (Whisper mishears "record meeting")
   if (/^(record|start recording|record meeting|record the meeting|meeting record|start meeting|begin meeting|take notes|record call|record the call|record making|i.ll record|recording meeting|record a meeting|start record|record this meeting|wanna record|want to record|i want to record)$/i.test(t) ||
       (t.includes('record') && t.includes('meet')) ||
       (t.includes('record') && t.length < 25)) {
@@ -94,24 +91,21 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     )
   }
 
-  // Also handle "end meeting" / "stop recording" — remind them to use the recorder page
   if (/^(end meeting|stop recording|stop meeting|meeting ended|meeting done)$/i.test(t)) {
     return `To stop recording, tap *End Meeting* in the AskGogo Recorder tab you opened earlier.\n\nIf you closed it accidentally, your minutes may not have been sent — you can re-open and record again.`
   }
 
-  // ── ASK GOGO SPLIT ────────────────────────────────────────────────
-  // Saved reels query
-  if (/^(my saved reels?|saved reels?|saved videos?|my reels?)$/.test(t)) {
-    // Return from notes filtered by REEL prefix
+  // ── SAVED REELS / LINKEDIN QUERY ───────────────────────────────────────
+  if (/^(my saved reels?|saved reels?|saved videos?|my reels?|my saved posts?|my linkedin saves?)$/.test(t)) {
     return null // Falls through to Claude which searches notes
   }
 
-  // WhatsApp-first Splitwise style groups, expenses, balances, settlement and charts.
+  // ── ASK GOGO SPLIT ─────────────────────────────────────────────────────
   if (parseSplitIntent(text)) {
     return (await post('/api/splitbill', { phone, text }))?.reply ?? null
   }
 
-  // ── EXPENSES ─────────────────────────────────────────────────────
+  // ── EXPENSES ───────────────────────────────────────────────────────────
   if (/^(spent|paid|expensed?|cost)\s/.test(t) || /rs\.?\s*\d+|\d+\s*rs/.test(t)) {
     return (await post('/api/expenses', { phone, text }))?.reply ?? null
   }
@@ -120,7 +114,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     return (await get('/api/expenses', { phone, period }))?.reply ?? null
   }
 
-  // ── TODOS ─────────────────────────────────────────────────────────
+  // ── TODOS ──────────────────────────────────────────────────────────────
   if (/^(add task|new task|todo|task:)\s/i.test(t)) {
     const taskText = text.replace(/^(add task|new task|todo|task:)\s*/i, '').trim()
     return (await post('/api/todos', { phone, action: 'add', text: taskText }))?.reply ?? null
@@ -136,7 +130,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     return (await post('/api/todos', { phone, action: 'clear' }))?.reply ?? null
   }
 
-  // ── CONTACT MEMORY ────────────────────────────────────────────────
+  // ── CONTACT MEMORY ─────────────────────────────────────────────────────
   const rememberMatch = text.match(/^remember\s+(\w+)\s+(.+)/i)
   if (rememberMatch) {
     return (await post('/api/contacts', { phone, action: 'save', name: rememberMatch[1], fact: rememberMatch[2] }))?.reply ?? null
@@ -149,13 +143,13 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     return (await post('/api/contacts', { phone, action: 'list' }))?.reply ?? null
   }
 
-  // ── FOLLOW-UPS ────────────────────────────────────────────────────
+  // ── FOLLOW-UPS ─────────────────────────────────────────────────────────
   const fuMatch = text.match(/follow.?up with\s+(\w+)(?:.*?in\s+(\d+)\s+days?)?/i)
   if (fuMatch) {
     return (await post('/api/followups', { phone, contact: fuMatch[1], daysIfNoReply: fuMatch[2] ? parseInt(fuMatch[2]) : 2, context: text }))?.reply ?? null
   }
 
-  // ── NEWS DIGEST ───────────────────────────────────────────────────
+  // ── NEWS DIGEST ────────────────────────────────────────────────────────
   if (/^(news|headlines?|digest)(\s+(tech|market|cricket|startup|world|politics))?$/i.test(t)) {
     const tm = t.match(/\b(tech|market|cricket|startup|world|politics)\b/)
     return (await post('/api/news', { phone, topics: tm ? [tm[1]] : undefined }))?.reply ?? null

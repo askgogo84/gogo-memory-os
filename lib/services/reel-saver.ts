@@ -1,143 +1,151 @@
-/**
- * Instagram Reel / YouTube Short / TikTok saver
- * 
- * Flow:
- * 1. Detect if message contains a social video URL
- * 2. Fetch video metadata via oEmbed (title, author, thumbnail)
- * 3. Try to get caption/description from the URL
- * 4. Use Claude to create a useful note from the metadata
- * 5. Save to user's notes with the original URL
- */
-
 import OpenAI from 'openai'
+
+export type ContentPlatform = 'instagram' | 'youtube' | 'tiktok' | 'linkedin' | 'other'
 
 export type ReelSaveResult = {
   url: string
-  platform: 'instagram' | 'youtube' | 'tiktok' | 'other'
+  platform: ContentPlatform
   title: string
   author: string
   summary: string
   savedNote: string
 }
 
-// Detect Instagram link preview card (WhatsApp forward without full URL)
-// Format: "Name on Instagram: "caption text...""
-export function detectInstagramPreviewCard(text: string): boolean {
-  const t = (text || '').trim()
-  return (
-    /on instagram:\s*[""]/.test(t.toLowerCase()) ||
-    /on instagram\.?\s*$/.test(t.toLowerCase()) ||
-    /instagram\.com\/reel/i.test(t) ||
-    /instagram\.com\/p\//i.test(t) ||
-    (/instagram/i.test(t) && /reel/i.test(t))
-  )
-}
+// ── URL Detection ─────────────────────────────────────────────────────────────
 
-// Detect social video URLs
 export function detectReelUrl(text: string): string | null {
   const patterns = [
-    /https?:\/\/(?:www\.)?instagram\.com\/(?:reel|p|tv)\/[^\s\/?#]+/i,
-    /https?:\/\/(?:www\.)?instagram\.com\/stories\/[^\s\/?#]+\/[^\s\/?#]+/i,
-    /https?:\/\/(?:www\.)?youtu\.be\/[^\s\/?#]+/i,
-    /https?:\/\/(?:www\.)?youtube\.com\/(?:shorts|watch)\?[^\s]+/i,
-    /https?:\/\/(?:vm\.)?tiktok\.com\/[^\s\/?#]+/i,
-    /https?:\/\/(?:www\.)?tiktok\.com\/@[^\s\/]+\/video\/[^\s\/?#]+/i,
+    // Instagram — include full URL with query params
+    /https?:\/\/(?:www\.)?instagram\.com\/(?:reel|p|tv)\/[^\s]+/i,
+    /https?:\/\/(?:www\.)?instagram\.com\/stories\/[^\s]+/i,
+    // YouTube
+    /https?:\/\/youtu\.be\/[^\s]+/i,
+    /https?:\/\/(?:www\.)?youtube\.com\/(?:shorts|watch)[^\s]+/i,
+    // TikTok
+    /https?:\/\/(?:vm\.)?tiktok\.com\/[^\s]+/i,
+    /https?:\/\/(?:www\.)?tiktok\.com\/@[^\s\/]+\/video\/[^\s]+/i,
+    // LinkedIn posts & articles
+    /https?:\/\/(?:www\.)?linkedin\.com\/(?:posts|feed\/update|pulse|in\/[^\s\/]+\/recent-activity\/shares)\/[^\s]+/i,
+    /https?:\/\/(?:www\.)?linkedin\.com\/posts\/[^\s]+/i,
   ]
   for (const p of patterns) {
     const m = text.match(p)
-    if (m) return m[0]
+    if (m) return m[0].replace(/[.,;!?]+$/, '') // strip trailing punctuation
   }
   return null
 }
 
-export function detectPlatform(url: string): ReelSaveResult['platform'] {
+export function detectPlatform(url: string): ContentPlatform {
   if (/instagram\.com/i.test(url)) return 'instagram'
   if (/youtube\.com|youtu\.be/i.test(url)) return 'youtube'
   if (/tiktok\.com/i.test(url)) return 'tiktok'
+  if (/linkedin\.com/i.test(url)) return 'linkedin'
   return 'other'
 }
 
-// Try Instagram oEmbed for metadata
-async function fetchInstagramMeta(url: string): Promise<{ title: string; author: string; thumbnail: string } | null> {
-  try {
-    const oembedUrl = `https://graph.facebook.com/v19.0/instagram_oembed?url=${encodeURIComponent(url)}&access_token=${process.env.FACEBOOK_APP_TOKEN || ''}&fields=title,author_name,thumbnail_url`
-    const r = await fetch(oembedUrl)
-    if (!r.ok) return null
-    const d = await r.json()
-    return { title: d.title || '', author: d.author_name || '', thumbnail: d.thumbnail_url || '' }
-  } catch { return null }
+// ── Card Preview Detection ────────────────────────────────────────────────────
+
+export function detectInstagramPreviewCard(text: string): boolean {
+  const t = (text || '').trim()
+  // Only trigger if text contains 'on Instagram:' pattern (WhatsApp link preview format)
+  // and does NOT already contain a full URL (handled by detectReelUrl)
+  const hasFullUrl = /https?:\/\//i.test(t)
+  if (hasFullUrl) return false // Let detectReelUrl handle it
+  return (
+    /on instagram:\s*["""]/i.test(t) ||
+    (/instagram/i.test(t) && t.length > 10 && !hasFullUrl)
+  )
 }
 
-// Try YouTube oEmbed
+export function detectLinkedInPreviewCard(text: string): boolean {
+  const t = (text || '').trim()
+  const hasFullUrl = /https?:\/\//i.test(t)
+  if (hasFullUrl) return false
+  return /on linkedin|linkedin\.com|linkedin post/i.test(t)
+}
+
+// ── Context Parsing ───────────────────────────────────────────────────────────
+
+export function parseWhatsAppBodyContext(bodyText: string): { creator: string; caption: string } {
+  if (!bodyText) return { creator: '', caption: '' }
+  
+  // Remove all URLs (including ?igsh= query params) first
+  const cleanText = bodyText.replace(/https?:\/\/\S+/g, '').replace(/\/\?\S+/g, '').trim()
+  
+  // Format: "Name | Role on Instagram: "caption text""  OR  "Name on LinkedIn: "post text""
+  const fullMatch = cleanText.match(/^(.+?)\s+on\s+(instagram|linkedin)[^:]*:\s*["""']?([\s\S]+?)["""']?\s*$/i)
+  if (fullMatch) {
+    return {
+      creator: fullMatch[1].trim(),
+      caption: fullMatch[3].trim().slice(0, 120)
+    }
+  }
+  
+  // Format: just the title text
+  return { creator: '', caption: cleanText.slice(0, 120).trim() }
+}
+
+// ── oEmbed Fetchers ───────────────────────────────────────────────────────────
+
 async function fetchYouTubeMeta(url: string): Promise<{ title: string; author: string } | null> {
   try {
-    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`
-    const r = await fetch(oembedUrl)
+    const r = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`)
     if (!r.ok) return null
     const d = await r.json()
     return { title: d.title || '', author: d.author_name || '' }
   } catch { return null }
 }
 
-// Use Claude to create a useful note from what we know about the URL
-function parseWhatsAppBodyContext(bodyText: string): { creator: string; caption: string } {
-  if (!bodyText) return { creator: '', caption: '' }
-  
-  // Format 1: "Name | Role on Instagram: "caption text""
-  const fullMatch = bodyText.match(/^(.+?)\s+on\s+instagram:\s*["“”](.+?)["“”]?$/i)
-  if (fullMatch) {
-    return { creator: fullMatch[1].trim(), caption: fullMatch[2].trim() }
-  }
-  
-  // Format 2: "Name on Instagram: "caption"" (no role)
-  const simpleMatch = bodyText.match(/^(.+?)\s+on\s+instagram[^:]*:\s*["“”]?(.+)/i)
-  if (simpleMatch) {
-    return { creator: simpleMatch[1].trim(), caption: simpleMatch[2].replace(/["“”]+$/, '').trim() }
-  }
-  
-  // Format 3: just the text without Instagram pattern
-  return { creator: '', caption: bodyText.slice(0, 120).trim() }
-}
+// ── AI Summary ────────────────────────────────────────────────────────────────
 
-async function buildReelNote(params: {
+async function buildContentNote(params: {
   url: string
-  platform: string
-  title: string
-  author: string
-  userCaption?: string
+  platform: ContentPlatform
+  creator: string
+  caption: string
 }): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) throw new Error('No OpenAI key')
+  if (!apiKey) return params.caption || ''
 
   const openai = new OpenAI({ apiKey })
 
-  // Parse the body text to get real creator + caption data
-  const parsed = parseWhatsAppBodyContext(params.userCaption || '')
-  const creator = parsed.creator || params.author || ''
-  const caption = parsed.caption || params.title || ''
+  const platformLabel = {
+    instagram: 'Instagram reel',
+    youtube: 'YouTube video',
+    tiktok: 'TikTok video',
+    linkedin: 'LinkedIn post',
+    other: 'social media post',
+  }[params.platform]
 
-  if (!creator && !caption) {
-    return `${params.platform} content saved.`
-  }
+  const contextParts = [
+    params.creator ? `Creator: ${params.creator}` : null,
+    params.caption ? `Caption: "${params.caption}"` : null,
+    `Platform: ${platformLabel}`,
+  ].filter(Boolean).join('\n')
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
-    max_tokens: 150,
+    max_tokens: 120,
     temperature: 0.2,
     messages: [
       {
         role: 'system',
-        content: 'You create one-paragraph notes from Instagram reel metadata. Use ONLY the creator name and caption text provided — do NOT guess or hallucinate content. If the caption is truncated, say what you know and note it is truncated. Be specific and accurate. No markdown. Under 60 words.'
+        content: `You write short useful notes about saved social media content. 
+Use ONLY the creator name and caption text provided — never invent content.
+If caption is truncated (ends with "..."), note it is truncated and describe what you can infer.
+2-3 sentences max. No hashtags. No markdown. Plain text only.`
       },
       {
         role: 'user',
-        content: `Creator: ${creator || 'unknown creator'}\nCaption: "${caption}"\nPlatform: ${params.platform}\n\nWrite a short useful note (2-3 sentences) about this reel. If the caption is truncated or unclear, describe what you can infer from the creator name and available text. Never say you cannot determine the content — always make a useful observation.`
+        content: `Write a note for this saved ${platformLabel}:\n\n${contextParts}`
       }
     ]
   })
 
-  return response.choices[0]?.message?.content?.trim() || caption
+  return response.choices[0]?.message?.content?.trim() || params.caption || ''
 }
+
+// ── Main saveReel function ────────────────────────────────────────────────────
 
 export async function saveReel(params: {
   url: string
@@ -147,58 +155,49 @@ export async function saveReel(params: {
   let title = ''
   let author = ''
 
-  // Try to get metadata via oEmbed
-  if (platform === 'instagram') {
-    const meta = await fetchInstagramMeta(params.url)
-    title = meta?.title || ''
-    author = meta?.author || ''
-  } else if (platform === 'youtube') {
-    const meta = await fetchYouTubeMeta(params.url)
+  // Try oEmbed for YouTube (Instagram oEmbed needs FB token, skip)
+  if (platform === 'youtube') {
+    const meta = await fetchYouTubeMeta(params.url).catch(() => null)
     title = meta?.title || ''
     author = meta?.author || ''
   }
 
-  // Build rich summary using Claude with everything we know
-  let summary = ''
-  try {
-    summary = await buildReelNote({ url: params.url, platform, title, author, userCaption: params.userCaption })
-  } catch {
-    summary = title || `${platform} content by ${author || 'unknown creator'}`
-  }
-
-  const platformLabel = platform === 'instagram' ? 'Instagram' : platform === 'youtube' ? 'YouTube' : platform === 'tiktok' ? 'TikTok' : 'Video'
-  
-  // Parse creator + caption from body text for display
+  // Parse creator + caption from WhatsApp body text
   const parsed = parseWhatsAppBodyContext(params.userCaption || '')
-  const displayCreator = parsed.creator || author || ''
-  const displayCaption = parsed.caption || title || ''
-  
-  const creatorLine = displayCreator ? `\n*By:* ${displayCreator}` : ''
-  // Only show caption if it's meaningful (not just a URL fragment or empty)
-  const isUsefulCaption = displayCaption && displayCaption.length > 5 && !displayCaption.startsWith('/?') && !displayCaption.startsWith('?igsh')
-  const captionLine = isUsefulCaption ? `\n*"${displayCaption.slice(0, 100)}${displayCaption.length > 100 ? '...' : ''}"*` : ''
-  
-  const savedNote = `📱 *${platformLabel} reel saved!*${creatorLine}${captionLine}\n\n${summary}\n\n✅ Saved to *my notes*.\nSay *my notes* to find it later.`
+  const creator = parsed.creator || author || ''
+  const caption = parsed.caption || title || ''
 
-  return { url: params.url, platform, title, author, summary, savedNote }
+  // Build AI summary
+  const summary = await buildContentNote({
+    url: params.url,
+    platform,
+    creator,
+    caption,
+  }).catch(() => caption || '')
+
+  // Format output
+  const platformLabels: Record<ContentPlatform, string> = {
+    instagram: '📱 Instagram',
+    youtube: '▶️ YouTube',
+    tiktok: '🎵 TikTok',
+    linkedin: '💼 LinkedIn',
+    other: '🔗 Social',
+  }
+  const label = platformLabels[platform]
+
+  const creatorLine = creator ? `\n*By:* ${creator}` : ''
+  const captionIsJunk = !caption || caption.startsWith('/?') || caption.startsWith('?igsh') || caption.length < 4
+  const captionLine = captionIsJunk ? '' : `\n*"${caption.slice(0, 100)}${caption.length > 100 ? '...' : ''}"*`
+
+  const savedNote = `${label} saved!${creatorLine}${captionLine}\n\n${summary}\n\n✅ Saved to *my notes*.\nSay *my notes* to find it later.`
+
+  return { url: params.url, platform, title: caption, author: creator, summary, savedNote }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Instagram thumbnail analyser — works when user forwards reel
-// (Twilio sends thumbnail as MediaUrl0 + caption as Body text)
-// ─────────────────────────────────────────────────────────────
+// ── Thumbnail analyser (for when WhatsApp sends image with link preview) ──────
 
 export function isInstagramReelPreview(bodyText: string): boolean {
-  const t = (bodyText || '').trim()
-  return (
-    // "Name on Instagram: "caption"" pattern
-    /on instagram:\s*["""]/i.test(t) ||
-    /on instagram\s*$/i.test(t) ||
-    // Contains instagram.com domain reference
-    /instagram\.com/i.test(t) ||
-    // Magnetic Shark / business accounts pattern
-    (/instagram/i.test(t) && t.length > 10)
-  )
+  return detectInstagramPreviewCard(bodyText) || detectLinkedInPreviewCard(bodyText)
 }
 
 export async function analyseInstagramThumbnail(params: {
@@ -206,10 +205,9 @@ export async function analyseInstagramThumbnail(params: {
   contentType: string
   captionText: string
 }): Promise<string> {
-  const OpenAI = (await import('openai')).default
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  const OpenAI_mod = (await import('openai')).default
+  const openai = new OpenAI_mod({ apiKey: process.env.OPENAI_API_KEY })
 
-  // Download thumbnail with Twilio auth
   const sid = process.env.TWILIO_ACCOUNT_SID
   const tok = process.env.TWILIO_AUTH_TOKEN
   let imageDataUrl: string | null = null
@@ -226,72 +224,40 @@ export async function analyseInstagramThumbnail(params: {
         bytes.forEach(x => b += String.fromCharCode(x))
         imageDataUrl = `data:image/jpeg;base64,${btoa(b)}`
       }
-    } catch { /* fall through to text-only mode */ }
+    } catch { /* fall through */ }
   }
 
-  // Extract creator name from caption text
-  // Format: "Creator Name on Instagram: "caption text""
-  const creatorMatch = params.captionText.match(/^(.+?)\s+on\s+instagram/i)
-  const creator = creatorMatch?.[1]?.trim() || ''
+  const parsed = parseWhatsAppBodyContext(params.captionText)
+  const creator = parsed.creator
+  const caption = parsed.caption
 
-  // Extract caption snippet
-  const captionMatch = params.captionText.match(/on instagram:\s*["""](.*?)["""]/i)
-  const captionSnippet = captionMatch?.[1]?.trim() || params.captionText.slice(0, 100)
+  const isLinkedIn = /linkedin/i.test(params.captionText)
+  const platformLabel = isLinkedIn ? 'LinkedIn post' : 'Instagram reel'
 
-  const messages: any[] = [
-    {
-      role: 'system',
-      content: `You are AskGogo, helping users save links and content they share on WhatsApp. 
-      The user has shared a link preview (website, tool, article, video, or social post).
-      Analyse the thumbnail image and title text to create a useful note about what this is.
-      Be specific: what is this? what does it do? why would someone save it?
-      Format for WhatsApp. Keep response under 180 words.
-      End with: "✅ Saved to my notes. Say *my notes* to find it later."`
-    },
-    {
-      role: 'user',
-      content: imageDataUrl
-        ? [
-            {
-              type: 'image_url',
-              image_url: { url: imageDataUrl, detail: 'low' }
-            },
-            {
-              type: 'text',
-              text: `This is a forwarded Instagram post${creator ? ` by @${creator}` : ''}.
-Caption: "${captionSnippet}"
-
-Analyse the thumbnail image and caption. Create a useful note that captures:
-1. What this content is about (be specific from the image)
-2. The key insight or tip (if it's educational/informational)
-3. Why someone would want to save it
-
-Then confirm it's saved.`
-            }
-          ]
-        : [
-            {
-              type: 'text',
-              text: `Forwarded Instagram post${creator ? ` by @${creator}` : ''}.
-Caption: "${captionSnippet}"
-
-Full text: ${params.captionText}
-
-Create a useful note from this Instagram content.`
-            }
-          ]
-    }
-  ]
+  const messages: any[] = [{
+    role: 'system',
+    content: `You create useful notes from ${platformLabel} thumbnails and captions shared on WhatsApp. Be specific about what you see/can infer. Under 150 words. Format for WhatsApp.`
+  }, {
+    role: 'user',
+    content: imageDataUrl
+      ? [
+          { type: 'image_url', image_url: { url: imageDataUrl, detail: 'low' } },
+          { type: 'text', text: `${platformLabel} by ${creator || 'unknown creator'}.\nCaption: "${caption}"\n\nDescribe what this content is about and why someone would save it.` }
+        ]
+      : [{ type: 'text', text: `${platformLabel} by ${creator || 'unknown creator'}.\nCaption: "${caption}"\n\nCreate a useful note about this content.` }]
+  }]
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
-    max_tokens: 400,
+    max_tokens: 300,
     temperature: 0.3,
     messages
   })
 
   const analysis = response.choices[0]?.message?.content?.trim() || ''
-  const creatorLine = creator ? `\n*By:* @${creator}` : ''
+  const platformEmoji = isLinkedIn ? '💼' : '📱'
+  const platformName = isLinkedIn ? 'LinkedIn' : 'Instagram'
+  const creatorLine = creator ? `\n*By:* ${creator}` : ''
 
-  return `📱 *Instagram content saved!*${creatorLine}\n\n${analysis}\n\n✅ Saved to *my notes*.\nSay *my saved reels* to see all saved posts.`
+  return `${platformEmoji} *${platformName} content saved!*${creatorLine}\n\n${analysis}\n\n✅ Saved to *my notes*.`
 }
