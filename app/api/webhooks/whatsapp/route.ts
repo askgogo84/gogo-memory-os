@@ -48,6 +48,25 @@ import {
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
 import { isInstagramReelPreview, analyseInstagramThumbnail } from '@/lib/services/reel-saver'
+
+// Detect WhatsApp link preview cards (any website shared as a card)
+// These come as: Body = "Site Title | Site Name" + MediaUrl0 = thumbnail
+function isLinkPreviewCard(bodyText: string, mediaType: string): boolean {
+  if (!bodyText || !bodyText.trim()) return false
+  if (!mediaType.includes('image')) return false
+  const t = bodyText.trim()
+  // Must look like a title, not a personal message
+  // Link preview titles: short, contain | or -, title-case, no first-person
+  const hasLinkTitlePattern = (
+    t.includes(' | ') ||
+    t.includes(' - ') ||
+    t.includes(': ') ||
+    /^[A-Z]/.test(t)
+  )
+  const looksPersonal = /^(i |hey|hi|hello|can you|please|what|how|when|where|why|remind|add|save|show|my |the |ok|yes|no |sure)/i.test(t)
+  const isShortTitle = t.length < 200 && t.split(' ').length < 25
+  return hasLinkTitlePattern && !looksPersonal && isShortTitle
+}
 import {
   buildReceiptSummary,
   extractReceiptGroupName,
@@ -276,6 +295,21 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', `[instagram reel] ${bodyText}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', reelNote)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[instagram reel]', reply: reelNote })
+        } else if (isLinkPreviewCard(bodyText, firstMediaType)) {
+          // ── WhatsApp Link Preview (any website/tool/article shared as card) ──
+          // Body = title text, MediaUrl0 = thumbnail image
+          // Use GPT-4o vision to identify what was shared and create a useful note
+          await sendWhatsAppMessage(from, '🔗 Saving link...')
+          const reelNote = await analyseInstagramThumbnail({
+            mediaUrl: firstMediaUrl,
+            contentType: firstMediaType,
+            captionText: bodyText,
+          })
+          const saveText = `LINK: ${bodyText.slice(0, 120)}`
+          await addToList(resolvedUser.telegramId, 'notes', [saveText])
+          await saveConversation(resolvedUser.telegramId, 'user', `[link preview] ${bodyText}`.trim())
+          await saveConversation(resolvedUser.telegramId, 'assistant', reelNote)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[link preview]', reply: reelNote })
         } else {
           await sendWhatsAppMessage(from, 'Reading your note...')
           const imageReply = await readAndSummarizeImageNote({
