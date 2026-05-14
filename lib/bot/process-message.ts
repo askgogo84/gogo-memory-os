@@ -24,6 +24,7 @@ import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { buildCalendarActionReply, createCalendarConflictEvent, isCalendarAction } from './handlers/calendar-actions'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
+import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -481,6 +482,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const reply = list ? formatList(list.list_name, list.items || []) : `I could not find a list called "${listName}".`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  // ── Nutrition ──────────────────────────────────────────────
+  if (intent.type === 'nutrition_log' || intent.type === 'nutrition_query') {
+    const nutritionReply = await handleNutritionText({ telegramId: resolvedUser.telegramId, text: incomingText })
+    await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
+    return { text: formatOutgoingText(params.channel, nutritionReply), resolvedUser }
   }
 
   if (intent.type === 'web_search') {
