@@ -48,6 +48,7 @@ import {
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
 import { isInstagramReelPreview, analyseInstagramThumbnail } from '@/lib/services/reel-saver'
+import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 import { handleNutritionPhoto, isNutritionPhotoCaption } from '@/lib/bot/handlers/nutrition'
 
 // Detect WhatsApp link preview cards (any website shared as a card)
@@ -369,9 +370,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Don't route single digits to skin check if last bot message was nutrition goal
+    // Check context: if last bot msg was nutrition goal menu, digits go to nutrition not skin
     const isAmbiguousDigit = /^[1-5]$/.test(text.trim())
-    let nutritionGoalIntercepted = false
+    let skinTextReply = null
     if (isAmbiguousDigit) {
       const { data: lastBotMsg } = await supabaseAdmin
         .from('conversations')
@@ -382,18 +383,21 @@ export async function POST(req: NextRequest) {
         .limit(1)
         .single()
       const lastContent = (lastBotMsg?.content || '').toLowerCase()
-      if (lastContent.includes('nutrition goal') || lastContent.includes('working towards') ||
-          lastContent.includes('lose weight') || lastContent.includes('build muscle') ||
-          lastContent.includes('balanced & healthy') || lastContent.includes('maintenance')) {
-        const { handleNutritionText } = await import('@/lib/bot/handlers/nutrition')
-        const nutritionReply = await handleNutritionText({ telegramId: resolvedUser.telegramId, text })
+      const isNutritionContext = lastContent.includes('nutrition goal') || lastContent.includes('working towards') ||
+        lastContent.includes('lose weight') || lastContent.includes('build muscle') ||
+        lastContent.includes('balanced & healthy') || lastContent.includes('maintenance') ||
+        lastContent.includes('calorie deficit') || lastContent.includes('calorie surplus')
+      if (isNutritionContext) {
+        const nutritionReply = await handleNutritionGoalSelection(resolvedUser.telegramId, text)
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
         await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: nutritionReply })
-        nutritionGoalIntercepted = true
+      } else {
+        skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
       }
+    } else {
+      skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
     }
-    const skinTextReply = nutritionGoalIntercepted ? null : await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
     if (skinTextReply) {
       const replyText = getReplyText(skinTextReply)
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)

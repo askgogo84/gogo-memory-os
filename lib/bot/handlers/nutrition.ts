@@ -238,7 +238,7 @@ function buildGoalSetupMessage(): string {
   )
 }
 
-async function handleGoalSelection(telegramId: number, goalType: 'weight_loss' | 'muscle' | 'balanced' | 'maintenance'): Promise<string> {
+export async function handleGoalSelection(telegramId: number, goalType: 'weight_loss' | 'muscle' | 'balanced' | 'maintenance'): Promise<string> {
   const goals = calculateGoals({ goalType })
   await saveUserGoals(telegramId, goals)
 
@@ -276,4 +276,14 @@ function buildHelpMessage(): string {
     `• *nutrition goal* — choose weight loss / muscle / balanced\n\n` +
     `💡 *Tip:* Be specific for accuracy — "2 medium rotis with 1 bowl dal" is better than "lunch"`
   )
+}
+
+// Called directly from webhook when digit is sent after nutrition goal menu
+export async function handleNutritionGoalSelection(telegramId: number, text: string): Promise<string> {
+  const lower = text.trim()
+  if (lower === '1') return handleGoalSelection(telegramId, 'weight_loss')
+  if (lower === '2') return handleGoalSelection(telegramId, 'muscle')
+  if (lower === '3') return handleGoalSelection(telegramId, 'balanced')
+  if (lower === '4') return handleGoalSelection(telegramId, 'maintenance')
+  return buildGoalSetupMessage()
 }
