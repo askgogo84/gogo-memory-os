@@ -172,7 +172,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ telegramId
     const remaining = goals.calories - todayTotals.calories
     const dateStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
 
-    const goalLabel = { weight_loss: 'Weight Loss', muscle: 'Muscle Gain', balanced: 'Balanced', maintenance: 'Maintenance' }[goals.goalType] || 'Balanced'
+    const goalLabel = ({ weight_loss: 'Weight Loss', muscle: 'Muscle Gain', balanced: 'Balanced', maintenance: 'Maintenance' } as Record<string, string>)[String(goals.goalType)] || 'Balanced'
 
     // Meal list (max 4)
     const mealEmojis: Record<string, string> = { breakfast: '☀️', lunch: '🌞', dinner: '🌙', snack: '🍎', drink: '💧', unknown: '🍽' }
