@@ -369,7 +369,31 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
+    // Don't route single digits to skin check if last bot message was nutrition goal
+    const isAmbiguousDigit = /^[1-5]$/.test(text.trim())
+    let nutritionGoalIntercepted = false
+    if (isAmbiguousDigit) {
+      const { data: lastBotMsg } = await supabaseAdmin
+        .from('conversations')
+        .select('content')
+        .eq('telegram_id', resolvedUser.telegramId)
+        .eq('role', 'assistant')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      const lastContent = (lastBotMsg?.content || '').toLowerCase()
+      if (lastContent.includes('nutrition goal') || lastContent.includes('working towards') ||
+          lastContent.includes('lose weight') || lastContent.includes('build muscle') ||
+          lastContent.includes('balanced & healthy') || lastContent.includes('maintenance')) {
+        const { handleNutritionText } = await import('@/lib/bot/handlers/nutrition')
+        const nutritionReply = await handleNutritionText({ telegramId: resolvedUser.telegramId, text })
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: nutritionReply })
+        nutritionGoalIntercepted = true
+      }
+    }
+    const skinTextReply = nutritionGoalIntercepted ? null : await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
     if (skinTextReply) {
       const replyText = getReplyText(skinTextReply)
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
