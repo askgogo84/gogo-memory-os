@@ -15,11 +15,10 @@ import { compactSkinCheckForSaving, isSkinCheckCaption } from '@/lib/services/sk
 
 export { isSkinCheckCaption, isSkinCompareCommand, isSkinHistoryCommand, isSkinReportCardCommand }
 
-export function isSkinGoalReply(text: string, requireExplicit = false) {
+export function isSkinGoalReply(text: string) {
   const lower = (text || '').toLowerCase().trim()
-  // Single digits alone are ambiguous - require explicit skin goal keywords
-  // unless requireExplicit is false (called with conversation context check)
-  const isExplicitGoal = (
+  return (
+    ['1', '2', '3', '4', '5'].includes(lower) ||
     lower.includes('reduce oiliness') ||
     lower.includes('oiliness') ||
     lower.includes('dark circles') ||
