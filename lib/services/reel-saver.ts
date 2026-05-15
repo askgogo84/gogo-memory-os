@@ -61,7 +61,14 @@ export function detectLinkedInPreviewCard(text: string): boolean {
   const t = (text || '').trim()
   const hasFullUrl = /https?:\/\//i.test(t)
   if (hasFullUrl) return false
-  return /on linkedin|linkedin\.com|linkedin post/i.test(t)
+  // Classic: body contains "linkedin.com" or "on linkedin"
+  if (/on linkedin|linkedin\.com|linkedin post/i.test(t)) return true
+  // WhatsApp LinkedIn share: body is hashtags + description (no URL in body text)
+  // Detect: 2+ hashtags AND has real text content alongside them
+  const hashtagCount = (t.match(/#\w+/g) || []).length
+  const textWithoutHashtags = t.replace(/#\w+/g, '').trim()
+  if (hashtagCount >= 2 && textWithoutHashtags.length > 20) return true
+  return false
 }
 
 // ── Context Parsing ───────────────────────────────────────────────────────────
@@ -82,9 +89,17 @@ export function parseWhatsAppBodyContext(bodyText: string): { creator: string; c
     return { creator: onPlatform[1].trim(), caption: onPlatform[2].trim().slice(0, 200) }
   }
 
-  // Format 2: LinkedIn article card — title + excerpt, no "on linkedin:" prefix
-  // e.g. "Anthropic just launched Claude for Small Business, and it basically..."
+  // Format 2: Hashtag-style LinkedIn post (e.g. #d2cinsider #vcfund\nD2C Insider is set to launch...)
   const lineArr = cleanText.split('\n').map((l: string) => l.trim()).filter(Boolean)
+  const firstLineIsHashtags = lineArr.length > 0 && /^(#\w+\s*)+$/.test(lineArr[0])
+  if (firstLineIsHashtags && lineArr.length > 1) {
+    // Use the description lines as caption, hashtags as context
+    const description = lineArr.slice(1).join(' ')
+    const hashtags = lineArr[0]
+    return { creator: '', caption: `${description} ${hashtags}`.slice(0, 200) }
+  }
+
+  // Format 3: LinkedIn article card — title + excerpt, no "on linkedin:" prefix
   if (lineArr.length > 0) {
     const title = lineArr[0]
     const excerpt = lineArr.slice(1, 3).join(' ')
@@ -241,7 +256,9 @@ export async function analyseInstagramThumbnail(params: {
   const creator = parsed.creator
   const caption = parsed.caption
 
-  const isLinkedIn = /linkedin/i.test(params.captionText)
+  // Detect LinkedIn: either "linkedin" in text, OR hashtag-style post (2+ hashtags)
+  const hashtagCount2 = (params.captionText.match(/#\w+/g) || []).length
+  const isLinkedIn = /linkedin/i.test(params.captionText) || hashtagCount2 >= 2
   const platformLabel = isLinkedIn ? 'LinkedIn post' : 'Instagram reel'
 
   const messages: any[] = [{
