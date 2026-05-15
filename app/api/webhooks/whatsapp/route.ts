@@ -245,7 +245,7 @@ export async function POST(req: NextRequest) {
       const welcomeMsg = buildWelcomeReply(resolvedUser.name)
       // Send demo video first
       const videoUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'}/askgogo_demo.mp4`
-      await sendWhatsAppMediaMessage(from, videoUrl, 'video/mp4', '🎬 AskGogo — see what I can do!')
+      await sendWhatsAppMediaMessage(from, '🎬 AskGogo — see what I can do!', videoUrl)
       // Then send the full welcome message
       await sendWhatsAppMessage(from, welcomeMsg)
       // Continue processing their first message too
