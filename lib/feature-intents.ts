@@ -104,7 +104,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   // ── NUTRITION (before split — split parser matches breakfast/lunch/dinner) ─
   if (isNutritionLogText(text) || isNutritionCommand(text)) {
     if (extra?.telegramId) {
-      return handleNutritionText({ telegramId: extra.telegramId, text })
+      return handleNutritionText({ telegramId: extra.telegramId, text, whatsappId: phone })
     }
   }
 

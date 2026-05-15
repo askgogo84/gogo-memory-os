@@ -5,6 +5,7 @@
 
 import { analyzeNutritionFromText, analyzeNutritionFromImage, calculateGoals, buildNutritionLogReply } from '@/lib/bot/services/nutrition-analyzer'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getUserTimeZone } from '@/lib/bot/handlers/user-timezone'
 import { saveNutritionLog, getTodayNutrition, getWeekNutrition, getUserGoals, saveUserGoals, DEFAULT_GOALS } from '@/lib/bot/services/nutrition-storage'
 
 // ── Intent detection ──────────────────────────────────────────────────────────
@@ -51,13 +52,15 @@ export function isNutritionPhotoCaption(caption: string): boolean {
 export async function handleNutritionText(params: {
   telegramId: number
   text: string
+  whatsappId?: string | null
 }): Promise<string> {
   const lower = params.text.toLowerCase().trim()
 
   // Today's summary
   if (lower === 'nutrition today' || lower === 'calories today' || lower === 'food today' ||
       lower === 'my calories' || lower === 'what did i eat' || lower === 'nutrition') {
-    return buildTodaySummary(params.telegramId)
+    const userTz = getUserTimeZone(null, params.whatsappId)
+    return buildTodaySummary(params.telegramId, userTz)
   }
 
   // Weekly report
@@ -192,9 +195,9 @@ async function logMealFromText(telegramId: number, foodText: string): Promise<st
   })
 }
 
-async function buildTodaySummary(telegramId: number): Promise<string> {
+async function buildTodaySummary(telegramId: number, tz = 'Asia/Kolkata'): Promise<string> {
   const goals = await getUserGoals(telegramId) || DEFAULT_GOALS
-  const todayData = await getTodayNutrition(telegramId)
+  const todayData = await getTodayNutrition(telegramId, tz)
 
   if (!todayData || todayData.mealCount === 0) {
     return (
@@ -214,7 +217,7 @@ async function buildTodaySummary(telegramId: number): Promise<string> {
   const bar = '█'.repeat(filled) + '░'.repeat(10 - filled)
 
   const mealLines = logs.slice(0, 6).map((l: any) => {
-    const time = new Date(l.logged_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+    const time = new Date(l.logged_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: tz })
     const mealEmoji = { breakfast: '☀️', lunch: '🌞', dinner: '🌙', snack: '🍎', drink: '💧', unknown: '🍽' }[l.meal_type as string] || '🍽'
     return `${mealEmoji} ${time} — ${l.description.slice(0, 35)} · ${Math.round(l.total_calories)} kcal`
   }).join('\n')

@@ -486,7 +486,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   // ── Nutrition ──────────────────────────────────────────────
   if (intent.type === 'nutrition_log' || intent.type === 'nutrition_query') {
-    const nutritionReply = await handleNutritionText({ telegramId: resolvedUser.telegramId, text: incomingText })
+    const nutritionReply = await handleNutritionText({ telegramId: resolvedUser.telegramId, text: incomingText, whatsappId: resolvedUser.whatsappId })
     await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
     return { text: formatOutgoingText(params.channel, nutritionReply), resolvedUser }
   }

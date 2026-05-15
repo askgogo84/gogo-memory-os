@@ -33,9 +33,24 @@ export async function saveNutritionLog(params: {
 }
 
 // ── Get today's totals ────────────────────────────────────────────────────────
-export async function getTodayNutrition(telegramId: number) {
-  const todayStart = new Date()
-  todayStart.setHours(0, 0, 0, 0)
+
+function getOffset(tz: string): string {
+  try {
+    const now = new Date()
+    const utcStr = now.toLocaleString('en-CA', { timeZone: 'UTC', hour12: false }).replace(', ', 'T')
+    const tzStr = now.toLocaleString('en-CA', { timeZone: tz, hour12: false }).replace(', ', 'T')
+    const diff = (new Date(tzStr).getTime() - new Date(utcStr).getTime()) / 60000
+    const h = Math.floor(Math.abs(diff) / 60).toString().padStart(2, '0')
+    const m = (Math.abs(diff) % 60).toString().padStart(2, '0')
+    return (diff >= 0 ? '+' : '-') + h + ':' + m
+  } catch { return '+05:30' }
+}
+
+export async function getTodayNutrition(telegramId: number, tz = 'Asia/Kolkata') {
+  // Use user's timezone for "today" — critical for global users
+  const now = new Date()
+  const todayStr = now.toLocaleDateString('en-CA', { timeZone: tz || 'Asia/Kolkata' })
+  const todayStart = new Date(todayStr + 'T00:00:00' + getOffset(tz || 'Asia/Kolkata'))
 
   const { data, error } = await supabaseAdmin
     .from('nutrition_logs')
