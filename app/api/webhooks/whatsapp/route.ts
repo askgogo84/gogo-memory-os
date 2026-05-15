@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
-import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
+import { sendWhatsAppMessage, sendWhatsAppMedia, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToList } from '@/lib/lists'
@@ -239,12 +239,16 @@ export async function POST(req: NextRequest) {
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
     const bodyText = String(formData.get('Body') || '').trim()
 
-    // ── Auto-send welcome message to brand new users ──────────────────
+    // ── Auto-send welcome + demo video to brand new users ────────────
     if ((resolvedUser as any).isNewUser) {
       const { buildWelcomeReply } = await import('@/lib/bot/handlers/whatsapp-premium')
       const welcomeMsg = buildWelcomeReply(resolvedUser.name)
+      // Send demo video first
+      const videoUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'}/askgogo_demo.mp4`
+      await sendWhatsAppMedia(from, videoUrl, 'video/mp4', '🎬 AskGogo — see what I can do!')
+      // Then send the full welcome message
       await sendWhatsAppMessage(from, welcomeMsg)
-      // Don't return — continue processing their first message too
+      // Continue processing their first message too
     }
 
     if (isAdminCommand(bodyText)) {
