@@ -66,7 +66,15 @@ export default async function AdminPage() {
             <h1 className="mt-4 text-4xl font-semibold tracking-tight">AskGogo Admin Dashboard</h1>
             <p className="mt-2 text-slate-600">Users, plans, platforms, institution pilots, referrals and payment intent in one place.</p>
           </div>
-          <div className="rounded-2xl bg-slate-950 px-5 py-3 text-sm text-white shadow-sm">Live data from Supabase</div>
+          <div className="flex items-center gap-3">
+            <a
+              href="/admin/users"
+              className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+            >
+              👥 Manage Users & Plans
+            </a>
+            <div className="rounded-2xl bg-slate-950 px-5 py-3 text-sm text-white shadow-sm">Live data from Supabase</div>
+          </div>
         </div>
 
         <section className="mb-8 rounded-3xl bg-slate-950 p-6 text-white shadow-sm">
