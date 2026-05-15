@@ -37,6 +37,8 @@ export type ProcessIncomingParams = {
 export type ProcessIncomingResult = {
   text: string
   resolvedUser: Awaited<ReturnType<typeof resolveUser>>
+  mediaUrl?: string
+  mediaType?: string
 }
 
 async function getConversationHistory(telegramId: number): Promise<Message[]> {
