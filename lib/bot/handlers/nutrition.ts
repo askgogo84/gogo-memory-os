@@ -4,17 +4,22 @@
  */
 
 import { analyzeNutritionFromText, analyzeNutritionFromImage, calculateGoals, buildNutritionLogReply } from '@/lib/bot/services/nutrition-analyzer'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { saveNutritionLog, getTodayNutrition, getWeekNutrition, getUserGoals, saveUserGoals, DEFAULT_GOALS } from '@/lib/bot/services/nutrition-storage'
 
 // ── Intent detection ──────────────────────────────────────────────────────────
 
 export function isNutritionLogText(text: string): boolean {
   const lower = text.toLowerCase().trim()
-  // Food logging triggers
-  const foodWords = ['ate', 'had', 'ate', 'breakfast', 'lunch', 'dinner', 'snack', 'drank', 'drank', 'ate', 'roti', 'rice', 'dal', 'dosa', 'idli', 'sambar', 'biryani', 'chai', 'coffee', 'paratha', 'poha', 'upma', 'sabzi', 'curry', 'chicken', 'egg', 'paneer', 'milk', 'fruit', 'banana', 'apple', 'curd', 'yogurt', 'oats', 'bread', 'pizza', 'burger', 'noodles', 'pasta']
+  const foodWords = ['roti', 'rice', 'dal', 'dosa', 'idli', 'idly', 'sambar', 'biryani', 
+    'chai', 'coffee', 'paratha', 'poha', 'upma', 'sabzi', 'curry', 'chicken', 'egg', 
+    'paneer', 'milk', 'fruit', 'banana', 'apple', 'curd', 'yogurt', 'oats', 'bread', 
+    'pizza', 'burger', 'noodles', 'pasta', 'vada', 'uttapam', 'puri', 'chapati', 
+    'rajma', 'chole', 'aloo', 'gobi', 'palak', 'methi']
   const hasFoodWord = foodWords.some(w => lower.includes(w))
-  const hasCalPrefix = /^(log|ate|had|just had|just ate|breakfast:|lunch:|dinner:|snack:)/i.test(lower)
-  return hasCalPrefix || (hasFoodWord && lower.length < 200 && !lower.includes('remind'))
+  const hasEatingPrefix = /^(log|ate|had|i had|i ate|just had|just ate|i just|breakfast:|lunch:|dinner:|snack:|for breakfast|for lunch|for dinner)/i.test(lower)
+  const hasCalorieWord = /calorie|calori|kcal|protein|carb|macro/i.test(lower)
+  return hasEatingPrefix || hasCalorieWord || (hasFoodWord && lower.length < 200 && !lower.includes('remind') && !lower.includes('recipe'))
 }
 
 export function isNutritionCommand(text: string): boolean {
@@ -76,12 +81,43 @@ export async function handleNutritionText(params: {
     return buildHelpMessage()
   }
 
-  // Remove "log " or "track " prefix and analyze as food
+  // Handle "log this/that/it" — look up last user message for the food
+  if (/^(log this|log that|log it|track this|save this meal|log meal)$/i.test(lower)) {
+    const { data: recentMsgs } = await supabaseAdmin
+      .from('conversations')
+      .select('role, content')
+      .eq('telegram_id', params.telegramId)
+      .order('created_at', { ascending: false })
+      .limit(6)
+    const msgs = (recentMsgs || []).reverse()
+    let lastFood = ''
+    for (const msg of msgs) {
+      if (msg.role === 'user') {
+        const ml = (msg.content || '').toLowerCase()
+        const hasFood = ['idli','dosa','roti','rice','dal','sambar','poha','upma','biryani',
+          'chicken','egg','paneer','milk','chai','coffee','bread','fruit','banana',
+          'lunch','breakfast','dinner','ate','had','eat'].some(w => ml.includes(w))
+        if (hasFood && msg.content !== params.text) {
+          lastFood = msg.content
+          break
+        }
+      }
+    }
+    if (lastFood) {
+      return logMealFromText(params.telegramId, lastFood)
+    }
+    return `What did you eat? Tell me and I'll log it!
+
+_Example: "had 2 idlis and sambar for breakfast"_`
+  }
+
+  // Remove "I had / I ate / log / track" prefixes and analyze as food
   const foodText = params.text
-    .replace(/^(log|track)\s+/i, '')
+    .replace(/^(i just had|i just ate|i had|i ate|just had|just ate|log|track)\s+/i, '')
+    .replace(/^(for (breakfast|lunch|dinner|snack)[,:]?\s*)/i, '')
     .trim()
 
-  return logMealFromText(params.telegramId, foodText)
+  return logMealFromText(params.telegramId, foodText || params.text)
 }
 
 export async function handleNutritionPhoto(params: {
