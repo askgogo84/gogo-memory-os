@@ -25,7 +25,7 @@ export type AdminAnalytics = {
   institutions: any[]
 }
 
-type PlanKey = 'free' | 'starter' | 'pro' | 'founder_pro'
+type PlanKey = 'free' | 'starter' | 'pro' | 'founder_pro' | 'imported'
 
 const PLAN_LABELS: Record<PlanKey, string> = {
   free: 'Free Beta',
