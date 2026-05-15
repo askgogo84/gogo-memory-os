@@ -40,6 +40,7 @@ const PLAN_LIMITS: Record<PlanKey, string> = {
   starter: '100 AI actions/month',
   pro: '250 AI actions/month',
   founder_pro: '600 AI actions/month',
+  imported: 'Not yet active',
 }
 
 function normalizePhone(value: string | null | undefined) {
