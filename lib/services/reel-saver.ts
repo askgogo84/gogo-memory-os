@@ -94,11 +94,6 @@ export function parseWhatsAppBodyContext(bodyText: string): { creator: string; c
 
   return { creator: '', caption: cleanText.slice(0, 200).trim() }
 }
-  }
-  
-  // Format: just the title text
-  return { creator: '', caption: cleanText.slice(0, 120).trim() }
-}
 
 // ── oEmbed Fetchers ───────────────────────────────────────────────────────────
 

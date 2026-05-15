@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
-import { sendWhatsAppMessage, sendWhatsAppMedia, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
+import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToList } from '@/lib/lists'
@@ -245,7 +245,7 @@ export async function POST(req: NextRequest) {
       const welcomeMsg = buildWelcomeReply(resolvedUser.name)
       // Send demo video first
       const videoUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'}/askgogo_demo.mp4`
-      await sendWhatsAppMedia(from, videoUrl, 'video/mp4', '🎬 AskGogo — see what I can do!')
+      await sendWhatsAppMediaMessage(from, videoUrl, 'video/mp4', '🎬 AskGogo — see what I can do!')
       // Then send the full welcome message
       await sendWhatsAppMessage(from, welcomeMsg)
       // Continue processing their first message too
