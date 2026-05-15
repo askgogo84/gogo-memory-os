@@ -3,12 +3,15 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export type AdminAnalytics = {
   totals: {
     users: number
+    totalWithImported: number
     whatsappUsers: number
     telegramUsers: number
     freeUsers: number
     starterUsers: number
     proUsers: number
     founderProUsers: number
+    importedUsers: number
+    importedContacts: number
     unknownTierUsers: number
     activeReminders: number
     paymentIntents: number
