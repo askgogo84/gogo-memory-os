@@ -239,6 +239,14 @@ export async function POST(req: NextRequest) {
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
     const bodyText = String(formData.get('Body') || '').trim()
 
+    // ── Auto-send welcome message to brand new users ──────────────────
+    if ((resolvedUser as any).isNewUser) {
+      const { buildWelcomeReply } = await import('@/lib/bot/handlers/whatsapp-premium')
+      const welcomeMsg = buildWelcomeReply(resolvedUser.name)
+      await sendWhatsAppMessage(from, welcomeMsg)
+      // Don't return — continue processing their first message too
+    }
+
     if (isAdminCommand(bodyText)) {
       if (!isAdminPhone(from)) {
         await sendWhatsAppMessage(from, `Admin access is restricted.`)

@@ -98,6 +98,7 @@ export async function resolveUser(params: {
 
     if (error) throw error
     user = created
+    ;(user as any)._isNew = true
   }
 
   return {
@@ -108,6 +109,7 @@ export async function resolveUser(params: {
     whatsappId: user?.whatsapp_id ?? externalUserId,
     name: user?.name || userName || 'Friend',
     tier: user?.tier || 'free',
+    isNewUser: !!(user as any)._isNew,
     platform: 'whatsapp',
     timezone: getUserTimeZone(user, externalUserId),
     rawUser: user,
