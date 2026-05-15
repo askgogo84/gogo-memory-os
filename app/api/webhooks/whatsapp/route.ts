@@ -48,6 +48,7 @@ import {
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
 import { isInstagramReelPreview, analyseInstagramThumbnail } from '@/lib/services/reel-saver'
+import { parsePdfTicket, buildTicketReply, getReminderTime } from '@/lib/services/pdf-reader'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
 // Detect WhatsApp link preview cards (any website shared as a card)
@@ -367,7 +368,69 @@ export async function POST(req: NextRequest) {
     const text = incoming.wasVoice ? normalizeVoicePromptForBot(originalText) : originalText
 
     if (!text) {
-      await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.\nYou can also send a short voice note, type your request, or upload a photo/screenshot of your notes.`)
+      // ── PDF / Document handler ────────────────────────────────────────────
+    if (numMedia > 0 && firstMediaUrl && (firstMediaType.includes('pdf') || firstMediaType.includes('document'))) {
+      await sendWhatsAppMessage(from, '📄 Reading your ticket PDF...')
+      try {
+        const accountSid = process.env.TWILIO_ACCOUNT_SID!
+        const authToken = process.env.TWILIO_AUTH_TOKEN!
+        const ticketInfo = await parsePdfTicket(firstMediaUrl, accountSid, authToken)
+
+        // Save to notes
+        const noteText = bodyText
+          ? `PDF ticket: ${bodyText}`
+          : ticketInfo
+            ? `PDF ticket: ${JSON.stringify(ticketInfo).slice(0, 200)}`
+            : 'PDF document received'
+        await addToList(resolvedUser.telegramId, 'notes', [noteText])
+
+        // Set reminders 3 hours before each departure
+        let remindersSet = 0
+        if (ticketInfo?.type === 'flight') {
+          for (const flight of (ticketInfo as any).flights) {
+            const reminderTime = getReminderTime(flight.date, flight.departure)
+            if (reminderTime && reminderTime > new Date()) {
+              const reminderMsg = `✈️ ${flight.from} → ${flight.to} departs in 3 hours at ${flight.departure}! PNR: ${flight.pnr}`
+              await supabaseAdmin.from('reminders').insert({
+                telegram_id: resolvedUser.telegramId,
+                whatsapp_id: from,
+                message: reminderMsg,
+                remind_at: reminderTime.toISOString(),
+                created_at: new Date().toISOString(),
+              })
+              remindersSet++
+            }
+          }
+        } else if (ticketInfo?.type === 'train' || ticketInfo?.type === 'event') {
+          const t = ticketInfo as any
+          const dateStr = t.date
+          const timeStr = t.departure || t.time
+          const reminderTime = getReminderTime(dateStr, timeStr)
+          if (reminderTime && reminderTime > new Date()) {
+            const name = t.type === 'train' ? `${t.from} → ${t.to}` : t.name
+            await supabaseAdmin.from('reminders').insert({
+              telegram_id: resolvedUser.telegramId,
+              whatsapp_id: from,
+              message: `${t.type === 'train' ? '🚆' : '🎟️'} ${name} ${t.type === 'train' ? 'departs' : 'starts'} in 3 hours at ${timeStr}!`,
+              remind_at: reminderTime.toISOString(),
+              created_at: new Date().toISOString(),
+            })
+            remindersSet++
+          }
+        }
+
+        const reply = buildTicketReply(ticketInfo, remindersSet > 0)
+        await saveConversation(resolvedUser.telegramId, 'user', '[PDF ticket]')
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: '[PDF ticket]', reply })
+      } catch (err: any) {
+        console.error('PDF_PARSE_ERROR:', err?.message)
+        await sendWhatsAppMessage(from, `📄 I received your PDF! I had trouble reading the details automatically.\n\nTell me what it is and I'll save it:\n_"This is my Bengaluru to Varanasi flight on 2 July"_`)
+      }
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    await sendWhatsAppMessage(from, `I can read text, voice notes, images and PDFs now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.\nYou can also send a short voice note or type your request.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
