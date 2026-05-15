@@ -82,7 +82,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ telegramId
     const avgPro = loggedDays > 0 ? Math.round(days.reduce((s, d) => s + d.pro, 0) / loggedDays) : 0
     const streak = (() => { let s = 0; for (let i = days.length - 1; i >= 0; i--) { if (days[i].cal > 0) s++; else break; } return s })()
     const maxCal = Math.max(...days.map(d => d.cal), goals.calories)
-    const goalLabel = { weight_loss: '🔥 Weight Loss', muscle: '💪 Muscle Gain', balanced: '🌿 Balanced', maintenance: '⚖️ Maintenance' }[goals.goalType] || '🌿 Balanced'
+    const goalLabel = ({ weight_loss: '🔥 Weight Loss', muscle: '💪 Muscle Gain', balanced: '🌿 Balanced', maintenance: '⚖️ Maintenance' } as Record<string,string>)[String(goals.goalType)] || '🌿 Balanced'
 
     const d = (style: any, children?: any): any => ({ type: 'div', props: { style: { display: 'flex', ...style }, children } })
     const t = (text: any, style: any = {}): any => d({ fontSize: 16, color: GREEN, fontWeight: 500, lineHeight: 1.3, ...style }, text)
