@@ -109,7 +109,7 @@ export default function UsersPage() {
                 value={addPhone}
                 onChange={e => setAddPhone(e.target.value)}
                 placeholder="+971504561503"
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm w-48 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm w-48 focus:outline-none focus:ring-2 focus:ring-emerald-400" style={{color:"#111827",backgroundColor:"#ffffff"}}
                 required
               />
             </div>
@@ -119,7 +119,7 @@ export default function UsersPage() {
                 value={addName}
                 onChange={e => setAddName(e.target.value)}
                 placeholder="John Doe"
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-emerald-400" style={{color:"#111827",backgroundColor:"#ffffff"}}
               />
             </div>
             <div className="flex flex-col gap-1">
@@ -127,8 +127,8 @@ export default function UsersPage() {
               <select
                 value={addTier}
                 onChange={e => setAddTier(e.target.value)}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
-              style={{color: '#374151', backgroundColor: '#ffffff'}}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" style={{color:"#111827",backgroundColor:"#ffffff"}}
+              style={{color:"#111827",backgroundColor:"#ffffff"}}
               >
                 {TIERS.map(t => <option key={t.value} value={t.value} style={{color:'#374151'}}>{t.label}</option>)}
               </select>
@@ -153,7 +153,7 @@ export default function UsersPage() {
             value={q}
             onChange={e => setQ(e.target.value)}
             placeholder="Search by phone number or name..."
-            className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" style={{color:"#111827",backgroundColor:"#ffffff"}}
           />
           <button type="submit" className="rounded-xl bg-slate-800 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-700">
             Search
@@ -190,7 +190,7 @@ export default function UsersPage() {
                   disabled={editing === u.whatsapp_id}
                   onChange={e => updateTier(u.whatsapp_id, e.target.value)}
                   className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:opacity-50 cursor-pointer"
-                  style={{color: '#374151', backgroundColor: '#ffffff'}}
+                  style={{color:"#111827",backgroundColor:"#ffffff"}}
                 >
                   {TIERS.map(t => <option key={t.value} value={t.value} style={{color:'#374151'}}>{t.label}</option>)}
                 </select>
