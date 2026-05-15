@@ -47,7 +47,8 @@ import {
   isImageContentType,
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
-import { isInstagramReelPreview, analyseInstagramThumbnail } from '@/lib/services/reel-saver'
+import { isInstagramReelPreview, detectReelUrl } from '@/lib/services/reel-saver'
+import { saveMediaMemory, isMediaMemoryCommand, buildMediaMemoryReply, detectPlatformFromText } from '@/lib/services/media-memory'
 import { parsePdfTicket, buildTicketReply, getReminderTime } from '@/lib/services/pdf-reader'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
@@ -306,37 +307,33 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || 'skin check'}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
-        } else if (isInstagramReelPreview(bodyText)) {
-          console.log('[webhook] LinkedIn/Instagram path - bodyText:', bodyText.slice(0, 300))
-          // ── Forwarded Instagram Reel / Post ──────────────────────
-          // Twilio sends the thumbnail as MediaUrl0 + caption text as Body
-          // Use GPT-4o vision to analyse the thumbnail + extract context from caption
-          await sendWhatsAppMessage(from, '📱 Saving Instagram content...')
-          const reelNote = await analyseInstagramThumbnail({
-            mediaUrl: firstMediaUrl,
-            contentType: firstMediaType,
-            captionText: bodyText,
+        } else if (isInstagramReelPreview(bodyText) || isLinkPreviewCard(bodyText, firstMediaType)) {
+          // ── Social media content (Instagram, LinkedIn, Facebook, YouTube, Twitter) ──
+          // Detect platform and save to the right memory bucket
+          const detectedUrl = detectReelUrl(bodyText) || undefined
+          const platform = detectPlatformFromText(bodyText, detectedUrl)
+          const platformLabels: Record<string, string> = {
+            instagram: '📸 Saving to Instagram memory...',
+            facebook: '👥 Saving to Facebook memory...',
+            youtube: '▶️ Saving YouTube video...',
+            linkedin: '💼 Saving to LinkedIn memory...',
+            twitter: '🐦 Saving to Twitter memory...',
+            tiktok: '🎵 Saving TikTok...',
+            other: '🔗 Saving content...',
+          }
+          await sendWhatsAppMessage(from, platformLabels[platform] || '💾 Saving...')
+          const { reply: mediaReply } = await saveMediaMemory({
+            telegramId: resolvedUser.telegramId,
+            platform,
+            bodyText,
+            mediaUrl: firstMediaUrl || undefined,
+            accountSid: process.env.TWILIO_ACCOUNT_SID || undefined,
+            authToken: process.env.TWILIO_AUTH_TOKEN || undefined,
+            detectedUrl,
           })
-          const saveText = `REEL: ${bodyText.slice(0, 120)} | Thumbnail analysis: ${reelNote.slice(0, 200)}`
-          await addToList(resolvedUser.telegramId, 'notes', [saveText])
-          await saveConversation(resolvedUser.telegramId, 'user', `[instagram reel] ${bodyText}`.trim())
-          await saveConversation(resolvedUser.telegramId, 'assistant', reelNote)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[instagram reel]', reply: reelNote })
-        } else if (isLinkPreviewCard(bodyText, firstMediaType)) {
-          // ── WhatsApp Link Preview (any website/tool/article shared as card) ──
-          // Body = title text, MediaUrl0 = thumbnail image
-          // Use GPT-4o vision to identify what was shared and create a useful note
-          await sendWhatsAppMessage(from, '🔗 Saving link...')
-          const reelNote = await analyseInstagramThumbnail({
-            mediaUrl: firstMediaUrl,
-            contentType: firstMediaType,
-            captionText: bodyText,
-          })
-          const saveText = `LINK: ${bodyText.slice(0, 120)}`
-          await addToList(resolvedUser.telegramId, 'notes', [saveText])
-          await saveConversation(resolvedUser.telegramId, 'user', `[link preview] ${bodyText}`.trim())
-          await saveConversation(resolvedUser.telegramId, 'assistant', reelNote)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[link preview]', reply: reelNote })
+          await saveConversation(resolvedUser.telegramId, 'user', `[${platform}] ${bodyText}`.trim())
+          await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || `[${platform}]`, reply: mediaReply })
         } else {
           await sendWhatsAppMessage(from, 'Reading your note...')
           const imageReply = await readAndSummarizeImageNote({

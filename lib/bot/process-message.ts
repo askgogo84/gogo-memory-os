@@ -25,6 +25,8 @@ import { buildCalendarActionReply, createCalendarConflictEvent, isCalendarAction
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
+import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
+import { detectReelUrl } from '@/lib/services/reel-saver'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -484,6 +486,28 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const reply = list ? formatList(list.list_name, list.items || []) : `I could not find a list called "${listName}".`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  // ── Media Memory (my instagram saves, my youtube notes, find reel about X) ──
+  if (intent.type === 'media_memory' || isMediaMemoryCommand(incomingText)) {
+    const mediaReply = await buildMediaMemoryReply(resolvedUser.telegramId, incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
+    return { text: formatOutgoingText(params.channel, mediaReply), resolvedUser }
+  }
+
+  // ── YouTube / social URL sent as plain text ──────────────────
+  const textReelUrl = detectReelUrl(incomingText)
+  if (textReelUrl && /youtu\.?be|youtube\.com/i.test(textReelUrl)) {
+    const platform = detectPlatformFromText(incomingText, textReelUrl)
+    const { reply: mediaReply } = await saveMediaMemory({
+      telegramId: resolvedUser.telegramId,
+      platform,
+      bodyText: incomingText,
+      detectedUrl: textReelUrl,
+    })
+    await saveConversation(resolvedUser.telegramId, 'user', `[youtube] ${incomingText}`)
+    await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
+    return { text: formatOutgoingText(params.channel, mediaReply), resolvedUser }
   }
 
   // ── Nutrition ──────────────────────────────────────────────
