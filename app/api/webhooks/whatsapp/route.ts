@@ -585,7 +585,13 @@ export async function POST(req: NextRequest) {
     await sendThinkingIfNeeded(from, text)
     const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text' })
     const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(result.text, originalText) : result.text
-    await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: finalReply })
+    // Send visual card if process-message returned a mediaUrl
+    if ((result as any).mediaUrl) {
+      const caption = finalReply || '📊 Your nutrition card'
+      await sendWhatsAppMediaMessage(from, (result as any).mediaUrl, (result as any).mediaType || 'image/png', caption)
+    } else {
+      await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: finalReply })
+    }
 
     return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
   } catch (error: any) {

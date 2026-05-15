@@ -63,7 +63,17 @@ export async function handleNutritionText(params: {
     return buildTodaySummary(params.telegramId, userTz)
   }
 
-  // Weekly report
+  // Daily visual card
+  if (lower === 'nutrition card' || lower === 'daily card' || lower === 'nutrition daily card') {
+    return `__SEND_DAILY_CARD__${params.telegramId}`
+  }
+
+  // Weekly visual card
+  if (lower === 'nutrition report card' || lower === 'weekly card' || lower === 'nutrition weekly card') {
+    return `__SEND_WEEKLY_CARD__${params.telegramId}`
+  }
+
+  // Weekly report (text)
   if (lower === 'nutrition report' || lower === 'nutrition week' || lower === 'weekly nutrition' || lower === 'nutrition summary') {
     return buildWeeklySummary(params.telegramId)
   }
@@ -269,7 +279,7 @@ async function buildWeeklySummary(telegramId: number): Promise<string> {
     `*Goal:* ${goals.dailyCalories} kcal · ${goalPct}% on target\n` +
     (bestDay ? `*Most active logging day:* ${bestDay}\n` : '') +
     `\n${streakMsg}\n\n` +
-    `_Say *nutrition report card* for your visual weekly card (coming soon!)_`
+    `_Say *nutrition card* for your visual daily card · *nutrition report card* for weekly_`
   )
 }
 

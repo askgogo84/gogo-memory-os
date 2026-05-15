@@ -487,6 +487,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // ── Nutrition ──────────────────────────────────────────────
   if (intent.type === 'nutrition_log' || intent.type === 'nutrition_query') {
     const nutritionReply = await handleNutritionText({ telegramId: resolvedUser.telegramId, text: incomingText, whatsappId: resolvedUser.whatsappId })
+
+    // Handle visual card signals
+    const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
+    if (nutritionReply.startsWith('__SEND_DAILY_CARD__')) {
+      const tid = nutritionReply.replace('__SEND_DAILY_CARD__', '')
+      const cardUrl = `${APP_URL}/api/nutrition/daily-card/${tid}`
+      return { text: '📊 Your daily nutrition card 👆', mediaUrl: cardUrl, mediaType: 'image/png', resolvedUser }
+    }
+    if (nutritionReply.startsWith('__SEND_WEEKLY_CARD__')) {
+      const tid = nutritionReply.replace('__SEND_WEEKLY_CARD__', '')
+      const cardUrl = `${APP_URL}/api/nutrition/weekly-card/${tid}`
+      return { text: '📊 Your weekly nutrition card 👆', mediaUrl: cardUrl, mediaType: 'image/png', resolvedUser }
+    }
+
     await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
     return { text: formatOutgoingText(params.channel, nutritionReply), resolvedUser }
   }
