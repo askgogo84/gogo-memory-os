@@ -68,17 +68,32 @@ export function detectLinkedInPreviewCard(text: string): boolean {
 
 export function parseWhatsAppBodyContext(bodyText: string): { creator: string; caption: string } {
   if (!bodyText) return { creator: '', caption: '' }
-  
-  // Remove all URLs (including ?igsh= query params) first
-  const cleanText = bodyText.replace(/https?:\/\/\S+/g, '').replace(/\/\?\S+/g, '').trim()
-  
-  // Format: "Name | Role on Instagram: "caption text""  OR  "Name on LinkedIn: "post text""
-  const fullMatch = cleanText.match(/^(.+?)\s+on\s+(instagram|linkedin)[^:]*:\s*["""']?([\s\S]+?)["""']?\s*$/i)
-  if (fullMatch) {
-    return {
-      creator: fullMatch[1].trim(),
-      caption: fullMatch[3].trim().slice(0, 120)
-    }
+
+  // Strip URLs and bare domain references (linkedin.com, instagram.com)
+  const cleanText = bodyText
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\/\?\S+/g, '')
+    .replace(/^[ \t]*(linkedin|instagram|youtube|tiktok)\.com[ \t]*$/im, '')
+    .trim()
+
+  // Format 1: "Name on Instagram/LinkedIn: caption"
+  const onPlatform = cleanText.match(/^(.+?)\s+on\s+(?:instagram|linkedin)[^:]*:\s*[\u201c"\u201d"]?([\s\S]+?)[\u201c"\u201d"]?\s*$/i)
+  if (onPlatform) {
+    return { creator: onPlatform[1].trim(), caption: onPlatform[2].trim().slice(0, 200) }
+  }
+
+  // Format 2: LinkedIn article card — title + excerpt, no "on linkedin:" prefix
+  // e.g. "Anthropic just launched Claude for Small Business, and it basically..."
+  const lineArr = cleanText.split('\n').map((l: string) => l.trim()).filter(Boolean)
+  if (lineArr.length > 0) {
+    const title = lineArr[0]
+    const excerpt = lineArr.slice(1, 3).join(' ')
+    const caption = excerpt ? title + ' — ' + excerpt : title
+    return { creator: '', caption: caption.slice(0, 200) }
+  }
+
+  return { creator: '', caption: cleanText.slice(0, 200).trim() }
+}
   }
   
   // Format: just the title text

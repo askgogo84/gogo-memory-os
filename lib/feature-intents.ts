@@ -40,13 +40,19 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     const emoji = isLI ? '💼' : '📱'
     const label = isLI ? 'LinkedIn post' : 'Instagram reel'
     const platformWord = isLI ? 'linkedin' : 'instagram'
-    const cleanText = text.replace(/https?:\/\/\S+/g, '').replace(/\/\?\S+/g, '').trim()
+    const cleanText = text
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/\/\?\S+/g, '')
+      .replace(/^[ \t]*(linkedin|instagram|youtube|tiktok)\.com[ \t]*$/im, '')
+      .trim()
     const creatorRegex = new RegExp('^([^\\n]+?)\\s+on\\s+' + platformWord, 'i')
     const creatorMatch = cleanText.match(creatorRegex)
     const creator = creatorMatch ? creatorMatch[1].trim() : ''
-    const caption = cleanText
-      .replace(new RegExp('.*on\\s+' + platformWord + '[^:]*:\\s*', 'i'), '')
-      .replace(/^["""]+|["""]+$/g, '').trim().slice(0, 100)
+    // If no "on platform:" pattern, use full clean text as caption (LinkedIn article cards)
+    const captionRaw = creatorMatch
+      ? cleanText.replace(new RegExp('.*on\\s+' + platformWord + '[^:]*:\\s*', 'i'), '').replace(/^[\u201c"\u201d"]+|[\u201c"\u201d"]+$/g, '').trim()
+      : cleanText.split('\n').map((l: string) => l.trim()).filter(Boolean).join(' — ')
+    const caption = captionRaw.slice(0, 150)
     if (extra?.telegramId) {
       const noteText = [(isLI ? 'LINKEDIN' : 'REEL'), creator, caption].filter(Boolean).join(' | ')
       await addToList(extra.telegramId, 'notes', [noteText])
