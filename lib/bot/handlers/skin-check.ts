@@ -87,16 +87,10 @@ export async function buildSkinCheckFromImage(params: {
     console.error('[skin-check] history save failed:', error?.message || error)
   }
 
-  try {
-    const note = compactSkinCheckForSaving(report)
-    await addToList(params.telegramId, 'notes', [note])
-    savedNotes = true
-  } catch (error: any) {
-    console.error('[skin-check] note save failed:', error?.message || error)
-  }
+  savedNotes = true // skin checks no longer saved to notes — use 'my skin history'
 
   const saveStatus = savedHistory && savedNotes
-    ? `✅ Saved to *my skin history* and *my notes*.`
+    ? `✅ Saved to *my skin history*.`
     : savedHistory
       ? `✅ Saved to *my skin history*.\nNote save had a temporary issue.`
       : savedNotes

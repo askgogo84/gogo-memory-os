@@ -188,7 +188,7 @@ export async function buildMeetingNotesReply(params: { telegramId: number; trans
   const reply = polishMeetingReply(rawReply)
 
   const savedNote = reply.replace(/\*/g, '').replace(/🎙️\s*Meeting notes ready/gi, 'Meeting notes').trim().slice(0, 1500)
-  await addToList(params.telegramId, 'notes', [savedNote])
+  await addToList(params.telegramId, 'meeting_notes', [savedNote])
 
   const actionItems = extractActionItems(reply)
   if (actionItems.length) await saveFollowupState(params.telegramId, 'meeting_action_items', { items: actionItems })

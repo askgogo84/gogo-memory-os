@@ -7,7 +7,7 @@ import { addToList } from '@/lib/lists'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
 import { normalizeVoicePromptForBot } from '@/lib/bot/handlers/voice-normalizer'
 import { buildMemoryControlReply, isMemoryControlCommand } from '@/lib/bot/handlers/memory-control'
-import { buildNotesReply, isNotesCommand } from '@/lib/bot/handlers/notes-control'
+import { buildNotesReply, isNotesCommand, isMeetingNotesCommand, buildMeetingNotesListReply } from '@/lib/bot/handlers/notes-control'
 import { buildPaymentIntentReply, isPaymentIntentCommand } from '@/lib/bot/handlers/payment-intent'
 import { buildAdminWhatsAppReply, isAdminCommand, isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
 import { buildFirstValueReferralNudge } from '@/lib/bot/handlers/first-value-nudge'
@@ -546,6 +546,12 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       await sendWhatsAppMessage(from, incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    if (isMeetingNotesCommand(text)) {
+      const reply = await buildMeetingNotesListReply(resolvedUser.telegramId)
+      await sendWhatsAppMessage(from, reply)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
