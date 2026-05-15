@@ -49,7 +49,6 @@ import {
 } from '@/lib/services/image-note-reader'
 import { isInstagramReelPreview, analyseInstagramThumbnail } from '@/lib/services/reel-saver'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
-import { handleNutritionPhoto, isNutritionPhotoCaption } from '@/lib/bot/handlers/nutrition'
 
 // Detect WhatsApp link preview cards (any website shared as a card)
 // These come as: Body = "Site Title | Site Name" + MediaUrl0 = thumbnail
