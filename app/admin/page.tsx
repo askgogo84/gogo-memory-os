@@ -113,6 +113,7 @@ export default async function AdminPage() {
           <StatCard label="Starter" value={totals.starterUsers} />
           <StatCard label="Pro" value={totals.proUsers} />
           <StatCard label="Founder Pro" value={totals.founderProUsers} />
+          <StatCard label="⭐ Imported Contacts" value={totals.importedUsers ?? 0} hint="Warm network — not yet active" />
         </section>
 
         <section className="mt-8 rounded-3xl bg-white/85 p-6 shadow-sm ring-1 ring-black/5">

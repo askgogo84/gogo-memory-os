@@ -320,6 +320,7 @@ export async function getAdminAnalytics(): Promise<AdminAnalytics> {
       starterUsers: usersByTier.starter || 0,
       proUsers: usersByTier.pro || 0,
       founderProUsers: usersByTier.founder_pro || usersByTier.founder || 0,
+      importedUsers: usersByTier.imported || 0,
       unknownTierUsers: usersByTier.unknown || 0,
       activeReminders: activeReminders || 0,
       paymentIntents: paymentIntents || 0,
