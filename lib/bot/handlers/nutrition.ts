@@ -81,6 +81,14 @@ export async function handleNutritionText(params: {
     return buildHelpMessage()
   }
 
+  // Bail out if message is clearly NOT a food log (vague/review requests)
+  const isVagueRequest = /^(this|that|it|review|check|later|end of day|end of the day)[\.\.\s]*$/i.test(lower)
+    || /i want to review/i.test(lower)
+    || /review at the end/i.test(lower)
+  if (isVagueRequest) {
+    return `What would you like to review? Say *nutrition today* to see your full day summary, or *nutrition report* for your weekly breakdown.`
+  }
+
   // Handle "log this/that/it" — look up last user message for the food
   if (/^(log this|log that|log it|track this|save this meal|log meal)$/i.test(lower)) {
     const { data: recentMsgs } = await supabaseAdmin
