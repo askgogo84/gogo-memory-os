@@ -127,8 +127,8 @@ export default function UsersPage() {
               <select
                 value={addTier}
                 onChange={e => setAddTier(e.target.value)}
-                className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" style={{color:"#111827",backgroundColor:"#ffffff"}}
-              style={{color:"#111827",backgroundColor:"#ffffff"}}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                style={{color:"#111827",backgroundColor:"#ffffff"}}
               >
                 {TIERS.map(t => <option key={t.value} value={t.value} style={{color:'#374151'}}>{t.label}</option>)}
               </select>
