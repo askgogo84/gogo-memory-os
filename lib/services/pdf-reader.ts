@@ -1,6 +1,6 @@
-import OpenAI from 'openai'
+import Anthropic from '@anthropic-ai/sdk'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
 export interface FlightInfo {
   type: 'flight'
@@ -40,88 +40,69 @@ export interface EventInfo {
 export type TicketInfo = FlightInfo | TrainInfo | EventInfo | null
 
 /**
- * Extract plain text from PDF buffer using pdf-parse
- */
-async function extractPdfText(pdfBuffer: ArrayBuffer): Promise<string> {
-  try {
-    // Dynamically import pdf-parse to avoid issues with Next.js bundling
-    const pdfParse = (await import('pdf-parse')).default
-    const data = await pdfParse(Buffer.from(pdfBuffer))
-    return data.text || ''
-  } catch (err) {
-    console.error('[pdf-reader] pdf-parse failed:', err)
-    return ''
-  }
-}
-
-/**
- * Download PDF from Twilio URL, extract text, then parse with GPT-4o
+ * Download PDF from Twilio URL and parse it using Claude's native PDF support
  */
 export async function parsePdfTicket(
   mediaUrl: string,
   accountSid: string,
   authToken: string
 ): Promise<TicketInfo> {
-  // 1. Fetch PDF from Twilio with auth
+  console.log('[pdf-reader] Fetching PDF from Twilio:', mediaUrl)
+
   const response = await fetch(mediaUrl, {
     headers: {
       Authorization: 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64'),
     },
   })
 
-  if (!response.ok) throw new Error(`Failed to fetch PDF: ${response.status}`)
-
-  const pdfBuffer = await response.arrayBuffer()
-
-  // 2. Extract text from PDF server-side
-  const pdfText = await extractPdfText(pdfBuffer)
-
-  if (!pdfText || pdfText.trim().length < 20) {
-    console.error('[pdf-reader] Could not extract text from PDF — possibly scanned/image PDF')
-    return null
+  if (!response.ok) {
+    console.error('[pdf-reader] Failed to fetch PDF:', response.status, response.statusText)
+    throw new Error(`Failed to fetch PDF: ${response.status}`)
   }
 
-  console.log('[pdf-reader] Extracted PDF text length:', pdfText.length)
-  console.log('[pdf-reader] First 500 chars:', pdfText.slice(0, 500))
+  const pdfBuffer = await response.arrayBuffer()
+  const base64Pdf = Buffer.from(pdfBuffer).toString('base64')
+  console.log('[pdf-reader] PDF fetched, bytes:', pdfBuffer.byteLength)
 
-  // 3. Send extracted text to GPT-4o for structured parsing
-  const result = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    max_tokens: 1000,
+  // Use Claude's native PDF document support — works on both text and image-based PDFs
+  const result = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 1024,
     messages: [
       {
-        role: 'system',
-        content: `You are a travel ticket parser. Extract travel details from the provided ticket text and return ONLY valid JSON. No markdown, no explanation.`,
-      },
-      {
         role: 'user',
-        content: `Parse this travel ticket and return JSON.
+        content: [
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: base64Pdf,
+            },
+          } as never,
+          {
+            type: 'text',
+            text: `Extract all travel details from this ticket and return ONLY valid JSON. No markdown, no explanation.
 
 If FLIGHT:
-{"type":"flight","flights":[{"from":"City name","to":"City name","date":"2 Jul 2026","departure":"14:50","arrival":"17:15","airline":"Airline name","flightNo":"QP1423","pnr":"XCDZFN"}],"passengers":["Full Name 1"]}
+{"type":"flight","flights":[{"from":"City","to":"City","date":"15 May 2026","departure":"14:50","arrival":"17:15","airline":"IndiGo","flightNo":"6E123","pnr":"XCDZFN"}],"passengers":["Full Name"]}
 
 If TRAIN:
-{"type":"train","from":"City","to":"City","date":"2 Jul 2026","departure":"14:50","trainNo":"12345","trainName":"Train Name","pnr":"ABC123","passengers":["Name 1"]}
+{"type":"train","from":"City","to":"City","date":"15 May 2026","departure":"14:50","trainNo":"12345","trainName":"Train Name","pnr":"ABC123","passengers":["Name"]}
 
 If EVENT:
-{"type":"event","name":"Event Name","date":"2 Jul 2026","time":"18:00","venue":"Venue Name"}
+{"type":"event","name":"Event Name","date":"15 May 2026","time":"18:00","venue":"Venue"}
 
-Rules:
-- Extract ALL flights if round-trip or multi-city
-- Extract ALL passenger names
-- Use the exact dates and times from the ticket
-- Return ONLY the JSON object, nothing else
-
-TICKET TEXT:
-${pdfText.slice(0, 8000)}`,
+Extract ALL flights for round-trips. Extract ALL passenger names. Return ONLY the JSON.`,
+          },
+        ],
       },
     ],
   })
 
-  const text = result.choices[0]?.message?.content?.trim() || ''
+  const text = result.content[0]?.type === 'text' ? result.content[0].text.trim() : ''
   const clean = text.replace(/```json|```/g, '').trim()
-
-  console.log('[pdf-reader] GPT-4o response:', clean.slice(0, 300))
+  console.log('[pdf-reader] Claude response:', clean.slice(0, 400))
 
   try {
     return JSON.parse(clean) as TicketInfo
@@ -148,14 +129,8 @@ export function buildTicketReply(info: TicketInfo, reminderSet = true): string {
           `${f.airline} ${f.flightNo} · PNR: \`${f.pnr}\``
       )
       .join('\n\n')
-
-    const pax =
-      fi.passengers.length > 0 ? `\n\n👥 *Passengers:* ${fi.passengers.join(', ')}` : ''
-
-    const reminder = reminderSet
-      ? `\n\n⏰ *Reminders set* — I'll alert you *3 hours before* each departure!`
-      : ''
-
+    const pax = fi.passengers.length > 0 ? `\n\n👥 *Passengers:* ${fi.passengers.join(', ')}` : ''
+    const reminder = reminderSet ? `\n\n⏰ *Reminders set* — I'll alert you *3 hours before* each departure!` : ''
     return `🎫 *Flight ticket saved!*\n\n${flightLines}${pax}${reminder}\n\n_Say *my reminders* to see all alerts_`
   }
 
@@ -176,7 +151,7 @@ export function buildTicketReply(info: TicketInfo, reminderSet = true): string {
 }
 
 /**
- * Parse "2 Jul 2026 14:50" → Date object minus 3 hours
+ * Parse date + time string → reminder Date (3 hours before)
  */
 export function getReminderTime(dateStr: string, timeStr: string): Date | null {
   try {
@@ -189,12 +164,9 @@ export function getReminderTime(dateStr: string, timeStr: string): Date | null {
     const month = months[parts[1]?.slice(0, 3)] ?? -1
     const year = parseInt(parts[2])
     const [h, m] = timeStr.split(':').map(Number)
-
     if (isNaN(day) || month < 0 || isNaN(year) || isNaN(h)) return null
-
     const departure = new Date(year, month, day, h, m, 0, 0)
-    const reminderTime = new Date(departure.getTime() - 3 * 60 * 60 * 1000)
-    return reminderTime
+    return new Date(departure.getTime() - 3 * 60 * 60 * 1000)
   } catch {
     return null
   }
