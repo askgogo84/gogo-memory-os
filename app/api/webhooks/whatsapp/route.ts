@@ -651,7 +651,7 @@ export async function POST(req: NextRequest) {
     // Send visual card if process-message returned a mediaUrl
     if ((result as any).mediaUrl) {
       const caption = finalReply || '📊 Your nutrition card'
-      await sendWhatsAppMediaMessage(from, (result as any).mediaUrl, (result as any).mediaType || 'image/png', caption)
+      await sendWhatsAppMediaMessage(from, caption, (result as any).mediaUrl)
     } else {
       await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: finalReply })
     }
