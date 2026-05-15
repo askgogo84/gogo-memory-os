@@ -41,8 +41,9 @@ export default function UsersPage() {
     try {
       const res = await fetch(`/api/admin/users?q=${encodeURIComponent(search)}`)
       const data = await res.json()
+      if (data.error) { setError('API error: ' + data.error); setLoading(false); return }
       setUsers(data.users || [])
-    } catch { setError('Failed to load users') }
+    } catch (e: any) { setError('Failed to load users: ' + e.message) }
     setLoading(false)
   }, [])
 
@@ -127,8 +128,9 @@ export default function UsersPage() {
                 value={addTier}
                 onChange={e => setAddTier(e.target.value)}
                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              style={{color: '#374151', backgroundColor: '#ffffff'}}
               >
-                {TIERS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                {TIERS.map(t => <option key={t.value} value={t.value} style={{color:'#374151'}}>{t.label}</option>)}
               </select>
             </div>
             <button
@@ -188,8 +190,9 @@ export default function UsersPage() {
                   disabled={editing === u.whatsapp_id}
                   onChange={e => updateTier(u.whatsapp_id, e.target.value)}
                   className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:opacity-50 cursor-pointer"
+                  style={{color: '#374151', backgroundColor: '#ffffff'}}
                 >
-                  {TIERS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  {TIERS.map(t => <option key={t.value} value={t.value} style={{color:'#374151'}}>{t.label}</option>)}
                 </select>
               </div>
             ))}
