@@ -32,6 +32,7 @@ const PLAN_LABELS: Record<PlanKey, string> = {
   starter: 'Starter',
   pro: 'Pro',
   founder_pro: 'Founder Pro',
+  imported: 'Imported Contacts',
 }
 
 const PLAN_LIMITS: Record<PlanKey, string> = {
