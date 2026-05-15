@@ -254,24 +254,34 @@ export async function analyseInstagramThumbnail(params: {
 
   const parsed = parseWhatsAppBodyContext(params.captionText)
   const creator = parsed.creator
-  const caption = parsed.caption
+  // Use parsed caption, fallback to raw captionText stripped of URLs
+  const rawCaption = params.captionText
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/linkedin\.com\s*/gi, '')
+    .trim()
+  const caption = parsed.caption || rawCaption
+
+  console.log('[reel-saver] captionText:', params.captionText.slice(0, 200))
+  console.log('[reel-saver] parsed caption:', caption.slice(0, 200))
 
   // Detect LinkedIn: either "linkedin" in text, OR hashtag-style post (2+ hashtags)
   const hashtagCount2 = (params.captionText.match(/#\w+/g) || []).length
   const isLinkedIn = /linkedin/i.test(params.captionText) || hashtagCount2 >= 2
   const platformLabel = isLinkedIn ? 'LinkedIn post' : 'Instagram reel'
 
+  const captionForPrompt = caption || '(no caption — use image to describe the content)'
+
   const messages: any[] = [{
     role: 'system',
-    content: `You create useful notes from ${platformLabel} thumbnails and captions shared on WhatsApp. Be specific about what you see/can infer. Under 150 words. Format for WhatsApp.`
+    content: `You create useful notes from ${platformLabel} thumbnails and captions shared on WhatsApp. Be specific and concise. Under 100 words. Plain text only, no markdown.`
   }, {
     role: 'user',
     content: imageDataUrl
       ? [
           { type: 'image_url', image_url: { url: imageDataUrl, detail: 'low' } },
-          { type: 'text', text: `${platformLabel} by ${creator || 'unknown creator'}.\nCaption: "${caption}"\n\nDescribe what this content is about and why someone would save it.` }
+          { type: 'text', text: `${platformLabel}${creator ? ' by ' + creator : ''}.\nContext: "${captionForPrompt}"\n\nWhat is this about? Write a useful 2-3 sentence note for someone who saved this.` }
         ]
-      : [{ type: 'text', text: `${platformLabel} by ${creator || 'unknown creator'}.\nCaption: "${caption}"\n\nCreate a useful note about this content.` }]
+      : [{ type: 'text', text: `${platformLabel}${creator ? ' by ' + creator : ''}.\nContext: "${captionForPrompt}"\n\nWrite a useful 2-3 sentence note for someone who saved this.` }]
   }]
 
   const response = await openai.chat.completions.create({

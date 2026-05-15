@@ -307,6 +307,7 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
         } else if (isInstagramReelPreview(bodyText)) {
+          console.log('[webhook] LinkedIn/Instagram path - bodyText:', bodyText.slice(0, 300))
           // ── Forwarded Instagram Reel / Post ──────────────────────
           // Twilio sends the thumbnail as MediaUrl0 + caption text as Body
           // Use GPT-4o vision to analyse the thumbnail + extract context from caption
