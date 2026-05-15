@@ -3,6 +3,7 @@
 // Returns a reply string if handled, null to fall through to Claude
 
 import { parseSplitIntent } from '@/lib/splitwise/split-parser'
+import { handleNutritionText, isNutritionLogText, isNutritionCommand } from '@/lib/bot/handlers/nutrition'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard, saveReel } from '@/lib/services/reel-saver'
 import { addToList } from '@/lib/lists'
 
@@ -100,8 +101,16 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     return null // Falls through to Claude which searches notes
   }
 
-  // ── ASK GOGO SPLIT ─────────────────────────────────────────────────────
-  if (parseSplitIntent(text)) {
+  // ── NUTRITION (before split — split parser matches breakfast/lunch/dinner) ─
+  if (isNutritionLogText(text) || isNutritionCommand(text)) {
+    if (extra?.telegramId) {
+      return handleNutritionText({ telegramId: extra.telegramId, text })
+    }
+  }
+
+  // ── ASK GOGO SPLIT ──────────────────────────────────────────────────────
+  // Guard: skip split parser for food-logging sentences
+  if (!isNutritionLogText(text) && parseSplitIntent(text)) {
     return (await post('/api/splitbill', { phone, text }))?.reply ?? null
   }
 
