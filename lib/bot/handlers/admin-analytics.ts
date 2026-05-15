@@ -301,7 +301,11 @@ export async function getAdminAnalytics(): Promise<AdminAnalytics> {
     .select('id', { count: 'exact', head: true })
     .like('content', 'ASKGOGO_REFERRAL_JOINED:%')
 
-  const usersByPlatform = countBy(users, 'platform')
+  // Separate real users from imported contacts
+  const realUsers = users.filter((u: any) => u.tier !== 'imported')
+  const importedContacts = users.filter((u: any) => u.tier === 'imported')
+
+  const usersByPlatform = countBy(realUsers, 'platform')
   const usersByTier = countBy(users, 'tier')
 
   const paymentByPlan = recentPaymentIntents.reduce((acc: Record<string, number>, item: any) => {
@@ -313,9 +317,11 @@ export async function getAdminAnalytics(): Promise<AdminAnalytics> {
 
   return {
     totals: {
-      users: users.length,
+      users: realUsers.length,
+      totalWithImported: users.length,
       whatsappUsers: usersByPlatform.whatsapp || 0,
       telegramUsers: usersByPlatform.telegram || 0,
+      importedContacts: importedContacts.length,
       freeUsers: usersByTier.free || 0,
       starterUsers: usersByTier.starter || 0,
       proUsers: usersByTier.pro || 0,

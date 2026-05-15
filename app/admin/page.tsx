@@ -75,6 +75,19 @@ export default async function AdminPage() {
             </a>
             <div className="rounded-2xl bg-slate-950 px-5 py-3 text-sm text-white shadow-sm">Live data from Supabase</div>
           </div>
+          <div className="col-span-full mt-2 rounded-2xl border-2 border-dashed border-emerald-200 bg-emerald-50 p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-emerald-600">⭐ Warm Network Contacts</p>
+                <p className="mt-1 text-4xl font-bold text-emerald-800">{totals.importedUsers ?? 0}</p>
+                <p className="mt-1 text-sm text-emerald-600">Identified contacts — not yet active on AskGogo</p>
+              </div>
+              <div className="text-right">
+                <p className="text-2xl font-bold text-slate-800">{(totals.users ?? 0) + (totals.importedUsers ?? 0)}</p>
+                <p className="text-xs text-slate-500">Total addressable users</p>
+              </div>
+            </div>
+          </div>
         </div>
 
         <section className="mb-8 rounded-3xl bg-slate-950 p-6 text-white shadow-sm">
@@ -95,7 +108,7 @@ export default async function AdminPage() {
         </section>
 
         <section className="grid gap-4 md:grid-cols-4">
-          <StatCard label="Total users" value={totals.users} hint="WhatsApp + Telegram" />
+          <StatCard label="Active users" value={totals.users} hint="Real WhatsApp + Telegram users" />
           <StatCard label="WhatsApp users" value={totals.whatsappUsers} hint="Primary growth channel" />
           <StatCard label="Telegram users" value={totals.telegramUsers} hint="Legacy beta users" />
           <StatCard label="Payment intents" value={totals.paymentIntents} hint="High-intent leads" />
@@ -113,7 +126,6 @@ export default async function AdminPage() {
           <StatCard label="Starter" value={totals.starterUsers} />
           <StatCard label="Pro" value={totals.proUsers} />
           <StatCard label="Founder Pro" value={totals.founderProUsers} />
-          <StatCard label="⭐ Imported Contacts" value={totals.importedUsers ?? 0} hint="Warm network — not yet active" />
         </section>
 
         <section className="mt-8 rounded-3xl bg-white/85 p-6 shadow-sm ring-1 ring-black/5">
