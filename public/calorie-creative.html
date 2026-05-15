@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AskGogo Calorie Tracker Creative</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: #0a0f0d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 40px;
+  font-family: 'DM Sans', sans-serif;
+}
+
+.card {
+  width: 1080px;
+  height: 1080px;
+  position: relative;
+  background: #0c1410;
+  overflow: hidden;
+  border-radius: 0;
+  flex-shrink: 0;
+}
+
+/* ── organic blob background ── */
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.18;
+}
+.blob-1 { width: 600px; height: 600px; background: #22c55e; top: -150px; right: -100px; }
+.blob-2 { width: 400px; height: 400px; background: #4ade80; bottom: 100px; left: -100px; opacity: 0.1; }
+.blob-3 { width: 300px; height: 300px; background: #a3e635; top: 400px; left: 300px; opacity: 0.08; }
+
+/* ── grain texture overlay ── */
+.grain {
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.035'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ── left column: editorial text ── */
+.left {
+  position: absolute;
+  left: 64px;
+  top: 72px;
+  width: 420px;
+  z-index: 5;
+}
+
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.eyebrow-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 12px #4ade80;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.7); }
+}
+
+.eyebrow-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: #4ade80;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+
+.headline {
+  font-family: 'Playfair Display', serif;
+  font-size: 78px;
+  font-weight: 900;
+  line-height: 0.92;
+  color: #f0fdf4;
+  letter-spacing: -2px;
+  margin-bottom: 24px;
+}
+
+.headline .accent {
+  color: #4ade80;
+  font-style: italic;
+}
+
+.headline .strikethrough {
+  position: relative;
+  color: rgba(240,253,244,0.25);
+  display: inline-block;
+}
+
+.headline .strikethrough::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 50%;
+  width: 100%; height: 3px;
+  background: #ef4444;
+  transform: rotate(-2deg);
+  border-radius: 2px;
+}
+
+.subtext {
+  font-size: 16px;
+  font-weight: 300;
+  color: rgba(240,253,244,0.5);
+  line-height: 1.7;
+  margin-bottom: 36px;
+  max-width: 360px;
+}
+
+/* ── stats row ── */
+.stats {
+  display: flex;
+  gap: 0;
+  margin-bottom: 40px;
+}
+
+.stat {
+  flex: 1;
+  padding-right: 24px;
+  border-right: 1px solid rgba(74,222,128,0.15);
+}
+
+.stat:last-child { border-right: none; padding-left: 24px; padding-right: 0; }
+.stat:first-child { padding-left: 0; }
+
+.stat-num {
+  font-family: 'Playfair Display', serif;
+  font-size: 42px;
+  font-weight: 700;
+  color: #4ade80;
+  line-height: 1;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: rgba(240,253,244,0.35);
+  margin-top: 4px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* ── wa badge ── */
+.wa-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(37,211,102,0.12);
+  border: 1px solid rgba(37,211,102,0.25);
+  border-radius: 100px;
+  padding: 12px 22px;
+}
+
+.wa-icon {
+  width: 32px; height: 32px;
+  background: #25D366;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.wa-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.wa-label { font-size: 10px; color: rgba(255,255,255,0.35); letter-spacing: 1.5px; text-transform: uppercase; }
+.wa-num { font-size: 15px; font-weight: 500; color: #fff; }
+
+/* ── right column: phone mockup ── */
+.right {
+  position: absolute;
+  right: -20px;
+  top: 40px;
+  width: 500px;
+  z-index: 5;
+}
+
+.phone {
+  width: 320px;
+  height: 640px;
+  background: #1a1f1d;
+  border-radius: 40px;
+  border: 1px solid rgba(255,255,255,0.08);
+  overflow: hidden;
+  position: relative;
+  margin: 0 auto;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.5),
+    0 40px 80px rgba(0,0,0,0.6),
+    inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+/* phone notch */
+.phone-notch {
+  width: 100px; height: 26px;
+  background: #1a1f1d;
+  border-radius: 0 0 18px 18px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 10;
+}
+
+/* WhatsApp header */
+.wa-header {
+  background: #075E54;
+  padding: 8px 14px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wa-avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #4ade80, #16a34a);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0;
+}
+
+.wa-contact { flex: 1; }
+.wa-contact-name { font-size: 14px; font-weight: 600; color: #fff; }
+.wa-contact-status { font-size: 11px; color: #90EE90; }
+
+/* chat area */
+.chat-bg {
+  background: #ECE5DD;
+  flex: 1;
+  padding: 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 540px;
+  overflow: hidden;
+}
+
+.msg { max-width: 85%; border-radius: 10px; padding: 8px 11px 18px; position: relative; font-size: 12.5px; line-height: 1.45; color: #1a1a1a; }
+.msg-user { align-self: flex-end; background: #DCF8C6; border-radius: 10px 10px 3px 10px; }
+.msg-bot { align-self: flex-start; background: #fff; border-radius: 10px 10px 10px 3px; }
+.msg-time { position: absolute; bottom: 3px; right: 8px; font-size: 9.5px; color: #8a8a8a; }
+.msg strong { font-weight: 700; color: #075E54; }
+.msg .bar { font-family: monospace; color: #25D366; letter-spacing: 1px; }
+.msg em { font-style: italic; color: #555; font-size: 11px; }
+
+/* floating meal tags */
+.meal-tags {
+  position: absolute;
+  left: -60px;
+  top: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.meal-tag {
+  background: rgba(12,20,16,0.95);
+  border: 1px solid rgba(74,222,128,0.2);
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  backdrop-filter: blur(20px);
+  transform: translateX(-10px);
+  animation: tagFloat 3s ease-in-out infinite;
+}
+
+.meal-tag:nth-child(2) { animation-delay: 1s; transform: translateX(10px); }
+.meal-tag:nth-child(3) { animation-delay: 2s; transform: translateX(-5px); }
+
+@keyframes tagFloat {
+  0%,100% { transform: translateY(0) translateX(var(--tx, 0)); }
+  50% { transform: translateY(-4px) translateX(var(--tx, 0)); }
+}
+
+.tag-emoji { font-size: 22px; }
+.tag-info { display: flex; flex-direction: column; }
+.tag-name { font-size: 11px; font-weight: 600; color: #f0fdf4; }
+.tag-cal { font-size: 10px; color: #4ade80; }
+
+/* bottom CTA strip */
+.bottom-strip {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: linear-gradient(to top, rgba(12,20,16,1) 60%, transparent);
+  padding: 40px 64px 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 5;
+}
+
+.brand-mark {
+  display: flex;
+  flex-direction: column;
+}
+
+.brand-name {
+  font-family: 'Playfair Display', serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: #4ade80;
+  letter-spacing: -0.5px;
+}
+
+.brand-sub {
+  font-size: 11px;
+  color: rgba(240,253,244,0.3);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.try-btn {
+  background: #25D366;
+  border-radius: 100px;
+  padding: 14px 28px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+  letter-spacing: 0.3px;
+}
+
+/* ── vertical rule ── */
+.v-rule {
+  position: absolute;
+  left: 540px;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, rgba(74,222,128,0.15) 30%, rgba(74,222,128,0.15) 70%, transparent);
+}
+
+/* ── big number bg ── */
+.bg-number {
+  position: absolute;
+  font-family: 'Playfair Display', serif;
+  font-size: 400px;
+  font-weight: 900;
+  color: rgba(74,222,128,0.025);
+  right: -40px;
+  bottom: -80px;
+  line-height: 1;
+  pointer-events: none;
+  z-index: 1;
+  letter-spacing: -20px;
+}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+  <div class="blob blob-3"></div>
+  <div class="grain"></div>
+  <div class="v-rule"></div>
+  <div class="bg-number">0</div>
+
+  <!-- LEFT COLUMN -->
+  <div class="left">
+    <div class="eyebrow">
+      <div class="eyebrow-dot"></div>
+      <div class="eyebrow-text">New feature · AskGogo</div>
+    </div>
+
+    <div class="headline">
+      Stop<br>
+      <span class="strikethrough">counting</span><br>
+      <span class="accent">just eat</span>
+    </div>
+
+    <div class="subtext">
+      Type what you ate. Send a photo. AskGogo logs your calories, protein and macros — instantly. Indian food first. No app needed.
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-num">0</div>
+        <div class="stat-label">App downloads</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">7</div>
+        <div class="stat-label">Languages</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">∞</div>
+        <div class="stat-label">Indian foods</div>
+      </div>
+    </div>
+
+    <div class="wa-badge">
+      <div class="wa-icon">💬</div>
+      <div class="wa-text">
+        <span class="wa-label">Try it free</span>
+        <span class="wa-num">wa.me/15797006612</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT COLUMN: PHONE -->
+  <div class="right">
+    <div class="phone">
+      <div class="phone-notch"></div>
+      <div class="wa-header">
+        <div class="wa-avatar">🤖</div>
+        <div class="wa-contact">
+          <div class="wa-contact-name">AskGogo AI</div>
+          <div class="wa-contact-status">● Online</div>
+        </div>
+      </div>
+      <div class="chat-bg">
+        <div class="msg msg-user">
+          I had 2 idlis, sambar and coffee ☕
+          <div class="msg-time">9:14 ✓✓</div>
+        </div>
+        <div class="msg msg-bot">
+          🥗 <strong>Meal logged!</strong><br><br>
+          • 2 Idli — 160 kcal<br>
+          • Sambar — 80 kcal<br>
+          • Coffee — 40 kcal<br><br>
+          <strong>280 kcal · 9g protein</strong><br>
+          <span class="bar">Today: ██░░░░░░░░ 14%</span>
+          <div class="msg-time">9:14</div>
+        </div>
+        <div class="msg msg-user">
+          Had chicken biryani for lunch 🍛
+          <div class="msg-time">1:30 ✓✓</div>
+        </div>
+        <div class="msg msg-bot">
+          🍛 <strong>Lunch logged!</strong><br><br>
+          • Chicken Biryani (1 plate) — 520 kcal<br>
+          • Raita — 60 kcal<br><br>
+          <strong>Today: 860 / 2000 kcal</strong><br>
+          <span class="bar">████░░░░░░ 43%</span><br><br>
+          <em>Great protein! 38g added 💪</em>
+          <div class="msg-time">1:30</div>
+        </div>
+        <div class="msg msg-user">
+          nutrition today
+          <div class="msg-time">9:00 pm ✓✓</div>
+        </div>
+        <div class="msg msg-bot">
+          ☀️ <strong>Today's nutrition</strong><br><br>
+          Calories: 1790/2000 kcal<br>
+          <span class="bar">█████████░ 90%</span><br>
+          Protein: 56/60g · Carbs: 280g<br><br>
+          <em>✅ 210 kcal remaining — a light snack!</em>
+          <div class="msg-time">9:00 pm</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- floating meal tags -->
+    <div class="meal-tags">
+      <div class="meal-tag" style="--tx: -10px">
+        <div class="tag-emoji">🍚</div>
+        <div class="tag-info">
+          <div class="tag-name">Biryani</div>
+          <div class="tag-cal">520 kcal</div>
+        </div>
+      </div>
+      <div class="meal-tag" style="--tx: 10px">
+        <div class="tag-emoji">🥣</div>
+        <div class="tag-info">
+          <div class="tag-name">2 Idli + Sambar</div>
+          <div class="tag-cal">240 kcal</div>
+        </div>
+      </div>
+      <div class="meal-tag" style="--tx: -5px">
+        <div class="tag-emoji">📷</div>
+        <div class="tag-info">
+          <div class="tag-name">Photo log</div>
+          <div class="tag-cal">Auto-detected</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM STRIP -->
+  <div class="bottom-strip">
+    <div class="brand-mark">
+      <div class="brand-name">AskGogo</div>
+      <div class="brand-sub">AI · WhatsApp · Free</div>
+    </div>
+    <div class="try-btn">💬 Try free on WhatsApp →</div>
+  </div>
+</div>
+
+</body>
+</html>
