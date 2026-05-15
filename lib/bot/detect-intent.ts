@@ -108,7 +108,7 @@ export function detectIntent(text: string): DetectedIntent {
   if (SEARCH_HINTS.some((k) => lower.includes(k))) return { type: 'web_search', confidence: 'medium' }
 
   // Nutrition commands
-  if (/^(nutrition|nutrition today|calories today|my calories|food today|what did i eat|nutrition report|nutrition week|nutrition summary|nutrition goal|set nutrition goal|set calorie goal|nutrition help|calorie help|food help)$/i.test(lower)) return { type: 'nutrition_query', confidence: 'high' }
+  if (/^(nutrition|nutrition today|calories today|my calories|food today|what did i eat|nutrition report|nutrition week|nutrition summary|nutrition goal|set nutrition goal|set calorie goal|nutrition help|calorie help|food help|nutrition card|daily card|nutrition daily card|nutrition report card|weekly card|nutrition weekly card)$/i.test(lower)) return { type: 'nutrition_query', confidence: 'high' }
   if (/^(log |track )/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
   if (/^(log this|log that|log it|track this|save this meal|log meal)/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
   if (/^(had |ate |just had |just ate |i had |i ate |i just had |i just ate |breakfast:|lunch:|dinner:|snack:)/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
