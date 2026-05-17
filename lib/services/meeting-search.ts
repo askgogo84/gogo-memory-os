@@ -23,11 +23,19 @@ interface MeetingNote {
 async function getMeetingNotes(telegramId: number): Promise<MeetingNote[]> {
   const list = await getList(telegramId, 'meeting_notes')
   const items = (list?.items || []) as ListItem[]
-  return items.map((item, i) => ({
-    text: item.text || '',
-    added_at: item.added_at,
-    index: i,
-  }))
+  return items.map((item, i) => {
+    // Items are stored as JSON: { summary, transcript, language, speakers, saved_at }
+    // or as plain text (legacy)
+    let text = item.text || ''
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed.summary || parsed.transcript) {
+        // Combine summary + transcript for rich search
+        text = [parsed.summary, parsed.transcript].filter(Boolean).join('\n\n--- FULL TRANSCRIPT ---\n\n')
+      }
+    } catch { /* legacy plain text format */ }
+    return { text, added_at: item.added_at, index: i }
+  })
 }
 
 // ── Cross-meeting search using Claude ────────────────────────────────────────

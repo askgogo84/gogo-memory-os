@@ -141,6 +141,28 @@ function extractActionItems(reply: string) {
     .map((message, index) => ({ message, remindAtIso: istTomorrowReminderIso(index) }))
 }
 
+function buildTranscriptMessage(transcript: string, speakerCount?: number): string[] {
+  // Split transcript into WhatsApp-safe chunks (4000 chars each)
+  const header = speakerCount && speakerCount > 1
+    ? `📝 *Full transcript* _(${speakerCount} speakers)_\n\n`
+    : `📝 *Full transcript*\n\n`
+
+  const body = transcript.trim()
+  const chunkSize = 3800
+  const chunks: string[] = []
+
+  for (let i = 0; i < body.length; i += chunkSize) {
+    const chunk = body.slice(i, i + chunkSize)
+    if (i === 0) {
+      chunks.push(header + chunk)
+    } else {
+      chunks.push(`📝 _(continued)_\n\n${chunk}`)
+    }
+  }
+
+  return chunks.length ? chunks : [header + '_(No transcript available)_']
+}
+
 export async function buildMeetingNotesReply(params: {
   telegramId: number
   transcript: string
@@ -187,13 +209,12 @@ export async function buildMeetingNotesReply(params: {
         role: 'user',
         content:
           `Caption: ${params.caption || 'No caption'}\n\nTranscript:\n${transcriptToSummarize}\n\n` +
-          `Return exactly in this format:\n\n` +
+          `Return exactly in this format (no Transcript snapshot section):\n\n` +
           `🎙️ *Meeting notes ready*\n\n` +
           `*Summary*\n• ...\n• ...\n\n` +
           `*Key decisions*\n• ...\n\n` +
           `*Action items*\n1. action item\n2. Name — action item\n\n` +
-          `*Follow-ups to create*\n• reminder suggestion if any\n\n` +
-          `*Transcript snapshot*\nshort important excerpt / or concise transcript summary`,
+          `*Follow-ups to create*\n• reminder suggestion if any`,
       },
     ],
   })
@@ -212,7 +233,16 @@ export async function buildMeetingNotesReply(params: {
   }
   if (badges.length) reply = reply + '\n\n' + badges.join(' · ')
 
-  const savedNote = reply.replace(/\*/g, '').replace(/🎙️\s*Meeting notes ready/gi, 'Meeting notes').trim().slice(0, 1500)
+  // Save both summary AND full transcript to meeting_notes for search
+  const summaryText = reply.replace(/\*/g, '').replace(/🎙️\s*Meeting notes ready/gi, 'Meeting notes').trim()
+  const fullTranscriptText = transcriptToSummarize
+  const savedNote = JSON.stringify({
+    summary: summaryText.slice(0, 1500),
+    transcript: fullTranscriptText.slice(0, 8000),
+    language: params.detectedLanguage || 'en',
+    speakers: params.speakerCount || 1,
+    saved_at: new Date().toISOString(),
+  })
   await addToList(params.telegramId, 'meeting_notes', [savedNote])
 
   const actionItems = extractActionItems(reply)
@@ -225,10 +255,12 @@ export async function buildMeetingNotesReply(params: {
       JSON.stringify({ tier: access.tier, words: wordCount(params.transcript), action_items: actionItems.length, created_at: new Date().toISOString() }),
   })
 
-  return (
+  const summaryReply = (
     `${reply}\n\n` +
-    `✅ Saved to *my notes*.\n\n` +
+    `✅ Saved to *my meeting notes*.\n\n` +
     `Plan note: ${meetingLimitText(access.tier)}\n\n` +
     (actionItems.length ? `Want me to create reminders for these action items? Reply *yes*.` : `No clear action items found to create reminders.`)
   )
+
+  return { summaryReply, transcriptChunks: fullTranscriptMsg }
 }

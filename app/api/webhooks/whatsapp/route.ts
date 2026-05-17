@@ -509,7 +509,8 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       try {
         await sendWhatsAppMessage(from, 'Preparing meeting notes...')
         const transcript = cleanTypedMeetingNotesText(text)
-        const reply = await buildMeetingNotesReply({ telegramId: resolvedUser.telegramId, transcript, caption: 'Typed meeting notes' })
+        const { summaryReply } = await buildMeetingNotesReply({ telegramId: resolvedUser.telegramId, transcript, caption: 'Typed meeting notes' })
+        const reply = summaryReply
         await saveConversation(resolvedUser.telegramId, 'user', `[typed meeting notes] ${transcript.slice(0, 500)}`)
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply })
@@ -538,7 +539,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
           }
         }
 
-        const reply = await buildMeetingNotesReply({
+        const { summaryReply, transcriptChunks } = await buildMeetingNotesReply({
           telegramId: resolvedUser.telegramId,
           transcript: originalText,
           speakerTranscript: txResult?.formattedWithSpeakers,
@@ -548,8 +549,15 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         })
 
         await saveConversation(resolvedUser.telegramId, 'user', `[meeting audio] ${bodyText || originalText.slice(0, 300)}`)
-        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[meeting audio]', reply })
+        await saveConversation(resolvedUser.telegramId, 'assistant', summaryReply)
+
+        // Send summary first
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[meeting audio]', reply: summaryReply })
+
+        // Then send full transcript as separate message(s)
+        for (const chunk of transcriptChunks) {
+          await sendWhatsAppMessage(from, chunk)
+        }
       } catch (error: any) {
         console.error('WHATSAPP_MEETING_NOTES_FAILED:', error?.message || error)
         await sendWhatsAppMessage(from, `I couldn't summarize that meeting audio clearly.\n\nTry a shorter recording, or add caption: *meeting notes* when sending the audio.`)
