@@ -42,6 +42,8 @@ import {
   isAudioContentType,
   transcribeTwilioVoiceNote,
 } from '@/lib/services/voice-transcription'
+import { isMeetingSearchCommand, buildMeetingSearchReply } from '@/lib/services/meeting-search'
+import { transcribeMeeting } from '@/lib/services/meeting-transcription'
 import {
   compactImageNoteForSaving,
   isImageContentType,
@@ -520,8 +522,31 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
 
     if (incoming.wasVoice && shouldTreatAudioAsMeeting({ caption: bodyText, transcript: originalText })) {
       try {
-        await sendWhatsAppMessage(from, 'Transcribing your meeting...')
-        const reply = await buildMeetingNotesReply({ telegramId: resolvedUser.telegramId, transcript: originalText, caption: bodyText })
+        await sendWhatsAppMessage(from, '🎙️ Transcribing your meeting...\n_Speaker detection + multilingual support enabled_')
+
+        // Re-fetch audio for AssemblyAI speaker diarization
+        const mediaUrl0 = String(formData.get('MediaUrl0') || '')
+        const contentType0 = String(formData.get('MediaContentType0') || 'audio/ogg')
+        let txResult = null
+
+        if (mediaUrl0) {
+          const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
+          const audioRes = await fetch(mediaUrl0, { headers: { Authorization: `Basic ${auth}` } })
+          if (audioRes.ok) {
+            const audioBuffer = await audioRes.arrayBuffer()
+            txResult = await transcribeMeeting({ audioBuffer, contentType: contentType0, isMeeting: true })
+          }
+        }
+
+        const reply = await buildMeetingNotesReply({
+          telegramId: resolvedUser.telegramId,
+          transcript: originalText,
+          speakerTranscript: txResult?.formattedWithSpeakers,
+          detectedLanguage: txResult?.detectedLanguage,
+          speakerCount: txResult?.speakerCount,
+          caption: bodyText,
+        })
+
         await saveConversation(resolvedUser.telegramId, 'user', `[meeting audio] ${bodyText || originalText.slice(0, 300)}`)
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[meeting audio]', reply })
@@ -546,6 +571,14 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       await sendWhatsAppMessage(from, incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    if (isMeetingSearchCommand(text)) {
+      await sendWhatsAppMessage(from, '🔍 Searching your meeting history...')
+      const reply = await buildMeetingSearchReply(resolvedUser.telegramId, text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, reply)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 

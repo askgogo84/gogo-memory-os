@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { addToList } from '@/lib/lists'
+import { transcribeMeeting, getLanguageLabel } from '@/lib/services/meeting-transcription'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { saveFollowupState } from './followup-state'
 
@@ -140,7 +141,14 @@ function extractActionItems(reply: string) {
     .map((message, index) => ({ message, remindAtIso: istTomorrowReminderIso(index) }))
 }
 
-export async function buildMeetingNotesReply(params: { telegramId: number; transcript: string; caption?: string | null }) {
+export async function buildMeetingNotesReply(params: {
+  telegramId: number
+  transcript: string
+  caption?: string | null
+  speakerTranscript?: string      // speaker-labelled English transcript
+  detectedLanguage?: string       // e.g. 'hi', 'kn', 'ta'
+  speakerCount?: number
+}) {
   const access = await canUseMeetingNotes(params.telegramId)
 
   if (!access.allowed) {
@@ -156,22 +164,29 @@ export async function buildMeetingNotesReply(params: { telegramId: number; trans
     )
   }
 
-  const safeTranscript = params.transcript.trim().slice(0, 24000)
+  // Use speaker-labelled English transcript if available, otherwise raw transcript
+  const transcriptToSummarize = (params.speakerTranscript || params.transcript || '').trim().slice(0, 24000)
+  const langLabel = params.detectedLanguage && params.detectedLanguage !== 'en' && params.detectedLanguage !== 'auto'
+    ? `\n_Transcribed from ${getLanguageLabel(params.detectedLanguage)} → English_`
+    : ''
+  const speakerLabel = params.speakerCount && params.speakerCount > 1
+    ? `\n_${params.speakerCount} speakers detected_`
+    : ''
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     temperature: 0.2,
-    max_tokens: 1000,
+    max_tokens: 1200,
     messages: [
       {
         role: 'system',
         content:
-          'You are AskGogo meeting notes assistant for WhatsApp. Summarize meeting transcripts into concise, useful notes. Use WhatsApp-friendly formatting. Do not invent names or decisions. Keep action items short and natural. Do not write Owner TBD. If owner is unclear, write only the action. If owner is clear, write Name — action. Always put a space after numbered list markers, like 1. Follow up.',
+          'You are AskGogo meeting notes assistant for WhatsApp. Summarize meeting transcripts into concise, useful notes. Use WhatsApp-friendly formatting. Do not invent names or decisions. Keep action items short and natural. Do not write Owner TBD. If owner is unclear, write only the action. If owner is clear, write Name — action. If speaker labels are present (Speaker A:, Speaker B:), use them to attribute action items. Always put a space after numbered list markers.',
       },
       {
         role: 'user',
         content:
-          `Caption: ${params.caption || 'No caption'}\n\nTranscript:\n${safeTranscript}\n\n` +
+          `Caption: ${params.caption || 'No caption'}\n\nTranscript:\n${transcriptToSummarize}\n\n` +
           `Return exactly in this format:\n\n` +
           `🎙️ *Meeting notes ready*\n\n` +
           `*Summary*\n• ...\n• ...\n\n` +
@@ -185,7 +200,17 @@ export async function buildMeetingNotesReply(params: { telegramId: number; trans
 
   const rawReply = response.choices?.[0]?.message?.content?.trim()
   if (!rawReply) throw new Error('Could not summarize meeting transcript')
-  const reply = polishMeetingReply(rawReply)
+  let reply = polishMeetingReply(rawReply)
+
+  // Append language + speaker badges to reply
+  const badges: string[] = []
+  if (params.detectedLanguage && params.detectedLanguage !== 'en' && params.detectedLanguage !== 'auto') {
+    badges.push(`🌐 _${getLanguageLabel(params.detectedLanguage)} → English_`)
+  }
+  if (params.speakerCount && params.speakerCount > 1) {
+    badges.push(`👥 _${params.speakerCount} speakers detected_`)
+  }
+  if (badges.length) reply = reply + '\n\n' + badges.join(' · ')
 
   const savedNote = reply.replace(/\*/g, '').replace(/🎙️\s*Meeting notes ready/gi, 'Meeting notes').trim().slice(0, 1500)
   await addToList(params.telegramId, 'meeting_notes', [savedNote])
