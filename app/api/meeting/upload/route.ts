@@ -65,14 +65,34 @@ export async function POST(req: NextRequest) {
     }
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: e164 })
-    const notes = await buildMeetingNotesReply({
+
+    // Use AssemblyAI for speaker diarization on upload path too
+    let txResult = null
+    try {
+      const { transcribeMeeting } = await import('@/lib/services/meeting-transcription')
+      txResult = await transcribeMeeting({ audioBuffer: arrayBuffer, contentType: audio.type || 'audio/webm', isMeeting: true })
+      if (txResult?.englishTranscript && txResult.englishTranscript.trim().length > 20) {
+        transcript = txResult.englishTranscript
+      }
+    } catch (e) {
+      console.log('[meeting-upload] AssemblyAI failed, using Whisper transcript')
+    }
+
+    const { summaryReply, transcriptChunks } = await buildMeetingNotesReply({
       telegramId: resolvedUser.telegramId,
       transcript,
+      speakerTranscript: txResult?.formattedWithSpeakers,
+      detectedLanguage: txResult?.detectedLanguage,
+      speakerCount: txResult?.speakerCount,
       caption: title + (attendees ? ` | Attendees: ${attendees}` : '')
     })
 
-    await sendWhatsAppMessage(e164, notes)
-    console.log(`[meeting-upload] Success! Notes sent to ${e164}`)
+    // Send summary first, then full transcript
+    await sendWhatsAppMessage(e164, summaryReply)
+    for (const chunk of transcriptChunks) {
+      await sendWhatsAppMessage(e164, chunk)
+    }
+    console.log(`[meeting-upload] Success! Notes + ${transcriptChunks.length} transcript chunk(s) sent to ${e164}`)
 
     return NextResponse.json({ ok: true })
 
