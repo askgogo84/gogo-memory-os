@@ -183,6 +183,36 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
 
+  // Pending reminder context — runs FIRST before any other handler
+  {
+    const _hist = await getConversationHistory(resolvedUser.telegramId)
+    const _lastBot = [..._hist].reverse().find((m: Message) => m.role === 'assistant')?.content || ''
+    const _pm = _lastBot.match(/<!--PENDING:(.*?)-->/)
+    if (_pm) {
+      try {
+        const _ctx = JSON.parse(_pm[1])
+        const _raw = incomingText.trim().replace(/[.,]/g, '').trim()
+        const _isTime = /^\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(_raw)
+        if (_isTime && _ctx.task) {
+          const _t = /[aApP][mM]$/.test(_raw) ? _raw : _raw + ' AM'
+          const _day = _ctx.day ? `on the ${_ctx.day}th of every month ` : ''
+          const _full = `Remind me to ${_ctx.task} ${_day}at ${_t}`
+          console.log('[pending] Completing:', _full)
+          const _r = parseReminderIntent(_full)
+          if (_r) {
+            await createReminder(resolvedUser.telegramId, _r.label, _r.scheduledFor,
+              _r.kind === 'recurring' ? _r.pattern : undefined,
+              params.channel === 'whatsapp' ? resolvedUser.whatsappId : null)
+            const _reply = buildReminderConfirmation(_r)
+            await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+            await saveConversation(resolvedUser.telegramId, 'assistant', _reply)
+            return { text: formatOutgoingText(params.channel, _reply), resolvedUser }
+          }
+        }
+      } catch (_e) { console.log('[pending] failed:', _e) }
+    }
+  }
+
   if (isUsageCommand(incomingText)) {
     const reply = await getUsageStatusReply(resolvedUser.telegramId)
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
@@ -330,40 +360,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
-  // ── Pending reminder context (user replied with just a time after bot asked) ──
-  const recentHistory = await getConversationHistory(resolvedUser.telegramId)
-  const lastBotMsg = [...recentHistory].reverse().find((m: Message) => m.role === 'assistant')?.content || ''
-  const pendingMatch = lastBotMsg.match(/<!--PENDING:(.*?)-->/)
-  if (pendingMatch) {
-    try {
-      const ctx = JSON.parse(pendingMatch[1])
-      const rawTime = incomingText.trim().replace(/["""'.,]/g, '').trim()
-      const looksLikeTime = /^\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(rawTime)
-      if (looksLikeTime && ctx.task) {
-        const dayPart = ctx.day ? `on the ${ctx.day}th of every month ` : ''
-        const reconstructed = `Remind me to ${ctx.task} ${dayPart}at ${incomingText.trim()}`
-        console.log('[process-message] Completing pending reminder:', reconstructed)
-        const completedReminder = parseReminderIntent(reconstructed)
-        if (completedReminder) {
-          await createReminder(
-            resolvedUser.telegramId,
-            completedReminder.label,
-            completedReminder.scheduledFor,
-            completedReminder.kind === 'recurring' ? completedReminder.pattern : undefined,
-            params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
-          )
-          const reply = buildReminderConfirmation(completedReminder)
-          await saveConversation(resolvedUser.telegramId, 'user', incomingText)
-          await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-          return { text: formatOutgoingText(params.channel, reply), resolvedUser }
-        }
-      }
-    } catch (e) {
-      console.log('[process-message] Pending reminder completion failed:', e)
-    }
-  }
-
   const eagerReminder = parseReminderIntent(incomingText)
+
   if (eagerReminder && intent.type === 'set_reminder') {
     await createReminder(
       resolvedUser.telegramId,
