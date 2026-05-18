@@ -44,16 +44,18 @@ export type ProcessIncomingResult = {
 }
 
 async function getConversationHistory(telegramId: number): Promise<Message[]> {
+  // Fetch most recent 20 messages (descending), then reverse for chronological order
   const { data } = await supabaseAdmin
     .from('conversations')
     .select('role, content')
     .eq('telegram_id', telegramId)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(20)
 
   return ((data || []) as any[])
     .filter((x) => x.role === 'user' || x.role === 'assistant')
     .map((x) => ({ role: x.role, content: x.content }))
+    .reverse() // restore chronological order for Claude context
 }
 
 async function saveConversation(telegramId: number, role: 'user' | 'assistant', content: string) {
