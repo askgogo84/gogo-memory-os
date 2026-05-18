@@ -43,6 +43,7 @@ import {
   transcribeTwilioVoiceNote,
 } from '@/lib/services/voice-transcription'
 import { isMeetingSearchCommand, buildMeetingSearchReply } from '@/lib/services/meeting-search'
+import { buildOnboardingMenu, buildOnboardingFollowup, isOnboardingMenuReply } from '@/lib/bot/handlers/onboarding'
 import { isNameReply, parseNameReply, relabelTranscript } from '@/lib/services/speaker-profiles'
 import { buildFollowupReminderMessage } from '@/lib/services/followup-reminder'
 import { transcribeMeeting } from '@/lib/services/meeting-transcription'
@@ -245,16 +246,12 @@ export async function POST(req: NextRequest) {
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
     const bodyText = String(formData.get('Body') || '').trim()
 
-    // ── Auto-send welcome + demo video to brand new users ────────────
+    // ── Interactive onboarding menu for new users ───────────────────
     if ((resolvedUser as any).isNewUser) {
-      const { buildWelcomeReply } = await import('@/lib/bot/handlers/whatsapp-premium')
-      const welcomeMsg = buildWelcomeReply(resolvedUser.name)
-      // Send demo video first
-      const videoUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'}/askgogo_demo.mp4`
-      await sendWhatsAppMediaMessage(from, '🎬 AskGogo — see what I can do!', videoUrl)
-      // Then send the full welcome message
-      await sendWhatsAppMessage(from, welcomeMsg)
-      // Continue processing their first message too
+      const welcomeMenu = buildOnboardingMenu(resolvedUser.name || profileName)
+      await sendWhatsAppMessage(from, welcomeMenu)
+      await saveConversation(resolvedUser.telegramId, 'assistant', welcomeMenu)
+      // Don't return — continue processing their first message too
     }
 
     if (isAdminCommand(bodyText)) {
@@ -660,6 +657,26 @@ _Reminder cancelled._`
           await sendWhatsAppMessage(from, reply)
           return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
         }
+      }
+    }
+
+    // ── Onboarding menu reply (1-6) ────────────────────────────────────────
+    const onboardingChoice = isOnboardingMenuReply(text)
+    if (onboardingChoice) {
+      const { data: recentConvs } = await supabaseAdmin
+        .from('conversations')
+        .select('role, content')
+        .eq('telegram_id', resolvedUser.telegramId)
+        .eq('role', 'assistant')
+        .order('created_at', { ascending: false })
+        .limit(3)
+      const lastBotOB = recentConvs?.[0]?.content || ''
+      if (lastBotOB.includes('What do you need most?') || lastBotOB.includes('Welcome to AskGogo')) {
+        const followup = buildOnboardingFollowup(onboardingChoice, resolvedUser.name || profileName)
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', followup)
+        await sendWhatsAppMessage(from, followup)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
 
