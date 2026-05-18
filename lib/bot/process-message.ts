@@ -345,22 +345,30 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
-  // Reminder intent detected but no specific time parsed â ask for time instead of giving unrelated answer
+  // Reminder intent detected but no specific time parsed - ask only for time
   if (!eagerReminder && intent.type === 'set_reminder') {
     const lower = incomingText.toLowerCase()
-    const hasActivity = lower.includes('run') || lower.includes('walk') || lower.includes('gym') ||
-      lower.includes('workout') || lower.includes('exercise') || lower.includes('train') ||
-      lower.includes('marathon') || lower.includes('jog') || lower.includes('yoga') || lower.includes('swim')
+    const hasDate = /\b(\d{1,2})(st|nd|rd|th)\b|every month|monthly|every week|weekly|every day|daily/i.test(lower)
+    const dayMatch = lower.match(/\b(\d{1,2})(?:st|nd|rd|th)\b/)
+    const dayNum = dayMatch?.[1] || ''
+
+    // Extract what they want to be reminded about
+    const aboutMatch = incomingText.match(/(?:remind(?:er)?(?: me)? (?:to |about |for )?)(.{3,50}?)(?:\s*(?:every|on the|at|by|before|$))/i)
+    const about = aboutMatch?.[1]?.trim()
+
     let reply: string
-    if (hasActivity) {
-      reply = `Got it! ð I'll help you set your training reminders.\n\nWhat time should I remind you? For example:\nâ¢ *"Remind me at 6 AM for easy run"*\nâ¢ *"Remind me every morning at 7 for training"*\nâ¢ *"Remind me daily at 6:30 AM for my marathon prep"*`
+    if (hasDate && about && dayNum) {
+      reply = `Got it \u2014 *${about}* on the ${dayNum}th.\n\nWhat time should I remind you?\n_e.g. "10 AM" or "9:30 AM"_`
+    } else if (hasDate && about) {
+      reply = `Got it \u2014 *${about}*.\n\nWhat time should I remind you?\n_e.g. "10 AM" or "6 PM"_`
+    } else if (about) {
+      reply = `Got it \u2014 *${about}*.\n\nWhat time and when?\n_e.g. "9 AM daily", "every Monday 10 AM", "in 2 hours"_`
     } else {
-      reply = `Sure! What time should I set this reminder for?\n\nFor example:\nâ¢ *"Remind me at 7 AM tomorrow"*\nâ¢ *"Remind me at 6 PM every day"*\nâ¢ *"Remind me in 2 hours"*`
+      reply = `Sure! When should I remind you?\n\n\u2022 _"Remind me at 7 AM tomorrow"_\n\u2022 _"15th of every month at 10 AM"_\n\u2022 _"Every Monday at 9 AM"_`
     }
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
-
   if (intent.type === 'set_briefing_time') {
     const reply = await setBriefingTime(resolvedUser.telegramId, incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
