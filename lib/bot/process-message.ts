@@ -388,7 +388,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     // Extract the task/label cleanly - remove trigger words and date/time fragments
     const cleanedInput = incomingText
       .replace(/(?:set |a )?remind(?:er)?(?:\s+me)?/gi, '')
-      .replace(/\b(on the |every month|monthly|every week|weekly|every day|daily|\d{1,2}(?:st|nd|rd|th)(?: of every month)?|of every month)\b/gi, '')
+      // Remove all recurrence patterns including day names
+      .replace(/\b(every\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
+      .replace(/\b(on the |every month|monthly|every week|weekly|every day|daily|\d{1,2}(?:st|nd|rd|th)(?: of every month)?|of every month|every)\b/gi, '')
       .replace(/\b(to|about|for|on|at|by)\b/gi, '')
       .replace(/\s+/g, ' ').trim()
     const about = cleanedInput.length > 2 ? cleanedInput : null
