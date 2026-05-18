@@ -77,12 +77,15 @@ export function parseFollowupReminder(text: string): FollowupReminder | null {
 
   // Build clean message
   let message = ''
-  if (contact && about) {
-    message = `Follow up with ${contact} about ${about}`
+  // Clean up 'about' to avoid duplication if it starts with 'about'
+  const cleanAbout = about?.replace(/^about\s+/i, '').trim()
+
+  if (contact && cleanAbout) {
+    message = `Follow up with ${contact} about ${cleanAbout}`
   } else if (contact) {
     message = `Follow up with ${contact}`
-  } else if (about) {
-    message = `Follow up about ${about}`
+  } else if (cleanAbout) {
+    message = `Follow up about ${cleanAbout}`
   } else {
     // Fallback: clean up the original text
     message = text
