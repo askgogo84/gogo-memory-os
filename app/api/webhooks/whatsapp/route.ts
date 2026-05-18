@@ -680,6 +680,14 @@ _Reminder cancelled._`
       }
     }
 
+    // ── Admin/test: reset onboarding menu ───────────────────────────────────
+    if (/^(reset onboarding|show onboarding|onboarding menu|test onboarding)$/i.test(text.trim())) {
+      const menu = buildOnboardingMenu(resolvedUser.name || profileName)
+      await saveConversation(resolvedUser.telegramId, 'assistant', menu)
+      await sendWhatsAppMessage(from, menu)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     if (isMeetingSearchCommand(text)) {
       await sendWhatsAppMessage(from, '🔍 Searching your meeting history...')
       const reply = await buildMeetingSearchReply(resolvedUser.telegramId, text)
