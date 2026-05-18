@@ -262,5 +262,5 @@ export async function buildMeetingNotesReply(params: {
     (actionItems.length ? `Want me to create reminders for these action items? Reply *yes*.` : `No clear action items found to create reminders.`)
   )
 
-  return { summaryReply, transcriptChunks: fullTranscriptMsg }
+  return { summaryReply, transcriptChunks: buildTranscriptMessage(transcriptToSummarize, params.speakerCount) }
 }
