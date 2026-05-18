@@ -116,15 +116,12 @@ async function summarizeMediaContent(params: {
     other: 'Social media post',
   }[params.platform]
 
-  const hasContent = params.transcript || params.caption
-
-  if (!hasContent && !params.thumbnailBase64) {
-    return { title: 'Saved content', summary: 'No content could be extracted.', tags: [] }
-  }
-
+  // Always proceed — use thumbnail if caption is empty
   const contentBlock = params.transcript
     ? `Full transcript:\n${params.transcript.slice(0, 4000)}`
-    : `Caption/text: ${params.caption}`
+    : params.caption
+      ? `Caption/text: ${params.caption}`
+      : '(No caption — describe what you see in the thumbnail image)'
 
   const prompt = `You are saving a ${platformLabel}${params.creator ? ` by ${params.creator}` : ''} to someone's long-term memory on WhatsApp.
 
@@ -188,10 +185,22 @@ export async function saveMediaMemory(params: {
   let transcript: string | undefined
   let thumbnailBase64: string | undefined
   let creator = params.creator || ''
-  let caption = bodyText
-    .replace(/https?:\/\/\S+/g, '')
-    .replace(/linkedin\.com\s*/gi, '')
-    .trim()
+
+  // Extract creator + caption from WhatsApp link preview format:
+  // "Jayant Shilanjan Mundhra on Instagram: 'My first angel investment...'"
+  const linkPreviewPattern = /^(.+?)\s+on\s+(?:instagram|facebook|linkedin|twitter|tiktok|youtube):\s*['"\u201c\u2018]?(.+?)['"\u201d\u2019]?$/i
+  const linkPreviewMatch = bodyText.match(linkPreviewPattern)
+  let caption = ''
+  if (linkPreviewMatch) {
+    creator = creator || linkPreviewMatch[1].trim()
+    caption = linkPreviewMatch[2].trim().replace(/\.\.\.$/, '').trim()
+  } else {
+    caption = bodyText
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/(?:linkedin|instagram|facebook|twitter|tiktok)\.com\s*/gi, '')
+      .trim()
+  }
+  console.log('[media-memory] platform:', platform, 'creator:', creator.slice(0, 50), 'caption:', caption.slice(0, 100))
 
   // YouTube: fetch transcript + metadata
   if (platform === 'youtube' && params.detectedUrl) {
