@@ -127,14 +127,16 @@ async function summarizeMediaContent(params: {
 
 ${contentBlock}
 
+${params.thumbnailBase64 ? 'Look at the thumbnail image and the text above to understand what this content is about.' : ''}
+
 Return ONLY valid JSON, no markdown:
 {
   "title": "Short descriptive title (max 8 words)",
-  "summary": "2-3 sentence summary of what this content is about and why it's worth saving",
+  "summary": "2-3 sentence summary of what this content is about and why it is worth saving",
   "tags": ["tag1", "tag2", "tag3"]
 }
 
-Tags should be 1-2 word topic labels (e.g. "marketing", "d2c", "fundraising", "fitness", "recipe").`
+Tags should be 1-2 word topic labels. Always return a useful title and summary based on whatever information is available — never say no content provided.`
 
   const content: Anthropic.MessageParam['content'] = []
 
@@ -186,20 +188,22 @@ export async function saveMediaMemory(params: {
   let thumbnailBase64: string | undefined
   let creator = params.creator || ''
 
-  // Extract creator + caption from WhatsApp link preview format:
-  // "Jayant Shilanjan Mundhra on Instagram: 'My first angel investment...'"
-  const linkPreviewPattern = /^(.+?)\s+on\s+(?:instagram|facebook|linkedin|twitter|tiktok|youtube):\s*['"\u201c\u2018]?(.+?)['"\u201d\u2019]?$/i
-  const linkPreviewMatch = bodyText.match(linkPreviewPattern)
-  let caption = ''
-  if (linkPreviewMatch) {
-    creator = creator || linkPreviewMatch[1].trim()
-    caption = linkPreviewMatch[2].trim().replace(/\.\.\.$/, '').trim()
-  } else {
-    caption = bodyText
-      .replace(/https?:\/\/\S+/g, '')
-      .replace(/(?:linkedin|instagram|facebook|twitter|tiktok)\.com\s*/gi, '')
-      .trim()
+  // Extract whatever useful text exists from body — thumbnail vision handles the rest
+  // Format 1: "Name on Instagram: 'caption...'"
+  // Format 2: "Name | Title on Instagram..."
+  // Format 3: hashtags + description (LinkedIn)
+  // In all cases, pass the raw text + thumbnail to Claude vision
+  const linkPreviewMatch = bodyText.match(/^(.+?)\s+on\s+(?:instagram|facebook|linkedin|twitter|tiktok|youtube)/i)
+  if (linkPreviewMatch && !creator) {
+    creator = linkPreviewMatch[1].replace(/\|.*$/, '').trim() // strip "| Title" part
   }
+  // Use full body text as caption context — Claude vision will fill in the rest
+  let caption = bodyText
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/(?:instagram|facebook|linkedin|twitter|tiktok)\.com\s*/gi, '')
+    .replace(/\.\.\.$/,'')
+    .trim()
+
   console.log('[media-memory] platform:', platform, 'creator:', creator.slice(0, 50), 'caption:', caption.slice(0, 100))
 
   // YouTube: fetch transcript + metadata
