@@ -26,6 +26,7 @@ import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './hand
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
+import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { detectReelUrl } from '@/lib/services/reel-saver'
 
 export type ProcessIncomingParams = {
@@ -359,6 +360,25 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (calendarResult.handled) {
       await saveConversation(resolvedUser.telegramId, 'assistant', calendarResult.reply)
       return { text: formatOutgoingText(params.channel, calendarResult.reply), resolvedUser }
+    }
+  }
+
+  // ── Conditional follow-up reminders ("remind me if no reply in 3 days") ──────
+  if (isFollowupReminderText(incomingText)) {
+    const followup = parseFollowupReminder(incomingText)
+    if (followup) {
+      await createReminder(
+        resolvedUser.telegramId,
+        resolvedUser.telegramId,
+        followup.remindAtIso,
+        followup.message,
+        followup.pattern,
+        params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
+      )
+      const reply = buildFollowupConfirmation(followup)
+      await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
   }
 

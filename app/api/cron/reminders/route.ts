@@ -104,7 +104,11 @@ export async function GET(req: Request) {
   const results: any[] = []
 
   for (const reminder of due || []) {
-    const reminderText = `⏰ *Reminder*\n\n${String(reminder.message || 'Reminder').replace(/^to\s+/i, '').trim()}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''}`
+    // Use follow-up style message for conditional reminders
+    const isFollowup = String(reminder.recurring_pattern || '').startsWith('followup:')
+    const reminderText = isFollowup
+      ? `🔔 *Follow-up reminder*\n\n📋 ${String(reminder.message || '').trim()}\n\nDid you hear back?\n• Reply *done* — mark as resolved\n• Reply *snooze 2 days* — remind again later\n• Reply *snooze friday* — remind on Friday`
+      : `⏰ *Reminder*\n\n${String(reminder.message || 'Reminder').replace(/^to\s+/i, '').trim()}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''}`
 
     try {
       const whatsappTo = await findWhatsAppForReminder(reminder)

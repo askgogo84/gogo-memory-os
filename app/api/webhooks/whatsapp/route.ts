@@ -44,6 +44,7 @@ import {
 } from '@/lib/services/voice-transcription'
 import { isMeetingSearchCommand, buildMeetingSearchReply } from '@/lib/services/meeting-search'
 import { isNameReply, parseNameReply, relabelTranscript } from '@/lib/services/speaker-profiles'
+import { buildFollowupReminderMessage } from '@/lib/services/followup-reminder'
 import { transcribeMeeting } from '@/lib/services/meeting-transcription'
 import {
   compactImageNoteForSaving,
@@ -608,6 +609,58 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       await sendWhatsAppMessage(from, incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // ── Follow-up reminder done/snooze handler ────────────────────────────────
+    const isDone = /^(done|resolved|sorted|closed|completed|cancel reminder|no need)$/i.test(text.trim())
+    const snoozeMatch = text.trim().match(/^snooze\s+(.+)$/i)
+
+    if (isDone || snoozeMatch) {
+      // Find most recent pending followup reminder
+      const { data: pendingFollowups } = await supabaseAdmin
+        .from('reminders')
+        .select('id, message, recurring_pattern')
+        .eq('telegram_id', resolvedUser.telegramId)
+        .eq('sent', false)
+        .like('recurring_pattern', 'followup:%')
+        .order('remind_at', { ascending: true })
+        .limit(1)
+
+      if (pendingFollowups?.length) {
+        const r = pendingFollowups[0]
+        if (isDone) {
+          // Mark as sent (cancel it)
+          await supabaseAdmin.from('reminders').update({ sent: true }).eq('id', r.id)
+          const reply = `✅ Got it! *${r.message}* marked as resolved.
+
+_Reminder cancelled._`
+          await saveConversation(resolvedUser.telegramId, 'user', text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+          await sendWhatsAppMessage(from, reply)
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        } else if (snoozeMatch) {
+          // Parse snooze duration
+          const snoozeText = snoozeMatch[1].trim()
+          const daysMatch = snoozeText.match(/(\d+)\s*(day|days)/i)
+          const weekdayMap: Record<string, number> = { monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6,sunday:0 }
+          let snoozeDays = 1
+          if (daysMatch) snoozeDays = parseInt(daysMatch[1])
+          else if (weekdayMap[snoozeText.toLowerCase()] !== undefined) {
+            const target = weekdayMap[snoozeText.toLowerCase()]
+            const today = new Date().getDay()
+            snoozeDays = ((target - today + 7) % 7) || 7
+          }
+          const newRemindAt = new Date(Date.now() + snoozeDays * 24 * 60 * 60 * 1000)
+          newRemindAt.setUTCHours(3, 30, 0, 0) // 9 AM IST
+          await supabaseAdmin.from('reminders').update({ remind_at: newRemindAt.toISOString(), sent: false }).eq('id', r.id)
+          const daysText = snoozeDays === 1 ? 'tomorrow' : `in ${snoozeDays} days`
+          const reply = `⏰ Snoozed! I'll remind you about *${r.message}* again *${daysText}*.`
+          await saveConversation(resolvedUser.telegramId, 'user', text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+          await sendWhatsAppMessage(from, reply)
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        }
+      }
     }
 
     if (isMeetingSearchCommand(text)) {
