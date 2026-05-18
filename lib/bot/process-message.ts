@@ -334,10 +334,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const recentHistory = await getConversationHistory(resolvedUser.telegramId)
   const lastBotMsg = [...recentHistory].reverse().find((m: Message) => m.role === 'assistant')?.content || ''
   const pendingMatch = lastBotMsg.match(/<!--PENDING:(.*?)-->/)
-  if (pendingMatch && intent.type !== 'set_reminder') {
+  if (pendingMatch) {
     try {
       const ctx = JSON.parse(pendingMatch[1])
-      const looksLikeTime = /^\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(incomingText.trim())
+      const rawTime = incomingText.trim().replace(/["""'.,]/g, '').trim()
+      const looksLikeTime = /^\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(rawTime)
       if (looksLikeTime && ctx.task) {
         const dayPart = ctx.day ? `on the ${ctx.day}th of every month ` : ''
         const reconstructed = `Remind me to ${ctx.task} ${dayPart}at ${incomingText.trim()}`
@@ -405,8 +406,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     } else {
       reply = `Sure! When should I remind you?\n\n\u2022 _\"Remind me at 7 AM tomorrow\"_\n\u2022 _\"15th of every month at 10 AM\"_\n\u2022 _\"Every Monday at 9 AM\"_`
     }
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    const cleanReply = reply.replace(/\s*<!--PENDING:.*?-->/s, '').trim()
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply) // keep tag in DB for context
+    return { text: formatOutgoingText(params.channel, cleanReply), resolvedUser }
   }
   if (intent.type === 'set_briefing_time') {
     const reply = await setBriefingTime(resolvedUser.telegramId, incomingText)
