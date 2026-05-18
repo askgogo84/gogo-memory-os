@@ -310,7 +310,7 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || 'skin check'}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
-        } else if (!incoming.wasVoice && isNameReply(bodyText)) {
+        } else if (isNameReply(bodyText)) {
           // Check if there's a pending speaker relabel state (within last 10 mins)
           const speakerState = await getLatestFollowupState(resolvedUser.telegramId, 'meeting_speaker_relabel')
           const stateAge = speakerState?.payload?.created_at

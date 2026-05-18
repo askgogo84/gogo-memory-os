@@ -175,7 +175,7 @@ export async function buildMeetingNotesReply(params: {
   const access = await canUseMeetingNotes(params.telegramId)
 
   if (!access.allowed) {
-    return (
+    const upsellReply = (
       `🎙️ *Meeting Notes*\n\n` +
       `I can turn meeting audio into a transcript, summary, decisions and action items.\n\n` +
       `This is a paid feature to keep AskGogo sustainable.\n\n` +
@@ -185,6 +185,7 @@ export async function buildMeetingNotesReply(params: {
       `• Founder Pro — power meeting notes\n\n` +
       `Reply *I want Pro* or *I want Founder Pro*.`
     )
+    return { summaryReply: upsellReply, transcriptChunks: [], speakerPrompt: null }
   }
 
   // Use speaker-labelled English transcript if available, otherwise raw transcript

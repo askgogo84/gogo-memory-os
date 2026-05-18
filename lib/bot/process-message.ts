@@ -202,7 +202,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
           console.log('[pending] Completing:', _full)
           const _r = parseReminderIntent(_full)
           if (_r) {
-            await createReminder(resolvedUser.telegramId, _r.label, _r.scheduledFor,
+            await createReminder(resolvedUser.telegramId, resolvedUser.telegramId, _r.remindAtIso, _r.message,
               _r.kind === 'recurring' ? _r.pattern : undefined,
               params.channel === 'whatsapp' ? resolvedUser.whatsappId : null)
             const _reply = buildReminderConfirmation(_r)
