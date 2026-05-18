@@ -93,24 +93,24 @@ async function transcribeWithWhisper(arrayBuffer: ArrayBuffer, mimeType: string,
   const OpenAI = (await import('openai')).default
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
-  const ext = mimeType.includes('mp4') || mimeType.includes('m4a') ? 'm4a'
-    : mimeType.includes('ogg') ? 'ogg'
-    : mimeType.includes('wav') ? 'wav'
-    : 'webm'
-
-  const filename = originalName || `meeting.${ext}`
+  // Browser records as audio/webm;codecs=opus
+  // Whisper accepts: mp3, mp4, m4a, wav, ogg, webm — send as webm with correct name
   const uint8Array = new Uint8Array(arrayBuffer)
-  const file = new File([uint8Array], filename, { type: mimeType })
 
-  console.log(`[meeting-upload] Calling Whisper: filename=${filename} size=${uint8Array.length}`)
+  // Force filename to meeting.webm so Whisper treats it correctly
+  const file = new File([uint8Array], 'meeting.webm', { type: 'audio/webm' })
+
+  console.log(`[meeting-upload] Calling Whisper: size=${uint8Array.length} mimeType=${mimeType}`)
 
   const response = await openai.audio.transcriptions.create({
     file,
     model: 'whisper-1',
-    language: 'en',
+    // No language lock — let Whisper auto-detect (supports Hindi, Kannada etc)
     response_format: 'text',
-    prompt: 'This is a meeting recording. Transcribe all speech accurately including names, decisions, and action items.'
+    // No prompt — prompt text leaks into output when audio is unclear
   })
 
-  return typeof response === 'string' ? response : (response as any).text || ''
+  const text = typeof response === 'string' ? response : (response as any).text || ''
+  console.log(`[meeting-upload] Whisper result length: ${text.length}, preview: ${text.slice(0, 150)}`)
+  return text
 }
