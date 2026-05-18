@@ -4,7 +4,7 @@ import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 90 // Whisper takes ~10-20s for 2min audio. AssemblyAI removed (too slow for sync)
 
 export async function POST(req: NextRequest) {
   try {
@@ -66,24 +66,11 @@ export async function POST(req: NextRequest) {
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: e164 })
 
-    // Use AssemblyAI for speaker diarization on upload path too
-    let txResult = null
-    try {
-      const { transcribeMeeting } = await import('@/lib/services/meeting-transcription')
-      txResult = await transcribeMeeting({ audioBuffer: arrayBuffer, contentType: audio.type || 'audio/webm', isMeeting: true })
-      if (txResult?.englishTranscript && txResult.englishTranscript.trim().length > 20) {
-        transcript = txResult.englishTranscript
-      }
-    } catch (e) {
-      console.log('[meeting-upload] AssemblyAI failed, using Whisper transcript')
-    }
-
+    // Use Whisper only on upload path — AssemblyAI polling (up to 3min) exceeds Vercel timeout
+    // Speaker diarization note: send audio as WhatsApp voice note for full diarization
     const { summaryReply, transcriptChunks } = await buildMeetingNotesReply({
       telegramId: resolvedUser.telegramId,
       transcript,
-      speakerTranscript: txResult?.formattedWithSpeakers,
-      detectedLanguage: txResult?.detectedLanguage,
-      speakerCount: txResult?.speakerCount,
       caption: title + (attendees ? ` | Attendees: ${attendees}` : '')
     })
 
