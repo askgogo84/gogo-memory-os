@@ -1,4 +1,4 @@
-{
+﻿{
   "crons": [
     {
       "path": "/api/cron/daily-briefings",
@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/reminders",
-      "schedule": "* * * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/followups",
