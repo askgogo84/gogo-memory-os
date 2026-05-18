@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import { addToList } from '@/lib/lists'
 import { transcribeMeeting, getLanguageLabel } from '@/lib/services/meeting-transcription'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getSavedSpeakers } from '@/lib/services/speaker-profiles'
 import { saveFollowupState } from './followup-state'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -262,5 +263,34 @@ export async function buildMeetingNotesReply(params: {
     (actionItems.length ? `Want me to create reminders for these action items? Reply *yes*.` : `No clear action items found to create reminders.`)
   )
 
-  return { summaryReply, transcriptChunks: buildTranscriptMessage(transcriptToSummarize, params.speakerCount) }
+  // Build speaker name prompt if multiple speakers detected
+  let speakerPrompt: string | null = null
+  if (params.speakerCount && params.speakerCount > 1) {
+    const savedSpeakers = await getSavedSpeakers(params.telegramId)
+    if (savedSpeakers.length >= params.speakerCount) {
+      // Auto-label with previously saved names
+      speakerPrompt = null // will be handled by relabelling
+    } else {
+      const labels = ['A', 'B', 'C', 'D', 'E'].slice(0, params.speakerCount).join(', ')
+      speakerPrompt = (
+        `👥 *${params.speakerCount} speakers detected* (${labels})\n\n` +
+        `Who was in this meeting? Reply with names in order:\n` +
+        `_e.g. "Gogo, Mathew, Srinivas"_\n\n` +
+        `I'll re-label the transcript with real names.`
+      )
+    }
+  }
+
+  // Store raw transcript for re-labelling when names arrive
+  await saveFollowupState(params.telegramId, 'meeting_speaker_relabel', {
+    transcript: transcriptToSummarize,
+    speakerCount: params.speakerCount || 1,
+    created_at: new Date().toISOString(),
+  })
+
+  return {
+    summaryReply,
+    transcriptChunks: buildTranscriptMessage(transcriptToSummarize, params.speakerCount),
+    speakerPrompt,
+  }
 }

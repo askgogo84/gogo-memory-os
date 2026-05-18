@@ -43,6 +43,7 @@ import {
   transcribeTwilioVoiceNote,
 } from '@/lib/services/voice-transcription'
 import { isMeetingSearchCommand, buildMeetingSearchReply } from '@/lib/services/meeting-search'
+import { isNameReply, parseNameReply, relabelTranscript } from '@/lib/services/speaker-profiles'
 import { transcribeMeeting } from '@/lib/services/meeting-transcription'
 import {
   compactImageNoteForSaving,
@@ -309,6 +310,27 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || 'skin check'}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
+        } else if (!incoming.wasVoice && isNameReply(bodyText)) {
+          // Check if there's a pending speaker relabel state (within last 10 mins)
+          const speakerState = await getLatestFollowupState(resolvedUser.telegramId, 'meeting_speaker_relabel')
+          const stateAge = speakerState?.payload?.created_at
+            ? Date.now() - new Date(speakerState.payload.created_at).getTime()
+            : Infinity
+          if (stateAge < 10 * 60 * 1000 && speakerState?.payload?.transcript && speakerState?.payload?.speakerCount > 1) {
+            const names = parseNameReply(bodyText)
+            const namedTranscript = relabelTranscript(speakerState.payload.transcript, names)
+            const nameLabels = names.map((n: string, i: number) => `Speaker ${'ABCDEF'[i]} → *${n}*`).join('\n')
+            const reply = (
+              `✅ *Names saved!*\n\n${nameLabels}\n\n` +
+              `📝 *Named transcript:*\n\n${namedTranscript.slice(0, 3500)}` +
+              (namedTranscript.length > 3500 ? '\n_...say *my meeting notes* to see full notes_' : '')
+            )
+            await saveConversation(resolvedUser.telegramId, 'user', bodyText)
+            await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+            await sendWhatsAppMessage(from, reply)
+            return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+          }
+          // Not a speaker reply — fall through to normal AI handling below
         } else if (isInstagramReelPreview(bodyText) || isLinkPreviewCard(bodyText, firstMediaType)) {
           // ── Social media content (Instagram, LinkedIn, Facebook, YouTube, Twitter) ──
           // Detect platform and save to the right memory bucket
@@ -539,7 +561,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
           }
         }
 
-        const { summaryReply, transcriptChunks } = await buildMeetingNotesReply({
+        const { summaryReply, transcriptChunks, speakerPrompt } = await buildMeetingNotesReply({
           telegramId: resolvedUser.telegramId,
           transcript: originalText,
           speakerTranscript: txResult?.formattedWithSpeakers,
@@ -557,6 +579,12 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         // Then send full transcript as separate message(s)
         for (const chunk of transcriptChunks) {
           await sendWhatsAppMessage(from, chunk)
+        }
+
+        // Ask for speaker names if multiple speakers detected
+        if (speakerPrompt) {
+          await new Promise(r => setTimeout(r, 1500)) // brief pause before asking
+          await sendWhatsAppMessage(from, speakerPrompt)
         }
       } catch (error: any) {
         console.error('WHATSAPP_MEETING_NOTES_FAILED:', error?.message || error)

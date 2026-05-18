@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
 
     // Use Whisper only on upload path — AssemblyAI polling (up to 3min) exceeds Vercel timeout
     // Speaker diarization note: send audio as WhatsApp voice note for full diarization
-    const { summaryReply, transcriptChunks } = await buildMeetingNotesReply({
+    const { summaryReply, transcriptChunks, speakerPrompt } = await buildMeetingNotesReply({
       telegramId: resolvedUser.telegramId,
       transcript,
       caption: title + (attendees ? ` | Attendees: ${attendees}` : '')
@@ -79,6 +79,13 @@ export async function POST(req: NextRequest) {
     for (const chunk of transcriptChunks) {
       await sendWhatsAppMessage(e164, chunk)
     }
+
+    // Ask for speaker names if multiple speakers detected
+    if (speakerPrompt) {
+      await new Promise(r => setTimeout(r, 2000))
+      await sendWhatsAppMessage(e164, speakerPrompt)
+    }
+
     console.log(`[meeting-upload] Success! Notes + ${transcriptChunks.length} transcript chunk(s) sent to ${e164}`)
 
     return NextResponse.json({ ok: true })
