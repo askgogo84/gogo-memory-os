@@ -330,6 +330,38 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
+  // ── Pending reminder context (user replied with just a time after bot asked) ──
+  const recentHistory = await getConversationHistory(resolvedUser.telegramId)
+  const lastBotMsg = [...recentHistory].reverse().find((m: Message) => m.role === 'assistant')?.content || ''
+  const pendingMatch = lastBotMsg.match(/<!--PENDING:(.*?)-->/)
+  if (pendingMatch && intent.type !== 'set_reminder') {
+    try {
+      const ctx = JSON.parse(pendingMatch[1])
+      const looksLikeTime = /^\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(incomingText.trim())
+      if (looksLikeTime && ctx.task) {
+        const dayPart = ctx.day ? `on the ${ctx.day}th of every month ` : ''
+        const reconstructed = `Remind me to ${ctx.task} ${dayPart}at ${incomingText.trim()}`
+        console.log('[process-message] Completing pending reminder:', reconstructed)
+        const completedReminder = parseReminderIntent(reconstructed)
+        if (completedReminder) {
+          await createReminder(
+            resolvedUser.telegramId,
+            completedReminder.label,
+            completedReminder.scheduledFor,
+            completedReminder.kind === 'recurring' ? completedReminder.pattern : undefined,
+            params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
+          )
+          const reply = buildReminderConfirmation(completedReminder)
+          await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+          await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+          return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+        }
+      }
+    } catch (e) {
+      console.log('[process-message] Pending reminder completion failed:', e)
+    }
+  }
+
   const eagerReminder = parseReminderIntent(incomingText)
   if (eagerReminder && intent.type === 'set_reminder') {
     await createReminder(
@@ -352,19 +384,26 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const dayMatch = lower.match(/\b(\d{1,2})(?:st|nd|rd|th)\b/)
     const dayNum = dayMatch?.[1] || ''
 
-    // Extract what they want to be reminded about
-    const aboutMatch = incomingText.match(/(?:remind(?:er)?(?: me)? (?:to |about |for )?)(.{3,50}?)(?:\s*(?:every|on the|at|by|before|$))/i)
-    const about = aboutMatch?.[1]?.trim()
+    // Extract the task/label cleanly - remove trigger words and date/time fragments
+    const cleanedInput = incomingText
+      .replace(/(?:set |a )?remind(?:er)?(?:\s+me)?/gi, '')
+      .replace(/\b(on the |every month|monthly|every week|weekly|every day|daily|\d{1,2}(?:st|nd|rd|th)(?: of every month)?|of every month)\b/gi, '')
+      .replace(/\b(to|about|for|on|at|by)\b/gi, '')
+      .replace(/\s+/g, ' ').trim()
+    const about = cleanedInput.length > 2 ? cleanedInput : null
+
+    // Store pending context in reply so next message can complete the reminder
+    const pendingCtx = JSON.stringify({ task: about, day: dayNum, recurrence: hasDate ? 'monthly' : null })
 
     let reply: string
     if (hasDate && about && dayNum) {
-      reply = `Got it \u2014 *${about}* on the ${dayNum}th.\n\nWhat time should I remind you?\n_e.g. "10 AM" or "9:30 AM"_`
+      reply = `Got it \u2014 *${about}* on the ${dayNum}th of every month.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"9:30 AM\"_\n\n<!--PENDING:${pendingCtx}-->`
     } else if (hasDate && about) {
-      reply = `Got it \u2014 *${about}*.\n\nWhat time should I remind you?\n_e.g. "10 AM" or "6 PM"_`
+      reply = `Got it \u2014 *${about}*.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"6 PM\"_\n\n<!--PENDING:${pendingCtx}-->`
     } else if (about) {
-      reply = `Got it \u2014 *${about}*.\n\nWhat time and when?\n_e.g. "9 AM daily", "every Monday 10 AM", "in 2 hours"_`
+      reply = `Got it \u2014 *${about}*.\n\nWhat time and when?\n_e.g. \"9 AM daily\", \"every Monday 10 AM\", \"in 2 hours\"_\n\n<!--PENDING:${pendingCtx}-->`
     } else {
-      reply = `Sure! When should I remind you?\n\n\u2022 _"Remind me at 7 AM tomorrow"_\n\u2022 _"15th of every month at 10 AM"_\n\u2022 _"Every Monday at 9 AM"_`
+      reply = `Sure! When should I remind you?\n\n\u2022 _\"Remind me at 7 AM tomorrow\"_\n\u2022 _\"15th of every month at 10 AM\"_\n\u2022 _\"Every Monday at 9 AM\"_`
     }
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
