@@ -7,7 +7,7 @@ import { addToList } from '@/lib/lists'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
 import { normalizeVoicePromptForBot } from '@/lib/bot/handlers/voice-normalizer'
 import { buildMemoryControlReply, isMemoryControlCommand } from '@/lib/bot/handlers/memory-control'
-import { buildNotesReply, isNotesCommand } from '@/lib/bot/handlers/notes-control'
+import { buildNotesReply, isNotesCommand, isMeetingNotesCommand, buildMeetingNotesListReply } from '@/lib/bot/handlers/notes-control'
 import { buildPaymentIntentReply, isPaymentIntentCommand } from '@/lib/bot/handlers/payment-intent'
 import { buildAdminWhatsAppReply, isAdminCommand, isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
 import { buildFirstValueReferralNudge } from '@/lib/bot/handlers/first-value-nudge'
@@ -42,18 +42,43 @@ import {
   isAudioContentType,
   transcribeTwilioVoiceNote,
 } from '@/lib/services/voice-transcription'
+import { isMeetingSearchCommand, buildMeetingSearchReply } from '@/lib/services/meeting-search'
+import { transcribeMeeting } from '@/lib/services/meeting-transcription'
 import {
   compactImageNoteForSaving,
   isImageContentType,
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
+import { isInstagramReelPreview, detectReelUrl } from '@/lib/services/reel-saver'
+import { saveMediaMemory, isMediaMemoryCommand, buildMediaMemoryReply, detectPlatformFromText } from '@/lib/services/media-memory'
+import { parsePdfTicket, buildTicketReply, getReminderTime } from '@/lib/services/pdf-reader'
+import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
+
+// Detect WhatsApp link preview cards (any website shared as a card)
+// These come as: Body = "Site Title | Site Name" + MediaUrl0 = thumbnail
+function isLinkPreviewCard(bodyText: string, mediaType: string): boolean {
+  if (!bodyText || !bodyText.trim()) return false
+  if (!mediaType.includes('image')) return false
+  const t = bodyText.trim()
+  // Must look like a title, not a personal message
+  // Link preview titles: short, contain | or -, title-case, no first-person
+  const hasLinkTitlePattern = (
+    t.includes(' | ') ||
+    t.includes(' - ') ||
+    t.includes(': ') ||
+    /^[A-Z]/.test(t)
+  )
+  const looksPersonal = /^(i |hey|hi|hello|can you|please|what|how|when|where|why|remind|add|save|show|my |the |ok|yes|no |sure)/i.test(t)
+  const isShortTitle = t.length < 200 && t.split(' ').length < 25
+  return hasLinkTitlePattern && !looksPersonal && isShortTitle
+}
 import {
   buildReceiptSummary,
   extractReceiptGroupName,
   isSplitReceiptCaption,
   scanReceiptFromImage,
 } from '@/lib/splitwise/receipt-reader'
-import { handleSplitCommand } from '@/lib/splitwise/split-service'
+import { addScannedReceiptToSplit, handleReceiptItemizeCommand, isReceiptItemizeCommand } from '@/lib/splitwise/receipt-itemizer'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -193,11 +218,6 @@ async function sendThinkingIfNeeded(from: string, text: string) {
   try { await sendWhatsAppMessage(from, 'Working on it...') } catch (error: any) { console.error('WHATSAPP_THINKING_TEXT_FAILED:', { error: error?.message || error }) }
 }
 
-function buildReceiptSplitCommand(receipt: { total: number; merchant: string }, groupName?: string) {
-  const description = receipt.merchant || 'Receipt'
-  return `Add expense ${receipt.total} ${description} paid by me${groupName ? ` in ${groupName}` : ''} split equally`
-}
-
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const mode = url.searchParams.get('hub.mode')
@@ -223,6 +243,18 @@ export async function POST(req: NextRequest) {
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
     const bodyText = String(formData.get('Body') || '').trim()
 
+    // ── Auto-send welcome + demo video to brand new users ────────────
+    if ((resolvedUser as any).isNewUser) {
+      const { buildWelcomeReply } = await import('@/lib/bot/handlers/whatsapp-premium')
+      const welcomeMsg = buildWelcomeReply(resolvedUser.name)
+      // Send demo video first
+      const videoUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'}/askgogo_demo.mp4`
+      await sendWhatsAppMediaMessage(from, '🎬 AskGogo — see what I can do!', videoUrl)
+      // Then send the full welcome message
+      await sendWhatsAppMessage(from, welcomeMsg)
+      // Continue processing their first message too
+    }
+
     if (isAdminCommand(bodyText)) {
       if (!isAdminPhone(from)) {
         await sendWhatsAppMessage(from, `Admin access is restricted.`)
@@ -247,11 +279,23 @@ export async function POST(req: NextRequest) {
           await sendWhatsAppMessage(from, 'Scanning receipt for AskGogo Split...')
           const receipt = await scanReceiptFromImage({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
           const groupName = extractReceiptGroupName(bodyText)
-          const splitReply = await handleSplitCommand(from, buildReceiptSplitCommand(receipt, groupName))
-          const reply = `${buildReceiptSummary(receipt)}\n\n✅ *Saved to AskGogo Split*\n\n${splitReply || 'Receipt saved.'}\n\nNext: send *itemize receipt* to assign items to people.`
+          const saved = await addScannedReceiptToSplit({ ownerPhone: from, groupName, receipt, rawCaption: bodyText })
+          const reply = `${buildReceiptSummary(receipt)}\n\n${saved.reply}\n\nNext: send *itemize receipt Rahul had pizza, Priya had pasta* to assign items to people.`
           await saveConversation(resolvedUser.telegramId, 'user', `[split receipt image] ${bodyText}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', reply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[split receipt image]', reply })
+        } else if (isNutritionPhotoCaption(bodyText) && !isSkinCheckCaption(bodyText) && !hasPendingSkinCheck) {
+          // ── Food photo → nutrition log ──────────────────────────
+          await sendWhatsAppMessage(from, '🥗 Analysing your meal...')
+          const nutritionReply = await handleNutritionPhoto({
+            telegramId: resolvedUser.telegramId,
+            mediaUrl: firstMediaUrl,
+            contentType: firstMediaType,
+            caption: bodyText
+          })
+          await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[food photo] ${bodyText}` : '[food photo]')
+          await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[food photo]', reply: nutritionReply })
         } else if (isSkinCheckCaption(bodyText) || hasPendingSkinCheck) {
           await sendWhatsAppMessage(from, 'Running AskGogo Skin Check...')
           const result = await buildSkinCheckFromImage({
@@ -265,6 +309,33 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || 'skin check'}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
+        } else if (isInstagramReelPreview(bodyText) || isLinkPreviewCard(bodyText, firstMediaType)) {
+          // ── Social media content (Instagram, LinkedIn, Facebook, YouTube, Twitter) ──
+          // Detect platform and save to the right memory bucket
+          const detectedUrl = detectReelUrl(bodyText) || undefined
+          const platform = detectPlatformFromText(bodyText, detectedUrl)
+          const platformLabels: Record<string, string> = {
+            instagram: '📸 Saving to Instagram memory...',
+            facebook: '👥 Saving to Facebook memory...',
+            youtube: '▶️ Saving YouTube video...',
+            linkedin: '💼 Saving to LinkedIn memory...',
+            twitter: '🐦 Saving to Twitter memory...',
+            tiktok: '🎵 Saving TikTok...',
+            other: '🔗 Saving content...',
+          }
+          await sendWhatsAppMessage(from, platformLabels[platform] || '💾 Saving...')
+          const { reply: mediaReply } = await saveMediaMemory({
+            telegramId: resolvedUser.telegramId,
+            platform,
+            bodyText,
+            mediaUrl: firstMediaUrl || undefined,
+            accountSid: process.env.TWILIO_ACCOUNT_SID || undefined,
+            authToken: process.env.TWILIO_AUTH_TOKEN || undefined,
+            detectedUrl,
+          })
+          await saveConversation(resolvedUser.telegramId, 'user', `[${platform}] ${bodyText}`.trim())
+          await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || `[${platform}]`, reply: mediaReply })
         } else {
           await sendWhatsAppMessage(from, 'Reading your note...')
           const imageReply = await readAndSummarizeImageNote({
@@ -286,6 +357,50 @@ export async function POST(req: NextRequest) {
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    // ── PDF / Document handler (BEFORE voice transcription) ──────────────
+    if (numMedia > 0 && firstMediaUrl && (firstMediaType.includes('pdf') || firstMediaType.includes('document'))) {
+      await sendWhatsAppMessage(from, '📄 Reading your ticket PDF...')
+      try {
+        const accountSid = process.env.TWILIO_ACCOUNT_SID!
+        const authToken = process.env.TWILIO_AUTH_TOKEN!
+        const ticketInfo = await parsePdfTicket(firstMediaUrl, accountSid, authToken)
+        const noteText = ticketInfo
+          ? `PDF ticket: ${JSON.stringify(ticketInfo).slice(0, 200)}`
+          : `PDF document: ${bodyText || 'received'}`
+        await addToList(resolvedUser.telegramId, 'notes', [noteText])
+        let remindersSet = 0
+        if (ticketInfo?.type === 'flight') {
+          for (const flight of (ticketInfo as any).flights) {
+            const reminderTime = getReminderTime(flight.date, flight.departure)
+            if (reminderTime && reminderTime > new Date()) {
+              const reminderMsg = `✈️ ${flight.from} → ${flight.to} departs in 3 hours at ${flight.departure}! PNR: ${flight.pnr}`
+              await supabaseAdmin.from('reminders').insert({ telegram_id: resolvedUser.telegramId, whatsapp_id: from, message: reminderMsg, remind_at: reminderTime.toISOString(), created_at: new Date().toISOString() })
+              remindersSet++
+            }
+          }
+        } else if (ticketInfo?.type === 'train' || ticketInfo?.type === 'event') {
+          const t = ticketInfo as any
+          const reminderTime = getReminderTime(t.date, t.departure || t.time)
+          if (reminderTime && reminderTime > new Date()) {
+            const name = t.type === 'train' ? `${t.from} → ${t.to}` : t.name
+            await supabaseAdmin.from('reminders').insert({ telegram_id: resolvedUser.telegramId, whatsapp_id: from, message: `${t.type === 'train' ? '🚆' : '🎟️'} ${name} starts in 3 hours at ${t.departure || t.time}!`, remind_at: reminderTime.toISOString(), created_at: new Date().toISOString() })
+            remindersSet++
+          }
+        }
+        const reply = buildTicketReply(ticketInfo, remindersSet > 0)
+        await saveConversation(resolvedUser.telegramId, 'user', '[PDF ticket]')
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: '[PDF ticket]', reply })
+      } catch (err: any) {
+        console.error('PDF_PARSE_ERROR:', err?.message)
+        await sendWhatsAppMessage(from, `📄 I received your PDF but had trouble reading it.
+
+Tell me the details and I'll save + set reminders:
+_"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
+      }
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     let incoming
     try { incoming = await getTextFromIncomingWhatsApp(formData) } catch (error: any) {
       console.error('WhatsApp voice transcription failed:', error)
@@ -297,11 +412,48 @@ export async function POST(req: NextRequest) {
     const text = incoming.wasVoice ? normalizeVoicePromptForBot(originalText) : originalText
 
     if (!text) {
-      await sendWhatsAppMessage(from, `I can read text, voice notes, and images now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.\nYou can also send a short voice note, type your request, or upload a photo/screenshot of your notes.`)
+      await sendWhatsAppMessage(from, `I can read text, voice notes, images and PDFs now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
-    const skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
+    if (isReceiptItemizeCommand(text)) {
+      const reply = await handleReceiptItemizeCommand(from, text)
+      if (reply) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWhatsAppMessage(from, reply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
+    // Check context: if last bot msg was nutrition goal menu, digits go to nutrition not skin
+    const isAmbiguousDigit = /^[1-5]$/.test(text.trim())
+    let skinTextReply = null
+    if (isAmbiguousDigit) {
+      const { data: lastBotMsg } = await supabaseAdmin
+        .from('conversations')
+        .select('content')
+        .eq('telegram_id', resolvedUser.telegramId)
+        .eq('role', 'assistant')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      const lastContent = (lastBotMsg?.content || '').toLowerCase()
+      const isNutritionContext = lastContent.includes('nutrition goal') || lastContent.includes('working towards') ||
+        lastContent.includes('lose weight') || lastContent.includes('build muscle') ||
+        lastContent.includes('balanced & healthy') || lastContent.includes('maintenance') ||
+        lastContent.includes('calorie deficit') || lastContent.includes('calorie surplus')
+      if (isNutritionContext) {
+        const nutritionReply = await handleNutritionGoalSelection(resolvedUser.telegramId, text)
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: nutritionReply })
+      } else {
+        skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
+      }
+    } else {
+      skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
+    }
     if (skinTextReply) {
       const replyText = getReplyText(skinTextReply)
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
@@ -357,7 +509,8 @@ export async function POST(req: NextRequest) {
       try {
         await sendWhatsAppMessage(from, 'Preparing meeting notes...')
         const transcript = cleanTypedMeetingNotesText(text)
-        const reply = await buildMeetingNotesReply({ telegramId: resolvedUser.telegramId, transcript, caption: 'Typed meeting notes' })
+        const { summaryReply } = await buildMeetingNotesReply({ telegramId: resolvedUser.telegramId, transcript, caption: 'Typed meeting notes' })
+        const reply = summaryReply
         await saveConversation(resolvedUser.telegramId, 'user', `[typed meeting notes] ${transcript.slice(0, 500)}`)
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply })
@@ -370,11 +523,41 @@ export async function POST(req: NextRequest) {
 
     if (incoming.wasVoice && shouldTreatAudioAsMeeting({ caption: bodyText, transcript: originalText })) {
       try {
-        await sendWhatsAppMessage(from, 'Transcribing your meeting...')
-        const reply = await buildMeetingNotesReply({ telegramId: resolvedUser.telegramId, transcript: originalText, caption: bodyText })
+        await sendWhatsAppMessage(from, '🎙️ Transcribing your meeting...\n_Speaker detection + multilingual support enabled_')
+
+        // Re-fetch audio for AssemblyAI speaker diarization
+        const mediaUrl0 = String(formData.get('MediaUrl0') || '')
+        const contentType0 = String(formData.get('MediaContentType0') || 'audio/ogg')
+        let txResult = null
+
+        if (mediaUrl0) {
+          const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
+          const audioRes = await fetch(mediaUrl0, { headers: { Authorization: `Basic ${auth}` } })
+          if (audioRes.ok) {
+            const audioBuffer = await audioRes.arrayBuffer()
+            txResult = await transcribeMeeting({ audioBuffer, contentType: contentType0, isMeeting: true })
+          }
+        }
+
+        const { summaryReply, transcriptChunks } = await buildMeetingNotesReply({
+          telegramId: resolvedUser.telegramId,
+          transcript: originalText,
+          speakerTranscript: txResult?.formattedWithSpeakers,
+          detectedLanguage: txResult?.detectedLanguage,
+          speakerCount: txResult?.speakerCount,
+          caption: bodyText,
+        })
+
         await saveConversation(resolvedUser.telegramId, 'user', `[meeting audio] ${bodyText || originalText.slice(0, 300)}`)
-        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[meeting audio]', reply })
+        await saveConversation(resolvedUser.telegramId, 'assistant', summaryReply)
+
+        // Send summary first
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[meeting audio]', reply: summaryReply })
+
+        // Then send full transcript as separate message(s)
+        for (const chunk of transcriptChunks) {
+          await sendWhatsAppMessage(from, chunk)
+        }
       } catch (error: any) {
         console.error('WHATSAPP_MEETING_NOTES_FAILED:', error?.message || error)
         await sendWhatsAppMessage(from, `I couldn't summarize that meeting audio clearly.\n\nTry a shorter recording, or add caption: *meeting notes* when sending the audio.`)
@@ -382,8 +565,8 @@ export async function POST(req: NextRequest) {
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
-    const featureReply = await routeFeatureIntent(from, text) ||
-      (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText) : null)
+    const featureReply = await routeFeatureIntent(from, text, { telegramId: resolvedUser.telegramId, caption: bodyText }) ||
+      (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText, { telegramId: resolvedUser.telegramId }) : null)
     if (featureReply) {
       await saveConversation(resolvedUser.telegramId, 'user', text)
       await saveConversation(resolvedUser.telegramId, 'assistant', featureReply)
@@ -396,6 +579,20 @@ export async function POST(req: NextRequest) {
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       await sendWhatsAppMessage(from, incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    if (isMeetingSearchCommand(text)) {
+      await sendWhatsAppMessage(from, '🔍 Searching your meeting history...')
+      const reply = await buildMeetingSearchReply(resolvedUser.telegramId, text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    if (isMeetingNotesCommand(text)) {
+      const reply = await buildMeetingNotesListReply(resolvedUser.telegramId)
+      await sendWhatsAppMessage(from, reply)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
@@ -478,7 +675,13 @@ export async function POST(req: NextRequest) {
     await sendThinkingIfNeeded(from, text)
     const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text' })
     const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(result.text, originalText) : result.text
-    await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: finalReply })
+    // Send visual card if process-message returned a mediaUrl
+    if ((result as any).mediaUrl) {
+      const caption = finalReply || '📊 Your nutrition card'
+      await sendWhatsAppMediaMessage(from, caption, (result as any).mediaUrl)
+    } else {
+      await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: finalReply })
+    }
 
     return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
   } catch (error: any) {

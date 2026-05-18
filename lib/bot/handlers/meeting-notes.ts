@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { addToList } from '@/lib/lists'
+import { transcribeMeeting, getLanguageLabel } from '@/lib/services/meeting-transcription'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { saveFollowupState } from './followup-state'
 
@@ -140,7 +141,36 @@ function extractActionItems(reply: string) {
     .map((message, index) => ({ message, remindAtIso: istTomorrowReminderIso(index) }))
 }
 
-export async function buildMeetingNotesReply(params: { telegramId: number; transcript: string; caption?: string | null }) {
+function buildTranscriptMessage(transcript: string, speakerCount?: number): string[] {
+  // Split transcript into WhatsApp-safe chunks (4000 chars each)
+  const header = speakerCount && speakerCount > 1
+    ? `📝 *Full transcript* _(${speakerCount} speakers)_\n\n`
+    : `📝 *Full transcript*\n\n`
+
+  const body = transcript.trim()
+  const chunkSize = 3800
+  const chunks: string[] = []
+
+  for (let i = 0; i < body.length; i += chunkSize) {
+    const chunk = body.slice(i, i + chunkSize)
+    if (i === 0) {
+      chunks.push(header + chunk)
+    } else {
+      chunks.push(`📝 _(continued)_\n\n${chunk}`)
+    }
+  }
+
+  return chunks.length ? chunks : [header + '_(No transcript available)_']
+}
+
+export async function buildMeetingNotesReply(params: {
+  telegramId: number
+  transcript: string
+  caption?: string | null
+  speakerTranscript?: string      // speaker-labelled English transcript
+  detectedLanguage?: string       // e.g. 'hi', 'kn', 'ta'
+  speakerCount?: number
+}) {
   const access = await canUseMeetingNotes(params.telegramId)
 
   if (!access.allowed) {
@@ -156,39 +186,64 @@ export async function buildMeetingNotesReply(params: { telegramId: number; trans
     )
   }
 
-  const safeTranscript = params.transcript.trim().slice(0, 24000)
+  // Use speaker-labelled English transcript if available, otherwise raw transcript
+  const transcriptToSummarize = (params.speakerTranscript || params.transcript || '').trim().slice(0, 24000)
+  const langLabel = params.detectedLanguage && params.detectedLanguage !== 'en' && params.detectedLanguage !== 'auto'
+    ? `\n_Transcribed from ${getLanguageLabel(params.detectedLanguage)} → English_`
+    : ''
+  const speakerLabel = params.speakerCount && params.speakerCount > 1
+    ? `\n_${params.speakerCount} speakers detected_`
+    : ''
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     temperature: 0.2,
-    max_tokens: 1000,
+    max_tokens: 1200,
     messages: [
       {
         role: 'system',
         content:
-          'You are AskGogo meeting notes assistant for WhatsApp. Summarize meeting transcripts into concise, useful notes. Use WhatsApp-friendly formatting. Do not invent names or decisions. Keep action items short and natural. Do not write Owner TBD. If owner is unclear, write only the action. If owner is clear, write Name — action. Always put a space after numbered list markers, like 1. Follow up.',
+          'You are AskGogo meeting notes assistant for WhatsApp. Summarize meeting transcripts into concise, useful notes. Use WhatsApp-friendly formatting. Do not invent names or decisions. Keep action items short and natural. Do not write Owner TBD. If owner is unclear, write only the action. If owner is clear, write Name — action. If speaker labels are present (Speaker A:, Speaker B:), use them to attribute action items. Always put a space after numbered list markers.',
       },
       {
         role: 'user',
         content:
-          `Caption: ${params.caption || 'No caption'}\n\nTranscript:\n${safeTranscript}\n\n` +
-          `Return exactly in this format:\n\n` +
+          `Caption: ${params.caption || 'No caption'}\n\nTranscript:\n${transcriptToSummarize}\n\n` +
+          `Return exactly in this format (no Transcript snapshot section):\n\n` +
           `🎙️ *Meeting notes ready*\n\n` +
           `*Summary*\n• ...\n• ...\n\n` +
           `*Key decisions*\n• ...\n\n` +
           `*Action items*\n1. action item\n2. Name — action item\n\n` +
-          `*Follow-ups to create*\n• reminder suggestion if any\n\n` +
-          `*Transcript snapshot*\nshort important excerpt / or concise transcript summary`,
+          `*Follow-ups to create*\n• reminder suggestion if any`,
       },
     ],
   })
 
   const rawReply = response.choices?.[0]?.message?.content?.trim()
   if (!rawReply) throw new Error('Could not summarize meeting transcript')
-  const reply = polishMeetingReply(rawReply)
+  let reply = polishMeetingReply(rawReply)
 
-  const savedNote = reply.replace(/\*/g, '').replace(/🎙️\s*Meeting notes ready/gi, 'Meeting notes').trim().slice(0, 1500)
-  await addToList(params.telegramId, 'notes', [savedNote])
+  // Append language + speaker badges to reply
+  const badges: string[] = []
+  if (params.detectedLanguage && params.detectedLanguage !== 'en' && params.detectedLanguage !== 'auto') {
+    badges.push(`🌐 _${getLanguageLabel(params.detectedLanguage)} → English_`)
+  }
+  if (params.speakerCount && params.speakerCount > 1) {
+    badges.push(`👥 _${params.speakerCount} speakers detected_`)
+  }
+  if (badges.length) reply = reply + '\n\n' + badges.join(' · ')
+
+  // Save both summary AND full transcript to meeting_notes for search
+  const summaryText = reply.replace(/\*/g, '').replace(/🎙️\s*Meeting notes ready/gi, 'Meeting notes').trim()
+  const fullTranscriptText = transcriptToSummarize
+  const savedNote = JSON.stringify({
+    summary: summaryText.slice(0, 1500),
+    transcript: fullTranscriptText.slice(0, 8000),
+    language: params.detectedLanguage || 'en',
+    speakers: params.speakerCount || 1,
+    saved_at: new Date().toISOString(),
+  })
+  await addToList(params.telegramId, 'meeting_notes', [savedNote])
 
   const actionItems = extractActionItems(reply)
   if (actionItems.length) await saveFollowupState(params.telegramId, 'meeting_action_items', { items: actionItems })
@@ -200,10 +255,12 @@ export async function buildMeetingNotesReply(params: { telegramId: number; trans
       JSON.stringify({ tier: access.tier, words: wordCount(params.transcript), action_items: actionItems.length, created_at: new Date().toISOString() }),
   })
 
-  return (
+  const summaryReply = (
     `${reply}\n\n` +
-    `✅ Saved to *my notes*.\n\n` +
+    `✅ Saved to *my meeting notes*.\n\n` +
     `Plan note: ${meetingLimitText(access.tier)}\n\n` +
     (actionItems.length ? `Want me to create reminders for these action items? Reply *yes*.` : `No clear action items found to create reminders.`)
   )
+
+  return { summaryReply, transcriptChunks: buildTranscriptMessage(transcriptToSummarize, params.speakerCount) }
 }

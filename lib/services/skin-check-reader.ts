@@ -144,9 +144,10 @@ function cleanLine(line: string) {
 }
 
 export function compactSkinCheckForSaving(text: string) {
-  const observations = extractSection(text, 'Visible observations')
-  const skinType = extractSection(text, 'Possible skin type indicators')
-  const avoid = extractSection(text, 'Avoid / caution')
+  // Try both old and new heading formats for compatibility
+  const observations = extractSection(text, 'Key observations') || extractSection(text, 'Visible observations')
+  const skinType = extractSection(text, 'Skin type indicator') || extractSection(text, 'Possible skin type indicators')
+  const avoid = extractSection(text, 'Avoid this week') || extractSection(text, 'Avoid / caution')
 
   const observationLines = observations
     .split('\n')

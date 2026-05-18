@@ -24,6 +24,9 @@ import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { buildCalendarActionReply, createCalendarConflictEvent, isCalendarAction } from './handlers/calendar-actions'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
+import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
+import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
+import { detectReelUrl } from '@/lib/services/reel-saver'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -36,19 +39,23 @@ export type ProcessIncomingParams = {
 export type ProcessIncomingResult = {
   text: string
   resolvedUser: Awaited<ReturnType<typeof resolveUser>>
+  mediaUrl?: string
+  mediaType?: string
 }
 
 async function getConversationHistory(telegramId: number): Promise<Message[]> {
+  // Fetch most recent 20 messages (descending), then reverse for chronological order
   const { data } = await supabaseAdmin
     .from('conversations')
     .select('role, content')
     .eq('telegram_id', telegramId)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(20)
 
   return ((data || []) as any[])
     .filter((x) => x.role === 'user' || x.role === 'assistant')
     .map((x) => ({ role: x.role, content: x.content }))
+    .reverse() // restore chronological order for Claude context
 }
 
 async function saveConversation(telegramId: number, role: 'user' | 'assistant', content: string) {
@@ -177,6 +184,36 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const incomingText = (params.text || '').trim()
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
+
+  // Pending reminder context — runs FIRST before any other handler
+  {
+    const _hist = await getConversationHistory(resolvedUser.telegramId)
+    const _lastBot = [..._hist].reverse().find((m: Message) => m.role === 'assistant')?.content || ''
+    const _pm = _lastBot.match(/<!--PENDING:(.*?)-->/)
+    if (_pm) {
+      try {
+        const _ctx = JSON.parse(_pm[1])
+        const _raw = incomingText.trim().replace(/[.,]/g, '').trim()
+        const _isTime = /^\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(_raw)
+        if (_isTime && _ctx.task) {
+          const _t = /[aApP][mM]$/.test(_raw) ? _raw : _raw + ' AM'
+          const _day = _ctx.day ? `on the ${_ctx.day}th of every month ` : ''
+          const _full = `Remind me to ${_ctx.task} ${_day}at ${_t}`
+          console.log('[pending] Completing:', _full)
+          const _r = parseReminderIntent(_full)
+          if (_r) {
+            await createReminder(resolvedUser.telegramId, _r.label, _r.scheduledFor,
+              _r.kind === 'recurring' ? _r.pattern : undefined,
+              params.channel === 'whatsapp' ? resolvedUser.whatsappId : null)
+            const _reply = buildReminderConfirmation(_r)
+            await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+            await saveConversation(resolvedUser.telegramId, 'assistant', _reply)
+            return { text: formatOutgoingText(params.channel, _reply), resolvedUser }
+          }
+        }
+      } catch (_e) { console.log('[pending] failed:', _e) }
+    }
+  }
 
   if (isUsageCommand(incomingText)) {
     const reply = await getUsageStatusReply(resolvedUser.telegramId)
@@ -326,6 +363,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   const eagerReminder = parseReminderIntent(incomingText)
+
   if (eagerReminder && intent.type === 'set_reminder') {
     await createReminder(
       resolvedUser.telegramId,
@@ -340,22 +378,40 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
-  // Reminder intent detected but no specific time parsed â ask for time instead of giving unrelated answer
+  // Reminder intent detected but no specific time parsed - ask only for time
   if (!eagerReminder && intent.type === 'set_reminder') {
     const lower = incomingText.toLowerCase()
-    const hasActivity = lower.includes('run') || lower.includes('walk') || lower.includes('gym') ||
-      lower.includes('workout') || lower.includes('exercise') || lower.includes('train') ||
-      lower.includes('marathon') || lower.includes('jog') || lower.includes('yoga') || lower.includes('swim')
-    let reply: string
-    if (hasActivity) {
-      reply = `Got it! ð I'll help you set your training reminders.\n\nWhat time should I remind you? For example:\nâ¢ *"Remind me at 6 AM for easy run"*\nâ¢ *"Remind me every morning at 7 for training"*\nâ¢ *"Remind me daily at 6:30 AM for my marathon prep"*`
-    } else {
-      reply = `Sure! What time should I set this reminder for?\n\nFor example:\nâ¢ *"Remind me at 7 AM tomorrow"*\nâ¢ *"Remind me at 6 PM every day"*\nâ¢ *"Remind me in 2 hours"*`
-    }
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
-  }
+    const hasDate = /\b(\d{1,2})(st|nd|rd|th)\b|every month|monthly|every week|weekly|every day|daily/i.test(lower)
+    const dayMatch = lower.match(/\b(\d{1,2})(?:st|nd|rd|th)\b/)
+    const dayNum = dayMatch?.[1] || ''
 
+    // Extract the task/label cleanly - remove trigger words and date/time fragments
+    const cleanedInput = incomingText
+      .replace(/(?:set |a )?remind(?:er)?(?:\s+me)?/gi, '')
+      // Remove all recurrence patterns including day names
+      .replace(/\b(every\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
+      .replace(/\b(on the |every month|monthly|every week|weekly|every day|daily|\d{1,2}(?:st|nd|rd|th)(?: of every month)?|of every month|every)\b/gi, '')
+      .replace(/\b(to|about|for|on|at|by)\b/gi, '')
+      .replace(/\s+/g, ' ').trim()
+    const about = cleanedInput.length > 2 ? cleanedInput : null
+
+    // Store pending context in reply so next message can complete the reminder
+    const pendingCtx = JSON.stringify({ task: about, day: dayNum, recurrence: hasDate ? 'monthly' : null })
+
+    let reply: string
+    if (hasDate && about && dayNum) {
+      reply = `Got it \u2014 *${about}* on the ${dayNum}th of every month.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"9:30 AM\"_\n\n<!--PENDING:${pendingCtx}-->`
+    } else if (hasDate && about) {
+      reply = `Got it \u2014 *${about}*.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"6 PM\"_\n\n<!--PENDING:${pendingCtx}-->`
+    } else if (about) {
+      reply = `Got it \u2014 *${about}*.\n\nWhat time and when?\n_e.g. \"9 AM daily\", \"every Monday 10 AM\", \"in 2 hours\"_\n\n<!--PENDING:${pendingCtx}-->`
+    } else {
+      reply = `Sure! When should I remind you?\n\n\u2022 _\"Remind me at 7 AM tomorrow\"_\n\u2022 _\"15th of every month at 10 AM\"_\n\u2022 _\"Every Monday at 9 AM\"_`
+    }
+    const cleanReply = reply.replace(/\s*<!--PENDING:.*?-->/s, '').trim()
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply) // keep tag in DB for context
+    return { text: formatOutgoingText(params.channel, cleanReply), resolvedUser }
+  }
   if (intent.type === 'set_briefing_time') {
     const reply = await setBriefingTime(resolvedUser.telegramId, incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -481,6 +537,49 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const reply = list ? formatList(list.list_name, list.items || []) : `I could not find a list called "${listName}".`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  // ── Media Memory (my instagram saves, my youtube notes, find reel about X) ──
+  if (intent.type === 'media_memory' || isMediaMemoryCommand(incomingText)) {
+    const mediaReply = await buildMediaMemoryReply(resolvedUser.telegramId, incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
+    return { text: formatOutgoingText(params.channel, mediaReply), resolvedUser }
+  }
+
+  // ── YouTube / social URL sent as plain text ──────────────────
+  const textReelUrl = detectReelUrl(incomingText)
+  if (textReelUrl && /youtu\.?be|youtube\.com/i.test(textReelUrl)) {
+    const platform = detectPlatformFromText(incomingText, textReelUrl)
+    const { reply: mediaReply } = await saveMediaMemory({
+      telegramId: resolvedUser.telegramId,
+      platform,
+      bodyText: incomingText,
+      detectedUrl: textReelUrl,
+    })
+    await saveConversation(resolvedUser.telegramId, 'user', `[youtube] ${incomingText}`)
+    await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
+    return { text: formatOutgoingText(params.channel, mediaReply), resolvedUser }
+  }
+
+  // ── Nutrition ──────────────────────────────────────────────
+  if (intent.type === 'nutrition_log' || intent.type === 'nutrition_query') {
+    const nutritionReply = await handleNutritionText({ telegramId: resolvedUser.telegramId, text: incomingText, whatsappId: resolvedUser.whatsappId })
+
+    // Handle visual card signals
+    const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
+    if (nutritionReply.startsWith('__SEND_DAILY_CARD__')) {
+      const tid = nutritionReply.replace('__SEND_DAILY_CARD__', '')
+      const cardUrl = `${APP_URL}/api/nutrition/daily-card/${tid}`
+      return { text: '📊 Your daily nutrition card 👆', mediaUrl: cardUrl, mediaType: 'image/png', resolvedUser }
+    }
+    if (nutritionReply.startsWith('__SEND_WEEKLY_CARD__')) {
+      const tid = nutritionReply.replace('__SEND_WEEKLY_CARD__', '')
+      const cardUrl = `${APP_URL}/api/nutrition/weekly-card/${tid}`
+      return { text: '📊 Your weekly nutrition card 👆', mediaUrl: cardUrl, mediaType: 'image/png', resolvedUser }
+    }
+
+    await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
+    return { text: formatOutgoingText(params.channel, nutritionReply), resolvedUser }
   }
 
   if (intent.type === 'web_search') {

@@ -3,12 +3,15 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export type AdminAnalytics = {
   totals: {
     users: number
+    totalWithImported: number
     whatsappUsers: number
     telegramUsers: number
     freeUsers: number
     starterUsers: number
     proUsers: number
     founderProUsers: number
+    importedUsers: number
+    importedContacts: number
     unknownTierUsers: number
     activeReminders: number
     paymentIntents: number
@@ -25,13 +28,14 @@ export type AdminAnalytics = {
   institutions: any[]
 }
 
-type PlanKey = 'free' | 'starter' | 'pro' | 'founder_pro'
+type PlanKey = 'free' | 'starter' | 'pro' | 'founder_pro' | 'imported'
 
 const PLAN_LABELS: Record<PlanKey, string> = {
   free: 'Free Beta',
   starter: 'Starter',
   pro: 'Pro',
   founder_pro: 'Founder Pro',
+  imported: 'Imported Contacts',
 }
 
 const PLAN_LIMITS: Record<PlanKey, string> = {
@@ -39,6 +43,7 @@ const PLAN_LIMITS: Record<PlanKey, string> = {
   starter: '100 AI actions/month',
   pro: '250 AI actions/month',
   founder_pro: '600 AI actions/month',
+  imported: 'Not yet active',
 }
 
 function normalizePhone(value: string | null | undefined) {
@@ -300,7 +305,11 @@ export async function getAdminAnalytics(): Promise<AdminAnalytics> {
     .select('id', { count: 'exact', head: true })
     .like('content', 'ASKGOGO_REFERRAL_JOINED:%')
 
-  const usersByPlatform = countBy(users, 'platform')
+  // Separate real users from imported contacts
+  const realUsers = users.filter((u: any) => u.tier !== 'imported')
+  const importedContacts = users.filter((u: any) => u.tier === 'imported')
+
+  const usersByPlatform = countBy(realUsers, 'platform')
   const usersByTier = countBy(users, 'tier')
 
   const paymentByPlan = recentPaymentIntents.reduce((acc: Record<string, number>, item: any) => {
@@ -312,13 +321,16 @@ export async function getAdminAnalytics(): Promise<AdminAnalytics> {
 
   return {
     totals: {
-      users: users.length,
+      users: realUsers.length,
+      totalWithImported: users.length,
       whatsappUsers: usersByPlatform.whatsapp || 0,
       telegramUsers: usersByPlatform.telegram || 0,
+      importedContacts: importedContacts.length,
       freeUsers: usersByTier.free || 0,
       starterUsers: usersByTier.starter || 0,
       proUsers: usersByTier.pro || 0,
       founderProUsers: usersByTier.founder_pro || usersByTier.founder || 0,
+      importedUsers: usersByTier.imported || 0,
       unknownTierUsers: usersByTier.unknown || 0,
       activeReminders: activeReminders || 0,
       paymentIntents: paymentIntents || 0,

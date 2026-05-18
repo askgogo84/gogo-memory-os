@@ -84,6 +84,17 @@ function wantsDoneNote(lower: string) {
   return /^done note\s+\d+\b/i.test(lower) || /^mark note\s+\d+\s+done\b/i.test(lower)
 }
 
+export function isMeetingNotesCommand(text: string) {
+  const lower = (text || '').toLowerCase().trim()
+  return (
+    lower === 'my meeting notes' ||
+    lower === 'meeting notes' ||
+    lower === 'my meetings' ||
+    lower === 'show meeting notes' ||
+    lower === 'meeting history'
+  )
+}
+
 export function isNotesCommand(text: string) {
   const lower = (text || '').toLowerCase().trim()
 
@@ -226,5 +237,29 @@ export async function buildNotesReply(telegramId: number, text: string) {
     `• delete note 1\n` +
     `• done note 2\n` +
     `• clear notes`
+  )
+}
+
+export async function buildMeetingNotesListReply(telegramId: number): Promise<string> {
+  const list = await getList(telegramId, 'meeting_notes')
+  const items = ((list?.items || []) as ListItem[])
+
+  if (!items.length) {
+    return `🎙️ *Meeting notes*\n\nNo meeting notes saved yet.\n\nSend me a voice note or audio recording of a meeting — I'll transcribe it and extract action items automatically.`
+  }
+
+  const recent = items.slice(-8).reverse()
+  const lines = recent.map((item, i) => {
+    const text = item.text || ''
+    // Extract first summary line
+    const summaryLine = text.split('\n').find(l => l.trim() && !l.includes('Meeting notes') && !l.includes('Summary')) || ''
+    const date = new Date(item.added_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+    return `${i + 1}. _${date}_ — ${summaryLine.slice(0, 90)}${summaryLine.length > 90 ? '...' : ''}`
+  })
+
+  return (
+    `🎙️ *Your meeting notes* (${items.length} total)\n\n` +
+    lines.join('\n') +
+    `\n\n_Send a voice note of your next meeting to add more._`
   )
 }

@@ -1,6 +1,6 @@
 import { supabaseAdmin } from './supabase-admin'
 
-type PlanKey = 'free' | 'lite' | 'starter' | 'pro' | 'founder_pro'
+type PlanKey = 'free' | 'lite' | 'starter' | 'pro' | 'founder_pro' | 'imported'
 
 export type UsageKind =
   | 'ai_action'

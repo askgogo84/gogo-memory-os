@@ -259,8 +259,26 @@ export async function handleSplitCommand(phone: string, text: string) {
 
   if (intent.type === 'create_group') {
     const group = await createFreshGroup(phone, intent.groupName, intent.members)
-    const members = await getMembers(group.id)
-    return `✅ *AskGogo Split created*\n\n*${group.name}*\nMembers: ${members.map((m) => m.name).join(', ')}\n\nAdd your first expense like:\n_Add expense 2400 hotel paid by me in ${group.name} split equally_\n\nInvite friends like:\n_Invite Rahul 9876543210 to ${group.name}_`
+    const groupMembers = await getMembers(group.id)
+    // Generate a universal WhatsApp-shareable invite link
+    const inviteCode = await createInvite(group.id, 'Friend', null)
+    const joinUrl = `${APP_URL}/join/${inviteCode}`
+    const waText = `Hey! Join my *${group.name}* trip split on AskGogo WhatsApp AI.\n\nTap to join → ${joinUrl}\n\nYou can add expenses, see balances & settle up — all on WhatsApp!`
+    const waLink = waDeepLink(waText)
+    const memberList = groupMembers.map((m) => m.name).join(', ')
+    return `✅ *${group.name}* created!
+
+👥 Members: ${memberList}
+
+📎 *Share this with your group on WhatsApp:*
+${joinUrl}
+
+👆 Anyone who taps this link can join and add expenses from their own WhatsApp.
+
+[Share invite on WhatsApp](${waLink})
+
+Start adding:
+_Add expense 2400 hotel paid by me split equally_`
   }
 
   if (intent.type === 'add_equal_expense') {
@@ -335,6 +353,89 @@ export async function handleSplitCommand(phone: string, text: string) {
     if (intent.phone) await sendWhatsAppMessage(intent.phone, directMessage).catch((error: any) => console.error('[split-invite] direct send failed:', error?.message || error))
 
     return `✉️ *Invite ready*\n\nInvite ${intent.name} to *${group.name}*:\n${askGogoLink}\n\n${intent.phone ? 'I also tried sending it directly on WhatsApp.' : 'Forward this link to them on WhatsApp.'}\n\nAfter joining, their expenses will update the same tracker and linked members will get updates.`
+  }
+
+  // ── Trip summary by category ──────────────────────────────────
+  if (intent.type === 'trip_summary') {
+    const group = await findGroup(phone, intent.groupName)
+    if (!group) return `No trip found. Create one with: *Create trip Goa with Rahul, Priya*`
+    const { expenses } = await calculateBalances(group.id)
+    if (!expenses.length) return `No expenses in *${group.name}* yet.`
+    const byCategory: Record<string, number> = {}
+    expenses.forEach((e: Expense) => {
+      const cat = guessCategory(e.description)
+      byCategory[cat] = roundMoney((byCategory[cat] || 0) + Number(e.total_amount))
+    })
+    const total = roundMoney(expenses.reduce((s: number, e: Expense) => s + Number(e.total_amount), 0))
+    const lines = Object.entries(byCategory)
+      .sort(([, a], [, b]) => b - a)
+      .map(([cat, amt]) => {
+        const icons: Record<string, string> = { food: '🍽', travel: '✈', stay: '🏨', activity: '🎭', recurring: '🔄', general: '📦' }
+        const pct = Math.round((amt / total) * 100)
+        return `${icons[cat] || '📦'} ${cat.charAt(0).toUpperCase() + cat.slice(1)}: ${money(amt)} (${pct}%)`
+      })
+    const members = await getMembers(group.id)
+    const perPerson = members.length > 1 ? `\nPer person avg: ${money(roundMoney(total / members.length))}` : ''
+    return `📊 *${group.name} · Trip Summary*\n\n${lines.join('\n')}\n\n💰 *Total spent: ${money(total)}*${perPerson}\n\nFor settlement: *simplify ${group.name}*`
+  }
+
+  // ── Remind debtors via WhatsApp ────────────────────────────────
+  if (intent.type === 'remind_debtors') {
+    const group = await findGroup(phone, intent.groupName)
+    if (!group) return `No trip found.`
+    const { balances } = await calculateBalances(group.id)
+    const debtors = Object.entries(balances).filter(([, b]) => b < -0.01)
+    if (!debtors.length) return `✅ Everyone is settled up in *${group.name}*!`
+    const members = await getMembers(group.id)
+    let notified = 0
+    for (const [name, balance] of debtors) {
+      const member = members.find(m => m.name.toLowerCase() === name.toLowerCase())
+      if (member?.phone && member.phone !== phone) {
+        await sendWhatsAppMessage(member.phone,
+          `💰 *${group.name} · Settlement Reminder*\n\nHey ${name}! You owe ${money(Math.abs(balance))} in the *${group.name}* split.\n\nSend it to the person you owe and mark it settled:\n*${name} paid [person] ₹[amount] in ${group.name}*`
+        )
+        notified++
+      }
+    }
+    const debtorList = debtors.map(([n, b]) => `• ${n}: owes ${money(Math.abs(b))}`).join('\n')
+    return `🔔 *Reminders sent in ${group.name}*\n\n${debtorList}\n\n${notified} member${notified !== 1 ? 's' : ''} notified on WhatsApp.`
+  }
+
+  // ── Set budget per person ──────────────────────────────────────
+  if (intent.type === 'set_budget') {
+    const group = await findGroup(phone, intent.groupName)
+    if (!group) return `No trip found. Create one first with: *Create trip Goa with Rahul, Priya*`
+    await supabaseAdmin.from('split_groups').update({ budget_per_person: intent.perPerson }).eq('id', group.id)
+    const { expenses } = await calculateBalances(group.id)
+    const members = await getMembers(group.id)
+    const totalSpent = expenses.reduce((s: number, e: Expense) => s + Number(e.total_amount), 0)
+    const spentPerPerson = members.length > 0 ? roundMoney(totalSpent / members.length) : 0
+    const remaining = roundMoney(intent.perPerson - spentPerPerson)
+    const pct = intent.perPerson > 0 ? Math.round((spentPerPerson / intent.perPerson) * 100) : 0
+    return `🎯 *Budget set for ${group.name}*\n\nBudget per person: ${money(intent.perPerson)}\nSpent per person so far: ${money(spentPerPerson)} (${pct}%)\n${remaining >= 0 ? `✅ Remaining: ${money(remaining)} per person` : `⚠️ Over budget by: ${money(Math.abs(remaining))} per person`}`
+  }
+
+  // ── Who owes me ───────────────────────────────────────────────
+  if (intent.type === 'who_owes_me') {
+    const group = await findGroup(phone, intent.groupName)
+    if (!group) return `No trip found.`
+    const { balances, expenses } = await calculateBalances(group.id)
+    const members = await getMembers(group.id)
+    const myMember = members.find(m => m.phone === phone)
+    const myName = myMember?.name || 'Me'
+    const simplified = simplifyDebts(balances)
+    const owedToMe = simplified.filter(s => s.to.toLowerCase() === myName.toLowerCase())
+    if (!owedToMe.length) return `✅ Nobody owes you anything in *${group.name}* right now.`
+    const lines = owedToMe.map(s => `• ${s.from} owes you *${money(s.amount)}*`)
+    const total = roundMoney(owedToMe.reduce((s, x) => s + x.amount, 0))
+    return `💰 *Who owes you in ${group.name}*\n\n${lines.join('\n')}\n\nTotal owed to you: *${money(total)}*\n\nTo remind them: *remind everyone in ${group.name}*`
+  }
+
+  // ── Scan receipt prompt ───────────────────────────────────────
+  if (intent.type === 'scan_receipt') {
+    const group = await findGroup(phone, intent.groupName)
+    const groupHint = group ? ` for *${group.name}*` : ''
+    return `📸 *Scan Receipt${groupHint}*\n\nSend a clear photo of the bill/receipt and I'll read it and split it automatically.\n\nAdd caption: *receipt ${group?.name || 'Goa'}* when you send the photo.`
   }
 
   return null

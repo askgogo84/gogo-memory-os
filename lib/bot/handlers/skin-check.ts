@@ -1,5 +1,5 @@
 import { addToList } from '@/lib/lists'
-import { analyzeSkinCheckImage } from '@/lib/bot/services/skin-check-analyzer'
+import { analyzeSkinCheckImage, buildSafeFallbackSkinCheckReport } from '@/lib/bot/services/skin-check-analyzer'
 import { saveSkinCheckReport } from '@/lib/bot/services/skin-check-storage'
 import {
   buildSkinCompareReply,
@@ -58,26 +58,49 @@ export async function buildSkinCheckFromImage(params: {
   userCaption?: string
   userName?: string | null
 }) {
-  const report = await analyzeSkinCheckImage({
-    mediaUrl: params.mediaUrl,
-    contentType: params.contentType,
-    userCaption: params.userCaption,
-    userName: params.userName,
-  })
+  // Wrap entire function - always return a result, never throw to outer handler
+  let report: string
+  try {
+    report = await analyzeSkinCheckImage({
+      mediaUrl: params.mediaUrl,
+      contentType: params.contentType,
+      userCaption: params.userCaption,
+      userName: params.userName,
+    })
+  } catch (analyzeError: any) {
+    console.error('[skin-check] analyzeSkinCheckImage threw unexpectedly:', analyzeError?.message)
+    report = buildSafeFallbackSkinCheckReport()
+  }
 
-  const savedReport = await saveSkinCheckReport({
-    telegramId: params.telegramId,
-    imageUrl: params.mediaUrl,
-    rawReport: report,
-  })
+  let savedReport: any = null
+  let savedHistory = false
+  let savedNotes = false
 
-  const note = compactSkinCheckForSaving(report)
-  await addToList(params.telegramId, 'notes', [note])
+  try {
+    savedReport = await saveSkinCheckReport({
+      telegramId: params.telegramId,
+      imageUrl: params.mediaUrl,
+      rawReport: report,
+    })
+    savedHistory = true
+  } catch (error: any) {
+    console.error('[skin-check] history save failed:', error?.message || error)
+  }
+
+  savedNotes = true // skin checks no longer saved to notes — use 'my skin history'
+
+  const saveStatus = savedHistory && savedNotes
+    ? `✅ Saved to *my skin history*.`
+    : savedHistory
+      ? `✅ Saved to *my skin history*.\nNote save had a temporary issue.`
+      : savedNotes
+        ? `✅ Saved to *my notes*.\nSkin history save had a temporary issue.`
+        : `Report generated. Saving to history had a temporary issue.`
 
   return {
     report,
     savedReport,
-    reply: `${report}\n\n✅ Saved to *my skin history* and *my notes*.`
+    reply: `${report}\n\n${saveStatus}`
   }
 }
 
