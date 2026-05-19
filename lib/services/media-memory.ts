@@ -204,6 +204,11 @@ export async function saveMediaMemory(params: {
     .replace(/\.\.\.$/,'')
     .trim()
 
+  // If caption is still empty but body text has real content, use it directly
+  if (!caption && bodyText.trim().length > 20) {
+    caption = bodyText.replace(/https?:\/\/\S+/g, '').trim()
+  }
+
   console.log('[media-memory] platform:', platform, 'creator:', creator.slice(0, 50), 'caption:', caption.slice(0, 100))
 
   // YouTube: fetch transcript + metadata
