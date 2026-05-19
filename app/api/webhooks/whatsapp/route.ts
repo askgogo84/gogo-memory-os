@@ -304,7 +304,7 @@ export async function POST(req: NextRequest) {
               const ans = check.content[0]?.type === 'text' ? check.content[0].text.trim().toUpperCase() : 'YES'
               isFoodImage = ans.includes('YES')
             }
-          } catch { isFoodImage = true } // default to food on error
+          } catch { isFoodImage = false } // default to image note on error — better safe than wrong
 
           if (!isFoodImage) {
             // Not food — treat as image note instead
