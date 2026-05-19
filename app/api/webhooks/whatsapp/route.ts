@@ -45,6 +45,7 @@ import {
 import { isMeetingSearchCommand, buildMeetingSearchReply } from '@/lib/services/meeting-search'
 import { buildOnboardingMenu, buildOnboardingFollowup, isOnboardingMenuReply } from '@/lib/bot/handlers/onboarding'
 import { isNameReply, parseNameReply, relabelTranscript } from '@/lib/services/speaker-profiles'
+import { isImageTranslationRequest, translateImage, buildImageTranslationReply, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
 import { buildFollowupReminderMessage } from '@/lib/services/followup-reminder'
 import { transcribeMeeting } from '@/lib/services/meeting-transcription'
 import {
@@ -274,7 +275,28 @@ export async function POST(req: NextRequest) {
         await saveRecentImageContext({ telegramId: resolvedUser.telegramId, mediaUrl: firstMediaUrl, contentType: firstMediaType })
         const hasPendingSkinCheck = await getRecentPendingSkinCheckRequest(resolvedUser.telegramId)
 
-        if (isSplitReceiptCaption(bodyText)) {
+        // ── Image translation (menus, signs, foreign documents) ────────────
+        if (isImageTranslationRequest(bodyText)) {
+          await sendWhatsAppMessage(from, '🌐 Translating image...')
+          const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
+          const imgRes = await fetch(firstMediaUrl, { headers: { Authorization: `Basic ${auth}` } })
+          if (imgRes.ok) {
+            const imgBuf = await imgRes.arrayBuffer()
+            const imageBase64 = Buffer.from(imgBuf).toString('base64')
+            const targetLang = parseTargetLanguage(bodyText)
+            const isMenu = /menu|food|restaurant|cafe/i.test(bodyText)
+            const translation = await translateImage({
+              imageBase64,
+              mediaType: firstMediaType || 'image/jpeg',
+              caption: bodyText,
+              targetLanguage: targetLang,
+            })
+            const reply = buildImageTranslationReply(translation, isMenu)
+            await saveConversation(resolvedUser.telegramId, 'user', `[image translation] ${bodyText}`)
+            await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText, reply })
+          }
+        } else if (isSplitReceiptCaption(bodyText)) {
           await sendWhatsAppMessage(from, 'Scanning receipt for AskGogo Split...')
           const receipt = await scanReceiptFromImage({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
           const groupName = extractReceiptGroupName(bodyText)
@@ -310,7 +332,7 @@ export async function POST(req: NextRequest) {
             // Not food — treat as image note instead
             await sendWhatsAppMessage(from, '📝 Saving as a note...')
             const { readAndSummarizeImageNote } = await import('@/lib/services/image-note-reader')
-            const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, captionText: bodyText, telegramId: resolvedUser.telegramId })
+            const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
             await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
             await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
             await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
@@ -569,6 +591,24 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         console.error('WHATSAPP_TYPED_MEETING_NOTES_FAILED:', error?.message || error)
         await sendWhatsAppMessage(from, `I couldn't turn that into meeting notes.\n\nTry starting with: *Meeting notes:* followed by the discussion and action items.`)
       }
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // ── Voice translation (voice note + caption "translate" or "translate to Hindi") ──
+    if (incoming.wasVoice && /^translate/i.test(bodyText.trim())) {
+      const targetLang = parseTargetLanguage(bodyText)
+      await sendWhatsAppMessage(from, `🌐 Translating to ${targetLang}...`)
+      const result = await translateText({ text: originalText, targetLanguage: targetLang })
+      const reply = (
+        `🎤 *Voice note heard:*
+_"${originalText}"_
+
+` +
+        buildTranslationReply({ ...result, originalText })
+      )
+      await saveConversation(resolvedUser.telegramId, 'user', `[voice translate] ${originalText}`)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: originalText, reply })
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 

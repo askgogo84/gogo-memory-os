@@ -27,6 +27,7 @@ import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from '
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
+import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
 import { detectReelUrl } from '@/lib/services/reel-saver'
 
 export type ProcessIncomingParams = {
@@ -361,6 +362,16 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       await saveConversation(resolvedUser.telegramId, 'assistant', calendarResult.reply)
       return { text: formatOutgoingText(params.channel, calendarResult.reply), resolvedUser }
     }
+  }
+
+  // ── Translation requests ────────────────────────────────────────────────────
+  if (isTranslationRequest(incomingText)) {
+    const targetLang = parseTargetLanguage(incomingText)
+    const result = await translateText({ text: incomingText, targetLanguage: targetLang })
+    const reply = buildTranslationReply(result)
+    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   // ── Conditional follow-up reminders ("remind me if no reply in 3 days") ──────

@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
     console.error('[meeting-upload] Unexpected error:', err?.message, err?.stack?.slice(0, 300))
     // Notify user on WhatsApp so they're not left hanging
     try {
-      const errPhone = String(formData.get('phone') || '').trim()
+      const errPhone = ''  // formData not in scope in catch block
       if (errPhone) {
         const { sendWhatsAppMessage: sendErr } = await import('@/lib/channels/whatsapp')
         await sendErr(errPhone,
