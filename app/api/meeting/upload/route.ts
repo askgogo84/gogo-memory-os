@@ -4,7 +4,7 @@ import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 90 // Whisper takes ~10-20s for 2min audio. AssemblyAI removed (too slow for sync)
+export const maxDuration = 300 // Max allowed on Pro plan. Whisper + GPT-4o can take 60-90s for long recordings.
 
 export async function POST(req: NextRequest) {
   try {
@@ -92,6 +92,16 @@ export async function POST(req: NextRequest) {
 
   } catch (err: any) {
     console.error('[meeting-upload] Unexpected error:', err?.message, err?.stack?.slice(0, 300))
+    // Notify user on WhatsApp so they're not left hanging
+    try {
+      const errPhone = String(formData.get('phone') || '').trim()
+      if (errPhone) {
+        const { sendWhatsAppMessage: sendErr } = await import('@/lib/channels/whatsapp')
+        await sendErr(errPhone,
+          `⚠️ *Meeting notes failed*\n\nError: ${(err?.message || 'timeout').slice(0, 100)}\n\nAlternative: send the recording as a WhatsApp voice note with caption *meeting notes*.`
+        )
+      }
+    } catch {}
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
