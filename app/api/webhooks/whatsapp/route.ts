@@ -276,7 +276,9 @@ export async function POST(req: NextRequest) {
         const hasPendingSkinCheck = await getRecentPendingSkinCheckRequest(resolvedUser.telegramId)
 
         // ── Image translation (menus, signs, foreign documents) ────────────
-        if (isImageTranslationRequest(bodyText)) {
+        // Also auto-detect if caption contains foreign script characters
+        const hasForeignScript = /[ऀ-ॿ؀-ۿ一-鿿぀-ゟ゠-ヿ가-힯฀-๿]/.test(bodyText)
+        if (isImageTranslationRequest(bodyText) || hasForeignScript) {
           await sendWhatsAppMessage(from, '🌐 Translating image...')
           const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
           const imgRes = await fetch(firstMediaUrl, { headers: { Authorization: `Basic ${auth}` } })
@@ -323,8 +325,10 @@ export async function POST(req: NextRequest) {
                   { type: 'text', text: 'Does this image contain food or a meal? Reply only: YES or NO' }
                 ]}]
               })
-              const ans = check.content[0]?.type === 'text' ? check.content[0].text.trim().toUpperCase() : 'YES'
-              isFoodImage = ans.includes('YES')
+              const ans = check.content[0]?.type === 'text' ? check.content[0].text.trim() : 'NO'
+              // Check for foreign text in response or direct YES/NO
+              const upperAns = ans.toUpperCase()
+              isFoodImage = upperAns.includes('YES') && !upperAns.includes('FOREIGN') && !upperAns.includes('JAPANESE') && !upperAns.includes('CHINESE') && !upperAns.includes('ARABIC')
             }
           } catch { isFoodImage = false } // default to image note on error — better safe than wrong
 
