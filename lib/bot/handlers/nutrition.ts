@@ -38,12 +38,13 @@ export function isNutritionCommand(text: string): boolean {
 
 export function isNutritionPhotoCaption(caption: string): boolean {
   const lower = (caption || '').toLowerCase().trim()
+  // Only trigger on explicit food-related captions — blank caption goes to image note handler
   return (
-    lower === '' || // blank caption on food photo = log it
     lower.includes('log') || lower.includes('track') || lower.includes('calories') ||
     lower.includes('food') || lower.includes('meal') || lower.includes('ate') ||
     lower.includes('lunch') || lower.includes('breakfast') || lower.includes('dinner') ||
-    lower.includes('nutrition')
+    lower.includes('snack') || lower.includes('nutrition') || lower.includes('ate') ||
+    lower.includes('had') || lower.includes('eating') || lower.includes('drink')
   )
 }
 

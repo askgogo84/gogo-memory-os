@@ -284,7 +284,37 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'assistant', reply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[split receipt image]', reply })
         } else if (isNutritionPhotoCaption(bodyText) && !isSkinCheckCaption(bodyText) && !hasPendingSkinCheck) {
-          // ── Food photo → nutrition log ──────────────────────────
+          // ── Food photo → first verify it's actually food via quick vision check ──
+          let isFoodImage = true
+          try {
+            const Anthropic = (await import('@anthropic-ai/sdk')).default
+            const ant = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+            const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
+            const imgRes = await fetch(firstMediaUrl, { headers: { Authorization: `Basic ${auth}` } })
+            if (imgRes.ok) {
+              const imgBuf = await imgRes.arrayBuffer()
+              const b64 = Buffer.from(imgBuf).toString('base64')
+              const check = await ant.messages.create({
+                model: 'claude-haiku-4-5', max_tokens: 10,
+                messages: [{ role: 'user', content: [
+                  { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+                  { type: 'text', text: 'Does this image contain food or a meal? Reply only: YES or NO' }
+                ]}]
+              })
+              const ans = check.content[0]?.type === 'text' ? check.content[0].text.trim().toUpperCase() : 'YES'
+              isFoodImage = ans.includes('YES')
+            }
+          } catch { isFoodImage = true } // default to food on error
+
+          if (!isFoodImage) {
+            // Not food — treat as image note instead
+            await sendWhatsAppMessage(from, '📝 Saving as a note...')
+            const { readAndSummarizeImageNote } = await import('@/lib/services/image-note-reader')
+            const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, captionText: bodyText, telegramId: resolvedUser.telegramId })
+            await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
+            await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
+            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
+          } else {
           await sendWhatsAppMessage(from, '🥗 Analysing your meal...')
           const nutritionReply = await handleNutritionPhoto({
             telegramId: resolvedUser.telegramId,
@@ -295,6 +325,7 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[food photo] ${bodyText}` : '[food photo]')
           await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[food photo]', reply: nutritionReply })
+          } // end isFoodImage
         } else if (isSkinCheckCaption(bodyText) || hasPendingSkinCheck) {
           await sendWhatsAppMessage(from, 'Running AskGogo Skin Check...')
           const result = await buildSkinCheckFromImage({
