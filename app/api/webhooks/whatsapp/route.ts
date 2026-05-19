@@ -283,7 +283,7 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', `[split receipt image] ${bodyText}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', reply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[split receipt image]', reply })
-        } else if (bodyText.trim() && isNutritionPhotoCaption(bodyText) && !isSkinCheckCaption(bodyText) && !hasPendingSkinCheck) {
+        } else if (isNutritionPhotoCaption(bodyText) || (!bodyText.trim() && !isSkinCheckCaption(bodyText) && !hasPendingSkinCheck)) {
           // ── Food photo → first verify it's actually food via quick vision check ──
           let isFoodImage = true
           try {
