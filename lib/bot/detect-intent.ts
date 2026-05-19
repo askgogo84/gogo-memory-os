@@ -75,7 +75,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (isBriefingSettingsIntent(lower)) return { type: 'set_briefing_time', confidence: 'high' }
 
-  if (lower === 'today' || lower === 'today summary' || lower === 'today briefing' || lower === 'what is today' || lower === 'morning briefing' || lower === 'daily briefing' || lower === 'good morning' || lower === 'brief me') return { type: 'morning_briefing', confidence: 'high' }
+  if (lower === 'today' || lower === 'today summary' || lower === 'today briefing' || lower === 'what is today' || lower === 'morning briefing' || lower === 'daily briefing' || lower === 'good morning' || lower === 'brief me' || lower === "what's my day today" || lower === 'whats my day today' || lower === "what's my day" || lower === 'my day today' || lower === 'my briefing' || lower === 'my day') return { type: 'morning_briefing', confidence: 'high' }
 
   if (lower.includes('connect my gmail') || lower.includes('connect to my gmail') || lower.includes('connect gmail') || lower.includes('connect to gmail') || lower.includes('link gmail') || lower.includes('gmail connect')) return { type: 'connect_gmail', confidence: 'high' }
 
