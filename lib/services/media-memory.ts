@@ -161,12 +161,13 @@ Tags should be 1-2 word topic labels. Always return a useful title and summary b
   try {
     const parsed = JSON.parse(clean)
     return {
-      title: parsed.title || 'Saved content',
-      summary: parsed.summary || params.caption.slice(0, 150),
+      title: parsed.title || (params.creator ? `${params.creator}'s ${platformLabel}` : 'Saved content'),
+      summary: parsed.summary || params.caption.slice(0, 150) || `${platformLabel} saved by ${params.creator || 'unknown creator'}`,
       tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 5) : [],
     }
   } catch {
-    return { title: 'Saved content', summary: params.caption.slice(0, 150), tags: [] }
+    const fb = clean.length > 20 ? clean.slice(0, 300) : (params.caption || (params.creator ? params.creator + "'s post" : 'Content saved'))
+    return { title: params.creator ? params.creator + "'s post" : 'Saved content', summary: fb, tags: [] }
   }
 }
 
