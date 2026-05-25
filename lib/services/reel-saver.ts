@@ -155,14 +155,14 @@ async function buildContentNote(params: {
     messages: [
       {
         role: 'system',
-        content: `You write short useful notes about saved social media content. 
-Use ONLY the creator name and caption text provided — never invent content.
-If caption is truncated (ends with "..."), note it is truncated and describe what you can infer.
+        content: `You write short useful notes about saved social media content.
+Use the creator name and caption provided. If caption is truncated or short, infer the topic from context.
+Always write something useful — never say you cannot write a note.
 2-3 sentences max. No hashtags. No markdown. Plain text only.`
       },
       {
         role: 'user',
-        content: `Write a note for this saved ${platformLabel}:\n\n${contextParts}`
+        content: `Write a note for this saved ${platformLabel}:\n\n${contextParts || 'No caption available — write a generic save note.'}`
       }
     ]
   })
@@ -211,7 +211,7 @@ export async function saveReel(params: {
   const label = platformLabels[platform]
 
   const creatorLine = creator ? `\n*By:* ${creator}` : ''
-  const captionIsJunk = !caption || caption.startsWith('/?') || caption.startsWith('?igsh') || caption.length < 4
+  const captionIsJunk = !caption || caption.startsWith('/?') || caption.startsWith('?igsh') || caption.replace(/\.\.\.$/,'').trim().length < 3
   const captionLine = captionIsJunk ? '' : `\n*"${caption.slice(0, 100)}${caption.length > 100 ? '...' : ''}"*`
 
   const savedNote = `${label} saved!${creatorLine}${captionLine}\n\n${summary}\n\n✅ Saved to *my notes*.\nSay *my notes* to find it later.`
