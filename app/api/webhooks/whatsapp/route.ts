@@ -688,15 +688,27 @@ _"${originalText}"_
     const snoozeMatch = text.trim().match(/^snooze\s+(.+)$/i)
 
     if (isDone || snoozeMatch) {
-      // Find most recent pending followup reminder
-      const { data: pendingFollowups } = await supabaseAdmin
+      // Find most recently fired reminder (sent in last 30 mins) OR any pending reminder
+      const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString()
+      const { data: recentFired } = await supabaseAdmin
+        .from('reminders')
+        .select('id, message, recurring_pattern')
+        .eq('telegram_id', resolvedUser.telegramId)
+        .eq('sent', true)
+        .gte('updated_at', thirtyMinsAgo)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+
+      const { data: pendingFollowupsRaw } = await supabaseAdmin
         .from('reminders')
         .select('id, message, recurring_pattern')
         .eq('telegram_id', resolvedUser.telegramId)
         .eq('sent', false)
-        .like('recurring_pattern', 'followup:%')
         .order('remind_at', { ascending: true })
         .limit(1)
+
+      // Prefer the most recently fired reminder for snooze
+      const pendingFollowups = recentFired?.length ? recentFired : pendingFollowupsRaw
 
       if (pendingFollowups?.length) {
         const r = pendingFollowups[0]
@@ -713,20 +725,36 @@ _Reminder cancelled._`
         } else if (snoozeMatch) {
           // Parse snooze duration
           const snoozeText = snoozeMatch[1].trim()
+          const minsMatch = snoozeText.match(/(\d+)\s*(min|mins|minute|minutes)/i)
+          const hoursMatch = snoozeText.match(/(\d+)\s*(hour|hours|hr|hrs)/i)
           const daysMatch = snoozeText.match(/(\d+)\s*(day|days)/i)
           const weekdayMap: Record<string, number> = { monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6,sunday:0 }
-          let snoozeDays = 1
-          if (daysMatch) snoozeDays = parseInt(daysMatch[1])
-          else if (weekdayMap[snoozeText.toLowerCase()] !== undefined) {
+          let snoozeMs = 24 * 60 * 60 * 1000 // default 1 day
+          let snoozeLabel = 'tomorrow'
+          if (minsMatch) {
+            const mins = parseInt(minsMatch[1])
+            snoozeMs = mins * 60 * 1000
+            snoozeLabel = `in ${mins} minutes`
+          } else if (hoursMatch) {
+            const hrs = parseInt(hoursMatch[1])
+            snoozeMs = hrs * 60 * 60 * 1000
+            snoozeLabel = `in ${hrs} hours`
+          } else if (daysMatch) {
+            const days = parseInt(daysMatch[1])
+            snoozeMs = days * 24 * 60 * 60 * 1000
+            snoozeLabel = days === 1 ? 'tomorrow' : `in ${days} days`
+          } else if (weekdayMap[snoozeText.toLowerCase()] !== undefined) {
             const target = weekdayMap[snoozeText.toLowerCase()]
             const today = new Date().getDay()
-            snoozeDays = ((target - today + 7) % 7) || 7
+            const snoozeDays = ((target - today + 7) % 7) || 7
+            snoozeMs = snoozeDays * 24 * 60 * 60 * 1000
+            snoozeLabel = `on ${snoozeText}`
           }
-          const newRemindAt = new Date(Date.now() + snoozeDays * 24 * 60 * 60 * 1000)
-          newRemindAt.setUTCHours(3, 30, 0, 0) // 9 AM IST
-          await supabaseAdmin.from('reminders').update({ remind_at: newRemindAt.toISOString(), sent: false }).eq('id', r.id)
-          const daysText = snoozeDays === 1 ? 'tomorrow' : `in ${snoozeDays} days`
-          const reply = `⏰ Snoozed! I'll remind you about *${r.message}* again *${daysText}*.`
+          const newRemindAt = new Date(Date.now() + snoozeMs)
+          // Only set to 9 AM if snoozing by days, not minutes/hours
+          if (snoozeMs >= 24 * 60 * 60 * 1000) newRemindAt.setUTCHours(3, 30, 0, 0) // 9 AM IST
+          await supabaseAdmin.from('reminders').update({ remind_at: newRemindAt.toISOString(), sent: false, updated_at: new Date().toISOString() }).eq('id', r.id)
+          const reply = `⏰ Snoozed! I'll remind you about *${r.message}* again *${snoozeLabel}*.`
           await saveConversation(resolvedUser.telegramId, 'user', text)
           await saveConversation(resolvedUser.telegramId, 'assistant', reply)
           await sendWhatsAppMessage(from, reply)
