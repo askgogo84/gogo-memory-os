@@ -5,6 +5,7 @@
 import { parseSplitIntent } from '@/lib/splitwise/split-parser'
 import { handleNutritionText, isNutritionLogText, isNutritionCommand } from '@/lib/bot/handlers/nutrition'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard, saveReel } from '@/lib/services/reel-saver'
+import { saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { addToList } from '@/lib/lists'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
@@ -33,36 +34,24 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   }
 
   // ── Instagram / LinkedIn card preview (forwarded link, no full URL) ────
+  // Uses saveMediaMemory (Claude vision) — the correct path that handles truncated captions
   const isIGCard = detectInstagramPreviewCard(text)
   const isLICard = detectLinkedInPreviewCard(text)
-  if (isIGCard || isLICard) {
-    const isLI = isLICard
-    const emoji = isLI ? '💼' : '📱'
-    const label = isLI ? 'LinkedIn post' : 'Instagram reel'
-    const platformWord = isLI ? 'linkedin' : 'instagram'
-    const cleanText = text
-      .replace(/https?:\/\/\S+/g, '')
-      .replace(/\/\?\S+/g, '')
-      .replace(/^[ \t]*(linkedin|instagram|youtube|tiktok)\.com[ \t]*$/im, '')
-      .trim()
-    const creatorRegex = new RegExp('^([^\\n]+?)\\s+on\\s+' + platformWord, 'i')
-    const creatorMatch = cleanText.match(creatorRegex)
-    const creator = creatorMatch ? creatorMatch[1].trim() : ''
-    // If no "on platform:" pattern, use full clean text as caption (LinkedIn article cards)
-    const captionRaw = creatorMatch
-      ? cleanText.replace(new RegExp('.*on\\s+' + platformWord + '[^:]*:\\s*', 'i'), '').replace(/^[\u201c"\u201d"]+|[\u201c"\u201d"]+$/g, '').trim()
-      : cleanText.split('\n').map((l: string) => l.trim()).filter(Boolean).join(' — ')
-    const caption = captionRaw.slice(0, 150)
-    if (extra?.telegramId) {
-      const noteText = [(isLI ? 'LINKEDIN' : 'REEL'), creator, caption].filter(Boolean).join(' | ')
-      await addToList(extra.telegramId, 'notes', [noteText])
+  if ((isIGCard || isLICard) && extra?.telegramId) {
+    try {
+      const detectedUrl = detectReelUrl(text) || undefined
+      const platform = detectPlatformFromText(text, detectedUrl)
+      const { reply } = await saveMediaMemory({
+        telegramId: extra.telegramId,
+        platform,
+        bodyText: text,
+        detectedUrl,
+      })
+      return reply
+    } catch (err: any) {
+      console.error('[feature-intents] saveMediaMemory failed:', err?.message)
+      // Fall through to Claude on error
     }
-    return (
-      emoji + ' *' + label + ' saved!*' +
-      (creator ? '\n*By:* ' + creator : '') +
-      (caption.length > 3 ? '\n*"' + caption + '"*\n\n' : '\n\n') +
-      '✅ Saved to your notes.\nSay *my notes* to find it later.'
-    )
   }
 
   const t = text.toLowerCase().trim()
