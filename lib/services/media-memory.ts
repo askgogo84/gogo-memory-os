@@ -136,7 +136,10 @@ Return ONLY valid JSON, no markdown:
   "tags": ["tag1", "tag2", "tag3"]
 }
 
-Tags should be 1-2 word topic labels. Always return a useful title and summary based on whatever information is available — never say no content provided.`
+Tags should be 1-2 word topic labels.
+
+CRITICAL: Return ONLY the JSON above. NEVER ask questions. NEVER say "please provide". NEVER request more info.
+If caption is truncated or minimal, infer from creator name and platform. Always produce a complete useful note.`
 
   const content: Anthropic.MessageParam['content'] = []
 
@@ -433,3 +436,4 @@ async function searchMediaMemory(telegramId: number, query: string): Promise<str
     lines.join('\n\n')
   )
 }
+
