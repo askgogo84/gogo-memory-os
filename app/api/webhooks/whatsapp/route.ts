@@ -270,6 +270,39 @@ export async function POST(req: NextRequest) {
     const firstMediaUrl = String(formData.get('MediaUrl0') || '')
     const firstMediaType = String(formData.get('MediaContentType0') || '')
 
+    // Instagram/LinkedIn video cards come as video/mp4 — handle them FIRST before image branch
+    const isVideoMedia = firstMediaType.startsWith('video/')
+    if (numMedia > 0 && firstMediaUrl && isVideoMedia) {
+      // Check if this is a social media link preview card (not a user-sent video)
+      const isLinkedInCard = detectLinkedInPreviewCard(bodyText)
+      const isIGCard = detectInstagramPreviewCard(bodyText) || isLinkPreviewCard(bodyText, 'image/jpeg')
+      if (isIGCard || isLinkedInCard) {
+        const detectedUrl = detectReelUrl(bodyText) || undefined
+        const platform = detectPlatformFromText(bodyText, detectedUrl)
+        const platformLabels: Record<string, string> = {
+          instagram: '📸 Saving to Instagram memory...',
+          facebook: '👥 Saving to Facebook memory...',
+          youtube: '▶️ Saving YouTube video...',
+          linkedin: '💼 Saving to LinkedIn memory...',
+          twitter: '🐦 Saving to Twitter memory...',
+          tiktok: '🎵 Saving TikTok...',
+          other: '🔗 Saving content...',
+        }
+        await sendWhatsAppMessage(from, platformLabels[platform] || '💾 Saving...')
+        const { reply: mediaReply } = await saveMediaMemory({
+          telegramId: resolvedUser.telegramId,
+          platform,
+          bodyText,
+          detectedUrl,
+        })
+        await saveConversation(resolvedUser.telegramId, 'user', `[${platform}] ${bodyText}`.trim())
+        await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || `[${platform}]`, reply: mediaReply })
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+      // Real user-sent video — fall through to Claude
+    }
+
     if (numMedia > 0 && firstMediaUrl && isImageContentType(firstMediaType)) {
       try {
         await saveRecentImageContext({ telegramId: resolvedUser.telegramId, mediaUrl: firstMediaUrl, contentType: firstMediaType })
@@ -898,3 +931,4 @@ _Reminder cancelled._`
     return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
   }
 }
+
