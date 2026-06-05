@@ -269,7 +269,8 @@ export async function saveMediaMemory(params: {
       thumbnailBase64,
     })
     // Only use AI result if it looks like real content (not a question/request)
-    const looksLikeQuestion = /please provide|provide the|tell me|what is|I need|more info|more context/i.test(aiResult.summary)
+    const questionPattern = /please provide|provide the|need the creator|need more|tell me|I need|more info|more context|to write a useful|can you provide|creator name|caption for/i
+    const looksLikeQuestion = questionPattern.test(aiResult.summary) || questionPattern.test(aiResult.title)
     if (!looksLikeQuestion && aiResult.title && aiResult.summary) {
       title = aiResult.title
       summary = aiResult.summary
@@ -457,4 +458,5 @@ async function searchMediaMemory(telegramId: number, query: string): Promise<str
     lines.join('\n\n')
   )
 }
+
 
