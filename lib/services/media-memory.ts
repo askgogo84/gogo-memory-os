@@ -255,28 +255,25 @@ export async function saveMediaMemory(params: {
     ? `${creator ? creator + ' posted: ' : ''}${caption.slice(0, 200)}`
     : `${getPlatformDisplayName(platform)} content${creator ? ' by ' + creator : ''} saved to memory.`
 
-  // Try AI summarization — but always fall back gracefully
+  // Use deterministic content — no AI for title/summary (Haiku kept asking for more info)
+  // The body text already has creator + caption; that's sufficient for a good save note
   let title = fallbackTitle
   let summary = fallbackSummary
   let tags: string[] = []
 
-  try {
-    const aiResult = await summarizeMediaContent({
-      platform,
-      caption,
-      creator,
-      transcript,
-      thumbnailBase64,
-    })
-    // Only use AI result if it looks like real content (not a question/request)
-    const questionPattern = /please provide|provide the|need the creator|need more|tell me|I need|more info|more context|to write a useful|can you provide|creator name|caption for/i
-    const looksLikeQuestion = questionPattern.test(aiResult.summary) || questionPattern.test(aiResult.title)
-    if (!looksLikeQuestion && aiResult.title && aiResult.summary) {
-      title = aiResult.title
-      summary = aiResult.summary
-      tags = aiResult.tags
-    }
-  } catch { /* use fallback */ }
+  // Only use AI for YouTube transcripts (where it adds real value)
+  if (transcript) {
+    try {
+      const aiResult = await summarizeMediaContent({ platform, caption, creator, transcript, thumbnailBase64 })
+      const questionPattern = /please provide|provide the|need the creator|need more|tell me|I need|more info|more context|to write a useful|can you provide|creator name|caption for/i
+      const looksLikeQuestion = questionPattern.test(aiResult.summary) || questionPattern.test(aiResult.title)
+      if (!looksLikeQuestion && aiResult.title && aiResult.summary) {
+        title = aiResult.title
+        summary = aiResult.summary
+        tags = aiResult.tags
+      }
+    } catch { /* use fallback */ }
+  }
 
   // Build memory item
   const item: MediaMemoryItem = {
@@ -458,5 +455,6 @@ async function searchMediaMemory(telegramId: number, query: string): Promise<str
     lines.join('\n\n')
   )
 }
+
 
 
