@@ -28,7 +28,7 @@ import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
-import { detectReelUrl } from '@/lib/services/reel-saver'
+import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -577,6 +577,23 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, mediaReply), resolvedUser }
   }
 
+  // ── Instagram / LinkedIn preview card (WhatsApp link preview, numMedia=0) ──
+  // Catches "Creator on Instagram: caption" forwarded cards that bypass the image branch
+  const isIGPreview = detectInstagramPreviewCard(incomingText) || detectLinkedInPreviewCard(incomingText)
+  if (isIGPreview) {
+    const detectedUrl = detectReelUrl(incomingText) || undefined
+    const platform = detectPlatformFromText(incomingText, detectedUrl)
+    const { reply: mediaReply } = await saveMediaMemory({
+      telegramId: resolvedUser.telegramId,
+      platform,
+      bodyText: incomingText,
+      detectedUrl,
+    })
+    await saveConversation(resolvedUser.telegramId, 'user', `[${platform}] ${incomingText}`)
+    await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
+    return { text: formatOutgoingText(params.channel, mediaReply), resolvedUser }
+  }
+
   // ── YouTube / social URL sent as plain text ──────────────────
   const textReelUrl = detectReelUrl(incomingText)
   if (textReelUrl && /youtu\.?be|youtube\.com/i.test(textReelUrl)) {
@@ -665,3 +682,4 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   await saveConversation(resolvedUser.telegramId, 'assistant', formatted)
   return { text: formatted, resolvedUser }
 }
+
