@@ -47,12 +47,13 @@ export function detectPlatform(url: string): ContentPlatform {
 
 export function detectInstagramPreviewCard(text: string): boolean {
   const t = (text || '').trim()
-  // Only trigger if text contains 'on Instagram:' pattern (WhatsApp link preview format)
-  // and does NOT already contain a full URL (handled by detectReelUrl)
+  // WhatsApp truncates platform names in link preview cards (e.g. "Instagra..." or "instagr")
+  // Match full and truncated platform names
   const hasFullUrl = /https?:\/\//i.test(t)
   if (hasFullUrl) return false // Let detectReelUrl handle it
   return (
-    /on instagram:\s*["""]/i.test(t) ||
+    /on instagr/i.test(t) ||   // catches "Instagram", "Instagra...", "Instagram:"
+    /instagram\.com/i.test(t) ||
     (/instagram/i.test(t) && t.length > 10 && !hasFullUrl)
   )
 }
@@ -298,3 +299,4 @@ export async function analyseInstagramThumbnail(params: {
 
   return `${platformEmoji} *${platformName} content saved!*${creatorLine}\n\n${analysis}\n\n✅ Saved to *my notes*.`
 }
+
