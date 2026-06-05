@@ -247,14 +247,35 @@ export async function saveMediaMemory(params: {
     } catch { /* thumbnail optional */ }
   }
 
-  // Summarize
-  const { title, summary, tags } = await summarizeMediaContent({
-    platform,
-    caption,
-    creator,
-    transcript,
-    thumbnailBase64,
-  })
+  // Build guaranteed fallback title/summary from body text — never depends on AI
+  const fallbackTitle = creator
+    ? `${creator}'s ${getPlatformDisplayName(platform)} post`
+    : caption.slice(0, 60) || `Saved ${getPlatformDisplayName(platform)} content`
+  const fallbackSummary = caption.length > 10
+    ? `${creator ? creator + ' posted: ' : ''}${caption.slice(0, 200)}`
+    : `${getPlatformDisplayName(platform)} content${creator ? ' by ' + creator : ''} saved to memory.`
+
+  // Try AI summarization — but always fall back gracefully
+  let title = fallbackTitle
+  let summary = fallbackSummary
+  let tags: string[] = []
+
+  try {
+    const aiResult = await summarizeMediaContent({
+      platform,
+      caption,
+      creator,
+      transcript,
+      thumbnailBase64,
+    })
+    // Only use AI result if it looks like real content (not a question/request)
+    const looksLikeQuestion = /please provide|provide the|tell me|what is|I need|more info|more context/i.test(aiResult.summary)
+    if (!looksLikeQuestion && aiResult.title && aiResult.summary) {
+      title = aiResult.title
+      summary = aiResult.summary
+      tags = aiResult.tags
+    }
+  } catch { /* use fallback */ }
 
   // Build memory item
   const item: MediaMemoryItem = {
