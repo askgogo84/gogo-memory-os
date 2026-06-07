@@ -5,8 +5,11 @@ import { sendWhatsApp } from '@/lib/whatsapp'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-// After this many consecutive failures, mark sent=true to stop infinite retry loop
 const MAX_FAIL_ATTEMPTS = 3
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
+
+// Keywords that mean "send the actual morning briefing" not a dumb notification
+const BRIEFING_KEYWORDS = /^(morning briefing|good morning|daily briefing|morning brief|briefing|my briefing)$/i
 
 function isAuthorized(req: Request) {
   const { searchParams } = new URL(req.url)
@@ -81,6 +84,21 @@ async function incrementFailAttempts(id: string, current: number): Promise<numbe
   return next
 }
 
+// Fire the actual morning briefing for a user's WhatsApp number
+async function triggerMorningBriefing(whatsappTo: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${APP_URL}/api/briefing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: whatsappTo }),
+    })
+    return res.ok
+  } catch (e) {
+    console.error('BRIEFING_TRIGGER_FAILED:', e)
+    return false
+  }
+}
+
 export async function GET(req: Request) {
   if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
@@ -104,21 +122,34 @@ export async function GET(req: Request) {
   const results: any[] = []
 
   for (const reminder of due || []) {
-    // Use follow-up style message for conditional reminders
+    const msgRaw = String(reminder.message || '').trim()
+    const isBriefing = BRIEFING_KEYWORDS.test(msgRaw)
     const isFollowup = String(reminder.recurring_pattern || '').startsWith('followup:')
+
+    // Build the reminder text
     const reminderText = isFollowup
-      ? `🔔 *Follow-up reminder*\n\n📋 ${String(reminder.message || '').trim()}\n\nDid you hear back?\n• Reply *done* — mark as resolved\n• Reply *snooze 2 days* — remind again later\n• Reply *snooze friday* — remind on Friday`
-      : `⏰ *Reminder*\n\n${String(reminder.message || 'Reminder').replace(/^to\s+/i, '').trim()}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''}`
+      ? `🔔 *Follow-up reminder*\n\n📋 ${msgRaw}\n\nDid you hear back?\n• Reply *done* — mark as resolved\n• Reply *snooze 2 days* — remind again later\n• Reply *snooze friday* — remind on Friday`
+      : `⏰ *Reminder*\n\n${msgRaw.replace(/^to\s+/i, '')}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''}`
 
     try {
       const whatsappTo = await findWhatsAppForReminder(reminder)
 
       if (whatsappTo) {
-        await sendWhatsApp(whatsappTo, reminderText)
-        results.push({ id: reminder.id, channel: 'whatsapp', to: whatsappTo, message: reminder.message, status: 'sent' })
+        if (isBriefing) {
+          // Trigger the actual briefing instead of a dumb notification
+          console.log(`BRIEFING_REMINDER: triggering actual briefing for ${whatsappTo}`)
+          const ok = await triggerMorningBriefing(whatsappTo)
+          if (!ok) {
+            // Fallback: send a nudge if briefing API fails
+            await sendWhatsApp(whatsappTo, '🌅 Good morning! Type *morning* to get your daily briefing.')
+          }
+        } else {
+          await sendWhatsApp(whatsappTo, reminderText)
+        }
+        results.push({ id: reminder.id, channel: 'whatsapp', to: whatsappTo, message: msgRaw, status: 'sent', isBriefing })
       } else if (reminder.chat_id && Number(reminder.chat_id) > 0) {
         await sendTelegram(Number(reminder.chat_id), reminderText)
-        results.push({ id: reminder.id, channel: 'telegram', to: reminder.chat_id, message: reminder.message, status: 'sent' })
+        results.push({ id: reminder.id, channel: 'telegram', to: reminder.chat_id, message: msgRaw, status: 'sent' })
       } else {
         throw new Error(`No delivery target. whatsapp_to=${reminder.whatsapp_to || ''}, telegram_id=${reminder.telegram_id || ''}, chat_id=${reminder.chat_id || ''}`)
       }
@@ -144,12 +175,11 @@ export async function GET(req: Request) {
       const newAttempts = await incrementFailAttempts(reminder.id, currentAttempts)
 
       console.error('REMINDER_SEND_FAILED:', {
-        id: reminder.id, message: reminder.message,
+        id: reminder.id, message: msgRaw,
         whatsapp_to: reminder.whatsapp_to, telegram_id: reminder.telegram_id,
         fail_attempts: newAttempts, error: message,
       })
 
-      // KEY FIX: abandon after MAX_FAIL_ATTEMPTS to stop infinite loop
       if (newAttempts >= MAX_FAIL_ATTEMPTS) {
         console.error(`REMINDER_ABANDONED id=${reminder.id} after ${newAttempts} attempts`)
         await markReminderSent(reminder.id)
@@ -159,7 +189,7 @@ export async function GET(req: Request) {
         id: reminder.id,
         channel: reminder.whatsapp_to ? 'whatsapp' : 'unknown',
         to: reminder.whatsapp_to || reminder.chat_id || null,
-        message: reminder.message,
+        message: msgRaw,
         status: newAttempts >= MAX_FAIL_ATTEMPTS ? 'abandoned' : 'failed',
         fail_attempts: newAttempts,
         error: message,
@@ -176,4 +206,4 @@ export async function GET(req: Request) {
     abandoned_count: results.filter((r) => r.status === 'abandoned').length,
     results,
   })
-      }
+}
