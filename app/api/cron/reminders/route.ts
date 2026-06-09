@@ -92,7 +92,18 @@ async function triggerMorningBriefing(whatsappTo: string): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone: whatsappTo }),
     })
-    return res.ok
+    if (!res.ok) return false
+    // POST returns { ok: true, reply } — we must send it to WhatsApp ourselves
+    const data = await res.json()
+    const briefingText = data?.reply
+    if (briefingText) {
+      await sendWhatsApp(whatsappTo, briefingText)
+      console.log(`BRIEFING_SENT: ${whatsappTo}`)
+    } else {
+      console.error('BRIEFING_EMPTY_REPLY:', data)
+      await sendWhatsApp(whatsappTo, '🌅 Good morning! Type *morning* to get your daily briefing.')
+    }
+    return true
   } catch (e) {
     console.error('BRIEFING_TRIGGER_FAILED:', e)
     return false
@@ -207,3 +218,4 @@ export async function GET(req: Request) {
     results,
   })
 }
+
