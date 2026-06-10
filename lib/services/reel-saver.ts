@@ -143,6 +143,11 @@ async function buildContentNote(params: {
     other: 'social media post',
   }[params.platform]
 
+  // No creator AND no caption -> skip GPT entirely, deterministic note
+  if (!params.creator && !params.caption) {
+    return 'Saved for later viewing. Open the link to watch.'
+  }
+
   const contextParts = [
     params.creator ? `Creator: ${params.creator}` : null,
     params.caption ? `Caption: "${params.caption}"` : null,
@@ -171,7 +176,8 @@ Always write something useful — never say you cannot write a note.
   const gptNote = response.choices[0]?.message?.content?.trim() || ''
   // Reject GPT output that asks for more info
   if (/please provide|provide the|creator name|need more|caption for/i.test(gptNote)) {
-    return params.caption || \ by \ saved for later.  }
+    return params.caption || 'Saved for later viewing.'
+  }
   return gptNote || params.caption || ''
 }
 
