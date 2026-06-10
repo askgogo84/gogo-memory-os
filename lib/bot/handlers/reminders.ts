@@ -171,8 +171,16 @@ function extractListNameFromText(text: string): string {
 }
 
 function extractTaskAfterTo(input: string) {
-  const match = input.match(/\bto\s+(.+)$/i)
-  if (!match) return null
+  // Only use "task after to" for patterns like "remind me to call X"
+  // Don't use for "Send X to Y" — that would strip the subject
+  const reminderVerbs = /\b(remind|set|schedule|book|call|email|message|text|send|ping|follow up|check|do|complete|finish|submit|pay|buy|order)/i
+  const match = input.match(/\bremind(?:\s+me)?\s+to\s+(.+)$/i)
+  if (!match) {
+    // Only extract "to Y" if it looks like a standalone recipient, not part of the task
+    const toPersonMatch = input.match(/\bto\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*(?:at|by|around|before|after|in|on|$)/i)
+    if (toPersonMatch) return null // Let cleanMessageText handle it naturally
+    return null
+  }
 
   const task = match[1]
     .replace(/\bat\s+\d{1,4}([:.]\d{2})?\s*(am|pm)?\b/gi, '')
@@ -190,12 +198,12 @@ function cleanMessageText(input: string): string {
     // Normalize spoken p.m./a.m. before stripping
     .replace(/\bp\.\s*m\.?\b/gi, 'pm')
     .replace(/\ba\.\s*m\.?\b/gi, 'am')
-    // Strip trailing filler from voice ("So remind me", "So.", "okay", "yeah")
-    .replace(/[,.]?\s*\bso\s+remind\s+me\.?$/gi, '')
+    // Strip trailing filler from voice ("So remind me", "Just remind me", "okay", etc.)
+    .replace(/[,.]?\s*\b(so|just|please)\s+remind\s+me\.?$/gi, '')
+    .replace(/[,.]?\s*\bjust\s+remind\.?$/gi, '')
     .replace(/[,.]?\s*\bremind\s+me\.?$/gi, '')
-    .replace(/[,.]?\s*\bso\b\.?$/gi, '')
-    .replace(/[,.]?\s*\bokay\b\.?$/gi, '')
-    .replace(/[,.]?\s*\byeah\b\.?$/gi, '')
+    .replace(/[,.]?\s*\b(so|just)\b\.?$/gi, '')
+    .replace(/[,.]?\s*\b(okay|ok|yeah|yep|right)\b\.?$/gi, '')
     .replace(/\bplease\b/gi, '')
     .replace(/\bkindly\b/gi, '')
     .replace(/\bfor me\b/gi, '')
@@ -459,5 +467,6 @@ export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>)
         : 'recurring'
   return `🔁 *Recurring reminder set*\n\n${parsed.message}\nPattern: ${patternText}\nStarts: ${displayTime}.`
 }
+
 
 
