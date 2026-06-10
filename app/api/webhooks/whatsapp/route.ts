@@ -420,7 +420,7 @@ export async function POST(req: NextRequest) {
             return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
           }
           // Not a speaker reply — fall through to normal AI handling below
-        } else if (isInstagramReelPreview(bodyText) || isLinkPreviewCard(bodyText, firstMediaType)) {
+        } else if (isInstagramReelPreview(bodyText) || isLinkPreviewCard(bodyText, firstMediaType) || (detectReelUrl(bodyText) !== null && numMedia > 0)) {
           // ── Social media content (Instagram, LinkedIn, Facebook, YouTube, Twitter) ──
           // Detect platform and save to the right memory bucket
           const detectedUrl = detectReelUrl(bodyText) || undefined
