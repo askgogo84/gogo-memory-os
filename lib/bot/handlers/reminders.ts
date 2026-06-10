@@ -445,10 +445,12 @@ function parseHourlyWindowRecurring(text: string): ParsedReminder {
 
 function parseSimpleAtTime(text: string): ParsedReminder {
   if (!/^remind/i.test(text) && !/\bset a reminder\b/i.test(text) && !/\bset reminder\b/i.test(text)) return null
-  if (!/\bat\s+/i.test(text)) return null
+  // Handle both "at 1:30" and "for 1:30" (Whisper often transcribes as "for")
+  if (!/\b(at|for)\s+\d/i.test(text)) return null
   if (/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text)) return null
   if (getAmbiguousReminderTime(text)) return null
-  const timeMatch = text.match(/\bat\s+(.+)$/i)
+  const timeMatch = text.match(/\b(?:at|for)\s+(\d[^.]*?)(?:\s+to\s+|\s+and\s+|$)/i)
+    || text.match(/\b(?:at|for)\s+(.+)$/i)
   if (!timeMatch) return null
   const time = parseTimePart(timeMatch[1])
   if (!time) return null
@@ -475,6 +477,7 @@ export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>)
         : 'recurring'
   return `🔁 *Recurring reminder set*\n\n${parsed.message}\nPattern: ${patternText}\nStarts: ${displayTime}.`
 }
+
 
 
 
