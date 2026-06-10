@@ -187,6 +187,15 @@ function cleanMessageText(input: string): string {
   const taskAfterTo = extractTaskAfterTo(input)
 
   let cleaned = input
+    // Normalize spoken p.m./a.m. before stripping
+    .replace(/\bp\.\s*m\.?\b/gi, 'pm')
+    .replace(/\ba\.\s*m\.?\b/gi, 'am')
+    // Strip trailing filler from voice ("So remind me", "So.", "okay", "yeah")
+    .replace(/[,.]?\s*\bso\s+remind\s+me\.?$/gi, '')
+    .replace(/[,.]?\s*\bremind\s+me\.?$/gi, '')
+    .replace(/[,.]?\s*\bso\b\.?$/gi, '')
+    .replace(/[,.]?\s*\bokay\b\.?$/gi, '')
+    .replace(/[,.]?\s*\byeah\b\.?$/gi, '')
     .replace(/\bplease\b/gi, '')
     .replace(/\bkindly\b/gi, '')
     .replace(/\bfor me\b/gi, '')
@@ -223,7 +232,10 @@ function cleanMessageText(input: string): string {
   cleaned = cleaned.replace(/^(to|for|every)\s+/i, '').trim()
   cleaned = cleaned.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim()
 
-  if ((!cleaned || cleaned === 'Reminder' || cleaned.toLowerCase().startsWith('every ')) && taskAfterTo) {
+  // Only use taskAfterTo as fallback if cleaned is empty/generic
+  // Don't use it when it would discard the subject (e.g. "Send X to Y" → don't reduce to "Y")
+  const taskAfterToIsSubset = taskAfterTo && cleaned && cleaned.length > taskAfterTo.length + 10
+  if ((!cleaned || cleaned === 'Reminder' || cleaned.toLowerCase().startsWith('every ')) && taskAfterTo && !taskAfterToIsSubset) {
     cleaned = taskAfterTo
   }
 
@@ -447,4 +459,5 @@ export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>)
         : 'recurring'
   return `🔁 *Recurring reminder set*\n\n${parsed.message}\nPattern: ${patternText}\nStarts: ${displayTime}.`
 }
+
 
