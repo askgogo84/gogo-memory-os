@@ -53,7 +53,7 @@ import {
   isImageContentType,
   readAndSummarizeImageNote,
 } from '@/lib/services/image-note-reader'
-import { isInstagramReelPreview, detectReelUrl } from '@/lib/services/reel-saver'
+import { isInstagramReelPreview, detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
 import { saveMediaMemory, isMediaMemoryCommand, buildMediaMemoryReply, detectPlatformFromText } from '@/lib/services/media-memory'
 import { parsePdfTicket, buildTicketReply, getReminderTime } from '@/lib/services/pdf-reader'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
