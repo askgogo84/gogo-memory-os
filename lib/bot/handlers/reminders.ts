@@ -114,7 +114,12 @@ export function buildAmPmClarificationReply(text: string) {
 }
 
 function parseTimePart(input: string): { hour: number; minute: number } | null {
-  const raw = input || ''
+  // Normalize spoken/written variants: "p.m." → "pm", "a.m." → "am", "around X" → "X"
+  const raw = (input || '')
+    .replace(/\bp\.\s*m\.?\b/gi, 'pm')
+    .replace(/\ba\.\s*m\.?\b/gi, 'am')
+    .replace(/\baround\s+/gi, '')
+    .replace(/\babout\s+/gi, '')
 
   const compact = raw.match(/\b(\d{3,4})\s*(am|pm)\b/i)
   if (compact) {
@@ -442,3 +447,4 @@ export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>)
         : 'recurring'
   return `🔁 *Recurring reminder set*\n\n${parsed.message}\nPattern: ${patternText}\nStarts: ${displayTime}.`
 }
+
