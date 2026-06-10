@@ -168,7 +168,11 @@ Always write something useful — never say you cannot write a note.
     ]
   })
 
-  return response.choices[0]?.message?.content?.trim() || params.caption || ''
+  const gptNote = response.choices[0]?.message?.content?.trim() || ''
+  // Reject GPT output that asks for more info
+  if (/please provide|provide the|creator name|need more|caption for/i.test(gptNote)) {
+    return params.caption || \ by \ saved for later.  }
+  return gptNote || params.caption || ''
 }
 
 // ── Main saveReel function ────────────────────────────────────────────────────
