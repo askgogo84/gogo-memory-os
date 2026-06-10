@@ -78,25 +78,21 @@ function compactTimeParts(digits: string): { hour: number; minute: number } | nu
 }
 
 export function getAmbiguousReminderTime(text: string): { label: string; hour: number; minute: number } | null {
+  // With smart AM/PM defaults applied, times are no longer truly ambiguous
+  // Only flag as ambiguous if the hour is genuinely unclear (e.g. "remind me at 8" could be 8am or 8pm)
+  // For 7-11: could be AM or PM — these remain ambiguous
+  // For 1-6 and 12: smart default to PM — not ambiguous
   const raw = text || ''
   if (/\b\d{1,4}([:.]\d{2})?\s*(am|pm)\b/i.test(raw)) return null
   if (!/\b(remind|wake|alarm|set|tomorrow|tmrw|tmr|at)\b/i.test(raw)) return null
 
-  const compact = raw.match(/\b(\d{3,4})\b/)
-  if (compact) {
-    const parsed = compactTimeParts(compact[1])
-    if (parsed) {
-      return {
-        label: `${parsed.hour}:${String(parsed.minute).padStart(2, '0')}`,
-        ...parsed,
-      }
-    }
-  }
-
   const hourOnly = raw.match(/\bat\s+(\d{1,2})\b/i)
   if (hourOnly) {
     const hour = parseInt(hourOnly[1], 10)
-    if (hour >= 1 && hour <= 12) return { label: `${hour}:00`, hour, minute: 0 }
+    // Only 7-11 are truly ambiguous (could be AM or PM)
+    // 1-6 default to PM, 12 defaults to PM — not ambiguous
+    if (hour >= 7 && hour <= 11) return { label: `${hour}:00`, hour, minute: 0 }
+    return null  // smart default applies, not ambiguous
   }
 
   return null
@@ -111,6 +107,18 @@ export function buildAmPmClarificationReply(text: string) {
     `• ${label} am\n` +
     `• ${label} pm`
   )
+}
+
+function applySmartAmPm(hour: number, hasAmPm: boolean, ampm?: string): number {
+  if (hasAmPm && ampm) {
+    if (ampm.toLowerCase() === 'pm' && hour !== 12) return hour + 12
+    if (ampm.toLowerCase() === 'am' && hour === 12) return 0
+    return hour
+  }
+  // Smart defaults: 1-6 without AM/PM = PM (daytime work hours), 7-11 = AM, 12 = PM
+  if (hour >= 1 && hour <= 6) return hour + 12  // 1→13, 2→14 ... 6→18
+  if (hour === 12) return 12  // noon
+  return hour  // 7-11 stay as AM
 }
 
 function parseTimePart(input: string): { hour: number; minute: number } | null {
@@ -467,6 +475,7 @@ export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>)
         : 'recurring'
   return `🔁 *Recurring reminder set*\n\n${parsed.message}\nPattern: ${patternText}\nStarts: ${displayTime}.`
 }
+
 
 
 
