@@ -166,7 +166,9 @@ function parseTimePart(input: string): { hour: number; minute: number } | null {
 
   if (hour > 23 || minute > 59) return null
 
-  return { hour, minute }
+  // Apply smart AM/PM defaults when no explicit AM/PM given
+  const resolvedHour = ampm ? hour : applySmartAmPm(hour, false)
+  return { hour: resolvedHour, minute }
 }
 
 function extractListNameFromText(text: string): string {
@@ -191,7 +193,8 @@ function extractTaskAfterTo(input: string) {
   }
 
   const task = match[1]
-    .replace(/\bat\s+\d{1,4}([:.]\d{2})?\s*(am|pm)?\b/gi, '')
+    .replace(/\b(?:at|for)\s+\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?\b/gi, '')
+    .replace(/\b\d{1,2}[:.]\d{2}\s*(?:am|pm)?\b/gi, '')
     .replace(/\b\d{1,4}([:.]\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -237,7 +240,8 @@ function cleanMessageText(input: string): string {
     .replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
-    .replace(/\bat\s+\d{1,4}([:.]\d{2})?\s*(am|pm)?\b/gi, '')
+    .replace(/\b(?:at|for)\s+\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?\b/gi, '')
+    .replace(/\b\d{1,2}[:.]\d{2}\s*(?:am|pm)?\b/gi, '')
     .replace(/\b\d{1,4}([:.]\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\bfrom\s+.+?\s+to\s+.+?(daily)?$/gi, '')
 
@@ -477,6 +481,7 @@ export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>)
         : 'recurring'
   return `🔁 *Recurring reminder set*\n\n${parsed.message}\nPattern: ${patternText}\nStarts: ${displayTime}.`
 }
+
 
 
 
