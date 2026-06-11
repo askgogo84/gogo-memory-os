@@ -1,47 +1,126 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-export const dynamic = 'force-dynamic'
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { parseExpenseText, generateDailyInsight } from '@/lib/bot/services/expense-analyzer'
+import { saveExpense, getTodayExpenses, getPeriodExpenses } from '@/lib/bot/services/expense-storage'
 
-export async function POST(req: NextRequest) {
-  const { phone, text } = await req.json()
-  if (!phone || !text) return NextResponse.json({ error: 'phone and text required' }, { status: 400 })
-  const p = parseExpense(text)
-  if (!p) return NextResponse.json({ understood: false })
-  await supabase.from('expenses').insert({ whatsapp_id: phone, amount: p.amount, category: p.category, description: p.description, logged_at: new Date().toISOString() })
-  const wStart = new Date(); wStart.setDate(wStart.getDate() - wStart.getDay())
-  const { data: we } = await supabase.from('expenses').select('amount').eq('whatsapp_id', phone).gte('logged_at', wStart.toISOString())
-  const wTotal = we?.reduce((s, e) => s + Number(e.amount), 0) || 0
-  const warn = wTotal > 5000 ? '\n\nWarning: Spent Rs.' + wTotal + ' this week.' : ''
-  return NextResponse.json({ ok: true, reply: 'Logged: Rs.' + p.amount + ' for ' + p.description + ' (' + p.category + ')' + warn + '\n\nType "expenses" to see weekly summary.' })
+export const dynamic = 'force-dynamic'
+export const maxDuration = 30
+
+async function resolveUser(phone: string) {
+  const { data } = await supabaseAdmin
+    .from('users')
+    .select('telegram_id')
+    .or(`whatsapp_id.eq.${phone},whatsapp_id.eq.whatsapp:${phone}`)
+    .maybeSingle()
+  return data?.telegram_id || null
 }
 
+// ── POST: log an expense ──────────────────────────────────────────────────────
+export async function POST(req: NextRequest) {
+  const { phone, text, telegramId: directTelegramId } = await req.json()
+  if (!text) return NextResponse.json({ error: 'text required' }, { status: 400 })
+
+  const telegramId = directTelegramId || (phone ? await resolveUser(phone) : null)
+  if (!telegramId) return NextResponse.json({ reply: "I couldn't find your account. Please message AskGogo on WhatsApp first." })
+
+  const expense = await parseExpenseText(text)
+  if (!expense) return NextResponse.json({ understood: false, reply: null })
+
+  await saveExpense({ telegramId, expense })
+
+  // Get today's total for context
+  const today = await getTodayExpenses(telegramId)
+
+  const catEmoji: Record<string, string> = {
+    Food: '🍜', Transport: '🚗', Bills: '⚡', Shopping: '🛍️',
+    Health: '💊', Entertainment: '🎬', Other: '📦'
+  }
+
+  const reply = [
+    `${catEmoji[expense.category] || '💰'} *Logged ₹${expense.amount}* — ${expense.description}`,
+    `Category: ${expense.category}`,
+    ``,
+    `Today's total: *₹${today.total}* (${today.count} transaction${today.count !== 1 ? 's' : ''})`,
+    today.total > 0 ? `Top spend: ${today.topCategory} ₹${today.byCategory[today.topCategory]}` : '',
+    ``,
+    `Say *expenses today* for breakdown or *expense insight* for AI analysis.`,
+  ].filter(l => l !== undefined).join('\n').trim()
+
+  return NextResponse.json({ ok: true, reply })
+}
+
+// ── GET: summary or insight ───────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const phone = req.nextUrl.searchParams.get('phone')
-  const period = req.nextUrl.searchParams.get('period') || 'week'
+  const period = (req.nextUrl.searchParams.get('period') || 'today') as 'today' | 'week' | 'month'
+  const insight = req.nextUrl.searchParams.get('insight') === '1'
+
   if (!phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })
-  const since = new Date(); if (period === 'week') since.setDate(since.getDate() - 7); else since.setDate(1)
-  const { data: exps } = await supabase.from('expenses').select('amount, category, description').eq('whatsapp_id', phone).gte('logged_at', since.toISOString())
-  if (!exps?.length) return NextResponse.json({ reply: 'No expenses this ' + period + ' yet. Say "Spent 450 on lunch" to start.' })
-  const byCat: Record<string, number> = {}; let total = 0
-  for (const e of exps) { byCat[e.category] = (byCat[e.category] || 0) + Number(e.amount); total += Number(e.amount) }
-  const lines = Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([c, a]) => '  ' + c + ': Rs.' + a).join('\n')
-  return NextResponse.json({ reply: (period === 'week' ? 'Weekly' : 'Monthly') + ' Expenses\nTotal: Rs.' + total + '\n\n' + lines })
-}
 
-function parseExpense(t: string) {
-  const m = t.match(/(?:spent|paid|cost|expensed?)\s+(?:rs\.?|inr|Rs\.?)?\s*(\d+(?:\.\d+)?)\s+(?:on|for)\s+(.+)/i)
-  if (!m) return null
-  const d = m[2].trim()
-  return { amount: parseFloat(m[1]), description: d, category: categorize(d) }
-}
+  const telegramId = await resolveUser(phone)
+  if (!telegramId) return NextResponse.json({ reply: "Account not found." })
 
-function categorize(d: string) {
-  const l = d.toLowerCase()
-  if (/food|lunch|dinner|breakfast|chai|coffee|zomato|swiggy/.test(l)) return 'Food'
-  if (/uber|ola|auto|cab|taxi|petrol|fuel/.test(l)) return 'Transport'
-  if (/amazon|flipkart|shop|cloth/.test(l)) return 'Shopping'
-  if (/doctor|medicine|pharmacy/.test(l)) return 'Health'
-  if (/rent|electricity|internet|recharge/.test(l)) return 'Bills'
-  return 'Other'
+  const catEmoji: Record<string, string> = {
+    Food: '🍜', Transport: '🚗', Bills: '⚡', Shopping: '🛍️',
+    Health: '💊', Entertainment: '🎬', Other: '📦'
+  }
+
+  if (period === 'today') {
+    const today = await getTodayExpenses(telegramId)
+
+    if (today.count === 0) {
+      return NextResponse.json({ reply: "No expenses logged today yet.\n\nSay *spent 200 on lunch* to start tracking! 💰" })
+    }
+
+    if (insight) {
+      const aiText = await generateDailyInsight(today)
+      const lines = [
+        `✨ *AI Expense Insight*`,
+        ``,
+        aiText,
+        ``,
+        `📊 Today: ₹${today.total} across ${today.count} transactions`,
+      ]
+      return NextResponse.json({ reply: lines.join('\n') })
+    }
+
+    const breakdown = Object.entries(today.byCategory)
+      .sort((a, b) => b[1] - a[1])
+      .map(([cat, amt]) => `${catEmoji[cat] || '📦'} ${cat}: ₹${amt} (${Math.round(amt / today.total * 100)}%)`)
+      .join('\n')
+
+    const reply = [
+      `📊 *Today's Expenses*`,
+      `Total: *₹${today.total}* · ${today.count} transactions`,
+      ``,
+      breakdown,
+      ``,
+      `Recent:`,
+      ...today.entries.slice(0, 5).map(e => `  • ${catEmoji[e.category] || '📦'} ₹${e.amount} — ${e.description} (${e.time})`),
+      ``,
+      `Say *expense insight* for AI analysis.`,
+    ].join('\n')
+
+    return NextResponse.json({ reply })
+  }
+
+  // Week or month
+  const data = await getPeriodExpenses(telegramId, period)
+  if (!data) {
+    return NextResponse.json({ reply: `No expenses logged this ${period} yet.` })
+  }
+
+  const breakdown = Object.entries(data.byCategory)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cat, amt]) => `${catEmoji[cat] || '📦'} ${cat}: ₹${amt} (${Math.round(amt / data.total * 100)}%)`)
+    .join('\n')
+
+  const reply = [
+    `📊 *${period === 'week' ? 'This Week' : 'This Month'}'s Expenses*`,
+    `Total: *₹${data.total}* · ${data.count} transactions`,
+    ``,
+    breakdown,
+  ].join('\n')
+
+  return NextResponse.json({ reply })
 }
