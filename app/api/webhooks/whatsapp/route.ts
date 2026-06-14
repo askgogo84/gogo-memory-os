@@ -246,7 +246,7 @@ export async function POST(req: NextRequest) {
     if (inboundMessageSid) sendWhatsAppTyping(inboundMessageSid).catch((error: any) => console.error('WHATSAPP_TYPING_BACKGROUND_FAILED:', error?.message || error))
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
-    const bodyText = String(formData.get('Body') || '').trim()
+    const bodyText = String(formData.get('Body') || '').slice(0, 2000) // Security: cap input length.trim()
 
     // ── Interactive onboarding menu for new users ───────────────────
     if ((resolvedUser as any).isNewUser) {

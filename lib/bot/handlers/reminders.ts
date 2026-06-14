@@ -322,6 +322,12 @@ function parseRelativeReminder(text: string): ParsedReminder {
   else if (unit.startsWith('hour')) when.setHours(when.getHours() + value)
   else if (unit.startsWith('day')) when.setDate(when.getDate() + value)
 
+  if (unit.startsWith('day')) {
+    const textWithoutRelative = text.replace(/\bin\s+\d+\s+(days?|hours?|mins?|minutes?)\b/gi, '')
+    const timeOverride = parseTimePart(textWithoutRelative)
+    if (timeOverride) when.setHours(timeOverride.hour, timeOverride.minute, 0, 0)
+  }
+
   return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text) }
 }
 
