@@ -167,8 +167,17 @@ function parseTimePart(input: string): { hour: number; minute: number } | null {
   if (hour > 23 || minute > 59) return null
 
   // Apply smart AM/PM defaults when no explicit AM/PM given
-  const resolvedHour = ampm ? hour : applySmartAmPm(hour, false)
-  return { hour: resolvedHour, minute }
+  // ampm is the matched group - if explicit use it, otherwise smart default
+  if (ampm) {
+    if (ampm.toLowerCase() === 'pm' && hour < 12) hour += 12
+    if (ampm.toLowerCase() === 'am' && hour === 12) hour = 0
+  } else {
+    // No AM/PM: 1-6 = PM, 7-11 = AM, 12 = PM
+    if (hour >= 1 && hour <= 6) hour += 12
+    // 7-11 stay as AM (no change needed)
+    if (hour === 12) hour = 12
+  }
+  return { hour, minute }
 }
 
 function extractListNameFromText(text: string): string {
@@ -215,6 +224,9 @@ function cleanMessageText(input: string): string {
     .replace(/[,.]?\s*\bremind\s+me\.?$/gi, '')
     .replace(/[,.]?\s*\b(so|just)\b\.?$/gi, '')
     .replace(/[,.]?\s*\b(okay|ok|yeah|yep|right)\b\.?$/gi, '')
+    .replace(/[,.]?\s*\bwill\s+(pick|collect|get|grab|bring|come|be)\b.{0,60}$/gi, '')
+    .replace(/[,.]?\s*\b(pick it up|collect it|come by|drop by|swing by).{0,60}$/gi, '')
+    .replace(/[,.]?\s*\bfrom you\b.{0,40}$/gi, '')
     .replace(/\bplease\b/gi, '')
     .replace(/\bkindly\b/gi, '')
     .replace(/\bfor me\b/gi, '')
