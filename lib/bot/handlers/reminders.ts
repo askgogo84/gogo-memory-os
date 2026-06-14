@@ -162,21 +162,13 @@ function parseTimePart(input: string): { hour: number; minute: number } | null {
   const ampm = match[3]?.toLowerCase()
 
   if (ampm === 'pm' && hour < 12) hour += 12
-  if (ampm === 'am' && hour === 12) hour = 0
+  else if (ampm === 'am' && hour === 12) hour = 0
+  else if (!ampm) {
+    // Smart defaults: 1-6 = PM, 7-11 = AM, 12 = noon
+    if (hour >= 1 && hour <= 6) hour += 12
+  }
 
   if (hour > 23 || minute > 59) return null
-
-  // Apply smart AM/PM defaults when no explicit AM/PM given
-  // ampm is the matched group - if explicit use it, otherwise smart default
-  if (ampm) {
-    if (ampm.toLowerCase() === 'pm' && hour < 12) hour += 12
-    if (ampm.toLowerCase() === 'am' && hour === 12) hour = 0
-  } else {
-    // No AM/PM: 1-6 = PM, 7-11 = AM, 12 = PM
-    if (hour >= 1 && hour <= 6) hour += 12
-    // 7-11 stay as AM (no change needed)
-    if (hour === 12) hour = 12
-  }
   return { hour, minute }
 }
 
