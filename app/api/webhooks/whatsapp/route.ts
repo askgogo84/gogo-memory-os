@@ -353,16 +353,16 @@ export async function POST(req: NextRequest) {
               const imgBuf = await imgRes.arrayBuffer()
               const b64 = Buffer.from(imgBuf).toString('base64')
               const check = await ant.messages.create({
-                model: 'claude-haiku-4-5', max_tokens: 10,
+                model: 'claude-haiku-4-5', max_tokens: 20,
                 messages: [{ role: 'user', content: [
                   { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
-                  { type: 'text', text: 'Does this image contain food or a meal? Reply only: YES or NO' }
+                  { type: 'text', text: 'Classify this image into exactly ONE category. Reply with only the category word:\n- FOOD (a plate, bowl, drink, or meal that is the main subject)\n- DOCUMENT (handwritten notes, printed text, receipts, screenshots, forms, lists)\n- OTHER (people, places, objects, products, anything else)\n\nIf the main subject is handwriting or text on paper or a screen, it is DOCUMENT, not FOOD. Reply with one word only.' }
                 ]}]
               })
-              const ans = check.content[0]?.type === 'text' ? check.content[0].text.trim() : 'NO'
-              // Check for foreign text in response or direct YES/NO
+              const ans = check.content[0]?.type === 'text' ? check.content[0].text.trim() : 'OTHER'
               const upperAns = ans.toUpperCase()
-              isFoodImage = upperAns.includes('YES') && !upperAns.includes('FOREIGN') && !upperAns.includes('JAPANESE') && !upperAns.includes('CHINESE') && !upperAns.includes('ARABIC')
+              // Only treat as food if explicitly classified FOOD — everything else is a note
+              isFoodImage = upperAns.includes('FOOD') && !upperAns.includes('DOCUMENT')
             }
           } catch { isFoodImage = false } // default to image note on error — better safe than wrong
 
