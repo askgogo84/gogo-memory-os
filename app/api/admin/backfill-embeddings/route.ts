@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
-  let limit = 500
+  let limit = 150   // max embeddings per call (OpenAI-bound; re-run to continue)
   try {
     const body = await req.json()
     if (body && typeof body.limit === 'number') limit = body.limit

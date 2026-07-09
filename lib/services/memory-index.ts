@@ -74,18 +74,29 @@ export async function backfillEmbeddings(limit = 500): Promise<{ scanned: number
 
   const done = new Set((existing || []).map((r: any) => r.source_id))
 
-  const { data: rows } = await supabaseAdmin
-    .from('memories')
-    .select('id, telegram_id, content')
-    .order('created_at', { ascending: false })
-    .limit(limit)
-
+  // Paginate through memories so internal usage/tracking rows don't eat the budget.
+  // Reads are cheap; the OpenAI embed calls are the real cost, so we cap how many
+  // NEW rows we embed per invocation (embedCap) to stay under the function timeout.
+  const pageSize = 1000
+  const embedCap = limit          // max embeddings to create this call
   let indexed = 0
-  for (const r of (rows || []) as any[]) {
-    if (done.has(String(r.id))) continue
-    if (!isIndexable(r.content)) continue
-    await indexMemory({ telegramId: r.telegram_id, sourceId: String(r.id), content: r.content })
-    indexed++
+  let scanned = 0
+  for (let from = 0; from < 20000 && indexed < embedCap; from += pageSize) {
+    const { data: rows } = await supabaseAdmin
+      .from('memories')
+      .select('id, telegram_id, content')
+      .order('created_at', { ascending: false })
+      .range(from, from + pageSize - 1)
+    if (!rows || rows.length === 0) break
+    scanned += rows.length
+    for (const r of rows as any[]) {
+      if (indexed >= embedCap) break
+      if (done.has(String(r.id))) continue
+      if (!isIndexable(r.content)) continue
+      await indexMemory({ telegramId: r.telegram_id, sourceId: String(r.id), content: r.content })
+      indexed++
+    }
+    if (rows.length < pageSize) break
   }
-  return { scanned: (rows || []).length, indexed }
+  return { scanned, indexed }
 }
