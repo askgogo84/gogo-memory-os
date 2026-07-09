@@ -57,6 +57,7 @@ import { isInstagramReelPreview, detectReelUrl, detectInstagramPreviewCard, dete
 import { saveMediaMemory, isMediaMemoryCommand, buildMediaMemoryReply, detectPlatformFromText } from '@/lib/services/media-memory'
 import { indexMemory } from '@/lib/services/memory-index'
 import { buildThrowbackLine, isThrowbackReply, handleThrowbackReply, getLastAssistantMessage } from '@/lib/bot/handlers/throwback'
+import { detectPreferenceForget, forgetPreference } from '@/lib/bot/handlers/preferences'
 import { parsePdfTicket, buildTicketReply, getReminderTime } from '@/lib/services/pdf-reader'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
@@ -914,6 +915,19 @@ _Reminder cancelled._`
           await sendWhatsAppMessage(from, reply)
           return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
         }
+      }
+    }
+
+    // Preference forget (1D) must beat the generic memory 'forget' handler.
+    {
+      const prefForget = detectPreferenceForget(text)
+      if (prefForget) {
+        const n = await forgetPreference(resolvedUser.telegramId, prefForget)
+        const reply = n ? `Removed ${n} preference${n > 1 ? 's' : ''}.` : `No matching preference found for "${prefForget}".`
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWhatsAppMessage(from, reply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
 
