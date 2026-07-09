@@ -472,8 +472,83 @@ function parseSimpleAtTime(text: string): ParsedReminder {
   return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text) }
 }
 
+// ---- Phase 0: absolute-date reminders ("27th", "18 June", "Dec 25") ----
+const MONTHS_ABS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+}
+
+function parseAbsoluteDateReminder(text: string): ParsedReminder {
+  // Only fire on explicit reminder/scheduling intent
+  if (!/\b(remind|reminder|alert|notify|ping|wake|alarm|schedule)\b/i.test(text)) return null
+
+  const monthAlt =
+    'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?' +
+    '|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?'
+
+  const dayMonth = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthAlt})(?:\\s+(\\d{4}))?\\b`, 'i')
+  const monthDay = new RegExp(`\\b(${monthAlt})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`, 'i')
+
+  let day: number | null = null
+  let monthName: string | null = null
+  let yearStr: string | undefined
+  let dateMatch = text.match(dayMonth)
+  if (dateMatch) {
+    day = parseInt(dateMatch[1], 10); monthName = dateMatch[2]; yearStr = dateMatch[3]
+  } else {
+    dateMatch = text.match(monthDay)
+    if (dateMatch) { monthName = dateMatch[1]; day = parseInt(dateMatch[2], 10); yearStr = dateMatch[3] }
+  }
+
+  // Fallback: bare ordinal like "27th" / "on the 27th" (no month named)
+  if (day === null || !monthName || !dateMatch) {
+    const ordMatch = text.match(/\b(?:on\s+)?(?:the\s+)?(\d{1,2})(st|nd|rd|th)\b/i)
+    if (!ordMatch) return null
+    const d = parseInt(ordMatch[1], 10)
+    if (d < 1 || d > 31) return null
+
+    const timeMatch2 = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+    const time2 = (timeMatch2 && parseTimePart(timeMatch2[0])) || { hour: 9, minute: 0 }
+
+    const nowIst2 = istNowParts()
+    let y = nowIst2.year, m = nowIst2.month
+    let when2 = istWallTimeToUtcDate(y, m, d, time2.hour, time2.minute)
+    if (when2.getTime() <= Date.now() || isNaN(when2.getTime())) {
+      m += 1; if (m > 12) { m = 1; y += 1 }
+      when2 = istWallTimeToUtcDate(y, m, d, time2.hour, time2.minute)
+    }
+    if (isNaN(when2.getTime())) return null
+
+    let msgInput2 = text.replace(ordMatch[0], ' ')
+    if (timeMatch2) msgInput2 = msgInput2.replace(timeMatch2[0], ' ')
+    return { kind: 'one_time', remindAtIso: when2.toISOString(), message: cleanMessageText(msgInput2) }
+  }
+
+  const month = MONTHS_ABS[monthName.toLowerCase().slice(0, 3)]
+  if (!month || day < 1 || day > 31) return null
+
+  // Time: only from an explicit time token — never the bare day number
+  const timeMatch = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i) || text.match(/\b(\d{1,2}):(\d{2})\b/)
+  const time = (timeMatch && parseTimePart(timeMatch[0])) || { hour: 9, minute: 0 }
+
+  const nowIst = istNowParts()
+  let year = yearStr ? parseInt(yearStr, 10) : nowIst.year
+  if (!yearStr) {
+    const candidate = istWallTimeToUtcDate(year, month, day, time.hour, time.minute)
+    if (candidate.getTime() <= Date.now()) year += 1 // date already passed -> next year
+  }
+
+  const when = istWallTimeToUtcDate(year, month, day, time.hour, time.minute)
+  if (isNaN(when.getTime())) return null
+
+  // Strip date + explicit time so the task text stays clean
+  let msgInput = text.replace(dateMatch[0], ' ')
+  if (timeMatch) msgInput = msgInput.replace(timeMatch[0], ' ')
+  return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(msgInput) }
+}
+
 export function parseReminderIntent(text: string): ParsedReminder {
-  return parseDailyRecurring(text) || parseEveryNRecurring(text) || parseRelativeReminder(text) || parseTomorrowReminder(text) || parseSpecificWeekdayReminder(text) || parseWeekdayRecurring(text) || parseHourlyWindowRecurring(text) || parseSimpleAtTime(text) || null
+  return parseDailyRecurring(text) || parseEveryNRecurring(text) || parseRelativeReminder(text) || parseTomorrowReminder(text) || parseSpecificWeekdayReminder(text) || parseWeekdayRecurring(text) || parseHourlyWindowRecurring(text) || parseAbsoluteDateReminder(text) || parseSimpleAtTime(text) || null
 }
 
 export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>): string {
