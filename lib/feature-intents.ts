@@ -147,8 +147,19 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   }
 
   // ── CONTACT MEMORY ─────────────────────────────────────────────────────
+  // Only treat "remember <Name> <fact>" as a CONTACT save when <Name> is an
+  // actual name, not a pronoun/article. "remember my flight ..." / "remember
+  // that ..." are personal memories and must fall through to the memory handler.
+  const NON_CONTACT_LEADS = new Set([
+    'my','the','a','an','this','that','these','those','his','her','its','their',
+    'our','your','to','it','i','me','we','they','he','she','when','how','what','why','if',
+  ])
   const rememberMatch = text.match(/^remember\s+(\w+)\s+(.+)/i)
-  if (rememberMatch) {
+  if (
+    rememberMatch &&
+    !/^remember\s+that\b/i.test(text) &&
+    !NON_CONTACT_LEADS.has(rememberMatch[1].toLowerCase())
+  ) {
     return (await post('/api/contacts', { phone, action: 'save', name: rememberMatch[1], fact: rememberMatch[2] }))?.reply ?? null
   }
   const recallMatch = text.match(/(?:what do i know about|tell me about|notes on)\s+(\w+)/i)
