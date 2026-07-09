@@ -648,6 +648,19 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  // Deterministic memory save: "remember X" / "remember that X" always persists
+  // (and, via awaited indexMemory inside saveMemory, always gets embedded for search).
+  if (intent.type === 'save_memory') {
+    const fact = incomingText
+      .replace(/^\s*(?:please\s+)?remember(?:\s+that)?\s+/i, '')
+      .replace(/^\s*save this memory[:\s]*/i, '')
+      .trim() || incomingText.trim()
+    await saveMemory(resolvedUser.telegramId, fact)
+    const reply = `Got it \u2014 I'll remember that ${fact}.`
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
   const history = await getConversationHistory(resolvedUser.telegramId)
   const memories = await getMemories(resolvedUser.telegramId)
   const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name)
