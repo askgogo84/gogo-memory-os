@@ -26,6 +26,7 @@ import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './hand
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
+import { indexMemory } from '@/lib/services/memory-index'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
@@ -76,7 +77,15 @@ async function getMemories(telegramId: number): Promise<string[]> {
 }
 
 async function saveMemory(telegramId: number, content: string) {
-  await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content })
+  const { data } = await supabaseAdmin
+    .from('memories')
+    .insert({ telegram_id: telegramId, content })
+    .select('id')
+    .single()
+  // Fire-and-forget semantic index (never blocks the save).
+  if (data?.id) {
+    void indexMemory({ telegramId, sourceId: String(data.id), content })
+  }
 }
 
 function normalizeReminderMessage(message: string) {

@@ -1,4 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { embedText } from '@/lib/services/embeddings'
+import { unindexMemory } from '@/lib/services/memory-index'
 
 function cleanMemoryContent(content: string) {
   return (content || '')
@@ -267,10 +269,38 @@ async function buildMemorySearchReply(telegramId: number, text: string) {
     getMemoryTwinProfile(telegramId),
   ])
 
-  const memoryMatches = memories
+  // Phase 1A: semantic pass — find saved notes by meaning, not just keywords.
+  // Falls back to keyword-only if embeddings are unavailable.
+  let semanticContents: string[] = []
+  try {
+    const queryEmbedding = await embedText(query)
+    const { data: sem } = await supabaseAdmin.rpc('match_memories', {
+      p_telegram_id: telegramId,
+      p_query: queryEmbedding,
+      p_k: 5,
+    })
+    semanticContents = ((sem || []) as any[])
+      .filter((r) => (r.score ?? 0) >= 0.3)
+      .map((r) => cleanMemoryContent(String(r.content || '')))
+      .filter((c) => c && !isInternalMemory(c))
+  } catch (err: any) {
+    console.error('[memory-search] semantic pass failed, keyword only:', err?.message)
+  }
+
+  const keywordContents = memories
     .filter((m: any) => matchesMemory(m.content, query))
-    .slice(0, 5)
-    .map((m: any) => `• ${m.content}`)
+    .map((m: any) => m.content)
+
+  const mergedContents: string[] = []
+  const seenContent = new Set<string>()
+  for (const c of [...semanticContents, ...keywordContents]) {
+    const key = (c || '').toLowerCase().trim()
+    if (!key || seenContent.has(key)) continue
+    seenContent.add(key)
+    mergedContents.push(c)
+    if (mergedContents.length >= 5) break
+  }
+  const memoryMatches = mergedContents.map((c: string) => `• ${c}`)
 
   const reminderMatches = (remindersResult.data || [])
     .filter((r: any) => matchesMemory(String(r.message || ''), query))
@@ -334,7 +364,10 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
     const memories = await getUserMemories(telegramId)
     const ids = memories.map((m: any) => m.id)
 
-    if (ids.length) await supabaseAdmin.from('memories').delete().in('id', ids)
+    if (ids.length) {
+      await supabaseAdmin.from('memories').delete().in('id', ids)
+      for (const id of ids) void unindexMemory(String(id))
+    }
 
     await Promise.all([
       supabaseAdmin.from('user_insights').update({ status: 'deleted' }).eq('telegram_id', telegramId),
@@ -356,7 +389,9 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
       return `I couldn’t find a saved memory matching *${query || 'that'}*.\n\nTry:\n• my memory\n• forget my office address\n• clear my memory`
     }
 
-    await supabaseAdmin.from('memories').delete().in('id', matched.map((m: any) => m.id))
+    const matchedIds = matched.map((m: any) => m.id)
+    await supabaseAdmin.from('memories').delete().in('id', matchedIds)
+    for (const id of matchedIds) void unindexMemory(String(id))
 
     return (
       `🧠 *Forgotten*\n\n` +

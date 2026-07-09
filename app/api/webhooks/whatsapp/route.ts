@@ -55,6 +55,7 @@ import {
 } from '@/lib/services/image-note-reader'
 import { isInstagramReelPreview, detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
 import { saveMediaMemory, isMediaMemoryCommand, buildMediaMemoryReply, detectPlatformFromText } from '@/lib/services/media-memory'
+import { indexMemory } from '@/lib/services/memory-index'
 import { parsePdfTicket, buildTicketReply, getReminderTime } from '@/lib/services/pdf-reader'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
@@ -100,7 +101,14 @@ async function saveConversation(telegramId: number, role: 'user' | 'assistant', 
 }
 
 async function saveMemory(telegramId: number, content: string) {
-  await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content })
+  const { data } = await supabaseAdmin
+    .from('memories')
+    .insert({ telegram_id: telegramId, content })
+    .select('id')
+    .single()
+  if (data?.id) {
+    void indexMemory({ telegramId, sourceId: String(data.id), content })
+  }
 }
 
 function getReplyText(reply: any) {
