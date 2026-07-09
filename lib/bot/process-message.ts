@@ -27,6 +27,7 @@ import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from '
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { indexMemory } from '@/lib/services/memory-index'
+import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePreference, listPreferences, forgetPreference, getPreferenceBlock, MAX_RULES } from '@/lib/bot/handlers/preferences'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
@@ -648,6 +649,34 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  // Preference rules (1D): standing instructions injected into Claude's prompt.
+  if (intent.type === 'general_chat' || intent.type === 'save_memory') {
+    const prefForget = detectPreferenceForget(incomingText)
+    if (prefForget) {
+      const n = await forgetPreference(resolvedUser.telegramId, prefForget)
+      const reply = n ? `Removed ${n} preference${n > 1 ? 's' : ''}.` : `No matching preference found for "${prefForget}".`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+    if (isPreferenceList(incomingText)) {
+      const rules = await listPreferences(resolvedUser.telegramId)
+      const reply = rules.length
+        ? `📌 *Your standing preferences*\n${rules.map((r, i) => `${i + 1}. ${r.rule_text}`).join('\n')}\n\nSay "forget rule about X" to remove one.`
+        : `You haven't set any preferences yet. Try:\n• always keep my lists in capitals\n• from now on address me as boss`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+    const prefRule = detectPreferenceSave(incomingText)
+    if (prefRule) {
+      const res = await savePreference(resolvedUser.telegramId, prefRule)
+      const reply = res.capped
+        ? `You've hit the ${MAX_RULES}-preference limit. Remove one first ("forget rule about ...").`
+        : `Got it — I'll always keep this in mind: "${prefRule}".`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+  }
+
   // Deterministic memory save: "remember X" / "remember that X" always persists
   // (and, via awaited indexMemory inside saveMemory, always gets embedded for search).
   if (intent.type === 'save_memory') {
@@ -663,7 +692,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   const history = await getConversationHistory(resolvedUser.telegramId)
   const memories = await getMemories(resolvedUser.telegramId)
-  const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name)
+  const preferenceBlock = await getPreferenceBlock(resolvedUser.telegramId)
+  const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name, preferenceBlock)
   const parsed = parseClaudeResponse(rawClaude)
   let finalReply = rawClaude
 
