@@ -280,7 +280,7 @@ async function buildMemorySearchReply(telegramId: number, text: string) {
       p_k: 5,
     })
     semanticContents = ((sem || []) as any[])
-      .filter((r) => (r.score ?? 0) >= 0.3)
+      .filter((r) => (r.score ?? 0) >= 0.12) // lenient floor; RPC already returns top-k by similarity
       .map((r) => cleanMemoryContent(String(r.content || '')))
       .filter((c) => c && !isInternalMemory(c))
   } catch (err: any) {
