@@ -478,6 +478,28 @@ const MONTHS_ABS: Record<string, number> = {
   jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 }
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// Remove the date + time tokens (and any preposition that governed them, e.g.
+// "on 18 June" / "at 5pm") so the leftover task text is clean.
+function stripDateTimeTokens(text: string, dateTok: string, timeTok?: string): string {
+  let out = text
+    .replace(new RegExp('\\b(?:on|for)\\s+' + escapeRe(dateTok), 'i'), ' ')
+    .replace(dateTok, ' ')
+  if (timeTok) {
+    out = out
+      .replace(new RegExp('\\b(?:at|for|by)\\s+' + escapeRe(timeTok), 'i'), ' ')
+      .replace(timeTok, ' ')
+  }
+  return cleanMessageText(out)
+    .replace(/\breminders?\b/gi, ' ')
+    .replace(/^[\s,.:-]+|[\s,.:-]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function parseAbsoluteDateReminder(text: string): ParsedReminder {
   // Only fire on explicit reminder/scheduling intent
   if (!/\b(remind|reminder|alert|notify|ping|wake|alarm|schedule)\b/i.test(text)) return null
@@ -519,9 +541,8 @@ function parseAbsoluteDateReminder(text: string): ParsedReminder {
     }
     if (isNaN(when2.getTime())) return null
 
-    let msgInput2 = text.replace(ordMatch[0], ' ')
-    if (timeMatch2) msgInput2 = msgInput2.replace(timeMatch2[0], ' ')
-    return { kind: 'one_time', remindAtIso: when2.toISOString(), message: cleanMessageText(msgInput2) }
+    const message2 = stripDateTimeTokens(text, ordMatch[0], timeMatch2 ? timeMatch2[0] : undefined)
+    return { kind: 'one_time', remindAtIso: when2.toISOString(), message: message2 || 'Reminder' }
   }
 
   const month = MONTHS_ABS[monthName.toLowerCase().slice(0, 3)]
@@ -541,10 +562,9 @@ function parseAbsoluteDateReminder(text: string): ParsedReminder {
   const when = istWallTimeToUtcDate(year, month, day, time.hour, time.minute)
   if (isNaN(when.getTime())) return null
 
-  // Strip date + explicit time so the task text stays clean
-  let msgInput = text.replace(dateMatch[0], ' ')
-  if (timeMatch) msgInput = msgInput.replace(timeMatch[0], ' ')
-  return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(msgInput) }
+  // Strip date + explicit time (and their governing prepositions) so the task stays clean
+  const message = stripDateTimeTokens(text, dateMatch[0], timeMatch ? timeMatch[0] : undefined)
+  return { kind: 'one_time', remindAtIso: when.toISOString(), message: message || 'Reminder' }
 }
 
 export function parseReminderIntent(text: string): ParsedReminder {
