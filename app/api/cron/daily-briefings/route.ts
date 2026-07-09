@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildMorningBriefing } from '@/lib/bot/handlers/morning-briefing'
+import { buildThrowbackLine } from '@/lib/bot/handlers/throwback'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -105,7 +106,14 @@ export async function GET(req: NextRequest) {
       }
 
       const briefing = await buildMorningBriefing(Number(user.telegram_id), user.name || 'there')
-      const reply = `☀️ *Good morning*\n\n${briefing}\n\nReply *plan my day* to turn this into reminders.`
+      let reply = `☀️ *Good morning*\n\n${briefing}\n\nReply *plan my day* to turn this into reminders.`
+
+      // Sunday: append a Throwback resurfacing an old saved memory (1B)
+      const istWeekday = new Date(`${now.date}T12:00:00+05:30`).getUTCDay() // 0 = Sunday
+      if (istWeekday === 0) {
+        const tb = await buildThrowbackLine(Number(user.telegram_id))
+        if (tb) reply += `\n\n${tb}`
+      }
 
       await sendWhatsAppMessage(phone, reply)
       await markSentToday(Number(user.telegram_id), now.date)

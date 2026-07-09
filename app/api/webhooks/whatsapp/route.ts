@@ -56,6 +56,7 @@ import {
 import { isInstagramReelPreview, detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
 import { saveMediaMemory, isMediaMemoryCommand, buildMediaMemoryReply, detectPlatformFromText } from '@/lib/services/media-memory'
 import { indexMemory } from '@/lib/services/memory-index'
+import { buildThrowbackLine, isThrowbackReply, handleThrowbackReply, getLastAssistantMessage } from '@/lib/bot/handlers/throwback'
 import { parsePdfTicket, buildTicketReply, getReminderTime } from '@/lib/services/pdf-reader'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
@@ -890,6 +891,30 @@ _Reminder cancelled._`
       await saveConversation(resolvedUser.telegramId, 'assistant', referralWelcome)
       await sendWhatsAppMessage(from, referralWelcome)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // Throwback (1B): test command + context-gated keep/forget reply
+    {
+      const tb = text.trim().toLowerCase()
+      if (tb === 'test throwback') {
+        const line = await buildThrowbackLine(resolvedUser.telegramId, { ignoreAge: true })
+        const reply = line || 'No saved memories to resurface yet — save a few notes first.'
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWhatsAppMessage(from, reply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+      if (tb === 'keep' || tb === 'forget') {
+        const lastBot = await getLastAssistantMessage(resolvedUser.telegramId)
+        const action = isThrowbackReply(text, lastBot)
+        if (action) {
+          const reply = await handleThrowbackReply(resolvedUser.telegramId, action)
+          await saveConversation(resolvedUser.telegramId, 'user', text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+          await sendWhatsAppMessage(from, reply)
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        }
+      }
     }
 
     if (isMemoryControlCommand(text)) {

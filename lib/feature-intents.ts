@@ -155,10 +155,19 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     'our','your','to','it','i','me','we','they','he','she','when','how','what','why','if',
   ])
   const rememberMatch = text.match(/^remember\s+(\w+)\s+(.+)/i)
+  // Route to CONTACTS only when the fact actually looks like contact info
+  // (phone/email/relationship keyword). Otherwise it's a personal memory and
+  // must fall through so it gets saved + embedded for semantic search.
+  const factText = rememberMatch ? rememberMatch[2] : ''
+  const looksLikeContact =
+    /\b\d{6,}\b/.test(factText) ||                                   // phone-like number
+    /[\w.+-]+@[\w-]+\.[\w.-]+/.test(factText) ||                     // email
+    /\b(number|phone|mobile|whatsapp|email|contact|birthday|bday|anniversary|address)\b/i.test(factText)
   if (
     rememberMatch &&
     !/^remember\s+that\b/i.test(text) &&
-    !NON_CONTACT_LEADS.has(rememberMatch[1].toLowerCase())
+    !NON_CONTACT_LEADS.has(rememberMatch[1].toLowerCase()) &&
+    looksLikeContact
   ) {
     return (await post('/api/contacts', { phone, action: 'save', name: rememberMatch[1], fact: rememberMatch[2] }))?.reply ?? null
   }
