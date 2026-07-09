@@ -84,7 +84,7 @@ async function saveMemory(telegramId: number, content: string) {
     .single()
   // Fire-and-forget semantic index (never blocks the save).
   if (data?.id) {
-    void indexMemory({ telegramId, sourceId: String(data.id), content })
+    await indexMemory({ telegramId, sourceId: String(data.id), content })
   }
 }
 

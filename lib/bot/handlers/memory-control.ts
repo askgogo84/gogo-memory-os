@@ -366,7 +366,7 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
 
     if (ids.length) {
       await supabaseAdmin.from('memories').delete().in('id', ids)
-      for (const id of ids) void unindexMemory(String(id))
+      for (const id of ids) await unindexMemory(String(id))
     }
 
     await Promise.all([
@@ -391,7 +391,7 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
 
     const matchedIds = matched.map((m: any) => m.id)
     await supabaseAdmin.from('memories').delete().in('id', matchedIds)
-    for (const id of matchedIds) void unindexMemory(String(id))
+    for (const id of matchedIds) await unindexMemory(String(id))
 
     return (
       `🧠 *Forgotten*\n\n` +

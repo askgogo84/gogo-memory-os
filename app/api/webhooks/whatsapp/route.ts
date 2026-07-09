@@ -107,7 +107,7 @@ async function saveMemory(telegramId: number, content: string) {
     .select('id')
     .single()
   if (data?.id) {
-    void indexMemory({ telegramId, sourceId: String(data.id), content })
+    await indexMemory({ telegramId, sourceId: String(data.id), content })
   }
 }
 
