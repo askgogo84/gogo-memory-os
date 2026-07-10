@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 90" role="img" aria-label="AskGogo" font-family="Poppins, Nunito, system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <title>AskGogo</title>
+  <defs>
+    <linearGradient id="ag-grn" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2AE372"/><stop offset="1" stop-color="#12B85C"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(2,2)">
+    <rect x="0" y="0" width="86" height="86" rx="26" fill="url(#ag-grn)"/>
+    <path d="M20 84 L20 66 L38 78 Z" fill="#12B85C"/>
+    <path d="M43 24 L49 39 L64 43 L49 47 L43 62 L37 47 L22 43 L37 39 Z" fill="#ffffff"/>
+    <circle cx="63" cy="24" r="5" fill="#FF7A00"/>
+  </g>
+  <text x="108" y="60" font-size="52" font-weight="800" letter-spacing="-1">
+    <tspan fill="#0B141A">Ask</tspan><tspan fill="#12B85C">Gogo</tspan>
+  </text>
+</svg>

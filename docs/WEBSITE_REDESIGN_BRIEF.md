@@ -51,3 +51,19 @@ Build a new hero + feature-showcase + comparison + pricing single page in `app/p
 - Permission to use their WhatsApp screenshots as proof
 - Any real testimonials / user counts
 - Confirm final pricing (₹99/mo, ₹999/yr) and the free-tier limits
+
+
+## 8. Brand assets (CREATED — use these)
+Logo system is committed and ready:
+- `public/askgogo-logo.svg` — primary horizontal logo (green speech-bubble + spark mark + "AskGogo" wordmark). Use in header/hero.
+- `public/askgogo-icon.svg` — "g-coin" app icon.
+- `public/askgogo-mark.svg` — bubble mark only (square/tight spaces).
+- `app/icon.svg` — auto favicon (Next App Router).
+- The user's **Gogo avatar** (curly-haired character in the WhatsApp screenshots) is the mascot — use it in the hero phone mockup and "meet Gogo" moments.
+
+**Brand tokens:**
+- Green (primary): `#12B85C` (gradient `#2AE372 → #12B85C`)
+- Ink (text): `#0B141A`
+- Spark (accent): `#FF7A00`
+- Muted text: `#667781` · Light bg: `#FFFFFF` / `#F7FBF9`
+- Font: rounded bold sans — **Poppins** (headings) / **Nunito** or Inter (body). SVGs reference Poppins with system fallback; for a pixel-perfect logo, outline the wordmark to paths later.

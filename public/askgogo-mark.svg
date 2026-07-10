@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 90" role="img" aria-label="AskGogo mark">
+  <title>AskGogo</title>
+  <defs><linearGradient id="ag-mk" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#2AE372"/><stop offset="1" stop-color="#12B85C"/></linearGradient></defs>
+  <rect x="2" y="2" width="86" height="86" rx="26" fill="url(#ag-mk)"/>
+  <path d="M22 86 L22 68 L40 80 Z" fill="#12B85C"/>
+  <path d="M45 26 L51 41 L66 45 L51 49 L45 64 L39 49 L24 45 L39 41 Z" fill="#ffffff"/>
+  <circle cx="65" cy="26" r="5" fill="#FF7A00"/>
+</svg>

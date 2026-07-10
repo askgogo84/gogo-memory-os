@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="AskGogo">
+  <title>AskGogo</title>
+  <defs>
+    <linearGradient id="ag-ic" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2AE372"/><stop offset="1" stop-color="#12B85C"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="96" height="96" rx="24" fill="url(#ag-ic)"/>
+  <path d="M22 92 L22 74 L42 88 Z" fill="#12B85C"/>
+  <text x="48" y="70" font-size="66" font-weight="800" fill="#ffffff" text-anchor="middle"
+        font-family="Poppins, Nunito, system-ui, sans-serif">g</text>
+  <circle cx="76" cy="20" r="8" fill="#FF7A00"/>
+</svg>
