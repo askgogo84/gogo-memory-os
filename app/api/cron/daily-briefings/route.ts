@@ -61,6 +61,25 @@ async function markSentToday(telegramId: number, today: string) {
   })
 }
 
+async function weekAheadSummary(telegramId: number): Promise<string | null> {
+  const nowIso = new Date().toISOString()
+  const weekIso = new Date(Date.now() + 7 * 864e5).toISOString()
+  const { data } = await supabaseAdmin
+    .from('reminders')
+    .select('message, remind_at')
+    .eq('telegram_id', telegramId)
+    .eq('sent', false)
+    .gte('remind_at', nowIso)
+    .lte('remind_at', weekIso)
+    .order('remind_at', { ascending: true })
+    .limit(6)
+  const rows = data || []
+  if (!rows.length) return '🗓️ *Week ahead*: nothing scheduled yet — a clean slate.'
+  const fmt = (iso: string) => new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso))
+  const lines = rows.map((r: any) => `• ${fmt(r.remind_at)} — ${(r.message || 'Reminder')}`)
+  return `🗓️ *Week ahead* (${rows.length} upcoming):\n${lines.join('\n')}`
+}
+
 export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization') || ''
   const expected = process.env.CRON_SECRET ? `Bearer ${process.env.CRON_SECRET}` : ''
@@ -74,7 +93,7 @@ export async function GET(req: NextRequest) {
 
   const { data: users, error } = await supabaseAdmin
     .from('users')
-    .select('telegram_id, name, whatsapp_id, briefing_enabled, briefing_time')
+    .select('telegram_id, name, whatsapp_id, briefing_enabled, briefing_time, weekly_brief')
     .eq('briefing_enabled', true)
     .not('whatsapp_id', 'is', null)
     .limit(100)
@@ -108,9 +127,13 @@ export async function GET(req: NextRequest) {
       const briefing = await buildMorningBriefing(Number(user.telegram_id), user.name || 'there')
       let reply = `☀️ *Good morning*\n\n${briefing}\n\nReply *plan my day* to turn this into reminders.`
 
-      // Sunday: append a Throwback resurfacing an old saved memory (1B)
+      // Sunday extras (1B Throwback + 1E week-ahead)
       const istWeekday = new Date(`${now.date}T12:00:00+05:30`).getUTCDay() // 0 = Sunday
       if (istWeekday === 0) {
+        if (user.weekly_brief) {
+          const wk = await weekAheadSummary(Number(user.telegram_id))
+          if (wk) reply += `\n\n${wk}`
+        }
         const tb = await buildThrowbackLine(Number(user.telegram_id))
         if (tb) reply += `\n\n${tb}`
       }

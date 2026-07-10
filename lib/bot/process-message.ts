@@ -28,6 +28,7 @@ import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { indexMemory } from '@/lib/services/memory-index'
 import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePreference, listPreferences, forgetPreference, getPreferenceBlock, MAX_RULES } from '@/lib/bot/handlers/preferences'
+import { detectFriendReminder, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, FRIEND_DAILY_CAP, cap0 } from '@/lib/bot/handlers/friend-reminders'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
@@ -196,6 +197,47 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const incomingText = (params.text || '').trim()
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
+
+  // ── Friend reminders (1C) — must run before self-reminder handling ──────────
+  // (a) reply with a phone number after we asked "what's their number?"
+  {
+    const maybeNumber = normalizePhoneNumber(incomingText)
+    if (maybeNumber && !detectFriendReminder(incomingText)) {
+      const pending = await getPendingFriend(resolvedUser.telegramId)
+      if (pending) {
+        await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+        await saveFriendContact(resolvedUser.telegramId, pending.name, maybeNumber)
+        const { whenHuman } = await createFriendReminder({ ownerTelegramId: resolvedUser.telegramId, senderName: resolvedUser.name, recipientWhatsapp: maybeNumber, rest: pending.rest })
+        const reply = `Saved ${cap0(pending.name)}'s number. I'll remind ${cap0(pending.name)} ${whenHuman}.\n\n(If they've never messaged AskGogo, they may need to send it a "hi" first for delivery.)`
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
+    }
+  }
+  // (b) "remind <name> to <task>" where <name> != me
+  {
+    const friend = detectFriendReminder(incomingText)
+    if (friend) {
+      await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      const used = await countTodayFriendReminders(resolvedUser.telegramId)
+      if (used >= FRIEND_DAILY_CAP) {
+        const reply = `You've hit today's friend-reminder limit (${FRIEND_DAILY_CAP}/day).`
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
+      const contact = await resolveFriendContact(resolvedUser.telegramId, friend.name)
+      if (contact) {
+        const { whenHuman } = await createFriendReminder({ ownerTelegramId: resolvedUser.telegramId, senderName: resolvedUser.name, recipientWhatsapp: contact, rest: friend.rest })
+        const reply = `Done — I'll remind ${cap0(friend.name)} ${whenHuman}.`
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
+      await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(friend.name, friend.rest))
+      const reply = `What's ${cap0(friend.name)}'s WhatsApp number? Send it with country code (e.g. +91 98765 43210) and I'll set the reminder.`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+  }
 
   // Pending reminder context — runs FIRST before any other handler
   {
@@ -647,6 +689,43 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(reply)) reply = buildDirectWebAnswer(incomingText, searchContext)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  // Weekly brief toggle + preview (1E)
+  {
+    const l = incomingText.trim().toLowerCase()
+    if (/^(preview|show|test)\s+(my\s+)?weekly (brief|briefing)$/.test(l)) {
+      const nowIso = new Date().toISOString()
+      const weekIso = new Date(Date.now() + 7 * 864e5).toISOString()
+      const { data: wkRows } = await supabaseAdmin
+        .from('reminders')
+        .select('message, remind_at')
+        .eq('telegram_id', resolvedUser.telegramId)
+        .eq('sent', false)
+        .gte('remind_at', nowIso)
+        .lte('remind_at', weekIso)
+        .order('remind_at', { ascending: true })
+        .limit(6)
+      const rows = wkRows || []
+      const fmt = (iso: string) => new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso))
+      const reply = rows.length
+        ? `🗓️ *Week ahead* (${rows.length} upcoming):\n${rows.map((r: any) => `• ${fmt(r.remind_at)} — ${r.message || 'Reminder'}`).join('\n')}`
+        : '🗓️ *Week ahead*: nothing scheduled in the next 7 days.'
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+    if (/\b(enable|turn on|start|add)\b.*\bweekly (brief|briefing)/.test(l)) {
+      await supabaseAdmin.from('users').update({ weekly_brief: true }).eq('telegram_id', resolvedUser.telegramId)
+      const reply = '🗓️ Weekly brief is on — you\'ll get a week-ahead summary with your Sunday briefing.'
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+    if (/\b(disable|turn off|stop|remove)\b.*\bweekly (brief|briefing)/.test(l)) {
+      await supabaseAdmin.from('users').update({ weekly_brief: false }).eq('telegram_id', resolvedUser.telegramId)
+      const reply = 'Weekly brief turned off.'
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
   }
 
   // Preference rules (1D): standing instructions injected into Claude's prompt.
