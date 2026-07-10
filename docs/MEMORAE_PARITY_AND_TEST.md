@@ -54,6 +54,8 @@ Tick each as you test on your bot. Grouped by area. (S) = shipped this session, 
 - [ ] `enable weekly brief` → on  (S)
 - [ ] `preview weekly brief` → next-7-days reminders  (S)
 - [ ] (auto) Sunday briefing shows week-ahead + throwback  (S)
+- [ ] `briefing should include reminders and tasks` → only those sections show; `reset briefing` → all  (#20)
+- [ ] `send me my <topic> bucket every day` → schedules a recurring topic digest  (#18)
 
 ## 8. Shared Memory (1.5)  (S)  — needs 2 users
 - [ ] `remember for Lisbon trip: flight is TAP 704 at 6pm` → saved to bucket
@@ -111,9 +113,9 @@ Tick each as you test on your bot. Grouped by area. (S) = shipped this session, 
 | 15 | Memory Bubbles / Serendipity | ✅ have (1B Throwback) |
 | 16 | Native app / priorities / subtasks | ⏭️ deliberate skip (no-app thesis) |
 | 17 | Channel-escalation reminders | 🅿️ pending (needs email channel) |
-| 18 | Topic buckets + scheduled digest | ⚠️ partial — buckets ✅ (1.5); scheduled topic digest ❌ |
+| 18 | Topic buckets + scheduled digest | ✅ have (1.5 buckets + #18 digest) |
 | 19 | Personalization rules engine | ✅ have (1D) |
-| 20 | Custom briefings (time/content/channel) | ⚠️ partial — time+weekly ✅; content-flags ❌ |
+| 20 | Custom briefings (time/content/channel) | ✅ have (time + weekly + content flags) |
 | 21 | Email classification + drafting | ⚠️ partial — read+draft-reply ✅; auto-classify + send ❌ |
 | 22 | Task tracker (pending/priorities) | ✅ have (reminders + lists) |
 | 23 | Shared memory | ✅ have (1.5) |
@@ -125,7 +127,8 @@ Tick each as you test on your bot. Grouped by area. (S) = shipped this session, 
 
 \* 1C delivery to cold numbers needs a Twilio approved template (account config).
 
-**Parity score: 22 ✅ full · 3 ⚠️ partial · 3 🅿️ pending · 3 ⏭️ deliberate skip = 28/28 accounted for.**
+**Parity score: 24 ✅ full · 1 ⚠️ partial · 3 🅿️ pending · 3 ⏭️ deliberate skip = 28/28 accounted for.**
+(21 = read+draft-reply ✅, auto-classify/send deferred; the 3 pending are dashboard, Twilio template config, Telegram channel.)
 Plus 6 features AskGogo has that Memorae does NOT (calories, split bills, expenses, meeting notes, translation, skin check).
 
 ---
@@ -134,8 +137,8 @@ Plus 6 features AskGogo has that Memorae does NOT (calories, split bills, expens
 
 Only these are real "features to build" (the ⏭️ skips are intentional per strategy):
 
-1. **Topic scheduled digest (#18 tail)** — "email/message me my <topic> bucket every Friday". Small: a recurring reminder that runs a topic search. ~½ day.
-2. **Briefing content flags (#20 tail)** — let users pick which sections appear (meetings only / tasks only / + spend / + calories). Needs briefing-builder surgery. ~1 day.
+1. ✅ ~~Topic scheduled digest (#18)~~ — DONE ("send me my <topic> bucket every friday").
+2. ✅ ~~Briefing content flags (#20)~~ — DONE ("briefing should include reminders and tasks").
 3. **Email auto-classify + drafting depth (#21 tail)** — classify inbox into flights/deliveries/payments and auto-log payments; deeper drafting. Send scope stays deferred (safety). ~1–2 days.
 4. **Web dashboard (#24)** — bulk-edit reminders/lists/briefings via magic-link login. Real front-end build. Multi-day.
 5. **Twilio approved template** — config step to make 1C reach cold numbers reliably. Not code.
