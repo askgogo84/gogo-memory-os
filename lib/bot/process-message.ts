@@ -209,6 +209,26 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
 
+  // Topic digest schedule (#18): "send me my <topic> bucket every friday"
+  {
+    const dm = incomingText.match(/^\s*(?:send|message|give|dm|email)\s+me\s+(?:my\s+)?(.+?)\s+(?:bucket|digest|summary|notes)\s+(every\s+.+|daily|weekly)\s*$/i)
+    if (dm) {
+      const topic = dm[1].trim().toLowerCase()
+      const rec = dm[2].trim()
+      const parsed = parseReminderIntent(`remind me ${rec}`)
+      const pattern = parsed ? (parsed as any).pattern : undefined
+      let reply: string
+      if (parsed && parsed.remindAtIso && pattern) {
+        await createReminder(resolvedUser.telegramId, resolvedUser.telegramId, parsed.remindAtIso, `[topic_digest] ${topic}`, pattern)
+        reply = `📂 Done — I'll send your *${topic}* digest ${rec}.`
+      } else {
+        reply = `Give me a schedule like "every Friday" or "every day". E.g. *send me my ${topic} bucket every friday*.`
+      }
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+  }
+
   // ── Friend reminders (1C) — must run before self-reminder handling ──────────
   // (a) reply with a phone number after we asked "what's their number?"
   {
@@ -700,6 +720,24 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(reply)) reply = buildDirectWebAnswer(incomingText, searchContext)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  // Briefing content flags (#20): "briefing should include meetings and tasks"
+  {
+    const m = incomingText.match(/^\s*(?:set (?:my )?)?briefing (?:should )?(?:include|show|content(?:\s+to)?)\s+(.+)$/i)
+    if (m) {
+      const content = m[1].trim().toLowerCase()
+      await supabaseAdmin.from('users').update({ briefing_content: content }).eq('telegram_id', resolvedUser.telegramId)
+      const reply = `Got it \u2014 your daily briefing will now show: *${content}*. (Say "reset briefing" to show everything again.)`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+    if (/^\s*reset briefing\s*$/i.test(incomingText)) {
+      await supabaseAdmin.from('users').update({ briefing_content: 'default' }).eq('telegram_id', resolvedUser.telegramId)
+      const reply = 'Briefing reset \u2014 it will show everything again.'
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
   }
 
   // Weekly brief toggle + preview (1E)

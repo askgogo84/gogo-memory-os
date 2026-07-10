@@ -117,6 +117,20 @@ export async function GET(req: Request) {
 
   const now = new Date().toISOString()
 
+  async function buildTopicDigest(telegramId: number, topic: string): Promise<string> {
+    const { data } = await supabaseAdmin
+      .from('memory_embeddings')
+      .select('content, created_at')
+      .eq('telegram_id', telegramId)
+      .ilike('topic', topic)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(10)
+    const rows = data || []
+    if (!rows.length) return `📂 *${topic} digest*\n\nNothing saved in this bucket yet.`
+    return `📂 *${topic} digest*\n\n${rows.map((r: any) => `• ${r.content}`).join('\n')}`
+  }
+
   const { data: due, error: dueError } = await supabaseAdmin
     .from('reminders')
     .select('*')
@@ -137,10 +151,16 @@ export async function GET(req: Request) {
     const isBriefing = BRIEFING_KEYWORDS.test(msgRaw)
     const isFollowup = String(reminder.recurring_pattern || '').startsWith('followup:')
 
+    // Topic digest (1.5/#18): message is "[topic_digest] <topic>"
+    const digestTopic = msgRaw.startsWith('[topic_digest]') ? msgRaw.replace(/^\[topic_digest\]\s*/i, '').trim() : null
+
     // Build the reminder text
-    const reminderText = isFollowup
+    let reminderText = isFollowup
       ? `🔔 *Follow-up reminder*\n\n📋 ${msgRaw}\n\nDid you hear back?\n• Reply *done* — mark as resolved\n• Reply *snooze 2 days* — remind again later\n• Reply *snooze friday* — remind on Friday`
       : `⏰ *Reminder*\n\n${msgRaw.replace(/^to\s+/i, '')}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''}`
+    if (digestTopic) {
+      reminderText = await buildTopicDigest(Number(reminder.telegram_id), digestTopic)
+    }
 
     try {
       const whatsappTo = await findWhatsAppForReminder(reminder)

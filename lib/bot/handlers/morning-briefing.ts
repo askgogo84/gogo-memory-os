@@ -168,40 +168,51 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
 
   const name = firstName(userName)
 
-  let reply = `☀️ *Today for ${name}*\n\n`
+  // #20 content flags: users.briefing_content (csv). 'default' = show everything.
+  const { data: bc } = await supabaseAdmin
+    .from('users')
+    .select('briefing_content')
+    .eq('telegram_id', telegramId)
+    .maybeSingle()
+  const flags = String((bc as any)?.briefing_content || 'default').toLowerCase()
+  const show = (k: string) => flags === 'default' || flags.includes(k)
 
-  reply += `🌤️ *Weather*\n${weatherText}\n\n`
+  const blocks: string[] = [`☀️ *Today for ${name}*`]
 
-  reply += `📅 *Calendar*\n`
-  if (!calendarState.connected) {
-    reply += `Calendar is not connected yet.\nType *connect calendar* to enable your daily schedule.`
-  } else if (calendarState.events.length) {
-    reply += calendarState.events
-      .slice(0, 5)
-      .map((event: any) => {
-        const title = event.summary || 'Untitled event'
-        return `• ${formatEventTime(event)} — ${title}`
-      })
-      .join('\n')
-  } else {
-    reply += `No calendar events lined up today.`
+  if (show('weather')) blocks.push(`🌤️ *Weather*\n${weatherText}`)
+
+  if (show('calendar') || show('meeting')) {
+    let cal = `📅 *Calendar*\n`
+    if (!calendarState.connected) {
+      cal += `Calendar is not connected yet.\nType *connect calendar* to enable your daily schedule.`
+    } else if (calendarState.events.length) {
+      cal += calendarState.events
+        .slice(0, 5)
+        .map((event: any) => `• ${formatEventTime(event)} — ${event.summary || 'Untitled event'}`)
+        .join('\n')
+    } else {
+      cal += `No calendar events lined up today.`
+    }
+    blocks.push(cal)
   }
 
-  reply += `\n\n⏰ *Reminders*\n`
-  if (reminders.length) {
-    reply += reminders
-      .slice(0, 7)
-      .map((r: any) => `• ${cleanReminderText(r.message)} — ${formatReminderTime(r.remind_at)}`)
-      .join('\n')
-  } else {
-    reply += `No reminders lined up for today.`
+  if (show('reminder') || show('task')) {
+    let rem = `⏰ *Reminders*\n`
+    if (reminders.length) {
+      rem += reminders
+        .slice(0, 7)
+        .map((r: any) => `• ${cleanReminderText(r.message)} — ${formatReminderTime(r.remind_at)}`)
+        .join('\n')
+    } else {
+      rem += `No reminders lined up for today.`
+    }
+    blocks.push(rem)
   }
 
   const nextActions = calendarState.connected
     ? ['add meeting tomorrow at 4 pm', 'show my reminders', 'plan my day']
     : ['connect calendar', 'set a reminder', 'next RCB match']
+  blocks.push(`*Next actions*\n${nextActions.map((x) => `• ${x}`).join('\n')}`)
 
-  reply += `\n\n*Next actions*\n${nextActions.map((x) => `• ${x}`).join('\n')}`
-
-  return reply
+  return blocks.join('\n\n')
 }
