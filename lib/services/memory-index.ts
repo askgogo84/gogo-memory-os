@@ -28,6 +28,7 @@ export async function indexMemory(params: {
   sourceId: string
   content: string
   sourceTable?: string
+  topic?: string | null
 }): Promise<void> {
   try {
     const content = (params.content || '').slice(0, 2000).trim()
@@ -39,6 +40,7 @@ export async function indexMemory(params: {
         source_table: params.sourceTable || 'memories',
         source_id: params.sourceId,
         content,
+        topic: params.topic ?? null,
         embedding,
         deleted_at: null,
       },

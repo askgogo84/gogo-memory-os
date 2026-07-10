@@ -29,6 +29,7 @@ import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPla
 import { indexMemory } from '@/lib/services/memory-index'
 import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePreference, listPreferences, forgetPreference, getPreferenceBlock, MAX_RULES } from '@/lib/bot/handlers/preferences'
 import { detectFriendReminder, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, FRIEND_DAILY_CAP, cap0 } from '@/lib/bot/handlers/friend-reminders'
+import { detectShareIntent, hasTopic, resolveRecipientTelegramId, grantShare } from '@/lib/bot/handlers/shared-memory'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
@@ -78,16 +79,26 @@ async function getMemories(telegramId: number): Promise<string[]> {
   return ((data || []) as any[]).map((m) => m.content).filter(Boolean)
 }
 
-async function saveMemory(telegramId: number, content: string) {
+async function saveMemory(telegramId: number, content: string, topic: string | null = null) {
   const { data } = await supabaseAdmin
     .from('memories')
     .insert({ telegram_id: telegramId, content })
     .select('id')
     .single()
-  // Fire-and-forget semantic index (never blocks the save).
+  // Awaited semantic index (survives serverless response). Never blocks the save on failure.
   if (data?.id) {
-    await indexMemory({ telegramId, sourceId: String(data.id), content })
+    await indexMemory({ telegramId, sourceId: String(data.id), content, topic })
   }
+}
+
+function parseTopicSave(text: string): { topic: string; fact: string } | null {
+  let m = text.match(/^\s*remember\s+(?:for|in|to)\s+(?:my\s+)?(.+?)\s+(?:bucket|space|topic)\s*[:,\-]?\s*(.+)$/i)
+  if (m) return { topic: m[1].trim().toLowerCase(), fact: m[2].trim() }
+  m = text.match(/^\s*(?:save|add)\s+to\s+(?:my\s+)?(.+?)\s+(?:bucket|space|topic)\s*[:,\-]?\s*(.+)$/i)
+  if (m) return { topic: m[1].trim().toLowerCase(), fact: m[2].trim() }
+  m = text.match(/^\s*remember\s+for\s+(.+?)\s*:\s*(.+)$/i)
+  if (m) return { topic: m[1].trim().toLowerCase(), fact: m[2].trim() }
+  return null
 }
 
 function normalizeReminderMessage(message: string) {
@@ -751,6 +762,38 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       const reply = res.capped
         ? `You've hit the ${MAX_RULES}-preference limit. Remove one first ("forget rule about ...").`
         : `Got it — I'll always keep this in mind: "${prefRule}".`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+  }
+
+  // Share a topic bucket (1.5): "share my <topic> bucket with <name>"
+  {
+    const share = detectShareIntent(incomingText)
+    if (share) {
+      let reply: string
+      if (!(await hasTopic(resolvedUser.telegramId, share.topic))) {
+        reply = `You don't have a "${share.topic}" bucket yet. Save to it first, e.g. remember for ${share.topic}: <something>.`
+      } else {
+        const { telegramId: rid, hasContact } = await resolveRecipientTelegramId(resolvedUser.telegramId, share.name)
+        if (!hasContact) reply = `I don't have ${cap0(share.name)}'s number yet. Do a friend reminder once (remind ${share.name} to ...) so I save it, then share.`
+        else if (!rid) reply = `${cap0(share.name)} isn't on AskGogo yet — ask them to message the bot first, then share.`
+        else {
+          await grantShare(resolvedUser.telegramId, rid, share.topic)
+          reply = `Shared your *${share.topic}* bucket with ${cap0(share.name)}. They can now ask me about it.`
+        }
+      }
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+  }
+
+  // Topic bucket save (1.5): "remember for <topic>: <fact>" / "save to <topic> bucket: <fact>"
+  {
+    const ts = parseTopicSave(incomingText)
+    if (ts) {
+      await saveMemory(resolvedUser.telegramId, ts.fact, ts.topic)
+      const reply = `Got it \u2014 saved to your *${ts.topic}* bucket: "${ts.fact}".`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }

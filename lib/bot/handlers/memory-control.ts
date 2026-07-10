@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { embedText } from '@/lib/services/embeddings'
 import { unindexMemory } from '@/lib/services/memory-index'
+import { getSharedMemories } from '@/lib/bot/handlers/shared-memory'
 
 function cleanMemoryContent(content: string) {
   return (content || '')
@@ -331,6 +332,11 @@ async function buildMemorySearchReply(telegramId: number, text: string) {
   if (entityMatches.length) sections.push(`*Important people/entities*\n${entityMatches.join('\n')}`)
   if (reminderMatches.length) sections.push(`*Reminders*\n${reminderMatches.join('\n')}`)
   if (eventMatches.length) sections.push(`*Recent activity*\n${eventMatches.join('\n')}`)
+
+  const sharedHits = await getSharedMemories(telegramId, query, 3)
+  if (sharedHits.length) {
+    sections.push(`📂 *Shared with you*\n${sharedHits.map((s: any) => `• ${s.content} (${s.topic})`).join('\n')}`)
+  }
 
   if (!sections.length) {
     return `I couldn’t find anything about *${query}* yet.\n\nTry saving it like:\nRemember that ${query} is important\n\nOr ask:\n• my memory\n• show notes about Claude`
