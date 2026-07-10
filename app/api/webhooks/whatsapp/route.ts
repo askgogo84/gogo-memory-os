@@ -58,6 +58,7 @@ import { saveMediaMemory, isMediaMemoryCommand, buildMediaMemoryReply, detectPla
 import { indexMemory } from '@/lib/services/memory-index'
 import { buildThrowbackLine, isThrowbackReply, handleThrowbackReply, getLastAssistantMessage } from '@/lib/bot/handlers/throwback'
 import { detectPreferenceForget, forgetPreference } from '@/lib/bot/handlers/preferences'
+import { handleBucketCommand } from '@/lib/bot/handlers/shared-memory'
 import { parsePdfTicket, buildTicketReply, getReminderTime } from '@/lib/services/pdf-reader'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
@@ -708,6 +709,18 @@ _"${originalText}"_
         await sendWhatsAppMessage(from, `I couldn't summarize that meeting audio clearly.\n\nTry a shorter recording, or add caption: *meeting notes* when sending the audio.`)
       }
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // Memory bucket save/share must beat feature-routing (split/reminder) when text
+    // contains a time like "...at 6pm" or "3pm". (1.5)
+    {
+      const bucketReply = await handleBucketCommand(resolvedUser.telegramId, text)
+      if (bucketReply) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', bucketReply)
+        await sendWhatsAppMessage(from, bucketReply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
     }
 
     const featureReply = await routeFeatureIntent(from, text, { telegramId: resolvedUser.telegramId, caption: bodyText }) ||

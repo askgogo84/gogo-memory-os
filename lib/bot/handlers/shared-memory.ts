@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { embedText } from '@/lib/services/embeddings'
+import { indexMemory } from '@/lib/services/memory-index'
 
 // Phase 1.5 — Shared Memory: share a topic "bucket" with a contact who is an
 // AskGogo user; they can then retrieve your notes in that topic (read-only).
@@ -70,4 +71,41 @@ export async function getSharedMemories(
     console.error('[shared-memory] read failed:', err?.message)
     return []
   }
+}
+
+
+export function parseTopicSave(text: string): { topic: string; fact: string } | null {
+  let m = text.match(/^\s*remember\s+(?:for|in|to)\s+(?:my\s+)?(.+?)\s+(?:bucket|space|topic)\s*[:,\-]?\s*(.+)$/i)
+  if (m) return { topic: m[1].trim().toLowerCase(), fact: m[2].trim() }
+  m = text.match(/^\s*(?:save|add)\s+to\s+(?:my\s+)?(.+?)\s+(?:bucket|space|topic)\s*[:,\-]?\s*(.+)$/i)
+  if (m) return { topic: m[1].trim().toLowerCase(), fact: m[2].trim() }
+  m = text.match(/^\s*remember\s+for\s+(.+?)\s*:\s*(.+)$/i)
+  if (m) return { topic: m[1].trim().toLowerCase(), fact: m[2].trim() }
+  return null
+}
+
+const capName = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** Handle topic-bucket save + share. Returns a reply string, or null if not a bucket command.
+ *  Called from the webhook BEFORE feature-routing so time-like text ("...at 6pm") isn't
+ *  hijacked by the reminder/split-bill handlers. */
+export async function handleBucketCommand(telegramId: number, text: string): Promise<string | null> {
+  const ts = parseTopicSave(text)
+  if (ts) {
+    const { data } = await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content: ts.fact }).select('id').single()
+    if (data?.id) await indexMemory({ telegramId, sourceId: String(data.id), content: ts.fact, topic: ts.topic })
+    return `Got it — saved to your *${ts.topic}* bucket: "${ts.fact}".`
+  }
+  const share = detectShareIntent(text)
+  if (share) {
+    if (!(await hasTopic(telegramId, share.topic))) {
+      return `You don't have a "${share.topic}" bucket yet. Save to it first, e.g. remember for ${share.topic}: <something>.`
+    }
+    const { telegramId: rid, hasContact } = await resolveRecipientTelegramId(telegramId, share.name)
+    if (!hasContact) return `I don't have ${capName(share.name)}'s number yet. Do a friend reminder once (remind ${share.name} to ...) so I save it, then share.`
+    if (!rid) return `${capName(share.name)} isn't on AskGogo yet — ask them to message the bot first, then share.`
+    await grantShare(telegramId, rid, share.topic)
+    return `Shared your *${share.topic}* bucket with ${capName(share.name)}. They can now ask me about it.`
+  }
+  return null
 }
