@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildMorningBriefing } from '@/lib/bot/handlers/morning-briefing'
@@ -80,11 +81,26 @@ async function weekAheadSummary(telegramId: number): Promise<string | null> {
   return `🗓️ *Week ahead* (${rows.length} upcoming):\n${lines.join('\n')}`
 }
 
-export async function GET(req: NextRequest) {
-  const auth = req.headers.get('authorization') || ''
-  const expected = process.env.CRON_SECRET ? `Bearer ${process.env.CRON_SECRET}` : ''
+function secretMatches(provided: string | null, expected: string) {
+  if (!provided) return false
+  const a = Buffer.from(provided)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
 
-  if (expected && auth !== expected) {
+function isAuthorized(req: NextRequest) {
+  const expected = process.env.CRON_SECRET
+  if (!expected) return true // no secret configured → open (matches prior behaviour)
+  // Prefer the Authorization: Bearer header (keeps the secret out of URLs/logs).
+  // The ?secret= query param is also accepted for parity with /api/cron/reminders
+  // and cron-job.org jobs — see the security note; use the header if you can.
+  const querySecret = new URL(req.url).searchParams.get('secret')
+  const bearerSecret = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
+  return secretMatches(bearerSecret, expected) || secretMatches(querySecret, expected)
+}
+
+export async function GET(req: NextRequest) {
+  if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
   }
 

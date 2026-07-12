@@ -78,6 +78,7 @@ export async function POST(req: NextRequest) {
       message,
       remind_at: remindAtIso,
       sent: false,
+      timezone: resolvedUser.timezone || 'Asia/Kolkata',
     })
 
     if (error) throw error

@@ -77,10 +77,11 @@ async function markReminderSent(id: string) {
 
 async function incrementFailAttempts(id: string, current: number): Promise<number> {
   const next = (current || 0) + 1
-  await supabaseAdmin
+  const { error } = await supabaseAdmin
     .from('reminders')
     .update({ fail_attempts: next, last_failed_at: new Date().toISOString() })
     .eq('id', id)
+  if (error) console.error('Failed to increment fail_attempts:', id, error.message)
   return next
 }
 
@@ -187,7 +188,7 @@ export async function GET(req: Request) {
 
       if (reminder.is_recurring && reminder.recurring_pattern) {
         const nextDate = getNextOccurrence(reminder.recurring_pattern, new Date(reminder.remind_at))
-        await supabaseAdmin.from('reminders').insert({
+        const { error: recurError } = await supabaseAdmin.from('reminders').insert({
           telegram_id: reminder.telegram_id,
           chat_id: reminder.chat_id,
           whatsapp_to: reminder.whatsapp_to || null,
@@ -196,7 +197,9 @@ export async function GET(req: Request) {
           sent: false,
           is_recurring: true,
           recurring_pattern: reminder.recurring_pattern,
+          timezone: reminder.timezone || null,
         })
+        if (recurError) console.error('RECURRING_REMINDER_INSERT_FAILED:', reminder.id, recurError.message)
       }
 
       await markReminderSent(reminder.id)

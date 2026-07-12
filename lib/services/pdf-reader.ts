@@ -165,7 +165,9 @@ export function getReminderTime(dateStr: string, timeStr: string): Date | null {
     const year = parseInt(parts[2])
     const [h, m] = timeStr.split(':').map(Number)
     if (isNaN(day) || month < 0 || isNaN(year) || isNaN(h)) return null
-    const departure = new Date(year, month, day, h, m, 0, 0)
+    // Ticket times are local wall-clock (IST). Build the UTC instant explicitly so
+    // the reminder is correct regardless of the server's timezone (Vercel runs in UTC).
+    const departure = new Date(Date.UTC(year, month, day, h - 5, (m || 0) - 30, 0, 0))
     return new Date(departure.getTime() - 3 * 60 * 60 * 1000)
   } catch {
     return null

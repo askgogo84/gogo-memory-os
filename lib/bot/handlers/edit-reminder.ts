@@ -285,6 +285,7 @@ async function updateReminderSent(reminder: any, sent: boolean) {
     .update({ sent })
     .eq('id', reminder.id)
 
+  if (error) console.error('REMINDER_SENT_UPDATE_FAILED:', reminder.id, error.message)
   return !error
 }
 
@@ -452,6 +453,7 @@ export async function editLatestReminder(telegramId: number, input: string) {
     .eq('id', reminder.id)
 
   if (error) {
+    console.error('REMINDER_RESCHEDULE_UPDATE_FAILED:', reminder.id, error.message)
     return `I couldn't update that reminder right now.`
   }
 

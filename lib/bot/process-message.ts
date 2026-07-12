@@ -135,6 +135,17 @@ async function findDuplicateRecurringReminder(telegramId: number, pattern?: stri
   return data?.[0] || null
 }
 
+// Read the user's saved timezone so every reminder row records the zone its
+// remind_at was computed against (reminders.timezone was previously always null).
+async function resolveReminderTimezone(telegramId: number): Promise<string> {
+  const { data } = await supabaseAdmin
+    .from('users')
+    .select('timezone')
+    .eq('telegram_id', telegramId)
+    .maybeSingle()
+  return data?.timezone || 'Asia/Kolkata'
+}
+
 async function createReminder(
   telegramId: number,
   chatId: number,
@@ -143,10 +154,11 @@ async function createReminder(
   pattern?: string,
   whatsappTo?: string | null
 ) {
+  const timezone = await resolveReminderTimezone(telegramId)
   if (pattern) {
     const duplicate = await findDuplicateRecurringReminder(telegramId, pattern)
     if (duplicate?.id) {
-      const updatePayload: any = { remind_at: remindAt, sent: false }
+      const updatePayload: any = { remind_at: remindAt, sent: false, timezone }
       if (whatsappTo) updatePayload.whatsapp_to = whatsappTo
       if (isCleanerReminderMessage(message, duplicate.message)) updatePayload.message = message
 
@@ -165,7 +177,7 @@ async function createReminder(
     }
   }
 
-  const payload: any = { telegram_id: telegramId, chat_id: chatId, message, remind_at: remindAt, sent: false }
+  const payload: any = { telegram_id: telegramId, chat_id: chatId, message, remind_at: remindAt, sent: false, timezone }
   if (whatsappTo) payload.whatsapp_to = whatsappTo
   if (pattern) {
     payload.recurring_pattern = pattern

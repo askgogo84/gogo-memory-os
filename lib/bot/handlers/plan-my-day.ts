@@ -267,6 +267,13 @@ export async function createDayPlanReminders(params: {
   whatsappTo?: string | null
   items: DayPlanItem[]
 }) {
+  const { data: planUser } = await supabaseAdmin
+    .from('users')
+    .select('timezone')
+    .eq('telegram_id', params.telegramId)
+    .maybeSingle()
+  const planTimezone = planUser?.timezone || 'Asia/Kolkata'
+
   for (const item of params.items) {
     const limit = await checkFeatureLimit(params.telegramId, 'reminder_create')
 
@@ -280,6 +287,7 @@ export async function createDayPlanReminders(params: {
       message: item.message,
       remind_at: istWallTimeToUtcIso(item.hour, item.minute),
       sent: false,
+      timezone: planTimezone,
     }
 
     if (params.whatsappTo) {

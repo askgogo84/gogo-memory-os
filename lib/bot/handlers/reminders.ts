@@ -329,7 +329,13 @@ function parseRelativeReminder(text: string): ParsedReminder {
   if (unit.startsWith('day')) {
     const textWithoutRelative = text.replace(/\bin\s+\d+\s+(days?|hours?|mins?|minutes?)\b/gi, '')
     const timeOverride = parseTimePart(textWithoutRelative)
-    if (timeOverride) when.setHours(timeOverride.hour, timeOverride.minute, 0, 0)
+    if (timeOverride) {
+      // Anchor the time override to the IST wall clock, not the server's local
+      // timezone (Vercel runs in UTC — plain setHours would be off by the IST offset).
+      const target = addIstDays(istNowParts(), value)
+      const when2 = istWallTimeToUtcDate(target.year, target.month, target.day, timeOverride.hour, timeOverride.minute)
+      return { kind: 'one_time', remindAtIso: when2.toISOString(), message: cleanMessageText(text) }
+    }
   }
 
   return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text) }

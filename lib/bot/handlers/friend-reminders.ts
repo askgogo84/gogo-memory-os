@@ -78,14 +78,21 @@ export async function createFriendReminder(params: {
 }): Promise<{ whenHuman: string }> {
   const { remindAtIso, task } = parseFriendTime(params.rest)
   const message = `⏰ Reminder from ${params.senderName || 'a friend'}: ${task}`
-  await supabaseAdmin.from('reminders').insert({
+  const { data: owner } = await supabaseAdmin
+    .from('users')
+    .select('timezone')
+    .eq('telegram_id', params.ownerTelegramId)
+    .maybeSingle()
+  const { error } = await supabaseAdmin.from('reminders').insert({
     telegram_id: params.ownerTelegramId,
     chat_id: params.ownerTelegramId,
     whatsapp_to: params.recipientWhatsapp,
     message,
     remind_at: remindAtIso,
     sent: false,
+    timezone: owner?.timezone || 'Asia/Kolkata',
   })
+  if (error) console.error('FRIEND_REMINDER_INSERT_FAILED:', error.message)
   const whenHuman = new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
     weekday: 'short',

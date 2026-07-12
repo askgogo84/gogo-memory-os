@@ -176,10 +176,12 @@ async function saveRecentImageContext(params: {
   )
 }
 
-async function createReminder(params: { telegramId: number; message: string; remindAtIso: string; whatsappTo?: string | null }) {
-  const payload: any = { telegram_id: params.telegramId, chat_id: params.telegramId, message: params.message, remind_at: params.remindAtIso, sent: false }
+async function createReminder(params: { telegramId: number; message: string; remindAtIso: string; whatsappTo?: string | null; timezone?: string | null }) {
+  const { data: u } = await supabaseAdmin.from('users').select('timezone').eq('telegram_id', params.telegramId).maybeSingle()
+  const payload: any = { telegram_id: params.telegramId, chat_id: params.telegramId, message: params.message, remind_at: params.remindAtIso, sent: false, timezone: params.timezone || u?.timezone || 'Asia/Kolkata' }
   if (params.whatsappTo) payload.whatsapp_to = params.whatsappTo
-  await supabaseAdmin.from('reminders').insert(payload)
+  const { error } = await supabaseAdmin.from('reminders').insert(payload)
+  if (error) console.error('MEETING_REMINDER_INSERT_FAILED:', error.message, payload)
 }
 
 async function createMeetingActionReminders(params: { telegramId: number; whatsappTo: string | null }) {
@@ -491,13 +493,15 @@ export async function POST(req: NextRequest) {
           : `PDF document: ${bodyText || 'received'}`
         await addToList(resolvedUser.telegramId, 'notes', [noteText])
         let remindersSet = 0
+        const ticketTimezone = resolvedUser.timezone || 'Asia/Kolkata'
         if (ticketInfo?.type === 'flight') {
           for (const flight of (ticketInfo as any).flights) {
             const reminderTime = getReminderTime(flight.date, flight.departure)
             if (reminderTime && reminderTime > new Date()) {
               const reminderMsg = `✈️ ${flight.from} → ${flight.to} departs in 3 hours at ${flight.departure}! PNR: ${flight.pnr}`
-              await supabaseAdmin.from('reminders').insert({ telegram_id: resolvedUser.telegramId, whatsapp_id: from, message: reminderMsg, remind_at: reminderTime.toISOString(), created_at: new Date().toISOString() })
-              remindersSet++
+              const { error: insErr } = await supabaseAdmin.from('reminders').insert({ telegram_id: resolvedUser.telegramId, whatsapp_to: from, timezone: ticketTimezone, message: reminderMsg, remind_at: reminderTime.toISOString(), created_at: new Date().toISOString() })
+              if (insErr) console.error('TICKET_REMINDER_INSERT_FAILED (flight):', insErr.message)
+              else remindersSet++
             }
           }
         } else if (ticketInfo?.type === 'train' || ticketInfo?.type === 'event') {
@@ -505,8 +509,9 @@ export async function POST(req: NextRequest) {
           const reminderTime = getReminderTime(t.date, t.departure || t.time)
           if (reminderTime && reminderTime > new Date()) {
             const name = t.type === 'train' ? `${t.from} → ${t.to}` : t.name
-            await supabaseAdmin.from('reminders').insert({ telegram_id: resolvedUser.telegramId, whatsapp_id: from, message: `${t.type === 'train' ? '🚆' : '🎟️'} ${name} starts in 3 hours at ${t.departure || t.time}!`, remind_at: reminderTime.toISOString(), created_at: new Date().toISOString() })
-            remindersSet++
+            const { error: insErr } = await supabaseAdmin.from('reminders').insert({ telegram_id: resolvedUser.telegramId, whatsapp_to: from, timezone: ticketTimezone, message: `${t.type === 'train' ? '🚆' : '🎟️'} ${name} starts in 3 hours at ${t.departure || t.time}!`, remind_at: reminderTime.toISOString(), created_at: new Date().toISOString() })
+            if (insErr) console.error('TICKET_REMINDER_INSERT_FAILED (train/event):', insErr.message)
+            else remindersSet++
           }
         }
         const reply = buildTicketReply(ticketInfo, remindersSet > 0)
@@ -747,13 +752,15 @@ _"${originalText}"_
     if (isDone || snoozeMatch) {
       // Find most recently fired reminder (sent in last 30 mins) OR any pending reminder
       const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString()
+      // A fired reminder records its time in sent_at (set by the cron); the
+      // reminders table has no updated_at column, so filter/order on sent_at.
       const { data: recentFired } = await supabaseAdmin
         .from('reminders')
         .select('id, message, recurring_pattern')
         .eq('telegram_id', resolvedUser.telegramId)
         .eq('sent', true)
-        .gte('updated_at', thirtyMinsAgo)
-        .order('updated_at', { ascending: false })
+        .gte('sent_at', thirtyMinsAgo)
+        .order('sent_at', { ascending: false })
         .limit(1)
 
       const { data: pendingFollowupsRaw } = await supabaseAdmin
@@ -771,7 +778,8 @@ _"${originalText}"_
         const r = pendingFollowups[0]
         if (isDone) {
           // Mark as sent (cancel it)
-          await supabaseAdmin.from('reminders').update({ sent: true }).eq('id', r.id)
+          const { error: doneErr } = await supabaseAdmin.from('reminders').update({ sent: true }).eq('id', r.id)
+          if (doneErr) console.error('REMINDER_DONE_UPDATE_FAILED:', r.id, doneErr.message)
           const reply = `✅ Got it! *${r.message}* marked as resolved.
 
 _Reminder cancelled._`
@@ -810,7 +818,10 @@ _Reminder cancelled._`
           const newRemindAt = new Date(Date.now() + snoozeMs)
           // Only set to 9 AM if snoozing by days, not minutes/hours
           if (snoozeMs >= 24 * 60 * 60 * 1000) newRemindAt.setUTCHours(3, 30, 0, 0) // 9 AM IST
-          await supabaseAdmin.from('reminders').update({ remind_at: newRemindAt.toISOString(), sent: false, updated_at: new Date().toISOString() }).eq('id', r.id)
+          // NOTE: reminders has no updated_at column — writing it made this whole
+          // update silently fail, so snoozes never actually rescheduled.
+          const { error: snoozeErr } = await supabaseAdmin.from('reminders').update({ remind_at: newRemindAt.toISOString(), sent: false }).eq('id', r.id)
+          if (snoozeErr) console.error('REMINDER_SNOOZE_UPDATE_FAILED:', r.id, snoozeErr.message)
           const reply = `⏰ Snoozed! I'll remind you about *${r.message}* again *${snoozeLabel}*.`
           await saveConversation(resolvedUser.telegramId, 'user', text)
           await saveConversation(resolvedUser.telegramId, 'assistant', reply)

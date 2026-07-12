@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { resolveUser } from "@/lib/bot/resolve-user";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { normalizeTimezone, parseLocalDateTime } from "@/lib/timezone";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ""
-);
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,28 +18,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const existingUserResult = await supabase
-      .from("users")
-      .select("id, timezone")
-      .eq("phone", phone)
-      .maybeSingle();
+    // Use the same user resolution as the rest of the bot so the row carries a
+    // valid telegram_id (NOT NULL) and is deliverable by /api/cron/reminders,
+    // which reads message / remind_at / sent — not the legacy due_at_* columns.
+    const resolved = await resolveUser({ channel: "whatsapp", externalUserId: phone, userName: "Friend" });
+    const timezone = normalizeTimezone(body.timezone || resolved.timezone);
 
-    const existingUser = existingUserResult.data;
-    const timezone = normalizeTimezone(body.timezone || existingUser?.timezone);
-
-    let userId = existingUser?.id;
-
-    if (!userId) {
-      const newUserResult = await supabase
+    if (body.timezone && timezone !== resolved.timezone) {
+      const { error: tzError } = await supabaseAdmin
         .from("users")
-        .insert({ phone, timezone })
-        .select("id")
-        .single();
-
-      if (newUserResult.error) throw newUserResult.error;
-      userId = newUserResult.data.id;
-    } else if (timezone !== existingUser?.timezone) {
-      await supabase.from("users").update({ timezone }).eq("id", userId);
+        .update({ timezone })
+        .eq("telegram_id", resolved.telegramId);
+      if (tzError) console.error("REMINDER_CREATE_TZ_UPDATE_FAILED:", tzError.message);
     }
 
     const parsed = parseLocalDateTime({ date, time, timezone });
@@ -55,17 +41,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const reminderResult = await supabase
+    const reminderResult = await supabaseAdmin
       .from("reminders")
       .insert({
-        user_id: userId,
-        phone,
-        reminder_text: reminderText,
+        telegram_id: resolved.telegramId,
+        chat_id: resolved.telegramId,
+        whatsapp_to: resolved.whatsappId || phone,
+        message: reminderText,
+        remind_at: parsed.dueAtUtcISO,
+        sent: false,
         timezone,
-        due_at_utc: parsed.dueAtUtcISO,
-        due_at_local: parsed.dueAtLocalISO,
-        status: "pending",
-        source: "whatsapp"
       })
       .select("*")
       .single();
@@ -87,6 +72,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to create reminder";
+    console.error("REMINDER_CREATE_FAILED:", message);
     return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }
