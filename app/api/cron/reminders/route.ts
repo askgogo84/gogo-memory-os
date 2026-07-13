@@ -118,7 +118,9 @@ export async function GET(req: Request) {
 
   const now = new Date().toISOString()
 
-  async function buildTopicDigest(telegramId: number, topic: string): Promise<string> {
+  // Returns null when the bucket is empty so the caller can skip the send
+  // entirely instead of messaging the user "Nothing saved in this bucket yet."
+  async function buildTopicDigest(telegramId: number, topic: string): Promise<string | null> {
     const { data } = await supabaseAdmin
       .from('memory_embeddings')
       .select('content, created_at')
@@ -128,7 +130,7 @@ export async function GET(req: Request) {
       .order('created_at', { ascending: false })
       .limit(10)
     const rows = data || []
-    if (!rows.length) return `📂 *${topic} digest*\n\nNothing saved in this bucket yet.`
+    if (!rows.length) return null
     return `📂 *${topic} digest*\n\n${rows.map((r: any) => `• ${r.content}`).join('\n')}`
   }
 
@@ -159,31 +161,45 @@ export async function GET(req: Request) {
     let reminderText = isFollowup
       ? `🔔 *Follow-up reminder*\n\n📋 ${msgRaw}\n\nDid you hear back?\n• Reply *done* — mark as resolved\n• Reply *snooze 2 days* — remind again later\n• Reply *snooze friday* — remind on Friday`
       : `⏰ *Reminder*\n\n${msgRaw.replace(/^to\s+/i, '')}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''}`
+    // An empty topic-digest bucket has nothing worth sending. Skip the send
+    // (but still consume/reschedule the reminder below) rather than messaging
+    // the user "Nothing saved in this bucket yet."
+    let skipEmptyDigest = false
     if (digestTopic) {
-      reminderText = await buildTopicDigest(Number(reminder.telegram_id), digestTopic)
+      const digest = await buildTopicDigest(Number(reminder.telegram_id), digestTopic)
+      if (digest === null) {
+        skipEmptyDigest = true
+      } else {
+        reminderText = digest
+      }
     }
 
     try {
-      const whatsappTo = await findWhatsAppForReminder(reminder)
-
-      if (whatsappTo) {
-        if (isBriefing) {
-          // Trigger the actual briefing instead of a dumb notification
-          console.log(`BRIEFING_REMINDER: triggering actual briefing for ${whatsappTo}`)
-          const ok = await triggerMorningBriefing(whatsappTo)
-          if (!ok) {
-            // Fallback: send a nudge if briefing API fails
-            await sendWhatsApp(whatsappTo, '🌅 Good morning! Type *morning* to get your daily briefing.')
-          }
-        } else {
-          await sendWhatsApp(whatsappTo, reminderText)
-        }
-        results.push({ id: reminder.id, channel: 'whatsapp', to: whatsappTo, message: msgRaw, status: 'sent', isBriefing })
-      } else if (reminder.chat_id && Number(reminder.chat_id) > 0) {
-        await sendTelegram(Number(reminder.chat_id), reminderText)
-        results.push({ id: reminder.id, channel: 'telegram', to: reminder.chat_id, message: msgRaw, status: 'sent' })
+      if (skipEmptyDigest) {
+        console.log(`TOPIC_DIGEST_EMPTY: nothing to send, skipping. telegram_id=${reminder.telegram_id} topic="${digestTopic}"`)
+        results.push({ id: reminder.id, channel: 'none', to: null, message: msgRaw, status: 'skipped_empty' })
       } else {
-        throw new Error(`No delivery target. whatsapp_to=${reminder.whatsapp_to || ''}, telegram_id=${reminder.telegram_id || ''}, chat_id=${reminder.chat_id || ''}`)
+        const whatsappTo = await findWhatsAppForReminder(reminder)
+
+        if (whatsappTo) {
+          if (isBriefing) {
+            // Trigger the actual briefing instead of a dumb notification
+            console.log(`BRIEFING_REMINDER: triggering actual briefing for ${whatsappTo}`)
+            const ok = await triggerMorningBriefing(whatsappTo)
+            if (!ok) {
+              // Fallback: send a nudge if briefing API fails
+              await sendWhatsApp(whatsappTo, '🌅 Good morning! Type *morning* to get your daily briefing.')
+            }
+          } else {
+            await sendWhatsApp(whatsappTo, reminderText)
+          }
+          results.push({ id: reminder.id, channel: 'whatsapp', to: whatsappTo, message: msgRaw, status: 'sent', isBriefing })
+        } else if (reminder.chat_id && Number(reminder.chat_id) > 0) {
+          await sendTelegram(Number(reminder.chat_id), reminderText)
+          results.push({ id: reminder.id, channel: 'telegram', to: reminder.chat_id, message: msgRaw, status: 'sent' })
+        } else {
+          throw new Error(`No delivery target. whatsapp_to=${reminder.whatsapp_to || ''}, telegram_id=${reminder.telegram_id || ''}, chat_id=${reminder.chat_id || ''}`)
+        }
       }
 
       if (reminder.is_recurring && reminder.recurring_pattern) {
@@ -236,6 +252,7 @@ export async function GET(req: Request) {
     checked_at: now,
     due_count: due?.length || 0,
     sent_count: results.filter((r) => r.status === 'sent').length,
+    skipped_count: results.filter((r) => r.status === 'skipped_empty').length,
     failed_count: results.filter((r) => r.status === 'failed').length,
     abandoned_count: results.filter((r) => r.status === 'abandoned').length,
     results,

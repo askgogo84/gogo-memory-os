@@ -26,6 +26,31 @@ function normalizeWhatsAppAddress(value: string): string {
   return `whatsapp:${normalized}`
 }
 
+// Central WhatsApp text sanitizer. WhatsApp does not render Markdown, so any
+// route that sends a message must have its raw Markdown normalized here — this
+// is the single chokepoint every send funnels through, so nothing can bypass it.
+// Designed to be idempotent: text that is already WhatsApp-formatted is left as-is.
+export function sanitizeMarkdownForWhatsApp(input: string): string {
+  let text = String(input ?? '')
+
+  // **bold** -> *bold* (WhatsApp uses single asterisks for bold)
+  text = text.replace(/\*\*(.+?)\*\*/g, '*$1*')
+
+  // ## / ### (and #…######) headings -> *bold* heading text
+  text = text.replace(/^[ \t]*#{1,6}[ \t]+(.+?)[ \t]*$/gm, '*$1*')
+
+  // strip any stray leading heading hashes left over (e.g. "#Heading", bare "## ")
+  text = text.replace(/^[ \t]*#{1,6}[ \t]*/gm, '')
+
+  // "- " bullets -> "• " (preserve leading indentation)
+  text = text.replace(/^([ \t]*)-[ \t]+/gm, '$1• ')
+
+  // strip citation markers like [1] [2] [3]
+  text = text.replace(/[ \t]*\[\d+\]/g, '')
+
+  return text
+}
+
 const WA_MAX_CHARS = 1550
 
 function splitIntoChunks(text: string): string[] {
@@ -70,7 +95,7 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
 
-  const chunks = splitIntoChunks(text || '')
+  const chunks = splitIntoChunks(sanitizeMarkdownForWhatsApp(text || ''))
   let lastMessage: any = null
 
   for (let i = 0; i < chunks.length; i++) {

@@ -129,6 +129,25 @@ function firstName(name?: string) {
   return (name || 'there').split(' ')[0] || 'there'
 }
 
+// Reminder messages carry internal routing markers (e.g. "[topic_digest] india
+// politics", "[image] ...", "[PDF ticket] ..."). These must never reach the user.
+function humanizeReminderMessage(message: string): string {
+  const raw = String(message || '').trim()
+
+  // Topic-digest reminders read best as "<topic> digest".
+  const digest = raw.match(/^\[topic_digest\]\s*(.*)$/i)
+  if (digest) return `${digest[1].trim()} digest`.trim()
+
+  // Strip other internal markers: known ones + any generic [snake_case] tag.
+  const cleaned = raw
+    .replace(/\[(image|voice|pdf ticket|pending_friend)\]/gi, '')
+    .replace(/\[[a-z0-9]+_[a-z0-9_]+\]/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+  return cleaned || raw
+}
+
 function isBadMemoryEntity(value: string) {
   const lower = value.toLowerCase().trim()
 
@@ -345,7 +364,7 @@ function buildPriorityLine(ctx: BriefingContext) {
   const firstReminder = ctx.reminders[0]
 
   if (firstReminder) {
-    return `Top priority: ${formatTime(firstReminder.remind_at, ctx.timezone)} — ${firstReminder.message}`
+    return `Top priority: ${formatTime(firstReminder.remind_at, ctx.timezone)} — ${humanizeReminderMessage(firstReminder.message)}`
   }
 
   if (ctx.followups[0]) {
@@ -370,12 +389,12 @@ function formatReminderBlock(ctx: BriefingContext) {
     lines.push('*Today’s reminders*')
     ctx.reminders
       .slice(0, 6)
-      .forEach((r) => lines.push(`• ${formatTime(r.remind_at, ctx.timezone)} — ${r.message}`))
+      .forEach((r) => lines.push(`• ${formatTime(r.remind_at, ctx.timezone)} — ${humanizeReminderMessage(r.message)}`))
   }
 
   if (ctx.overdueReminders.length) {
     lines.push('*Overdue*')
-    ctx.overdueReminders.slice(0, 3).forEach((r) => lines.push(`• ${r.message}`))
+    ctx.overdueReminders.slice(0, 3).forEach((r) => lines.push(`• ${humanizeReminderMessage(r.message)}`))
   }
 
   return lines.join('\n')
