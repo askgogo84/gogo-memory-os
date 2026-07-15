@@ -10,7 +10,38 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 )
 
-// ── Shared: one-time payment-link activation (existing behaviour) ─────────────
+// The bot's limit gate (lib/data/limits.ts) reads `tier` + `tier_expires_at`.
+// `tier` must be one of: free | lite | starter | pro | founder_pro.
+function tierFromEntitlement(planKey?: string | null): string {
+  const k = String(planKey || 'pro').toLowerCase().replace(/[\s-]+/g, '_')
+  if (k === 'founder' || k === 'founder_pro') return 'founder_pro'
+  if (k === 'lite' || k === 'starter' || k === 'pro') return k
+  return 'pro'
+}
+
+// Tolerant matching: phone digits (ignores +, spaces, "whatsapp:"), telegram_id,
+// user id, or the subscription id. Handles the "whatsapp:+91..." vs "+91..." rows.
+function buildMatchClauses(p: {
+  phone?: string | null
+  whatsappId?: string | null
+  telegramId?: string | number | null
+  userId?: string | null
+  subscriptionId?: string | null
+}): string[] {
+  const clauses: string[] = []
+  const digits = String(p.phone || p.whatsappId || '').replace(/\D/g, '')
+  const last10 = digits.slice(-10)
+  if (last10.length === 10) {
+    clauses.push(`phone.ilike.*${last10}*`, `whatsapp_id.ilike.*${last10}*`)
+  }
+  const tg = p.telegramId != null ? String(p.telegramId).replace(/[^\d-]/g, '') : ''
+  if (tg && tg !== '0') clauses.push(`telegram_id.eq.${tg}`)
+  if (p.userId) clauses.push(`id.eq.${p.userId}`)
+  if (p.subscriptionId) clauses.push(`razorpay_subscription_id.eq.${p.subscriptionId}`)
+  return clauses
+}
+
+// One-time payment-link activation (existing flow, now also sets tier).
 async function activateUserPlan(params: {
   phone: string | null
   telegramId?: string | null
@@ -22,24 +53,27 @@ async function activateUserPlan(params: {
   rawPayload?: unknown
 }) {
   const plan = getPlan(params.planKey)
+  const tier = tierFromEntitlement(params.planKey)
   const now = new Date()
   const expiry = new Date(now.getTime() + plan.validityDays * 24 * 60 * 60 * 1000)
 
-  const orClauses: string[] = []
-  if (params.phone) orClauses.push(`phone.eq.${params.phone}`, `whatsapp_id.eq.${params.phone}`)
-  if (params.whatsappId && params.whatsappId !== params.phone) {
-    orClauses.push(`whatsapp_id.eq.${params.whatsappId}`)
-  }
-  if (params.telegramId) orClauses.push(`telegram_id.eq.${params.telegramId}`)
-  if (params.userId) orClauses.push(`id.eq.${params.userId}`)
+  const orClauses = buildMatchClauses({
+    phone: params.phone,
+    whatsappId: params.whatsappId,
+    telegramId: params.telegramId,
+    userId: params.userId,
+  })
 
   if (orClauses.length > 0) {
     await supabase
       .from('users')
       .update({
+        tier,
+        tier_expires_at: expiry.toISOString(),
         plan: plan.key,
         plan_name: plan.name,
         plan_active: true,
+        plan_status: 'active',
         plan_started_at: now.toISOString(),
         plan_expires_at: expiry.toISOString(),
       })
@@ -63,48 +97,48 @@ async function activateUserPlan(params: {
   return { plan, expiry }
 }
 
-// ── Subscriptions: recurring auto-debit activation ───────────────────────────
-function subscriptionTargets(notes: Record<string, any>) {
-  const phone = notes.whatsapp_id || notes.phone || null
-  const telegramId = notes.telegram_id ? String(notes.telegram_id) : null
-  const userId = notes.user_id ? String(notes.user_id) : null
-  const orClauses: string[] = []
-  if (phone) orClauses.push(`phone.eq.${phone}`, `whatsapp_id.eq.${phone}`)
-  if (telegramId) orClauses.push(`telegram_id.eq.${telegramId}`)
-  if (userId) orClauses.push(`id.eq.${userId}`)
-  return { phone, telegramId, userId, orClauses }
-}
-
+// Subscription activation: writes tier + tier_expires_at (what the gate reads).
 async function activateSubscription(entity: any, rawPayload: unknown) {
   const notes = entity?.notes || {}
   const plan = getPlan(notes.plan || 'pro') // entitlement tier: lite / starter / pro
+  const tier = tierFromEntitlement(notes.plan || 'pro')
   const now = new Date()
-  // Prefer Razorpay's own period end; fall back to +validityDays if absent.
+  // Use Razorpay's own period end; fall back to +validityDays. This also keeps
+  // tier_expires_at in the future so the gate's auto-downgrade won't fire.
   const expiry = entity?.current_end
     ? new Date(entity.current_end * 1000)
     : new Date(now.getTime() + plan.validityDays * 24 * 60 * 60 * 1000)
 
-  const { phone, telegramId, orClauses } = subscriptionTargets(notes)
+  const orClauses = buildMatchClauses({
+    phone: notes.whatsapp_id || notes.phone,
+    whatsappId: notes.whatsapp_id,
+    telegramId: notes.telegram_id,
+    userId: notes.user_id,
+    subscriptionId: entity.id,
+  })
 
   if (orClauses.length > 0) {
     await supabase
       .from('users')
       .update({
+        tier,
+        tier_expires_at: expiry.toISOString(),
         plan: plan.key,
         plan_name: plan.name,
         plan_active: true,
+        plan_status: 'active',
         plan_started_at: now.toISOString(),
         plan_expires_at: expiry.toISOString(),
         razorpay_subscription_id: entity.id,
+        subscription_id: entity.id,
         subscription_status: entity.status,
       })
       .or(orClauses.join(','))
   }
 
-  // Append an audit row per event (activation + each renewal charge).
   await supabase.from('payment_records').insert({
-    whatsapp_id: phone,
-    telegram_id: telegramId ? Number(telegramId) : null,
+    whatsapp_id: notes.whatsapp_id || null,
+    telegram_id: notes.telegram_id ? Number(notes.telegram_id) : null,
     plan: plan.key,
     amount: plan.amountInPaise,
     currency: 'INR',
@@ -116,43 +150,56 @@ async function activateSubscription(entity: any, rawPayload: unknown) {
     updated_at: now.toISOString(),
   })
 
+  const phone = notes.whatsapp_id || notes.phone || null
   return { plan, phone }
 }
 
 async function updateSubscriptionStatus(entity: any, opts: { revokeNow: boolean }) {
   const notes = entity?.notes || {}
-  const { orClauses } = subscriptionTargets(notes)
+  const orClauses = buildMatchClauses({
+    phone: notes.whatsapp_id || notes.phone,
+    whatsappId: notes.whatsapp_id,
+    telegramId: notes.telegram_id,
+    userId: notes.user_id,
+    subscriptionId: entity.id,
+  })
   if (orClauses.length === 0) return
+
   const update: Record<string, any> = { subscription_status: entity.status }
   if (opts.revokeNow) {
-    // Payments permanently failed (halted): cut access now.
-    update.plan_active = false
+    // Payments permanently failed (halted): downgrade to free immediately.
+    update.tier = 'free'
+    update.tier_expires_at = new Date().toISOString()
     update.plan = 'free'
+    update.plan_active = false
+    update.plan_status = 'inactive'
+  } else {
+    update.plan_status = entity.status
   }
-  // On plain cancellation we DON'T flip plan_active — the user keeps access
-  // until plan_expires_at (their paid period end), then it lapses naturally.
+  // On plain cancellation we leave tier + tier_expires_at intact — the user keeps
+  // access until the paid period ends, then the gate downgrades them automatically.
   await supabase.from('users').update(update).or(orClauses.join(','))
 }
 
 function buildConfirmationMessage(plan: ReturnType<typeof getPlan>, name?: string): string {
   const greeting = name && name !== 'AskGogo User' ? `Hey ${name.split(' ')[0]}! ` : 'Hey! '
   const featuresByPlan: Record<string, string> = {
-    lite: '• 60 AI actions/month\n• 5 active reminders\n• 10 voice notes/month\n• Weather & sports updates',
-    starter: '• 100 AI actions/month\n• 10 active reminders\n• 30 voice notes/month\n• Basic memory',
-    pro: '• 250 AI actions/month\n• 50 active reminders\n• Calendar integration\n• Daily briefing & planning\n• 100 voice notes/month\n• Web search: 30/month',
-    founder: '• 600 AI actions/month\n• 200 active reminders\n• All Pro features + priority access\n• 300 voice notes/month\n• Web search: 100/month',
+    lite: '\u2022 60 AI actions/month\n\u2022 5 active reminders\n\u2022 10 voice notes/month\n\u2022 Weather & sports updates',
+    starter: '\u2022 100 AI actions/month\n\u2022 10 active reminders\n\u2022 30 voice notes/month\n\u2022 Basic memory',
+    pro: '\u2022 250 AI actions/month\n\u2022 50 active reminders\n\u2022 Calendar integration\n\u2022 Daily briefing & planning\n\u2022 100 voice notes/month\n\u2022 Web search: 30/month',
+    founder: '\u2022 600 AI actions/month\n\u2022 200 active reminders\n\u2022 All Pro features + priority access\n\u2022 300 voice notes/month\n\u2022 Web search: 100/month',
   }
   const features = featuresByPlan[plan.key] || featuresByPlan.pro
-  return `✅ *Payment confirmed!*
+  return `\u2705 *Payment confirmed!*
 
-${greeting}You're now on *${plan.name}* (₹${plan.amountInRupees}/month). 🎉
+${greeting}You're now on *${plan.name}* (\u20b9${plan.amountInRupees}/month). \ud83c\udf89
 
 *What's unlocked:*
 ${features}
 
-Your plan is active right now — just keep chatting here as usual.
+Your plan is active right now \u2014 just keep chatting here as usual.
 
-Type *menu* to see everything I can do, or just ask me anything! 🧘`
+Type *menu* to see everything I can do, or just ask me anything! \ud83e\uddd8`
 }
 
 async function notifyWhatsApp(phone: string | null, message: string, tag: string) {
@@ -191,7 +238,6 @@ export async function POST(req: NextRequest) {
   console.log('Webhook event:', event)
 
   try {
-    // ── One-time payment link paid (existing) ────────────────────────────────
     if (event === 'payment_link.paid') {
       const entity = body.payload?.payment_link?.entity
       const paymentEntity = body.payload?.payment?.entity
@@ -217,7 +263,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, event, plan: planKey })
     }
 
-    // ── Subscription authorized & activated (first time) ──────────────────────
     if (event === 'subscription.activated' || event === 'subscription.authenticated') {
       const entity = body.payload?.subscription?.entity
       if (!entity) return NextResponse.json({ ok: true })
@@ -226,7 +271,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, event, plan: plan.key })
     }
 
-    // ── Subscription charged each cycle → extend access silently ──────────────
     if (event === 'subscription.charged') {
       const entity = body.payload?.subscription?.entity
       if (!entity) return NextResponse.json({ ok: true })
@@ -234,14 +278,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, event, plan: plan.key })
     }
 
-    // ── Subscription cancelled / completed → keep access until period end ─────
     if (event === 'subscription.cancelled' || event === 'subscription.completed') {
       const entity = body.payload?.subscription?.entity
       if (entity) await updateSubscriptionStatus(entity, { revokeNow: false })
       return NextResponse.json({ ok: true, event })
     }
 
-    // ── Subscription halted (payments permanently failed) → revoke now ────────
     if (event === 'subscription.halted') {
       const entity = body.payload?.subscription?.entity
       if (entity) {
@@ -249,21 +291,19 @@ export async function POST(req: NextRequest) {
         const phone = entity?.notes?.whatsapp_id || null
         await notifyWhatsApp(
           phone,
-          `⚠️ We couldn't renew your AskGogo subscription after a few tries, so it's paused.\n\nReply *upgrade* to set it up again. 🙏`,
+          `\u26a0\ufe0f We couldn't renew your AskGogo subscription after a few tries, so it's paused.\n\nReply *upgrade* to set it up again. \ud83d\ude4f`,
           'subscription.halted',
         )
       }
       return NextResponse.json({ ok: true, event })
     }
 
-    // ── Subscription pending (a renewal charge failed, retrying) → log only ───
     if (event === 'subscription.pending') {
       const entity = body.payload?.subscription?.entity
       if (entity) await updateSubscriptionStatus(entity, { revokeNow: false })
       return NextResponse.json({ ok: true, event })
     }
 
-    // ── Direct payment captured (existing) ────────────────────────────────────
     if (event === 'payment.captured') {
       const payment = body.payload?.payment?.entity
       if (!payment) return NextResponse.json({ ok: true })
@@ -273,7 +313,7 @@ export async function POST(req: NextRequest) {
       const planKey = notes.plan || 'pro'
       const name = notes.name || 'AskGogo User'
 
-      // Skip subscription-driven payments here — handled by subscription.charged.
+      // Skip subscription-driven payments here - handled by subscription.charged.
       if ((phone || notes.telegram_id || notes.user_id) && !payment.invoice_id) {
         const { plan } = await activateUserPlan({
           phone,
@@ -289,7 +329,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, event })
     }
 
-    // ── Payment failed (existing) ─────────────────────────────────────────────
     if (event === 'payment.failed') {
       const payment = body.payload?.payment?.entity
       const notes = payment?.notes || {}
@@ -298,7 +337,7 @@ export async function POST(req: NextRequest) {
 
       await notifyWhatsApp(
         phone,
-        `⚠️ Your payment didn't go through.\n\nPlease try again — type *upgrade* and I'll send you a fresh link. If the issue persists, just reply here and we'll sort it out. 🙏`,
+        `\u26a0\ufe0f Your payment didn't go through.\n\nPlease try again - type *upgrade* and I'll send you a fresh link. If the issue persists, just reply here and we'll sort it out. \ud83d\ude4f`,
         'payment.failed',
       )
       return NextResponse.json({ ok: true, event })
