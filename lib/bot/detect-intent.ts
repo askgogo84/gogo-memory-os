@@ -65,7 +65,7 @@ export function detectIntent(text: string): DetectedIntent {
   if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) return { type: 'welcome_menu', confidence: 'high' }
   if (lower === 'help' || lower === '/help' || lower === 'menu' || lower === 'commands' || lower === 'what can you do') return { type: 'help_menu', confidence: 'high' }
 
-  if (lower === 'pricing' || lower === 'price' || lower === 'plans' || lower === 'plan' || lower === 'upgrade' || lower === '/upgrade' || lower === 'payment' || lower === 'payments' || lower.includes('razorpay') || lower.includes('paid plan') || lower.includes('subscribe')) return { type: 'upgrade_plan', confidence: 'high' }
+  if (lower === 'pricing' || lower === 'price' || lower === 'plans' || lower === 'plan' || lower === 'upgrade' || lower === '/upgrade' || lower === 'payment' || lower === 'payments' || lower === 'subscribe' || lower === 'razorpay' || lower === 'paid plan') return { type: 'upgrade_plan', confidence: 'high' }
 
   if (lower === 'notify me' || lower === 'notify' || lower === 'notify me when live' || lower === 'notify me when payment is live' || lower === 'founder offer' || lower === 'founder pricing' || lower.includes('early access') || lower.includes('i want pro') || lower.includes('i want lite') || lower.includes('i want starter') || lower.includes('i want founder') || lower.includes('want paid plan') || lower.includes('want to subscribe') || lower.includes('interested in paid')) return { type: 'notify_me', confidence: 'high' }
 
