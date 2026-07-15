@@ -49,8 +49,8 @@ export const ASKGOGO_PLANS: Record<AskGogoPlanKey, AskGogoPlan> = {
   pro: {
     key: 'pro',
     name: 'AskGogo Pro',
-    amountInRupees: 299,
-    amountInPaise: 29900,
+    amountInRupees: 199,
+    amountInPaise: 19900,
     description: 'AskGogo Pro - calendar, daily planning, voice and web search',
     validityDays: 30,
     limits: {

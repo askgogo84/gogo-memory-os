@@ -53,6 +53,20 @@ async function sendTelegram(chatId: number, text: string) {
   return body
 }
 
+// Resolve the user's saved timezone so a rescheduled recurring reminder never
+// re-writes timezone:null. Legacy digest rows created before the timezone fix
+// carry null; without this fallback the null would propagate forever because
+// each reschedule copies it straight from the parent row.
+async function resolveUserTimezone(telegramId: number | null | undefined): Promise<string> {
+  if (!telegramId) return 'Asia/Kolkata'
+  const { data } = await supabaseAdmin
+    .from('users')
+    .select('timezone')
+    .eq('telegram_id', telegramId)
+    .maybeSingle()
+  return data?.timezone || 'Asia/Kolkata'
+}
+
 async function findWhatsAppForReminder(reminder: any): Promise<string | null> {
   if (reminder.whatsapp_to) return reminder.whatsapp_to
   if (reminder.telegram_id) {
@@ -175,12 +189,15 @@ export async function GET(req: Request) {
     }
 
     try {
+      // Resolve once up front so the recurrence reschedule (below) can carry a
+      // real WhatsApp number forward even when the parent row's whatsapp_to is
+      // null — e.g. legacy topic-digest rows created without it.
+      const whatsappTo = await findWhatsAppForReminder(reminder)
+
       if (skipEmptyDigest) {
         console.log(`TOPIC_DIGEST_EMPTY: nothing to send, skipping. telegram_id=${reminder.telegram_id} topic="${digestTopic}"`)
         results.push({ id: reminder.id, channel: 'none', to: null, message: msgRaw, status: 'skipped_empty' })
       } else {
-        const whatsappTo = await findWhatsAppForReminder(reminder)
-
         if (whatsappTo) {
           if (isBriefing) {
             // Trigger the actual briefing instead of a dumb notification
@@ -207,13 +224,16 @@ export async function GET(req: Request) {
         const { error: recurError } = await supabaseAdmin.from('reminders').insert({
           telegram_id: reminder.telegram_id,
           chat_id: reminder.chat_id,
-          whatsapp_to: reminder.whatsapp_to || null,
+          // Carry the delivery target + zone forward; fall back to the resolved
+          // number / the user's saved timezone so a null parent doesn't poison
+          // the whole recurrence chain.
+          whatsapp_to: reminder.whatsapp_to || whatsappTo || null,
           message: reminder.message,
           remind_at: nextDate.toISOString(),
           sent: false,
           is_recurring: true,
           recurring_pattern: reminder.recurring_pattern,
-          timezone: reminder.timezone || null,
+          timezone: reminder.timezone || (await resolveUserTimezone(reminder.telegram_id)),
         })
         if (recurError) console.error('RECURRING_REMINDER_INSERT_FAILED:', reminder.id, recurError.message)
       }

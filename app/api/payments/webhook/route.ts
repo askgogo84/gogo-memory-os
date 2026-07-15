@@ -10,6 +10,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 )
 
+// ── Shared: one-time payment-link activation (existing behaviour) ─────────────
 async function activateUserPlan(params: {
   phone: string | null
   telegramId?: string | null
@@ -54,12 +55,83 @@ async function activateUserPlan(params: {
     status: 'paid',
     razorpay_payment_link_id: params.paymentLinkId || null,
     razorpay_payment_id: params.paymentId || null,
-    raw_payload: params.rawPayload as any || null,
+    raw_payload: (params.rawPayload as any) || null,
     paid_at: now.toISOString(),
     updated_at: now.toISOString(),
   }, { onConflict: 'razorpay_payment_link_id', ignoreDuplicates: false })
 
   return { plan, expiry }
+}
+
+// ── Subscriptions: recurring auto-debit activation ───────────────────────────
+function subscriptionTargets(notes: Record<string, any>) {
+  const phone = notes.whatsapp_id || notes.phone || null
+  const telegramId = notes.telegram_id ? String(notes.telegram_id) : null
+  const userId = notes.user_id ? String(notes.user_id) : null
+  const orClauses: string[] = []
+  if (phone) orClauses.push(`phone.eq.${phone}`, `whatsapp_id.eq.${phone}`)
+  if (telegramId) orClauses.push(`telegram_id.eq.${telegramId}`)
+  if (userId) orClauses.push(`id.eq.${userId}`)
+  return { phone, telegramId, userId, orClauses }
+}
+
+async function activateSubscription(entity: any, rawPayload: unknown) {
+  const notes = entity?.notes || {}
+  const plan = getPlan(notes.plan || 'pro') // entitlement tier: lite / starter / pro
+  const now = new Date()
+  // Prefer Razorpay's own period end; fall back to +validityDays if absent.
+  const expiry = entity?.current_end
+    ? new Date(entity.current_end * 1000)
+    : new Date(now.getTime() + plan.validityDays * 24 * 60 * 60 * 1000)
+
+  const { phone, telegramId, orClauses } = subscriptionTargets(notes)
+
+  if (orClauses.length > 0) {
+    await supabase
+      .from('users')
+      .update({
+        plan: plan.key,
+        plan_name: plan.name,
+        plan_active: true,
+        plan_started_at: now.toISOString(),
+        plan_expires_at: expiry.toISOString(),
+        razorpay_subscription_id: entity.id,
+        subscription_status: entity.status,
+      })
+      .or(orClauses.join(','))
+  }
+
+  // Append an audit row per event (activation + each renewal charge).
+  await supabase.from('payment_records').insert({
+    whatsapp_id: phone,
+    telegram_id: telegramId ? Number(telegramId) : null,
+    plan: plan.key,
+    amount: plan.amountInPaise,
+    currency: 'INR',
+    status: 'paid',
+    razorpay_subscription_id: entity.id,
+    subscription_status: entity.status,
+    raw_payload: (rawPayload as any) || null,
+    paid_at: now.toISOString(),
+    updated_at: now.toISOString(),
+  })
+
+  return { plan, phone }
+}
+
+async function updateSubscriptionStatus(entity: any, opts: { revokeNow: boolean }) {
+  const notes = entity?.notes || {}
+  const { orClauses } = subscriptionTargets(notes)
+  if (orClauses.length === 0) return
+  const update: Record<string, any> = { subscription_status: entity.status }
+  if (opts.revokeNow) {
+    // Payments permanently failed (halted): cut access now.
+    update.plan_active = false
+    update.plan = 'free'
+  }
+  // On plain cancellation we DON'T flip plan_active — the user keeps access
+  // until plan_expires_at (their paid period end), then it lapses naturally.
+  await supabase.from('users').update(update).or(orClauses.join(','))
 }
 
 function buildConfirmationMessage(plan: ReturnType<typeof getPlan>, name?: string): string {
@@ -83,6 +155,16 @@ Your plan is active right now — just keep chatting here as usual.
 Type *menu* to see everything I can do, or just ask me anything! 🧘`
 }
 
+async function notifyWhatsApp(phone: string | null, message: string, tag: string) {
+  if (!phone) return
+  const waPhone = phone.startsWith('+') ? phone : `+${phone.replace(/\D/g, '')}`
+  try {
+    await sendWhatsApp(waPhone, message)
+  } catch (waErr) {
+    console.error(`Webhook ${tag}: WhatsApp send failed:`, waErr)
+  }
+}
+
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
   const signature = req.headers.get('x-razorpay-signature') || ''
@@ -99,7 +181,9 @@ export async function POST(req: NextRequest) {
   }
 
   let body: any
-  try { body = JSON.parse(rawBody) } catch {
+  try {
+    body = JSON.parse(rawBody)
+  } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
@@ -107,6 +191,7 @@ export async function POST(req: NextRequest) {
   console.log('Webhook event:', event)
 
   try {
+    // ── One-time payment link paid (existing) ────────────────────────────────
     if (event === 'payment_link.paid') {
       const entity = body.payload?.payment_link?.entity
       const paymentEntity = body.payload?.payment?.entity
@@ -128,15 +213,57 @@ export async function POST(req: NextRequest) {
         rawPayload: body.payload,
       })
 
-      if (phone) {
-        const waPhone = phone.startsWith('+') ? phone : `+${phone.replace(/\D/g, '')}`
-        try { await sendWhatsApp(waPhone, buildConfirmationMessage(plan, name)) }
-        catch (waErr) { console.error('Webhook: WhatsApp confirmation failed:', waErr) }
-      }
-
+      await notifyWhatsApp(phone, buildConfirmationMessage(plan, name), 'payment_link.paid')
       return NextResponse.json({ ok: true, event, plan: planKey })
     }
 
+    // ── Subscription authorized & activated (first time) ──────────────────────
+    if (event === 'subscription.activated' || event === 'subscription.authenticated') {
+      const entity = body.payload?.subscription?.entity
+      if (!entity) return NextResponse.json({ ok: true })
+      const { plan, phone } = await activateSubscription(entity, body.payload)
+      await notifyWhatsApp(phone, buildConfirmationMessage(plan), 'subscription.activated')
+      return NextResponse.json({ ok: true, event, plan: plan.key })
+    }
+
+    // ── Subscription charged each cycle → extend access silently ──────────────
+    if (event === 'subscription.charged') {
+      const entity = body.payload?.subscription?.entity
+      if (!entity) return NextResponse.json({ ok: true })
+      const { plan } = await activateSubscription(entity, body.payload)
+      return NextResponse.json({ ok: true, event, plan: plan.key })
+    }
+
+    // ── Subscription cancelled / completed → keep access until period end ─────
+    if (event === 'subscription.cancelled' || event === 'subscription.completed') {
+      const entity = body.payload?.subscription?.entity
+      if (entity) await updateSubscriptionStatus(entity, { revokeNow: false })
+      return NextResponse.json({ ok: true, event })
+    }
+
+    // ── Subscription halted (payments permanently failed) → revoke now ────────
+    if (event === 'subscription.halted') {
+      const entity = body.payload?.subscription?.entity
+      if (entity) {
+        await updateSubscriptionStatus(entity, { revokeNow: true })
+        const phone = entity?.notes?.whatsapp_id || null
+        await notifyWhatsApp(
+          phone,
+          `⚠️ We couldn't renew your AskGogo subscription after a few tries, so it's paused.\n\nReply *upgrade* to set it up again. 🙏`,
+          'subscription.halted',
+        )
+      }
+      return NextResponse.json({ ok: true, event })
+    }
+
+    // ── Subscription pending (a renewal charge failed, retrying) → log only ───
+    if (event === 'subscription.pending') {
+      const entity = body.payload?.subscription?.entity
+      if (entity) await updateSubscriptionStatus(entity, { revokeNow: false })
+      return NextResponse.json({ ok: true, event })
+    }
+
+    // ── Direct payment captured (existing) ────────────────────────────────────
     if (event === 'payment.captured') {
       const payment = body.payload?.payment?.entity
       if (!payment) return NextResponse.json({ ok: true })
@@ -146,35 +273,34 @@ export async function POST(req: NextRequest) {
       const planKey = notes.plan || 'pro'
       const name = notes.name || 'AskGogo User'
 
-      if (phone || notes.telegram_id || notes.user_id) {
+      // Skip subscription-driven payments here — handled by subscription.charged.
+      if ((phone || notes.telegram_id || notes.user_id) && !payment.invoice_id) {
         const { plan } = await activateUserPlan({
-          phone, whatsappId: notes.whatsapp_id || phone,
-          telegramId: notes.telegram_id || null, userId: notes.user_id || null,
-          planKey, paymentId: payment.id, rawPayload: body.payload,
+          phone,
+          whatsappId: notes.whatsapp_id || phone,
+          telegramId: notes.telegram_id || null,
+          userId: notes.user_id || null,
+          planKey,
+          paymentId: payment.id,
+          rawPayload: body.payload,
         })
-        if (phone) {
-          const waPhone = phone.startsWith('+') ? phone : `+${phone.replace(/\D/g, '')}`
-          try { await sendWhatsApp(waPhone, buildConfirmationMessage(plan, name)) }
-          catch (waErr) { console.error('Webhook payment.captured: WA failed:', waErr) }
-        }
+        await notifyWhatsApp(phone, buildConfirmationMessage(plan, name), 'payment.captured')
       }
       return NextResponse.json({ ok: true, event })
     }
 
+    // ── Payment failed (existing) ─────────────────────────────────────────────
     if (event === 'payment.failed') {
       const payment = body.payload?.payment?.entity
       const notes = payment?.notes || {}
       const phone = payment?.contact || notes.whatsapp_id || null
       console.warn('Webhook payment.failed:', { id: payment?.id, phone, reason: payment?.error_description })
 
-      if (phone) {
-        const waPhone = phone.startsWith('+') ? phone : `+${phone.replace(/\D/g, '')}`
-        try {
-          await sendWhatsApp(waPhone,
-            `⚠️ Your payment didn't go through.\n\nPlease try again — type *upgrade* and I'll send you a fresh payment link. If the issue persists, just reply here and we'll sort it out. 🙏`
-          )
-        } catch (waErr) { console.error('Webhook payment.failed: WA failed:', waErr) }
-      }
+      await notifyWhatsApp(
+        phone,
+        `⚠️ Your payment didn't go through.\n\nPlease try again — type *upgrade* and I'll send you a fresh link. If the issue persists, just reply here and we'll sort it out. 🙏`,
+        'payment.failed',
+      )
       return NextResponse.json({ ok: true, event })
     }
 
@@ -183,4 +309,4 @@ export async function POST(req: NextRequest) {
     console.error('Webhook processing error:', err)
     return NextResponse.json({ ok: true, error: String(err) })
   }
-    }
+}

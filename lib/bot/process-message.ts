@@ -231,7 +231,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       const pattern = parsed ? (parsed as any).pattern : undefined
       let reply: string
       if (parsed && parsed.remindAtIso && pattern) {
-        await createReminder(resolvedUser.telegramId, resolvedUser.telegramId, parsed.remindAtIso, `[topic_digest] ${topic}`, pattern)
+        await createReminder(resolvedUser.telegramId, resolvedUser.telegramId, parsed.remindAtIso, `[topic_digest] ${topic}`, pattern, params.channel === 'whatsapp' ? resolvedUser.whatsappId : null)
         reply = `📂 Done — I'll send your *${topic}* digest ${rec}.`
       } else {
         reply = `Give me a schedule like "every Friday" or "every day". E.g. *send me my ${topic} bucket every friday*.`
