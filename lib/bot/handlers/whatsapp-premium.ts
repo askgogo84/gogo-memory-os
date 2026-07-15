@@ -79,46 +79,27 @@ Type or speak naturally. I’ll understand.`
 }
 
 export function buildUpgradeReply() {
-  return `💚 *AskGogo Pricing*
+  return `💚 *AskGogo Plans*
 
-Starting at ₹99/month — less than a cup of chai/day.
+Starting at ₹99/month — less than a cup of chai/day. Every plan comes with a *7-day free trial*, cancel anytime.
 
-*Free Beta*
-₹0
-• 25 AI actions/month
-• 3 active reminders
-• 5 voice notes/month
-
-*Lite*
-₹99/month
+*Lite* — ₹99/month
 • 60 AI actions/month
 • 5 active reminders
 • 10 voice notes/month
-• Weather, sports, lists and notes
 
-*Starter*
-₹149/month
+*Starter* — ₹149/month
 • 100 AI actions/month
 • 10 active reminders
 • 30 voice notes/month
-• Basic memory
 
-*Pro — most popular*
-₹299/month
+*Pro — most popular* — ₹199/month
 • 250 AI actions/month
-• Calendar integration
-• Today briefing
+• 50 active reminders
+• Calendar + daily briefing
 • Web search
 
-*Founder Pro*
-₹499/month
-• 600 AI actions/month
-• Priority access
-• Calendar power features
-
-Razorpay verification is in progress, so checkout is not live yet.
-
-Reply *notify me* to get early founder pricing.`
+Reply *lite*, *starter*, or *pro* and I'll send you a secure payment link. 🔒`
 }
 
 export function buildNotifyMeReply(userName?: string) {

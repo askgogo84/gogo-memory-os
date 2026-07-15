@@ -57,7 +57,7 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
   },
   pro: {
     label: 'Pro',
-    priceInr: 299,
+    priceInr: 199,
     monthlyActions: 250,
     dailyActions: 60,
     activeReminders: 50,
@@ -156,7 +156,7 @@ function recommendedPlan(tier: PlanKey) {
     return `Starter — ₹149/month\n100 AI actions/month\nMore voice notes and reminders.`
   }
   if (tier === 'starter') {
-    return `Pro — ₹299/month\n250 AI actions/month\nCalendar power features and deeper usage.`
+    return `Pro — ₹199/month\n250 AI actions/month\nCalendar power features and deeper usage.`
   }
   if (tier === 'pro') {
     return `Founder Pro — ₹499/month\n600 AI actions/month\nBest for power users.`
@@ -172,13 +172,11 @@ function buildLimitReachedMessage(params: {
   return (
     `⚡ *You’ve used today’s free beta quota*\n\n` +
     `You’re on the *${params.planLabel}* plan and have reached the ${params.limitLabel} limit of *${params.limitValue}*.\n\n` +
-    `AskGogo is still in founder beta while Razorpay checkout is being enabled.\n\n` +
-    `Going live soon:\n` +
+    `Upgrade to keep going:\n` +
     `• Lite — ₹99/month — 60 AI actions/month\n` +
     `• Starter — ₹149/month — 100 AI actions/month\n` +
-    `• Pro — ₹299/month — 250 AI actions/month\n` +
-    `• Founder Pro — ₹499/month — 600 AI actions/month\n\n` +
-    `Reply *notify me* to get early founder pricing.\n` +
+    `• Pro — ₹199/month — 250 AI actions/month\n\n` +
+    `Reply *upgrade* to pick a plan (7-day free trial).\n` +
     `Reply *usage* to see your current limits.`
   )
 }

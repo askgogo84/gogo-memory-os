@@ -21,6 +21,7 @@ import { setBriefingTime } from './handlers/briefing-settings'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
+import { parsePlanSelection, buildPlanCheckoutReply } from './handlers/plan-checkout'
 import { buildCalendarActionReply, createCalendarConflictEvent, isCalendarAction } from './handlers/calendar-actions'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
@@ -410,6 +411,22 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
+  // ── Plan selection → create a subscription link ──
+  {
+    const selectedPlan = parsePlanSelection(incomingText)
+    if (selectedPlan) {
+      const explicit = /^(subscribe|get|buy|choose|select|start)\b/i.test(incomingText.trim())
+      const recent = await getLatestFollowupState(resolvedUser.telegramId, 'plan_select')
+      const recentEnough = recent && (Date.now() - new Date(recent.created_at).getTime() < 30 * 60 * 1000)
+      if (explicit || recentEnough) {
+        const reply = await buildPlanCheckoutReply(resolvedUser, selectedPlan)
+        await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
+    }
+  }
+
   if (
     intent.type === 'welcome_menu' ||
     intent.type === 'help_menu' ||
@@ -421,6 +438,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     if (intent.type === 'notify_me') {
       await saveMemory(resolvedUser.telegramId, 'User asked to be notified for AskGogo founder pricing / paid plan launch.')
+    }
+    if (intent.type === 'upgrade_plan') {
+      await saveFollowupState(resolvedUser.telegramId, 'plan_select', { created_at: new Date().toISOString() })
     }
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
