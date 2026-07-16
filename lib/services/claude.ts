@@ -31,12 +31,22 @@ Current UTC ISO: ${isoNow}
 
 RULES:
 
-1. REMINDER: If user wants a reminder, output on FIRST LINE:
-   One-time:  REMINDER: [ISO datetime +05:30] | [message]
-   Recurring: REMINDER: [ISO datetime +05:30] | [message] | [pattern]
+1. REMINDER: If the user wants a reminder, output on the FIRST LINE:
+   One-time:  REMINDER: [ISO datetime +05:30] | [clean task label]
+   Recurring: REMINDER: [ISO datetime +05:30] | [clean task label] | [pattern]
+   The first datetime is the FIRST fire in IST (+05:30) - calculate it yourself from the current time above.
+   [clean task label] is a short action only (e.g. "Drink water", "Call the bank") - never include date/time words.
+   [pattern] MUST be exactly ONE of:
+     daily | weekly | monday | tuesday | wednesday | thursday | friday | saturday | sunday
+     every_Nh   (every N hours, e.g. every_2h)
+     every_Nd   (every N days, e.g. every_3d)
+     hourly_between:HH:MM-HH:MM   (every hour within an IST window, 24-hour clock)
    Examples:
-   "remind me in 2 minutes" -> REMINDER: 2026-04-20T09:45:00+05:30 | Reminder
-   "remind me every Monday at 9am" -> REMINDER: 2026-04-21T09:00:00+05:30 | Review goals | every Monday
+   "remind me in 2 minutes to stretch" -> REMINDER: 2026-07-16T15:47:00+05:30 | Stretch
+   "remind me every Monday at 9am to review goals" -> REMINDER: 2026-07-20T09:00:00+05:30 | Review goals | monday
+   "drink water every 1 hr from 9am to 9pm daily" -> REMINDER: 2026-07-17T09:00:00+05:30 | Drink water | hourly_between:09:00-21:00
+   "remind me every 2 hours to check the oven" -> REMINDER: 2026-07-16T17:00:00+05:30 | Check the oven | every_2h
+   "take medicine every 3 days" -> REMINDER: 2026-07-19T09:00:00+05:30 | Take medicine | every_3d
 
 2. MEMORY: If user wants to save a fact, output on FIRST LINE:
    MEMORY: [the fact]

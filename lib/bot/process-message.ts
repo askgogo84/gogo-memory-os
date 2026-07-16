@@ -508,6 +508,40 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
+  // Conversational parsing: recurring/complex phrasings that the regex chain
+  // mis-parses go to Claude first (it understands language). Simple one-time
+  // reminders still use the fast regex path below. Fail-safe: any error/decline
+  // falls through to the regex chain.
+  if (intent.type === 'set_reminder' && /\b(every|hourly|twice|between|from .+ to |each (day|week|mon|tue|wed|thu|fri|sat|sun))\b/i.test(incomingText)) {
+    try {
+      const cRaw = await askClaude(incomingText, [], [], resolvedUser.name, '')
+      const cParsed = parseClaudeResponse(cRaw)
+      if (cParsed.type === 'reminder' && cParsed.remindAt) {
+        const ms = Date.parse(cParsed.remindAt)
+        if (!isNaN(ms) && ms > Date.now() - 60000) {
+          const normalizePat = (raw?: string): string | undefined => {
+            if (!raw) return undefined
+            const s = raw.toLowerCase().trim()
+            const hb = s.match(/hourly_between:\d{2}:\d{2}-\d{2}:\d{2}/); if (hb) return hb[0]
+            const en = s.match(/^every_(\d+)([hd])\b/); if (en) return `every_${en[1]}${en[2]}`
+            let mm = s.match(/every\s*(\d+)\s*hours?/); if (mm) return `every_${mm[1]}h`
+            mm = s.match(/every\s*(\d+)\s*days?/); if (mm) return `every_${mm[1]}d`
+            for (const d of ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']) if (s.includes(d)) return d
+            if (s.includes('week')) return 'weekly'
+            if (s.includes('day') || s === 'daily') return 'daily'
+            return undefined
+          }
+          const pat = normalizePat(cParsed.pattern)
+          await createReminder(resolvedUser.telegramId, resolvedUser.telegramId, cParsed.remindAt, cParsed.message, pat, params.channel === 'whatsapp' ? resolvedUser.whatsappId : null)
+          const conf = buildReminderConfirmation({ kind: pat ? 'recurring' : 'one_time', remindAtIso: new Date(ms).toISOString(), message: cParsed.message, pattern: pat } as any)
+          const rr = styleReplyByIntent('set_reminder', conf)
+          await saveConversation(resolvedUser.telegramId, 'assistant', rr)
+          return { text: formatOutgoingText(params.channel, rr), resolvedUser }
+        }
+      }
+    } catch (e) { console.error('Claude-first reminder parse failed, falling back to regex:', e) }
+  }
+
   const eagerReminder = parseReminderIntent(incomingText)
 
   if (eagerReminder && intent.type === 'set_reminder') {
