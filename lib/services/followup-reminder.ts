@@ -97,6 +97,7 @@ function buildMessage(t: string, contact?: string, about?: string): string {
 
 function stripToTask(t: string): string {
   return t
+    .replace(/["'\u201c\u201d\u2018\u2019]/g, '')
     .replace(/^\s*(please\s+)?/i, '')
     .replace(/keep reminding me\s*/i, '')
     .replace(/\bnag me\s*/i, '')

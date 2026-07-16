@@ -226,23 +226,39 @@ export async function getLatestPendingReminder(telegramId: number) {
 }
 
 export async function getLatestActionableReminder(telegramId: number) {
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  const now = Date.now()
+  const firedCut = new Date(now - 6 * 60 * 60 * 1000).toISOString()
+  const createdCut = new Date(now - 60 * 60 * 1000).toISOString()
+  const cols = 'id, message, remind_at, sent, sent_at, created_at, recurring_pattern'
 
-  const { data } = await supabaseAdmin
-    .from('reminders')
-    .select('id, message, remind_at, sent, created_at')
-    .eq('telegram_id', telegramId)
-    .gte('created_at', oneHourAgo)
-    .order('created_at', { ascending: false })
-    .limit(1)
+  // The reminder that most recently NUDGED the user.
+  const { data: fired } = await supabaseAdmin
+    .from('reminders').select(cols)
+    .eq('telegram_id', telegramId).not('sent_at', 'is', null).gte('sent_at', firedCut)
+    .order('sent_at', { ascending: false }).limit(1)
 
-  return data?.[0] || null
+  // The reminder the user most recently SET.
+  const { data: created } = await supabaseAdmin
+    .from('reminders').select(cols)
+    .eq('telegram_id', telegramId).gte('created_at', createdCut)
+    .order('created_at', { ascending: false }).limit(1)
+
+  const f = fired?.[0], cr = created?.[0]
+  if (f && cr) return new Date(f.sent_at).getTime() >= new Date(cr.created_at).getTime() ? f : cr
+  return f || cr || null
+}
+
+// When a follow-up is marked done, cancel its pending next nudge so the chain stops.
+async function cancelFollowupChain(telegramId: number, pattern: string | null | undefined) {
+  if (!pattern || !String(pattern).startsWith('followup:')) return
+  await supabaseAdmin.from('reminders').update({ sent: true })
+    .eq('telegram_id', telegramId).eq('recurring_pattern', pattern).eq('sent', false)
 }
 
 export async function getActiveReminders(telegramId: number, limit = 10) {
   const { data } = await supabaseAdmin
     .from('reminders')
-    .select('id, message, remind_at, sent, created_at')
+    .select('id, message, remind_at, sent, sent_at, created_at, recurring_pattern')
     .eq('telegram_id', telegramId)
     .eq('sent', false)
     .order('remind_at', { ascending: true })
@@ -350,6 +366,8 @@ export async function markLatestReminderDone(telegramId: number, input?: string)
   if (!ok) {
     return `I couldn't mark that reminder done right now.`
   }
+
+  await cancelFollowupChain(telegramId, reminder.recurring_pattern)
 
   return `✅ *Marked done*\n\n${cleanReminderName(reminder.message)}`
 }
