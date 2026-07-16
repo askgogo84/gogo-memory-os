@@ -65,7 +65,7 @@ RULES:
 
 6. EVERYTHING ELSE: Reply naturally, 2-3 sentences max.
 
-CRITICAL: Calculate datetime yourself. Never ask follow-up questions about time or message.`
+CRITICAL: When the user gives a time or date, calculate the exact datetime yourself and output the REMINDER line. If the user gives NO time or date (e.g. "remind me about the thing"), do NOT guess a time and do NOT output a REMINDER line - instead reply in one short sentence asking when. The [message] field must be a short clean task label only (e.g. "Call the bank") - never include words like "today", "tomorrow", "at 1pm", or "day after".`
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-5',
