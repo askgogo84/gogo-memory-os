@@ -19,6 +19,7 @@ export type CalMutResult = { handled: boolean; reply: string }
 // ── Intent detection ─────────────────────────────────────────────────────────
 export function isCalendarMutation(text: string): boolean {
   const t = (text || '').toLowerCase()
+  if (/\breminders?\b/.test(t)) return false // "cancel my X reminder" stays with the reminder editor
   const verb = /\b(move|reschedule|resched|postpone|push|shift|change|cancel|delete|remove|clear)\b/.test(t)
   const obj = /\b(meeting|event|appointment|appt|call|calendar|standup|sync|session|slot)\b/.test(t)
   // "move my 3pm to 4pm" (has a time + move verb) also qualifies without an explicit object noun

@@ -356,7 +356,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
-  if (intent.type === 'edit_reminder') {
+  // "cancel the standup" / "move my 3pm meeting" name a calendar object -> skip the
+  // reminder editor and fall through to the calendar-mutation dispatch below.
+  // Bare "move it to 8 pm" (reminder nudge quick-action) has no such noun and stays here.
+  const namesCalendarObject = /\b(meeting|event|appointment|appt|standup|sync|session|slot|calendar)\b/i.test(incomingText)
+  if (intent.type === 'edit_reminder' && !(isCalendarMutation(incomingText) && namesCalendarObject)) {
     const reply = await editLatestReminder(resolvedUser.telegramId, incomingText)
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
