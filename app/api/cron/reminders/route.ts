@@ -25,6 +25,15 @@ function getNextOccurrence(pattern: string, fromDate: Date): Date {
   const next = new Date(fromDate)
   const lower = pattern.toLowerCase()
 
+  // Follow-up cadence: followup:<interval>:<message>  e.g. followup:2h:..., followup:1d:...
+  const fu = lower.match(/^followup:(\d+)(h|d):/)
+  if (fu) {
+    const n = parseInt(fu[1], 10)
+    if (fu[2] === 'h') next.setHours(next.getHours() + n)
+    else next.setDate(next.getDate() + n)
+    return next
+  }
+
   if (lower.includes('hourly_between')) { next.setHours(next.getHours() + 1); return next }
   if (lower.includes('every day') || lower.includes('daily')) next.setDate(next.getDate() + 1)
   else if (lower.includes('every week') || lower.includes('weekly')) next.setDate(next.getDate() + 7)
@@ -220,13 +229,11 @@ export async function GET(req: Request) {
       }
 
       if (reminder.is_recurring && reminder.recurring_pattern) {
+        const isFu = String(reminder.recurring_pattern).startsWith('followup:')
         const nextDate = getNextOccurrence(reminder.recurring_pattern, new Date(reminder.remind_at))
-        const { error: recurError } = await supabaseAdmin.from('reminders').insert({
+        const baseInsert: any = {
           telegram_id: reminder.telegram_id,
           chat_id: reminder.chat_id,
-          // Carry the delivery target + zone forward; fall back to the resolved
-          // number / the user's saved timezone so a null parent doesn't poison
-          // the whole recurrence chain.
           whatsapp_to: reminder.whatsapp_to || whatsappTo || null,
           message: reminder.message,
           remind_at: nextDate.toISOString(),
@@ -234,8 +241,27 @@ export async function GET(req: Request) {
           is_recurring: true,
           recurring_pattern: reminder.recurring_pattern,
           timezone: reminder.timezone || (await resolveUserTimezone(reminder.telegram_id)),
-        })
-        if (recurError) console.error('RECURRING_REMINDER_INSERT_FAILED:', reminder.id, recurError.message)
+        }
+        if (isFu) {
+          // Safety cap: stop after ~7 days or 20 nudges so we never spam.
+          const startedAt = reminder.followup_started_at ? new Date(reminder.followup_started_at) : new Date()
+          const nudgeCount = (reminder.nudge_count || 0) + 1
+          const daysElapsed = (Date.now() - startedAt.getTime()) / 86400000
+          if (nudgeCount >= 20 || daysElapsed >= 7) {
+            const label = String(reminder.message || 'that').replace(/^follow up (with|about)\s*/i, '').trim()
+            if (whatsappTo) {
+              try { await sendWhatsApp(whatsappTo, `\ud83d\udd15 I've reminded you several times about *${label}* \u2014 I'll stop nagging now so I don't spam you. Just ask me to set it again anytime.`) } catch (e) { console.error('FOLLOWUP_STOP_MSG_FAILED:', e) }
+            }
+          } else {
+            baseInsert.nudge_count = nudgeCount
+            baseInsert.followup_started_at = startedAt.toISOString()
+            const { error: recurError } = await supabaseAdmin.from('reminders').insert(baseInsert)
+            if (recurError) console.error('FOLLOWUP_REMINDER_INSERT_FAILED:', reminder.id, recurError.message)
+          }
+        } else {
+          const { error: recurError } = await supabaseAdmin.from('reminders').insert(baseInsert)
+          if (recurError) console.error('RECURRING_REMINDER_INSERT_FAILED:', reminder.id, recurError.message)
+        }
       }
 
       await markReminderSent(reminder.id)
