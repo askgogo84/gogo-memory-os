@@ -129,6 +129,8 @@ function parseTimePart(input: string): { hour: number; minute: number } | null {
     .replace(/\baround\s+/gi, '')
     .replace(/\babout\s+/gi, '')
 
+  if (/\b(noon|midday)\b/i.test(raw)) return { hour: 12, minute: 0 }
+  if (/\bmidnight\b/i.test(raw)) return { hour: 0, minute: 0 }
   const compact = raw.match(/\b(\d{3,4})\s*(am|pm)\b/i)
   if (compact) {
     const digits = compact[1]
@@ -381,6 +383,17 @@ function parseEveryNRecurring(text: string): ParsedReminder {
   }
 }
 
+function parseTodayReminder(text: string): ParsedReminder {
+  if (!/\btoday\b/i.test(text)) return null
+  if (getAmbiguousReminderTime(text)) return null
+  const time = parseTimePart(text)
+  if (!time) return null
+  const nowIst = istNowParts()
+  const when = istWallTimeToUtcDate(nowIst.year, nowIst.month, nowIst.day, time.hour, time.minute)
+  if (when.getTime() <= Date.now()) return null
+  return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text) }
+}
+
 function parseTomorrowReminder(text: string): ParsedReminder {
   if (!/\b(tomorrow|tmrw|tmr)\b/i.test(text)) return null
   if (getAmbiguousReminderTime(text)) return null
@@ -574,7 +587,7 @@ function parseAbsoluteDateReminder(text: string): ParsedReminder {
 }
 
 export function parseReminderIntent(text: string): ParsedReminder {
-  return parseDailyRecurring(text) || parseEveryNRecurring(text) || parseRelativeReminder(text) || parseTomorrowReminder(text) || parseSpecificWeekdayReminder(text) || parseWeekdayRecurring(text) || parseHourlyWindowRecurring(text) || parseAbsoluteDateReminder(text) || parseSimpleAtTime(text) || null
+  return parseDailyRecurring(text) || parseEveryNRecurring(text) || parseRelativeReminder(text) || parseTomorrowReminder(text) || parseTodayReminder(text) || parseSpecificWeekdayReminder(text) || parseWeekdayRecurring(text) || parseHourlyWindowRecurring(text) || parseAbsoluteDateReminder(text) || parseSimpleAtTime(text) || null
 }
 
 export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>): string {

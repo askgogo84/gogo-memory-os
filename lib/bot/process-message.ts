@@ -526,6 +526,25 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   // Reminder intent detected but no specific time parsed - ask only for time
   if (!eagerReminder && intent.type === 'set_reminder') {
+    // Regex couldn't parse the time — let Claude resolve it (it computes the
+    // datetime itself and handles natural phrasings). Fail-safe: any error
+    // falls through to the clarifying question below.
+    try {
+      const llmRaw = await askClaude(incomingText, [], [], resolvedUser.name, '')
+      const llmParsed = parseClaudeResponse(llmRaw)
+      if (llmParsed.type === 'reminder' && llmParsed.remindAt) {
+        const ms = Date.parse(llmParsed.remindAt)
+        if (!isNaN(ms) && ms > Date.now() - 60000) {
+          await createReminder(resolvedUser.telegramId, resolvedUser.telegramId, llmParsed.remindAt, llmParsed.message, llmParsed.pattern, params.channel === 'whatsapp' ? resolvedUser.whatsappId : null)
+          const confirmation = buildReminderConfirmation({ kind: llmParsed.pattern ? 'recurring' : 'one_time', remindAtIso: new Date(ms).toISOString(), message: llmParsed.message, pattern: llmParsed.pattern } as any)
+          const rr = styleReplyByIntent('set_reminder', confirmation)
+          await saveConversation(resolvedUser.telegramId, 'assistant', rr)
+          return { text: formatOutgoingText(params.channel, rr), resolvedUser }
+        }
+      }
+    } catch (llmErr) {
+      console.error('LLM reminder fallback failed, asking instead:', llmErr)
+    }
     const lower = incomingText.toLowerCase()
     const hasDate = /\b(\d{1,2})(st|nd|rd|th)\b|every month|monthly|every week|weekly|every day|daily/i.test(lower)
     const dayMatch = lower.match(/\b(\d{1,2})(?:st|nd|rd|th)\b/)
