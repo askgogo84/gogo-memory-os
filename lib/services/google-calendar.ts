@@ -105,3 +105,60 @@ export async function getTodayEvents(accessToken: string): Promise<any[]> {
   const data = await response.json()
   return data.items || []
 }
+// ── Bidirectional: list / update / delete ────────────────────────────────────
+
+// Upcoming events across a window (default 7 days) WITH ids — needed to find the
+// specific event a user means ("my 3pm meeting", "the dentist appointment").
+export async function listUpcomingEvents(accessToken: string, days = 7): Promise<any[]> {
+  const now = new Date()
+  const timeMax = new Date(now.getTime() + days * 24 * 60 * 60 * 1000)
+  const params = new URLSearchParams({
+    timeMin: now.toISOString(),
+    timeMax: timeMax.toISOString(),
+    singleEvents: 'true',
+    orderBy: 'startTime',
+    maxResults: '50',
+  })
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  )
+  const data = await response.json()
+  return data.items || []
+}
+
+// PATCH: only the fields provided change (title, time, location).
+export async function updateCalendarEvent(
+  accessToken: string,
+  eventId: string,
+  patch: { summary?: string; startTime?: string; endTime?: string; location?: string }
+): Promise<{ ok: boolean; event?: any; error?: string }> {
+  const body: any = {}
+  if (patch.summary) body.summary = patch.summary
+  if (patch.startTime) body.start = { dateTime: patch.startTime, timeZone: 'Asia/Kolkata' }
+  if (patch.endTime) body.end = { dateTime: patch.endTime, timeZone: 'Asia/Kolkata' }
+  if (patch.location) body.location = patch.location
+
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+  )
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) return { ok: false, error: data?.error?.message || `HTTP ${response.status}` }
+  return { ok: true, event: data }
+}
+
+// DELETE a single event. 410 = already gone, treated as success.
+export async function deleteCalendarEvent(accessToken: string, eventId: string): Promise<{ ok: boolean; error?: string }> {
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } }
+  )
+  if (response.ok || response.status === 410) return { ok: true }
+  const data = await response.json().catch(() => ({}))
+  return { ok: false, error: data?.error?.message || `HTTP ${response.status}` }
+}

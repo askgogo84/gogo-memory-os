@@ -23,6 +23,7 @@ import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { parsePlanSelection, buildPlanCheckoutReply } from './handlers/plan-checkout'
 import { buildCalendarActionReply, createCalendarConflictEvent, isCalendarAction } from './handlers/calendar-actions'
+import { isCalendarMutation, isCalendarMutationConfirm, buildCalendarMutationReply, confirmCalendarMutation } from './handlers/calendar-mutations'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
@@ -469,6 +470,27 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const reply = await buildPlanMyDayReply(resolvedUser.telegramId, resolvedUser.name)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  // Calendar mutation confirm (yes / pick a number) — only when one is pending.
+  {
+    const pendingCalMut = await getLatestFollowupState(resolvedUser.telegramId, 'calendar_mutation')
+    if (pendingCalMut && isCalendarMutationConfirm(incomingText)) {
+      const reply = await confirmCalendarMutation(resolvedUser.telegramId, incomingText, pendingCalMut.payload)
+      if (reply) {
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
+    }
+  }
+
+  // Calendar mutation: move / reschedule / cancel an event (confirms before mutating).
+  if (isCalendarMutation(incomingText)) {
+    const mut = await buildCalendarMutationReply(resolvedUser.telegramId, incomingText)
+    if (mut.handled) {
+      await saveConversation(resolvedUser.telegramId, 'assistant', mut.reply)
+      return { text: formatOutgoingText(params.channel, mut.reply), resolvedUser }
+    }
   }
 
   if (isCalendarAction(incomingText)) {
