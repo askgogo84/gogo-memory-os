@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { sendWhatsApp } from '@/lib/whatsapp'
+import { sendWhatsApp, sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -231,7 +231,17 @@ export async function GET(req: Request) {
               // Fallback: send a nudge if briefing API fails
               await sendWhatsApp(whatsappTo, '🌅 Good morning! Type *morning* to get your daily briefing.')
             }
+          } else if (digestTopic) {
+            // Topic digests are rich dynamic content - freeform (in-session only for now).
+            await sendWhatsApp(whatsappTo, reminderText)
+          } else if (process.env.TWILIO_REMINDER_CONTENT_SID) {
+            // Reminders are business-initiated: ALWAYS use the approved utility
+            // template. Freeform outside the 24h window is accepted then dropped
+            // async with 63016 (uncatchable) - the Jul 19 outage.
+            const reminderLabel = msgRaw.replace(/^to\s+/i, '')
+            await sendWhatsAppReminderTemplate(whatsappTo, reminderLabel)
           } else {
+            console.warn('NO_REMINDER_TEMPLATE_SID: freeform send - will NOT deliver outside the 24h window')
             await sendWhatsApp(whatsappTo, reminderText)
           }
           results.push({ id: reminder.id, channel: 'whatsapp', to: whatsappTo, message: msgRaw, status: 'sent', isBriefing })

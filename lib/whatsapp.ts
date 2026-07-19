@@ -130,6 +130,25 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
   return lastMessage
 }
 
+// Business-initiated send via an approved WhatsApp utility template.
+// Outside the 24h customer-service window, freeform sends are ACCEPTED by
+// Twilio but dropped asynchronously with error 63016 (invisible to try/catch)
+// - the Jul 19 outage. Templates are the only reliable business-initiated path.
+export async function sendWhatsAppReminderTemplate(toNumber: string, label: string) {
+  const contentSid = process.env.TWILIO_REMINDER_CONTENT_SID
+  if (!contentSid) throw new Error('Missing TWILIO_REMINDER_CONTENT_SID')
+  const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
+  const to = normalizeWhatsAppAddress(toNumber)
+  const message = await client.messages.create({
+    from,
+    to,
+    contentSid,
+    contentVariables: JSON.stringify({ '1': String(label || 'your task').slice(0, 400) }),
+  })
+  console.log('WHATSAPP_TEMPLATE_SENT:', { sid: message.sid, to, status: message.status })
+  return message
+}
+
 export async function sendWhatsAppTypingIndicator(messageSid?: string | null) {
   const sid = (messageSid || '').trim()
 
