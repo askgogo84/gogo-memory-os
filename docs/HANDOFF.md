@@ -20,6 +20,11 @@ meeting notes, translation, skin check).
 - **Line endings:** repo is CRLF; git shows LF→CRLF warnings on new files — harmless.
 - **Verify features live:** the reminder/embedding/routing pipeline hides bugs until run on real WhatsApp. Always give the user a copy-paste test after each deploy.
 
+## 2b. Cron & scheduling (CRITICAL ops gotcha)
+- **The reminder/briefing crons are driven by an EXTERNAL scheduler, NOT Vercel Cron.** A **cron-job.org** job pings the routes over HTTP using the `?secret=<CRON_SECRET>` query param — that's why both `/api/cron/reminders` and `/api/cron/daily-briefings` accept `?secret=` in addition to the `Authorization: Bearer` header. The real firing cadence (e.g. hourly) lives in the **cron-job.org dashboard**, which is **not in this repo**.
+- **`vercel.json` crons are effectively a fallback / are misleading.** The `"/api/cron/reminders": "0 2 * * *"` (daily) entry does NOT match observed behaviour — hourly `hourly_between` reminders (e.g. drink-water 9am–9pm) only work because the external job pings far more often than daily. Don't trust `vercel.json` schedules as the source of truth for when things actually fire.
+- **⚠️ Single point of failure, UNMONITORED.** If the cron-job.org job is paused, deleted, hits a billing/quota issue, or its `?secret=` drifts from `CRON_SECRET`, **ALL reminders and briefings stop silently** — no error, no alert, users just stop hearing from the bot. There is currently no heartbeat/dead-man's-switch on this. Treat "reminders stopped" incidents by checking the external scheduler FIRST.
+
 ## 3. Architecture — message routing (where bugs hide)
 Inbound WhatsApp → `app/api/webhooks/whatsapp/route.ts`. Order matters; earlier handlers win:
 1. throwback keep/forget · preference-forget · **bucket save/share** (`handleBucketCommand`) — these run BEFORE `routeFeatureIntent`
