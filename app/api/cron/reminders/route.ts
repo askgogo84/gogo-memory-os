@@ -21,6 +21,34 @@ function isAuthorized(req: Request) {
   return querySecret === expected || bearerSecret === expected
 }
 
+// Context emoji for a reminder label. First keyword match wins; order matters
+// (health/celebration before generic). Prefixes the label so the icon rides
+// inside the template {{1}} variable and shows on out-of-session sends too.
+function pickReminderEmoji(label: string): string {
+  const s = (label || '').toLowerCase()
+  const rules: [RegExp, string][] = [
+    [/\b(medicine|medication|meds|pill|tablet|dose|insulin|vitamins?|syrup|antibiotic)\b/, '💊'],
+    [/\b(doctor|dentist|clinic|hospital|checkup|check[- ]?up|physio)\b/, '🩺'],
+    [/\b(birthday|anniversary|bday)\b/, '🎂'],
+    [/\b(plant|plants|garden|watering the)\b/, '🌱'],
+    [/\b(drink water|water|hydrate|hydration)\b/, '💧'],
+    [/\b(call|phone|ring|dial)\b/, '📞'],
+    [/\b(pay|payment|bill|emi|rent|invoice|recharge|premium|installment|instalment|due)\b/, '💰'],
+    [/\b(flight|airport|travel|trip|boarding|check[- ]?in|pnr|departure)\b/, '✈️'],
+    [/\b(gym|workout|exercise|run|running|walk|jog|yoga|training|cardio)\b/, '🏋️'],
+    [/\b(lunch|dinner|breakfast|meal|eat|food|cook)\b/, '🍽️'],
+    [/\b(email|mail|reply|inbox)\b/, '📧'],
+    [/\b(buy|shop|shopping|grocery|groceries|order|pick up|pickup|purchase)\b/, '🛒'],
+    [/\b(meditate|meditation|sleep|rest|wind down|bedtime|bed)\b/, '🧘'],
+    [/\b(meeting|appointment|appt|standup|sync|interview|catch up)\b/, '📅'],
+    [/\b(study|homework|assignment|exam|revise|revision|class|lecture)\b/, '🎓'],
+    [/\b(submit|report|deadline|presentation|deck)\b/, '💼'],
+    [/\b(dog|cat|pet|feed the|vet)\b/, '🐶'],
+  ]
+  for (const [re, emoji] of rules) if (re.test(s)) return emoji
+  return '⏰'
+}
+
 function getNextOccurrence(pattern: string, fromDate: Date): Date {
   const next = new Date(fromDate)
   const lower = pattern.toLowerCase()
@@ -198,7 +226,7 @@ export async function GET(req: Request) {
     // Build the reminder text
     let reminderText = isFollowup
       ? `🔔 *Follow-up reminder*\n\n📋 ${msgRaw}\n\nDid you hear back?\n• Reply *done* — mark as resolved\n• Reply *snooze 2 days* — remind again later\n• Reply *snooze friday* — remind on Friday`
-      : `⏰ *Reminder*\n\n${msgRaw.replace(/^to\s+/i, '')}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''}`
+      : (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); const emo = pickReminderEmoji(lbl); return `${emo} *Reminder*\n\n${emo} ${lbl}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''}` })()
     // An empty topic-digest bucket has nothing worth sending. Skip the send
     // (but still consume/reschedule the reminder below) rather than messaging
     // the user "Nothing saved in this bucket yet."
@@ -238,7 +266,7 @@ export async function GET(req: Request) {
             // Reminders are business-initiated: ALWAYS use the approved utility
             // template. Freeform outside the 24h window is accepted then dropped
             // async with 63016 (uncatchable) - the Jul 19 outage.
-            const reminderLabel = msgRaw.replace(/^to\s+/i, '')
+            const reminderLabel = (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); return `${pickReminderEmoji(lbl)} ${lbl}` })()
             await sendWhatsAppReminderTemplate(whatsappTo, reminderLabel)
           } else {
             console.warn('NO_REMINDER_TEMPLATE_SID: freeform send - will NOT deliver outside the 24h window')
