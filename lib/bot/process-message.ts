@@ -31,6 +31,7 @@ import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPla
 import { indexMemory } from '@/lib/services/memory-index'
 import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePreference, listPreferences, forgetPreference, getPreferenceBlock, MAX_RULES } from '@/lib/bot/handlers/preferences'
 import { detectFriendReminder, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, FRIEND_DAILY_CAP, cap0 } from '@/lib/bot/handlers/friend-reminders'
+import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
 import { detectShareIntent, hasTopic, resolveRecipientTelegramId, grantShare } from '@/lib/bot/handlers/shared-memory'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
@@ -222,6 +223,19 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const incomingText = (params.text || '').trim()
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
+
+  // ── CreditIQ account linking ────────────────────────────────────────────────
+  // High-priority, prefixed-code intent. WhatsApp-only; must run before the
+  // friend-reminder number handling and before usage metering. The raw 6-digit
+  // code is redacted from saved conversation history.
+  if (intent.type === 'creditiq_link') {
+    const code = String(intent.meta?.code || '')
+    const senderKey = normalizePhoneNumber(resolvedUser.whatsappId || '')
+    const reply = await handleCreditIqLink({ channel: params.channel, senderKey, code })
+    await saveConversation(resolvedUser.telegramId, 'user', 'link creditiq [redacted]')
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
 
   // Topic digest schedule (#18): "send me my <topic> bucket every friday"
   {

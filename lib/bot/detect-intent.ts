@@ -26,6 +26,7 @@ export type IntentType =
   | 'nutrition_log'
   | 'nutrition_query'
   | 'media_memory'
+  | 'creditiq_link'
   | 'general_chat'
 
 export type DetectedIntent = {
@@ -64,6 +65,12 @@ export function detectIntent(text: string): DetectedIntent {
   if (!lower) return { type: 'general_chat', confidence: 'low' }
   if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) return { type: 'welcome_menu', confidence: 'high' }
   if (lower === 'help' || lower === '/help' || lower === 'menu' || lower === 'commands' || lower === 'what can you do') return { type: 'help_menu', confidence: 'high' }
+
+  // CreditIQ account linking — high-priority, PREFIXED 6-digit code only (never a bare number).
+  {
+    const cq = lower.match(/^link\s+creditiq\s+(\d{6})$/) || lower.match(/^creditiq\s+(?:link\s+)?(\d{6})$/)
+    if (cq) return { type: 'creditiq_link', confidence: 'high', meta: { code: cq[1] } }
+  }
 
   if (lower === 'pricing' || lower === 'price' || lower === 'plans' || lower === 'plan' || lower === 'upgrade' || lower === '/upgrade' || lower === 'payment' || lower === 'payments' || lower === 'subscribe' || lower === 'razorpay' || lower === 'paid plan') return { type: 'upgrade_plan', confidence: 'high' }
 
