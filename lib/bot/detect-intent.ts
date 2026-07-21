@@ -27,6 +27,7 @@ export type IntentType =
   | 'nutrition_query'
   | 'media_memory'
   | 'creditiq_link'
+  | 'creditiq_cards'
   | 'general_chat'
 
 export type DetectedIntent = {
@@ -71,6 +72,17 @@ export function detectIntent(text: string): DetectedIntent {
     const cq = lower.match(/^link\s+creditiq\s+(\d{6})$/) || lower.match(/^creditiq\s+(?:link\s+)?(\d{6})$/)
     if (cq) return { type: 'creditiq_link', confidence: 'high', meta: { code: cq[1] } }
   }
+
+  // CreditIQ portfolio ("show my cards"). Anchored, tight — must NOT catch unrelated
+  // "card" mentions (business cards, nutrition cards, "save this card").
+  if (
+    /^(show\s+)?my\s+(credit\s+)?cards$/.test(lower) ||
+    /^show\s+cards$/.test(lower) ||
+    /^(show\s+)?my\s+portfolio$/.test(lower) ||
+    /^(show\s+)?my\s+(reward\s+)?points$/.test(lower) ||
+    /^(show\s+)?my\s+creditiq$/.test(lower) ||
+    /^creditiq\s+(cards|portfolio|points)$/.test(lower)
+  ) return { type: 'creditiq_cards', confidence: 'high' }
 
   if (lower === 'pricing' || lower === 'price' || lower === 'plans' || lower === 'plan' || lower === 'upgrade' || lower === '/upgrade' || lower === 'payment' || lower === 'payments' || lower === 'subscribe' || lower === 'razorpay' || lower === 'paid plan') return { type: 'upgrade_plan', confidence: 'high' }
 

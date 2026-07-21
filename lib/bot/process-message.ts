@@ -32,6 +32,7 @@ import { indexMemory } from '@/lib/services/memory-index'
 import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePreference, listPreferences, forgetPreference, getPreferenceBlock, MAX_RULES } from '@/lib/bot/handlers/preferences'
 import { detectFriendReminder, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, FRIEND_DAILY_CAP, cap0 } from '@/lib/bot/handlers/friend-reminders'
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
+import { handleCreditIqCards } from '@/lib/bot/handlers/creditiq-cards'
 import { detectShareIntent, hasTopic, resolveRecipientTelegramId, grantShare } from '@/lib/bot/handlers/shared-memory'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
@@ -233,6 +234,17 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const senderKey = normalizePhoneNumber(resolvedUser.whatsappId || '')
     const reply = await handleCreditIqLink({ channel: params.channel, senderKey, code })
     await saveConversation(resolvedUser.telegramId, 'user', 'link creditiq [redacted]')
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  // ── CreditIQ portfolio ("show my cards") ────────────────────────────────────
+  // Reads the linked portfolio via wa_creditiq_links → consumer /wa/portfolio.
+  // Runs before usage metering; deterministic not-linked path (no LLM guess).
+  if (intent.type === 'creditiq_cards') {
+    const senderKey = normalizePhoneNumber(resolvedUser.whatsappId || '')
+    const reply = await handleCreditIqCards({ senderKey })
+    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
