@@ -13,6 +13,7 @@ export interface FlightInfo {
     airline: string
     flightNo: string
     pnr: string
+    seat?: string
   }>
   passengers: string[]
 }
@@ -23,9 +24,11 @@ export interface TrainInfo {
   to: string
   date: string
   departure: string
+  arrival?: string
   trainNo: string
   trainName: string
   pnr: string
+  seat?: string
   passengers: string[]
 }
 
@@ -38,6 +41,32 @@ export interface EventInfo {
 }
 
 export type TicketInfo = FlightInfo | TrainInfo | EventInfo | null
+
+// Shared extraction prompt for both PDF (document) and image (photo) tickets.
+const TICKET_EXTRACT_PROMPT = `Extract all travel details from this ticket and return ONLY valid JSON. No markdown, no explanation.
+
+If FLIGHT:
+{"type":"flight","flights":[{"from":"City","to":"City","date":"15 May 2026","departure":"14:50","arrival":"17:15","airline":"IndiGo","flightNo":"6E123","pnr":"XCDZFN","seat":"14C"}],"passengers":["Full Name"]}
+
+If TRAIN:
+{"type":"train","from":"City","to":"City","date":"15 May 2026","departure":"14:50","arrival":"20:10","trainNo":"12345","trainName":"Train Name","pnr":"ABC123","seat":"B2-34","passengers":["Name"]}
+
+If EVENT:
+{"type":"event","name":"Event Name","date":"15 May 2026","time":"18:00","venue":"Venue"}
+
+Extract ALL flights for round-trips. Extract ALL passenger names. Include seat and arrival when present (omit the field if unknown). Return ONLY the JSON. If this is NOT a flight, train, or event ticket, return exactly: null`
+
+function parseTicketJson(text: string): TicketInfo {
+  const clean = text.replace(/```json|```/g, '').trim()
+  console.log('[ticket-reader] Claude response:', clean.slice(0, 400))
+  if (!clean || clean.toLowerCase() === 'null') return null
+  try {
+    return JSON.parse(clean) as TicketInfo
+  } catch {
+    console.error('[ticket-reader] JSON parse failed:', clean)
+    return null
+  }
+}
 
 /**
  * Download PDF from Twilio URL and parse it using Claude's native PDF support
@@ -82,18 +111,7 @@ export async function parsePdfTicket(
           } as never,
           {
             type: 'text',
-            text: `Extract all travel details from this ticket and return ONLY valid JSON. No markdown, no explanation.
-
-If FLIGHT:
-{"type":"flight","flights":[{"from":"City","to":"City","date":"15 May 2026","departure":"14:50","arrival":"17:15","airline":"IndiGo","flightNo":"6E123","pnr":"XCDZFN"}],"passengers":["Full Name"]}
-
-If TRAIN:
-{"type":"train","from":"City","to":"City","date":"15 May 2026","departure":"14:50","trainNo":"12345","trainName":"Train Name","pnr":"ABC123","passengers":["Name"]}
-
-If EVENT:
-{"type":"event","name":"Event Name","date":"15 May 2026","time":"18:00","venue":"Venue"}
-
-Extract ALL flights for round-trips. Extract ALL passenger names. Return ONLY the JSON.`,
+            text: TICKET_EXTRACT_PROMPT,
           },
         ],
       },
@@ -101,15 +119,63 @@ Extract ALL flights for round-trips. Extract ALL passenger names. Return ONLY th
   })
 
   const text = result.content[0]?.type === 'text' ? result.content[0].text.trim() : ''
-  const clean = text.replace(/```json|```/g, '').trim()
-  console.log('[pdf-reader] Claude response:', clean.slice(0, 400))
+  return parseTicketJson(text)
+}
 
-  try {
-    return JSON.parse(clean) as TicketInfo
-  } catch {
-    console.error('[pdf-reader] JSON parse failed:', clean)
-    return null
+/**
+ * Download an image (flight/train/event ticket photo) from Twilio and parse it
+ * with Claude vision. Same JSON contract as parsePdfTicket. Returns null for
+ * anything that isn't a recognisable ticket, so callers can safely fall back.
+ */
+export async function parseImageTicket(
+  mediaUrl: string,
+  accountSid: string,
+  authToken: string,
+  mediaType: string = 'image/jpeg'
+): Promise<TicketInfo> {
+  console.log('[ticket-reader] Fetching ticket image from Twilio:', mediaUrl)
+
+  const response = await fetch(mediaUrl, {
+    headers: {
+      Authorization: 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64'),
+    },
+  })
+
+  if (!response.ok) {
+    console.error('[ticket-reader] Failed to fetch image:', response.status, response.statusText)
+    throw new Error(`Failed to fetch image: ${response.status}`)
   }
+
+  const imgBuffer = await response.arrayBuffer()
+  const base64Img = Buffer.from(imgBuffer).toString('base64')
+  const cleanMediaType = mediaType.includes('png') ? 'image/png' : 'image/jpeg'
+
+  const result = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 1024,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: cleanMediaType,
+              data: base64Img,
+            },
+          } as never,
+          {
+            type: 'text',
+            text: TICKET_EXTRACT_PROMPT,
+          },
+        ],
+      },
+    ],
+  })
+
+  const text = result.content[0]?.type === 'text' ? result.content[0].text.trim() : ''
+  return parseTicketJson(text)
 }
 
 /**

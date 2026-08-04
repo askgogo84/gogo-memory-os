@@ -96,6 +96,30 @@ async function getTodaysReminders(telegramId: number) {
   return uniqueReminders(reminders)
 }
 
+// Flights departing today (IST). Reads the structured travel_tickets store; returns
+// [] on any error (e.g. table not migrated yet) so the brief stays resilient.
+async function getTodaysDepartures(telegramId: number) {
+  try {
+    const key = todayDateKey() // YYYY-MM-DD in IST
+    const startMs = new Date(`${key}T00:00:00+05:30`).getTime()
+    const startUtc = new Date(startMs).toISOString()
+    const endUtc = new Date(startMs + 24 * 60 * 60 * 1000).toISOString()
+
+    const { data } = await supabaseAdmin
+      .from('travel_tickets')
+      .select('from_city, to_city, depart_local, airline, flight_no, seat, pnr')
+      .eq('telegram_id', telegramId)
+      .eq('type', 'flight')
+      .gte('depart_at', startUtc)
+      .lt('depart_at', endUtc)
+      .order('depart_at', { ascending: true })
+
+    return data || []
+  } catch {
+    return []
+  }
+}
+
 async function getCalendarState(telegramId: number) {
   const { data: user } = await supabaseAdmin
     .from('users')
@@ -180,6 +204,20 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
   const blocks: string[] = [`☀️ *Today for ${name}*`]
 
   if (show('weather')) blocks.push(`🌤️ *Weather*\n${weatherText}`)
+
+  // ✈️ Today's flight — above Calendar. 'travel' is included by the 'default' flag.
+  if (show('travel')) {
+    const flights = await getTodaysDepartures(telegramId)
+    if (flights.length) {
+      const lines = flights.map((f: any) => {
+        const carrier = [f.airline, f.flight_no].filter(Boolean).join(' ')
+        const seat = f.seat ? ` · Seat ${f.seat}` : ''
+        const pnr = f.pnr ? ` · PNR ${f.pnr}` : ''
+        return `• ${f.from_city} → ${f.to_city} · ${f.depart_local || ''}${carrier ? ` · ${carrier}` : ''}${seat}${pnr}`
+      })
+      blocks.push(`✈️ *Today's flight*\n${lines.join('\n')}`)
+    }
+  }
 
   if (show('calendar') || show('meeting')) {
     let cal = `📅 *Calendar*\n`

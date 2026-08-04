@@ -59,7 +59,8 @@ import { indexMemory } from '@/lib/services/memory-index'
 import { buildThrowbackLine, isThrowbackReply, handleThrowbackReply, getLastAssistantMessage } from '@/lib/bot/handlers/throwback'
 import { detectPreferenceForget, forgetPreference } from '@/lib/bot/handlers/preferences'
 import { handleBucketCommand } from '@/lib/bot/handlers/shared-memory'
-import { parsePdfTicket, buildTicketReply, getReminderTime } from '@/lib/services/pdf-reader'
+import { parsePdfTicket, parseImageTicket, buildTicketReply } from '@/lib/services/pdf-reader'
+import { persistAndRemindTicket } from '@/lib/services/travel-tickets'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
 // Detect WhatsApp link preview cards (any website shared as a card)
@@ -354,9 +355,41 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', `[split receipt image] ${bodyText}`.trim())
           await saveConversation(resolvedUser.telegramId, 'assistant', reply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[split receipt image]', reply })
+        } else if (/\b(ticket|boarding\s?pass|e-?ticket|itinerary|pnr)\b/i.test(bodyText)) {
+          // ── Captioned ticket photo → structured parse; fall back to note if not a ticket ──
+          await sendWhatsAppMessage(from, '🎫 Reading your ticket...')
+          let handledAsTicket = false
+          try {
+            const accountSid = process.env.TWILIO_ACCOUNT_SID!
+            const authToken = process.env.TWILIO_AUTH_TOKEN!
+            const ticketInfo = await parseImageTicket(firstMediaUrl, accountSid, authToken, firstMediaType)
+            if (ticketInfo) {
+              const res = await persistAndRemindTicket(ticketInfo, {
+                telegramId: resolvedUser.telegramId,
+                whatsappTo: from,
+                timezone: resolvedUser.timezone || 'Asia/Kolkata',
+                source: 'image',
+              })
+              await saveConversation(resolvedUser.telegramId, 'user', `[image ticket] ${bodyText}`.trim())
+              await saveConversation(resolvedUser.telegramId, 'assistant', res.reply)
+              await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image ticket]', reply: res.reply })
+              handledAsTicket = true
+            }
+          } catch (err: any) {
+            console.error('TRAVEL_IMAGE_TICKET_FAILED (caption):', err?.message || err)
+          }
+          if (!handledAsTicket) {
+            // Not a recognisable ticket → treat as a normal image note.
+            const { readAndSummarizeImageNote } = await import('@/lib/services/image-note-reader')
+            const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
+            await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
+            await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
+            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
+          }
         } else if (isNutritionPhotoCaption(bodyText) || (!bodyText.trim() && !isSkinCheckCaption(bodyText) && !hasPendingSkinCheck)) {
           // ── Food photo → first verify it's actually food via quick vision check ──
           let isFoodImage = true
+          let isTicketImage = false
           try {
             const Anthropic = (await import('@anthropic-ai/sdk')).default
             const ant = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -369,24 +402,51 @@ export async function POST(req: NextRequest) {
                 model: 'claude-haiku-4-5', max_tokens: 20,
                 messages: [{ role: 'user', content: [
                   { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
-                  { type: 'text', text: 'Classify this image into exactly ONE category. Reply with only the category word:\n- FOOD (a plate, bowl, drink, or meal that is the main subject)\n- DOCUMENT (handwritten notes, printed text, receipts, screenshots, forms, lists)\n- OTHER (people, places, objects, products, anything else)\n\nIf the main subject is handwriting or text on paper or a screen, it is DOCUMENT, not FOOD. Reply with one word only.' }
+                  { type: 'text', text: 'Classify this image into exactly ONE category. Reply with only the category word:\n- TICKET (a flight/train/bus travel ticket, boarding pass, e-ticket, or itinerary with a PNR/flight number — NOT a purchase receipt)\n- FOOD (a plate, bowl, drink, or meal that is the main subject)\n- DOCUMENT (handwritten notes, printed text, receipts, screenshots, forms, lists)\n- OTHER (people, places, objects, products, anything else)\n\nIf the main subject is handwriting or text on paper or a screen, it is DOCUMENT, not FOOD. Reply with one word only.' }
                 ]}]
               })
               const ans = check.content[0]?.type === 'text' ? check.content[0].text.trim() : 'OTHER'
               const upperAns = ans.toUpperCase()
+              isTicketImage = upperAns.includes('TICKET')
               // Only treat as food if explicitly classified FOOD — everything else is a note
-              isFoodImage = upperAns.includes('FOOD') && !upperAns.includes('DOCUMENT')
+              isFoodImage = upperAns.includes('FOOD') && !upperAns.includes('DOCUMENT') && !isTicketImage
             }
           } catch { isFoodImage = false } // default to image note on error — better safe than wrong
 
           if (!isFoodImage) {
-            // Not food — treat as image note instead
-            await sendWhatsAppMessage(from, '📝 Saving as a note...')
-            const { readAndSummarizeImageNote } = await import('@/lib/services/image-note-reader')
-            const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
-            await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
-            await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
-            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
+            // Ticket photo → structured parse; ANY miss falls through to the note path below.
+            let handledAsTicket = false
+            if (isTicketImage) {
+              await sendWhatsAppMessage(from, '🎫 Reading your ticket...')
+              try {
+                const accountSid = process.env.TWILIO_ACCOUNT_SID!
+                const authToken = process.env.TWILIO_AUTH_TOKEN!
+                const ticketInfo = await parseImageTicket(firstMediaUrl, accountSid, authToken, firstMediaType)
+                if (ticketInfo) {
+                  const res = await persistAndRemindTicket(ticketInfo, {
+                    telegramId: resolvedUser.telegramId,
+                    whatsappTo: from,
+                    timezone: resolvedUser.timezone || 'Asia/Kolkata',
+                    source: 'image',
+                  })
+                  await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image ticket] ${bodyText}` : '[image ticket]')
+                  await saveConversation(resolvedUser.telegramId, 'assistant', res.reply)
+                  await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image ticket]', reply: res.reply })
+                  handledAsTicket = true
+                }
+              } catch (err: any) {
+                console.error('TRAVEL_IMAGE_TICKET_FAILED (classify):', err?.message || err)
+              }
+            }
+            if (!handledAsTicket) {
+              // Not food, not a ticket — treat as image note instead
+              await sendWhatsAppMessage(from, '📝 Saving as a note...')
+              const { readAndSummarizeImageNote } = await import('@/lib/services/image-note-reader')
+              const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
+              await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
+              await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
+              await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
+            }
           } else {
           await sendWhatsAppMessage(from, '🥗 Analysing your meal...')
           const nutritionReply = await handleNutritionPhoto({
@@ -488,33 +548,21 @@ export async function POST(req: NextRequest) {
         const accountSid = process.env.TWILIO_ACCOUNT_SID!
         const authToken = process.env.TWILIO_AUTH_TOKEN!
         const ticketInfo = await parsePdfTicket(firstMediaUrl, accountSid, authToken)
-        const noteText = ticketInfo
-          ? `PDF ticket: ${JSON.stringify(ticketInfo).slice(0, 200)}`
-          : `PDF document: ${bodyText || 'received'}`
-        await addToList(resolvedUser.telegramId, 'notes', [noteText])
-        let remindersSet = 0
-        const ticketTimezone = resolvedUser.timezone || 'Asia/Kolkata'
-        if (ticketInfo?.type === 'flight') {
-          for (const flight of (ticketInfo as any).flights) {
-            const reminderTime = getReminderTime(flight.date, flight.departure)
-            if (reminderTime && reminderTime > new Date()) {
-              const reminderMsg = `✈️ ${flight.from} → ${flight.to} departs in 3 hours at ${flight.departure}! PNR: ${flight.pnr}`
-              const { error: insErr } = await supabaseAdmin.from('reminders').insert({ telegram_id: resolvedUser.telegramId, whatsapp_to: from, timezone: ticketTimezone, message: reminderMsg, remind_at: reminderTime.toISOString(), created_at: new Date().toISOString() })
-              if (insErr) console.error('TICKET_REMINDER_INSERT_FAILED (flight):', insErr.message)
-              else remindersSet++
-            }
-          }
-        } else if (ticketInfo?.type === 'train' || ticketInfo?.type === 'event') {
-          const t = ticketInfo as any
-          const reminderTime = getReminderTime(t.date, t.departure || t.time)
-          if (reminderTime && reminderTime > new Date()) {
-            const name = t.type === 'train' ? `${t.from} → ${t.to}` : t.name
-            const { error: insErr } = await supabaseAdmin.from('reminders').insert({ telegram_id: resolvedUser.telegramId, whatsapp_to: from, timezone: ticketTimezone, message: `${t.type === 'train' ? '🚆' : '🎟️'} ${name} starts in 3 hours at ${t.departure || t.time}!`, remind_at: reminderTime.toISOString(), created_at: new Date().toISOString() })
-            if (insErr) console.error('TICKET_REMINDER_INSERT_FAILED (train/event):', insErr.message)
-            else remindersSet++
-          }
+        let reply: string
+        if (ticketInfo) {
+          // Store legs + fire T-3h (unchanged) and T-24h check-in reminders.
+          const res = await persistAndRemindTicket(ticketInfo, {
+            telegramId: resolvedUser.telegramId,
+            whatsappTo: from,
+            timezone: resolvedUser.timezone || 'Asia/Kolkata',
+            source: 'pdf',
+          })
+          reply = res.reply
+        } else {
+          // Unparseable PDF: keep the existing note + generic reply (behaviour-preserving).
+          await addToList(resolvedUser.telegramId, 'notes', [`PDF document: ${bodyText || 'received'}`])
+          reply = buildTicketReply(null)
         }
-        const reply = buildTicketReply(ticketInfo, remindersSet > 0)
         await saveConversation(resolvedUser.telegramId, 'user', '[PDF ticket]')
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: '[PDF ticket]', reply })
