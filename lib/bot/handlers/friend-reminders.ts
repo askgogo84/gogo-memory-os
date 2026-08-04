@@ -6,8 +6,6 @@ import { parseReminderIntent } from './reminders'
 // Delivery reuses the existing reminders cron: a row with whatsapp_to set is
 // sent to that number. No reminder-schema change needed.
 
-const DAILY_CAP = 5
-
 /** Detect "remind <name> to <task>" where <name> is NOT the sender. */
 export function detectFriendReminder(text: string): { name: string; rest: string } | null {
   const m = (text || '').match(
@@ -44,8 +42,10 @@ export async function saveFriendContact(ownerTelegramId: number, name: string, w
 }
 
 export async function countTodayFriendReminders(ownerTelegramId: number): Promise<number> {
-  const since = new Date()
-  since.setUTCHours(0, 0, 0, 0)
+  // Bug 3: count the user's *local* (IST) day, not the UTC day. Asia/Kolkata is a
+  // fixed UTC+5:30 with no DST, so start-of-IST-day as a UTC instant is:
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000
+  const since = new Date(Math.floor((Date.now() + IST_OFFSET_MS) / 864e5) * 864e5 - IST_OFFSET_MS)
   const { count } = await supabaseAdmin
     .from('reminders')
     .select('id', { count: 'exact', head: true })
@@ -66,8 +66,6 @@ export function parseFriendTime(rest: string): { remindAtIso: string; task: stri
   d.setUTCHours(3, 30, 0, 0)
   return { remindAtIso: d.toISOString(), task: rest }
 }
-
-export const FRIEND_DAILY_CAP = DAILY_CAP
 
 /** Create the reminder row for the recipient. Returns human-friendly time. */
 export async function createFriendReminder(params: {

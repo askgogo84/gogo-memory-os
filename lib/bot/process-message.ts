@@ -1,6 +1,6 @@
 import { askClaude, askClaudeWithContext, type Message } from '@/lib/claude'
 import { addToList, checkItem, clearList, formatList, getAllLists, getList } from '@/lib/lists'
-import { checkAndIncrementLimit, getUsageStatusReply } from '@/lib/limits'
+import { checkAndIncrementLimit, getUsageStatusReply, getFriendReminderCap } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAuthUrl } from '@/lib/google-calendar'
 import { fetchLatestEmails, fetchUnreadEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
@@ -30,7 +30,7 @@ import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { indexMemory } from '@/lib/services/memory-index'
 import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePreference, listPreferences, forgetPreference, getPreferenceBlock, MAX_RULES } from '@/lib/bot/handlers/preferences'
-import { detectFriendReminder, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, FRIEND_DAILY_CAP, cap0 } from '@/lib/bot/handlers/friend-reminders'
+import { detectFriendReminder, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, cap0 } from '@/lib/bot/handlers/friend-reminders'
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
 import { handleCreditIqCards } from '@/lib/bot/handlers/creditiq-cards'
 import { detectShareIntent, hasTopic, resolveRecipientTelegramId, grantShare } from '@/lib/bot/handlers/shared-memory'
@@ -288,11 +288,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // (b) "remind <name> to <task>" where <name> != me
   {
     const friend = detectFriendReminder(incomingText)
-    if (friend) {
+    // Bug 1: detectFriendReminder greedily reads the first word after "remind" as a
+    // recipient, so self-reminders like "remind this Thursday 5B we work…" mis-parse
+    // "this" as a friend name. detectIntent already classified this message as
+    // set_reminder; a genuine friend reminder links recipient→task with an explicit
+    // "to" ("remind Priya to call me"). Treat it as a self-reminder — and skip the
+    // friend path so the set_reminder handler below takes it — when it's a
+    // set_reminder that lacks that "to" connector.
+    const isSelfReminder = intent.type === 'set_reminder' && !/^\s*remind\s+\S+\s+to\s+/i.test(incomingText)
+    if (friend && !isSelfReminder) {
       await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      const cap = getFriendReminderCap(resolvedUser.tier)
       const used = await countTodayFriendReminders(resolvedUser.telegramId)
-      if (used >= FRIEND_DAILY_CAP) {
-        const reply = `You've hit today's friend-reminder limit (${FRIEND_DAILY_CAP}/day).`
+      if (used >= cap) {
+        const reply = `You've hit today's friend-reminder limit (${cap}/day).`
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         return { text: formatOutgoingText(params.channel, reply), resolvedUser }
       }

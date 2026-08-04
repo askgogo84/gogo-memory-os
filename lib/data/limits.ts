@@ -18,6 +18,7 @@ type PlanLimit = {
   voiceNotesMonthly: number
   webSearchesMonthly: number
   calendarEventsMonthly: number
+  friendRemindersDaily: number
   costGuardrailInr: number
 }
 
@@ -31,6 +32,7 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
     voiceNotesMonthly: 5,
     webSearchesMonthly: 3,
     calendarEventsMonthly: 3,
+    friendRemindersDaily: 5,
     costGuardrailInr: 25,
   },
   lite: {
@@ -42,6 +44,7 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
     voiceNotesMonthly: 10,
     webSearchesMonthly: 5,
     calendarEventsMonthly: 5,
+    friendRemindersDaily: 10,
     costGuardrailInr: 60,
   },
   starter: {
@@ -53,6 +56,7 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
     voiceNotesMonthly: 30,
     webSearchesMonthly: 10,
     calendarEventsMonthly: 20,
+    friendRemindersDaily: 20,
     costGuardrailInr: 95,
   },
   pro: {
@@ -64,6 +68,7 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
     voiceNotesMonthly: 100,
     webSearchesMonthly: 30,
     calendarEventsMonthly: 100,
+    friendRemindersDaily: 50,
     costGuardrailInr: 210,
   },
   founder_pro: {
@@ -75,6 +80,7 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
     voiceNotesMonthly: 300,
     webSearchesMonthly: 100,
     calendarEventsMonthly: 300,
+    friendRemindersDaily: 200,
     costGuardrailInr: 375,
   },
 }
@@ -463,4 +469,9 @@ export async function getUsageStatusReply(telegramId: number) {
 
 export function getPlanLimits() {
   return LIMITS
+}
+
+/** Daily friend-reminder cap for a user's plan tier (same LIMITS source as every other limit). */
+export function getFriendReminderCap(tier?: string | null): number {
+  return LIMITS[normalizeTier(tier)].friendRemindersDaily
 }
