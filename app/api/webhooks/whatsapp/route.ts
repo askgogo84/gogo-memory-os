@@ -1092,7 +1092,7 @@ _Reminder cancelled._`
     }
 
     await sendThinkingIfNeeded(from, text)
-    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text' })
+    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', messageId: inboundMessageSid || null })
     const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(result.text, originalText) : result.text
     // Send visual card if process-message returned a mediaUrl
     if ((result as any).mediaUrl) {

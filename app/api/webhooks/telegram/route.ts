@@ -81,6 +81,7 @@ export async function POST(req: NextRequest) {
       text: inputText,
       userName,
       messageType,
+      messageId: message?.message_id ?? null,
     })
 
     if (tempMessageId) {

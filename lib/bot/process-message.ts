@@ -37,6 +37,101 @@ import { detectShareIntent, hasTopic, resolveRecipientTelegramId, grantShare } f
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
+import { checkAllowance, recordUsage, getPlan, getLimits, MeterUnavailableError, type AllowanceResult } from '@/lib/services/meter'
+
+// ── Usage meter wiring (Phase 3: web-search only) ────────────────────────────
+// Gated entirely behind METER_ENABLED. When it is not exactly 'true', every
+// helper below short-circuits on its first line with zero side effects, so the
+// behaviour of this module is byte-identical to the pre-meter build.
+const METER_ENABLED = process.env.METER_ENABLED === 'true'
+
+const METER_UNAVAILABLE_COPY =
+  "Couldn't verify your allowance right now — try again in a moment."
+
+// Upsell ladder for the run-out message. Prices/labels are product copy (not in
+// plan_limits); the per-day counts are read live from plan_limits, never
+// hardcoded. Pro tiers (and any unknown code) get no upsell.
+const RUN_OUT_UPSELL: Record<string, { code: string; label: string; price: string }> = {
+  free: { code: 'lite', label: 'Lite', price: '₹99' },
+  imported: { code: 'lite', label: 'Lite', price: '₹99' },
+  lite: { code: 'starter', label: 'Starter', price: '₹149' },
+  starter: { code: 'pro', label: 'Pro', price: '₹199' },
+}
+
+// Build the "you're out of AI actions" reply, branching on the resolved plan so
+// we never sell someone what they already have. Reads the next tier's daily
+// count from plan_limits. Any read failure degrades to the plain no-upsell line.
+async function buildRunOutReply(telegramId: string | number, limit: number): Promise<string> {
+  const base = `You've used all ${limit} AI actions for today, Gogo — they reset at midnight.`
+  let planCode = 'free'
+  try {
+    planCode = (await getPlan(telegramId)).plan_code
+  } catch {
+    return base
+  }
+  const up = RUN_OUT_UPSELL[planCode]
+  if (!up) return base // pro / pro_annual / founder_pro / unknown → no upsell
+  try {
+    const nextPerDay = (await getLimits(up.code)).ai_actions_per_day
+    return `${base} ${up.label} (${up.price}) gives you ${nextPerDay} a day: app.askgogo.in/plans`
+  } catch {
+    return base // can't read the ladder number → don't fabricate one
+  }
+}
+
+// Low-allowance footer, appended only to a successful action reply. Cap the low
+// zone at 5 so big plans (Pro=150) warn only on the last 5, not the last 30.
+// `usage` is the pre-action snapshot; remaining accounts for this action.
+function lowAllowanceFooter(usage: AllowanceResult): string {
+  if (usage.limit <= 0) return ''
+  const remaining = usage.limit - usage.used - 1
+  if (remaining < 0) return ''
+  const lowZone = Math.min(Math.floor(usage.limit * 0.2), 5)
+  if (remaining > lowZone) return ''
+  if (remaining === 0) return '\n\nThat was your last AI action for today — they reset at midnight.'
+  return `\n\n${remaining} AI actions left today.`
+}
+
+type AiActionGuard = { ok: true; usage?: AllowanceResult } | { ok: false; reply: string }
+
+// Allowance gate for one ai_action. Fails closed: any meter error (not just
+// MeterUnavailableError) yields the honest "couldn't verify" reply rather than a
+// false "limit reached" or a crashed pipeline.
+async function guardAiAction(telegramId: string | number): Promise<AiActionGuard> {
+  if (!METER_ENABLED) return { ok: true }
+  try {
+    const usage = await checkAllowance(telegramId, 'ai_action')
+    if (!usage.allowed) return { ok: false, reply: await buildRunOutReply(telegramId, usage.limit) }
+    return { ok: true, usage }
+  } catch (err) {
+    if (!(err instanceof MeterUnavailableError)) {
+      console.error('METER_CHECK_UNEXPECTED:', err instanceof Error ? err.message : err)
+    }
+    return { ok: false, reply: METER_UNAVAILABLE_COPY }
+  }
+}
+
+// Record a billed web-search outcome and return the low-allowance footer (''
+// when metering is off or we're not in the low zone). recordUsage never throws
+// by contract; the catch is belt-and-braces so billing can never break a reply.
+async function recordWebSearch(
+  resolvedUser: { telegramId: number; whatsappId?: string | null },
+  channel: Channel,
+  messageId: string | number | null,
+  usage?: AllowanceResult,
+): Promise<string> {
+  if (!METER_ENABLED) return ''
+  try {
+    await recordUsage(resolvedUser.telegramId, 'ai_action', 'web_search', {
+      message_id: messageId,
+      whatsapp_id: resolvedUser.whatsappId ?? null,
+      surface: channel,
+    })
+  } catch (err) {
+    console.error('METER_RECORD_UNEXPECTED:', err instanceof Error ? err.message : err)
+  }
+  return usage ? lowAllowanceFooter(usage) : ''
+}
 
 export type ProcessIncomingParams = {
   channel: Channel
@@ -44,6 +139,7 @@ export type ProcessIncomingParams = {
   text: string
   userName?: string
   messageType?: 'text' | 'voice' | 'image' | 'document'
+  messageId?: string | number | null
 }
 
 export type ProcessIncomingResult = {
@@ -224,6 +320,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const incomingText = (params.text || '').trim()
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
+
+  // Inbound message id for meter idempotency (one unit per message per counter).
+  const inboundMessageId = params.messageId ?? null
 
   // ── CreditIQ account linking ────────────────────────────────────────────────
   // High-priority, prefixed-code intent. WhatsApp-only; must run before the
@@ -860,10 +959,16 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   if (intent.type === 'web_search') {
+    const guard = await guardAiAction(resolvedUser.telegramId)
+    if (!guard.ok) {
+      await saveConversation(resolvedUser.telegramId, 'assistant', guard.reply)
+      return { text: formatOutgoingText(params.channel, guard.reply), resolvedUser }
+    }
     const searchContext = await searchWeb(incomingText)
     let reply = ''
     try { reply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } catch { reply = buildDirectWebAnswer(incomingText, searchContext) }
     if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(reply)) reply = buildDirectWebAnswer(incomingText, searchContext)
+    reply += await recordWebSearch(resolvedUser, params.channel, inboundMessageId, guard.usage)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -1031,9 +1136,15 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     finalReply = !lists.length ? 'You do not have any lists yet.' : `Your lists:\n` + lists.map((l: any) => `- ${l.list_name}`).join('\n')
   }
   if (parsed.type === 'search') {
-    const searchContext = await searchWeb(parsed.query)
-    try { finalReply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } catch { finalReply = buildDirectWebAnswer(incomingText, searchContext) }
-    if (!finalReply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(finalReply)) finalReply = buildDirectWebAnswer(incomingText, searchContext)
+    const guard = await guardAiAction(resolvedUser.telegramId)
+    if (!guard.ok) {
+      finalReply = guard.reply
+    } else {
+      const searchContext = await searchWeb(parsed.query)
+      try { finalReply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } catch { finalReply = buildDirectWebAnswer(incomingText, searchContext) }
+      if (!finalReply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(finalReply)) finalReply = buildDirectWebAnswer(incomingText, searchContext)
+      finalReply += await recordWebSearch(resolvedUser, params.channel, inboundMessageId, guard.usage)
+    }
   }
 
   const formatted = formatOutgoingText(params.channel, finalReply)
