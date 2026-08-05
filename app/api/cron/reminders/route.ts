@@ -6,6 +6,10 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const MAX_FAIL_ATTEMPTS = 3
+// Recurring dedupe: skip inserting a next-occurrence row if an identical pending
+// reminder already exists within ±this window of the computed nextDate, so
+// recurring + snooze/move copies don't stack. Fail-open (never drop on error).
+const DEDUPE_WINDOW_MIN = 30
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
 // Keywords that mean "send the actual morning briefing" not a dumb notification
@@ -328,8 +332,36 @@ export async function GET(req: Request) {
             if (recurError) console.error('FOLLOWUP_REMINDER_INSERT_FAILED:', reminder.id, recurError.message)
           }
         } else {
-          const { error: recurError } = await supabaseAdmin.from('reminders').insert(baseInsert)
-          if (recurError) console.error('RECURRING_REMINDER_INSERT_FAILED:', reminder.id, recurError.message)
+          // Dedupe guard (plain recurring only): skip if the SAME user already has a
+          // pending, identical-label reminder near nextDate — stops recurring +
+          // snooze/move copies from stacking. Fail-open: any query error → insert.
+          let alreadyPending = false
+          try {
+            const winMs = DEDUPE_WINDOW_MIN * 60 * 1000
+            const lo = new Date(nextDate.getTime() - winMs).toISOString()
+            const hi = new Date(nextDate.getTime() + winMs).toISOString()
+            let dupeQuery = supabaseAdmin
+              .from('reminders')
+              .select('id')
+              .eq('telegram_id', reminder.telegram_id)
+              .eq('message', reminder.message)
+              .eq('sent', false)
+              .gte('remind_at', lo)
+              .lte('remind_at', hi)
+              .limit(1)
+            if (reminder.whatsapp_to) dupeQuery = dupeQuery.eq('whatsapp_to', reminder.whatsapp_to)
+            const { data: existingDupe, error: dupeErr } = await dupeQuery
+            if (dupeErr) console.error('RECURRING_DEDUPE_QUERY_FAILED:', reminder.id, dupeErr.message)
+            else alreadyPending = !!(existingDupe && existingDupe.length)
+          } catch (e: any) {
+            console.error('RECURRING_DEDUPE_QUERY_FAILED:', reminder.id, e?.message || e)
+          }
+          if (alreadyPending) {
+            console.log('RECURRING_DEDUPE_SKIP:', reminder.id)
+          } else {
+            const { error: recurError } = await supabaseAdmin.from('reminders').insert(baseInsert)
+            if (recurError) console.error('RECURRING_REMINDER_INSERT_FAILED:', reminder.id, recurError.message)
+          }
         }
       }
 
