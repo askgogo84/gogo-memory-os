@@ -48,6 +48,10 @@ const METER_ENABLED = process.env.METER_ENABLED === 'true'
 const METER_UNAVAILABLE_COPY =
   "Couldn't verify your allowance right now — try again in a moment."
 
+// Where run-out upsells point. The `/upgrade` route exists in app/; the old
+// `/plans` path 404s in production. Kept in one place so copy edits touch it once.
+const UPGRADE_URL = 'app.askgogo.in/upgrade'
+
 // Upsell ladder for the run-out message. Prices/labels are product copy (not in
 // plan_limits); the per-day counts are read live from plan_limits, never
 // hardcoded. Pro tiers (and any unknown code) get no upsell.
@@ -73,7 +77,7 @@ async function buildRunOutReply(telegramId: string | number, limit: number): Pro
   if (!up) return base // pro / pro_annual / founder_pro / unknown → no upsell
   try {
     const nextPerDay = (await getLimits(up.code)).ai_actions_per_day
-    return `${base} ${up.label} (${up.price}) gives you ${nextPerDay} a day: app.askgogo.in/plans`
+    return `${base} ${up.label} (${up.price}) gives you ${nextPerDay} a day: ${UPGRADE_URL}?id=${telegramId}`
   } catch {
     return base // can't read the ladder number → don't fabricate one
   }
