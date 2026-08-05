@@ -149,6 +149,25 @@ export async function sendWhatsAppReminderTemplate(toNumber: string, label: stri
   return message
 }
 
+// Same business-initiated reminder send, but via the approved Quick-Reply buttons
+// template (Done / Snooze 10m / Move to 8pm). Also a Utility template, so the
+// out-of-24h-window delivery guarantee is preserved. {{1}} = emoji+label, an
+// identical content payload to sendWhatsAppReminderTemplate.
+export async function sendWhatsAppReminderButtons(toNumber: string, label: string) {
+  const contentSid = process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID
+  if (!contentSid) throw new Error('Missing TWILIO_REMINDER_BUTTONS_CONTENT_SID')
+  const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
+  const to = normalizeWhatsAppAddress(toNumber)
+  const message = await client.messages.create({
+    from,
+    to,
+    contentSid,
+    contentVariables: JSON.stringify({ '1': String(label || 'your task').slice(0, 400) }),
+  })
+  console.log('WHATSAPP_BUTTONS_TEMPLATE_SENT:', { sid: message.sid, to, status: message.status })
+  return message
+}
+
 export async function sendWhatsAppTypingIndicator(messageSid?: string | null) {
   const sid = (messageSid || '').trim()
 

@@ -282,6 +282,63 @@ export async function POST(req: NextRequest) {
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    // ── Reminder Quick-Reply button actions (approved buttons template) ─────────
+    // When a user taps Done / Snooze 10m / Move to 8pm, Twilio sends ButtonPayload
+    // (the button id) alongside a Body that equals the button TITLE. We MUST route
+    // on ButtonPayload — the title would not match the typed-reply regexes below.
+    // Handled here, before any Body-text routing, so a tap is deterministic.
+    // Reminder resolution matches the typed "done"/"snooze" path: the most recently
+    // fired reminder (sent_at within ~30 min), else the next pending one. Typed
+    // replies keep working unchanged (this block is skipped when there's no payload).
+    const buttonPayload = String(formData.get('ButtonPayload') || '').trim()
+    if (buttonPayload === 'done' || buttonPayload === 'snooze_10' || buttonPayload === 'move_8pm') {
+      const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString()
+      const { data: recentFired } = await supabaseAdmin
+        .from('reminders')
+        .select('id, message')
+        .eq('telegram_id', resolvedUser.telegramId)
+        .eq('sent', true)
+        .gte('sent_at', thirtyMinsAgo)
+        .order('sent_at', { ascending: false })
+        .limit(1)
+      const { data: pendingRaw } = await supabaseAdmin
+        .from('reminders')
+        .select('id, message')
+        .eq('telegram_id', resolvedUser.telegramId)
+        .eq('sent', false)
+        .order('remind_at', { ascending: true })
+        .limit(1)
+      const target = (recentFired?.length ? recentFired : pendingRaw)?.[0]
+
+      let reply: string
+      if (!target) {
+        reply = `I couldn't find a recent reminder to update. Say *my reminders* to see what's pending.`
+      } else if (buttonPayload === 'done') {
+        const { error } = await supabaseAdmin.from('reminders').update({ sent: true }).eq('id', target.id)
+        if (error) console.error('REMINDER_BTN_DONE_UPDATE_FAILED:', target.id, error.message)
+        reply = `✅ Got it! *${target.message}* marked as resolved.\n\n_Reminder cancelled._`
+      } else if (buttonPayload === 'snooze_10') {
+        const newRemindAt = new Date(Date.now() + 10 * 60 * 1000)
+        const { error } = await supabaseAdmin.from('reminders').update({ remind_at: newRemindAt.toISOString(), sent: false }).eq('id', target.id)
+        if (error) console.error('REMINDER_BTN_SNOOZE_UPDATE_FAILED:', target.id, error.message)
+        reply = `⏰ Snoozed! I'll remind you about *${target.message}* again *in 10 minutes*.`
+      } else {
+        // move_8pm → today 20:00 IST. IST is UTC+5:30 with no DST, so 20:00 IST is
+        // 14:30 UTC on the current IST calendar day.
+        const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000)
+        const moveTarget = new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate(), 14, 30, 0, 0))
+        if (moveTarget.getTime() <= Date.now()) moveTarget.setUTCDate(moveTarget.getUTCDate() + 1) // past 8pm IST → tomorrow 8pm
+        const { error } = await supabaseAdmin.from('reminders').update({ remind_at: moveTarget.toISOString(), sent: false }).eq('id', target.id)
+        if (error) console.error('REMINDER_BTN_MOVE_UPDATE_FAILED:', target.id, error.message)
+        reply = `⏰ Moved! I'll remind you about *${target.message}* today at *8:00 PM*.`
+      }
+
+      await saveConversation(resolvedUser.telegramId, 'user', `[button:${buttonPayload}]`)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     const firstMediaUrl = String(formData.get('MediaUrl0') || '')
     const firstMediaType = String(formData.get('MediaContentType0') || '')
 

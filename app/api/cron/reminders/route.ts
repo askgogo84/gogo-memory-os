@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { sendWhatsApp, sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
+import { sendWhatsApp, sendWhatsAppReminderTemplate, sendWhatsAppReminderButtons } from '@/lib/whatsapp'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -271,12 +271,19 @@ export async function GET(req: Request) {
           } else if (digestTopic) {
             // Topic digests are rich dynamic content - freeform (in-session only for now).
             await sendWhatsApp(whatsappTo, reminderText)
-          } else if (process.env.TWILIO_REMINDER_CONTENT_SID) {
-            // Reminders are business-initiated: ALWAYS use the approved utility
+          } else if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID || process.env.TWILIO_REMINDER_CONTENT_SID) {
+            // Reminders are business-initiated: ALWAYS use an approved Utility
             // template. Freeform outside the 24h window is accepted then dropped
             // async with 63016 (uncatchable) - the Jul 19 outage.
+            // Prefer the Quick-Reply buttons template when its SID is set (both are
+            // Utility, so the out-of-24h-window guarantee is unchanged); fall back to
+            // the text template otherwise — reversible rollout via the env var alone.
             const reminderLabel = (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); return `${pickReminderEmoji(lbl)} ${lbl}` })()
-            await sendWhatsAppReminderTemplate(whatsappTo, reminderLabel)
+            if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID) {
+              await sendWhatsAppReminderButtons(whatsappTo, reminderLabel)
+            } else {
+              await sendWhatsAppReminderTemplate(whatsappTo, reminderLabel)
+            }
           } else {
             console.warn('NO_REMINDER_TEMPLATE_SID: freeform send - will NOT deliver outside the 24h window')
             await sendWhatsApp(whatsappTo, reminderText)
