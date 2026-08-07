@@ -1,22 +1,43 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createPaymentLink } from '@/lib/razorpay'
+import { getSession } from '@/lib/dashboard/session'
 
 export const dynamic = 'force-dynamic'
+
+const WA_DASHBOARD_LINK = 'https://wa.me/15797006612?text=dashboard'
 
 export default async function UpgradePage({
   searchParams,
 }: {
-  searchParams: Promise<{ id?: string; plan?: string }>
+  searchParams: Promise<{ plan?: string }>
 }) {
   const params = await searchParams
-  const telegramId = params.id ? parseInt(params.id) : null
   const plan = params.plan || 'pro'
 
-  if (!telegramId) {
+  // Identity comes from the dashboard session cookie, never from the URL. This
+  // closes the old ?id=<telegramId> IDOR: previously anyone could open anyone's
+  // checkout (and leak that user's name into Razorpay / mis-attribute a payment)
+  // just by editing the query string. `plan` stays in the URL — it selects copy,
+  // not a user — and no plan/limits tables are touched here.
+  const session = await getSession()
+  const telegramId = session ? parseInt(session.telegramId, 10) : null
+
+  if (!telegramId || Number.isNaN(telegramId)) {
     return (
-      <main style={{ fontFamily: 'system-ui', padding: 40, textAlign: 'center' }}>
-        <h1>AskGogo Upgrade</h1>
-        <p>Open this from your Telegram bot using /upgrade</p>
+      <main style={{ fontFamily: 'system-ui', maxWidth: 480, margin: '0 auto', padding: '64px 24px', textAlign: 'center' }}>
+        <h1 style={{ fontSize: 24, margin: '0 0 12px' }}>Sign in to upgrade.</h1>
+        <p style={{ color: '#666', fontSize: 15, lineHeight: 1.6, margin: '0 0 28px' }}>
+          Message AskGogo on WhatsApp and send <strong>dashboard</strong> to get your private link, then come back here.
+        </p>
+        <a
+          href={WA_DASHBOARD_LINK}
+          style={{
+            display: 'inline-block', background: '#25D366', color: '#fff',
+            padding: '12px 24px', borderRadius: 100, fontSize: 15, fontWeight: 600, textDecoration: 'none',
+          }}
+        >
+          Open WhatsApp →
+        </a>
       </main>
     )
   }

@@ -38,6 +38,7 @@ import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmatio
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
 import { checkAllowance, recordUsage, getPlan, getLimits, MeterUnavailableError, type AllowanceResult } from '@/lib/services/meter'
+import { issueToken } from '@/lib/dashboard/session'
 
 // ── Usage meter wiring (Phase 3: web-search only) ────────────────────────────
 // Gated entirely behind METER_ENABLED. When it is not exactly 'true', every
@@ -77,7 +78,11 @@ async function buildRunOutReply(telegramId: string | number, limit: number): Pro
   if (!up) return base // pro / pro_annual / founder_pro / unknown → no upsell
   try {
     const nextPerDay = (await getLimits(up.code)).ai_actions_per_day
-    return `${base} ${up.label} (${up.price}) gives you ${nextPerDay} a day: ${UPGRADE_URL}?id=${telegramId}`
+    // No identifier in the URL. /upgrade reads the dashboard session now; a
+    // returning user carries a 30-day cookie straight to checkout, a first-timer
+    // gets the get-a-link screen. A dangling ?id= would reopen the IDOR this
+    // phase closes.
+    return `${base} ${up.label} (${up.price}) gives you ${nextPerDay} a day: ${UPGRADE_URL}`
   } catch {
     return base // can't read the ladder number → don't fabricate one
   }
@@ -456,6 +461,29 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const reply = await getUsageStatusReply(resolvedUser.telegramId)
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  // ── Dashboard magic link ────────────────────────────────────────────────────
+  // Deterministic branch: issue a single-use, 15-min token and reply with the
+  // link and one line of copy. The dashboard IS the summary — nothing else here.
+  // Handled before the daily-limit gate (a utility command, like `usage`), and
+  // deterministic on purpose so the LLM freeform path — which has surfaced stored
+  // credentials — never fires on the word "dashboard". The issued link is a live
+  // credential, so it is NOT written to conversation history in plaintext (the
+  // hash-at-rest discipline would be pointless if the plaintext sat here).
+  if (intent.type === 'dashboard') {
+    const issue = await issueToken(resolvedUser.telegramId)
+    let reply: string
+    if (issue.ok) {
+      reply = `Here's your private dashboard, Gogo — it opens once and expires in 15 minutes:\n\nhttps://app.askgogo.in/dashboard?t=${issue.token}`
+    } else if (issue.reason === 'throttled') {
+      reply = `You've requested a few dashboard links just now. Give it a few minutes and try again.`
+    } else {
+      reply = `Couldn't create your dashboard link right now — try again in a moment.`
+    }
+    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+    await saveConversation(resolvedUser.telegramId, 'assistant', issue.ok ? '[dashboard link sent]' : reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 

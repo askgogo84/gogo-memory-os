@@ -21,6 +21,7 @@ export type IntentType =
   | 'help_menu'
   | 'welcome_menu'
   | 'upgrade_plan'
+  | 'dashboard'
   | 'save_memory'
   | 'web_search'
   | 'nutrition_log'
@@ -83,6 +84,11 @@ export function detectIntent(text: string): DetectedIntent {
     /^(show\s+)?my\s+creditiq$/.test(lower) ||
     /^creditiq\s+(cards|portfolio|points)$/.test(lower)
   ) return { type: 'creditiq_cards', confidence: 'high' }
+
+  // Dashboard magic-link request. Deterministic command — an exact-match set so
+  // it can't shadow ordinary chat, and so it stops the LLM freeform path (which
+  // has surfaced stored credentials) from firing on the word "dashboard".
+  if (lower === 'dashboard' || lower === '/dashboard' || lower === 'my dashboard' || lower === 'open dashboard' || lower === 'web dashboard' || lower === 'dashboard link' || lower === 'my dashboard link') return { type: 'dashboard', confidence: 'high' }
 
   if (lower === 'pricing' || lower === 'price' || lower === 'plans' || lower === 'plan' || lower === 'upgrade' || lower === '/upgrade' || lower === 'payment' || lower === 'payments' || lower === 'subscribe' || lower === 'razorpay' || lower === 'paid plan') return { type: 'upgrade_plan', confidence: 'high' }
 
