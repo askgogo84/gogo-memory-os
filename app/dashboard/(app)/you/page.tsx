@@ -1,3 +1,5 @@
+import { EmptyState } from '@/components/dashboard/empty-state'
+
 export const dynamic = 'force-dynamic'
 
 // Phase-3 placeholder for the "You" surface (formerly Profile). Phone, plan,
@@ -8,7 +10,10 @@ export default function YouPage() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="font-serif text-[28px] font-semibold text-gogo-ink">You</h1>
-      <p className="text-[15px] text-gogo-ink">Your account and sign out will live here.</p>
+      <EmptyState
+        message="Your account and sign out will live here."
+        detail="Phone, plan and sign out arrive next."
+      />
     </div>
   )
 }

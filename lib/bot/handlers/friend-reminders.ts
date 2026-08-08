@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { istDayWindow } from '@/lib/ist'
 import { parseReminderIntent } from './reminders'
 
 // Phase 1C — Friend-to-friend reminders.
@@ -42,16 +43,15 @@ export async function saveFriendContact(ownerTelegramId: number, name: string, w
 }
 
 export async function countTodayFriendReminders(ownerTelegramId: number): Promise<number> {
-  // Bug 3: count the user's *local* (IST) day, not the UTC day. Asia/Kolkata is a
-  // fixed UTC+5:30 with no DST, so start-of-IST-day as a UTC instant is:
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000
-  const since = new Date(Math.floor((Date.now() + IST_OFFSET_MS) / 864e5) * 864e5 - IST_OFFSET_MS)
+  // Bug 3: count the user's *local* (IST) day, not the UTC day. The day window is
+  // the shared helper in lib/ist — same one the dashboard reads today's reminders by.
+  const { startUtc } = istDayWindow()
   const { count } = await supabaseAdmin
     .from('reminders')
     .select('id', { count: 'exact', head: true })
     .eq('telegram_id', ownerTelegramId)
     .not('whatsapp_to', 'is', null)
-    .gte('created_at', since.toISOString())
+    .gte('created_at', startUtc.toISOString())
   return count || 0
 }
 

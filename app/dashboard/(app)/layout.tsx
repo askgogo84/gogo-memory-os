@@ -27,7 +27,7 @@ export default async function DashboardShell({
     // Cream/ink scoped to the shell so the app reads warm regardless of the OS
     // dark-mode preference the global body honours. Desktop = same layout,
     // centred at 480px (app-flow §8). pb clears the fixed tab bar.
-    <div className="mx-auto flex min-h-full max-w-[480px] flex-col bg-gogo-cream font-sans text-gogo-ink">
+    <div className="mx-auto flex min-h-full max-w-[480px] flex-1 flex-col bg-gogo-cream font-sans text-gogo-ink">
       <main className="flex-1 px-5 pt-6 pb-24">{children}</main>
       <TabBar />
     </div>
