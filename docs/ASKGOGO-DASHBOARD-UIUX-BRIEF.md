@@ -83,7 +83,7 @@ Memorae's blob floats over every screen and follows you around. After a day it r
 
 Mobile-first, designed at **375px**, tested there before anything else. Touch targets 44px minimum.
 
-- Bottom tab bar, five items: **Reminders · Calendar · Lists · Usage · Profile**. Active tab in `--gogo-orange`, inactive in ink at 45%.
+- Bottom tab bar, five items: **Today · Calendar · Lists · Usage · You**. Active tab in `--gogo-orange`, inactive in ink at 45%.
 - Single-column card stack. Card radius 16px, 1px border at ink/8%, no drop shadows — shadows fight the calm.
 - 20px page padding, 16px between cards, 12px inside them.
 - One primary action per screen. If a screen needs two, it's two screens.

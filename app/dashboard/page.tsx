@@ -36,7 +36,7 @@ export default function Dashboard() {
         if (res.ok) {
           // Land on the app and drop ?t= from history in one replace, so the
           // token never lingers in the URL bar or back-stack.
-          window.location.replace('/dashboard/reminders')
+          window.location.replace('/dashboard/today')
         } else {
           setPhase('error')
         }

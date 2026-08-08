@@ -15,7 +15,7 @@ Bot replies:  "Here's your dashboard, Gogo — this link works for 15 minutes.
         ↓
 User taps → token exchanged for session cookie → token burned
         ↓
-URL cleaned → /dashboard/reminders
+URL cleaned → /dashboard/today
 ```
 
 **No session, or an expired/used token:**
@@ -26,11 +26,11 @@ URL cleaned → /dashboard/reminders
 
 Plus the figure, resting. Never a login form, never an error code.
 
-**Returning visit with a valid cookie:** straight to `/dashboard/reminders`, no interstitial.
+**Returning visit with a valid cookie:** straight to `/dashboard/today`, no interstitial.
 
 ---
 
-## 2. Reminders — the default surface
+## 2. Today — the default surface
 
 ```
 [ Active 4 ]  [ Recurring 2 ]  [ Done ]        ← filter row, orange active pill
@@ -121,7 +121,7 @@ Tapping a list expands it inline. Items tick off with a tap; ticked items grey a
 
 ---
 
-## 6. Profile
+## 6. You
 
 ```
   +91 88845 01501
@@ -141,7 +141,7 @@ CreditIQ not linked → a chip prefilling `link creditiq`.
 
 ## 7. Navigation
 
-Bottom tab bar, persistent, five items: **Reminders · Calendar · Lists · Usage · Profile**. Active in orange, inactive in ink at 45%. No hamburger, no nested navigation, no back button dependence — every surface is one tap from every other.
+Bottom tab bar, persistent, five items: **Today · Calendar · Lists · Usage · You**. Active in orange, inactive in ink at 45%. No hamburger, no nested navigation, no back button dependence — every surface is one tap from every other.
 
 ---
 

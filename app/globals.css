@@ -8,15 +8,54 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-karla);
   --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-fraunces);
 }
 
+/* ── AskGogo dashboard design tokens ───────────────────────────────────────────
+   Palette sampled from the logo (UI/UX brief §2), not eyeballed. Orange + plum is
+   the whole identity — warm, Indian, deliberately nothing like a cool SaaS blue.
+   These become Tailwind utilities: bg-gogo-orange, text-gogo-ink, text-gogo-ink/45…
+
+   The green rule (non-negotiable): WhatsApp green is NOT in this palette on
+   purpose. It lives only inside <WhatsAppChip>, so "green" always means
+   "this hands me back to the bot" and never leaks onto anything else. */
+@theme {
+  --color-gogo-orange: #f18219; /* primary accent: buttons, active nav, fills */
+  --color-gogo-orange-deep: #d67528; /* hover/pressed for orange */
+  --color-gogo-plum: #714c77; /* secondary: headers, chips, meter tail */
+  --color-gogo-plum-deep: #4d2a50; /* hover/pressed for plum */
+  --color-gogo-ink: #3e2312; /* body + headings — warm near-black, not #000 */
+  --color-gogo-sand: #e4a97d; /* soft fill: illustration backdrops, dividers */
+  --color-gogo-cream: #fdfbf7; /* page background */
+  --color-gogo-surface: #ffffff; /* cards, sheets, inputs */
+
+  /* Motion (brief §4): slow float, gentle ease-in-out, never spring or bounce.
+     Deliberately slower than typical UI so the product reads as settled. */
+  --ease-calm: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Dark mode is kept for the marketing/other routes, but SCOPED OUT of the
+   dashboard. The whole dashboard identity is the warm cream/ink palette; if this
+   near-black override reaches it, the design system renders invisible on black.
+   Every /dashboard route is wrapped in `.dashboard-root` (app/dashboard/layout.tsx),
+   so `:root:not(:has(.dashboard-root))` applies the dark flip everywhere EXCEPT
+   pages that contain the dashboard. Scoped, not deleted. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(:has(.dashboard-root)) {
     --background: #0a0a0a;
     --foreground: #ededed;
   }
+}
+
+/* Belt-and-suspenders: force light rendering inside the dashboard regardless of
+   OS preference, so form controls, scrollbars and any var(--background) reader
+   stay light even if the media query above ever changes. */
+.dashboard-root {
+  --background: var(--color-gogo-cream);
+  --foreground: var(--color-gogo-ink);
+  color-scheme: light;
 }
 
 body {
