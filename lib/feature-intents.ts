@@ -6,9 +6,22 @@ import { parseSplitIntent } from '@/lib/splitwise/split-parser'
 import { handleNutritionText, isNutritionLogText, isNutritionCommand } from '@/lib/bot/handlers/nutrition'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard, saveReel } from '@/lib/services/reel-saver'
 import { saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
-import { addToList } from '@/lib/lists'
+import { addToList, formatList } from '@/lib/lists'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
+
+// Normalise a spoken list name to the canonical key the rest of the bot reads.
+// Mirrors extractListNameFromText() in process-message.ts so the dashboard chip
+// ("add milk to my groceries") writes to the SAME list "show my grocery list" reads.
+function normalizeListName(raw: string): string {
+  let n = raw.toLowerCase().trim().replace(/\s+/g, ' ')
+  n = n.replace(/\s+list$/, '').trim() // "weekend list" → "weekend", "grocery list" → "grocery"
+  if (n === 'groceries' || n === 'grocery') return 'grocery'
+  if (n === 'shopping') return 'shopping'
+  if (n === 'to-do' || n === 'to do' || n === 'todo') return 'todo'
+  if (n === 'note' || n === 'notes') return 'notes'
+  return n || 'list'
+}
 
 export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string }): Promise<string | null> {
 
@@ -94,6 +107,23 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   // ── SAVED REELS / LINKEDIN QUERY ───────────────────────────────────────
   if (/^(my saved reels?|saved reels?|saved videos?|my reels?|my saved posts?|my linkedin saves?)$/.test(t)) {
     return null // Falls through to Claude which searches notes
+  }
+
+  // ── ADD TO LIST ("add milk to my groceries") ──────────────────────────────
+  // Deterministic and BEFORE nutrition: the nutrition matcher would otherwise
+  // swallow any food word ("milk") and log a meal. "add X to Y" is unambiguous,
+  // so capture an arbitrary trailing list name ("weekend list", "Goa list") too.
+  const listAdd = text.match(/^\s*(?:gogo[,!\s]+)?add\s+(.+?)\s+(?:to|into)\s+(?:my\s+)?(.+?)\s*$/i)
+  if (listAdd && extra?.telegramId) {
+    const item = listAdd[1].trim()
+    const listName = normalizeListName(listAdd[2])
+    // "add a reminder to call mom" is a reminder, not a list item — let it fall
+    // through to the reminder path rather than filing "a reminder" under "call mom".
+    const isReminderShape = /^(a |an )?(reminder|alarm|alert)$/i.test(item) || /\badd\s+(?:a |an )?(?:reminder|alarm)\b/i.test(text)
+    if (item && listName && !isReminderShape) {
+      const items = await addToList(extra.telegramId, listName, [item])
+      return formatList(listName, items)
+    }
   }
 
   // ── NUTRITION (before split — split parser matches breakfast/lunch/dinner) ─

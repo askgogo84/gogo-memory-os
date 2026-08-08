@@ -10,29 +10,69 @@ import { saveNutritionLog, getTodayNutrition, getWeekNutrition, getUserGoals, sa
 
 // ── Intent detection ──────────────────────────────────────────────────────────
 
+// Word-boundary food lexicon. The old `lower.includes(w)` substring test fired
+// on "price" (⊂ rice), "veggie" (⊂ egg), "scandal" (⊂ dal), "balloon" (⊂ aloo) —
+// the \b anchors below kill those false positives.
+const FOOD_WORDS = ['roti', 'rice', 'dal', 'dosa', 'idli', 'idly', 'sambar', 'biryani',
+  'chai', 'coffee', 'paratha', 'poha', 'upma', 'sabzi', 'curry', 'chicken', 'egg', 'eggs',
+  'paneer', 'milk', 'fruit', 'banana', 'apple', 'curd', 'yogurt', 'oats', 'bread',
+  'pizza', 'burger', 'noodles', 'pasta', 'vada', 'uttapam', 'puri', 'chapati',
+  'rajma', 'chole', 'aloo', 'gobi', 'palak', 'methi']
+// Trailing `s?` matches plurals ("rotis", "eggs") without dropping the \b anchor
+// that kills the substring false positives ("price" ⊄ rice, "veggie" ⊄ egg).
+const FOOD_RE = new RegExp(`\\b(?:${FOOD_WORDS.join('|')})s?\\b`, 'i')
+
+// An explicit "add X to my <list>" command is never a food log, even when X is a
+// food word ("add milk to my groceries"). Belt-and-braces: the feature router
+// already intercepts this shape with a deterministic list route BEFORE nutrition.
+const ADD_TO_LIST_RE = /^\s*(?:gogo[,!\s]+)?add\b.+\b(?:to|into)\b/i
+
 export function isNutritionLogText(text: string): boolean {
   const lower = text.toLowerCase().trim()
-  const foodWords = ['roti', 'rice', 'dal', 'dosa', 'idli', 'idly', 'sambar', 'biryani', 
-    'chai', 'coffee', 'paratha', 'poha', 'upma', 'sabzi', 'curry', 'chicken', 'egg', 
-    'paneer', 'milk', 'fruit', 'banana', 'apple', 'curd', 'yogurt', 'oats', 'bread', 
-    'pizza', 'burger', 'noodles', 'pasta', 'vada', 'uttapam', 'puri', 'chapati', 
-    'rajma', 'chole', 'aloo', 'gobi', 'palak', 'methi']
-  const hasFoodWord = foodWords.some(w => lower.includes(w))
-  const hasEatingPrefix = /^(log|ate|had|i had|i ate|just had|just ate|i just|breakfast:|lunch:|dinner:|snack:|for breakfast|for lunch|for dinner)/i.test(lower)
-  const hasCalorieWord = /calorie|calori|kcal|protein|carb|macro/i.test(lower)
-  return hasEatingPrefix || hasCalorieWord || (hasFoodWord && lower.length < 200 && !lower.includes('remind') && !lower.includes('recipe'))
+
+  // Nutrition requires EXPLICIT food-logging intent — never a bare food mention.
+  if (ADD_TO_LIST_RE.test(lower)) return false
+  if (lower.includes('remind') || lower.includes('recipe')) return false
+
+  // "log …" / "track …" — a meal command only when a food/meal actually follows.
+  // "track my order", "log in", "log out" must fall through (NOT nutrition).
+  const logTrack = lower.match(/^(?:log|track)\s+(.+)/i)
+  if (logTrack) {
+    const rest = logTrack[1]
+    if (/^(this|that|it|meal|my (meal|food|breakfast|lunch|dinner|snack))\b/i.test(rest)) return true
+    if (/\b(meal|breakfast|lunch|dinner|snack|food)\b/i.test(rest)) return true
+    return FOOD_RE.test(rest)
+  }
+
+  // Explicit meal declarations: "breakfast: …", "for lunch i had …".
+  if (/^(breakfast|lunch|dinner|snack)\s*:/i.test(lower)) return true
+
+  // Calorie / macro vocabulary is a nutrition signal on its own (word-boundary,
+  // so "carbon" ⊄ carb).
+  if (/\b(calories?|kcal|protein|carbs?|macros?)\b/i.test(lower)) return true
+
+  // Otherwise require an eating verb AND a recognised food word. An eating verb
+  // alone ("had a meeting") or a food word alone ("gold price") is not a log.
+  const hasEatingVerb =
+    /^(?:i\s+)?(?:just\s+)?(?:had|ate)\b/i.test(lower) ||
+    /^(?:i\s+)?(?:am\s+)?eating\b/i.test(lower) ||
+    /^for\s+(?:breakfast|lunch|dinner|snack)\b/i.test(lower)
+  if (!hasEatingVerb) return false
+  return FOOD_RE.test(lower) && lower.length < 200
 }
 
 export function isNutritionCommand(text: string): boolean {
   const lower = text.toLowerCase().trim()
+  // NOTE: the old blanket `startsWith('log ')` / `startsWith('track ')` lines were
+  // removed — they routed "log in" / "track my order" to nutrition. Smart log/track
+  // handling (requires a food/meal to follow) now lives in isNutritionLogText.
   return (
     lower === 'nutrition today' || lower === 'nutrition' || lower === 'calories today' ||
     lower === 'my calories' || lower === 'food today' || lower === 'what did i eat' ||
     lower === 'nutrition report' || lower === 'nutrition week' || lower === 'weekly nutrition' ||
     lower === 'nutrition summary' || lower === 'my nutrition' ||
     lower === 'set nutrition goal' || lower === 'nutrition goal' || lower === 'set calorie goal' ||
-    lower === 'nutrition help' || lower === 'calorie help' || lower === 'food help' ||
-    lower.startsWith('log ') || lower.startsWith('track ')
+    lower === 'nutrition help' || lower === 'calorie help' || lower === 'food help'
   )
 }
 
@@ -131,6 +171,20 @@ export async function handleNutritionText(params: {
     return `What did you eat? Tell me and I'll log it!
 
 _Example: "had 2 idlis and sambar for breakfast"_`
+  }
+
+  // Questions must never be recorded as eaten. An interrogative routes to a
+  // nutrition QUERY (today's tally when it's about their own intake) — it must
+  // never fall through to logMealFromText below. Only an explicit logging shape
+  // ("had …", "log 2 rotis") writes a meal.
+  const isQuestion = lower.endsWith('?') ||
+    /^(how|what|which|is|are|does|do|can|should|when|why|where)\b/i.test(lower)
+  if (isQuestion) {
+    if (/\btoday\b|\bso far\b|\b(?:did|have)\s+i\b|\bi\s+(?:ate|eaten|eat)\b/i.test(lower)) {
+      const userTz = getUserTimeZone(null, params.whatsappId)
+      return buildTodaySummary(params.telegramId, userTz)
+    }
+    return `I log meals rather than look up calorie counts. Tell me what you ate — e.g. *had 2 rotis with dal* — and I'll log it and tally your day.`
   }
 
   // Remove "I had / I ate / log / track" prefixes and analyze as food
