@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { istDayWindow } from '@/lib/ist'
+import type { ListItem } from '@/lib/data/lists'
 
 // ── The dashboard's read layer ────────────────────────────────────────────────
 // Every Supabase read the dashboard does lives here, one function per surface,
@@ -55,4 +56,51 @@ export async function getTodayReminders(telegramId: string): Promise<TodayRemind
     return { ok: false }
   }
   return { ok: true, reminders: (data as ReminderRow[]) ?? [] }
+}
+
+// The dashboard's view of a list: the stored name (lower-cased, trimmed — the
+// same string the bot renders in WhatsApp) and its items. The `lists` table has
+// NO item table — items are a JSONB array on the row — so the count the page
+// shows is items.length in app code, never a SQL count.
+export type DashboardList = {
+  id: number | string
+  name: string
+  items: ListItem[]
+}
+
+// Same discriminated shape as TodayReminders: an empty account (ok, no lists) is
+// never confused with a failed read (not ok).
+export type Lists = { ok: true; lists: DashboardList[] } | { ok: false }
+
+/**
+ * Every list the signed-in user owns, newest-touched first. The row the user
+ * just changed sits on top (order by updated_at desc). Read-only: ticking items
+ * and creating lists arrive in a later phase.
+ *
+ * The DB column is `list_name`; we map it to `name` here so the render layer
+ * never sees the storage column. items comes back as the raw JSONB array.
+ */
+export async function getLists(telegramId: string): Promise<Lists> {
+  const tgNum = parseInt(telegramId, 10)
+  // lists.telegram_id is numeric; a non-numeric session id can't own any list —
+  // that's an empty account, not a failure. (Failures are actual read errors.)
+  if (!Number.isFinite(tgNum)) return { ok: true, lists: [] }
+
+  const { data, error } = await supabaseAdmin
+    .from('lists')
+    .select('id, list_name, items, updated_at')
+    .eq('telegram_id', tgNum)
+    .order('updated_at', { ascending: false })
+
+  if (error) {
+    console.error('DASHBOARD_LISTS_FAILED:', error)
+    return { ok: false }
+  }
+
+  const lists: DashboardList[] = (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.list_name,
+    items: (row.items as ListItem[]) ?? [],
+  }))
+  return { ok: true, lists }
 }
