@@ -91,6 +91,12 @@ function splitIntoChunks(text: string): string[] {
   return chunks.filter(c => c.trim())
 }
 
+// Twilio status-callback URL for delivery-truth. Attached to a send ONLY when
+// this env var is present and non-empty, so an unset var means byte-identical
+// create() payloads to before this feature existed. Fail-open: a bad/absent URL
+// simply means no callback, never a dropped send.
+const statusCallbackUrl = (process.env.TWILIO_STATUS_CALLBACK_URL || '').trim()
+
 export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: string | null) {
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
@@ -139,12 +145,14 @@ export async function sendWhatsAppReminderTemplate(toNumber: string, label: stri
   if (!contentSid) throw new Error('Missing TWILIO_REMINDER_CONTENT_SID')
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
-  const message = await client.messages.create({
+  const payload: any = {
     from,
     to,
     contentSid,
     contentVariables: JSON.stringify({ '1': String(label || 'your task').slice(0, 400) }),
-  })
+  }
+  if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
+  const message = await client.messages.create(payload)
   console.log('WHATSAPP_TEMPLATE_SENT:', { sid: message.sid, to, status: message.status })
   return message
 }
@@ -158,12 +166,14 @@ export async function sendWhatsAppReminderButtons(toNumber: string, label: strin
   if (!contentSid) throw new Error('Missing TWILIO_REMINDER_BUTTONS_CONTENT_SID')
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
-  const message = await client.messages.create({
+  const payload: any = {
     from,
     to,
     contentSid,
     contentVariables: JSON.stringify({ '1': String(label || 'your task').slice(0, 400) }),
-  })
+  }
+  if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
+  const message = await client.messages.create(payload)
   console.log('WHATSAPP_BUTTONS_TEMPLATE_SENT:', { sid: message.sid, to, status: message.status })
   return message
 }

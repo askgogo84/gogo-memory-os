@@ -11,6 +11,11 @@ const MAX_FAIL_ATTEMPTS = 3
 // recurring + snooze/move copies don't stack. Fail-open (never drop on error).
 const DEDUPE_WINDOW_MIN = 30
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
+// Delivery-truth gate. When unset, markReminderSent writes exactly {sent, sent_at}
+// as before — the twilio_sid/delivery_status columns stay untouched, so unsetting
+// the env var reverts behaviour to HEAD instantly. Fail-open: never drops a reminder.
+const REMINDER_DELIVERY_TRACKING =
+  process.env.REMINDER_DELIVERY_TRACKING === '1' || process.env.REMINDER_DELIVERY_TRACKING === 'true'
 
 // Keywords that mean "send the actual morning briefing" not a dumb notification
 const BRIEFING_KEYWORDS = /^(morning briefing|good morning|daily briefing|morning brief|briefing|my briefing)$/i
@@ -146,10 +151,28 @@ async function findWhatsAppForReminder(reminder: any): Promise<string | null> {
   return null
 }
 
-async function markReminderSent(id: string) {
+// sid/status are the values returned by the Twilio send at the call site; abandoned
+// marks a reminder given up after MAX_FAIL_ATTEMPTS. When REMINDER_DELIVERY_TRACKING
+// is unset the update object is byte-identical to HEAD ({sent, sent_at} only).
+async function markReminderSent(
+  id: string,
+  sid?: string | null,
+  status?: string | null,
+  abandoned?: boolean,
+) {
+  const update: any = { sent: true, sent_at: new Date().toISOString() }
+  if (REMINDER_DELIVERY_TRACKING) {
+    if (sid) {
+      update.twilio_sid = sid
+      update.delivery_status = 'accepted'
+      console.log('REMINDER_TRACKED:', { id, sid, acceptStatus: status || 'accepted' })
+    } else if (abandoned) {
+      update.delivery_status = 'abandoned'
+    }
+  }
   const { error } = await supabaseAdmin
     .from('reminders')
-    .update({ sent: true, sent_at: new Date().toISOString() })
+    .update(update)
     .eq('id', id)
   if (error) console.error('Failed to mark reminder sent:', error.message)
 }
@@ -254,6 +277,10 @@ export async function GET(req: Request) {
     }
 
     try {
+      // Holds the Twilio message returned by whichever send branch fired, so its
+      // sid/status can be recorded by markReminderSent below. Null for branches
+      // with no direct Twilio return (briefing, telegram) — those stay untracked.
+      let sentMsg: any = null
       // Resolve once up front so the recurrence reschedule (below) can carry a
       // real WhatsApp number forward even when the parent row's whatsapp_to is
       // null — e.g. legacy topic-digest rows created without it.
@@ -274,7 +301,7 @@ export async function GET(req: Request) {
             }
           } else if (digestTopic) {
             // Topic digests are rich dynamic content - freeform (in-session only for now).
-            await sendWhatsApp(whatsappTo, reminderText)
+            sentMsg = await sendWhatsApp(whatsappTo, reminderText)
           } else if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID || process.env.TWILIO_REMINDER_CONTENT_SID) {
             // Reminders are business-initiated: ALWAYS use an approved Utility
             // template. Freeform outside the 24h window is accepted then dropped
@@ -284,13 +311,13 @@ export async function GET(req: Request) {
             // the text template otherwise — reversible rollout via the env var alone.
             const reminderLabel = (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); return `${pickReminderEmoji(lbl)} ${lbl}` })()
             if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID) {
-              await sendWhatsAppReminderButtons(whatsappTo, reminderLabel)
+              sentMsg = await sendWhatsAppReminderButtons(whatsappTo, reminderLabel)
             } else {
-              await sendWhatsAppReminderTemplate(whatsappTo, reminderLabel)
+              sentMsg = await sendWhatsAppReminderTemplate(whatsappTo, reminderLabel)
             }
           } else {
             console.warn('NO_REMINDER_TEMPLATE_SID: freeform send - will NOT deliver outside the 24h window')
-            await sendWhatsApp(whatsappTo, reminderText)
+            sentMsg = await sendWhatsApp(whatsappTo, reminderText)
           }
           results.push({ id: reminder.id, channel: 'whatsapp', to: whatsappTo, message: msgRaw, status: 'sent', isBriefing })
         } else if (reminder.chat_id && Number(reminder.chat_id) > 0) {
@@ -365,7 +392,7 @@ export async function GET(req: Request) {
         }
       }
 
-      await markReminderSent(reminder.id)
+      await markReminderSent(reminder.id, sentMsg?.sid, sentMsg?.status)
     } catch (error: any) {
       const message = error?.message || String(error)
       const currentAttempts = reminder.fail_attempts || 0
@@ -379,7 +406,7 @@ export async function GET(req: Request) {
 
       if (newAttempts >= MAX_FAIL_ATTEMPTS) {
         console.error(`REMINDER_ABANDONED id=${reminder.id} after ${newAttempts} attempts`)
-        await markReminderSent(reminder.id)
+        await markReminderSent(reminder.id, null, null, true)
       }
 
       results.push({
