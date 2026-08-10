@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToList } from '@/lib/lists'
 import { buildTicketReply, type TicketInfo, type FlightInfo, type TrainInfo, type EventInfo } from './pdf-reader'
+import { AIRLINES, checkInOpensHours, checkInLink, DEFAULT_CHECKIN_OPENS_HOURS } from './airline-checkin'
 
 // Shared store-and-remind path for parsed tickets, used by BOTH the PDF and
 // image handlers so their behaviour is identical:
@@ -48,6 +49,33 @@ function computeDepartAt(dateStr?: string, timeStr?: string, tz: string = 'Asia/
   }
 }
 
+// Derive the IATA carrier code from a stored flight number: strip non-alphanumerics,
+// uppercase, take the leading two chars. Returns a code only when it maps to a known
+// airline in AIRLINES; null on null / <2-char / unknown input, so callers fall back to
+// the default window and drop the check-in link cleanly.
+function iataFromFlightNo(flightNo: string | null): string | null {
+  if (!flightNo) return null
+  const cleaned = flightNo.replace(/[^a-z0-9]/gi, '').toUpperCase()
+  if (cleaned.length < 2) return null
+  const code = cleaned.slice(0, 2)
+  return code in AIRLINES ? code : null
+}
+
+// Format a departure instant as an absolute IST date label, e.g. "Thu 14 Aug".
+// Absolute wording reads correctly at any check-in offset (24h/48h), unlike the old
+// relative "tomorrow". Returns null when the instant is missing so the caller can
+// fall back to the raw date label.
+function formatDepartDateIST(d: Date | null): string | null {
+  if (!d) return null
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      weekday: 'short', day: '2-digit', month: 'short', timeZone: 'Asia/Kolkata',
+    }).format(d).replace(/,/g, '')
+  } catch {
+    return null
+  }
+}
+
 type TicketContext = {
   telegramId: number
   whatsappTo: string | null
@@ -88,12 +116,15 @@ function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
     const group = fi.flights[0]?.pnr || null
     fi.flights.forEach((f, i) => {
       const tz = resolveDepartTz(f.from)
+      const departAt = computeDepartAt(f.date, f.departure, tz)
+      const departLabel = formatDepartDateIST(departAt) || f.date
+      const link = checkInLink(iataFromFlightNo(f.flightNo))
       legs.push({
         type: 'flight',
         legIndex: i,
         bookingGroup: f.pnr || group,
         fromCity: f.from, toCity: f.to,
-        departAt: computeDepartAt(f.date, f.departure, tz),
+        departAt,
         arriveAt: computeDepartAt(f.date, f.arrival, tz),
         departTz: tz,
         dateLabel: f.date, departLocal: f.departure,
@@ -103,7 +134,10 @@ function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
         passengers: fi.passengers || null,
         raw: f,
         reminderMsg: `✈️ ${f.from} → ${f.to} departs in 3 hours at ${f.departure}! PNR: ${f.pnr}`,
-        checkinMsg: `🧳 Web check-in open — ${f.airline} ${f.flightNo} (${f.from} → ${f.to}) departs tomorrow at ${f.departure}. Check in now to pick your seat. PNR: ${f.pnr}`,
+        checkinMsg:
+          `🧳 Web check-in open — ${f.airline} ${f.flightNo} (${f.from} → ${f.to}) ` +
+          `departs ${departLabel} at ${f.departure}. Check in now to pick your seat. PNR: ${f.pnr}` +
+          (link ? `\n${link}` : ''),
       })
     })
   } else if (info.type === 'train') {
@@ -269,11 +303,22 @@ export async function persistAndRemindTicket(
       if (await createReminderIfAbsent(ctx, leg.reminderMsg, t3)) remindersSet++
     }
 
-    // T-24h web check-in reminder — flights only (NEW).
+    // T-minus web check-in reminder — flights only. The window is per-airline
+    // (Indian carriers open at 48h, not 24h), derived from the flight number's
+    // IATA prefix. Any miss — null/unparseable flight_no, unknown carrier, or a
+    // throw — falls back to the default window so a lookup failure never drops the
+    // reminder. isInternational is false: no international flag exists on the leg,
+    // and firing early (the domestic window) is safer than firing late.
     if (leg.type === 'flight' && leg.checkinMsg) {
-      const t24 = new Date(leg.departAt.getTime() - 24 * 60 * 60 * 1000)
-      if (t24.getTime() > now) {
-        if (await createReminderIfAbsent(ctx, leg.checkinMsg, t24)) remindersSet++
+      let windowHours = DEFAULT_CHECKIN_OPENS_HOURS
+      try {
+        windowHours = checkInOpensHours(iataFromFlightNo(leg.flightNo), false)
+      } catch (err: any) {
+        console.error('CHECKIN_WINDOW_FALLBACK:', err?.message || err)
+      }
+      const tCheckin = new Date(leg.departAt.getTime() - windowHours * 60 * 60 * 1000)
+      if (tCheckin.getTime() > now) {
+        if (await createReminderIfAbsent(ctx, leg.checkinMsg, tCheckin)) remindersSet++
       }
     }
   }
