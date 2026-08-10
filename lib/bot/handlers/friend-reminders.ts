@@ -75,7 +75,11 @@ export async function createFriendReminder(params: {
   rest: string
 }): Promise<{ whenHuman: string }> {
   const { remindAtIso, task } = parseFriendTime(params.rest)
-  const message = `⏰ Reminder from ${params.senderName || 'a friend'}: ${task}`
+  // Body must NOT start with "⏰ Reminder" — the delivery template already prepends
+  // "⏰ Reminder:" (and the cron prepends a context emoji). Embedding it here again
+  // produced the doubled "⏰ Reminder: 📞 ⏰ Reminder from Gogo: …". Keep only "from
+  // <sender>:" so it renders once as "⏰ Reminder: 📞 from Gogo: …".
+  const message = `from ${params.senderName || 'a friend'}: ${task}`
   const { data: owner } = await supabaseAdmin
     .from('users')
     .select('timezone')

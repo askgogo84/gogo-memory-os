@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
+import { isStopMessage, suppressAllForRecipient } from '@/lib/bot/handlers/reminder-optout'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToList } from '@/lib/lists'
 import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
@@ -257,6 +258,25 @@ export async function POST(req: NextRequest) {
     console.log('RAW_TWILIO:', Object.fromEntries([...formData.entries()]))
     console.log('WhatsApp inbound:', { fromRaw, from, profileName, numMedia, messageSid: inboundMessageSid, body: String(formData.get('Body') || ''), mediaType: String(formData.get('MediaContentType0') || ''), allKeys: [...formData.keys()].join(',') })
     if (!from) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+
+    // ── Consent gate: STOP / UNSUBSCRIBE ────────────────────────────────────────
+    // Must run BEFORE resolveUser so an opt-out never creates a users row, never
+    // triggers the onboarding menu, and never reaches the LLM. A friend-reminder
+    // recipient who never opted in must be able to opt out without being onboarded.
+    // suppressAllForRecipient records one reminder_optout row per (owner, recipient)
+    // pair. We confirm politely even when the number is in no friend_contacts (n=0)
+    // or the suppression write errors — the user asked to stop; don't 500 in their face.
+    if (isStopMessage(String(formData.get('Body') || ''))) {
+      try {
+        const pairs = await suppressAllForRecipient(from)
+        console.log('OPTOUT_STOP:', { from, pairsSuppressed: pairs })
+      } catch (e: any) {
+        console.error('OPTOUT_STOP_SUPPRESS_FAILED:', from, e?.message || e)
+      }
+      await sendWhatsAppMessage(from, `You won't get any more reminders from AskGogo users. Reply START if you change your mind.`)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     if (inboundMessageSid) sendWhatsAppTyping(inboundMessageSid).catch((error: any) => console.error('WHATSAPP_TYPING_BACKGROUND_FAILED:', error?.message || error))
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })

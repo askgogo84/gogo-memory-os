@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp, sendWhatsAppReminderTemplate, sendWhatsAppReminderButtons } from '@/lib/whatsapp'
+import { isSuppressed } from '@/lib/bot/handlers/reminder-optout'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -151,6 +152,25 @@ async function findWhatsAppForReminder(reminder: any): Promise<string | null> {
   return null
 }
 
+// Quick-Reply buttons (Done / Snooze 10m / Move to 8pm) mutate the reminder row by
+// the OWNER's telegram_id, so a tap only works for the person who owns the row. A
+// friend-reminder recipient does NOT own the row — their tap 404s ("couldn't find a
+// recent reminder"). So buttons are for the owner's OWN reminders only: true iff the
+// delivery number is the owner's own WhatsApp number. Note both owner and friend
+// reminders carry whatsapp_to, so we compare numbers (last 10 digits) rather than
+// gating on whatsapp_to being set.
+async function reminderGoesToOwner(reminder: any, whatsappTo: string): Promise<boolean> {
+  if (!reminder.telegram_id) return false
+  const { data } = await supabaseAdmin
+    .from('users')
+    .select('whatsapp_id')
+    .eq('telegram_id', reminder.telegram_id)
+    .maybeSingle()
+  const ownDigits = String(data?.whatsapp_id || '').replace(/\D/g, '').slice(-10)
+  const toDigits = String(whatsappTo || '').replace(/\D/g, '').slice(-10)
+  return !!ownDigits && ownDigits === toDigits
+}
+
 // sid/status are the values returned by the Twilio send at the call site; abandoned
 // marks a reminder given up after MAX_FAIL_ATTEMPTS. When REMINDER_DELIVERY_TRACKING
 // is unset the update object is byte-identical to HEAD ({sent, sent_at} only).
@@ -159,6 +179,7 @@ async function markReminderSent(
   sid?: string | null,
   status?: string | null,
   abandoned?: boolean,
+  suppressed?: boolean,
 ) {
   const update: any = { sent: true, sent_at: new Date().toISOString() }
   if (REMINDER_DELIVERY_TRACKING) {
@@ -168,6 +189,11 @@ async function markReminderSent(
       console.log('REMINDER_TRACKED:', { id, sid, acceptStatus: status || 'accepted' })
     } else if (abandoned) {
       update.delivery_status = 'abandoned'
+    } else if (suppressed) {
+      // Consumed by the opt-out gate, not a real delivery. Tag it so the audit
+      // doesn't conflate it with untracked (Telegram/freeform) sends — same reason
+      // the abandon path tags 'abandoned'. Gated: unset ⇒ {sent, sent_at} only.
+      update.delivery_status = 'suppressed'
     }
   }
   const { error } = await supabaseAdmin
@@ -252,6 +278,31 @@ export async function GET(req: Request) {
   const results: any[] = []
 
   for (const reminder of due || []) {
+    // ── Consent gate (FAIL CLOSED) ──────────────────────────────────────────────
+    // A recipient who replied STOP must never receive a reminder from this owner.
+    // Only reminders with whatsapp_to can be third-party friend reminders; the check
+    // is harmless for the owner's own number (never suppressed against themselves).
+    // This is the ONE guard in this cron that fails CLOSED: if the opt-out lookup
+    // throws we DO NOT SEND and leave the row pending to retry next run — every other
+    // guard here fails open. If suppressed, consume the row (mark sent) so it doesn't
+    // retry forever.
+    if (reminder.whatsapp_to) {
+      let suppressed: boolean
+      try {
+        suppressed = await isSuppressed(reminder.telegram_id, reminder.whatsapp_to)
+      } catch (e: any) {
+        console.error('OPTOUT_CHECK_FAILED (fail-closed, not sending):', reminder.id, e?.message || e)
+        results.push({ id: reminder.id, channel: 'whatsapp', to: reminder.whatsapp_to, message: String(reminder.message || ''), status: 'optout_check_failed' })
+        continue
+      }
+      if (suppressed) {
+        await markReminderSent(reminder.id, null, null, false, true)
+        console.log('OPTOUT_SUPPRESSED:', { id: reminder.id, to: reminder.whatsapp_to, owner: reminder.telegram_id })
+        results.push({ id: reminder.id, channel: 'whatsapp', to: reminder.whatsapp_to, message: String(reminder.message || ''), status: 'suppressed_optout' })
+        continue
+      }
+    }
+
     const msgRaw = String(reminder.message || '').trim()
     const isBriefing = BRIEFING_KEYWORDS.test(msgRaw)
     const isFollowup = String(reminder.recurring_pattern || '').startsWith('followup:')
@@ -310,7 +361,10 @@ export async function GET(req: Request) {
             // Utility, so the out-of-24h-window guarantee is unchanged); fall back to
             // the text template otherwise — reversible rollout via the env var alone.
             const reminderLabel = (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); return `${pickReminderEmoji(lbl)} ${lbl}` })()
-            if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID) {
+            // Buttons only for the owner's OWN reminders — a friend recipient can't act
+            // on buttons that mutate a row they don't own (they'd get "couldn't find a
+            // recent reminder"). Friend reminders get the plain text template instead.
+            if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID && await reminderGoesToOwner(reminder, whatsappTo)) {
               sentMsg = await sendWhatsAppReminderButtons(whatsappTo, reminderLabel)
             } else {
               sentMsg = await sendWhatsAppReminderTemplate(whatsappTo, reminderLabel)
