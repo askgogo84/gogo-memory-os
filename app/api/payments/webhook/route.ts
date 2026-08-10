@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyWebhookSignature, getPlan } from '@/lib/razorpay'
+import { verifyWebhookSignature, getPlan, ASKGOGO_PLANS } from '@/lib/razorpay'
 import { createClient } from '@supabase/supabase-js'
 import { sendWhatsApp } from '@/lib/whatsapp'
 
@@ -100,8 +100,19 @@ async function activateUserPlan(params: {
 // Subscription activation: writes tier + tier_expires_at (what the gate reads).
 async function activateSubscription(entity: any, rawPayload: unknown) {
   const notes = entity?.notes || {}
-  const plan = getPlan(notes.plan || 'pro') // entitlement tier: lite / starter / pro
-  const tier = tierFromEntitlement(notes.plan || 'pro')
+  // Never guess an unknown plan. The old code fell back to AskGogo "pro" and
+  // inserted a payment_record regardless — so a foreign (e.g. CreditIQ) or
+  // malformed plan key silently became a paid AskGogo "pro" row. Recognise only
+  // real AskGogo plans; anything else logs and bails with NO write. A CreditIQ
+  // plan (monthly/sixmonth/twelvemonth) that ever slips past the product guard
+  // lands here and is correctly ignored. Returns null so callers skip confirmation.
+  const planKey = String(notes.plan || '').toLowerCase().replace(/founder_pro/g, 'founder')
+  if (!planKey || !(planKey in ASKGOGO_PLANS)) {
+    console.warn('Webhook activateSubscription: unknown plan key, skipping (no write)', { plan: notes.plan, subId: entity?.id })
+    return null
+  }
+  const plan = getPlan(planKey) // entitlement tier: lite / starter / pro / founder
+  const tier = tierFromEntitlement(planKey)
   const now = new Date()
   // Use Razorpay's own period end; fall back to +validityDays. This also keeps
   // tier_expires_at in the future so the gate's auto-downgrade won't fire.
@@ -237,6 +248,23 @@ export async function POST(req: NextRequest) {
   const event: string = body.event || ''
   console.log('Webhook event:', event)
 
+  // CreditIQ shares this Razorpay account + webhook endpoint but owns its own
+  // entitlement write in the creditiq.app repo (its own Supabase DB). Any event
+  // explicitly tagged product:'creditiq' is theirs — skip it here so AskGogo's
+  // DB/tier logic never touches a CreditIQ payment.
+  // FAIL OPEN: skip ONLY what is tagged creditiq. Older AskGogo links (including
+  // the live ₹99 mandate) may carry no product/source tag, so a missing tag must
+  // always proceed — never require a tag to act.
+  const productTag =
+    body.payload?.subscription?.entity?.notes?.product ||
+    body.payload?.payment?.entity?.notes?.product ||
+    body.payload?.payment_link?.entity?.notes?.product ||
+    ''
+  if (String(productTag).toLowerCase() === 'creditiq') {
+    console.log('Webhook: skipping CreditIQ-tagged event', event)
+    return NextResponse.json({ ok: true, ignored: 'creditiq' })
+  }
+
   try {
     if (event === 'payment_link.paid') {
       const entity = body.payload?.payment_link?.entity
@@ -266,16 +294,18 @@ export async function POST(req: NextRequest) {
     if (event === 'subscription.activated' || event === 'subscription.authenticated') {
       const entity = body.payload?.subscription?.entity
       if (!entity) return NextResponse.json({ ok: true })
-      const { plan, phone } = await activateSubscription(entity, body.payload)
-      await notifyWhatsApp(phone, buildConfirmationMessage(plan), 'subscription.activated')
-      return NextResponse.json({ ok: true, event, plan: plan.key })
+      const result = await activateSubscription(entity, body.payload)
+      if (!result) return NextResponse.json({ ok: true, event, ignored: 'unknown-plan' })
+      await notifyWhatsApp(result.phone, buildConfirmationMessage(result.plan), 'subscription.activated')
+      return NextResponse.json({ ok: true, event, plan: result.plan.key })
     }
 
     if (event === 'subscription.charged') {
       const entity = body.payload?.subscription?.entity
       if (!entity) return NextResponse.json({ ok: true })
-      const { plan } = await activateSubscription(entity, body.payload)
-      return NextResponse.json({ ok: true, event, plan: plan.key })
+      const result = await activateSubscription(entity, body.payload)
+      if (!result) return NextResponse.json({ ok: true, event, ignored: 'unknown-plan' })
+      return NextResponse.json({ ok: true, event, plan: result.plan.key })
     }
 
     if (event === 'subscription.cancelled' || event === 'subscription.completed') {
