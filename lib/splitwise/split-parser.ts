@@ -166,11 +166,29 @@ export function parseSplitIntent(input: string): SplitIntent {
 
   if (/^(my splits?|past splits?|split history|recent splits?)$/i.test(lower)) return { type: 'history' }
 
-  const balanceMatch = text.match(/^(?:show\s+)?(?:balance|balances|who owes who|who owes whom)(?:\s+(?:(?:for|in|of)\s+)?(.+))?$/i)
+  // FIX B: the trailing group now REQUIRES a for/in/of lead-in. Kills "balance due"
+  // (no lead-in) while keeping bare "balance" and "balance for Goa".
+  const balanceMatch = text.match(/^(?:show\s+)?(?:balance|balances|who owes who|who owes whom)(?:\s+(?:for|in|of)\s+(.+))?$/i)
   if (balanceMatch) return { type: 'show_balance', groupName: cleanGroupName(balanceMatch[1]) }
 
+  // FIX A: "<name> balance" reverse form. The lazy prefix used to claim ANY phrase
+  // ending in "balance" (e.g. "my card balance"), starving downstream intents. Only
+  // claim when the prefix looks like a real group name — reject a possessive lead
+  // (my/our/your/…) or a reserved non-group noun (card/credit/bank/…) found ANYWHERE
+  // in the prefix (so "what's my balance" is rejected on "my", not just at the start).
+  // A plausible/typo'd group name ("Gooa balance") still passes and reaches the
+  // create-trip hint. Accepted limitation: a real group literally named with a
+  // reserved noun ("Credit Union Trip balance") is falsely rejected — graceful,
+  // since "show balance for <group>" still works.
   const reverseBalanceMatch = text.match(/^(.+?)\s+(?:balance|balances)$/i)
-  if (reverseBalanceMatch) return { type: 'show_balance', groupName: cleanGroupName(reverseBalanceMatch[1]) }
+  if (reverseBalanceMatch) {
+    const prefix = reverseBalanceMatch[1]
+    const possessiveLead = /\b(my|our|your|his|her|their)\b/i
+    const reservedNoun = /\b(card|credit|bank|account|points|miles|loan|wallet)\b/i
+    if (!possessiveLead.test(prefix) && !reservedNoun.test(prefix)) {
+      return { type: 'show_balance', groupName: cleanGroupName(prefix) }
+    }
+  }
 
   const simplifyMatch = text.match(/^(?:simplify|settlement|settlements|simplify settlement|simplify debts)(?:\s+(?:(?:for|in|of)\s+)?(.+))?$/i)
   if (simplifyMatch) return { type: 'simplify', groupName: cleanGroupName(simplifyMatch[1]) }
