@@ -74,15 +74,31 @@ export function detectIntent(text: string): DetectedIntent {
     if (cq) return { type: 'creditiq_link', confidence: 'high', meta: { code: cq[1] } }
   }
 
-  // CreditIQ portfolio ("show my cards"). Anchored, tight — must NOT catch unrelated
-  // "card" mentions (business cards, nutrition cards, "save this card").
+  // CreditIQ portfolio. Two ways to match:
+  //   (a) the original anchored commands (kept verbatim), OR
+  //   (b) natural phrasings ("how many points do I have", "what cards do I
+  //       have", "my card balance") — each anchored to a query/possessive
+  //       SHAPE so a mid-sentence "my card" in an unrelated message ("pay my
+  //       credit card bill", "remind me to renew my card") can NOT steal this
+  //       intent. Every pattern requires a rewards/card noun (cards/points/
+  //       miles/card balance) together with a first-person marker (my / do I /
+  //       I have). \b boundaries only — never substring matching, so "what's
+  //       the point" (no plural noun), "bank balance" / "work-life balance"
+  //       (no card/points/miles noun) and a bare "points" never fire.
   if (
     /^(show\s+)?my\s+(credit\s+)?cards$/.test(lower) ||
     /^show\s+cards$/.test(lower) ||
     /^(show\s+)?my\s+portfolio$/.test(lower) ||
     /^(show\s+)?my\s+(reward\s+)?points$/.test(lower) ||
     /^(show\s+)?my\s+creditiq$/.test(lower) ||
-    /^creditiq\s+(cards|portfolio|points)$/.test(lower)
+    /^creditiq\s+(cards|portfolio|points)$/.test(lower) ||
+    // (b1) possessive: "my points", "my reward points", "my miles",
+    //      "show my cards", "what's my card balance", "check my miles"
+    /^(?:show\s+(?:me\s+)?|check\s+|what(?:'?s|\s+is|\s+are)\s+)?my\s+(?:credit\s+|reward\s+)?(?:cards?|points|miles|card\s+balance)\b/.test(lower) ||
+    // (b2) count question: "how many points do I have", "how many miles have I earned"
+    /^how\s+many\s+(?:credit\s+|reward\s+)?(?:cards?|points|miles)\b.*\b(?:do\s+i|i\s+have|have\s+i|i've)\b/.test(lower) ||
+    // (b3) which-do-I-have question: "what cards do I have", "what points do I have"
+    /^what\s+(?:credit\s+|reward\s+)?(?:cards?|points|miles)\s+(?:do\s+i\s+have|have\s+i)\b/.test(lower)
   ) return { type: 'creditiq_cards', confidence: 'high' }
 
   // Dashboard magic-link request. Deterministic command — an exact-match set so
