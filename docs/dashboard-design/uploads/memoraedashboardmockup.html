@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memorae Dashboard — Recreation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --blue:#557BF4; --sky:#92B4D4; --ink:#14140F; --muted:#9A9AA1;
+    --grad-cta:linear-gradient(90deg,#6D5FF6,#E255A1);
+    --grad-nova:linear-gradient(90deg,#5B8CFF,#9B5CF6,#E255A1);
+    --glass:rgba(20,20,22,.42); --hair:rgba(255,255,255,.14);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Figtree',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+  html,body{height:100%}
+  body{background:#0c1424;color:#fff;overflow:hidden}
+  .screen{position:fixed;inset:0;display:none}
+  .screen.active{display:block}
+  .cloud-bg{position:absolute;inset:0;object-fit:cover;width:100%;height:100%}
+  /* ---------- Room switcher (shared) ---------- */
+  .roomnav{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:50;
+    display:flex;gap:4px;background:rgba(255,255,255,.55);backdrop-filter:blur(14px);
+    padding:6px;border-radius:999px;box-shadow:0 8px 30px rgba(0,0,0,.15)}
+  .roomnav button{border:0;background:transparent;color:#3a4a63;font-weight:600;font-size:14px;
+    display:flex;align-items:center;gap:7px;padding:9px 18px;border-radius:999px;cursor:pointer}
+  .roomnav button.on{background:#fff;color:var(--blue);box-shadow:0 2px 8px rgba(0,0,0,.12)}
+  .roomnav .ico{font-size:15px}
+  .float-bubble{position:fixed;right:26px;bottom:26px;width:92px;height:92px;z-index:40;
+    filter:drop-shadow(0 10px 24px rgba(0,0,0,.25));animation:bob 4s ease-in-out infinite}
+  @keyframes bob{50%{transform:translateY(-10px)}}
+  /* ---------- PORTAL / HALL ---------- */
+  #portal .cloud-bg{background:linear-gradient(180deg,#7fb0ee,#a9cbf3)}
+  #portal .center{position:absolute;top:8%;left:50%;transform:translateX(-50%);width:min(720px,92vw);text-align:center}
+  #portal .mascot{width:120px;height:120px;filter:drop-shadow(0 8px 20px rgba(80,110,200,.4))}
+  #portal h1{font-size:56px;font-weight:800;margin:10px 0 6px;text-shadow:0 2px 20px rgba(60,90,160,.25)}
+  #portal .sub{font-size:19px;opacity:.92;margin-bottom:26px}
+  .cmdbar{display:flex;align-items:center;background:rgba(255,255,255,.32);backdrop-filter:blur(10px);
+    border:1px solid rgba(255,255,255,.5);border-radius:999px;padding:16px 16px 16px 26px;gap:10px;
+    box-shadow:0 10px 40px rgba(60,90,160,.18)}
+  .cmdbar input{flex:1;background:transparent;border:0;outline:0;color:#fff;font-size:18px}
+  .cmdbar input::placeholder{color:rgba(255,255,255,.85)}
+  .cmdbar .circ{width:40px;height:40px;border-radius:50%;border:0;cursor:pointer;font-size:17px}
+  .cmdbar .plus{background:transparent;color:#fff;font-size:24px}
+  .cmdbar .rec{background:#fff;color:var(--blue)}
+  .chips{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
+  .chip{display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.92);color:#2b2b33;
+    border-radius:999px;padding:11px 16px;text-align:left;box-shadow:0 4px 14px rgba(0,0,0,.08)}
+  .chip img{width:20px;height:20px}
+  .chip b{font-size:14px;font-weight:600;display:block}
+  .chip span{font-size:12px;color:#8a8a92}
+  .sidecards{position:absolute;right:26px;bottom:96px;display:flex;flex-direction:column;gap:10px}
+  .sidecard{display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.92);color:#2b2b33;
+    border-radius:999px;padding:10px 16px;box-shadow:0 4px 14px rgba(0,0,0,.1);font-size:13px}
+  .sidecard img{width:18px;height:18px}
+  .sidecard span{color:#9a9aa1;margin-left:auto;font-size:12px}
+  .toast{position:absolute;left:22px;bottom:96px;background:rgba(255,255,255,.28);backdrop-filter:blur(8px);
+    border:1px solid rgba(255,255,255,.4);border-radius:16px;padding:12px 16px;max-width:250px;font-size:12px}
+  .toast .k{opacity:.8;font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+  .toast .t{font-weight:700;font-size:14px;margin:3px 0}
+  /* ---------- OFFICE / DASHBOARD ---------- */
+  #office .cloud-bg{background:#20242c}
+  #office .deskbg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:blur(2px) brightness(.6)}
+  .layout{position:absolute;inset:0;display:flex}
+  .sidebar{width:236px;background:rgba(12,12,16,.55);backdrop-filter:blur(16px);
+    border-right:1px solid var(--hair);display:flex;flex-direction:column;padding:18px 14px}
+  .logo{font-weight:800;font-size:19px;padding:6px 10px 16px}
+  .logo span{color:var(--blue)}
+  .navitem{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:10px;color:#c9c9d2;
+    font-size:14px;font-weight:500;cursor:pointer}
+  .navitem .ico{width:18px;text-align:center;opacity:.85}
+  .navitem.on{background:rgba(255,255,255,.1);color:#fff}
+  .navitem:hover{background:rgba(255,255,255,.06)}
+  .sb-bottom{margin-top:auto;display:flex;flex-direction:column;gap:12px}
+  .nova-btn{background:var(--grad-nova);border:0;color:#fff;font-weight:700;font-size:14px;
+    padding:12px;border-radius:999px;cursor:pointer}
+  .userrow{display:flex;align-items:center;gap:10px;padding:6px 4px}
+  .avatar{width:34px;height:34px;border-radius:50%;background:var(--grad-cta);display:grid;place-items:center;
+    font-weight:700;font-size:13px}
+  .userrow small{display:block;color:var(--muted);font-size:11px}
+  .main{flex:1;overflow:auto;padding:26px 30px}
+  .banner{border-radius:20px;overflow:hidden;position:relative;padding:26px 30px;min-height:120px;
+    background:linear-gradient(90deg,rgba(20,22,30,.7),rgba(20,22,30,.2)),url('https://cdn.memorae.ai/l3/dashboard-bg-desk.webp');
+    background-size:cover;background-position:center;margin-bottom:22px}
+  .banner small{opacity:.85;font-size:14px}
+  .banner h1{font-size:30px;font-weight:800;margin-top:4px}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .card{background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--hair);border-radius:18px;
+    padding:16px;min-height:190px;display:flex;flex-direction:column}
+  .card .head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .card .head b{font-size:16px}
+  .viewall{background:rgba(255,255,255,.9);color:#222;border:0;border-radius:999px;padding:5px 12px;
+    font-size:12px;font-weight:600;cursor:pointer}
+  .card .empty{flex:1;display:grid;place-items:center;color:var(--muted);font-size:13px}
+  .promptchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .pc{background:rgba(255,255,255,.08);border:1px solid var(--hair);border-radius:999px;padding:5px 10px;font-size:11px;color:#cfcfd6}
+  .mascot-sm{width:44px;height:44px}
+  /* ---------- PARK / MEMORY BUBBLE ---------- */
+  #park .cloud-bg{background:linear-gradient(180deg,#6ea8e8,#bcd6f2)}
+  .parktop{position:absolute;top:22px;left:0;right:0;display:flex;align-items:center;justify-content:center;gap:14px;padding:0 26px}
+  .homebtn{position:absolute;left:26px;top:22px;width:44px;height:44px;border-radius:50%;
+    background:rgba(255,255,255,.35);border:1px solid rgba(255,255,255,.5);color:#fff;font-size:18px;cursor:pointer}
+  .segtabs{display:flex;gap:4px;background:rgba(255,255,255,.55);backdrop-filter:blur(12px);padding:6px;border-radius:999px}
+  .segtabs button{border:0;background:transparent;color:#3a4a63;font-weight:600;font-size:14px;padding:9px 18px;border-radius:999px;cursor:pointer;display:flex;gap:7px;align-items:center}
+  .segtabs button.on{background:#fff;color:var(--blue)}
+  #park .psearch{position:absolute;top:96px;left:5%;right:5%;font-size:52px;font-style:italic;font-weight:600;color:rgba(255,255,255,.75)}
+  .board{position:absolute;top:190px;left:5%;right:5%;bottom:100px;overflow:auto;
+    column-count:5;column-gap:16px}
+  .tile{break-inside:avoid;border-radius:18px;margin-bottom:16px;overflow:hidden;box-shadow:0 6px 18px rgba(40,70,130,.18);
+    background:rgba(255,255,255,.85);color:#222}
+  .tile.input{background:rgba(255,255,255,.4);backdrop-filter:blur(8px);color:#fff;padding:16px;min-height:200px;display:flex;flex-direction:column;justify-content:space-between}
+  .tile.input .ph{font-size:17px;font-weight:500;opacity:.9}
+  .tile.input .row{display:flex;gap:8px}
+  .tile.input .row button{width:40px;height:40px;border-radius:50%;border:0;background:rgba(255,255,255,.85);cursor:pointer}
+  .tile img{width:100%;display:block}
+  .tile .lbl{padding:12px 14px;font-weight:600;font-size:14px}
+  .tile.quote{background:var(--grad-cta);color:#fff;padding:22px 18px;font-size:26px;font-weight:700}
+  .tile.file{padding:14px}
+  .tile.file .tag{font-size:10px;font-weight:700;color:var(--blue);background:#eaf0ff;border-radius:6px;padding:2px 7px;display:inline-block}
+  .parkscene{position:absolute;inset:0;display:none;place-items:center}
+  .parkscene .bench{width:min(760px,90vw);text-align:center}
+  .parkscene .speech{background:rgba(255,255,255,.92);color:#222;border-radius:18px;padding:16px 22px;display:inline-block;margin-bottom:10px}
+  .parkscene .speech .k{color:var(--blue);font-weight:700;font-size:12px}
+  .parkscene .speech .t{font-size:22px;font-weight:600;margin-top:4px}
+  .note{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99;background:rgba(0,0,0,.55);
+    color:#fff;font-size:12px;padding:6px 14px;border-radius:999px}
+</style>
+</head>
+<body>
+<div class="note">Recreation of Memorae — switch rooms below · Portal · Office · Park</div>
+
+<!-- ===================== PORTAL / HALL ===================== -->
+<section id="portal" class="screen active">
+  <div class="cloud-bg"></div>
+  <div class="center">
+    <img class="mascot" src="https://cdn.memorae.ai/l3/memorae-side-chat.webp" alt="Memorae">
+    <h1>Good evening, Gogo</h1>
+    <div class="sub">Talk to me, or pick where you feel pull.</div>
+    <div class="cmdbar">
+      <input placeholder="Summarize my Berlin trip notes" readonly>
+      <button class="circ plus">+</button>
+      <button class="circ rec">●</button>
+    </div>
+    <div class="chips">
+      <div class="chip"><img src="https://cdn.memorae.ai/l3/what-can-i-share.webp"><div><b>What can I save here?</b><span>Teach me</span></div></div>
+      <div class="chip"><img src="https://cdn.memorae.ai/l3/remind-me-to.webp"><div><b>Remind me to __</b><span>Fill in the blanks</span></div></div>
+      <div class="chip"><img src="https://cdn.memorae.ai/l3/whats-my-schedule.webp"><div><b>What's on my schedule?</b><span>Retrieve what I know</span></div></div>
+      <div class="chip"><img src="https://cdn.memorae.ai/l3/save-this-link.webp"><div><b>Save this link</b><span>Park it for later</span></div></div>
+    </div>
+  </div>
+  <div class="sidecards">
+    <div class="sidecard"><img src="https://cdn.memorae.ai/l3/friends-icon.webp">Friends<span>1 partners</span></div>
+    <div class="sidecard"><img src="https://cdn.memorae.ai/l3/personalize-icon.webp">Personalize<span>Customize</span></div>
+    <div class="sidecard"><img src="https://cdn.memorae.ai/l3/integrations-icon.webp">Integrations<span>1 active</span></div>
+    <div class="sidecard"><img src="https://cdn.memorae.ai/l3/master-memorae-icon.webp">Master Memorae<span>1/21</span></div>
+  </div>
+  <div class="toast"><div class="k">Continue to Master Memorae</div><div class="t">Create Your First Reminder</div><div>Unlocks Baseball Cap</div></div>
+</section>
+
+<!-- ===================== OFFICE / DASHBOARD ===================== -->
+<section id="office" class="screen">
+  <img class="deskbg" src="https://cdn.memorae.ai/l3/dashboard-bg-desk.webp" alt="">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="logo">mem<span>o</span>rae</div>
+      <div class="navitem"><span class="ico">🏠</span>Hall</div>
+      <div class="navitem on"><span class="ico">▦</span>Dashboard</div>
+      <div class="navitem"><span class="ico">👥</span>Friends</div>
+      <div class="navitem"><span class="ico">🔗</span>Integrations</div>
+      <div class="navitem"><span class="ico">🔔</span>Reminders</div>
+      <div class="navitem"><span class="ico">📅</span>Calendars</div>
+      <div class="navitem"><span class="ico">☰</span>Lists</div>
+      <div class="navitem"><span class="ico">✔</span>Tasks</div>
+      <div class="navitem"><span class="ico">🎓</span>Master Memorae</div>
+      <div class="navitem"><span class="ico">✨</span>Choose a personality</div>
+      <div class="sb-bottom">
+        <button class="nova-btn">Unlock Supernova</button>
+        <div class="userrow"><div class="avatar">GO</div><div>Gogo<small>Profile &amp; settings</small></div></div>
+      </div>
+    </aside>
+    <div class="main">
+      <div class="banner"><small>Welcome back, Gogo</small><h1>What's on your mind today?</h1></div>
+      <div class="cards">
+        <div class="card">
+          <div class="head"><b>Reminder</b><button class="viewall">View all</button></div>
+          <img class="mascot-sm" src="https://cdn.memorae.ai/l3/memorae-side-chat.webp">
+          <div class="empty">No reminders</div>
+          <div class="promptchips"><span class="pc">Memorae, remind me to call mom</span><span class="pc">Memorae, wakeup at 7am</span></div>
+        </div>
+        <div class="card">
+          <div class="head"><b>Calendars</b><button class="viewall">View more</button></div>
+          <div style="font-size:13px;color:var(--muted)">Monday 10</div>
+          <div class="empty">No events</div>
+          <div class="promptchips"><span class="pc">Memorae, schedule meeting at 3pm</span><span class="pc">Memorae, show my schedule</span></div>
+        </div>
+        <div class="card">
+          <div class="head"><b>Lists</b><button class="viewall">View all</button></div>
+          <div class="empty">No lists</div>
+          <div class="promptchips"><span class="pc">Memorae, add milk to shopping list</span><span class="pc">Memorae, create a todo list</span></div>
+        </div>
+        <div class="card" style="grid-column:span 1">
+          <div class="head"><b>Today's Tasks</b><button class="viewall">View all</button></div>
+          <div class="empty">No tasks in Today</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PARK / MEMORY BUBBLE ===================== -->
+<section id="park" class="screen">
+  <div class="cloud-bg"></div>
+  <button class="homebtn" onclick="showRoom('portal')">⌂</button>
+  <div class="parktop">
+    <div class="segtabs">
+      <button class="on" onclick="parkTab('board',this)">▦ Everything</button>
+      <button onclick="parkTab('scene',this)">◎ My bubbles</button>
+      <button onclick="alert('Clean up is gated behind the Supernova upgrade (modal: “Clean up your memory”).')">🧹 Clean up</button>
+    </div>
+  </div>
+  <div id="pk-board">
+    <div class="psearch">Search your Memory…</div>
+    <div class="board">
+      <div class="tile input"><div class="ph">Type or record a new thought</div><div class="row"><button>+</button><button>🎙</button><button>↑</button></div></div>
+      <div class="tile"><div class="lbl">📸 Instagram</div></div>
+      <div class="tile quote">"Live in the moment"</div>
+      <div class="tile file"><span class="tag">FILE</span><div class="lbl" style="padding:8px 0 0">Document shared: E-itinerary.pdf</div></div>
+      <div class="tile"><div class="lbl">🤖 AI Agent · morae</div></div>
+      <div class="tile"><div class="lbl">💻 Laptop capture</div></div>
+      <div class="tile"><div class="lbl">▶ Motion Graphic explainer</div></div>
+      <div class="tile"><div class="lbl">⌚ Smartwatch</div></div>
+      <div class="tile"><div class="lbl">👩‍💻 People at laptop</div></div>
+      <div class="tile"><div class="lbl">🖼 AI image · bubble</div></div>
+    </div>
+  </div>
+  <div id="pk-scene" class="parkscene">
+    <div class="bench">
+      <div class="speech"><div class="k">MEMORAE</div><div class="t">Welcome!<br>Create your first bubble.</div></div>
+      <div style="font-size:64px">🪑</div>
+      <img src="https://cdn.memorae.ai/l3/memorae-side-chat.webp" style="width:120px;margin-top:-40px">
+    </div>
+  </div>
+</section>
+
+<!-- shared floating mascot + room nav -->
+<img class="float-bubble" src="https://cdn.memorae.ai/l3/memorae-side-chat.webp" alt="chat">
+<nav class="roomnav">
+  <button class="on" data-room="portal" onclick="showRoom('portal',this)"><span class="ico">🏠</span>Portal</button>
+  <button data-room="office" onclick="showRoom('office',this)"><span class="ico">💼</span>Office</button>
+  <button data-room="coffee" onclick="alert('Coffee = “Coffee with Memorae” casual chat view (conversation + coffee-cup sidebar).')"><span class="ico">☕</span>Coffee</button>
+  <button data-room="park" onclick="showRoom('park',this)"><span class="ico">🌳</span>Park</button>
+</nav>
+
+<script>
+  function showRoom(id,btn){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===id));
+    document.querySelectorAll('.roomnav button').forEach(b=>b.classList.toggle('on',b.dataset.room===id));
+  }
+  function parkTab(which,btn){
+    document.querySelectorAll('.segtabs button').forEach(b=>b.classList.remove('on'));
+    btn.classList.add('on');
+    document.getElementById('pk-board').style.display = which==='board'?'block':'none';
+    document.getElementById('pk-scene').style.display = which==='scene'?'grid':'none';
+  }
+</script>
+</body>
+</html>

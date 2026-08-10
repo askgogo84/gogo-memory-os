@@ -19,9 +19,23 @@ export default async function ListsPage() {
   // as an empty account, never a crash.
   const result = session ? await getLists(session.telegramId) : { ok: true as const, lists: [] }
 
+  // Header count line, derived from items already in hand (open = not done) — no
+  // extra query. Only shown when there's something to summarise.
+  const lists = result.ok ? result.lists : []
+  const openItems = lists.reduce((n, l) => n + l.items.filter((i) => !i.done).length, 0)
+  const hasLists = result.ok && lists.length > 0
+
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="font-serif text-[28px] font-semibold text-gogo-ink">Lists</h1>
+    <div className="flex flex-col gap-5">
+      <header>
+        <h1 className="font-serif text-[25px] font-semibold tracking-[-0.4px] text-gogo-ink">Lists</h1>
+        {hasLists && (
+          <p className="mt-1 text-[13px] font-medium text-gogo-ink-3">
+            {lists.length} {lists.length === 1 ? 'list' : 'lists'} · {openItems} open{' '}
+            {openItems === 1 ? 'item' : 'items'}
+          </p>
+        )}
+      </header>
 
       {!result.ok ? (
         // A read failure is not an empty account — show a retry, never a blank.
@@ -33,12 +47,9 @@ export default async function ListsPage() {
           action={<WhatsAppChip message="Gogo, add milk to my groceries" />}
         />
       ) : (
-        <>
-          <ListCollection lists={result.lists} />
-          <div>
-            <WhatsAppChip message="Gogo, add milk to my groceries" />
-          </div>
-        </>
+        // The add-affordance now lives contextually inside each expanded list
+        // (mockup 1d), so there's no separate bottom chip here.
+        <ListCollection lists={result.lists} />
       )}
     </div>
   )

@@ -26,9 +26,17 @@
   --color-gogo-orange-deep: #d67528; /* hover/pressed for orange */
   --color-gogo-plum: #714c77; /* secondary: headers, chips, meter tail */
   --color-gogo-plum-deep: #4d2a50; /* hover/pressed for plum */
+  --color-gogo-plum-tint: #f0eaf1; /* plum tint fill: count chips, personality card */
   --color-gogo-ink: #3e2312; /* body + headings — warm near-black, not #000 */
+  /* Ink ramp: numbered off gogo-ink so the hierarchy is unmissable. These are
+     WARMER, greyer taupes — not gogo-ink at alpha — so meta text keeps its own
+     hue against cream instead of going translucent. ink-2 darkest → ink-4 faintest. */
+  --color-gogo-ink-2: #6b4a34; /* warm brown: secondary body, inactive pill labels */
+  --color-gogo-ink-3: #9a8778; /* muted taupe: dates, meta, eyebrow labels */
+  --color-gogo-ink-4: #b8a797; /* faint taupe: qty values, placeholders */
   --color-gogo-sand: #e4a97d; /* soft fill: illustration backdrops, dividers */
-  --color-gogo-cream: #fdfbf7; /* page background */
+  --color-gogo-orange-tint: #fdf0e2; /* orange tint fill: count circles, avatar bg */
+  --color-gogo-cream: #fbf6ef; /* page background — the design's warm screen surface */
   --color-gogo-surface: #ffffff; /* cards, sheets, inputs */
 
   /* Motion (brief §4): slow float, gentle ease-in-out, never spring or bounce.

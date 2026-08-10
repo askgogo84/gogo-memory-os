@@ -13,22 +13,30 @@ import type { ReminderRow } from '@/lib/dashboard/queries'
 function Node({ node }: { node: ThreadNode }) {
   return (
     <div className="relative mb-[26px]">
-      <span className="absolute -left-[74px] top-px w-[46px] text-right text-xs tabular-nums text-gogo-ink/55">
+      <span
+        className={`absolute -left-[74px] top-px w-[46px] text-right text-[11.5px] font-semibold tabular-nums ${
+          node.past ? 'text-gogo-ink-3' : 'text-gogo-ink-2'
+        }`}
+      >
         {node.timeLabel}
       </span>
-      <span
-        className={`absolute -left-6 top-1.5 h-[9px] w-[9px] rounded-full border-2 ${
-          node.past ? 'border-transparent bg-gogo-ink/20' : 'border-gogo-plum bg-gogo-cream'
-        }`}
-      />
+      {/* Past nodes get a small solid sand dot; upcoming ones a hollow plum ring
+          on surface white — the mockup's two states for done vs still-to-come. */}
+      {node.past ? (
+        <span className="absolute -left-[23px] top-2 h-[7px] w-[7px] rounded-full bg-gogo-sand" />
+      ) : (
+        <span className="absolute -left-6 top-1.5 h-[9px] w-[9px] rounded-full border-2 border-gogo-plum bg-gogo-surface" />
+      )}
       <p
-        className={`text-[15px] font-medium leading-[1.35] ${
-          node.past ? 'text-gogo-ink/40 line-through decoration-gogo-ink/20' : 'text-gogo-ink'
+        className={`text-[14.5px] leading-[1.35] ${
+          node.past
+            ? 'font-medium text-gogo-ink-3 line-through decoration-gogo-ink/20'
+            : 'font-semibold text-gogo-ink'
         }`}
       >
         {node.label}
       </p>
-      {node.seriesMeta && <p className="mt-[3px] text-[12.5px] text-gogo-ink/55">{node.seriesMeta}</p>}
+      {node.seriesMeta && <p className="mt-[3px] text-[12.5px] text-gogo-ink-3">{node.seriesMeta}</p>}
     </div>
   )
 }
@@ -41,8 +49,9 @@ export function ReminderThread({ rows, tz }: { rows: ReminderRow[]; tz: string }
 
   return (
     <div className="relative pl-[74px]">
-      {/* The rail: a hairline that fades in at the top and out at the bottom. */}
-      <div className="pointer-events-none absolute bottom-6 left-[52px] top-1.5 w-0.5 bg-gradient-to-b from-gogo-ink/10 via-gogo-ink/20 to-gogo-ink/10" />
+      {/* The rail: a sand hairline that fades from full at the top to faint at the
+          bottom — the day draining away below the now-marker. */}
+      <div className="pointer-events-none absolute bottom-6 left-[52px] top-1.5 w-px bg-gradient-to-b from-gogo-sand to-gogo-sand/25" />
 
       {before.map((node) => (
         <Node key={node.id} node={node} />
@@ -50,12 +59,15 @@ export function ReminderThread({ rows, tz }: { rows: ReminderRow[]; tz: string }
 
       {/* The now-marker — one per screen, orange, between past and upcoming. */}
       <div className="relative mb-[30px] mt-0.5">
-        <span className="absolute -left-[74px] -top-0.5 w-[46px] text-right text-xs font-bold tabular-nums text-gogo-orange">
+        <span className="absolute -left-[74px] -top-0.5 w-[46px] text-right text-[11.5px] font-bold tabular-nums text-gogo-orange">
           {nowLabel}
         </span>
         <span className="absolute -left-[27px] top-0.5 h-[15px] w-[15px] rounded-full bg-gogo-orange shadow-[0_0_0_5px_rgba(241,130,25,0.16)]" />
         <div className="mt-2 h-0.5 rounded-sm bg-gradient-to-r from-gogo-orange to-transparent" />
-        {gapLine && <p className="mt-[7px] text-xs font-semibold text-gogo-orange-deep">{gapLine}</p>}
+        {/* The spoken gap line — Fraunces, plum, the one bit of voice on the spine. */}
+        {gapLine && (
+          <p className="mt-[7px] font-serif text-[14px] font-semibold leading-[1.4] text-gogo-plum">{gapLine}</p>
+        )}
       </div>
 
       {after.map((node) => (
