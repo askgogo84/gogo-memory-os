@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'crypto'
+import { createHash, createHmac, randomBytes } from 'crypto'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -24,8 +24,49 @@ function sha256(input: string): string {
   return createHash('sha256').update(input).digest('hex')
 }
 
+// ── Typed one-time code ───────────────────────────────────────────────────────
+// Alongside the magic link we mint a short, human-typable code so a user who
+// can't tap the link (wrong device, copy-paste mangling) can still get in. It
+// lives on the SAME dashboard_tokens row as the token and is stored only as
+// sha256 of its normalised form.
+//
+// Crockford base32 alphabet — deliberately omits I, L, O, U (the glyphs people
+// confuse or that spell things). 256 is an exact multiple of 32, so `byte % 32`
+// is unbiased; no rejection sampling needed.
+const CROCKFORD_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+const CODE_LENGTH = 8
+
+function generateCode(): string {
+  const bytes = randomBytes(CODE_LENGTH)
+  let code = ''
+  for (let i = 0; i < CODE_LENGTH; i++) code += CROCKFORD_ALPHABET[bytes[i] % 32]
+  return code
+}
+
+// 4-4 display form. The redeem form and the normaliser both strip the hyphen, so
+// "ABCD-EFGH" and "ABCDEFGH" hash identically and redeem the same.
+function hyphenate(code: string): string {
+  return `${code.slice(0, 4)}-${code.slice(4)}`
+}
+
+// Normalisation MUST be byte-for-byte identical on issue and redeem, or a code
+// minted one way won't match when typed back. Uppercase → strip whitespace and
+// hyphens → fold the Crockford aliases I/L→1 and O→0. Generated codes never
+// contain I/L/O, so the fold only ever repairs a user's typo.
+export function normalizeCode(input: string): string {
+  return input
+    .toUpperCase()
+    .replace(/[\s-]/g, '')
+    .replace(/[IL]/g, '1')
+    .replace(/O/g, '0')
+}
+
+function hashCode(code: string): string {
+  return sha256(normalizeCode(code))
+}
+
 export type IssueResult =
-  | { ok: true; token: string }
+  | { ok: true; token: string; code: string }
   | { ok: false; reason: 'throttled' | 'error' }
 
 // Issue a magic-link token for a telegram_id. Rate-limited to 5 issues per hour
@@ -52,31 +93,51 @@ export async function issueToken(telegramId: string | number): Promise<IssueResu
   }
 
   const token = randomBytes(32).toString('base64url')
+  const code = generateCode()
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString()
   const { error: insertError } = await supabaseAdmin
     .from('dashboard_tokens')
-    .insert({ telegram_id: tg, token_hash: sha256(token), expires_at: expiresAt })
+    // Token and code minted on ONE row, in ONE insert — same telegram_id, same
+    // TTL, same used_at gate. Redeeming either burns the row for both.
+    .insert({
+      telegram_id: tg,
+      token_hash: sha256(token),
+      code_hash: hashCode(code),
+      expires_at: expiresAt,
+    })
 
   if (insertError) {
     console.error('DASHBOARD_TOKEN_INSERT_FAILED:', insertError)
     return { ok: false, reason: 'error' } // fail closed
   }
-  return { ok: true, token }
+  return { ok: true, token, code: hyphenate(code) }
 }
 
-// Redeem a token, returning the telegram_id (TEXT) or null. The burn is a single
-// atomic conditional UPDATE: used_at is set in the same statement that reads the
-// row, gated on `used_at is null and expires_at > now()`. Two concurrent taps
-// race on the row lock; Postgres re-evaluates the WHERE for the loser, so exactly
-// one update succeeds and only one session can ever be minted. Zero rows back —
-// invalid, expired, or already used — all return null; the difference only helps
-// an attacker.
-export async function redeemToken(token: string): Promise<string | null> {
+// Burn a credential row by its hash, returning the telegram_id (TEXT) or null.
+// Single atomic conditional UPDATE: used_at is set in the same statement that
+// reads the row, gated on `used_at is null and expires_at > now()`. Two concurrent
+// taps race on the row lock; Postgres re-evaluates the WHERE for the loser, so
+// exactly one update succeeds and only one session can ever be minted.
+//
+// The hash is matched against BOTH columns (token_hash OR code_hash) so ONE
+// statement serves both the magic-link and the typed-code path. A token's hash
+// can only ever equal a token_hash and a code's only a code_hash (different
+// preimages), so the OR never cross-matches. Zero rows back — invalid, expired,
+// or already used — all return null; the difference only helps an attacker.
+//
+// INVARIANT — the ONLY callers are redeemToken (sha256 of the token) and
+// redeemCode (sha256 of the normalised code). `hash` is therefore ALWAYS a
+// 64-char sha256 hex string, NEVER raw user input. That is what makes the
+// `.or()` string interpolation below safe (hex has no PostgREST filter
+// metacharacters). If you add a caller, it MUST pass sha256 hex too — do not
+// widen this to interpolate anything user-supplied.
+async function burnCredential(hash: string): Promise<string | null> {
   const nowIso = new Date().toISOString()
   const { data, error } = await supabaseAdmin
     .from('dashboard_tokens')
     .update({ used_at: nowIso })
-    .eq('token_hash', sha256(token))
+    // Safe interpolation: `hash` is sha256 hex only (see INVARIANT above).
+    .or(`token_hash.eq.${hash},code_hash.eq.${hash}`)
     .is('used_at', null)
     .gt('expires_at', nowIso)
     .select('telegram_id')
@@ -88,6 +149,16 @@ export async function redeemToken(token: string): Promise<string | null> {
   }
   if (!data) return null
   return String(data.telegram_id)
+}
+
+// Magic-link path: hash the raw token and burn.
+export function redeemToken(token: string): Promise<string | null> {
+  return burnCredential(sha256(token))
+}
+
+// Typed-code path: normalise (identically to issue) then hash and burn.
+export function redeemCode(code: string): Promise<string | null> {
+  return burnCredential(hashCode(code))
 }
 
 // Create a session row for a redeemed telegram_id and return its random id (the
@@ -139,4 +210,59 @@ export async function endSession(): Promise<void> {
     .eq('session_id', sessionId)
 
   if (error) console.error('DASHBOARD_SESSION_DELETE_FAILED:', error)
+}
+
+// ── Redeem throttle ───────────────────────────────────────────────────────────
+// Per-IP lockout on the /dashboard code-redeem endpoint, to blunt online brute
+// force of the 8-char code. The ~1.1e12 code space is the real defence; this is
+// belt-and-braces. Tunables (20 attempts / 15-min window / 15-min lockout) live
+// in Postgres — loosened from 10 because Indian carrier-grade NAT pools many
+// users behind one IP. Keyed by an HMAC of the client IP under a server pepper;
+// we NEVER store a bare IP hash.
+
+// Peppered IP hash, or null if DASHBOARD_THROTTLE_PEPPER is unset. Read with NO
+// fallback: a missing pepper MUST fail closed at the caller (refuse the redeem),
+// never degrade to a bare hash. Empty IP folds to a shared 'unknown' bucket
+// rather than a per-request key.
+export function hashIp(ip: string): string | null {
+  const pepper = process.env.DASHBOARD_THROTTLE_PEPPER
+  if (!pepper) {
+    console.error('DASHBOARD_THROTTLE_PEPPER_MISSING')
+    return null
+  }
+  return createHmac('sha256', pepper).update(ip || 'unknown').digest('hex')
+}
+
+// True when this ip_hash is currently locked. THROWS on a store error so the
+// caller can fail closed — a throttle we can't read must not become one we ignore.
+export async function isRedeemLocked(ipHash: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from('dashboard_redeem_throttle')
+    .select('locked_until')
+    .eq('ip_hash', ipHash)
+    .maybeSingle()
+  if (error) {
+    console.error('DASHBOARD_REDEEM_THROTTLE_READ_FAILED:', error)
+    throw new Error('throttle_read_failed')
+  }
+  if (!data?.locked_until) return false
+  return new Date(data.locked_until).getTime() > Date.now()
+}
+
+// Register one failed redeem. The RPC owns the attempt-count → locked_until
+// arithmetic in Postgres. Best-effort: a logged error here never changes the
+// generic failure the user already sees.
+export async function registerRedeemFail(ipHash: string): Promise<void> {
+  const { error } = await supabaseAdmin.rpc('dashboard_redeem_register_fail', { p_ip_hash: ipHash })
+  if (error) console.error('DASHBOARD_REDEEM_REGISTER_FAIL_RPC_FAILED:', error)
+}
+
+// Clear the throttle row after a successful redeem. Best-effort — a stale row
+// just costs the user a few attempts next time; it never blocks the session.
+export async function clearRedeemThrottle(ipHash: string): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from('dashboard_redeem_throttle')
+    .delete()
+    .eq('ip_hash', ipHash)
+  if (error) console.error('DASHBOARD_REDEEM_THROTTLE_CLEAR_FAILED:', error)
 }

@@ -14,11 +14,15 @@ import { useEffect, useState } from 'react'
 // GET route handler or a server-side redeem — that reintroduces the burn.
 
 const WA_DASHBOARD_LINK = 'https://wa.me/15797006612?text=dashboard'
+const CREAM = '#fbf6ef'
 
 type Phase = 'checking' | 'redeeming' | 'error' | 'no-token'
 
 export default function Dashboard() {
   const [phase, setPhase] = useState<Phase>('checking')
+  const [code, setCode] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [codeError, setCodeError] = useState(false)
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get('t')
@@ -44,11 +48,40 @@ export default function Dashboard() {
       .catch(() => setPhase('error'))
   }, [])
 
+  // Typed-code redeem. Same route, same generic-failure contract: any non-ok
+  // response is shown as one message — we never say wrong vs expired vs used.
+  // The code is sent as typed (with or without hyphen); the server normalises.
+  const submitCode = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (submitting || !code.trim()) return
+    setSubmitting(true)
+    setCodeError(false)
+    fetch('/api/dashboard/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code.trim() }),
+    })
+      .then((res) => {
+        if (res.ok) {
+          window.location.replace('/dashboard/today')
+        } else {
+          setCodeError(true)
+          setSubmitting(false)
+        }
+      })
+      .catch(() => {
+        setCodeError(true)
+        setSubmitting(false)
+      })
+  }
+
   const shell = (children: React.ReactNode) => (
     <main
       style={{
         fontFamily: 'system-ui',
-        maxWidth: 480,
+        background: CREAM,
+        minHeight: '100vh',
+        maxWidth: 375,
         margin: '0 auto',
         padding: '64px 24px',
         textAlign: 'center',
@@ -65,8 +98,8 @@ export default function Dashboard() {
   const heading = phase === 'error' ? 'That link has expired.' : 'Your dashboard is here.'
   const body =
     phase === 'error'
-      ? 'Dashboard links work once and last 15 minutes. Send AskGogo another to get a fresh one.'
-      : 'Message AskGogo on WhatsApp and send it to get your private link.'
+      ? 'Dashboard links work once and last 15 minutes. Enter the code AskGogo sent, or ask for a fresh one.'
+      : 'Message AskGogo on WhatsApp to get your private link and code.'
 
   return shell(
     <>
@@ -74,6 +107,54 @@ export default function Dashboard() {
       <p style={{ color: '#666', fontSize: 15, lineHeight: 1.6, margin: '0 0 28px' }}>
         {body} Send <strong>dashboard</strong>.
       </p>
+
+      <form onSubmit={submitCode} style={{ margin: '0 0 28px' }}>
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          autoComplete="one-time-code"
+          inputMode="text"
+          autoCapitalize="characters"
+          placeholder="Enter your code"
+          aria-label="Dashboard code"
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            padding: '14px 16px',
+            fontSize: 17,
+            letterSpacing: 2,
+            textAlign: 'center',
+            borderRadius: 12,
+            border: '1px solid #ddd6cc',
+            background: '#fff',
+            marginBottom: 12,
+          }}
+        />
+        <button
+          type="submit"
+          disabled={submitting || !code.trim()}
+          style={{
+            width: '100%',
+            padding: '14px 16px',
+            fontSize: 15,
+            fontWeight: 600,
+            color: '#fff',
+            background: '#1c1c1c',
+            border: 'none',
+            borderRadius: 100,
+            cursor: submitting || !code.trim() ? 'default' : 'pointer',
+            opacity: submitting || !code.trim() ? 0.5 : 1,
+          }}
+        >
+          {submitting ? 'Checking…' : 'Open dashboard'}
+        </button>
+        {codeError && (
+          <p style={{ color: '#a33', fontSize: 14, margin: '12px 0 0' }}>
+            That code didn't work. It may be wrong, expired, or already used — ask AskGogo for a fresh one.
+          </p>
+        )}
+      </form>
+
       <a
         href={WA_DASHBOARD_LINK}
         style={{

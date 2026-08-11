@@ -476,7 +476,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const issue = await issueToken(resolvedUser.telegramId)
     let reply: string
     if (issue.ok) {
-      reply = `Here's your private dashboard, Gogo — it opens once and expires in 15 minutes:\n\nhttps://app.askgogo.in/dashboard?t=${issue.token}`
+      reply =
+        `Here's your private dashboard, Gogo — it opens once and expires in 15 minutes:\n\n` +
+        `https://app.askgogo.in/dashboard?t=${issue.token}\n\n` +
+        `Or open app.askgogo.in/dashboard and enter this code: ${issue.code}`
     } else if (issue.reason === 'throttled') {
       reply = `You've requested a few dashboard links just now. Give it a few minutes and try again.`
     } else {
