@@ -75,19 +75,32 @@ export default function Dashboard() {
       })
   }
 
+  // Full-bleed cream fills the viewport at every width; the card floats centred
+  // on top. At 375px the card is full-width with the same 24px gutters and 64px
+  // top offset as before, so mobile is pixel-identical. On wider/taller screens
+  // the cream now reaches the edges and the card centres vertically.
   const shell = (children: React.ReactNode) => (
     <main
       style={{
         fontFamily: 'system-ui',
         background: CREAM,
         minHeight: '100vh',
-        maxWidth: 375,
-        margin: '0 auto',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
         padding: '64px 24px',
-        textAlign: 'center',
+        boxSizing: 'border-box',
       }}
     >
-      {children}
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 420,
+          textAlign: 'center',
+        }}
+      >
+        {children}
+      </div>
     </main>
   )
 
