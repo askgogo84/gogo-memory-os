@@ -1,6 +1,7 @@
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getTodayReminders, type ReminderRow } from '@/lib/dashboard/queries'
+import { countRecurringSeries } from '@/lib/dashboard/thread'
 import { EmptyState } from '@/components/dashboard/empty-state'
 import { WhatsAppChip } from '@/components/dashboard/whatsapp-chip'
 import { ReminderThread } from '@/components/dashboard/reminder-thread'
@@ -63,16 +64,22 @@ export default async function TodayPage() {
   const nowMs = now.getTime()
   const isPast = (r: ReminderRow) => r.sent === true || new Date(r.remind_at).getTime() <= nowMs
   const upcoming = reminders.filter((r) => !isPast(r))
-  const doneCount = reminders.length - upcoming.length
-  const recurringCount = upcoming.filter((r) => r.is_recurring).length
-  const todayCount = upcoming.length - recurringCount
+  // Today pill and the date-line count are the SAME population on purpose: every
+  // upcoming occurrence, recurring or not — exactly the nodes the thread draws
+  // above the now-marker. Pointing both at leftCount means "Today N" and
+  // "N things left" can never contradict each other six pixels apart.
   const leftCount = upcoming.length
+  const doneCount = reminders.length - leftCount
+  // Recurring is an INDEPENDENT lens, not a slice of leftCount: distinct recurring
+  // series in today's rows, past or upcoming (see countRecurringSeries). So the
+  // three pills no longer partition — they're three ways of reading the same day.
+  const recurringCount = countRecurringSeries(reminders)
   const leftLabel =
     leftCount === 0 ? 'nothing left' : leftCount === 1 ? 'one thing left' : `${leftCount} things left`
   const hasThread = today.ok && reminders.length > 0
 
   const pills: Array<{ label: string; count: number; active: boolean }> = [
-    { label: 'Today', count: todayCount, active: true },
+    { label: 'Today', count: leftCount, active: true },
     { label: 'Recurring', count: recurringCount, active: false },
     { label: 'Done', count: doneCount, active: false },
   ]

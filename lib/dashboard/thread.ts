@@ -123,7 +123,30 @@ function toNode(row: ReminderRow, past: boolean, tz: string): ThreadNode {
 // joins the two fields so a space in one can't bleed into the other.
 function seriesKey(row: ReminderRow): string | null {
   if (!row.is_recurring) return null
-  return `${row.message ?? ''}\u0000${row.recurring_pattern ?? ''}`
+  // Case- and whitespace-insensitive on the message: "Drink water" 11:00 and
+  // "drink water" 11:46 are the SAME series, so their occurrences collapse into
+  // one node instead of rendering separately. Only the KEY is normalized — the
+  // display still uses the row's own casing (toNode/cleanLabel), and an
+  // interleaved different reminder still yields a different key, so the
+  // run-breaking rule is untouched.
+  return `${(row.message ?? '').toLowerCase().trim()}\u0000${row.recurring_pattern ?? ''}`
+}
+
+/**
+ * How many distinct recurring SERIES appear in today's rows — the "Recurring"
+ * filter-pill count. Each series counts once no matter how many times it fired
+ * today, and whether its occurrences are past or upcoming: counting unsent
+ * occurrences instead reads 0 once every occurrence has already fired, which was
+ * the bug. Non-recurring rows never count. Shares seriesKey with collapsePast, so
+ * the pill and the thread's collapse can never disagree about what a series is.
+ */
+export function countRecurringSeries(rows: ReminderRow[]): number {
+  const keys = new Set<string>()
+  for (const row of rows) {
+    const key = seriesKey(row)
+    if (key !== null) keys.add(key)
+  }
+  return keys.size
 }
 
 // Collapse each run of CONSECUTIVE past occurrences of one series into a single

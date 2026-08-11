@@ -132,8 +132,10 @@ function ListRow({ list, accent }: { list: DashboardList; accent: boolean }) {
                 ))}
               </ul>
               <div className="mt-3 flex flex-wrap items-center gap-3">
-                {/* Contextual hand-back: adds to THIS list. Green lives only here. */}
-                <WhatsAppChip message={`Gogo, add to ${list.name}`} />
+                {/* Contextual hand-back: adds to THIS list. Green lives only here.
+                    Uses the sentence-cased display name so the chip reads "…add to
+                    Goa", matching the card header (not the raw stored "goa"). */}
+                <WhatsAppChip message={`Gogo, add to ${sentenceCase(list.name)}`} />
                 {hidden > 0 && (
                   <button
                     type="button"

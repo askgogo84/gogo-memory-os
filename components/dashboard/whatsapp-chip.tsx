@@ -20,13 +20,17 @@ type WhatsAppChipProps = {
 export function WhatsAppChip({ message, label }: WhatsAppChipProps) {
   const href = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(message)}`
   return (
+    // Sized to the export's inline prefill chip (frame 1d: ~7px/11px padding,
+    // 11.5px semibold) — small enough to sit inside a list card, not the biggest
+    // element on the screen. Dropping min-h-11 is deliberate: the mockup's chip is
+    // a compact affordance, not a full-height CTA button.
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[#25D366] px-4 py-2 text-sm font-semibold text-white transition-colors duration-500 ease-calm hover:bg-[#1EBE5B]"
+      className="inline-flex items-center gap-1.5 rounded-full bg-[#25D366] px-[11px] py-[7px] text-[11.5px] font-semibold text-white transition-colors duration-500 ease-calm hover:bg-[#1EBE5B]"
     >
-      <WhatsAppIcon className="block h-3.5 w-3.5" />
+      <WhatsAppIcon className="block h-3 w-3" />
       {label ?? message}
     </a>
   )
