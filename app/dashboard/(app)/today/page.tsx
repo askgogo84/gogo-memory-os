@@ -1,11 +1,19 @@
+import { Suspense } from 'react'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getTodayReminders, type ReminderRow } from '@/lib/dashboard/queries'
+import {
+  getTodayReminders,
+  getLists,
+  getUsageSummary,
+  getTodayCalendar,
+  type ReminderRow,
+} from '@/lib/dashboard/queries'
 import { countRecurringSeries } from '@/lib/dashboard/thread'
 import { EmptyState } from '@/components/dashboard/empty-state'
 import { WhatsAppChip } from '@/components/dashboard/whatsapp-chip'
 import { ReminderThread } from '@/components/dashboard/reminder-thread'
 import { CardError } from '@/components/dashboard/card-error'
+import { CalendarIcon, ListsIcon, UsageIcon } from '@/components/dashboard/icons'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,12 +41,80 @@ function dayLine(now: Date, tz: string): string {
   return `${weekday}, ${dayMonth}`
 }
 
+// Sentence-case a stored list name for display ("goa" → "Goa"), mirroring
+// components/dashboard/list-collection.tsx. The stored value is never mutated.
+function sentenceCase(name: string): string {
+  if (!name) return name
+  const spaced = name.replace(/_/g, ' ')
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+}
+
+// One "rest of today" row — icon, title, one fact line, optional prefill chip.
+function RestRow({
+  title,
+  fact,
+  tone,
+  Icon,
+  chip,
+}: {
+  title: string
+  fact: string
+  tone: string
+  Icon: typeof ListsIcon
+  chip?: { message: string; label: string }
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-[16px] border border-gogo-ink/10 bg-gogo-surface px-[13px] py-3">
+      <span className={tone}>
+        <Icon className="block h-[22px] w-[22px]" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[14px] font-semibold text-gogo-ink">{title}</div>
+        <div className="truncate text-[12.5px] text-gogo-ink-3">{fact}</div>
+      </div>
+      {chip && <WhatsAppChip message={chip.message} label={chip.label} />}
+    </div>
+  )
+}
+
+// The Calendar row as its own async server component so <Suspense> can stream it in
+// AFTER the page has rendered — the Google token refresh + events fetch never delay
+// Today. Renders nothing when the calendar isn't connected or the read fails: a
+// missing row, never a blank one.
+async function CalendarRestRow({ telegramId }: { telegramId: string }) {
+  const calendar = await getTodayCalendar(telegramId)
+  if (!calendar.ok || !calendar.connected) return null
+  const fact =
+    calendar.events.length > 0
+      ? calendar.events
+          .slice(0, 2)
+          .map((e) => (e.time ? `${e.title} ${e.time}` : e.title))
+          .join(' · ')
+      : 'Clear today'
+  return (
+    <RestRow
+      title="Calendar"
+      fact={fact}
+      tone="text-gogo-plum"
+      Icon={CalendarIcon}
+      chip={{ message: 'Gogo, what’s on today?', label: 'Ask' }}
+    />
+  )
+}
+
 export default async function TodayPage() {
   // The (app) layout already guarantees a session. telegram_id is TEXT in
   // dashboard_sessions; users.telegram_id is bigint — cast at the boundary.
   // Identity and reminders are read in parallel (TRD §5: fetch in parallel).
   const session = await getSession()
-  const [{ data: user }, today] = await Promise.all([
+  // Reminders drive the spine; lists / usage / calendar feed "the rest of today"
+  // (now unblocked). All read in parallel; each degrades independently so a slow or
+  // failed cross-domain read never blanks the day — its row is simply omitted.
+  // Reminders drive the spine; lists + usage feed "the rest of today" — all cheap,
+  // same-DB, read in parallel. The Calendar row is DELIBERATELY not here: it needs a
+  // Google token refresh + API round-trip, which must never sit on Today's (the
+  // landing surface's) critical path. It streams in separately via <Suspense> below.
+  const [{ data: user }, today, lists, usage] = await Promise.all([
     session
       ? supabaseAdmin
           .from('users')
@@ -47,6 +123,8 @@ export default async function TodayPage() {
           .maybeSingle()
       : Promise.resolve({ data: null }),
     session ? getTodayReminders(session.telegramId) : Promise.resolve({ ok: true as const, reminders: [] }),
+    session ? getLists(session.telegramId) : Promise.resolve({ ok: true as const, lists: [] }),
+    session ? getUsageSummary(session.telegramId) : Promise.resolve({ ok: false } as const),
   ])
 
   // The whole spine renders in the user's CURRENT timezone (fallback IST), never
@@ -83,6 +161,47 @@ export default async function TodayPage() {
     { label: 'Recurring', count: recurringCount, active: false },
     { label: 'Done', count: doneCount, active: false },
   ]
+
+  // "The rest of today": one row per other surface, REAL facts only. A row with no
+  // available fact (calendar not connected, lists empty, meter down) is omitted —
+  // never shown blank. A count-less row would just be the tab bar one screen lower.
+  type RestRowData = {
+    key: string
+    title: string
+    fact: string
+    tone: string
+    Icon: typeof ListsIcon
+    chip?: { message: string; label: string }
+  }
+  const restRows: RestRowData[] = []
+
+  if (lists.ok && lists.lists.length > 0) {
+    const top = lists.lists[0]
+    const total = top.items.length
+    const open = top.items.filter((i) => !i.done).length
+    const name = sentenceCase(top.name)
+    restRows.push({
+      key: 'lists',
+      title: 'Lists',
+      fact: `${name} · ${open} of ${total} left`,
+      tone: 'text-gogo-plum',
+      Icon: ListsIcon,
+      chip: { message: `Gogo, add to ${name}`, label: 'Add' },
+    })
+  }
+
+  if (usage.ok) {
+    restRows.push({
+      key: 'usage',
+      title: 'Usage',
+      fact: `${usage.usage.aiToday} of ${usage.limits.aiPerDay} actions today`,
+      tone: 'text-gogo-orange',
+      Icon: UsageIcon,
+    })
+  }
+
+  // The Calendar row is NOT built here — it streams in via <CalendarRestRow> so its
+  // Google round-trip never blocks the page.
 
   return (
     <div className="flex flex-col gap-5">
@@ -128,6 +247,21 @@ export default async function TodayPage() {
             <WhatsAppChip message="Gogo, remind me to…" />
           </div>
         </>
+      )}
+
+      {restRows.length > 0 && (
+        <section className="flex flex-col gap-[9px]">
+          <h2 className="text-[12px] font-semibold uppercase tracking-[0.1em] text-gogo-ink-3">The rest of today</h2>
+          {restRows.map((row) => (
+            <RestRow key={row.key} title={row.title} fact={row.fact} tone={row.tone} Icon={row.Icon} chip={row.chip} />
+          ))}
+          {/* Calendar streams in — its Google round-trip is off the critical path. */}
+          {session && (
+            <Suspense fallback={null}>
+              <CalendarRestRow telegramId={session.telegramId} />
+            </Suspense>
+          )}
+        </section>
       )}
     </div>
   )
