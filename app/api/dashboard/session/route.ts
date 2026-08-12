@@ -12,6 +12,7 @@ import {
   SESSION_COOKIE,
   SESSION_MAX_AGE_SECONDS,
 } from '@/lib/dashboard/session'
+import { verifySameOrigin } from '@/lib/dashboard/guard'
 
 // Per-request: we read the client IP from headers, so this must never cache.
 export const dynamic = 'force-dynamic'
@@ -108,7 +109,13 @@ export async function POST(request: Request) {
 }
 
 // DELETE — sign out. Deletes the session row server-side, then expires the cookie.
-export async function DELETE() {
+// Same-origin guarded like every other dashboard mutation (Phase 6): sign-out is
+// low-stakes (idempotent, unauthenticated), but the posture is uniform on purpose —
+// every state-changing dashboard route runs verifySameOrigin first, no exceptions.
+export async function DELETE(request: Request) {
+  const blocked = verifySameOrigin(request)
+  if (blocked) return blocked
+
   await endSession()
 
   const cookieStore = await cookies()

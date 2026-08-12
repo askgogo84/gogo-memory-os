@@ -3,6 +3,7 @@ import { getLists } from '@/lib/dashboard/queries'
 import { EmptyState } from '@/components/dashboard/empty-state'
 import { WhatsAppChip } from '@/components/dashboard/whatsapp-chip'
 import { ListCollection } from '@/components/dashboard/list-collection'
+import { ListCreate } from '@/components/dashboard/list-create'
 import { CardError } from '@/components/dashboard/card-error'
 
 export const dynamic = 'force-dynamic'
@@ -36,6 +37,10 @@ export default async function ListsPage() {
           </p>
         )}
       </header>
+
+      {/* Create is available whether or not any lists exist yet — including from the
+          empty state below. */}
+      <ListCreate />
 
       {!result.ok ? (
         // A read failure is not an empty account — show a retry, never a blank.

@@ -249,7 +249,9 @@ export async function getLatestActionableReminder(telegramId: number) {
 }
 
 // When a follow-up is marked done, cancel its pending next nudge so the chain stops.
-async function cancelFollowupChain(telegramId: number, pattern: string | null | undefined) {
+// Exported so the dashboard's deleteReminderById can stop the chain too — a deleted
+// follow-up must not keep nagging from its already-queued next occurrence.
+export async function cancelFollowupChain(telegramId: number, pattern: string | null | undefined) {
   if (!pattern || !String(pattern).startsWith('followup:')) return
   await supabaseAdmin.from('reminders').update({ sent: true })
     .eq('telegram_id', telegramId).eq('recurring_pattern', pattern).eq('sent', false)

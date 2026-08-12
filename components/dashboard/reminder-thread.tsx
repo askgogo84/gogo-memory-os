@@ -1,5 +1,7 @@
+import type { ReactNode } from 'react'
 import { buildThread, type ThreadNode } from '@/lib/dashboard/thread'
 import type { ReminderRow } from '@/lib/dashboard/queries'
+import { ReminderActions } from './reminder-actions'
 
 // ── The signature of the Today screen ─────────────────────────────────────────
 // A vertical time spine: reminders as nodes, ordered by time, with a single
@@ -10,7 +12,7 @@ import type { ReminderRow } from '@/lib/dashboard/queries'
 // Server component: it takes rows and renders. All computation is in
 // lib/dashboard/thread.ts; all reads are in lib/dashboard/queries.ts.
 
-function Node({ node }: { node: ThreadNode }) {
+function Node({ node, children }: { node: ThreadNode; children?: ReactNode }) {
   return (
     <div className="relative mb-[26px]">
       <span
@@ -37,6 +39,7 @@ function Node({ node }: { node: ThreadNode }) {
         {node.label}
       </p>
       {node.seriesMeta && <p className="mt-[3px] text-[12.5px] text-gogo-ink-3">{node.seriesMeta}</p>}
+      {children}
     </div>
   )
 }
@@ -70,8 +73,19 @@ export function ReminderThread({ rows, tz }: { rows: ReminderRow[]; tz: string }
         )}
       </div>
 
+      {/* Upcoming nodes carry the edit/delete affordance. Past/collapsed nodes never
+          do: a collapsed node stands for several rows (no single id to act on), and
+          editing something already fired is meaningless. */}
       {after.map((node) => (
-        <Node key={node.id} node={node} />
+        <Node key={node.id} node={node}>
+          <ReminderActions
+            id={node.id}
+            isRecurring={node.isRecurring}
+            messageRaw={node.messageRaw}
+            remindAtIso={node.remindAtIso}
+            tz={tz}
+          />
+        </Node>
       ))}
     </div>
   )

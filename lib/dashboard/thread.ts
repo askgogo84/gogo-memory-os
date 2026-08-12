@@ -30,6 +30,15 @@ export type ThreadNode = {
   /** How many occurrences this node stands for. 1 for a normal node; >1 when a
    * run of past occurrences of one series is collapsed into this node. */
   count: number
+  /** From the row — drives whether the dashboard offers EDIT. Recurring rows are
+   * delete-only (editing a recurring child risks the cron's dedupe guard stacking a
+   * duplicate); see Phase 6 sign-off. Only ever read on upcoming (non-collapsed) nodes. */
+  isRecurring: boolean
+  /** The stored message verbatim; the edit form prefills its label from this (the
+   * displayed `label` is the cleaned form). */
+  messageRaw: string
+  /** remind_at ISO — the edit form prefills its time input from this. */
+  remindAtIso: string
 }
 
 export type ThreadModel = {
@@ -111,6 +120,9 @@ function toNode(row: ReminderRow, past: boolean, tz: string): ThreadNode {
     seriesMeta: row.is_recurring ? describeRecurrence(row.recurring_pattern) : null,
     past,
     count: 1,
+    isRecurring: row.is_recurring === true,
+    messageRaw: row.message ?? '',
+    remindAtIso: row.remind_at,
   }
 }
 

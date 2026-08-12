@@ -247,13 +247,16 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // Hoisted out of the try so the catch can reach it to send a user-facing error reply.
+  // Empty until we've parsed the inbound number; the catch guards on it.
+  let from = ''
   try {
     const formData = await req.formData()
     const fromRaw = String(formData.get('From') || '')
     const profileName = String(formData.get('ProfileName') || 'Friend')
     const numMedia = Number(formData.get('NumMedia') || '0')
     const inboundMessageSid = String(formData.get('MessageSid') || formData.get('SmsMessageSid') || '').trim()
-    const from = normalizeWhatsAppNumber(fromRaw)
+    from = normalizeWhatsAppNumber(fromRaw)
 
     console.log('RAW_TWILIO:', Object.fromEntries([...formData.entries()]))
     console.log('WhatsApp inbound:', { fromRaw, from, profileName, numMedia, messageSid: inboundMessageSid, body: String(formData.get('Body') || ''), mediaType: String(formData.get('MediaContentType0') || ''), allKeys: [...formData.keys()].join(',') })
@@ -1125,6 +1128,18 @@ _Reminder cancelled._`
     return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
   } catch (error: any) {
     console.error('WhatsApp webhook error:', error)
+    // Never leave the user in silence on an error. We only reach this catch from an
+    // INBOUND message, so we're inside the 24h session window — a freeform reply
+    // delivers and is never business-initiated (no template needed). Wrapped so a send
+    // failure here can't throw back out of the catch. Generic text only — the error is
+    // logged above, never shown to the user.
+    if (from) {
+      try {
+        await sendWhatsAppMessage(from, 'Something went wrong — try once more?')
+      } catch (notifyErr: any) {
+        console.error('WHATSAPP_ERROR_NOTIFY_FAILED:', { error: notifyErr?.message || notifyErr })
+      }
+    }
     return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
   }
 }

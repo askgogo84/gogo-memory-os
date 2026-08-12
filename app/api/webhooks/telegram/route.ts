@@ -25,6 +25,9 @@ function getTelegramUserName(message: any): string {
 }
 
 export async function POST(req: NextRequest) {
+  // Hoisted out of the try so the catch can reach it to send a user-facing error reply.
+  // Null until we've parsed the inbound chat; the catch guards on it.
+  let chatId: number | null = null
   try {
     const body = await req.json()
     const message = body?.message || body?.edited_message
@@ -33,7 +36,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, skipped: 'no message' })
     }
 
-    const chatId = Number(message.chat.id)
+    chatId = Number(message.chat.id)
     const userName = getTelegramUserName(message)
 
     let inputText = ''
@@ -101,6 +104,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   } catch (error: any) {
     console.error('Telegram webhook error:', error)
+    // Never leave the user in silence on an error. Telegram has no 24h-window
+    // restriction, but we only reach this catch from an inbound message anyway.
+    // Wrapped so a send failure here can't throw back out of the catch. Generic text
+    // only — the error is logged above, never shown to the user.
+    if (chatId != null) {
+      try {
+        await sendTelegramMessage(chatId, 'Something went wrong — try once more?')
+      } catch (notifyErr: any) {
+        console.error('TELEGRAM_ERROR_NOTIFY_FAILED:', { error: notifyErr?.message || notifyErr })
+      }
+    }
     return NextResponse.json(
       { ok: false, error: error?.message || 'Unknown error' },
       { status: 200 }
