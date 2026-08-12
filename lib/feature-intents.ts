@@ -6,22 +6,16 @@ import { parseSplitIntent } from '@/lib/splitwise/split-parser'
 import { handleNutritionText, isNutritionLogText, isNutritionCommand } from '@/lib/bot/handlers/nutrition'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard, saveReel } from '@/lib/services/reel-saver'
 import { saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
-import { addToList, formatList } from '@/lib/lists'
+import {
+  addToList,
+  addToListDetailed,
+  formatAddResult,
+  normalizeListName,
+  setItemDoneByText,
+  findPendingExactAcrossLists,
+} from '@/lib/lists'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
-
-// Normalise a spoken list name to the canonical key the rest of the bot reads.
-// Mirrors extractListNameFromText() in process-message.ts so the dashboard chip
-// ("add milk to my groceries") writes to the SAME list "show my grocery list" reads.
-function normalizeListName(raw: string): string {
-  let n = raw.toLowerCase().trim().replace(/\s+/g, ' ')
-  n = n.replace(/\s+list$/, '').trim() // "weekend list" → "weekend", "grocery list" → "grocery"
-  if (n === 'groceries' || n === 'grocery') return 'grocery'
-  if (n === 'shopping') return 'shopping'
-  if (n === 'to-do' || n === 'to do' || n === 'todo') return 'todo'
-  if (n === 'note' || n === 'notes') return 'notes'
-  return n || 'list'
-}
 
 export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string }): Promise<string | null> {
 
@@ -121,8 +115,8 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     // through to the reminder path rather than filing "a reminder" under "call mom".
     const isReminderShape = /^(a |an )?(reminder|alarm|alert)$/i.test(item) || /\badd\s+(?:a |an )?(?:reminder|alarm)\b/i.test(text)
     if (item && listName && !isReminderShape) {
-      const items = await addToList(extra.telegramId, listName, [item])
-      return formatList(listName, items)
+      const res = await addToListDetailed(extra.telegramId, listName, [item])
+      return formatAddResult(listName, res)
     }
   }
 
@@ -170,6 +164,22 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   }
   const doneMatch = t.match(/^(done|completed?|finished?|did)\s+(.+)/)
   if (doneMatch) {
+    const arg = doneMatch[2].trim()
+    // "done <number>" (done 1) stays EXACTLY as before → reminders/todos. Only a
+    // non-numeric "done <text>" is eligible for the list-first divert, and only when a
+    // real PENDING list item matches exactly — otherwise we fall straight through to the
+    // unchanged /api/todos handler below, so today's behaviour is untouched.
+    if (extra?.telegramId && !/^\d+$/.test(arg)) {
+      const hits = await findPendingExactAcrossLists(extra.telegramId, arg)
+      if (hits.length === 1) {
+        await setItemDoneByText(extra.telegramId, hits[0].list_name, arg, true)
+        return `✅ Marked done on your ${hits[0].list_name} list: ${hits[0].matched}.`
+      }
+      if (hits.length > 1) {
+        return `"${arg}" is on more than one list: ${hits.map(h => h.list_name).join(', ')}. Which one do you mean?`
+      }
+      // hits.length === 0 → no matching list item → fall through to /api/todos unchanged
+    }
     return (await post('/api/todos', { phone, action: 'done', text: doneMatch[2] }))?.reply ?? null
   }
   if (/^clear (completed|done) tasks?$/i.test(t)) {

@@ -55,8 +55,10 @@ RULES:
    LIST_ADD: [list_name] | [item1, item2, item3]
    LIST_SHOW: [list_name]
    LIST_CLEAR: [list_name]
-   LIST_CHECK: [list_name] | [item_text]
+   LIST_CHECK: [list_name] | [item_text]     (mark an item DONE — "done milk", "check milk", "tick milk")
+   LIST_UNCHECK: [list_name] | [item_text]   (mark a done item NOT done again — "uncheck milk", "untick milk", "undone milk", "unmark milk")
    LIST_ALL
+   LIST_CHECK sets the item done and LIST_UNCHECK sets it not-done — they are absolute states, NOT a toggle. Use LIST_UNCHECK (never LIST_CHECK) whenever the user's verb starts with "un" (uncheck/untick/undone/unmark).
 
 4. WEB SEARCH: If user asks about current events, news, prices, weather, sports scores, or anything requiring up-to-date information, output on FIRST LINE:
    SEARCH: [search query]

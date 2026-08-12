@@ -1,3 +1,5 @@
+import { classifyCheckVerb } from '@/lib/data/lists-core'
+
 export type IntentType =
   | 'connect_gmail'
   | 'read_gmail'
@@ -11,6 +13,7 @@ export type IntentType =
   | 'list_show'
   | 'list_add'
   | 'list_check'
+  | 'list_uncheck'
   | 'list_clear'
   | 'set_reminder'
   | 'edit_reminder'
@@ -144,7 +147,11 @@ export function detectIntent(text: string): DetectedIntent {
   if (lower === 'show all lists' || lower === 'list all' || lower === 'show my lists') return { type: 'list_show_all', confidence: 'high' }
   if ((lower.startsWith('show ') || lower.startsWith('open ') || lower.startsWith('view ')) && lower.includes(' list')) return { type: 'list_show', confidence: 'medium' }
   if (lower.startsWith('add ') && (lower.includes(' to ') || lower.includes(' into '))) return { type: 'list_add', confidence: 'medium' }
-  if (lower.startsWith('check ') || lower.startsWith('tick ') || lower.startsWith('mark ')) return { type: 'list_check', confidence: 'medium' }
+  // uncheck/untick/undone/unmark → list_uncheck; check/tick/mark → list_check. Ordered
+  // uncheck-first and check kept PREFIX-anchored inside classifyCheckVerb so "uncheck X"
+  // can never be claimed by the check branch (it CONTAINS "check").
+  const checkVerb = classifyCheckVerb(lower)
+  if (checkVerb) return { type: checkVerb, confidence: 'medium' }
   if (lower.startsWith('clear ') || lower.startsWith('delete list ') || lower.startsWith('remove list ')) return { type: 'list_clear', confidence: 'medium' }
   if (lower.startsWith('remember ') || lower.includes('remember that ') || lower.includes('save this memory')) return { type: 'save_memory', confidence: 'high' }
   if (SEARCH_HINTS.some((k) => lower.includes(k))) return { type: 'web_search', confidence: 'medium' }

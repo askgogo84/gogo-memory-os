@@ -6,6 +6,7 @@
   | { type: 'list_show'; listName: string; replyText: string }
   | { type: 'list_clear'; listName: string; replyText: string }
   | { type: 'list_check'; listName: string; itemText: string; replyText: string }
+  | { type: 'list_uncheck'; listName: string; itemText: string; replyText: string }
   | { type: 'list_all'; replyText: string }
   | { type: 'search'; query: string; replyText: string }
 
@@ -68,6 +69,20 @@ export function parseClaudeResponse(raw: string): ClaudeAction {
     return {
       type: 'list_clear',
       listName: first.replace('LIST_CLEAR:', '').trim(),
+      replyText: rest,
+    }
+  }
+
+  // LIST_UNCHECK before LIST_CHECK: "LIST_UNCHECK:" does not startWith "LIST_CHECK:"
+  // (they differ at char 5, U vs C), so there is no prefix collision — but we order it
+  // first anyway to mirror the detect-intent guard.
+  if (first.startsWith('LIST_UNCHECK:')) {
+    const payload = first.replace('LIST_UNCHECK:', '').trim()
+    const parts = payload.split('|').map(p => p.trim())
+    return {
+      type: 'list_uncheck',
+      listName: parts[0] || 'list',
+      itemText: parts[1] || '',
       replyText: rest,
     }
   }

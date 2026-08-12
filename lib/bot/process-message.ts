@@ -1,5 +1,5 @@
 import { askClaude, askClaudeWithContext, type Message } from '@/lib/claude'
-import { addToList, checkItem, clearList, formatList, getAllLists, getList } from '@/lib/lists'
+import { addToListDetailed, formatAddResult, clearList, formatList, getAllLists, getList, setItemDoneByText, resolveAndSetDoneAcrossLists, normalizeListName } from '@/lib/lists'
 import { checkAndIncrementLimit, getUsageStatusReply, getFriendReminderCap } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAuthUrl } from '@/lib/google-calendar'
@@ -300,13 +300,43 @@ async function createReminder(
   }
 }
 
+// SHOW-path name resolver. Strips the show/open/view verb (+ optional my/the) then runs
+// the SAME normalizeListName the ADD path uses — so "show groceries" and "show my
+// grocery list" both resolve to the canonical "grocery" that ADD wrote. (Was a weaker
+// keyword scan that couldn't even map "groceries" → "grocery".)
 function extractListNameFromText(text: string): string {
-  const lower = text.toLowerCase()
-  if (lower.includes('shopping')) return 'shopping'
-  if (lower.includes('todo')) return 'todo'
-  if (lower.includes('to-do')) return 'todo'
-  if (lower.includes('grocery')) return 'grocery'
-  return 'list'
+  const stripped = text
+    .replace(/^\s*(show|open|view|display)\s+/i, '')
+    .replace(/^\s*(my|the)\s+/i, '')
+  return normalizeListName(stripped)
+}
+
+// Item text for a bare "check/uncheck/tick/mark X" command: drop the leading verb and a
+// trailing "done"/"off" so "mark milk done" and "uncheck milk" both yield "milk".
+function extractCheckItemText(text: string): string {
+  return text
+    .replace(/^\s*un(check|tick|mark|done)\s+/i, '')
+    .replace(/^\s*(check|tick|mark|done)\s+/i, '')
+    .replace(/\s+(done|off)\s*$/i, '')
+    .trim()
+}
+
+// Shared reply for the bare cross-list check/uncheck commands.
+async function replyForCrossListSetDone(telegramId: number, itemText: string, done: boolean): Promise<string> {
+  if (!itemText) return `Which item? Try "${done ? 'check' : 'uncheck'} milk".`
+  const r = await resolveAndSetDoneAcrossLists(telegramId, itemText, done)
+  if (r.status === 'set') {
+    return done
+      ? `✅ Marked done on your ${r.listName} list: ${r.matched}.`
+      : `↩️ Marked "${r.matched}" as not done on your ${r.listName} list.`
+  }
+  if (r.status === 'noop') {
+    return `"${r.matched}" is already ${done ? 'done' : 'pending'} on your ${r.listName} list.`
+  }
+  if (r.status === 'ambiguous') {
+    return `"${r.itemText}" is on more than one list: ${r.lists.join(', ')}. Which one do you mean?`
+  }
+  return `I could not find "${r.itemText}" on any of your lists.`
 }
 
 function isUsageCommand(text: string) {
@@ -933,6 +963,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  if (intent.type === 'list_check' || intent.type === 'list_uncheck') {
+    const done = intent.type === 'list_check'
+    const reply = await replyForCrossListSetDone(resolvedUser.telegramId, extractCheckItemText(incomingText), done)
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
   // ── Media Memory (my instagram saves, my youtube notes, find reel about X) ──
   if (intent.type === 'media_memory' || isMediaMemoryCommand(incomingText)) {
     const mediaReply = await buildMediaMemoryReply(resolvedUser.telegramId, incomingText)
@@ -1153,14 +1190,30 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     finalReply = parsed.replyText || `Done Ã¢ÂÂ I have set the reminder for ${parsed.message}.`
   }
 
-  if (parsed.type === 'list_add') finalReply = parsed.replyText || formatList(parsed.listName, await addToList(resolvedUser.telegramId, parsed.listName, parsed.items))
+  if (parsed.type === 'list_add') {
+    const res = await addToListDetailed(resolvedUser.telegramId, parsed.listName, parsed.items)
+    // If nothing was added (all dupes), surface the dedupe note even when Claude supplied
+    // a friendly replyText — otherwise keep Claude's wording.
+    const hasDedupeNote = res.added.length === 0 && (res.alreadyPending.length > 0 || res.reactivated.length > 0)
+    finalReply = (!hasDedupeNote && parsed.replyText) ? parsed.replyText : formatAddResult(normalizeListName(parsed.listName), res)
+  }
   if (parsed.type === 'list_show') {
     const list = await getList(resolvedUser.telegramId, parsed.listName)
     finalReply = list ? formatList(list.list_name, list.items || []) : `I could not find a list called "${parsed.listName}".`
   }
-  if (parsed.type === 'list_check') {
-    const updated = await checkItem(resolvedUser.telegramId, parsed.listName, parsed.itemText)
-    finalReply = updated ? formatList(parsed.listName, updated) : `I could not find that list item.`
+  if (parsed.type === 'list_check' || parsed.type === 'list_uncheck') {
+    const done = parsed.type === 'list_check'
+    const listName = normalizeListName(parsed.listName)
+    const r = await setItemDoneByText(resolvedUser.telegramId, listName, parsed.itemText, done)
+    if (!r) {
+      finalReply = `I could not find "${parsed.itemText}" on your ${listName} list.`
+    } else if (!r.changed) {
+      finalReply = `"${r.matched}" is already ${done ? 'done' : 'pending'} on your ${listName} list.`
+    } else {
+      finalReply = done
+        ? `✅ Marked done on your ${listName} list: ${r.matched}.`
+        : `↩️ Marked "${r.matched}" as not done on your ${listName} list.`
+    }
   }
   if (parsed.type === 'list_clear') {
     await clearList(resolvedUser.telegramId, parsed.listName)

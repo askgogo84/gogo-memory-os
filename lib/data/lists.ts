@@ -1,12 +1,22 @@
 import { supabaseAdmin } from './supabase-admin'
-import { mutateListItems as mutateItemsCore, ListWriteConflictError, type ListItem } from './lists-core'
+import {
+  mutateListItems as mutateItemsCore,
+  ListWriteConflictError,
+  normalizeListName,
+  normItemText,
+  applyAdd,
+  applySetDone,
+  findPendingExactMatches,
+  DEDUPE_EXEMPT_BUCKETS,
+  type ListItem,
+} from './lists-core'
 
 // The CAS core and ListItem now live in the zero-import lists-core.ts so they can be
 // unit-tested with an injected fake db (the meter-core pattern). Re-export the type so
 // existing consumers importing it from '@/lib/data/lists' keep working, and provide a
 // thin wrapper that injects the real supabaseAdmin as the client.
 export type { ListItem } from './lists-core'
-export { ListWriteConflictError } from './lists-core'
+export { ListWriteConflictError, normalizeListName } from './lists-core'
 
 // Route every list write through the CAS core with the real client. Per the Phase 6
 // sign-off this fixes the CLASS — checkItem, addToList, removeDone AND the dashboard
@@ -19,8 +29,27 @@ function mutateListItems(
   return mutateItemsCore(supabaseAdmin, listId, mutate)
 }
 
-export async function addToList(telegramId: number, listName: string, items: string[]) {
-  const name = listName.toLowerCase().trim()
+export type AddToListResult = {
+  items: ListItem[]
+  added: string[]
+  alreadyPending: string[]
+  reactivated: string[]
+}
+
+// Dedupe-on-add (see applyAdd). Returns what happened per item so callers can say
+// "already there" rather than silently stacking a duplicate. addToList() is the thin
+// items-only wrapper kept for the machine-generated callers (reels, tickets, notes…)
+// that only want the array back.
+export async function addToListDetailed(
+  telegramId: number,
+  listName: string,
+  items: string[],
+): Promise<AddToListResult> {
+  const name = normalizeListName(listName)
+  // notes / meeting_notes / *_saves hold timestamped artifacts that legitimately repeat a
+  // label across days — never dedupe those (see DEDUPE_EXEMPT_BUCKETS). Only user-facing
+  // lists (grocery, weekend, todo…) get the "already there" / reactivate treatment.
+  const dedupe = !DEDUPE_EXEMPT_BUCKETS.has(name)
 
   const { data: existing } = await supabaseAdmin
     .from('lists')
@@ -29,34 +58,55 @@ export async function addToList(telegramId: number, listName: string, items: str
     .eq('list_name', name)
     .single()
 
-  const newItems: ListItem[] = items.map(t => ({
-    text: t.trim(),
-    done: false,
-    added_at: new Date().toISOString(),
-  }))
-
   if (existing) {
-    // Append against a FRESH read inside the CAS core, so a concurrent add/tick
-    // can't be clobbered by a stale copy of the array.
-    return await mutateListItems(existing.id, cur => [...cur, ...newItems])
+    // Dedupe against a FRESH read inside the CAS core, so a concurrent add/tick can't be
+    // clobbered by a stale copy. `out` is reassigned each attempt (the callback re-runs
+    // on a CAS retry) so it reflects the winning application, never a stale/doubled one.
+    let out = { added: [] as string[], alreadyPending: [] as string[], reactivated: [] as string[] }
+    const finalItems = await mutateListItems(existing.id, cur => {
+      const r = applyAdd(cur, items, new Date().toISOString(), dedupe)
+      out = { added: r.added, alreadyPending: r.alreadyPending, reactivated: r.reactivated }
+      return r.changed ? r.next : null // all dupes → no write
+    })
+    return { items: finalItems, ...out }
   } else {
+    const r = applyAdd([], items, new Date().toISOString(), dedupe)
     const { data } = await supabaseAdmin
       .from('lists')
-      .insert({ telegram_id: telegramId, list_name: name, items: newItems, updated_at: new Date().toISOString() })
+      .insert({ telegram_id: telegramId, list_name: name, items: r.next, updated_at: new Date().toISOString() })
       .select()
       .single()
-    return data?.items || []
+    return { items: (data?.items as ListItem[]) || r.next, added: r.added, alreadyPending: r.alreadyPending, reactivated: r.reactivated }
   }
 }
 
+export async function addToList(telegramId: number, listName: string, items: string[]) {
+  return (await addToListDetailed(telegramId, listName, items)).items
+}
+
 export async function getList(telegramId: number, listName: string) {
+  // normalizeListName here is the single choke point that makes EVERY getList call site
+  // — checkItem, removeDone, setListItemDone, both SHOW paths, the notes/media buckets —
+  // resolve names the same way ADD writes them.
+  const canonical = normalizeListName(listName)
+
+  // Fast path: rows written by addToList/createList are already stored canonical (both
+  // inserts lowercase-normalise), so an exact .eq hits directly.
   const { data } = await supabaseAdmin
     .from('lists')
     .select('*')
     .eq('telegram_id', telegramId)
-    .eq('list_name', listName.toLowerCase().trim())
+    .eq('list_name', canonical)
     .single()
-  return data
+  if (data) return data
+
+  // Fallback for LEGACY rows stored in a non-canonical literal form that predates name
+  // normalisation ("groceries" plural, "grocery list", "Note", "to do"). The fast .eq
+  // above compares a normalised query against a RAW column, so those rows would miss and
+  // the list would silently vanish. Here we normalise BOTH sides in-app to reach them.
+  // (Does not bridge underscore-vs-space — but no writer ever stored a space, so moot.)
+  const all = await getAllLists(telegramId)
+  return all.find((l: any) => normalizeListName(l.list_name) === canonical) ?? null
 }
 
 export async function getAllLists(telegramId: number) {
@@ -68,28 +118,97 @@ export async function getAllLists(telegramId: number) {
   return data || []
 }
 
-export async function checkItem(telegramId: number, listName: string, itemText: string) {
+// SET the item's done state by spoken text (exact-first, substring fallback, one row).
+// Returns the matched item's stored text + whether the write changed anything, so the
+// caller can name what it touched. NO flip — "done milk" twice is a no-op on an
+// already-done item. Routes through the CAS core, re-applying against the fresh array.
+export async function setItemDoneByText(
+  telegramId: number,
+  listName: string,
+  itemText: string,
+  done: boolean,
+): Promise<{ items: ListItem[]; matched: string; changed: boolean } | null> {
   const list = await getList(telegramId, listName)
   if (!list) return null
+  const current = (list.items as ListItem[]) ?? []
+  const probe = applySetDone(current, itemText, done)
+  if (probe.matched === null) return null
+  if (!probe.changed) return { items: current, matched: probe.matched, changed: false }
 
-  // Bot path: substring match, toggle. Unchanged behaviour — an "add milk" then
-  // "done milk" flow — but now routed through the CAS core. (The dashboard uses
-  // setListItemDone instead: exact identity, set-not-flip.)
-  return await mutateListItems(list.id, items =>
-    items.map(item =>
-      item.text.toLowerCase().includes(itemText.toLowerCase())
-        ? { ...item, done: !item.done }
-        : item,
-    ),
+  const items = await mutateListItems(list.id, arr => {
+    const r = applySetDone(arr, itemText, done)
+    return r.changed ? r.next : null
+  })
+  return { items, matched: probe.matched, changed: true }
+}
+
+// Bot list-check kept as a SET-to-done wrapper (was a flip). No other callers, but the
+// export stays so nothing that imported it breaks.
+export async function checkItem(telegramId: number, listName: string, itemText: string) {
+  const r = await setItemDoneByText(telegramId, listName, itemText, true)
+  return r ? r.items : null
+}
+
+export type ResolveDoneResult =
+  | { status: 'set'; listName: string; matched: string }
+  | { status: 'noop'; listName: string; matched: string }
+  | { status: 'ambiguous'; lists: string[]; itemText: string }
+  | { status: 'none'; itemText: string }
+
+// Cross-list resolver for the bare "check/uncheck/tick X" commands that name no list.
+// Exact match across all lists first, substring only if nothing matches exactly; among
+// hits, prefer the list where the item is actionable (not already in the desired state).
+// More than one actionable list → ambiguous (ask, don't guess).
+export async function resolveAndSetDoneAcrossLists(
+  telegramId: number,
+  itemText: string,
+  done: boolean,
+): Promise<ResolveDoneResult> {
+  const lists = await getAllLists(telegramId)
+  const q = normItemText(itemText)
+  const withItems = lists.map((l: any) => ({ name: l.list_name as string, items: (l.items as ListItem[]) ?? [] }))
+
+  const exact = withItems
+    .map(l => ({ l, item: l.items.find(i => normItemText(i.text) === q) }))
+    .filter(x => x.item)
+  let cand = exact
+  if (cand.length === 0) {
+    cand = withItems
+      .map(l => ({ l, item: l.items.find(i => normItemText(i.text).includes(q)) }))
+      .filter(x => x.item)
+  }
+  if (cand.length === 0) return { status: 'none', itemText }
+
+  const actionable = cand.filter(x => x.item!.done !== done)
+  const chosen = actionable.length ? actionable : cand
+  if (chosen.length > 1) return { status: 'ambiguous', lists: chosen.map(x => x.l.name), itemText }
+
+  const { l, item } = chosen[0]
+  if (item!.done === done) return { status: 'noop', listName: l.name, matched: item!.text }
+  await setItemDoneByText(telegramId, l.name, item!.text, done)
+  return { status: 'set', listName: l.name, matched: item!.text }
+}
+
+// For the "done <text>" divert in feature-intents: PENDING + exact only, so it fires
+// ONLY when there is a real list item to mark, else the caller falls through to /api/todos.
+export async function findPendingExactAcrossLists(telegramId: number, itemText: string) {
+  const lists = await getAllLists(telegramId)
+  return findPendingExactMatches(
+    lists.map((l: any) => ({ list_name: l.list_name as string, items: (l.items as ListItem[]) ?? [] })),
+    itemText,
   )
 }
 
 export async function clearList(telegramId: number, listName: string) {
+  // Resolve via getList (fast .eq + legacy both-sides-normalised fallback) and delete by
+  // id, so a legacy non-canonical row ("groceries", "Grocery") is cleared too rather than
+  // silently surviving a name-keyed delete.
+  const list = await getList(telegramId, listName)
+  if (!list) return
   await supabaseAdmin
     .from('lists')
     .delete()
-    .eq('telegram_id', telegramId)
-    .eq('list_name', listName.toLowerCase().trim())
+    .eq('id', list.id)
 }
 
 export async function removeDone(telegramId: number, listName: string) {
@@ -112,8 +231,8 @@ export type CreateListResult =
 // name could both pass the existence check — acceptable at single-user concurrency; a
 // unique (telegram_id, list_name) index would harden it.)
 export async function createList(telegramId: number, listName: string): Promise<CreateListResult> {
-  const name = listName.toLowerCase().trim()
-  if (!name) return { ok: false, reason: 'error' }
+  const name = normalizeListName(listName)
+  if (!name || name === 'list') return { ok: false, reason: 'error' }
 
   const { data: existing, error: readErr } = await supabaseAdmin
     .from('lists')
@@ -181,4 +300,21 @@ export function formatList(name: string, items: ListItem[]): string {
   )
   const doneCount = items.filter(i => i.done).length
   return `📋 *${name}* (${items.length - doneCount} pending, ${doneCount} done)\n\n${lines.join('\n')}`
+}
+
+// Renders an add result: leads with a dedupe note when an item was already present
+// (pending) or was moved back to pending, then the list. No note → just the list, so
+// the normal "added" path reads exactly as before.
+export function formatAddResult(listName: string, res: AddToListResult): string {
+  const notes: string[] = []
+  if (res.alreadyPending.length) {
+    const q = res.alreadyPending.map(t => `"${t}"`).join(', ')
+    notes.push(`${q} ${res.alreadyPending.length > 1 ? 'are' : 'is'} already on your ${listName} list.`)
+  }
+  if (res.reactivated.length) {
+    const q = res.reactivated.map(t => `"${t}"`).join(', ')
+    notes.push(`Moved ${q} back to pending.`)
+  }
+  const body = formatList(listName, res.items)
+  return notes.length ? `${notes.join(' ')}\n\n${body}` : body
 }
