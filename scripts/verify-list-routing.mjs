@@ -156,6 +156,68 @@ for (const l of ['grocery', 'groceries', 'weekend', 'todo']) {
   eq('grocery: reported already pending', r.alreadyPending, ['milk'])
 }
 
+// ── 12. SHOW-A-LIST matcher — claim ONLY if serviceable (real two-stage order) ──
+// Exercises the REAL pipeline order for the new routeFeatureIntent SHOW matcher:
+//   stage 1  showListMatch  — claims "show/open/view [my] <name>" ONLY if getList finds it
+//   stage 2  detectIntent   — modelled subset, the homes the controls MUST keep
+// The account holds exactly ONE list: "grocery" (canonical). A control the new matcher
+// would claim on shape alone is a FAILURE — it would be the 4th hijack of this class
+// (rice⊂price, split-parser, …): "show my cards" (CreditIQ), "show my reminders",
+// "show me the weather" must reach their own handlers untouched.
+console.log('\n12. SHOW-A-LIST — claim only if serviceable, else fall through')
+
+// Reserved names checked BEFORE getList — mirrors lib/feature-intents.ts. These collide
+// with higher-priority detectIntent handlers, so a list literally named "reminders"/"cards"
+// must NOT data-hijack "show my reminders"/"show my cards".
+const RESERVED_SHOW_NAMES = new Set(['cards', 'card', 'reminders', 'reminder', 'weather', 'points', 'miles', 'balance'])
+// getList modelled against an injected store: normalise BOTH sides, exactly like getList.
+const getListFake = (store, name) => store.find(s => normalizeListName(s) === normalizeListName(name)) ?? null
+// The new matcher (mirrors lib/feature-intents.ts): reserved-decline → resolve → else null.
+function showListMatch(text, store = ['grocery']) {
+  const m = text.toLowerCase().trim().match(/^(show|open|view)\s+(?:my\s+)?(.+)$/)
+  if (!m) return null
+  const name = normalizeListName(m[2])
+  if (RESERVED_SHOW_NAMES.has(name)) return null // reserved → real owner keeps it
+  const hit = getListFake(store, name)
+  return hit ? `list_show:${hit}` : null
+}
+// detectIntent subset — the real precedence for these controls (creditiq_cards line 100,
+// edit_reminder line 118, weather_live line 140, gold_live line 141 of detect-intent.ts).
+function detectIntentModel(text) {
+  const lower = text.toLowerCase().trim()
+  if (/^(?:show\s+(?:me\s+)?|check\s+|what(?:'?s|\s+is|\s+are)\s+)?my\s+(?:credit\s+|reward\s+)?(?:cards?|points|miles|card\s+balance)\b/.test(lower)) return 'creditiq_cards'
+  if (lower === 'show my reminders' || lower === 'show reminders' || lower === 'my reminders') return 'edit_reminder'
+  if (lower.includes('weather')) return 'weather_live'
+  if (lower.includes('gold price')) return 'gold_live'
+  return 'general_chat'
+}
+// Full two-stage resolution in the REAL order: stage-1 wins if it claims, else stage-2.
+const route = text => showListMatch(text) ?? detectIntentModel(text)
+
+// must-MATCH: the new serviceable matcher resolves each form to the grocery list.
+eq('"show groceries"       → grocery list', route('show groceries'), 'list_show:grocery')
+eq('"show grocery"         → grocery list', route('show grocery'), 'list_show:grocery')
+eq('"view my grocery list" → grocery list', route('view my grocery list'), 'list_show:grocery')
+
+// stage-1 non-negotiable: the matcher DECLINES every non-list control (no such list).
+eq('stage-1 declines "show my cards"',       showListMatch('show my cards'), null)
+eq('stage-1 declines "show my reminders"',   showListMatch('show my reminders'), null)
+eq('stage-1 declines "show me the weather"', showListMatch('show me the weather'), null)
+eq('stage-1 declines "show gold price"',     showListMatch('show gold price'), null)
+
+// must-NOT-match: each control keeps its REAL home in the two-stage order (no hijack).
+eq('"show my cards"       → creditiq_cards (not hijacked)', route('show my cards'), 'creditiq_cards')
+eq('"show my reminders"   → edit_reminder (not hijacked)', route('show my reminders'), 'edit_reminder')
+eq('"show me the weather" → weather_live (not hijacked)', route('show me the weather'), 'weather_live')
+eq('"show gold price"     → gold_live (not hijacked)', route('show gold price'), 'gold_live')
+
+// data-hijack guard: even when a list named "reminders"/"cards" EXISTS, stage 1 declines
+// (reserved-name set is checked before getList) so the real handler still keeps it.
+const COLLIDING = ['grocery', 'reminders', 'cards']
+eq('list "reminders" EXISTS → stage-1 still declines "show my reminders"', showListMatch('show my reminders', COLLIDING), null)
+eq('list "cards" EXISTS → stage-1 still declines "show my cards"', showListMatch('show my cards', COLLIDING), null)
+eq('sanity: "reminders" WOULD resolve without the reserved guard', getListFake(COLLIDING, normalizeListName('reminders')), 'reminders')
+
 console.log('\n' + '-'.repeat(80))
 console.log(fails === 0 ? 'ALL LIST-ROUTING CHECKS PASS ✓' : `${fails} CHECK(S) FAILED ✗`)
 process.exit(fails === 0 ? 0 : 1)

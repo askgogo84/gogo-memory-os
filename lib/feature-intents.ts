@@ -10,6 +10,8 @@ import {
   addToList,
   addToListDetailed,
   formatAddResult,
+  formatList,
+  getList,
   normalizeListName,
   setItemDoneByText,
   findPendingExactAcrossLists,
@@ -117,6 +119,35 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     if (item && listName && !isReminderShape) {
       const res = await addToListDetailed(extra.telegramId, listName, [item])
       return formatAddResult(listName, res)
+    }
+  }
+
+  // ── SHOW A LIST ("show groceries", "view my grocery list") ────────────────────
+  // Deterministic SHOW that CLAIMS ONLY IF SERVICEABLE. detectIntent's list_show only
+  // fires when the text literally contains " list", so bare "show groceries" fell
+  // through to Claude, which did its OWN literal name-matching against history ("grocery"
+  // ≠ "groceries") and emitted a not-found — never calling getList, never normalising.
+  // Here we resolve the name through the SAME normalizeListName+getList the ADD path uses
+  // and return the list ONLY when it actually exists; on no match we return null and let
+  // normal routing continue. That existence gate is the whole point: a match-on-shape
+  // rule would be the 4th hijack of this class — swallowing "show my cards" (CreditIQ),
+  // "show my reminders", "show me the weather". getList is cheap here because
+  // routeFeatureIntent is async and already holds telegramId (it wasn't, for the sync
+  // parseSplitIntent that this guard's absence once bit).
+  const showMatch = t.match(/^(show|open|view)\s+(?:my\s+)?(.+)$/)
+  if (showMatch && extra?.telegramId) {
+    const showName = normalizeListName(showMatch[2])
+    // Reserved names that collide with higher-priority detectIntent handlers
+    // (creditiq_cards, edit_reminder, weather_live). The existence check below stops
+    // shape-hijacking, but NOT data-hijacking: a user who creates a list literally named
+    // "reminders" or "cards" would otherwise have "show my reminders"/"show my cards"
+    // resolve to that list instead of their reminders/portfolio. Decline these outright,
+    // before getList, so the reserved word always reaches its real owner downstream.
+    const RESERVED_SHOW_NAMES = new Set(['cards', 'card', 'reminders', 'reminder', 'weather', 'points', 'miles', 'balance'])
+    if (!RESERVED_SHOW_NAMES.has(showName)) {
+      const list = await getList(extra.telegramId, showName)
+      if (list) return formatList(list.list_name, list.items || [])
+      // no such list → fall through to detectIntent / Claude unchanged
     }
   }
 
