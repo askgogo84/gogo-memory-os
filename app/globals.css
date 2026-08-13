@@ -37,6 +37,7 @@
   --color-gogo-sand: #e4a97d; /* soft fill: illustration backdrops, dividers */
   --color-gogo-orange-tint: #fdf0e2; /* orange tint fill: count circles, avatar bg */
   --color-gogo-cream: #fbf6ef; /* page background — the design's warm screen surface */
+  --color-gogo-rail: #f6efe5; /* desktop side rail: a touch deeper than cream so the rail reads as its own surface beside the column */
   --color-gogo-surface: #ffffff; /* cards, sheets, inputs */
 
   /* Motion (brief §4): slow float, gentle ease-in-out, never spring or bounce.

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/dashboard/session'
 import { TabBar } from '@/components/dashboard/tab-bar'
+import { SideRail } from '@/components/dashboard/side-rail'
 
 // ── The guarded dashboard shell ───────────────────────────────────────────────
 // Everything under this (app) route group is signed-in-only. The guard lives
@@ -33,7 +34,13 @@ export default async function DashboardShell({
     // the cream column shrinks to its CONTENT width, so a page with narrow content
     // (Lists) shows body-white bands down both sides while a wide one (Today) looks
     // full-bleed. w-full pins it to min(100%, 480px) regardless of content.
+    // SideRail is fixed to the viewport's left edge and only shows on lg+; below
+    // lg it is display:none, so the mobile layout is untouched. It lives outside
+    // the centred column deliberately — a flex child here (the container is
+    // flex-col) would stack under <main>, and pushing the column would shift the
+    // reminder-thread gutter. Kept as a fixed sibling, it never enters the flow.
     <div className="mx-auto flex min-h-full w-full max-w-[480px] flex-1 flex-col bg-gogo-cream font-sans text-gogo-ink">
+      <SideRail />
       <main className="flex-1 px-5 pt-6 pb-24">{children}</main>
       <TabBar />
     </div>
