@@ -59,7 +59,8 @@ export default async function CalendarPage() {
   const { events } = calendar
 
   return (
-    <div className="flex flex-col gap-5">
+    // temporary desktop freeze — removed in this surface's own 5c phase
+    <div className="flex flex-col gap-5 lg:max-w-[480px]">
       <header>
         {Title}
         <div className="mt-1 flex items-center gap-2">

@@ -44,7 +44,8 @@ export default async function UsagePage() {
   const priceLine = planPriceInr > 0 ? `₹${planPriceInr} / month` : 'Free'
 
   return (
-    <div className="flex flex-col gap-5">
+    // temporary desktop freeze — removed in this surface's own 5c phase
+    <div className="flex flex-col gap-5 lg:max-w-[480px]">
       <header>
         {Title}
         <p className="mt-1 text-[13px] font-medium text-gogo-ink-3">

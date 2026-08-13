@@ -67,7 +67,8 @@ export default async function YouPage() {
   ]
 
   return (
-    <div className="flex flex-col gap-5">
+    // temporary desktop freeze — removed in this surface's own 5c phase
+    <div className="flex flex-col gap-5 lg:max-w-[480px]">
       {/* Identity */}
       <header className="pt-1 text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}

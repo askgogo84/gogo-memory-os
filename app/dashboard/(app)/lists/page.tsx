@@ -27,7 +27,8 @@ export default async function ListsPage() {
   const hasLists = result.ok && lists.length > 0
 
   return (
-    <div className="flex flex-col gap-5">
+    // temporary desktop freeze — removed in this surface's own 5c phase
+    <div className="flex flex-col gap-5 lg:max-w-[480px]">
       <header>
         <h1 className="font-serif text-[25px] font-semibold tracking-[-0.4px] text-gogo-ink">Lists</h1>
         {hasLists && (
