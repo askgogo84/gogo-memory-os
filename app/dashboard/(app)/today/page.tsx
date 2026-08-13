@@ -12,6 +12,7 @@ import { countRecurringSeries } from '@/lib/dashboard/thread'
 import { EmptyState } from '@/components/dashboard/empty-state'
 import { WhatsAppChip } from '@/components/dashboard/whatsapp-chip'
 import { ReminderThread } from '@/components/dashboard/reminder-thread'
+import { TodayDesktop } from '@/components/dashboard/today-desktop'
 import { CardError } from '@/components/dashboard/card-error'
 import { CalendarIcon, ListsIcon, UsageIcon } from '@/components/dashboard/icons'
 
@@ -204,15 +205,15 @@ export default async function TodayPage() {
   // Google round-trip never blocks the page.
 
   return (
-    // Two-column at lg (mockup 1i): the thread column fixes to 470px on the left,
-    // the aggregate cards flow into the right column. Below lg this is the untouched
-    // single stack — every lg:- class is inert, so 375px renders exactly as before.
-    <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:gap-[26px]">
-      {/* LEFT column — the day as a spine. The greeting, day-line, pills and thread
-          all belong to this narrative column (design 1i puts them here, not full
-          width). The wrapper keeps the same gap-5 rhythm, so the mobile stack is
-          visually identical; at lg it pins to the design's 470px. */}
-      <div className="flex flex-col gap-5 lg:w-[470px] lg:flex-none">
+    // Two treatments of the SAME today, split at lg. Below lg: the untouched mobile
+    // stack (frame 1i's two-column arrangement is gone — this tree carries no lg:-
+    // prefixes, so 375px renders byte-for-byte as before). At lg: an entirely
+    // separate DOM, the aggregate (frame 3a), because its order diverges too far
+    // from the spine to share one tree. Data is fetched once above and handed to
+    // both; neither reads anything the other doesn't.
+    <>
+      {/* MOBILE — the single stack, hidden at lg. */}
+      <div className="flex flex-col gap-5 lg:hidden">
       <header>
         <h1 className="font-serif text-[26px] font-semibold leading-[1.15] tracking-[-0.4px] text-gogo-ink">
           {greeting}
@@ -256,12 +257,9 @@ export default async function TodayPage() {
           </div>
         </>
       )}
-      </div>
-
       {restRows.length > 0 && (
-        // RIGHT column at lg — the aggregate cards as a stack (design 1i, gap 14).
-        // Below lg it stays right where it was in the single stack, unchanged.
-        <section className="flex flex-col gap-[9px] lg:min-w-0 lg:flex-1 lg:gap-[14px]">
+        // "The rest of today" — the mobile aggregate stack, sitting under the thread.
+        <section className="flex flex-col gap-[9px]">
           <h2 className="text-[12px] font-semibold uppercase tracking-[0.1em] text-gogo-ink-3">The rest of today</h2>
           {restRows.map((row) => (
             <RestRow key={row.key} title={row.title} fact={row.fact} tone={row.tone} Icon={row.Icon} chip={row.chip} />
@@ -274,6 +272,21 @@ export default async function TodayPage() {
           )}
         </section>
       )}
-    </div>
+      </div>
+
+      {/* DESKTOP — the aggregate, frame 3a. lg only; a wholly separate DOM. */}
+      <div className="hidden lg:block">
+        <TodayDesktop
+          greeting={greeting}
+          dayLine={dayLine(now, tz)}
+          leftLabel={leftLabel}
+          hasThread={hasThread}
+          today={today}
+          lists={lists}
+          usage={usage}
+          tz={tz}
+        />
+      </div>
+    </>
   )
 }

@@ -7,8 +7,10 @@ import { WhatsAppIcon } from './icons'
 // nothing else on the dashboard is ever green, so the user learns in one session
 // that green means "this takes me back to Gogo". Do not reuse this colour.
 
-// Same number the redeemer hands out (app/dashboard/page.tsx).
-const WA_NUMBER = '15797006612'
+// Same number the redeemer hands out (app/dashboard/page.tsx). Exported so the
+// desktop command bar (command-bar.tsx) hands off to the exact same number — one
+// source of truth for "where WhatsApp opens", never a second copy that can drift.
+export const WA_NUMBER = '15797006612'
 
 type WhatsAppChipProps = {
   /** The text Gogo receives, e.g. "Gogo, remind me to…". Prefilled, not sent. */
