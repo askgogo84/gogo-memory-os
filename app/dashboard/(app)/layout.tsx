@@ -34,20 +34,18 @@ export default async function DashboardShell({
     // the cream column shrinks to its CONTENT width, so a page with narrow content
     // (Lists) shows body-white bands down both sides while a wide one (Today) looks
     // full-bleed. w-full pins it to min(100%, 480px) regardless of content.
-    // SideRail is fixed to the viewport's left edge and only shows on lg+; below
-    // lg it is display:none, so the mobile layout is untouched. It lives outside
-    // the centred column deliberately — a flex child here (the container is
-    // flex-col) would stack under <main>, and pushing the column would shift the
-    // reminder-thread gutter. Kept as a fixed sibling, it never enters the flow.
-    // At lg the column grows to the design's 1180px frame (mockup 1i) and gains a
-    // 212px LEFT PADDING — not a margin — to clear the fixed SideRail. Padding is
-    // load-bearing here: the shell is mx-auto-centred, so a margin-left would be
-    // cancelled by the auto centring, whereas padding keeps the 1180 frame centred
-    // and reproduces the design's internal split (212 rail + 968 content). Below lg
-    // both lg:-prefixes are inert, so the mobile column is unchanged. (Wide-viewport
-    // note: the rail is fixed to the VIEWPORT edge, so past 1180px the centred
-    // content drifts right of it — re-anchoring the rail is a later pass.)
-    <div className="mx-auto flex min-h-full w-full max-w-[480px] flex-1 flex-col bg-gogo-cream font-sans text-gogo-ink lg:max-w-[1180px] lg:pl-[212px]">
+    // SideRail only shows on lg+; below lg it is display:none, so the mobile layout
+    // is untouched (this container stays flex-col and the rail contributes nothing).
+    // At lg the container becomes a flex ROW and grows to the design's 1180px frame
+    // (mockup 1i): the rail is the first, IN-FLOW child at w-[212px] and <main> is
+    // flex-1, so 212 + 968 = 1180 falls out of the width by construction — the rail
+    // sits ADJACENT to the content inside the centred frame at every viewport width,
+    // not tracking the viewport edge. This replaced the old scheme (fixed rail +
+    // lg:pl-[212px] on <main> to clear it): those were two independent values that
+    // only agreed at exactly 1180px, so past that the centred content drifted right
+    // of the viewport-anchored rail. One flex row removes the second source of truth.
+    // Below lg the lg: prefixes are inert, so the mobile column is byte-identical.
+    <div className="mx-auto flex min-h-full w-full max-w-[480px] flex-1 flex-col bg-gogo-cream font-sans text-gogo-ink lg:max-w-[1180px] lg:flex-row">
       <SideRail />
       {/* lg padding matches the design content-area (26 / 28 / 30). pb drops from
           the tab-bar clearance (pb-24 ≈ 96px) to 30px — there's no bottom bar on
