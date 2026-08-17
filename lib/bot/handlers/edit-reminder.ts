@@ -192,16 +192,32 @@ function extractReminderIndex(input: string) {
   return index
 }
 
-function extractCancelQuery(input: string) {
-  return input
+// Stopwords stripped from a cancel query BEFORE matching. Recurrence adverbs
+// ("daily", "every day") and determiners/pronouns ("the", "my") are not part of a
+// reminder's stored name, yet reminderMatches requires every ≥3-char token to appear
+// in that name — so an un-stripped "daily" or "the" makes a real match fail. Multi-word
+// phrases must precede their single-word fragments so "every day" is consumed whole.
+const CANCEL_STOPWORDS = [
+  'every day', 'every week', 'every month', 'each day',
+  'everyday', 'daily', 'weekly', 'monthly', 'yearly', 'hourly', 'repeating', 'recurring',
+  'the', 'a', 'an', 'my', 'your', 'our', 'this', 'that', 'for', 'about', 'please',
+]
+
+// Returns the cleaned match query, or null when nothing meaningful survives stripping.
+// Null is deliberate: an empty query must fall through to the numbered-list fallback
+// rather than match every reminder — an over-eager cancel is worse than a miss.
+export function extractCancelQuery(input: string): string | null {
+  let out = input
     .replace(/^(cancel|delete|remove|clear|stop)\s+/i, '')
-    .replace(/^reminder\s+/i, '')
-    .replace(/\breminder\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+    .replace(/\breminder\b/gi, ' ')
+  for (const w of CANCEL_STOPWORDS) {
+    out = out.replace(new RegExp(`\\b${w}\\b`, 'gi'), ' ')
+  }
+  out = out.replace(/\s+/g, ' ').trim()
+  return out.length ? out : null
 }
 
-function reminderMatches(reminder: any, query: string) {
+export function reminderMatches(reminder: any, query: string) {
   const q = query.toLowerCase().trim()
   if (!q) return false
 
@@ -324,7 +340,7 @@ export async function cancelReminder(telegramId: number, input: string) {
 
   if (!reminder) {
     const query = extractCancelQuery(lower)
-    reminder = reminders.find((item: any) => reminderMatches(item, query)) || null
+    if (query) reminder = reminders.find((item: any) => reminderMatches(item, query)) || null
   }
 
   if (!reminder) {
