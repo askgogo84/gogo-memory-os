@@ -49,42 +49,38 @@ function formatBalance(card: any): string {
   return line
 }
 
-function formatSynced(iso: string | null | undefined): string {
+// "21 Jul" from the statement date. Empty string if missing/unparseable.
+function formatStatementDate(iso: string | null | undefined): string {
   if (!iso) return ''
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return ''
-  const mins = Math.max(0, Math.round((Date.now() - then) / 60000))
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.round(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return `${Math.round(hrs / 24)}d ago`
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
 }
 
-function formatPortfolio(cards: any[]): string {
+function formatPortfolio(cards: any[], totalPoints: number): string {
   const verified = cards.filter((c) => c?.verified)
   const selfReported = cards.filter((c) => !c?.verified)
 
-  let out = `💳 *Your CreditIQ cards*\n`
+  let out = `💳 *Your CreditIQ cards* · ${totalPoints.toLocaleString('en-IN')} pts total\n`
 
   if (verified.length) {
-    out += `\n✅ *Bank-verified*\n`
+    out += `\n✅ *Verified*\n`
     for (const c of verified) {
       out += `• *${formatTitle(c)}*\n  ${formatBalance(c)}`
-      const synced = formatSynced(c.synced_at)
-      if (synced) out += `\n  _synced ${synced}_`
+      const statement = formatStatementDate(c.statement_date)
+      if (statement) out += `\n  statement ${statement}`
       out += `\n`
     }
   }
 
   if (selfReported.length) {
-    out += `\n📝 *Self-reported* _(added by you — not bank-confirmed)_\n`
+    out += `\n📝 *Self-entered*\n`
     for (const c of selfReported) {
-      out += `• *${formatTitle(c)}*\n  ${formatBalance(c)} _(unverified)_\n`
+      out += `• *${formatTitle(c)}*\n  ${formatBalance(c)}\n`
     }
   }
 
-  out += `\n_Bank-verified balances come straight from your bank via Account Aggregator. Self-reported cards are what you entered in the CreditIQ app._`
+  out += `\nVerified balances are read from a statement you uploaded. Self-entered balances are what you typed into the CreditIQ app.`
   return out.trim()
 }
 
@@ -134,6 +130,8 @@ export async function handleCreditIqCards({ senderKey }: HandleCreditIqCardsPara
   const cards = Array.isArray(payload?.cards) ? payload.cards : []
   if (!cards.length) return NO_CARDS
 
+  const totalPoints = Number(payload?.total_points || 0)
+
   console.log('CREDITIQ_CARDS_SHOWN:', { sender: senderKey, count: cards.length })
-  return formatPortfolio(cards)
+  return formatPortfolio(cards, totalPoints)
 }
