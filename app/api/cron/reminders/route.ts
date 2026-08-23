@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp, sendWhatsAppReminderTemplate, sendWhatsAppReminderButtons } from '@/lib/whatsapp'
 import { isSuppressed } from '@/lib/bot/handlers/reminder-optout'
+// getNextOccurrence now lives in the shared reminder-series module so skip-occurrence
+// advances a series exactly the way this cron does — one implementation, no drift.
+import { getNextOccurrence } from '@/lib/services/reminder-series'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -66,49 +69,6 @@ function pickReminderEmoji(label: string): string {
   ]
   for (const [re, emoji] of rules) if (re.test(s)) return emoji
   return '⏰'
-}
-
-function getNextOccurrence(pattern: string, fromDate: Date): Date {
-  const next = new Date(fromDate)
-  const lower = pattern.toLowerCase()
-
-  // Follow-up cadence: followup:<interval>:<message>  e.g. followup:2h:..., followup:1d:...
-  const fu = lower.match(/^followup:(\d+)(h|d):/)
-  if (fu) {
-    const n = parseInt(fu[1], 10)
-    if (fu[2] === 'h') next.setHours(next.getHours() + n)
-    else next.setDate(next.getDate() + n)
-    return next
-  }
-
-  const ev = lower.match(/^every_(\d+)(h|d)\b/)
-  if (ev) { const n = parseInt(ev[1], 10); if (ev[2] === 'h') next.setHours(next.getHours() + n); else next.setDate(next.getDate() + n); return next }
-
-  if (lower.includes('hourly_between')) {
-    const m = lower.match(/hourly_between:(\d{2}):(\d{2})-(\d{2}):(\d{2})/)
-    const IST = 5.5 * 60 * 60 * 1000
-    const istNext = new Date(next.getTime() + IST + 60 * 60 * 1000)
-    if (m) {
-      const sH = +m[1], sM = +m[2], eH = +m[3], eM = +m[4]
-      const h = istNext.getUTCHours(), mm = istNext.getUTCMinutes()
-      const pastEnd = h > eH || (h === eH && mm > eM)
-      const beforeStart = h < sH || (h === sH && mm < sM)
-      if (pastEnd || beforeStart) { if (pastEnd) istNext.setUTCDate(istNext.getUTCDate() + 1); istNext.setUTCHours(sH, sM, 0, 0) }
-    }
-    return new Date(istNext.getTime() - IST)
-  }
-  if (lower.includes('every day') || lower.includes('daily')) next.setDate(next.getDate() + 1)
-  else if (lower.includes('every week') || lower.includes('weekly')) next.setDate(next.getDate() + 7)
-  else if (lower.includes('monday')) next.setDate(next.getDate() + ((1 + 7 - next.getDay()) % 7 || 7))
-  else if (lower.includes('tuesday')) next.setDate(next.getDate() + ((2 + 7 - next.getDay()) % 7 || 7))
-  else if (lower.includes('wednesday')) next.setDate(next.getDate() + ((3 + 7 - next.getDay()) % 7 || 7))
-  else if (lower.includes('thursday')) next.setDate(next.getDate() + ((4 + 7 - next.getDay()) % 7 || 7))
-  else if (lower.includes('friday')) next.setDate(next.getDate() + ((5 + 7 - next.getDay()) % 7 || 7))
-  else if (lower.includes('saturday')) next.setDate(next.getDate() + ((6 + 7 - next.getDay()) % 7 || 7))
-  else if (lower.includes('sunday')) next.setDate(next.getDate() + ((0 + 7 - next.getDay()) % 7 || 7))
-  else next.setDate(next.getDate() + 1)
-
-  return next
 }
 
 async function sendTelegram(chatId: number, text: string) {

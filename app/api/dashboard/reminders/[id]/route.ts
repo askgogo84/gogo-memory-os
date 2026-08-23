@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
 import { verifySameOrigin } from '@/lib/dashboard/guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { deleteReminderById, updateReminderById } from '@/lib/dashboard/reminder-writes'
+import { deleteReminderById, updateReminderById, stopReminderSeriesById, skipReminderOccurrenceById } from '@/lib/dashboard/reminder-writes'
 import { todayInTz, wallTimeToUtcIso } from '@/lib/dashboard/wall-time'
 
 // Reads cookies + headers per request → never cache. (Non-GET handlers aren't cached
@@ -44,6 +44,44 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   const res = await deleteReminderById(tgNum, id)
   if (!res.ok) {
     return NextResponse.json({ ok: false }, { status: res.reason === 'not_found' ? 404 : 500 })
+  }
+  return NextResponse.json({ ok: true })
+}
+
+// POST = recurring-only series actions: { action: 'skip' } (this occurrence) or
+// { action: 'stop' } (end the series). Non-GET + same-origin for the same CSRF reason
+// as DELETE/PATCH. One-off rows keep using DELETE; recurring rows use these so a single
+// tap can't silently end a series.
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const blocked = verifySameOrigin(request)
+  if (blocked) return blocked
+
+  const session = await getSession()
+  if (!session) return unauthorized()
+  const tgNum = parseInt(session.telegramId, 10)
+  if (!Number.isFinite(tgNum)) return unauthorized()
+
+  const { id } = await params
+
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Malformed request.' }, { status: 400 })
+  }
+  const action = (body as { action?: unknown }).action
+  if (action !== 'skip' && action !== 'stop') {
+    return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 })
+  }
+
+  const res = action === 'stop'
+    ? await stopReminderSeriesById(tgNum, id)
+    : await skipReminderOccurrenceById(tgNum, id)
+
+  if (!res.ok) {
+    const status = res.reason === 'not_found' ? 404 : res.reason === 'not_recurring' ? 409 : 500
+    const error = res.reason === 'not_recurring' ? 'That reminder doesn’t repeat.' : undefined
+    return NextResponse.json({ ok: false, error }, { status })
   }
   return NextResponse.json({ ok: true })
 }

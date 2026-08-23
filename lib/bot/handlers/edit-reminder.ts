@@ -1,4 +1,11 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import {
+  stopReminderSeries,
+  skipReminderOccurrence,
+  describeCadence,
+  formatReminderTimeOfDay,
+  formatReminderWhen,
+} from '@/lib/services/reminder-series'
 
 function istNowParts() {
   const now = new Date()
@@ -274,15 +281,25 @@ export async function cancelFollowupChain(telegramId: number, pattern: string | 
 }
 
 export async function getActiveReminders(telegramId: number, limit = 10) {
+  // Active = still coming. A recurring series is always kept (its pending occurrence
+  // is current or future). A one-off is kept only if its time hasn't long passed —
+  // a reminder dated months ago that never fired is stale (the cron would have sent
+  // or abandoned it), so it must not keep showing in "my reminders". 24h grace covers
+  // cron lag / a just-missed fire. Filter + slice in JS to avoid PostgREST .or()
+  // value-quoting fragility on the ISO timestamp.
+  const cutoffMs = Date.now() - 24 * 60 * 60 * 1000
   const { data } = await supabaseAdmin
     .from('reminders')
-    .select('id, message, remind_at, sent, sent_at, created_at, recurring_pattern')
+    .select('id, message, remind_at, sent, sent_at, created_at, recurring_pattern, is_recurring')
     .eq('telegram_id', telegramId)
     .eq('sent', false)
     .order('remind_at', { ascending: true })
-    .limit(limit)
+    .limit(100)
 
-  return dedupeReminders(data || [])
+  const active = (data || []).filter(
+    (r: any) => r.is_recurring === true || new Date(r.remind_at).getTime() >= cutoffMs,
+  )
+  return dedupeReminders(active).slice(0, limit)
 }
 
 export async function showActiveReminders(telegramId: number) {
@@ -355,13 +372,98 @@ export async function cancelReminder(telegramId: number, input: string) {
     )
   }
 
-  const ok = await updateReminderSent(reminder, true)
+  // CANCEL = end the whole series (recurring) or remove the one-off. Shared with the
+  // dashboard's Stop action so both surfaces behave identically.
+  const res = await stopReminderSeries(telegramId, reminder)
 
-  if (!ok) {
+  if (!res.ok) {
     return `I couldn’t cancel that reminder right now.`
   }
 
-  return `🗑️ *Reminder cancelled*\n\n${cleanReminderName(reminder.message)}\n${formatWhen(reminder.remind_at)}`
+  const name = cleanReminderName(reminder.message)
+  if (res.wasRecurring) {
+    const cadence = describeCadence(reminder.recurring_pattern)
+    return (
+      `🛑 *Stopped* your ${cadence} *${name}* reminder at ${formatReminderTimeOfDay(reminder.remind_at)}.\n\n` +
+      `It won’t repeat anymore. Say *skip* next time if you only want to miss one.`
+    )
+  }
+  return `🗑️ *Cancelled* *${name}*\n${formatReminderWhen(reminder.remind_at)}`
+}
+
+function isSkipReminderCommand(input: string) {
+  const lower = input.toLowerCase().trim()
+  return /^skip\b/i.test(lower) || lower === 'not today'
+}
+
+// Skip-query stripping mirrors extractCancelQuery but also drops the skip verbs and
+// day words ("skip today drink water" → "drink water"). Null → fall through to the
+// single-recurring default / numbered-list ask rather than matching everything.
+export function extractSkipQuery(input: string): string | null {
+  let out = input
+    .replace(/^skip\s+/i, '')
+    .replace(/^not\s+today\b/i, '')
+    .replace(/\b(today|tomorrow|tonight)\b/gi, ' ')
+    .replace(/\breminder\b/gi, ' ')
+  for (const w of CANCEL_STOPWORDS) {
+    out = out.replace(new RegExp(`\\b${w}\\b`, 'gi'), ' ')
+  }
+  out = out.replace(/\s+/g, ' ').trim()
+  return out.length ? out : null
+}
+
+export async function skipReminder(telegramId: number, input: string) {
+  const reminders = await getActiveReminders(telegramId, 20)
+
+  if (!reminders.length) {
+    return `No active reminders to skip.`
+  }
+
+  const lower = normalizeNumberWords(input.toLowerCase().trim())
+  let reminder: any | null = null
+
+  const index = extractReminderIndex(lower)
+  if (index !== null) {
+    reminder = reminders[index] || null
+  }
+
+  if (!reminder) {
+    const query = extractSkipQuery(lower)
+    if (query) reminder = reminders.find((item: any) => reminderMatches(item, query)) || null
+  }
+
+  // "skip" / "skip today" / "not today" with nothing else: if there's exactly one
+  // repeating reminder, that's unambiguous — skip it.
+  if (!reminder) {
+    const recurringOnes = reminders.filter((item: any) => item.is_recurring === true)
+    if (recurringOnes.length === 1) reminder = recurringOnes[0]
+  }
+
+  if (!reminder) {
+    return (
+      `Which reminder should I skip?\n\n` +
+      reminders
+        .slice(0, 5)
+        .map((item: any, idx: number) => `${idx + 1}. ${cleanReminderName(item.message)} — ${formatWhen(item.remind_at)}`)
+        .join('\n') +
+      `\n\nTry: *skip 1* or *skip water reminder*.`
+    )
+  }
+
+  const res = await skipReminderOccurrence(telegramId, reminder)
+
+  if (res.notRecurring) {
+    return `*${cleanReminderName(reminder.message)}* is a one-off reminder, not a repeating one.\n\nSay *cancel* to remove it, or *snooze* to push it.`
+  }
+  if (!res.ok || !res.next) {
+    return `I couldn’t skip that reminder right now.`
+  }
+
+  const cadence = describeCadence(reminder.recurring_pattern)
+  return (
+    `⏭️ *Skipped* *${cleanReminderName(reminder.message)}* this time.\n` +
+    `Your ${cadence} reminder is back ${formatReminderWhen(res.next)}.`
+  )
 }
 
 export async function markLatestReminderDone(telegramId: number, input?: string) {
@@ -399,6 +501,10 @@ export async function editLatestReminder(telegramId: number, input: string) {
 
   if (isCancelReminderCommand(lower)) {
     return await cancelReminder(telegramId, lower)
+  }
+
+  if (isSkipReminderCommand(lower)) {
+    return await skipReminder(telegramId, lower)
   }
 
   if (isDoneCommand(lower)) {

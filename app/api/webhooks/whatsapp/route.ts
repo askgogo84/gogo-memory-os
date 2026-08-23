@@ -63,6 +63,7 @@ import { handleBucketCommand } from '@/lib/bot/handlers/shared-memory'
 import { parsePdfTicket, parseImageTicket, classifyPdfDocument, readAndSummarizePdfDocument, type PdfClass } from '@/lib/services/pdf-reader'
 import { persistAndRemindTicket } from '@/lib/services/travel-tickets'
 import { saveDocumentNote, saveTicketDocument } from '@/lib/services/document-store'
+import { describeCadence, formatReminderWhen, cleanReminderName } from '@/lib/services/reminder-series'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
 // Detect WhatsApp link preview cards (any website shared as a card)
@@ -319,7 +320,7 @@ export async function POST(req: NextRequest) {
       const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString()
       const { data: recentFired } = await supabaseAdmin
         .from('reminders')
-        .select('id, message')
+        .select('id, message, sent, is_recurring, recurring_pattern')
         .eq('telegram_id', resolvedUser.telegramId)
         .eq('sent', true)
         .gte('sent_at', thirtyMinsAgo)
@@ -327,7 +328,7 @@ export async function POST(req: NextRequest) {
         .limit(1)
       const { data: pendingRaw } = await supabaseAdmin
         .from('reminders')
-        .select('id, message')
+        .select('id, message, sent, is_recurring, recurring_pattern')
         .eq('telegram_id', resolvedUser.telegramId)
         .eq('sent', false)
         .order('remind_at', { ascending: true })
@@ -338,9 +339,35 @@ export async function POST(req: NextRequest) {
       if (!target) {
         reply = `I couldn't find a recent reminder to update. Say *my reminders* to see what's pending.`
       } else if (buttonPayload === 'done') {
-        const { error } = await supabaseAdmin.from('reminders').update({ sent: true }).eq('id', target.id)
-        if (error) console.error('REMINDER_BTN_DONE_UPDATE_FAILED:', target.id, error.message)
-        reply = `✅ Got it! *${target.message}* marked as resolved.\n\n_Reminder cancelled._`
+        // "Done" resolves THIS occurrence — it must never masquerade as cancelling a
+        // whole series (the old copy said "Reminder cancelled" even when it set sent=true
+        // on an already-fired row: success for a no-op).
+        const name = cleanReminderName(String(target.message || ''))
+        if (target.is_recurring) {
+          // The cron already queued the next occurrence when this one fired, so we do
+          // NOT write sent here (marking a pending recurring row sent would kill the
+          // series). Just acknowledge and restate when it next comes.
+          const { data: nextRows } = await supabaseAdmin
+            .from('reminders')
+            .select('remind_at')
+            .eq('telegram_id', resolvedUser.telegramId)
+            .eq('message', target.message)
+            .eq('sent', false)
+            .order('remind_at', { ascending: true })
+            .limit(1)
+          const cadence = describeCadence(target.recurring_pattern)
+          const nextIso = nextRows?.[0]?.remind_at
+          reply = nextIso
+            ? `✅ Done! *${name}* — next ${cadence} reminder ${formatReminderWhen(nextIso)}.`
+            : `✅ Done! *${name}* logged.`
+        } else {
+          // One-off: mark resolved (idempotent if it already fired). No "cancelled".
+          if (target.sent !== true) {
+            const { error } = await supabaseAdmin.from('reminders').update({ sent: true }).eq('id', target.id)
+            if (error) console.error('REMINDER_BTN_DONE_UPDATE_FAILED:', target.id, error.message)
+          }
+          reply = `✅ Done! *${name}* marked as resolved.`
+        }
       } else if (buttonPayload === 'snooze_10') {
         const newRemindAt = new Date(Date.now() + 10 * 60 * 1000)
         const { error } = await supabaseAdmin.from('reminders').update({ remind_at: newRemindAt.toISOString(), sent: false }).eq('id', target.id)

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { cancelFollowupChain } from '@/lib/bot/handlers/edit-reminder'
+import { stopReminderSeries, skipReminderOccurrence } from '@/lib/services/reminder-series'
 
 // ── The dashboard's reminder write layer ──────────────────────────────────────
 // Two id-scoped services, mirroring the read layer in lib/dashboard/queries.ts. The
@@ -15,8 +16,14 @@ import { cancelFollowupChain } from '@/lib/bot/handlers/edit-reminder'
 // NEVER-WRITE COLUMNS (Phase 6 sign-off): twilio_sid, delivery_status, sent_at,
 // fail_attempts, last_failed_at, nudge_count, followup_started_at, recurring_pattern,
 // is_recurring, telegram_id, chat_id, whatsapp_to, timezone. These carry delivery
-// truth, the cron's recurrence/follow-up state, or identity/routing. The only columns
-// these functions ever write are `message`, `remind_at`, and `sent`.
+// truth, the cron's recurrence/follow-up state, or identity/routing. deleteReminderById
+// and updateReminderById only ever write `message`, `remind_at`, and `sent`.
+//
+// EXCEPTION — stopReminderSeriesById (below) DELIBERATELY writes is_recurring/
+// recurring_pattern, via the shared stop-series primitive. That is the whole point of
+// a "Stop" action: a recurring reminder's Stop must end the series (clear the
+// recurrence), not just blank one occurrence. skipReminderOccurrenceById writes only
+// remind_at + sent, advancing the pending occurrence so the series keeps regenerating.
 
 export type DeleteReminderResult = { ok: true } | { ok: false; reason: 'not_found' | 'error' }
 
@@ -53,6 +60,46 @@ export async function deleteReminderById(
   // a chain-cancel failure is logged inside cancelFollowupChain, not surfaced.
   await cancelFollowupChain(telegramId, row.recurring_pattern)
   return { ok: true }
+}
+
+export type SeriesActionResult =
+  | { ok: true }
+  | { ok: false; reason: 'not_found' | 'error' | 'not_recurring' }
+
+// STOP a whole recurring series from the dashboard — the "Stop" action's write path,
+// shared with the WhatsApp cancel via stopReminderSeries. Resolves the row on
+// id+telegram_id first (identity boundary), then ends the series. For a one-off it
+// simply marks the row sent (stopReminderSeries handles both).
+export async function stopReminderSeriesById(telegramId: number, id: string): Promise<SeriesActionResult> {
+  const { data: row, error } = await supabaseAdmin
+    .from('reminders')
+    .select('id, message, is_recurring, recurring_pattern')
+    .eq('id', id)
+    .eq('telegram_id', telegramId)
+    .maybeSingle()
+  if (error) return { ok: false, reason: 'error' }
+  if (!row) return { ok: false, reason: 'not_found' }
+
+  const res = await stopReminderSeries(telegramId, row)
+  return res.ok ? { ok: true } : { ok: false, reason: 'error' }
+}
+
+// SKIP one occurrence from the dashboard — advances the pending row to its next
+// occurrence so the series keeps going. Only valid for recurring rows (returns
+// not_recurring otherwise, so the UI can explain).
+export async function skipReminderOccurrenceById(telegramId: number, id: string): Promise<SeriesActionResult> {
+  const { data: row, error } = await supabaseAdmin
+    .from('reminders')
+    .select('id, remind_at, is_recurring, recurring_pattern')
+    .eq('id', id)
+    .eq('telegram_id', telegramId)
+    .maybeSingle()
+  if (error) return { ok: false, reason: 'error' }
+  if (!row) return { ok: false, reason: 'not_found' }
+
+  const res = await skipReminderOccurrence(telegramId, row)
+  if (res.notRecurring) return { ok: false, reason: 'not_recurring' }
+  return res.ok ? { ok: true } : { ok: false, reason: 'error' }
 }
 
 export type UpdateReminderResult =

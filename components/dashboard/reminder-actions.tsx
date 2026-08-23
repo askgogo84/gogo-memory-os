@@ -34,7 +34,7 @@ function timeInTz(iso: string, tz: string): string {
   return `${h}:${m}`
 }
 
-type Mode = 'idle' | 'confirmDelete' | 'editing'
+type Mode = 'idle' | 'confirmDelete' | 'confirmStop' | 'editing'
 
 export function ReminderActions({
   id,
@@ -76,6 +76,32 @@ export function ReminderActions({
       startTransition(() => router.refresh())
     } catch {
       setError('Couldn’t delete that. Try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Recurring-only: skip THIS occurrence (series continues) or stop the whole series.
+  // Both hit POST /api/dashboard/reminders/[id] with an { action } body, mirroring the
+  // WhatsApp skip/cancel via the same shared server primitives.
+  async function onSeriesAction(action: 'skip' | 'stop') {
+    if (working) return
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/dashboard/reminders/${encodeURIComponent(id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      const json = await res.json().catch(() => ({ ok: false }))
+      if (!json.ok) {
+        setError(action === 'stop' ? 'Couldn’t stop that. Try again.' : 'Couldn’t skip that. Try again.')
+        return
+      }
+      startTransition(() => router.refresh())
+    } catch {
+      setError(action === 'stop' ? 'Couldn’t stop that. Try again.' : 'Couldn’t skip that. Try again.')
     } finally {
       setBusy(false)
     }
@@ -185,20 +211,77 @@ export function ReminderActions({
     )
   }
 
-  return (
-    <div className="mt-1.5 flex items-center gap-4">
-      {!isRecurring && (
+  if (mode === 'confirmStop') {
+    return (
+      <div className="mt-2 flex items-center gap-2">
+        <span className="text-[12.5px] font-medium text-gogo-ink-2">Stop this repeating reminder for good?</span>
+        <button
+          type="button"
+          onClick={() => onSeriesAction('stop')}
+          disabled={working}
+          className="inline-flex min-h-9 items-center rounded-full bg-gogo-ink px-4 text-[13px] font-semibold text-white disabled:opacity-50"
+        >
+          {working ? 'Stopping…' : 'Stop series'}
+        </button>
         <button
           type="button"
           onClick={() => {
-            setMode('editing')
+            setMode('idle')
             setError(null)
           }}
-          className="text-[12.5px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2"
+          disabled={working}
+          className="inline-flex min-h-9 items-center px-2 text-[13px] font-semibold text-gogo-ink-3 disabled:opacity-50"
         >
-          Edit
+          Keep it
         </button>
-      )}
+        {error && <p className="text-[12.5px] text-gogo-orange-deep">{error}</p>}
+      </div>
+    )
+  }
+
+  // Recurring rows get Skip vs Stop instead of a single Delete: a lone Delete would
+  // silently end the whole series (the cron only spawns the next occurrence when the
+  // current one fires, so deleting the pending row kills it). Skip advances one
+  // occurrence; Stop ends the series. One-off rows keep Edit/Delete.
+  if (isRecurring) {
+    return (
+      <div className="mt-1.5 flex items-center gap-4">
+        <button
+          type="button"
+          onClick={() => onSeriesAction('skip')}
+          disabled={working}
+          className="text-[12.5px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2 disabled:opacity-50"
+        >
+          {working ? 'Skipping…' : 'Skip once'}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setMode('confirmStop')
+            setError(null)
+          }}
+          disabled={working}
+          className="text-[12.5px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2 disabled:opacity-50"
+        >
+          Stop
+        </button>
+        {error && <p className="text-[12.5px] text-gogo-orange-deep">{error}</p>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-1.5 flex items-center gap-4">
+      <button
+        type="button"
+        onClick={() => {
+          setMode('editing')
+          setError(null)
+        }}
+        className="text-[12.5px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2"
+      >
+        Edit
+      </button>
       <button
         type="button"
         onClick={() => {
