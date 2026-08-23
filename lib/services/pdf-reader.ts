@@ -122,6 +122,140 @@ export async function parsePdfTicket(
   return parseTicketJson(text)
 }
 
+// Download a Twilio-hosted PDF and return it base64-encoded. Shared by the
+// classifier and the summariser below (the ticket parser above inlines the same
+// fetch; left untouched to keep this change scoped to the new document path).
+async function fetchTwilioPdfBase64(
+  mediaUrl: string,
+  accountSid: string,
+  authToken: string,
+): Promise<string> {
+  const response = await fetch(mediaUrl, {
+    headers: {
+      Authorization: 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64'),
+    },
+  })
+  if (!response.ok) {
+    console.error('[pdf-reader] Failed to fetch PDF:', response.status, response.statusText)
+    throw new Error(`Failed to fetch PDF: ${response.status}`)
+  }
+  return Buffer.from(await response.arrayBuffer()).toString('base64')
+}
+
+export type PdfClass = 'TICKET' | 'DOCUMENT' | 'OTHER'
+
+/**
+ * Classify a PDF's first page so the webhook can route travel tickets to
+ * parsePdfTicket and route everything else (leases, licences, bills, forms…) to
+ * the summarise-and-save note path. This is the PDF analogue of the image
+ * classifier already used in the webhook, generalised to a document content
+ * block. Cheap Haiku call; defaults to DOCUMENT on any ambiguity so a non-ticket
+ * is never forced down the travel-only parser. All active Claude models support
+ * PDF document blocks.
+ */
+export async function classifyPdfDocument(
+  mediaUrl: string,
+  accountSid: string,
+  authToken: string,
+): Promise<PdfClass> {
+  const base64Pdf = await fetchTwilioPdfBase64(mediaUrl, accountSid, authToken)
+  const result = await anthropic.messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 20,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf },
+          } as never,
+          {
+            type: 'text',
+            text:
+              'Classify this document into exactly ONE category based on its first page. Reply with only the category word:\n' +
+              '- TICKET (a flight/train/bus travel ticket, boarding pass, e-ticket, or itinerary with a PNR/flight number — NOT a purchase receipt)\n' +
+              '- DOCUMENT (a lease, contract, licence, ID, invoice, bill, statement, report, form, letter, notes, or any other paperwork)\n' +
+              '- OTHER (anything that is not a travel ticket or a readable document)\n' +
+              'Reply with one word only.',
+          },
+        ],
+      },
+    ],
+  })
+  const ans = (result.content[0]?.type === 'text' ? result.content[0].text : '').trim().toUpperCase()
+  console.log('[pdf-reader] first-page class:', ans.slice(0, 20))
+  if (ans.includes('TICKET')) return 'TICKET'
+  if (ans.includes('OTHER')) return 'OTHER'
+  return 'DOCUMENT'
+}
+
+const PDF_SUMMARY_SYSTEM =
+  'You are AskGogo reading a PDF a user sent on WhatsApp. First decide whether it is a medical prescription/health/lab note, or a normal document (lease, contract, licence, ID, bill/receipt, statement, form, letter, notes). If it is medical, never guess medicine names, dosage, timing, diagnosis, or lab values when unclear — mark unclear parts as [unclear] and give no medical advice. Return plain WhatsApp-friendly text only.'
+
+/**
+ * Read a non-ticket PDF and return a WhatsApp-friendly summary. Mirrors
+ * readAndSummarizeImageNote: same medical-vs-normal split and the same section
+ * headings, so the webhook can reuse compactImageNoteForSaving() to store the
+ * result in the notes list. Uses Sonnet (the model parsePdfTicket already relies
+ * on) because it handles both text- and image-based PDFs.
+ */
+export async function readAndSummarizePdfDocument(params: {
+  mediaUrl: string
+  accountSid: string
+  authToken: string
+  userCaption?: string
+}): Promise<string> {
+  const base64Pdf = await fetchTwilioPdfBase64(params.mediaUrl, params.accountSid, params.authToken)
+  const result = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 1200,
+    system: PDF_SUMMARY_SYSTEM,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf },
+          } as never,
+          {
+            type: 'text',
+            text:
+              `User caption: ${params.userCaption || 'No caption'}\n\n` +
+              'Read this document carefully. If it is a doctor prescription, clinic note, lab/health report, or medicine note, output exactly this medical format:\n\n' +
+              '📝 *Prescription / medical note read*\n\n' +
+              '*Important*\n' +
+              '• Handwritten or scanned notes can be unclear. Please verify medicine names, dosage, and timing with the doctor/pharmacist.\n\n' +
+              '*Patient / clinic details*\n' +
+              '• Patient, doctor/clinic, and date if visible, otherwise [unclear]\n\n' +
+              '*Vitals / test values visible*\n' +
+              '• List visible values (TG, LDL, BP…) exactly as written, [unclear] if unsure\n\n' +
+              '*Medicines / instructions visible*\n' +
+              '• Medicine name / strength / timing / duration — [unclear] where not legible\n\n' +
+              '*Extracted text*\n' +
+              'Key lines, preserving uncertainty with [unclear].\n\n' +
+              '*Next actions*\n' +
+              '• Practical next steps only.\n\n' +
+              'If it is NOT medical, output exactly this normal format:\n\n' +
+              '📄 *Document read*\n\n' +
+              '*Summary*\n' +
+              '• what this document is and the 2-3 most important facts (parties, dates, amounts, reference numbers)\n' +
+              '• bullet 2\n\n' +
+              '*Extracted text*\n' +
+              'The key readable text (names, dates, amounts, reference numbers). Use [unclear] instead of guessing.\n\n' +
+              '*Next actions*\n' +
+              '• action if any',
+          },
+        ],
+      },
+    ],
+  })
+  const text = result.content[0]?.type === 'text' ? result.content[0].text.trim() : ''
+  if (!text) throw new Error('Could not read document')
+  return text
+}
+
 /**
  * Download an image (flight/train/event ticket photo) from Twilio and parse it
  * with Claude vision. Same JSON contract as parsePdfTicket. Returns null for
@@ -183,7 +317,7 @@ export async function parseImageTicket(
  */
 export function buildTicketReply(info: TicketInfo, reminderSet = true): string {
   if (!info)
-    return "📄 I received your PDF but couldn't extract travel details. Is this a flight, train, or event ticket?"
+    return "📄 I received your PDF but couldn't extract travel details."
 
   if (info.type === 'flight') {
     const fi = info as FlightInfo

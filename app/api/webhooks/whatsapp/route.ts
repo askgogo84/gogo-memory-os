@@ -60,7 +60,7 @@ import { indexMemory } from '@/lib/services/memory-index'
 import { buildThrowbackLine, isThrowbackReply, handleThrowbackReply, getLastAssistantMessage } from '@/lib/bot/handlers/throwback'
 import { detectPreferenceForget, forgetPreference } from '@/lib/bot/handlers/preferences'
 import { handleBucketCommand } from '@/lib/bot/handlers/shared-memory'
-import { parsePdfTicket, parseImageTicket, buildTicketReply } from '@/lib/services/pdf-reader'
+import { parsePdfTicket, parseImageTicket, classifyPdfDocument, readAndSummarizePdfDocument, type PdfClass } from '@/lib/services/pdf-reader'
 import { persistAndRemindTicket } from '@/lib/services/travel-tickets'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
@@ -623,29 +623,57 @@ export async function POST(req: NextRequest) {
 
     // ── PDF / Document handler (BEFORE voice transcription) ──────────────
     if (numMedia > 0 && firstMediaUrl && (firstMediaType.includes('pdf') || firstMediaType.includes('document'))) {
-      await sendWhatsAppMessage(from, '📄 Reading your ticket PDF...')
+      // Type-neutral: at this point we don't yet know whether it's a ticket.
+      await sendWhatsAppMessage(from, '📄 Reading your document...')
       try {
         const accountSid = process.env.TWILIO_ACCOUNT_SID!
         const authToken = process.env.TWILIO_AUTH_TOKEN!
-        const ticketInfo = await parsePdfTicket(firstMediaUrl, accountSid, authToken)
-        let reply: string
-        if (ticketInfo) {
-          // Store legs + fire T-3h (unchanged) and T-24h check-in reminders.
-          const res = await persistAndRemindTicket(ticketInfo, {
-            telegramId: resolvedUser.telegramId,
-            whatsappTo: from,
-            timezone: resolvedUser.timezone || 'Asia/Kolkata',
-            source: 'pdf',
-          })
-          reply = res.reply
-        } else {
-          // Unparseable PDF: keep the existing note + generic reply (behaviour-preserving).
-          await addToList(resolvedUser.telegramId, 'notes', [`PDF document: ${bodyText || 'received'}`])
-          reply = buildTicketReply(null)
+
+        // Classify the first page before assuming it's a travel ticket. Non-tickets
+        // (leases, licences, bills, forms…) go to the summarise-and-save note path,
+        // mirroring the image handler. Defaults to DOCUMENT on any classify error so
+        // a non-ticket is never forced down the travel-only parser.
+        let pdfClass: PdfClass = 'DOCUMENT'
+        try {
+          pdfClass = await classifyPdfDocument(firstMediaUrl, accountSid, authToken)
+        } catch (err: any) {
+          console.error('PDF_CLASSIFY_FAILED:', err?.message || err)
         }
-        await saveConversation(resolvedUser.telegramId, 'user', '[PDF ticket]')
-        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: '[PDF ticket]', reply })
+
+        let handledAsTicket = false
+        if (pdfClass === 'TICKET') {
+          const ticketInfo = await parsePdfTicket(firstMediaUrl, accountSid, authToken)
+          if (ticketInfo) {
+            // Store legs + fire T-3h (unchanged) and T-24h check-in reminders.
+            const res = await persistAndRemindTicket(ticketInfo, {
+              telegramId: resolvedUser.telegramId,
+              whatsappTo: from,
+              timezone: resolvedUser.timezone || 'Asia/Kolkata',
+              source: 'pdf',
+            })
+            await saveConversation(resolvedUser.telegramId, 'user', '[PDF ticket]')
+            await saveConversation(resolvedUser.telegramId, 'assistant', res.reply)
+            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: '[PDF ticket]', reply: res.reply })
+            handledAsTicket = true
+          }
+          // Ticket parse missed on a ticket-looking PDF → fall through to the note path.
+        }
+
+        if (!handledAsTicket) {
+          // Not a ticket → summarise the document and save it to the notes list,
+          // exactly like the image-note path (readAndSummarizeImageNote).
+          const noteReply = await readAndSummarizePdfDocument({
+            mediaUrl: firstMediaUrl,
+            accountSid,
+            authToken,
+            userCaption: bodyText,
+          })
+          const savedNote = compactImageNoteForSaving(noteReply, 'Document')
+          await addToList(resolvedUser.telegramId, 'notes', [savedNote])
+          await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[PDF] ${bodyText}` : '[PDF document]')
+          await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[PDF document]', reply: `${noteReply}\n\nSaved to *my notes*.` })
+        }
       } catch (err: any) {
         console.error('PDF_PARSE_ERROR:', err?.message)
         await sendWhatsAppMessage(from, `📄 I received your PDF but had trouble reading it.

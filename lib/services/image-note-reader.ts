@@ -144,8 +144,8 @@ function cleanBulletLine(line: string) {
   return line.replace(/^[-•\d.)\s]+/, '').replace(/\s+/g, ' ').trim()
 }
 
-function titleFromSummary(summaryLines: string[]) {
-  const first = summaryLines[0] || 'Image note'
+function titleFromSummary(summaryLines: string[], kind = 'Image note') {
+  const first = summaryLines[0] || kind
   const clean = first
     .replace(/^the image\s+(discusses|shows|contains|outlines|describes)\s+/i, '')
     .replace(/^this image\s+(discusses|shows|contains|outlines|describes)\s+/i, '')
@@ -154,10 +154,13 @@ function titleFromSummary(summaryLines: string[]) {
     .trim()
 
   const title = clean.length > 48 ? clean.slice(0, 45).trim() + '...' : clean
-  return title ? `Image note — ${title}` : 'Image note'
+  return title ? `${kind} — ${title}` : kind
 }
 
-export function compactImageNoteForSaving(text: string) {
+// `kind` labels the saved-note title ("Image note — …" by default). PDF callers
+// pass "Document" so listed-back notes aren't mislabelled as images. No other
+// behaviour changes with the label.
+export function compactImageNoteForSaving(text: string, kind = 'Image note') {
   const summary = extractSection(text, 'Summary')
   const patient = extractSection(text, 'Patient / clinic details')
   const vitals = extractSection(text, 'Vitals / test values visible')
@@ -183,7 +186,7 @@ export function compactImageNoteForSaving(text: string) {
 
   const readableExtract = extracted && !/not readable|not clearly readable|no readable text/i.test(extracted)
   const compactParts: string[] = []
-  compactParts.push(medicalMode ? 'Medical note / prescription image' : titleFromSummary(summaryLines))
+  compactParts.push(medicalMode ? 'Medical note / prescription image' : titleFromSummary(summaryLines, kind))
 
   if (summaryLines.length) compactParts.push(...summaryLines.map((line) => `• ${line}`))
 
