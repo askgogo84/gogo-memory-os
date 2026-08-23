@@ -199,3 +199,25 @@ export function compactImageNoteForSaving(text: string, kind = 'Image note') {
 
   return compactParts.join('\n').trim().slice(0, medicalMode ? 1400 : 900)
 }
+
+// Structured view of a summariser's sectioned output, for the durable documents
+// row. Reuses the same section extraction as compactImageNoteForSaving, so it
+// works for both readAndSummarizeImageNote and readAndSummarizePdfDocument.
+export function extractNoteFields(text: string): { summary: string; extracted: string; medicalMode: boolean } {
+  const medicalMode = /Prescription \/ medical note read|Medicines \/ instructions visible|Patient \/ clinic details/i.test(text)
+  const summarySrc = medicalMode
+    ? [
+        extractSection(text, 'Patient / clinic details'),
+        extractSection(text, 'Vitals / test values visible'),
+        extractSection(text, 'Medicines / instructions visible'),
+      ].join('\n')
+    : extractSection(text, 'Summary')
+  const summary = summarySrc
+    .split('\n')
+    .map(cleanBulletLine)
+    .filter(Boolean)
+    .filter((line) => !/^none$/i.test(line))
+    .join('\n')
+  const extracted = extractSection(text, 'Extracted text').trim()
+  return { summary, extracted, medicalMode }
+}

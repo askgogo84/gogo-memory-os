@@ -39,7 +39,7 @@ export class MeterUnavailableError extends Error {
 
 export type Counter = 'ai_action' | 'document' | 'friend_contacts'
 export type AiAction = 'web_search' | 'translate' | 'ask' | 'image_classify' | 'skin_check' | 'nutrition'
-export type DocumentAction = 'ticket_parse' | 'receipt_parse' | 'meeting_notes'
+export type DocumentAction = 'ticket_parse' | 'receipt_parse' | 'meeting_notes' | 'document_save'
 export type MeterAction = AiAction | DocumentAction
 
 // Which counter each action belongs to. Reference for the wiring phase.
@@ -60,6 +60,7 @@ export const ACTION_COUNTER: Record<MeterAction, Exclude<Counter, 'friend_contac
   ticket_parse: 'document',
   receipt_parse: 'document',
   meeting_notes: 'document',
+  document_save: 'document',
 }
 
 // ── Row shapes ──────────────────────────────────────────────────────────────

@@ -62,6 +62,7 @@ import { detectPreferenceForget, forgetPreference } from '@/lib/bot/handlers/pre
 import { handleBucketCommand } from '@/lib/bot/handlers/shared-memory'
 import { parsePdfTicket, parseImageTicket, classifyPdfDocument, readAndSummarizePdfDocument, type PdfClass } from '@/lib/services/pdf-reader'
 import { persistAndRemindTicket } from '@/lib/services/travel-tickets'
+import { saveDocumentNote, saveTicketDocument } from '@/lib/services/document-store'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
 // Detect WhatsApp link preview cards (any website shared as a card)
@@ -453,6 +454,8 @@ export async function POST(req: NextRequest) {
               await saveConversation(resolvedUser.telegramId, 'user', `[image ticket] ${bodyText}`.trim())
               await saveConversation(resolvedUser.telegramId, 'assistant', res.reply)
               await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image ticket]', reply: res.reply })
+              // Additive: store the file + a documents row alongside travel_tickets.
+              await saveTicketDocument({ telegramId: resolvedUser.telegramId, info: ticketInfo, replyText: res.reply, messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid, authToken, contentType: firstMediaType } })
               handledAsTicket = true
             }
           } catch (err: any) {
@@ -465,6 +468,8 @@ export async function POST(req: NextRequest) {
             await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
             await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
             await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
+            // Additive: durably store the document image (captioned ticket that didn't parse).
+            await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
           }
         } else if (isNutritionPhotoCaption(bodyText) || (!bodyText.trim() && !isSkinCheckCaption(bodyText) && !hasPendingSkinCheck)) {
           // ── Food photo → first verify it's actually food via quick vision check ──
@@ -512,6 +517,8 @@ export async function POST(req: NextRequest) {
                   await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image ticket] ${bodyText}` : '[image ticket]')
                   await saveConversation(resolvedUser.telegramId, 'assistant', res.reply)
                   await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image ticket]', reply: res.reply })
+                  // Additive: store the file + a documents row alongside travel_tickets.
+                  await saveTicketDocument({ telegramId: resolvedUser.telegramId, info: ticketInfo, replyText: res.reply, messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid, authToken, contentType: firstMediaType } })
                   handledAsTicket = true
                 }
               } catch (err: any) {
@@ -526,6 +533,8 @@ export async function POST(req: NextRequest) {
               await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
               await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
               await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
+              // Additive: durably store the document image (existing note behaviour unchanged).
+              await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
             }
           } else {
           await sendWhatsAppMessage(from, '🥗 Analysing your meal...')
@@ -613,6 +622,8 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image note]')
           await saveConversation(resolvedUser.telegramId, 'assistant', imageReply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image note]', reply: `${imageReply}\n\nSaved to *my notes*.` })
+          // Additive: durably store the document image (default note path; existing notes write unchanged above).
+          await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: imageReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
         }
       } catch (error: any) {
         console.error('WHATSAPP_IMAGE_PROCESSING_FAILED:', error?.message || error)
@@ -654,6 +665,8 @@ export async function POST(req: NextRequest) {
             await saveConversation(resolvedUser.telegramId, 'user', '[PDF ticket]')
             await saveConversation(resolvedUser.telegramId, 'assistant', res.reply)
             await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: '[PDF ticket]', reply: res.reply })
+            // Additive: store the file + a documents row alongside travel_tickets.
+            await saveTicketDocument({ telegramId: resolvedUser.telegramId, info: ticketInfo, replyText: res.reply, messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid, authToken, contentType: firstMediaType } })
             handledAsTicket = true
           }
           // Ticket parse missed on a ticket-looking PDF → fall through to the note path.
@@ -673,6 +686,9 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[PDF] ${bodyText}` : '[PDF document]')
           await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[PDF document]', reply: `${noteReply}\n\nSaved to *my notes*.` })
+          // Additive: durably store the file + documents row (notes behaviour unchanged above).
+          // doc_type carries the classifier verdict (document/other, or ticket on a parse miss).
+          await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: pdfClass.toLowerCase(), messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid, authToken, contentType: firstMediaType } })
         }
       } catch (err: any) {
         console.error('PDF_PARSE_ERROR:', err?.message)
