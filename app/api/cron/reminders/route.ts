@@ -4,7 +4,7 @@ import { sendWhatsApp, sendWhatsAppReminderTemplate, sendWhatsAppReminderButtons
 import { isSuppressed } from '@/lib/bot/handlers/reminder-optout'
 // getNextOccurrence now lives in the shared reminder-series module so skip-occurrence
 // advances a series exactly the way this cron does — one implementation, no drift.
-import { getNextOccurrence } from '@/lib/services/reminder-series'
+import { getNextOccurrence, describeCadence } from '@/lib/services/reminder-series'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -273,7 +273,7 @@ export async function GET(req: Request) {
     // Build the reminder text
     let reminderText = isFollowup
       ? `🔔 *Follow-up reminder*\n\n📋 ${msgRaw}\n\nDid you hear back?\n• Reply *done* — mark as resolved\n• Reply *snooze 2 days* — remind again later\n• Reply *snooze friday* — remind on Friday`
-      : (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); const emo = pickReminderEmoji(lbl); return `${emo} *Reminder*\n\n${emo} ${lbl}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${reminder.recurring_pattern}` : ''}` })()
+      : (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); const emo = pickReminderEmoji(lbl); return `${emo} *Reminder*\n\n${emo} ${lbl}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${describeCadence(reminder.recurring_pattern)}` : ''}` })()
     // An empty topic-digest bucket has nothing worth sending. Skip the send
     // (but still consume/reschedule the reminder below) rather than messaging
     // the user "Nothing saved in this bucket yet."

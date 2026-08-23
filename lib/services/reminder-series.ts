@@ -10,6 +10,23 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 //   CANCEL / STOP  = end the whole series.
 //   SKIP           = this occurrence only; the series keeps regenerating.
 
+// Interval cadence, parsed from EITHER stored shape so the advance math and the
+// humanizer can't disagree about what a pattern means:
+//   compact  — every_2h / every_2d          (LLM path)
+//   verbose  — every_2_hours / every_15_minutes / every_3_days   (the create parser)
+// The create parser only ever writes the verbose form, so getNextOccurrence MUST read
+// it — otherwise a verbose interval falls through to the default +1 day and silently
+// recurs daily. Minutes are interval-only (no compact minute form). Returns null when
+// the pattern is not an interval.
+function parseIntervalPattern(pattern: string): { n: number; unit: 'minute' | 'hour' | 'day' } | null {
+  const m = pattern.toLowerCase().match(/^every_(\d+)_?(h|hours?|d|days?|m|mins?|minutes?)\b/)
+  if (!m) return null
+  const n = parseInt(m[1], 10)
+  const u = m[2]
+  const unit = u.startsWith('d') ? 'day' : u.startsWith('h') ? 'hour' : 'minute'
+  return { n, unit }
+}
+
 // Next-occurrence math for a recurring pattern. MOVED VERBATIM from the reminders
 // cron (app/api/cron/reminders/route.ts) so skip advances a series EXACTLY the way
 // the cron advances it — one implementation, no drift. The cron now imports this.
@@ -27,8 +44,13 @@ export function getNextOccurrence(pattern: string, fromDate: Date): Date {
     return next
   }
 
-  const ev = lower.match(/^every_(\d+)(h|d)\b/)
-  if (ev) { const n = parseInt(ev[1], 10); if (ev[2] === 'h') next.setHours(next.getHours() + n); else next.setDate(next.getDate() + n); return next }
+  const iv = parseIntervalPattern(lower)
+  if (iv) {
+    if (iv.unit === 'day') next.setDate(next.getDate() + iv.n)
+    else if (iv.unit === 'hour') next.setHours(next.getHours() + iv.n)
+    else next.setMinutes(next.getMinutes() + iv.n)
+    return next
+  }
 
   if (lower.includes('hourly_between')) {
     const m = lower.match(/hourly_between:(\d{2}):(\d{2})-(\d{2}):(\d{2})/)
@@ -61,34 +83,56 @@ export function cleanReminderName(message: string): string {
   return (message || 'Reminder').replace(/^to\s+/i, '').trim()
 }
 
-// Human cadence phrasing for confirmations ("daily", "weekly", "every Monday",
-// "every 2 hours", "follow-up"). Every stop/skip/done confirmation restates this.
-export function describeCadence(pattern: string | null | undefined): string {
+// ONE humanizer for a recurring pattern, two renderings — so the dashboard chip, the
+// WhatsApp stop/skip copy, and the cron never drift into separate vocabularies:
+//   'sentence' (default) — lower-case, reads inside a line: "daily at 9:00 am",
+//                          "every Monday", "every 2 hours". WhatsApp + create copy.
+//   'label'              — Title-case chip: "Every day", "Every Monday", "Hourly".
+//                          Matches the dashboard series chip EXACTLY as shipped.
+// The two styles share the SAME detection; only the wording differs.
+export function describeCadence(
+  pattern: string | null | undefined,
+  style: 'sentence' | 'label' = 'sentence',
+): string {
+  const label = style === 'label'
   const p = String(pattern || '').toLowerCase()
-  if (!p) return 'repeating'
-  if (p.startsWith('followup:')) return 'follow-up'
-  if (p.includes('hourly_between')) return 'hourly'
-  const ev = p.match(/^every_(\d+)(h|d)\b/)
-  if (ev) {
-    const n = Number(ev[1])
-    const unit = ev[2] === 'h' ? (n === 1 ? 'hour' : 'hours') : (n === 1 ? 'day' : 'days')
-    return `every ${n} ${unit}`
+  if (!p) return label ? 'Repeats' : 'repeating'
+  if (p.startsWith('followup:')) return label ? 'Follow-up' : 'follow-up'
+  if (p.includes('hourly_between')) return label ? 'Hourly' : 'hourly'
+  const iv = parseIntervalPattern(p)
+  if (iv) {
+    // The dashboard chip drops the count for n===1 ("Every day", "Every hour"); the
+    // sentence form keeps it ("every 1 day") as it always has.
+    if (label) return iv.n === 1 ? `Every ${iv.unit}` : `Every ${iv.n} ${iv.unit}s`
+    return `every ${iv.n} ${iv.n === 1 ? iv.unit : iv.unit + 's'}`
   }
-  if (p.includes('every day') || p.includes('daily')) return 'daily'
-  if (p.includes('every week') || p.includes('weekly')) return 'weekly'
-  if (p.includes('every month') || p.includes('monthly')) return 'monthly'
+  if (p.includes('every day') || p.includes('daily')) return label ? 'Every day' : 'daily'
+  if (p.includes('every week') || p.includes('weekly')) return label ? 'Every week' : 'weekly'
+  if (p.includes('every month') || p.includes('monthly')) return label ? 'Every month' : 'monthly'
   for (const d of ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']) {
-    if (p.includes(d)) return `every ${d[0].toUpperCase()}${d.slice(1)}`
+    if (p.includes(d)) {
+      const day = `${d[0].toUpperCase()}${d.slice(1)}`
+      return label ? `Every ${day}` : `every ${day}`
+    }
   }
-  return 'repeating'
+  return label ? 'Repeats' : 'repeating'
 }
 
-// Full date+time in IST, e.g. "Tue, 26 Aug, 9:00 am".
+// IST year of a date, used to decide whether to print the year (see below).
+function istYear(d: Date): number {
+  return Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric' }).format(d))
+}
+
+// Full date+time in IST, e.g. "Tue, 26 Aug, 9:00 am". The year is shown ONLY when it
+// isn't the current year, so a far-future reminder ("Fri, 18 Jun 2027, 5:00 pm") can't
+// masquerade as a stale/imminent one — same-year output is unchanged.
 export function formatReminderWhen(iso: string): string {
+  const target = new Date(iso)
   return new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short',
+    ...(istYear(target) !== istYear(new Date()) ? { year: 'numeric' } : {}),
     hour: 'numeric', minute: '2-digit', hour12: true,
-  }).format(new Date(iso))
+  }).format(target)
 }
 
 // Time-of-day only in IST, e.g. "9:00 am" — for recurring confirmations where the

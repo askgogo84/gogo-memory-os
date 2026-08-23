@@ -1,3 +1,5 @@
+import { describeCadence, formatReminderTimeOfDay } from '@/lib/services/reminder-series'
+
 type ParsedReminder =
   | {
       kind: 'one_time'
@@ -596,14 +598,10 @@ export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>)
     if (parsed.message === 'Reminder') return `Done — I'll remind you ${displayTime}.`
     return `Done — I'll remind you to *${parsed.message}* ${displayTime}.`
   }
-  const patternText = parsed.pattern.startsWith('daily:')
-    ? 'daily'
-    : parsed.pattern.startsWith('weekly:')
-      ? 'weekly'
-      : parsed.pattern.startsWith('every_')
-        ? parsed.pattern.replace(/_/g, ' ')
-        : 'recurring'
-  return `🔁 *Recurring reminder set*\n\n${parsed.message}\nPattern: ${patternText}\nStarts: ${displayTime}.`
+  // Describe the cadence in the SAME words as the stop/skip copy (describeCadence).
+  // "Pattern: recurring" told the user nothing — this reads "daily at 9:00 am".
+  const cadence = describeCadence(parsed.pattern)
+  return `🔁 *Recurring reminder set*\n\n*${parsed.message}* — ${cadence} at ${formatReminderTimeOfDay(parsed.remindAtIso)}.`
 }
 
 

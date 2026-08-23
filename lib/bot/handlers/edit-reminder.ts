@@ -87,16 +87,27 @@ function parseTimePart(input: string): { hour: number; minute: number } | null {
   return { hour, minute }
 }
 
+// IST year of a date — used to decide whether to print the year (see formatWhen).
+function istYearOf(d: Date) {
+  return Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric' }).format(d))
+}
+
 function formatWhen(iso: string) {
+  const target = new Date(iso)
+  // Show the year ONLY when it isn't the current year. A far-future reminder was
+  // rendering as a bare "Fri, 18 Jun" and reading as long-past/imminent; with the year
+  // it reads "Fri, 18 Jun 2027, 5:00 pm". Same-year output is byte-for-byte unchanged.
+  const showYear = istYearOf(target) !== istYearOf(new Date())
   return new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
     weekday: 'short',
     day: 'numeric',
     month: 'short',
+    ...(showYear ? { year: 'numeric' } : {}),
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-  }).format(new Date(iso))
+  }).format(target)
 }
 
 function cleanReminderName(message: string) {
@@ -340,6 +351,22 @@ async function updateReminderSent(reminder: any, sent: boolean) {
   return !error
 }
 
+// The numbered "which one?" list, shared by skip and cancel — ONE implementation so
+// both surfaces disambiguate identically. Indices are 1-based and match the order
+// getActiveReminders returns, so the "<verb> 1" hint resolves to the row shown. The
+// verb drives both the question and the example hints.
+function reminderDisambiguation(verb: 'skip' | 'cancel', reminders: any[]) {
+  const question = verb === 'cancel' ? 'Which reminder should I cancel?' : 'Which reminder should I skip?'
+  return (
+    `${question}\n\n` +
+    reminders
+      .slice(0, 5)
+      .map((item: any, idx: number) => `${idx + 1}. ${cleanReminderName(item.message)} — ${formatWhen(item.remind_at)}`)
+      .join('\n') +
+    `\n\nTry: *${verb} 1* or *${verb} water reminder*.`
+  )
+}
+
 export async function cancelReminder(telegramId: number, input: string) {
   const reminders = await getActiveReminders(telegramId, 20)
 
@@ -357,7 +384,14 @@ export async function cancelReminder(telegramId: number, input: string) {
 
   if (!reminder) {
     const query = extractCancelQuery(lower)
-    if (query) reminder = reminders.find((item: any) => reminderMatches(item, query)) || null
+    if (query) {
+      const matches = reminders.filter((item: any) => reminderMatches(item, query))
+      // MORE THAN ONE match → do NOT act. Cancel stopping the wrong series (the hourly
+      // "Drink water" instead of the daily one) is exactly the bug this guards. Ask with
+      // the SAME numbered list skip uses; only a single match is safe to cancel outright.
+      if (matches.length > 1) return reminderDisambiguation('cancel', reminders)
+      reminder = matches[0] || null
+    }
   }
 
   if (!reminder) {
@@ -440,14 +474,7 @@ export async function skipReminder(telegramId: number, input: string) {
   }
 
   if (!reminder) {
-    return (
-      `Which reminder should I skip?\n\n` +
-      reminders
-        .slice(0, 5)
-        .map((item: any, idx: number) => `${idx + 1}. ${cleanReminderName(item.message)} — ${formatWhen(item.remind_at)}`)
-        .join('\n') +
-      `\n\nTry: *skip 1* or *skip water reminder*.`
-    )
+    return reminderDisambiguation('skip', reminders)
   }
 
   const res = await skipReminderOccurrence(telegramId, reminder)

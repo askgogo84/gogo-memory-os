@@ -1,4 +1,5 @@
 import type { ReminderRow } from './queries'
+import { describeCadence } from '@/lib/services/reminder-series'
 
 // ── The Today thread, computed ────────────────────────────────────────────────
 // Pure functions only — no Supabase, no React. Given today's rows and "now", this
@@ -76,27 +77,12 @@ function cleanLabel(message: string | null): string {
   return s || 'Reminder'
 }
 
-// Humanize the stored recurring_pattern into one calm line. Vocabulary mirrors
-// getNextOccurrence in the cron: daily/weekly, weekday names, every_Nh/Nd,
-// hourly_between, followup:. Unknown shapes fall back to a neutral "Repeats".
+// The series chip ("Every day", "Every Monday", …). Delegates to describeCadence's
+// 'label' rendering so the dashboard, the WhatsApp stop/skip copy, and the cron share
+// ONE humanizer — but the chip reads EXACTLY as it does in production (Title-case, not
+// the sentence form). null pattern → null so a non-recurring row shows no chip.
 function describeRecurrence(pattern: string | null): string | null {
-  if (!pattern) return null
-  const p = pattern.toLowerCase()
-  if (p.startsWith('followup:')) return 'Follow-up'
-  let m: RegExpMatchArray | null
-  if ((m = p.match(/^every_(\d+)(h|d)\b/))) {
-    const n = parseInt(m[1], 10)
-    if (m[2] === 'h') return n === 1 ? 'Every hour' : `Every ${n} hours`
-    return n === 1 ? 'Every day' : `Every ${n} days`
-  }
-  if (p.includes('hourly_between')) return 'Hourly'
-  if (p.includes('daily') || p.includes('every day')) return 'Every day'
-  if (p.includes('weekly') || p.includes('every week')) return 'Every week'
-  const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-  for (const d of days) {
-    if (p.includes(d)) return `Every ${d[0].toUpperCase()}${d.slice(1)}`
-  }
-  return 'Repeats'
+  return pattern ? describeCadence(pattern, 'label') : null
 }
 
 // The one line under the now-marker. Callers only reach this when the next
