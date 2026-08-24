@@ -131,6 +131,7 @@ async function getCalendarState(telegramId: number) {
     return {
       connected: false,
       events: [],
+      error: false,
     }
   }
 
@@ -140,6 +141,7 @@ async function getCalendarState(telegramId: number) {
     return {
       connected: false,
       events: [],
+      error: false,
     }
   }
 
@@ -149,11 +151,16 @@ async function getCalendarState(telegramId: number) {
     return {
       connected: true,
       events,
+      error: false,
     }
-  } catch {
+  } catch (err) {
+    // Fetch failed (bad/expired token, wrong account, Google error). Flag it so the
+    // briefing says "couldn't reach Calendar" instead of the empty-day copy.
+    console.error('CALENDAR_STATE_FETCH_FAILED:', err)
     return {
       connected: true,
       events: [],
+      error: true,
     }
   }
 }
@@ -223,6 +230,8 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
     let cal = `📅 *Calendar*\n`
     if (!calendarState.connected) {
       cal += `Calendar is not connected yet.\nType *connect calendar* to enable your daily schedule.`
+    } else if (calendarState.error) {
+      cal += `⚠️ Couldn't reach Google Calendar just now — this is a temporary hiccup, not necessarily an empty day. If it keeps happening, reconnect with *connect calendar*.`
     } else if (calendarState.events.length) {
       cal += calendarState.events
         .slice(0, 5)

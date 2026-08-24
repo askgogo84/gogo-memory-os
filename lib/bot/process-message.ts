@@ -22,7 +22,7 @@ import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeter
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { parsePlanSelection, buildPlanCheckoutReply } from './handlers/plan-checkout'
-import { buildCalendarActionReply, createCalendarConflictEvent, isCalendarAction } from './handlers/calendar-actions'
+import { buildCalendarActionReply, createCalendarConflictEvent, isCalendarAction, getCalendarTokens } from './handlers/calendar-actions'
 import { isCalendarMutation, isCalendarMutationConfirm, buildCalendarMutationReply, confirmCalendarMutation } from './handlers/calendar-mutations'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
@@ -34,6 +34,7 @@ import { detectFriendReminder, normalizePhoneNumber, resolveFriendContact, saveF
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
 import { handleCreditIqCards } from '@/lib/bot/handlers/creditiq-cards'
 import { pickRecurringDuplicate } from '@/lib/bot/reminder-dedup'
+import { stripSecretShapedMemories } from '@/lib/bot/memory-redaction'
 import { detectShareIntent, hasTopic, resolveRecipientTelegramId, grantShare } from '@/lib/bot/handlers/shared-memory'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
@@ -186,7 +187,10 @@ async function getMemories(telegramId: number): Promise<string[]> {
     .order('created_at', { ascending: false })
     .limit(20)
 
-  return ((data || []) as any[]).map((m) => m.content).filter(Boolean)
+  const rows = ((data || []) as any[]).map((m) => m.content).filter(Boolean)
+  // Belt-and-braces: never surface secret-shaped memories in the LLM prompt. Defense in
+  // depth behind the structural guarantee that vault plaintext never lands in `memories`.
+  return stripSecretShapedMemories(rows)
 }
 
 async function saveMemory(telegramId: number, content: string, topic: string | null = null) {
@@ -613,7 +617,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
       )
 
-      const reply = `Ã¢ÂÂ *Match reminder set*\n\n${latestSportsFollowup.payload.match_label}\n${lower.includes('2 hours before') ? '2 hours before the match' : '1 hour before the match'}`
+      const reply = `⏰ *Match reminder set*\n\n${latestSportsFollowup.payload.match_label}\n${lower.includes('2 hours before') ? '2 hours before the match' : '1 hour before the match'}`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
@@ -853,8 +857,17 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   if (intent.type === 'connect_calendar') {
+    // Check existing state before minting a fresh OAuth URL. An already-connected user
+    // is told so plainly; the link is only offered for adding a DIFFERENT account.
+    const calTokens = await getCalendarTokens(resolvedUser.telegramId)
+    if (calTokens.connected) {
+      const url = getAuthUrl(resolvedUser.telegramId)
+      const reply = `✅ *Your Google Calendar is already connected.*\n\nYour schedule already shows up in your *Today* briefing.\n\nWant to connect a *different* Google account? Use this link:\n${url}`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
     const url = getAuthUrl(resolvedUser.telegramId)
-    const reply = `Ã°ÂÂÂ *Connect Google Calendar*\n\nThis lets AskGogo include your schedule in Today briefing and help you plan reminders better.\n\n${url}\n\nAfter connecting, come back and type:\nToday`
+    const reply = `📅 *Connect Google Calendar*\n\nThis lets AskGogo include your schedule in Today briefing and help you plan reminders better.\n\n${url}\n\nAfter connecting, come back and type:\nToday`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -874,7 +887,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
     if (!user?.gmail_connected) {
       const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-      const reply = `Ã°ÂÂÂ¬ *Connect Gmail*\n\nTo show unread emails and draft replies, connect Gmail once.\n\n${connectUrl}\n\nAfter connecting, come back and type:\nshow my unread emails`
+      const reply = `💬 *Connect Gmail*\n\nTo show unread emails and draft replies, connect Gmail once.\n\n${connectUrl}\n\nAfter connecting, come back and type:\nshow my unread emails`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
@@ -901,7 +914,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
     if (!emails.length) {
       const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-      const reply = `Ã°ÂÂÂ¬ *Gmail needs reconnecting*\n\nI couldnÃ¢ÂÂt fetch your emails right now.\n\nReconnect Gmail here:\n${connectUrl}\n\nThen type:\nshow my unread emails`
+      const reply = `💬 *Gmail needs reconnecting*\n\nI couldnÃ¢ÂÂt fetch your emails right now.\n\nReconnect Gmail here:\n${connectUrl}\n\nThen type:\nshow my unread emails`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
@@ -920,7 +933,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'connect_gmail') {
     const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-    const reply = `Ã°ÂÂÂ¬ *Connect Gmail*\n\nConnect once to unlock email summaries and reply drafts.\n\n${connectUrl}`
+    const reply = `💬 *Connect Gmail*\n\nConnect once to unlock email summaries and reply drafts.\n\n${connectUrl}`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -1177,6 +1190,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  // FREEFORM LLM CONTEXT ASSEMBLY — hard constraint: only conversation history, memories,
+  // and preferences may feed the model here. Vault plaintext must NEVER reach this path —
+  // never write decrypted vault_items into public.memories, and never add a vault_items
+  // SELECT to the three sources below. (getMemories also strips secret-shaped rows as
+  // defense in depth — see lib/bot/memory-redaction.ts.)
   const history = await getConversationHistory(resolvedUser.telegramId)
   const memories = await getMemories(resolvedUser.telegramId)
   const preferenceBlock = await getPreferenceBlock(resolvedUser.telegramId)

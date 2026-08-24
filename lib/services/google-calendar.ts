@@ -96,12 +96,24 @@ export async function getTodayEvents(accessToken: string): Promise<any[]> {
     orderBy: 'startTime',
   })
 
+  // KNOWN LIMITATION: primary calendar only. Events on secondary / shared / subscribed
+  // calendars are not fetched. Full multi-calendar support (enumerate calendarList, then
+  // merge per-calendar event lists) is out of scope for this pass — a separate, larger
+  // change — so we deliberately leave it as a single primary-calendar request.
   const response = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
     {
       headers: { 'Authorization': `Bearer ${accessToken}` },
     }
   )
+  // A non-200 (expired/revoked token, wrong account, quota, outage) must NOT be
+  // swallowed into an empty list — that's indistinguishable from a genuinely empty day.
+  // Throw so the caller can tell "couldn't reach Calendar" apart from "nothing today".
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    console.error('GCAL_TODAY_EVENTS_FAILED:', response.status, body.slice(0, 300))
+    throw new Error(`Google Calendar events fetch failed: ${response.status}`)
+  }
   const data = await response.json()
   return data.items || []
 }

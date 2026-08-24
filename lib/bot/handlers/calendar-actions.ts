@@ -175,7 +175,7 @@ function parseTime(text: string) {
   return { hour, minute }
 }
 
-function parseCalendarCreate(text: string) {
+export function parseCalendarCreate(text: string) {
   const lower = text.toLowerCase()
 
   const isCreate =
@@ -190,7 +190,11 @@ function parseCalendarCreate(text: string) {
     lower.includes('add event') ||
     lower.includes('schedule event') ||
     lower.includes('create event') ||
-    lower.includes('add to calendar') ||
+    // "add to calendar" plus possessive variants: "add to my/the/your calendar",
+    // "add it/this/that to my calendar". Requires the explicit add→to→calendar verb
+    // phrase, so a passing mention ("check my calendar", "add milk to my list") never
+    // matches and correctly falls through to the reminder path.
+    /\badd (?:it |this |that )?to (?:my |the |your )?calendar\b/.test(lower) ||
     lower.includes('calendar event')
 
   if (!isCreate) return null
@@ -249,7 +253,7 @@ function parseCalendarCreate(text: string) {
   }
 }
 
-async function getCalendarTokens(telegramId: number) {
+export async function getCalendarTokens(telegramId: number) {
   const { data: user } = await supabaseAdmin
     .from('users')
     .select('google_calendar_connected, google_refresh_token')
@@ -396,13 +400,11 @@ export async function createCalendarConflictEvent(
   return await createEventFromPayload(telegramId, tokens.accessToken, payload)
 }
 
-export async function buildCalendarActionReply(
-  telegramId: number,
-  text: string
-): Promise<CalendarActionResult> {
+// Pure "does the user want to SEE their calendar" test — exported so the routing
+// harness can assert the same view/create/fall-through precedence prod uses.
+export function isCalendarViewRequest(text: string): boolean {
   const lower = (text || '').toLowerCase().trim()
-
-  const wantsCalendarView =
+  return (
     lower.includes('calendar today') ||
     lower.includes('calendar tomorrow') ||
     lower.includes('calendar for today') ||
@@ -410,6 +412,14 @@ export async function buildCalendarActionReply(
     lower.includes('what is on my calendar') ||
     lower.includes("what's on my calendar") ||
     lower.includes('show my calendar')
+  )
+}
+
+export async function buildCalendarActionReply(
+  telegramId: number,
+  text: string
+): Promise<CalendarActionResult> {
+  const wantsCalendarView = isCalendarViewRequest(text)
 
   const createIntent = parseCalendarCreate(text)
 
