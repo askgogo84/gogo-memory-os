@@ -171,6 +171,14 @@ function deriveNoteTitle(summary: string, medicalMode: boolean): string {
   return first.length > 80 ? first.slice(0, 77) + '…' : first
 }
 
+// The title saveDocumentNote will file this reader output under — exposed so the
+// WhatsApp reply can name it WITHOUT re-deriving (and drifting from) the stored value.
+// Pure: same readerText in → same title saveDocumentNote persists.
+export function deriveNoteTitleFromReader(readerText: string): string {
+  const { summary, medicalMode } = extractNoteFields(readerText)
+  return deriveNoteTitle(summary, medicalMode)
+}
+
 /**
  * Store a non-ticket document that was read by one of the note summarisers
  * (readAndSummarizeImageNote / readAndSummarizePdfDocument). Parses title,

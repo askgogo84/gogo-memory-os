@@ -62,7 +62,7 @@ import { detectPreferenceForget, forgetPreference } from '@/lib/bot/handlers/pre
 import { handleBucketCommand } from '@/lib/bot/handlers/shared-memory'
 import { parsePdfTicket, parseImageTicket, classifyPdfDocument, readAndSummarizePdfDocument, type PdfClass } from '@/lib/services/pdf-reader'
 import { persistAndRemindTicket } from '@/lib/services/travel-tickets'
-import { saveDocumentNote, saveTicketDocument } from '@/lib/services/document-store'
+import { saveDocumentNote, saveTicketDocument, deriveNoteTitleFromReader } from '@/lib/services/document-store'
 import { describeCadence, formatReminderWhen, cleanReminderName } from '@/lib/services/reminder-series'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
@@ -648,7 +648,8 @@ export async function POST(req: NextRequest) {
           await addToList(resolvedUser.telegramId, 'notes', [savedNote])
           await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image note]')
           await saveConversation(resolvedUser.telegramId, 'assistant', imageReply)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image note]', reply: `${imageReply}\n\nSaved to *my notes*.` })
+          const imageDocTitle = deriveNoteTitleFromReader(imageReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image note]', reply: `${imageReply}\n\n🗂️ Filed under *${imageDocTitle}* — say *my notes* to get it back.` })
           // Additive: durably store the document image (default note path; existing notes write unchanged above).
           await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: imageReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
         }
@@ -712,7 +713,8 @@ export async function POST(req: NextRequest) {
           await addToList(resolvedUser.telegramId, 'notes', [savedNote])
           await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[PDF] ${bodyText}` : '[PDF document]')
           await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[PDF document]', reply: `${noteReply}\n\nSaved to *my notes*.` })
+          const pdfDocTitle = deriveNoteTitleFromReader(noteReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[PDF document]', reply: `${noteReply}\n\n🗂️ Filed under *${pdfDocTitle}* — say *my notes* to get it back.` })
           // Additive: durably store the file + documents row (notes behaviour unchanged above).
           // doc_type carries the classifier verdict (document/other, or ticket on a parse miss).
           await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: pdfClass.toLowerCase(), messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid, authToken, contentType: firstMediaType } })

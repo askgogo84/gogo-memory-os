@@ -76,6 +76,21 @@ function formatDepartDateIST(d: Date | null): string | null {
   }
 }
 
+// Absolute IST date + 24h time for naming a specific alert's fire time, e.g.
+// "Thu 27 Aug 11:30". Used only in the confirmation copy, so on any formatter error
+// it degrades to the raw ISO rather than throwing.
+function formatAlertWhenIST(d: Date): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      weekday: 'short', day: '2-digit', month: 'short',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+      timeZone: 'Asia/Kolkata',
+    }).format(d).replace(/,/g, '')
+  } catch {
+    return d.toISOString()
+  }
+}
+
 type TicketContext = {
   telegramId: number
   whatsappTo: string | null
@@ -353,6 +368,10 @@ export async function persistAndRemindTicket(
   let remindersSet = 0
   let remindersFailed = 0
   const openNowNotes: string[] = []
+  // Alerts that are actually scheduled (inserted now OR already present on a re-forward)
+  // so the confirmation can name each with its real fire time. 'failed' is excluded —
+  // it's surfaced separately below so we never claim an alert that didn't land.
+  const scheduledAlerts: { kind: 'departure' | 'checkin'; legType: Leg['type']; remindAt: Date }[] = []
 
   for (const leg of legs) {
     await persistLeg(ctx, leg)
@@ -365,6 +384,9 @@ export async function persistAndRemindTicket(
       const res = await createReminderIfAbsent(ctx, decision.message, decision.remindAt)
       if (res === 'inserted') remindersSet++
       else if (res === 'failed') remindersFailed++
+      if (res === 'inserted' || res === 'exists') {
+        scheduledAlerts.push({ kind: decision.kind, legType: leg.type, remindAt: decision.remindAt })
+      }
     }
   }
 
@@ -375,8 +397,21 @@ export async function persistAndRemindTicket(
     console.error('TRAVEL_TICKET_NOTE_FAILED:', err?.message || err)
   }
 
-  // Base reply claims "Reminders set" only when at least one was actually inserted.
-  let reply = buildTicketReply(info, remindersSet > 0)
+  // Name every alert that's actually scheduled with its real IST fire time, instead of
+  // the old blanket "3 hours before each departure" (which lied about the check-in alert).
+  let reminderTail = ''
+  if (scheduledAlerts.length) {
+    const parts = scheduledAlerts.map((a) => {
+      const when = formatAlertWhenIST(a.remindAt)
+      if (a.kind === 'checkin') return `🧳 Check-in alert ${when}`
+      return `⏰ ${a.legType === 'event' ? 'Event' : 'Departure'} alert ${when}`
+    })
+    reminderTail = `\n\n${parts.join(' · ')}`
+  } else if (remindersFailed === 0 && openNowNotes.length === 0) {
+    // Nothing scheduled and nothing failed/open-now → be honest rather than silent.
+    reminderTail = `\n\n⏰ No alerts set — the departure time has already passed.`
+  }
+  let reply = buildTicketReply(info, reminderTail)
 
   // Check-in window already open → surface it now rather than skipping silently.
   if (openNowNotes.length) {

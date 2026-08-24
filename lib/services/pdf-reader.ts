@@ -315,7 +315,11 @@ export async function parseImageTicket(
 /**
  * Build the WhatsApp reply for a parsed ticket
  */
-export function buildTicketReply(info: TicketInfo, reminderSet = true): string {
+// reminderTail is a pre-built block (with its own leading blank line) that names the
+// exact alerts created, e.g. "⏰ Departure alert Thu 27 Aug 11:30 · 🧳 Check-in alert
+// Tue 25 Aug 14:30". The caller (persistAndRemindTicket) owns it because only it knows
+// which alerts actually landed; buildTicketReply just renders the ticket details.
+export function buildTicketReply(info: TicketInfo, reminderTail = ''): string {
   if (!info)
     return "📄 I received your PDF but couldn't extract travel details."
 
@@ -330,21 +334,18 @@ export function buildTicketReply(info: TicketInfo, reminderSet = true): string {
       )
       .join('\n\n')
     const pax = fi.passengers.length > 0 ? `\n\n👥 *Passengers:* ${fi.passengers.join(', ')}` : ''
-    const reminder = reminderSet ? `\n\n⏰ *Reminders set* — I'll alert you *3 hours before* each departure!` : ''
-    return `🎫 *Flight ticket saved!*\n\n${flightLines}${pax}${reminder}\n\n_Say *my reminders* to see all alerts_`
+    return `🎫 *Flight ticket saved!*\n\n${flightLines}${pax}${reminderTail}\n\n_Say *my reminders* to see all alerts_`
   }
 
   if (info.type === 'train') {
     const ti = info as TrainInfo
     const pax = ti.passengers.length > 0 ? `\n👥 ${ti.passengers.join(', ')}` : ''
-    const reminder = reminderSet ? '\n\n⏰ *Reminder set* — 3 hours before departure!' : ''
-    return `🚆 *Train ticket saved!*\n\n*${ti.from} → ${ti.to}*\n${ti.date} · ${ti.departure}\n${ti.trainName} (${ti.trainNo}) · PNR: \`${ti.pnr}\`${pax}${reminder}\n\n_Say *my reminders* to see all alerts_`
+    return `🚆 *Train ticket saved!*\n\n*${ti.from} → ${ti.to}*\n${ti.date} · ${ti.departure}\n${ti.trainName} (${ti.trainNo}) · PNR: \`${ti.pnr}\`${pax}${reminderTail}\n\n_Say *my reminders* to see all alerts_`
   }
 
   if (info.type === 'event') {
     const ei = info as EventInfo
-    const reminder = reminderSet ? '\n\n⏰ *Reminder set* — 3 hours before the event!' : ''
-    return `🎟️ *Event ticket saved!*\n\n*${ei.name}*\n${ei.date} · ${ei.time}\n📍 ${ei.venue}${reminder}\n\n_Say *my reminders* to see all alerts_`
+    return `🎟️ *Event ticket saved!*\n\n*${ei.name}*\n${ei.date} · ${ei.time}\n📍 ${ei.venue}${reminderTail}\n\n_Say *my reminders* to see all alerts_`
   }
 
   return '📄 Ticket saved to your notes!'
