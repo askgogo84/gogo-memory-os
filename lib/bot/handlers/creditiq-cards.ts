@@ -35,7 +35,19 @@ const FETCH_ERROR = `⚠️ Couldn't fetch your cards right now. Please try agai
 // "HDFC Regalia ••4321" (manual) / "HDFC ••4321" (AA-linked has no catalogue name).
 function formatTitle(card: any): string {
   const mask = card.last4 ? `••${card.last4}` : ''
-  const base = [card.bank, card.name].filter(Boolean).join(' ')
+  // When the catalogue name already leads with the bank (e.g. "HDFC Regalia"),
+  // don't prefix the bank again. Require a word boundary after the bank so a bank
+  // like "HDFC" doesn't swallow a name like "HDFCfirst-something".
+  const bank = String(card.bank ?? '').trim().toLowerCase()
+  const name = String(card.name ?? '').trim().toLowerCase()
+  const nameLeadsWithBank =
+    !!card.name &&
+    !!bank &&
+    name.startsWith(bank) &&
+    (name.length === bank.length || name[bank.length] === ' ')
+  const base = nameLeadsWithBank
+    ? card.name
+    : [card.bank, card.name].filter(Boolean).join(' ')
   return (mask ? `${base} ${mask}` : base).trim() || 'Card'
 }
 

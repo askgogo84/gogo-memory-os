@@ -16,6 +16,7 @@ import {
   setItemDoneByText,
   findPendingExactAcrossLists,
 } from '@/lib/lists'
+import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
@@ -143,7 +144,6 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     // "reminders" or "cards" would otherwise have "show my reminders"/"show my cards"
     // resolve to that list instead of their reminders/portfolio. Decline these outright,
     // before getList, so the reserved word always reaches its real owner downstream.
-    const RESERVED_SHOW_NAMES = new Set(['cards', 'card', 'reminders', 'reminder', 'weather', 'points', 'miles', 'balance'])
     if (!RESERVED_SHOW_NAMES.has(showName)) {
       const list = await getList(extra.telegramId, showName)
       if (list) return formatList(list.list_name, list.items || [])

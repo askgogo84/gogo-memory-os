@@ -16,6 +16,7 @@ import {
   findPendingExactMatches,
   isDedupeExemptBucket,
 } from '../lib/data/lists-core.ts'
+import { RESERVED_SHOW_NAMES } from '../lib/data/reserved-names.ts'
 
 const NOW = '2026-08-12T00:00:00.000Z'
 let fails = 0
@@ -166,10 +167,6 @@ for (const l of ['grocery', 'groceries', 'weekend', 'todo']) {
 // "show me the weather" must reach their own handlers untouched.
 console.log('\n12. SHOW-A-LIST — claim only if serviceable, else fall through')
 
-// Reserved names checked BEFORE getList — mirrors lib/feature-intents.ts. These collide
-// with higher-priority detectIntent handlers, so a list literally named "reminders"/"cards"
-// must NOT data-hijack "show my reminders"/"show my cards".
-const RESERVED_SHOW_NAMES = new Set(['cards', 'card', 'reminders', 'reminder', 'weather', 'points', 'miles', 'balance'])
 // getList modelled against an injected store: normalise BOTH sides, exactly like getList.
 const getListFake = (store, name) => store.find(s => normalizeListName(s) === normalizeListName(name)) ?? null
 // The new matcher (mirrors lib/feature-intents.ts): reserved-decline → resolve → else null.
