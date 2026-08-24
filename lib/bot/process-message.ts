@@ -33,6 +33,7 @@ import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePre
 import { detectFriendReminder, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, cap0 } from '@/lib/bot/handlers/friend-reminders'
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
 import { handleCreditIqCards } from '@/lib/bot/handlers/creditiq-cards'
+import { pickRecurringDuplicate } from '@/lib/bot/reminder-dedup'
 import { detectShareIntent, hasTopic, resolveRecipientTelegramId, grantShare } from '@/lib/bot/handlers/shared-memory'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
 import { isTranslationRequest, translateText, buildTranslationReply, parseTargetLanguage } from '@/lib/services/translator'
@@ -228,7 +229,10 @@ function isCleanerReminderMessage(newMessage: string, oldMessage: string) {
   return false
 }
 
-async function findDuplicateRecurringReminder(telegramId: number, pattern?: string) {
+// A same-pattern row is only a duplicate when it fires at the SAME time of day.
+// Without the remindAt check, "drink water daily at 9am" and "…at 6pm" collapse to
+// one row (both pattern 'daily'), and the second create overwrites the first.
+async function findDuplicateRecurringReminder(telegramId: number, pattern?: string, remindAt?: string) {
   if (!pattern) return null
 
   const { data } = await supabaseAdmin
@@ -241,7 +245,7 @@ async function findDuplicateRecurringReminder(telegramId: number, pattern?: stri
     .order('created_at', { ascending: true })
     .limit(5)
 
-  return data?.[0] || null
+  return pickRecurringDuplicate(data || [], remindAt)
 }
 
 // Read the user's saved timezone so every reminder row records the zone its
@@ -265,7 +269,7 @@ async function createReminder(
 ) {
   const timezone = await resolveReminderTimezone(telegramId)
   if (pattern) {
-    const duplicate = await findDuplicateRecurringReminder(telegramId, pattern)
+    const duplicate = await findDuplicateRecurringReminder(telegramId, pattern, remindAt)
     if (duplicate?.id) {
       const updatePayload: any = { remind_at: remindAt, sent: false, timezone }
       if (whatsappTo) updatePayload.whatsapp_to = whatsappTo

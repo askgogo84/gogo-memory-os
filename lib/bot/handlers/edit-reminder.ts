@@ -463,7 +463,14 @@ export async function skipReminder(telegramId: number, input: string) {
 
   if (!reminder) {
     const query = extractSkipQuery(lower)
-    if (query) reminder = reminders.find((item: any) => reminderMatches(item, query)) || null
+    if (query) {
+      const matches = reminders.filter((item: any) => reminderMatches(item, query))
+      // MORE THAN ONE match → ask, don't guess. Skipping the wrong series (the 6pm
+      // "Drink water" instead of the 9am one) is the same hazard cancel guards; use
+      // the SAME numbered list so skip and cancel disambiguate identically.
+      if (matches.length > 1) return reminderDisambiguation('skip', reminders)
+      reminder = matches[0] || null
+    }
   }
 
   // "skip" / "skip today" / "not today" with nothing else: if there's exactly one
