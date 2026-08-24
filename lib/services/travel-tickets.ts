@@ -108,7 +108,7 @@ type Leg = {
   checkinMsg: string | null
 }
 
-function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
+export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
   const legs: Leg[] = []
 
   if (info.type === 'flight') {
@@ -239,32 +239,92 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<void> {
   }
 }
 
+// Result of an attempted reminder write. 'failed' is distinct from 'exists' so the
+// caller can warn the user instead of silently claiming the alert was set.
+type ReminderWriteResult = 'inserted' | 'exists' | 'failed'
+
 // Create a reminder unless one with the same message + remind_at already exists.
-// Returns true if a new row was inserted.
-async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date): Promise<boolean> {
+// The insert MUST mirror the columns the primary writer createReminder
+// (process-message.ts) sets — notably chat_id and sent — or a NOT NULL constraint
+// rejects every row here and the alert is lost. chat_id is the telegramId, matching
+// createReminder's own `createReminder(telegramId, telegramId, ...)` calls: for a
+// Telegram private chat the chat id equals the user id, and on WhatsApp the cron
+// delivers via whatsapp_to, so telegramId is the correct, constraint-satisfying value.
+async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date): Promise<ReminderWriteResult> {
   const iso = remindAt.toISOString()
-  const { data: existing } = await supabaseAdmin
+  const { data: existing, error: selError } = await supabaseAdmin
     .from('reminders')
     .select('id')
     .eq('telegram_id', ctx.telegramId)
     .eq('message', message)
     .eq('remind_at', iso)
     .limit(1)
-  if (existing && existing.length) return false
+  // A failed existence check must not silently drop the reminder — log and fall
+  // through to insert (the DB unique-index backstop still guards against a dupe).
+  if (selError) console.error('TRAVEL_REMINDER_DEDUPE_CHECK_FAILED:', selError.message)
+  if (existing && existing.length) return 'exists'
 
   const { error } = await supabaseAdmin.from('reminders').insert({
     telegram_id: ctx.telegramId,
+    chat_id: ctx.telegramId,
     whatsapp_to: ctx.whatsappTo,
     timezone: ctx.timezone,
     message,
     remind_at: iso,
+    sent: false,
     created_at: new Date().toISOString(),
   })
   if (error) {
     console.error('TRAVEL_REMINDER_INSERT_FAILED:', error.message)
-    return false
+    return 'failed'
   }
-  return true
+  return 'inserted'
+}
+
+// A scheduling decision for one leg. Pure — no DB, no clock beyond the injected
+// `now` — so the harness can assert it against the REAL shipped logic.
+//   departure       — the T-3h departure alert (still in the future)
+//   checkin         — the web check-in nudge, scheduled for when the window opens
+//   checkin_open_now — the check-in window ALREADY opened before the ticket was saved;
+//                      surface it in the reply now instead of silently skipping
+export type TicketReminderDecision =
+  | { kind: 'departure'; message: string; remindAt: Date }
+  | { kind: 'checkin'; message: string; remindAt: Date }
+  | { kind: 'checkin_open_now'; message: string }
+
+export function planLegReminders(leg: Leg, now: number): TicketReminderDecision[] {
+  const decisions: TicketReminderDecision[] = []
+  if (!leg.departAt) return decisions
+
+  // T-3h departure reminder — only if it hasn't already passed.
+  const t3 = new Date(leg.departAt.getTime() - 3 * 60 * 60 * 1000)
+  if (t3.getTime() > now) {
+    decisions.push({ kind: 'departure', message: leg.reminderMsg, remindAt: t3 })
+  }
+
+  // Web check-in — flights only. Window is per-airline (Indian carriers open at 48h),
+  // derived from the flight number's IATA prefix; any lookup miss falls back to the
+  // default window so a failure never drops the nudge. isInternational is false: no
+  // international flag exists on the leg, and firing early is safer than firing late.
+  if (leg.type === 'flight' && leg.checkinMsg) {
+    let windowHours = DEFAULT_CHECKIN_OPENS_HOURS
+    try {
+      windowHours = checkInOpensHours(iataFromFlightNo(leg.flightNo), false)
+    } catch (err: any) {
+      console.error('CHECKIN_WINDOW_FALLBACK:', err?.message || err)
+    }
+    const tCheckin = new Date(leg.departAt.getTime() - windowHours * 60 * 60 * 1000)
+    if (tCheckin.getTime() > now) {
+      // Window opens later → schedule the nudge for then.
+      decisions.push({ kind: 'checkin', message: leg.checkinMsg, remindAt: tCheckin })
+    } else if (leg.departAt.getTime() > now) {
+      // Window already open but the flight hasn't left → tell them NOW, don't skip.
+      decisions.push({ kind: 'checkin_open_now', message: leg.checkinMsg })
+    }
+    // else: the flight has already departed → nothing to say.
+  }
+
+  return decisions
 }
 
 function oneLineNote(info: NonNullable<TicketInfo>): string {
@@ -291,35 +351,20 @@ export async function persistAndRemindTicket(
   const now = Date.now()
   const legs = buildLegs(info)
   let remindersSet = 0
+  let remindersFailed = 0
+  const openNowNotes: string[] = []
 
   for (const leg of legs) {
     await persistLeg(ctx, leg)
 
-    if (!leg.departAt) continue
-
-    // T-3h departure reminder (behaviour-preserving vs. the legacy PDF path).
-    const t3 = new Date(leg.departAt.getTime() - 3 * 60 * 60 * 1000)
-    if (t3.getTime() > now) {
-      if (await createReminderIfAbsent(ctx, leg.reminderMsg, t3)) remindersSet++
-    }
-
-    // T-minus web check-in reminder — flights only. The window is per-airline
-    // (Indian carriers open at 48h, not 24h), derived from the flight number's
-    // IATA prefix. Any miss — null/unparseable flight_no, unknown carrier, or a
-    // throw — falls back to the default window so a lookup failure never drops the
-    // reminder. isInternational is false: no international flag exists on the leg,
-    // and firing early (the domestic window) is safer than firing late.
-    if (leg.type === 'flight' && leg.checkinMsg) {
-      let windowHours = DEFAULT_CHECKIN_OPENS_HOURS
-      try {
-        windowHours = checkInOpensHours(iataFromFlightNo(leg.flightNo), false)
-      } catch (err: any) {
-        console.error('CHECKIN_WINDOW_FALLBACK:', err?.message || err)
+    for (const decision of planLegReminders(leg, now)) {
+      if (decision.kind === 'checkin_open_now') {
+        openNowNotes.push(decision.message)
+        continue
       }
-      const tCheckin = new Date(leg.departAt.getTime() - windowHours * 60 * 60 * 1000)
-      if (tCheckin.getTime() > now) {
-        if (await createReminderIfAbsent(ctx, leg.checkinMsg, tCheckin)) remindersSet++
-      }
+      const res = await createReminderIfAbsent(ctx, decision.message, decision.remindAt)
+      if (res === 'inserted') remindersSet++
+      else if (res === 'failed') remindersFailed++
     }
   }
 
@@ -330,5 +375,21 @@ export async function persistAndRemindTicket(
     console.error('TRAVEL_TICKET_NOTE_FAILED:', err?.message || err)
   }
 
-  return { reply: buildTicketReply(info, remindersSet > 0), remindersSet }
+  // Base reply claims "Reminders set" only when at least one was actually inserted.
+  let reply = buildTicketReply(info, remindersSet > 0)
+
+  // Check-in window already open → surface it now rather than skipping silently.
+  if (openNowNotes.length) {
+    reply += `\n\n✅ *Check-in is already open* — you can check in now:\n\n${openNowNotes.join('\n\n')}`
+  }
+
+  // A "saved!" reply must NOT quietly imply alerts that never landed. If any insert
+  // failed, tell the user so they can set it themselves.
+  if (remindersFailed > 0) {
+    const n = remindersFailed === 1 ? 'one alert' : `${remindersFailed} alerts`
+    const it = remindersFailed === 1 ? 'it' : 'them'
+    reply += `\n\n⚠️ I saved the ticket but couldn't set ${n} for this trip — please add ${it} manually with *remind me …*.`
+  }
+
+  return { reply, remindersSet }
 }
