@@ -4,14 +4,15 @@ import { exchangeCode } from '@/lib/google-calendar'
 
 export const dynamic = 'force-dynamic'
 
-function pageHtml(status: 'success' | 'failed') {
-  const success = status === 'success'
-
+// Success now redirects to the static /calendar-connected.html page; this markup
+// only ever renders the failure case.
+function failedPageHtml() {
   return `<!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${success ? 'Calendar connected' : 'Calendar connection failed'}</title>
+  <title>Calendar connection failed</title>
   <style>
     body {
       margin: 0;
@@ -38,7 +39,7 @@ function pageHtml(status: 'success' | 'failed') {
       height: 72px;
       border-radius: 50%;
       margin: 0 auto 18px;
-      background: ${success ? '#DCFCE7' : '#FEE2E2'};
+      background: #FEE2E2;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -74,12 +75,12 @@ function pageHtml(status: 'success' | 'failed') {
 </head>
 <body>
   <div class="card">
-    <div class="logo">${success ? '✅' : '⚠️'}</div>
-    <h1>${success ? 'Calendar connected' : 'Connection failed'}</h1>
-    <p>${success ? 'Your Google Calendar is now connected to AskGogo.' : 'Google Calendar could not be connected.'}</p>
-    <p>${success ? 'Go back to WhatsApp and type:' : 'Go back to WhatsApp and type:'}</p>
-    <div class="pill">${success ? 'Today' : 'Connect calendar'}</div>
-    <div class="small">${success ? 'You can close this page now.' : 'Please try again once.'}</div>
+    <div class="logo">⚠️</div>
+    <h1>Connection failed</h1>
+    <p>Google Calendar could not be connected.</p>
+    <p>Go back to WhatsApp and type:</p>
+    <div class="pill">Connect calendar</div>
+    <div class="small">Please try again once.</div>
   </div>
 </body>
 </html>`
@@ -91,18 +92,18 @@ export async function GET(req: NextRequest) {
   const telegramId = searchParams.get('state')
 
   if (!code || !telegramId) {
-    return new NextResponse(pageHtml('failed'), {
+    return new NextResponse(failedPageHtml(), {
       status: 200,
-      headers: { 'Content-Type': 'text/html' },
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
     })
   }
 
   const tokens = await exchangeCode(code)
 
   if (!tokens || !tokens.refresh_token) {
-    return new NextResponse(pageHtml('failed'), {
+    return new NextResponse(failedPageHtml(), {
       status: 200,
-      headers: { 'Content-Type': 'text/html' },
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
     })
   }
 
@@ -114,8 +115,8 @@ export async function GET(req: NextRequest) {
     })
     .eq('telegram_id', parseInt(telegramId))
 
-  return new NextResponse(pageHtml('success'), {
-    status: 200,
-    headers: { 'Content-Type': 'text/html' },
-  })
+  // The OAuth scope is calendar-only (no openid/email), so the connected
+  // account's email isn't available here — the static page falls back to
+  // "your Google account" on its own, so we pass no ?email param.
+  return NextResponse.redirect(new URL('/calendar-connected.html', req.url), 303)
 }
