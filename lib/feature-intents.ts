@@ -17,6 +17,7 @@ import {
   findPendingExactAcrossLists,
 } from '@/lib/lists'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
+import { isCalendarListName } from '@/lib/data/lists-core'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
@@ -117,7 +118,12 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     // "add a reminder to call mom" is a reminder, not a list item — let it fall
     // through to the reminder path rather than filing "a reminder" under "call mom".
     const isReminderShape = /^(a |an )?(reminder|alarm|alert)$/i.test(item) || /\badd\s+(?:a |an )?(?:reminder|alarm)\b/i.test(text)
-    if (item && listName && !isReminderShape) {
+    // "add meeting … to my calendar" is a calendar-create, not a list named "calendar".
+    // Fall through so processIncomingMessage's parseCalendarCreate path handles it — this
+    // router runs BEFORE that path, so without the guard the meeting is filed into a
+    // "calendar" list and the calendar handler never runs. Symmetric to isReminderShape.
+    const isCalendarShape = isCalendarListName(listAdd[2])
+    if (item && listName && !isReminderShape && !isCalendarShape) {
       const res = await addToListDetailed(extra.telegramId, listName, [item])
       return formatAddResult(listName, res)
     }

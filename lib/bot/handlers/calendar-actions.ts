@@ -3,6 +3,7 @@ import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { saveFollowupState } from './followup-state'
 import {
   createCalendarEvent,
+  fetchPrimaryCalendarEvents,
   refreshAccessToken,
 } from '@/lib/google-calendar'
 
@@ -282,27 +283,12 @@ export async function getCalendarTokens(telegramId: number) {
   }
 }
 
+// Throws on a non-200 (bad/expired token, wrong account, Google error) via the shared
+// fetch — a failed fetch must NOT masquerade as an empty day. Callers below catch it and
+// either surface a "couldn't reach Calendar" reply (view) or degrade to no-conflicts (create).
 async function getEventsForTarget(accessToken: string, target: CalendarDateTarget) {
   const range = calendarRangeForTarget(target)
-
-  const params = new URLSearchParams({
-    timeMin: range.timeMin,
-    timeMax: range.timeMax,
-    singleEvents: 'true',
-    orderBy: 'startTime',
-  })
-
-  const response = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
-    {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      cache: 'no-store',
-    }
-  )
-
-  const data = await response.json()
-
-  return data.items || []
+  return fetchPrimaryCalendarEvents(accessToken, range.timeMin, range.timeMax, 'GCAL_TARGET_EVENTS_FAILED')
 }
 
 function findConflictingEvents(events: any[], startIso: string, endIso: string) {
@@ -444,7 +430,22 @@ export async function buildCalendarActionReply(
 
   if (wantsCalendarView) {
     const target = targetFromText(text)
-    const events = await getEventsForTarget(tokens.accessToken, target)
+    let events: any[]
+    try {
+      events = await getEventsForTarget(tokens.accessToken, target)
+    } catch (err) {
+      // Fetch failed — say so instead of the empty-day copy, mirroring the morning
+      // briefing (getCalendarState → "Couldn't reach Google Calendar"). Empty vs failed
+      // must read differently to the user.
+      console.error('CALENDAR_VIEW_FETCH_FAILED:', err)
+      return {
+        handled: true,
+        reply:
+          `📅 *Your calendar ${targetLabel(target)}*\n\n` +
+          `⚠️ Couldn't reach Google Calendar just now — this is a temporary hiccup, not ` +
+          `necessarily an empty day. If it keeps happening, reconnect with *connect calendar*.`,
+      }
+    }
 
     if (!events.length) {
       return {
@@ -505,7 +506,15 @@ export async function buildCalendarActionReply(
     )
 
     const displayTime = formatIstDisplayFromParts(start.year, start.month, start.day, start.hour, start.minute)
-    const eventsForDay = await getEventsForTarget(tokens.accessToken, createIntent.target)
+    // Conflict detection is best-effort: if we can't read the day's events (token/API
+    // error), don't block the create — proceed as if no known conflicts. Blocking a user's
+    // event because the conflict-check fetch failed is worse than skipping the warning.
+    let eventsForDay: any[] = []
+    try {
+      eventsForDay = await getEventsForTarget(tokens.accessToken, createIntent.target)
+    } catch (err) {
+      console.error('GCAL_CONFLICT_CHECK_FAILED:', err)
+    }
     const conflicts = findConflictingEvents(eventsForDay, startIso, endIso)
 
     if (conflicts.length) {

@@ -15,6 +15,7 @@ import {
   applySetDone,
   findPendingExactMatches,
   isDedupeExemptBucket,
+  isCalendarListName,
 } from '../lib/data/lists-core.ts'
 import { RESERVED_SHOW_NAMES } from '../lib/data/reserved-names.ts'
 
@@ -214,6 +215,34 @@ const COLLIDING = ['grocery', 'reminders', 'cards']
 eq('list "reminders" EXISTS → stage-1 still declines "show my reminders"', showListMatch('show my reminders', COLLIDING), null)
 eq('list "cards" EXISTS → stage-1 still declines "show my cards"', showListMatch('show my cards', COLLIDING), null)
 eq('sanity: "reminders" WOULD resolve without the reserved guard', getListFake(COLLIDING, normalizeListName('reminders')), 'reminders')
+
+// ── 13. ADD-TO-LIST matcher — "add X to my calendar" must NOT become a list ─────
+// The WhatsApp pre-router (lib/feature-intents.ts) runs BEFORE processIncomingMessage's
+// calendar-create path. Its ADD-TO-LIST block accepts an arbitrary trailing list name, so
+// without a calendar guard "add meeting … to my calendar" was filed into a "calendar"
+// list and the calendar handler never ran. This models that block with the REAL
+// isCalendarListName + normalizeListName the router uses.
+console.log('\n13. ADD-TO-LIST — calendar targets fall through, real lists still add')
+function addListRoute(text) {
+  const m = text.match(/^\s*(?:gogo[,!\s]+)?add\s+(.+?)\s+(?:to|into)\s+(?:my\s+)?(.+?)\s*$/i)
+  if (!m) return 'no_add_match'
+  const item = m[1].trim()
+  const isReminderShape = /^(a |an )?(reminder|alarm|alert)$/i.test(item) || /\badd\s+(?:a |an )?(?:reminder|alarm)\b/i.test(text)
+  const isCalendarShape = isCalendarListName(m[2])
+  if (item && !isReminderShape && !isCalendarShape) return `list_add:${normalizeListName(m[2])}`
+  return 'fall_through' // reminder/calendar — leave for the downstream handler
+}
+// must-NOT-add: calendar-create phrasings fall through to the calendar handler.
+eq('"add meeting with test at 3pm to my calendar" → fall through', addListRoute('add meeting with test at 3pm to my calendar'), 'fall_through')
+eq('"add it to my calendar" → fall through', addListRoute('add it to my calendar'), 'fall_through')
+eq('"add lunch to the calendar" → fall through', addListRoute('add lunch to the calendar'), 'fall_through')
+eq('"add milk to my calendar" → fall through (calendar wins over item)', addListRoute('add milk to my calendar'), 'fall_through')
+// must-ADD: genuine list adds are untouched (regression guard).
+eq('"add milk to my grocery list" → list_add:grocery', addListRoute('add milk to my grocery list'), 'list_add:grocery')
+eq('"add eggs to groceries" → list_add:grocery', addListRoute('add eggs to groceries'), 'list_add:grocery')
+eq('"add sunscreen to my notes" → list_add:notes (real bucket, not reserved)', addListRoute('add sunscreen to my notes'), 'list_add:notes')
+// reserved SHOW mirror: "show my calendar" declines so it reaches the calendar view.
+eq('stage-1 declines "show my calendar" (reserved)', showListMatch('show my calendar'), null)
 
 console.log('\n' + '-'.repeat(80))
 console.log(fails === 0 ? 'ALL LIST-ROUTING CHECKS PASS ✓' : `${fails} CHECK(S) FAILED ✗`)

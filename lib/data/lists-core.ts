@@ -86,6 +86,14 @@ export function normalizeListName(raw: string): string {
   return n || 'list'
 }
 
+// "add X to (my/the/your) calendar" must reach the calendar-create handler, never create a
+// list literally named "calendar". Tests the RAW captured target (not normalizeListName,
+// which only strips a trailing " list", not a leading the/your) and mirrors
+// parseCalendarCreate's possessive calendar phrase. Used by the router's ADD-TO-LIST guard.
+export function isCalendarListName(raw: string): boolean {
+  return /^(?:my\s+|the\s+|your\s+)?calendar(?:\s+list)?$/i.test((raw || '').trim())
+}
+
 // Item-text normalisation for dedupe + match: lowercase + trim + collapse whitespace.
 // Deliberately NOT fuzzy — "milk" and "almond milk" stay distinct.
 export function normItemText(s: string): string {
