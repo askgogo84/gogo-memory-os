@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { waLink } from '@/lib/product-urls'
 
 // ── Why this redeemer is a CLIENT-SIDE POST — and must stay one ────────────────
 // The magic link (…/dashboard?t=<token>) is delivered over WhatsApp. WhatsApp's
@@ -13,7 +14,7 @@ import { useEffect, useState } from 'react'
 // useEffect is therefore invisible to it and safe. DO NOT "simplify" this into a
 // GET route handler or a server-side redeem — that reintroduces the burn.
 
-const WA_DASHBOARD_LINK = 'https://wa.me/15797006612?text=dashboard'
+const WA_DASHBOARD_LINK = waLink('dashboard')
 const CREAM = '#fbf6ef'
 
 type Phase = 'checking' | 'redeeming' | 'error' | 'no-token'

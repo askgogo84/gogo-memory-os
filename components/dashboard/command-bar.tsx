@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { WA_NUMBER } from './whatsapp-chip'
+import { waLink } from '@/lib/product-urls'
 
 // ── The desktop command bar (frame 3a) ────────────────────────────────────────
 // The white pill across the top of the aggregate. It is the SAME promise as the
@@ -20,9 +20,7 @@ export function CommandBar() {
 
   const openWhatsApp = () => {
     const msg = text.trim()
-    const url = msg
-      ? `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`
-      : `https://wa.me/${WA_NUMBER}`
+    const url = waLink(msg || undefined)
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 

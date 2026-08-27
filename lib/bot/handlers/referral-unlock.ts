@@ -1,8 +1,9 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { waLink } from '@/lib/product-urls'
 
 const ASK_GOGO_WHATSAPP_LINK =
   process.env.ASK_GOGO_WHATSAPP_JOIN_LINK ||
-  'https://wa.me/15797006612?text=Hi%20AskGogo'
+  waLink('Hi AskGogo')
 
 function cleanReferralId(value: number | string) {
   return String(value).replace(/\D/g, '').slice(-10)

@@ -1,3 +1,5 @@
+import { waLink } from '@/lib/product-urls'
+
 export type PremiumWhatsappIntent =
   | 'welcome_menu'
   | 'help_menu'
@@ -7,7 +9,7 @@ export type PremiumWhatsappIntent =
 
 const ASK_GOGO_WHATSAPP_LINK =
   process.env.ASK_GOGO_WHATSAPP_JOIN_LINK ||
-  'https://wa.me/15797006612?text=Hi%20AskGogo'
+  waLink('Hi AskGogo')
 
 function cleanName(name?: string) {
   const n = (name || '').trim()

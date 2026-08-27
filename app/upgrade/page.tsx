@@ -1,10 +1,11 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createPaymentLink } from '@/lib/razorpay'
 import { getSession } from '@/lib/dashboard/session'
+import { waLink } from '@/lib/product-urls'
 
 export const dynamic = 'force-dynamic'
 
-const WA_DASHBOARD_LINK = 'https://wa.me/15797006612?text=dashboard'
+const WA_DASHBOARD_LINK = waLink('dashboard')
 
 export default async function UpgradePage({
   searchParams,
