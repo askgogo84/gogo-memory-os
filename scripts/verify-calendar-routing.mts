@@ -59,6 +59,11 @@ eq('"put dinner on my calendar at 8"', route('put dinner on my calendar at 8'), 
 eq('"add dinner with mom to my calendar"', route('add dinner with mom to my calendar'), 'calendar_create')
 eq('"create an event for Friday 10am"', route('create an event for Friday 10am'), 'calendar_create')
 
+// B.3b — misspelled "calendar" still routes to calendar_create (demo-recording regression:
+// "add a meeting with Demo at 7pm to my calender" was filed into a LIST named "calender").
+eq('"add a meeting with demo at 7pm to my calender"', route('add a meeting with demo at 7pm to my calender'), 'calendar_create')
+eq('"add a meeting with demo at 7pm to my calandar"', route('add a meeting with demo at 7pm to my calandar'), 'calendar_create')
+
 // B.4 — anti-swallow (FIX 1): "schedule lunch tomorrow" is a create VERB with NO calendar
 // noun/phrase, genuinely ambiguous with a reminder → stays a reminder (documented behaviour).
 eq('"schedule lunch tomorrow"', route('schedule lunch tomorrow'), 'reminder')

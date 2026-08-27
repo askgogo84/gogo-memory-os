@@ -12,13 +12,18 @@ type CalendarActionResult = {
   reply: string
 }
 
-// Tolerant "calendar" matcher. Users routinely misspell it and the mistakes fell
-// through to the freeform LLM. This single pattern is the canonical spelling set
-// shared by isCalendarAction, the calendar-create signal test, and the
-// connect_calendar intent matcher (imported in detect-intent.ts):
-//   calendar | calendars | calender | calenders | calandar | calandars |
-//   calander | calanders  — i.e. e/a swaps in either vowel slot, optional plural.
-export const CALENDAR_WORD_RE = /\bcal[ae]nd[ae]rs?\b/
+// Tolerant "calendar" matcher — canonical spelling set now lives in the zero-import
+// lib/data/calendar-word.ts so it can be shared with the list-routing guard without
+// dragging this file's @/… deps into the type-stripped harness. Re-exported here so
+// existing importers (detect-intent.ts) keep working.
+export { CALENDAR_WORD_RE } from '@/lib/data/calendar-word'
+import { CALENDAR_WORD_RE } from '@/lib/data/calendar-word'
+
+// Calendar-create SIGNAL phrases, derived from the shared spelling set rather than
+// re-encoding the cal[ae]nd[ae]rs? vowel-swaps by hand (that hand-encoding is exactly how
+// "calender" leaked). CALENDAR_WORD_RE.source already carries its own \b boundaries.
+const CALENDAR_POSSESSIVE_RE = new RegExp(`\\b(?:in|on|to)\\s+(?:my|the|your)\\s+${CALENDAR_WORD_RE.source}`)
+const CALENDAR_EVENT_RE = new RegExp(`${CALENDAR_WORD_RE.source}\\s+event\\b`)
 
 type CalendarDateTarget = 'today' | 'tomorrow' | 'day_after_tomorrow'
 
@@ -203,8 +208,8 @@ export function parseCalendarCreate(text: string) {
   const hasCreateVerb = /\b(?:add|schedule|book|create|set\s+up|put)\b/.test(lower)
   const hasCalendarSignal =
     /\b(?:meeting|appointments?|appts?|call|event)\b/.test(lower) ||
-    /\b(?:in|on|to)\s+(?:my|the|your)\s+cal[ae]nd[ae]rs?\b/.test(lower) ||  // tolerant of calender/calandar/…
-    /\bcal[ae]nd[ae]rs?\s+event\b/.test(lower)
+    CALENDAR_POSSESSIVE_RE.test(lower) ||  // "in/on/to my|the|your calendar" (+ misspellings)
+    CALENDAR_EVENT_RE.test(lower)          // "calendar event" (+ misspellings)
   const isCreate = hasCreateVerb && hasCalendarSignal
 
   if (!isCreate) return null

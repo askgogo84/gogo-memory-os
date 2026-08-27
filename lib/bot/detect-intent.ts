@@ -1,6 +1,11 @@
 import { classifyCheckVerb } from '@/lib/data/lists-core'
 import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
 
+// "google calendar" (+ misspellings) → connect intent, derived from the shared spelling
+// set rather than re-encoding the vowel-swaps by hand. Hoisted out of the per-message
+// detectIntent hot path.
+const GOOGLE_CALENDAR_RE = new RegExp(`\\bgoogle\\s+${CALENDAR_WORD_RE.source}`)
+
 export type IntentType =
   | 'connect_gmail'
   | 'read_gmail'
@@ -130,7 +135,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   // Tolerant of common "calendar" misspellings (calender/calandar/calenders/…) via
   // CALENDAR_WORD_RE — "connect calender" used to miss and fall to the freeform LLM.
-  if (((lower.includes('connect') || lower.includes('link')) && CALENDAR_WORD_RE.test(lower)) || /\bgoogle\s+cal[ae]nd[ae]rs?\b/.test(lower)) return { type: 'connect_calendar', confidence: 'high' }
+  if (((lower.includes('connect') || lower.includes('link')) && CALENDAR_WORD_RE.test(lower)) || GOOGLE_CALENDAR_RE.test(lower)) return { type: 'connect_calendar', confidence: 'high' }
   // Check "remind me" BEFORE weather - marathon/training reminders must not go to weather
   if (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ')) return { type: 'set_reminder', confidence: 'high' }
 

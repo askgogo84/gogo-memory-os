@@ -17,7 +17,7 @@ import {
   findPendingExactAcrossLists,
 } from '@/lib/lists'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
-import { isCalendarListName } from '@/lib/data/lists-core'
+import { isCalendarListName } from '@/lib/data/calendar-word'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 

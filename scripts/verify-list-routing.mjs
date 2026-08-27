@@ -15,8 +15,8 @@ import {
   applySetDone,
   findPendingExactMatches,
   isDedupeExemptBucket,
-  isCalendarListName,
 } from '../lib/data/lists-core.ts'
+import { isCalendarListName } from '../lib/data/calendar-word.ts'
 import { RESERVED_SHOW_NAMES } from '../lib/data/reserved-names.ts'
 
 const NOW = '2026-08-12T00:00:00.000Z'
@@ -237,6 +237,10 @@ eq('"add meeting with test at 3pm to my calendar" → fall through', addListRout
 eq('"add it to my calendar" → fall through', addListRoute('add it to my calendar'), 'fall_through')
 eq('"add lunch to the calendar" → fall through', addListRoute('add lunch to the calendar'), 'fall_through')
 eq('"add milk to my calendar" → fall through (calendar wins over item)', addListRoute('add milk to my calendar'), 'fall_through')
+// misspellings must ALSO fall through, not create a list literally named "calender"/"calandar"
+// (the demo-recording regression: "add a meeting with Demo at 7pm to my calender").
+eq('"add a meeting with demo at 7pm to my calender" → fall through', addListRoute('add a meeting with demo at 7pm to my calender'), 'fall_through')
+eq('"add a meeting with demo at 7pm to my calandar" → fall through', addListRoute('add a meeting with demo at 7pm to my calandar'), 'fall_through')
 // must-ADD: genuine list adds are untouched (regression guard).
 eq('"add milk to my grocery list" → list_add:grocery', addListRoute('add milk to my grocery list'), 'list_add:grocery')
 eq('"add eggs to groceries" → list_add:grocery', addListRoute('add eggs to groceries'), 'list_add:grocery')
