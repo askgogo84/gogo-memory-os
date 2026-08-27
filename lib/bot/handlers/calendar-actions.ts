@@ -12,6 +12,14 @@ type CalendarActionResult = {
   reply: string
 }
 
+// Tolerant "calendar" matcher. Users routinely misspell it and the mistakes fell
+// through to the freeform LLM. This single pattern is the canonical spelling set
+// shared by isCalendarAction, the calendar-create signal test, and the
+// connect_calendar intent matcher (imported in detect-intent.ts):
+//   calendar | calendars | calender | calenders | calandar | calandars |
+//   calander | calanders  — i.e. e/a swaps in either vowel slot, optional plural.
+export const CALENDAR_WORD_RE = /\bcal[ae]nd[ae]rs?\b/
+
 type CalendarDateTarget = 'today' | 'tomorrow' | 'day_after_tomorrow'
 
 type CalendarCreatePayload = {
@@ -195,8 +203,8 @@ export function parseCalendarCreate(text: string) {
   const hasCreateVerb = /\b(?:add|schedule|book|create|set\s+up|put)\b/.test(lower)
   const hasCalendarSignal =
     /\b(?:meeting|appointments?|appts?|call|event)\b/.test(lower) ||
-    /\b(?:in|on|to)\s+(?:my|the|your)\s+calendar\b/.test(lower) ||
-    lower.includes('calendar event')
+    /\b(?:in|on|to)\s+(?:my|the|your)\s+cal[ae]nd[ae]rs?\b/.test(lower) ||  // tolerant of calender/calandar/…
+    /\bcal[ae]nd[ae]rs?\s+event\b/.test(lower)
   const isCreate = hasCreateVerb && hasCalendarSignal
 
   if (!isCreate) return null
@@ -353,15 +361,13 @@ export function isCalendarAction(text: string) {
   const lower = (text || '').toLowerCase()
 
   return (
-    lower.includes('calendar') ||
+    CALENDAR_WORD_RE.test(lower) ||   // calendar + common misspellings (calender/calandar/…)
     lower.includes('meeting') ||
     lower.includes('schedule call') ||
     lower.includes('add call') ||
     lower.includes('book call') ||
     lower.includes('add event') ||
-    lower.includes('schedule event') ||
-    lower.includes('what is on my calendar') ||
-    lower.includes("what's on my calendar")
+    lower.includes('schedule event')
   )
 }
 

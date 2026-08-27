@@ -1,4 +1,5 @@
 import { classifyCheckVerb } from '@/lib/data/lists-core'
+import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
 
 export type IntentType =
   | 'connect_gmail'
@@ -127,7 +128,9 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (lower.includes('check my latest mail') || lower.includes('check my latest mails') || lower.includes('latest mail') || lower.includes('latest mails') || lower.includes('latest email') || lower.includes('latest emails') || lower.includes('show my unread emails') || lower.includes('show unread emails') || lower.includes('check unread emails') || lower.includes('any new mails') || lower.includes('any new mail') || lower.includes('check my inbox') || lower.includes('mail summary') || lower.includes('mails summary') || lower.includes('email summary') || lower.includes('emails summary') || lower.includes('top 3 mails') || lower.includes('top 3 mail') || lower.includes('top 3 emails') || lower.includes('top 3 email') || lower.includes('check my top 3 mail') || lower.includes('check my top 3 email') || lower.includes('show me my top 3 mails') || lower.includes('show me my top 3 email') || lower.includes('summarize my mails') || lower.includes('summarize my emails') || lower.includes('summarize top 3 mails') || lower.includes('summarize top 3 emails') || lower.includes('top 3 mails summary') || lower.includes('top 3 emails summary')) return { type: 'read_gmail', confidence: 'high' }
 
-  if (lower.includes('connect calendar') || lower.includes('connect my calendar') || lower.includes('connect to my calendar') || lower.includes('link calendar') || lower.includes('google calendar')) return { type: 'connect_calendar', confidence: 'high' }
+  // Tolerant of common "calendar" misspellings (calender/calandar/calenders/…) via
+  // CALENDAR_WORD_RE — "connect calender" used to miss and fall to the freeform LLM.
+  if (((lower.includes('connect') || lower.includes('link')) && CALENDAR_WORD_RE.test(lower)) || /\bgoogle\s+cal[ae]nd[ae]rs?\b/.test(lower)) return { type: 'connect_calendar', confidence: 'high' }
   // Check "remind me" BEFORE weather - marathon/training reminders must not go to weather
   if (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ')) return { type: 'set_reminder', confidence: 'high' }
 
