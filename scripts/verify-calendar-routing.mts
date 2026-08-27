@@ -18,8 +18,15 @@ const { parseCalendarCreate, isCalendarViewRequest } = await import('../lib/bot/
 function route(text: string): string {
   if (isCalendarViewRequest(text)) return 'calendar_view'
   if (parseCalendarCreate(text)) return 'calendar_create'
-  // reminder catch-all (detectIntent set_reminder → eager create)
-  if (/\bremind\b/i.test(text) || /\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(text)) return 'reminder'
+  // reminder catch-all — mirrors detectIntent's set_reminder signals (detect-intent.ts:145):
+  // remind verb, tomorrow/weekday/relative, or an explicit clock time.
+  if (
+    /\bremind\b/i.test(text) ||
+    /\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(text) ||
+    /\b(tomorrow|tmrw|tmr)\b/i.test(text) ||
+    /\b(on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text) ||
+    /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(text)
+  ) return 'reminder'
   return 'general'
 }
 
@@ -39,9 +46,22 @@ eq('"add it to my calendar at 6 pm"', route('add it to my calendar at 6 pm'), 'c
 eq('"add meeting with Rahul tomorrow at 4 pm"', route('add meeting with Rahul tomorrow at 4 pm'), 'calendar_create')
 
 // B.2 — anti-swallow: a genuine reminder that MENTIONS calendar in passing stays a
-// reminder (no add→to→calendar verb phrase, so parseCalendarCreate declines).
+// reminder (no create VERB, so parseCalendarCreate declines).
 eq('"remind me to check my calendar at 5 pm"', route('remind me to check my calendar at 5 pm'), 'reminder')
 eq('"add milk to my grocery list at 8 am"', route('add milk to my grocery list at 8 am'), 'reminder')
+
+// B.3 — structural isCreate (FIX 1): articles + synonyms + verbs no longer break detection.
+// Each of these MUST route to calendar_create (the article "a"/"an"/"the" used to break it).
+eq('"add a meeting with demo at 8pm to my calendar"', route('add a meeting with demo at 8pm to my calendar'), 'calendar_create')
+eq('"schedule a call with Priya tomorrow at 3pm"', route('schedule a call with Priya tomorrow at 3pm'), 'calendar_create')
+eq('"book an appointment at 5pm"', route('book an appointment at 5pm'), 'calendar_create')
+eq('"put dinner on my calendar at 8"', route('put dinner on my calendar at 8'), 'calendar_create')
+eq('"add dinner with mom to my calendar"', route('add dinner with mom to my calendar'), 'calendar_create')
+eq('"create an event for Friday 10am"', route('create an event for Friday 10am'), 'calendar_create')
+
+// B.4 — anti-swallow (FIX 1): "schedule lunch tomorrow" is a create VERB with NO calendar
+// noun/phrase, genuinely ambiguous with a reminder → stays a reminder (documented behaviour).
+eq('"schedule lunch tomorrow"', route('schedule lunch tomorrow'), 'reminder')
 
 // View requests are unaffected.
 eq('"what is on my calendar"', route('what is on my calendar'), 'calendar_view')

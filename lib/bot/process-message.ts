@@ -10,7 +10,8 @@ import { parseClaudeResponse } from './parse-claude-response'
 import { formatOutgoingText } from './format-response'
 import { searchWeb } from '@/lib/web-search'
 import { buildSportsReplyWithState } from './handlers/sports'
-import { getLatestFollowupState, saveFollowupState } from './handlers/followup-state'
+import { getLatestFollowupState, saveFollowupState, isFreshFollowupState } from './handlers/followup-state'
+import { resolvePendingReminder, resolvePendingCalendar, looksLikeNewCommand } from './pending-followup'
 import { buildEmailActionReply } from './handlers/email-actions'
 import { styleReplyByIntent } from './handlers/response-style'
 import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
@@ -22,7 +23,7 @@ import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeter
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { parsePlanSelection, buildPlanCheckoutReply } from './handlers/plan-checkout'
-import { buildCalendarActionReply, createCalendarConflictEvent, isCalendarAction, getCalendarTokens } from './handlers/calendar-actions'
+import { buildCalendarActionReply, createCalendarConflictEvent, createCalendarEventAtIso, isCalendarAction, getCalendarTokens } from './handlers/calendar-actions'
 import { isCalendarMutation, isCalendarMutationConfirm, buildCalendarMutationReply, confirmCalendarMutation } from './handlers/calendar-mutations'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
@@ -352,14 +353,6 @@ function isUsageCommand(text: string) {
   return lower === 'usage' || lower === 'my usage' || lower === 'usage status' || lower === 'plan usage' || lower === 'limits' || lower === 'my limits'
 }
 
-function isFreshFollowupState(state: any, maxMinutes = 10) {
-  if (!state?.created_at && !state?.payload?.created_at) return true
-  const raw = state.created_at || state.payload.created_at
-  const createdAt = new Date(raw).getTime()
-  if (!Number.isFinite(createdAt)) return true
-  return Date.now() - createdAt <= maxMinutes * 60 * 1000
-}
-
 export async function processIncomingMessage(params: ProcessIncomingParams): Promise<ProcessIncomingResult> {
   console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
   const resolvedUser = await resolveUser({ channel: params.channel, externalUserId: params.externalUserId, userName: params.userName })
@@ -465,34 +458,63 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
-  // Pending reminder context — runs FIRST before any other handler
-  {
-    const _hist = await getConversationHistory(resolvedUser.telegramId)
-    const _lastBot = [..._hist].reverse().find((m: Message) => m.role === 'assistant')?.content || ''
-    const _pm = _lastBot.match(/<!--PENDING:(.*?)-->/)
-    if (_pm) {
-      try {
-        const _ctx = JSON.parse(_pm[1])
-        const _raw = incomingText.trim().replace(/[.,]/g, '').trim()
-        const _isTime = /^\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(_raw)
-        if (_isTime && _ctx.task) {
-          const _t = /[aApP][mM]$/.test(_raw) ? _raw : _raw + ' AM'
-          const _day = _ctx.day ? `on the ${_ctx.day}th of every month ` : ''
-          const _full = `Remind me to ${_ctx.task} ${_day}at ${_t}`
-          console.log('[pending] Completing:', _full)
-          const _r = parseReminderIntent(_full)
-          if (_r) {
-            await createReminder(resolvedUser.telegramId, resolvedUser.telegramId, _r.remindAtIso, _r.message,
-              _r.kind === 'recurring' ? _r.pattern : undefined,
-              params.channel === 'whatsapp' ? resolvedUser.whatsappId : null)
-            const _reply = buildReminderConfirmation(_r)
-            await saveConversation(resolvedUser.telegramId, 'user', incomingText)
-            await saveConversation(resolvedUser.telegramId, 'assistant', _reply)
-            return { text: formatOutgoingText(params.channel, _reply), resolvedUser }
-          }
+  // ── Pending clarification answer — runs FIRST, before any other routing ─────────────
+  // A prior turn asked "what time?" and stored a pending_reminder or pending_calendar via
+  // saveFollowupState (per-user, created_at TTL). If THIS message is a time/schedule answer
+  // (not a fresh command), complete the ORIGINAL intent. Unified on the followup-state store
+  // — replaces the old inline <!--PENDING--> tag, whose `^time$` reader silently dropped every
+  // richer answer the prompt itself advertises ("8pm today", "in 2 hours", "every Monday 10am").
+  if (!looksLikeNewCommand(incomingText)) {
+    const pendingReminder = await getLatestFollowupState(resolvedUser.telegramId, 'pending_reminder')
+    const pendingCalendar = await getLatestFollowupState(resolvedUser.telegramId, 'pending_calendar')
+
+    const ts = (s: any) => new Date(s?.created_at || s?.payload?.created_at || 0).getTime()
+    const rFresh = pendingReminder && isFreshFollowupState(pendingReminder)
+    const cFresh = pendingCalendar && isFreshFollowupState(pendingCalendar)
+    // When both are live, answer the more recent question.
+    const pick = !rFresh && !cFresh ? null : cFresh && (!rFresh || ts(pendingCalendar) >= ts(pendingReminder)) ? 'calendar' : 'reminder'
+
+    if (pick === 'calendar') {
+      const ctx = pendingCalendar.payload || {}
+      const parsed = resolvePendingCalendar(ctx, incomingText)
+      if (parsed?.remindAtIso) {
+        const reply = await createCalendarEventAtIso(resolvedUser.telegramId, ctx.title || 'Meeting', parsed.remindAtIso)
+        if (reply) {
+          await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+          await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+          return { text: formatOutgoingText(params.channel, reply), resolvedUser }
         }
-      } catch (_e) { console.log('[pending] failed:', _e) }
+      }
+    } else if (pick === 'reminder') {
+      const ctx = pendingReminder.payload || {}
+      const parsed = resolvePendingReminder(ctx, incomingText)
+      if (parsed) {
+        // No task was ever captured (the "Sure! When should I remind you?" branch): a bare
+        // time must not become a task-less "Reminder". If the answer carries its own subject
+        // ("call mom at 6pm") we use it; otherwise re-ask for the subject and keep waiting.
+        const noTask = !ctx.task || !String(ctx.task).trim()
+        if (noTask && parsed.message === 'Reminder') {
+          await saveFollowupState(resolvedUser.telegramId, 'pending_reminder', { task: null })
+          const reply = `What should I remind you about?\n_e.g. *call mom at 6 pm*_`
+          await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+          await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+          return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+        }
+        await createReminder(
+          resolvedUser.telegramId,
+          resolvedUser.telegramId,
+          parsed.remindAtIso,
+          parsed.message,
+          parsed.kind === 'recurring' ? parsed.pattern : undefined,
+          params.channel === 'whatsapp' ? resolvedUser.whatsappId : null
+        )
+        const reply = styleReplyByIntent('set_reminder', buildReminderConfirmation(parsed))
+        await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
     }
+    // No fresh pending, or the answer didn't resolve to a time → fall through to normal routing.
   }
 
   if (isUsageCommand(incomingText)) {
@@ -827,22 +849,28 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       .replace(/\s+/g, ' ').trim()
     const about = cleanedInput.length > 2 ? cleanedInput : null
 
-    // Store pending context in reply so next message can complete the reminder
-    const pendingCtx = JSON.stringify({ task: about, day: dayNum, recurrence: hasDate ? 'monthly' : null })
+    // Store the pending reminder in the shared followup-state store (per-user, created_at TTL)
+    // so the user's next message \u2014 the time \u2014 completes it. `task: null` on the no-subject
+    // branch is intentional: the pending reader re-asks for the subject rather than creating a
+    // task-less reminder from a bare time.
+    await saveFollowupState(resolvedUser.telegramId, 'pending_reminder', {
+      task: about,
+      day: dayNum,
+      recurrence: hasDate ? 'monthly' : null,
+    })
 
     let reply: string
     if (hasDate && about && dayNum) {
-      reply = `Got it \u2014 *${about}* on the ${dayNum}th of every month.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"9:30 AM\"_\n\n<!--PENDING:${pendingCtx}-->`
+      reply = `Got it \u2014 *${about}* on the ${dayNum}th of every month.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"9:30 AM\"_`
     } else if (hasDate && about) {
-      reply = `Got it \u2014 *${about}*.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"6 PM\"_\n\n<!--PENDING:${pendingCtx}-->`
+      reply = `Got it \u2014 *${about}*.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"6 PM\"_`
     } else if (about) {
-      reply = `Got it \u2014 *${about}*.\n\nWhat time and when?\n_e.g. \"9 AM daily\", \"every Monday 10 AM\", \"in 2 hours\"_\n\n<!--PENDING:${pendingCtx}-->`
+      reply = `Got it \u2014 *${about}*.\n\nWhat time and when?\n_e.g. \"9 AM daily\", \"every Monday 10 AM\", \"in 2 hours\"_`
     } else {
       reply = `Sure! When should I remind you?\n\n\u2022 _\"Remind me at 7 AM tomorrow\"_\n\u2022 _\"15th of every month at 10 AM\"_\n\u2022 _\"Every Monday at 9 AM\"_`
     }
-    const cleanReply = reply.replace(/\s*<!--PENDING:.*?-->/s, '').trim()
-    await saveConversation(resolvedUser.telegramId, 'assistant', reply) // keep tag in DB for context
-    return { text: formatOutgoingText(params.channel, cleanReply), resolvedUser }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
   if (intent.type === 'set_briefing_time') {
     const reply = await setBriefingTime(resolvedUser.telegramId, incomingText)

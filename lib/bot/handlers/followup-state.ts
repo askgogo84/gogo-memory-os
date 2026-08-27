@@ -37,3 +37,15 @@ export async function getLatestFollowupState(telegramId: number, kind: string) {
 
   return items[0] || null
 }
+
+// TTL guard shared by every follow-up consumer: a stored pending record is only honored for
+// `maxMinutes` (default 10). Missing/unparseable timestamps are treated as fresh (fail-open)
+// so a legacy record without created_at still works. Reads created_at off the row or the
+// embedded payload, whichever is present.
+export function isFreshFollowupState(state: any, maxMinutes = 10): boolean {
+  if (!state?.created_at && !state?.payload?.created_at) return true
+  const raw = state.created_at || state.payload.created_at
+  const createdAt = new Date(raw).getTime()
+  if (!Number.isFinite(createdAt)) return true
+  return Date.now() - createdAt <= maxMinutes * 60 * 1000
+}

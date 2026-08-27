@@ -179,24 +179,25 @@ function parseTime(text: string) {
 export function parseCalendarCreate(text: string) {
   const lower = text.toLowerCase()
 
-  const isCreate =
-    lower.includes('add meeting') ||
-    lower.includes('schedule meeting') ||
-    lower.includes('create meeting') ||
-    lower.includes('book meeting') ||
-    lower.includes('add call') ||
-    lower.includes('schedule call') ||
-    lower.includes('create call') ||
-    lower.includes('book call') ||
-    lower.includes('add event') ||
-    lower.includes('schedule event') ||
-    lower.includes('create event') ||
-    // "add to calendar" plus possessive variants: "add to my/the/your calendar",
-    // "add it/this/that to my calendar". Requires the explicit add→to→calendar verb
-    // phrase, so a passing mention ("check my calendar", "add milk to my list") never
-    // matches and correctly falls through to the reminder path.
-    /\badd (?:it |this |that )?to (?:my |the |your )?calendar\b/.test(lower) ||
+  // Structural detection. The old test matched exact contiguous bigrams ("add meeting",
+  // "schedule call"), so a single article broke it: "add a meeting" ≠ "add meeting". A
+  // calendar-create needs BOTH a create VERB and a calendar SIGNAL, anywhere in the text,
+  // regardless of intervening articles or title words.
+  //   verb:   add | schedule | book | create | set up | put
+  //   signal: meeting | appointment(s) | appt(s) | call | event, OR the possessive phrase
+  //           "in/on/to my|the|your calendar", OR the literal "calendar event".
+  // Requiring a create verb is what keeps this from swallowing reminders that merely mention
+  // a calendar noun ("remind me to check my calendar", "add milk to my grocery list").
+  // FOLLOW-UP: a verb-only phrasing with no calendar noun ("schedule lunch tomorrow") is
+  // genuinely ambiguous with a reminder and deliberately stays a reminder here. Resolving
+  // that class robustly would need an LLM classification step — deferred; this structural
+  // test is zero-latency and covers every reported phrasing.
+  const hasCreateVerb = /\b(?:add|schedule|book|create|set\s+up|put)\b/.test(lower)
+  const hasCalendarSignal =
+    /\b(?:meeting|appointments?|appts?|call|event)\b/.test(lower) ||
+    /\b(?:in|on|to)\s+(?:my|the|your)\s+calendar\b/.test(lower) ||
     lower.includes('calendar event')
+  const isCreate = hasCreateVerb && hasCalendarSignal
 
   if (!isCreate) return null
 
@@ -386,6 +387,48 @@ export async function createCalendarConflictEvent(
   return await createEventFromPayload(telegramId, tokens.accessToken, payload)
 }
 
+// Complete a pending calendar-create once the user answers with a time. The caller resolves
+// the answer to an absolute instant (via the shared reminder parser, so "8pm today", "in 2
+// hours" and "every Monday 10am" all work); here we just turn that instant into a 30-min
+// primary-calendar event. Recurring answers are created as their next single occurrence —
+// the create path has no recurrence support (a documented limitation). Returns the reply
+// string, or null on a bad instant so the caller can fall through.
+export async function createCalendarEventAtIso(
+  telegramId: number,
+  title: string,
+  startIso: string
+): Promise<string | null> {
+  const start = new Date(startIso)
+  if (isNaN(start.getTime())) return null
+
+  const tokens = await getCalendarTokens(telegramId)
+  if (!tokens.connected || !tokens.accessToken) {
+    return (
+      `📅 *Connect Google Calendar*\n\n` +
+      `To add this event, connect Calendar once.\n\n` +
+      `Type *connect calendar* to get the secure Google link.`
+    )
+  }
+
+  const end = new Date(start.getTime() + 30 * 60 * 1000)
+  const displayTime = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(start)
+
+  return await createEventFromPayload(telegramId, tokens.accessToken, {
+    title: title || 'Meeting',
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+    displayTime,
+  })
+}
+
 // Pure "does the user want to SEE their calendar" test — exported so the routing
 // harness can assert the same view/create/fall-through precedence prod uses.
 export function isCalendarViewRequest(text: string): boolean {
@@ -475,6 +518,14 @@ export async function buildCalendarActionReply(
   }
 
   if (createIntent?.needsTime) {
+    // Store the pending create so the user's next message (the time) completes THIS event.
+    // Previously nothing was stored, so "8pm" fell through to the reminder path and silently
+    // became a reminder instead of a calendar event. Keyed by user with created_at TTL via
+    // saveFollowupState — the same store the AM/PM and conflict follow-ups already use.
+    await saveFollowupState(telegramId, 'pending_calendar', {
+      title: createIntent.title,
+      target: targetFromText(text),
+    })
     return {
       handled: true,
       reply:
