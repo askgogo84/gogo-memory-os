@@ -3,7 +3,6 @@ import { addToListDetailed, formatAddResult, clearList, formatList, getAllLists,
 import { checkAndIncrementLimit, getUsageStatusReply, getFriendReminderCap } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAuthUrl } from '@/lib/google-calendar'
-import { fetchLatestEmails, fetchUnreadEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
 import { resolveUser, type Channel } from './resolve-user'
 import { detectIntent } from './detect-intent'
 import { parseClaudeResponse } from './parse-claude-response'
@@ -12,7 +11,6 @@ import { searchWeb } from '@/lib/web-search'
 import { buildSportsReplyWithState } from './handlers/sports'
 import { getLatestFollowupState, saveFollowupState, isFreshFollowupState } from './handlers/followup-state'
 import { resolvePendingReminder, resolvePendingCalendar, looksLikeNewCommand } from './pending-followup'
-import { buildEmailActionReply } from './handlers/email-actions'
 import { styleReplyByIntent } from './handlers/response-style'
 import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
 import { buildAmPmReminderSetReply, buildReminderFromAmPmChoice, isAmPmChoice } from './handlers/reminder-ampm-followup'
@@ -901,67 +899,21 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   if (intent.type === 'email_action') {
-    const reply = styleReplyByIntent('email_action', await buildEmailActionReply(resolvedUser.telegramId, incomingText))
+    // Email reading is disabled (gmail.readonly scope dropped). No Gmail API call.
+    const reply = `Email reading isn't available right now.`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'read_gmail') {
-    const { data: user } = await supabaseAdmin
-      .from('users')
-      .select('gmail_connected, gmail_access_token, gmail_refresh_token, gmail_email')
-      .eq('telegram_id', resolvedUser.telegramId)
-      .single()
-
-    if (!user?.gmail_connected) {
-      const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-      const reply = `💬 *Connect Gmail*\n\nTo show unread emails and draft replies, connect Gmail once.\n\n${connectUrl}\n\nAfter connecting, come back and type:\nshow my unread emails`
-      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
-    }
-
-    const lowerText = incomingText.toLowerCase()
-    const wantsUnread = lowerText.includes('unread')
-    const wantsSummary = lowerText.includes('summary') || lowerText.includes('summarize')
-    let emails: any[] = []
-    let accessToken = user.gmail_access_token || null
-    const fetchMode = async (token: string) => wantsUnread ? await fetchUnreadEmails(token, 3) : await fetchLatestEmails(token, 3)
-
-    if (accessToken) {
-      try { emails = await fetchMode(accessToken) } catch (error) { console.error('fetch emails with current token failed:', error) }
-    }
-
-    if (!emails.length && user.gmail_refresh_token) {
-      const refreshedToken = await refreshGmailAccessToken(user.gmail_refresh_token)
-      if (refreshedToken) {
-        accessToken = refreshedToken
-        await supabaseAdmin.from('users').update({ gmail_access_token: refreshedToken }).eq('telegram_id', resolvedUser.telegramId)
-        try { emails = await fetchMode(refreshedToken) } catch (error) { console.error('fetch emails with refreshed token failed:', error) }
-      }
-    }
-
-    if (!emails.length) {
-      const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-      const reply = `💬 *Gmail needs reconnecting*\n\nI couldnÃ¢ÂÂt fetch your emails right now.\n\nReconnect Gmail here:\n${connectUrl}\n\nThen type:\nshow my unread emails`
-      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
-    }
-
-    const reply = `Top 3 ${wantsUnread ? 'unread' : 'latest'} emails${user.gmail_email ? ` for ${user.gmail_email}` : ''}:\n\n` +
-      emails.map((mail: any, idx: number) => {
-        const safeSnippet = (mail.snippet || '').replace(/\s+/g, ' ').trim()
-        const shortSnippet = safeSnippet.length > 160 ? safeSnippet.slice(0, 157) + '...' : safeSnippet
-        return `${idx + 1}. ${mail.subject}\nFrom: ${mail.from}` + (shortSnippet ? `\n${shortSnippet}` : '')
-      }).join('\n\n')
-
-    const styledGmailReply = styleReplyByIntent('read_gmail', reply)
-    await saveConversation(resolvedUser.telegramId, 'assistant', styledGmailReply)
-    return { text: formatOutgoingText(params.channel, styledGmailReply), resolvedUser }
+    // Email reading is disabled (gmail.readonly scope dropped).
+    const reply = `Email reading isn't available right now.`
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'connect_gmail') {
-    const connectUrl = `https://app.askgogo.in/api/gmail/connect?telegramId=${resolvedUser.telegramId}`
-    const reply = `💬 *Connect Gmail*\n\nConnect once to unlock email summaries and reply drafts.\n\n${connectUrl}`
+    const reply = `Gmail connection isn't available right now.`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -1232,12 +1184,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (parsed.type === 'memory') {
     await saveMemory(resolvedUser.telegramId, parsed.fact)
-    finalReply = parsed.replyText || 'Got it Ã¢ÂÂ I will remember that.'
+    finalReply = parsed.replyText || 'Got it — I will remember that.'
   }
 
   if (parsed.type === 'reminder') {
     await createReminder(resolvedUser.telegramId, resolvedUser.telegramId, parsed.remindAt, parsed.message, parsed.pattern, params.channel === 'whatsapp' ? resolvedUser.whatsappId : null)
-    finalReply = parsed.replyText || `Done Ã¢ÂÂ I have set the reminder for ${parsed.message}.`
+    finalReply = parsed.replyText || `Done — I have set the reminder for ${parsed.message}.`
   }
 
   if (parsed.type === 'list_add') {

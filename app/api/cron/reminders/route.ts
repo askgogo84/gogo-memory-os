@@ -20,6 +20,13 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 // the env var reverts behaviour to HEAD instantly. Fail-open: never drops a reminder.
 const REMINDER_DELIVERY_TRACKING =
   process.env.REMINDER_DELIVERY_TRACKING === '1' || process.env.REMINDER_DELIVERY_TRACKING === 'true'
+// Friend-to-friend delivery gate. Default OFF (unset): a reminder bound for a
+// friend (recipient ≠ owner) is still created and the sender was already told it
+// was saved, but this cron does NOT deliver it to the recipient — the row is
+// consumed (markReminderSent at the end of the loop) so it won't retry forever.
+// The owner's own reminders are never affected. Set to '1'/'true' to deliver.
+const F2F_REMINDERS_ENABLED =
+  process.env.F2F_REMINDERS_ENABLED === '1' || process.env.F2F_REMINDERS_ENABLED === 'true'
 
 // Keywords that mean "send the actual morning briefing" not a dumb notification
 const BRIEFING_KEYWORDS = /^(morning briefing|good morning|daily briefing|morning brief|briefing|my briefing)$/i
@@ -302,38 +309,46 @@ export async function GET(req: Request) {
         results.push({ id: reminder.id, channel: 'none', to: null, message: msgRaw, status: 'skipped_empty' })
       } else {
         if (whatsappTo) {
-          if (isBriefing) {
-            // Trigger the actual briefing instead of a dumb notification
-            console.log(`BRIEFING_REMINDER: triggering actual briefing for ${whatsappTo}`)
-            const ok = await triggerMorningBriefing(whatsappTo)
-            if (!ok) {
-              // Fallback: send a nudge if briefing API fails
-              await sendWhatsApp(whatsappTo, '🌅 Good morning! Type *morning* to get your daily briefing.')
-            }
-          } else if (digestTopic) {
-            // Topic digests are rich dynamic content - freeform (in-session only for now).
-            sentMsg = await sendWhatsApp(whatsappTo, reminderText)
-          } else if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID || process.env.TWILIO_REMINDER_CONTENT_SID) {
-            // Reminders are business-initiated: ALWAYS use an approved Utility
-            // template. Freeform outside the 24h window is accepted then dropped
-            // async with 63016 (uncatchable) - the Jul 19 outage.
-            // Prefer the Quick-Reply buttons template when its SID is set (both are
-            // Utility, so the out-of-24h-window guarantee is unchanged); fall back to
-            // the text template otherwise — reversible rollout via the env var alone.
-            const reminderLabel = (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); return `${pickReminderEmoji(lbl)} ${lbl}` })()
-            // Buttons only for the owner's OWN reminders — a friend recipient can't act
-            // on buttons that mutate a row they don't own (they'd get "couldn't find a
-            // recent reminder"). Friend reminders get the plain text template instead.
-            if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID && await reminderGoesToOwner(reminder, whatsappTo)) {
-              sentMsg = await sendWhatsAppReminderButtons(whatsappTo, reminderLabel)
-            } else {
-              sentMsg = await sendWhatsAppReminderTemplate(whatsappTo, reminderLabel)
-            }
+          if (!F2F_REMINDERS_ENABLED && !(await reminderGoesToOwner(reminder, whatsappTo))) {
+            // F2F gate OFF: recipient is not the owner → do not deliver. The row is
+            // consumed by markReminderSent at the end of this iteration so it won't
+            // retry forever. No routing/parsing/schema change; delivery only.
+            console.log('F2F_DISABLED_SUPPRESSED:', { id: reminder.id, to: whatsappTo, owner: reminder.telegram_id })
+            results.push({ id: reminder.id, channel: 'none', to: whatsappTo, message: msgRaw, status: 'f2f_disabled' })
           } else {
-            console.warn('NO_REMINDER_TEMPLATE_SID: freeform send - will NOT deliver outside the 24h window')
-            sentMsg = await sendWhatsApp(whatsappTo, reminderText)
+            if (isBriefing) {
+              // Trigger the actual briefing instead of a dumb notification
+              console.log(`BRIEFING_REMINDER: triggering actual briefing for ${whatsappTo}`)
+              const ok = await triggerMorningBriefing(whatsappTo)
+              if (!ok) {
+                // Fallback: send a nudge if briefing API fails
+                await sendWhatsApp(whatsappTo, '🌅 Good morning! Type *morning* to get your daily briefing.')
+              }
+            } else if (digestTopic) {
+              // Topic digests are rich dynamic content - freeform (in-session only for now).
+              sentMsg = await sendWhatsApp(whatsappTo, reminderText)
+            } else if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID || process.env.TWILIO_REMINDER_CONTENT_SID) {
+              // Reminders are business-initiated: ALWAYS use an approved Utility
+              // template. Freeform outside the 24h window is accepted then dropped
+              // async with 63016 (uncatchable) - the Jul 19 outage.
+              // Prefer the Quick-Reply buttons template when its SID is set (both are
+              // Utility, so the out-of-24h-window guarantee is unchanged); fall back to
+              // the text template otherwise — reversible rollout via the env var alone.
+              const reminderLabel = (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); return `${pickReminderEmoji(lbl)} ${lbl}` })()
+              // Buttons only for the owner's OWN reminders — a friend recipient can't act
+              // on buttons that mutate a row they don't own (they'd get "couldn't find a
+              // recent reminder"). Friend reminders get the plain text template instead.
+              if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID && await reminderGoesToOwner(reminder, whatsappTo)) {
+                sentMsg = await sendWhatsAppReminderButtons(whatsappTo, reminderLabel)
+              } else {
+                sentMsg = await sendWhatsAppReminderTemplate(whatsappTo, reminderLabel)
+              }
+            } else {
+              console.warn('NO_REMINDER_TEMPLATE_SID: freeform send - will NOT deliver outside the 24h window')
+              sentMsg = await sendWhatsApp(whatsappTo, reminderText)
+            }
+            results.push({ id: reminder.id, channel: 'whatsapp', to: whatsappTo, message: msgRaw, status: 'sent', isBriefing })
           }
-          results.push({ id: reminder.id, channel: 'whatsapp', to: whatsappTo, message: msgRaw, status: 'sent', isBriefing })
         } else if (reminder.chat_id && Number(reminder.chat_id) > 0) {
           await sendTelegram(Number(reminder.chat_id), reminderText)
           results.push({ id: reminder.id, channel: 'telegram', to: reminder.chat_id, message: msgRaw, status: 'sent' })

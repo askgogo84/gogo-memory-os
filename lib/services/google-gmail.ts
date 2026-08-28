@@ -18,10 +18,8 @@ export function getGmailAuthUrl(telegramId: number): string {
     client_id: process.env.GOOGLE_CLIENT_ID!,
     redirect_uri: 'https://app.askgogo.in/api/gmail/callback',
     response_type: 'code',
-    scope: [
-      'https://www.googleapis.com/auth/gmail.readonly',
-      'https://www.googleapis.com/auth/userinfo.email'
-    ].join(' '),
+    // gmail.readonly dropped — email reading is disabled. Only identity is requested.
+    scope: 'https://www.googleapis.com/auth/userinfo.email',
     access_type: 'offline',
     prompt: 'consent',
     state: String(telegramId),

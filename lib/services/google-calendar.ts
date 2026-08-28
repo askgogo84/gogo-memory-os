@@ -3,7 +3,7 @@ export function getAuthUrl(telegramId: number): string {
     client_id: process.env.GOOGLE_CLIENT_ID!,
     redirect_uri: 'https://app.askgogo.in/api/calendar/callback',
     response_type: 'code',
-    scope: 'https://www.googleapis.com/auth/calendar',
+    scope: 'https://www.googleapis.com/auth/calendar.events',
     access_type: 'offline',
     prompt: 'consent',
     state: String(telegramId),
