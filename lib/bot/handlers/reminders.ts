@@ -188,7 +188,6 @@ function extractListNameFromText(text: string): string {
 function extractTaskAfterTo(input: string) {
   // Only use "task after to" for patterns like "remind me to call X"
   // Don't use for "Send X to Y" — that would strip the subject
-  const reminderVerbs = /\b(remind|set|schedule|book|call|email|message|text|send|ping|follow up|check|do|complete|finish|submit|pay|buy|order)/i
   const match = input.match(/\bremind(?:\s+me)?\s+to\s+(.+)$/i)
   if (!match) {
     // Only extract "to Y" if it looks like a standalone recipient, not part of the task
@@ -248,16 +247,17 @@ function cleanMessageText(input: string): string {
     .replace(/\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
+    .replace(/\bfrom\s+.+?\s+to\s+.+?(daily)?$/gi, '')
     .replace(/\b(?:at|for)\s+\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?\b/gi, '')
     .replace(/\b\d{1,2}[:.]\d{2}\s*(?:am|pm)?\b/gi, '')
     .replace(/\b\d{1,4}([:.]\d{2})?\s*(am|pm)\b/gi, '')
-    .replace(/\bfrom\s+.+?\s+to\s+.+?(daily)?$/gi, '')
 
     .replace(/[.]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 
   cleaned = cleaned.replace(/^(to|for|every)\s+/i, '').trim()
+  cleaned = cleaned.replace(/\s+\b(from|to|for|at|on|in|by)\b(?=\s|$)/gi, '').replace(/\s+/g, ' ').trim()
   cleaned = cleaned.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').trim()
 
   // Only use taskAfterTo as fallback if cleaned is empty/generic
