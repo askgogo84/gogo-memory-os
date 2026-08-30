@@ -163,6 +163,10 @@ function cleanTitle(text: string) {
     .replace(/\btomorrow\b/gi, '')
     .replace(/\btoday\b/gi, '')
     .replace(/\bday after tomorrow\b/gi, '')
+    .replace(new RegExp('\\\\b\\\\d{1,2}(?:st|nd|rd|th)?\\\\s+(?:of\\\\s+)?(?:' + MONTH_NAMES + ')\\\\b\\\\s*,?\\\\s*(?:\\\\d{4})?', 'gi'), '')
+    .replace(new RegExp('\\\\b(?:' + MONTH_NAMES + ')\\\\s+\\\\d{1,2}(?:st|nd|rd|th)?\\\\b\\\\s*,?\\\\s*(?:\\\\d{4})?', 'gi'), '')
+    .replace(/\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b/g, '')
+    .replace(/\b\d{4}-\d{1,2}-\d{1,2}\b/g, '')
     .replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?/gi, '')
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\s+/g, ' ')
@@ -189,6 +193,102 @@ function parseTime(text: string) {
   return { hour, minute }
 }
 
+// ── Absolute dates ───────────────────────────────────────────────────────────
+// targetFromText only knows today / tomorrow / day after tomorrow, so any event
+// dated further out silently landed on today. These parse a real date out of the
+// text; when the text has no absolute date every existing path is untouched.
+
+const MONTH_NAMES =
+  'jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december'
+
+const MONTH_INDEX: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+  may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9,
+  september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+}
+
+function daysInMonth(year: number, month: number) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate()
+}
+
+function resolveYear(month: number, day: number, raw?: string) {
+  if (raw) {
+    const n = Number(raw)
+    return n < 100 ? 2000 + n : n
+  }
+  const now = istPartsNow()
+  const isPast = month < now.month || (month === now.month && day < now.day)
+  return isPast ? now.year + 1 : now.year
+}
+
+function validDate(year: number, month: number, day: number) {
+  if (!year || !month || !day) return null
+  if (month < 1 || month > 12) return null
+  if (day < 1 || day > daysInMonth(year, month)) return null
+  return { year, month, day }
+}
+
+export function parseAbsoluteDate(text: string) {
+  const lower = (text || '').toLowerCase()
+
+  const iso = lower.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/)
+  if (iso) return validDate(Number(iso[1]), Number(iso[2]), Number(iso[3]))
+
+  const dayFirst = lower.match(
+    new RegExp('\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(' + MONTH_NAMES + ')\\b(?:\\s*,?\\s*(\\d{4}|\\d{2}))?')
+  )
+  if (dayFirst) {
+    const month = MONTH_INDEX[dayFirst[2]]
+    const day = Number(dayFirst[1])
+    return validDate(resolveYear(month, day, dayFirst[3]), month, day)
+  }
+
+  const monthFirst = lower.match(
+    new RegExp('\\b(' + MONTH_NAMES + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:\\s*,?\\s*(\\d{4}|\\d{2}))?')
+  )
+  if (monthFirst) {
+    const month = MONTH_INDEX[monthFirst[1]]
+    const day = Number(monthFirst[2])
+    return validDate(resolveYear(month, day, monthFirst[3]), month, day)
+  }
+
+  // Numeric, day-first (Indian convention), and only with an explicit year so
+  // that bare "7/9" can never be mistaken for a date.
+  const numeric = lower.match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})\b/)
+  if (numeric) {
+    const day = Number(numeric[1])
+    const month = Number(numeric[2])
+    return validDate(resolveYear(month, day, numeric[3]), month, day)
+  }
+
+  return null
+}
+
+const DEICTIC_RE = /\b(?:this|that|it|the (?:above|event|poster|invite|note))\b/i
+
+// Newest saved note for this user in the last 20 minutes, if it carries a date.
+async function findRecentNoteEvent(telegramId: number) {
+  const since = new Date(Date.now() - 20 * 60 * 1000).toISOString()
+  const { data, error } = await supabaseAdmin
+    .from('documents')
+    .select('title, summary, extracted, created_at')
+    .eq('telegram_id', telegramId)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  if (error || !data || !data.length) return null
+  const row: any = data[0]
+  const blob = [row.title, row.summary, row?.extracted?.text].filter(Boolean).join('\n')
+  const date = parseAbsoluteDate(blob)
+  if (!date) return null
+
+  return {
+    title: String(row.title || 'Event').replace(/^Image note\s*—\s*/i, '').slice(0, 120),
+    date,
+    time: parseTime(blob),
+  }
+}
 export function parseCalendarCreate(text: string) {
   const lower = text.toLowerCase()
 
@@ -461,7 +561,7 @@ export async function buildCalendarActionReply(
 ): Promise<CalendarActionResult> {
   const wantsCalendarView = isCalendarViewRequest(text)
 
-  const createIntent = parseCalendarCreate(text)
+  let createIntent: any = parseCalendarCreate(text)
 
   if (!wantsCalendarView && !createIntent) {
     return {
@@ -528,6 +628,31 @@ export async function buildCalendarActionReply(
     }
   }
 
+  // "add this to my calendar" straight after an image note: the date and time live in
+  // the note, not in the message. Resolve them before falling back to asking for a time.
+  if (createIntent?.needsTime && DEICTIC_RE.test(text)) {
+    const noteEvent = await findRecentNoteEvent(telegramId)
+    if (noteEvent && noteEvent.time) {
+      const d = noteEvent.date
+      const start = { ...d, hour: noteEvent.time.hour, minute: noteEvent.time.minute }
+      const endUtc = istWallTimeToUtcDate(d.year, d.month, d.day, start.hour, start.minute)
+      endUtc.setMinutes(endUtc.getMinutes() + 30)
+      const endParts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false,
+      }).formatToParts(endUtc)
+      createIntent = {
+        needsTime: false,
+        title: noteEvent.title,
+        target: targetFromText(text),
+        start,
+        end: {
+          ...d,
+          hour: Number(endParts.find((x) => x.type === 'hour')?.value || start.hour),
+          minute: Number(endParts.find((x) => x.type === 'minute')?.value || start.minute),
+        },
+      }
+    }
+  }
   if (createIntent?.needsTime) {
     // Store the pending create so the user's next message (the time) completes THIS event.
     // Previously nothing was stored, so "8pm" fell through to the reminder path and silently
