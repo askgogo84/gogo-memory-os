@@ -117,7 +117,8 @@ export async function readAndSummarizeImageNote(params: {
               '*Extracted text*\n' +
               'short extracted text, or say if text was not readable. Use [unclear] instead of guessing.\n\n' +
               '*Next actions*\n' +
-              '• action if any',
+              '• If the image shows a specific calendar date, make the FIRST bullet exactly: Reply *add to calendar* to create this event\\n' +
+              '• Then any other practical action. If there are none, write: No further actions needed.',
           },
           {
             type: 'image_url',
@@ -221,3 +222,4 @@ export function extractNoteFields(text: string): { summary: string; extracted: s
   const extracted = extractSection(text, 'Extracted text').trim()
   return { summary, extracted, medicalMode }
 }
+
