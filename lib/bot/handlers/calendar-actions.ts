@@ -324,7 +324,8 @@ export function parseCalendarCreate(text: string) {
   }
 
   const target = targetFromText(text)
-  const parts = targetParts(target)
+  const absolute = parseAbsoluteDate(text)
+  const parts = absolute || targetParts(target)
 
   let title = cleanTitle(text)
 
@@ -746,3 +747,4 @@ export async function buildCalendarActionReply(
     reply: '',
   }
 }
+
