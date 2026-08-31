@@ -1,4 +1,4 @@
-﻿import { supabaseAdmin } from '@/lib/supabase-admin'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 function parseTimePart(input: string): { hour: number; minute: number } | null {
   const match = input.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
@@ -103,6 +103,23 @@ export async function setBriefingTime(telegramId: number, input: string) {
     return await disableBriefing(telegramId)
   }
 
+  // Plain "turn it on" phrasings. Previously the ONLY way to enable a briefing
+  // was to say a parseable time, so "turn on daily briefing" returned an error
+  // and 116 of 117 users never had one — while onboarding told them it was on.
+  if (/^(turn on|enable|start|switch on)\s+(the\s+)?(daily|morning)\s+brief(ing)?$/.test(lower) ||
+      /^(daily|morning)\s+brief(ing)?\s+(on|please)$/.test(lower)) {
+    const { error: onErr } = await supabaseAdmin
+      .from('users')
+      .update({ briefing_enabled: true, briefing_time: '08:00' })
+      .eq('telegram_id', telegramId)
+    if (onErr) return `I couldn't turn on your daily briefing right now.`
+    return (
+      `☀️ *Daily briefing on*\n\n` +
+      `I'll message you every morning at *8:00 AM*.\n\n` +
+      `Weather, calendar, reminders and what to focus on.\n\n` +
+      `Say *set briefing at 9 am* to change the time, or *turn off daily briefing* to stop.`
+    )
+  }
   const time = parseTimePart(input)
   if (!time) {
     return `I couldn't understand the briefing time. Try something like *set briefing at 8 am*.`

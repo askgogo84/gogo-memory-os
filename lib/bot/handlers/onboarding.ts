@@ -138,7 +138,8 @@ export function buildOnboardingFollowup(choice: number, userName?: string): stri
         `🍎 *Nutrition* — track meals, daily summary\n` +
         `✈️ *Travel* — forward tickets, auto-reminders\n` +
         `📅 *Calendar* — connect Google Calendar\n` +
-        `☀️ *Daily briefing* — every morning at 8 AM\n\n` +
+        `☀️ *Daily briefing* — your day, every morning\n\n` +
+        `👉 Reply *briefing on* and I'll send it at 8 AM daily.\n\n` +
         `*Quick commands to try:*\n` +
         `• _"Remind me tomorrow at 9 to call Priya"_\n` +
         `• _"What's my day today"_\n` +

@@ -65,7 +65,13 @@ function isBriefingSettingsIntent(lower: string) {
     lower === 'briefing status' || lower === 'daily briefing status' || lower === 'morning briefing status' ||
     lower === 'turn off daily briefing' || lower === 'turn off morning briefing' ||
     lower === 'stop daily briefing' || lower === 'stop morning briefing' ||
-    lower === 'disable daily briefing' || lower === 'disable morning briefing'
+    lower === 'disable daily briefing' || lower === 'disable morning briefing' ||
+    // Enable phrasings. Without these, "turn on daily briefing" fell through and
+    // sent ONE briefing without ever setting briefing_enabled, so the user believed
+    // it was on and never heard from us again.
+    /^(turn on|enable|start|switch on)\s+(the\s+)?(daily|morning)\s+brief(ing)?$/.test(lower) ||
+    /^(daily|morning)\s+brief(ing)?\s+(on|please)$/.test(lower) ||
+    lower === 'briefing on' || lower === 'brief me daily' || lower === 'send me daily briefing'
   )
 }
 
