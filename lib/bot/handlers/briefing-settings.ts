@@ -109,6 +109,7 @@ export async function setBriefingTime(telegramId: number, input: string) {
   if (/^(turn on|enable|start|switch on)\s+(the\s+)?(daily|morning)\s+brief(ing)?$/.test(lower) ||
       /^(daily |morning )?brief(ing)?\s+(on|please)$/.test(lower) ||
       lower === 'briefing on' || lower === 'brief me daily' || lower === 'send me daily briefing') {
+    const { error: onErr } = await supabaseAdmin
       .from('users')
       .update({ briefing_enabled: true, briefing_time: '08:00' })
       .eq('telegram_id', telegramId)
