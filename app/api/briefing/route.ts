@@ -461,11 +461,21 @@ function formatNotes(ctx: BriefingContext) {
   const seen = new Set<string>()
   const lines: string[] = []
   for (const n of ctx.notes) {
+    // Filter and dedupe against the RAW note. cleanNoteForBriefing truncates to
+    // 120 chars, which was hiding the date from isPastDatedNote and making two
+    // copies of the same document look distinct.
+    const raw = String(n.text || '').replace(/\s+/g, ' ').trim()
+    if (!raw) continue
+    if (isPastDatedNote(raw, ctx.timezone)) continue
+    const key = raw
+      .toLowerCase()
+      .replace(/^(document|image note|note)\s*[-—:]*\s*/i, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .slice(0, 50)
+    if (!key || seen.has(key)) continue
     const cleaned = cleanNoteForBriefing(n.text || '')
     if (!cleaned) continue
-    if (isPastDatedNote(cleaned, ctx.timezone)) continue
-    const key = cleaned.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 60)
-    if (!key || seen.has(key)) continue
     seen.add(key)
     lines.push(cleaned)
     if (lines.length >= 3) break
