@@ -107,8 +107,8 @@ export async function setBriefingTime(telegramId: number, input: string) {
   // was to say a parseable time, so "turn on daily briefing" returned an error
   // and 116 of 117 users never had one — while onboarding told them it was on.
   if (/^(turn on|enable|start|switch on)\s+(the\s+)?(daily|morning)\s+brief(ing)?$/.test(lower) ||
-      /^(daily|morning)\s+brief(ing)?\s+(on|please)$/.test(lower)) {
-    const { error: onErr } = await supabaseAdmin
+      /^(daily |morning )?brief(ing)?\s+(on|please)$/.test(lower) ||
+      lower === 'briefing on' || lower === 'brief me daily' || lower === 'send me daily briefing') {
       .from('users')
       .update({ briefing_enabled: true, briefing_time: '08:00' })
       .eq('telegram_id', telegramId)
