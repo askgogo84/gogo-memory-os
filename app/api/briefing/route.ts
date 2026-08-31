@@ -418,13 +418,58 @@ function formatTodos(ctx: BriefingContext) {
     .join('\n')}`
 }
 
+// True only when the note carries a date and EVERY date in it is already past.
+// Defaults to false whenever no date is found or parsing is uncertain — keeping a
+// stale note is a much smaller failure than silently hiding a live one.
+const NOTE_MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+}
+
+function isPastDatedNote(text: string, timezone: string): boolean {
+  const found: number[] = []
+  const push = (y: number, m: number, d: number) => {
+    if (!y || m < 1 || m > 12 || d < 1 || d > 31) return
+    found.push(Date.UTC(y, m - 1, d))
+  }
+
+  const lower = text.toLowerCase()
+  const nowParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone || 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date())
+  const get = (t: string) => Number(nowParts.find((p) => p.type === t)?.value)
+  const todayUtc = Date.UTC(get('year'), get('month') - 1, get('day'))
+
+  let m: RegExpExecArray | null
+  const dayMonth = /\\b(\\d{1,2})\\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\s+(\\d{4})\\b/g
+  while ((m = dayMonth.exec(lower))) push(Number(m[3]), NOTE_MONTHS[m[2]], Number(m[1]))
+
+  const numeric = /\\b(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-](\\d{4})\\b/g
+  while ((m = numeric.exec(lower))) push(Number(m[3]), Number(m[2]), Number(m[1]))
+
+  if (!found.length) return false
+  return found.every((d) => d < todayUtc)
+}
+
 function formatNotes(ctx: BriefingContext) {
   if (!ctx.notes.length) return ''
 
-  const lines = ctx.notes
-    .map((n: any) => cleanNoteForBriefing(n.text || ''))
-    .filter(Boolean)
-    .slice(0, 3)
+  // Dedupe near-identical notes (the same document summarised twice, one truncated)
+  // and drop notes whose only content is a date already in the past — a flown flight
+  // leg is not a 'recent note'.
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const n of ctx.notes) {
+    const cleaned = cleanNoteForBriefing(n.text || '')
+    if (!cleaned) continue
+    if (isPastDatedNote(cleaned, ctx.timezone)) continue
+    const key = cleaned.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 60)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    lines.push(cleaned)
+    if (lines.length >= 3) break
+  }
 
   if (!lines.length) return ''
 
