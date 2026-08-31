@@ -261,11 +261,15 @@ function cleanNoteForBriefing(text: string) {
 
   // Image/document notes store a one-line summary followed by an extracted-text
   // block ("... Text: <ocr dump>"). Only the summary belongs in the briefing —
-  // cut everything from the "Text:" boundary on so a single note renders as a
-  // single bullet, not two.
+  // cut everything from the "Text:" boundary on. What remains can still span
+  // multiple lines: a title line followed by the note's own "• " bullets. Keep
+  // only the first line — formatNotes adds its own "• " prefix, so a multi-line
+  // return would make one note read as several entries.
   return raw
     .replace(/^Image note —\s*/i, '')
     .replace(/\s*Text:.*$/is, '')
+    .trim()
+    .split('\n')[0]
     .trim()
     .slice(0, 120)
 }
