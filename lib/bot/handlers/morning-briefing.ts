@@ -256,10 +256,6 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
     blocks.push(rem)
   }
 
-  const nextActions = calendarState.connected
-    ? ['add meeting tomorrow at 4 pm', 'show my reminders', 'plan my day']
-    : ['connect calendar', 'set a reminder', 'next RCB match']
-  blocks.push(`*Next actions*\n${nextActions.map((x) => `• ${x}`).join('\n')}`)
 
   return blocks.join('\n\n')
 }
