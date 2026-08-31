@@ -488,9 +488,6 @@ async function buildBriefing(user: UserRecord) {
     formatFollowups(ctx),
     formatTodos(ctx),
     formatNotes(ctx),
-    formatMemory(ctx),
-    '',
-    `💬 Try: *tasks*, *my memory*, *show notes about Dr Gautami*, or *news*`,
   ]
 
   return sections.filter(Boolean).join('\n\n')
