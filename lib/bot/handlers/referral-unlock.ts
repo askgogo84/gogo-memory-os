@@ -39,6 +39,8 @@ async function findUserByReferralCode(code: string) {
     .from('users')
     .select('telegram_id, whatsapp_id')
     .ilike('whatsapp_id', `%${referralId}%`)
+    .not('telegram_id', 'is', null)
+    .order('telegram_id', { ascending: true })
     .limit(1)
 
   return data?.[0] || null

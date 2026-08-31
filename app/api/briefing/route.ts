@@ -259,9 +259,14 @@ function cleanNoteForBriefing(text: string) {
     return parts.join(' • ').slice(0, 130)
   }
 
+  // Image/document notes store a one-line summary followed by an extracted-text
+  // block ("... Text: <ocr dump>"). Only the summary belongs in the briefing —
+  // cut everything from the "Text:" boundary on so a single note renders as a
+  // single bullet, not two.
   return raw
     .replace(/^Image note —\s*/i, '')
-    .replace(/\s*Text:\s*/i, ' • ')
+    .replace(/\s*Text:.*$/is, '')
+    .trim()
     .slice(0, 120)
 }
 
@@ -442,10 +447,10 @@ function isPastDatedNote(text: string, timezone: string): boolean {
   const todayUtc = Date.UTC(get('year'), get('month') - 1, get('day'))
 
   let m: RegExpExecArray | null
-  const dayMonth = /\\b(\\d{1,2})\\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\s+(\\d{4})\\b/g
+  const dayMonth = /\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{4})\b/g
   while ((m = dayMonth.exec(lower))) push(Number(m[3]), NOTE_MONTHS[m[2]], Number(m[1]))
 
-  const numeric = /\\b(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-](\\d{4})\\b/g
+  const numeric = /\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})\b/g
   while ((m = numeric.exec(lower))) push(Number(m[3]), Number(m[2]), Number(m[1]))
 
   if (!found.length) return false

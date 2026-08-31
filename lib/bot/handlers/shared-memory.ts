@@ -40,6 +40,8 @@ export async function resolveRecipientTelegramId(
     .from('users')
     .select('telegram_id, whatsapp_id')
     .ilike('whatsapp_id', `%${last10}%`)
+    .not('telegram_id', 'is', null)
+    .order('telegram_id', { ascending: true })
     .limit(1)
   return { telegramId: u?.[0]?.telegram_id ?? null, hasContact: true }
 }
