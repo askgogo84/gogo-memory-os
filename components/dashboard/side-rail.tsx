@@ -2,38 +2,25 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { TAB_ICONS } from './icons'
+import { TAB_ICONS, UsageIcon } from './icons'
 import { TABS } from './tab-bar'
-
-// ── The desktop nav surface ───────────────────────────────────────────────────
-// On lg+ the bottom TabBar is hidden and this left rail takes over (mockup 1i:
-// "the same thread widened, not a different product. Left rail replaces the tab
-// bar."). It is the first IN-FLOW child of the shell's lg flex-row, sitting to
-// the left of <main> INSIDE the centred 1180px frame — so it stays adjacent to
-// the content at every viewport width instead of tracking the viewport edge.
-//
-// lg:sticky + lg:top-0 + lg:self-start + lg:h-screen keep it pinned and full-
-// height: self-start opts out of the row's align-items:stretch so h-screen (not
-// the content height) governs it, and sticky/top-0 re-pin it during scroll on
-// long pages. This preserves the always-visible, viewport-tall behaviour the old
-// fixed rail had, but as normal flow so it aligns within the frame (fixed would
-// not). NB: sticky is in-flow — it does not shift <main>'s geometry.
-//
-// EVERYTHING here is lg:-prefixed / gated behind `hidden lg:flex`: below lg the
-// component renders display:none, so narrow (mobile) output is byte-identical to
-// before this phase. The tab list and icons come from tab-bar.tsx / icons.tsx —
-// one source of nav truth, no second icon set.
-//
-// Active/inactive states mirror the mockup rail: active item on surface-white
-// with the orange accent and a hairline shadow; inactive in warm ink-2.
+import { ThemeToggle } from './theme-toggle'
 
 export function SideRail() {
   const pathname = usePathname()
+  const usageActive = pathname === '/dashboard/usage' || pathname.startsWith('/dashboard/usage/')
 
   return (
-    <nav className="hidden w-[212px] flex-col gap-[22px] border-r border-gogo-ink/8 bg-gogo-rail px-4 py-[22px] lg:flex lg:sticky lg:top-0 lg:h-screen lg:self-start">
-      <div className="flex items-center px-3">
-        <span className="font-serif text-[18px] font-semibold tracking-[-0.3px] text-gogo-ink">AskGogo</span>
+    <nav className="hidden w-[224px] shrink-0 flex-col border-r border-gogo-ink/8 bg-gogo-rail px-4 py-5 lg:sticky lg:top-0 lg:flex lg:h-screen lg:self-start">
+      <div className="flex items-center justify-between px-2 pb-5">
+        <div className="flex items-center gap-2.5">
+          <img src="/gogo-figure.png" alt="" className="h-9 w-9 rounded-full" />
+          <div>
+            <div className="font-serif text-[18px] font-semibold tracking-[-0.3px] text-gogo-ink">AskGogo</div>
+            <div className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-gogo-ink-3">Control center</div>
+          </div>
+        </div>
+        <ThemeToggle />
       </div>
 
       <div className="flex flex-col gap-[3px]">
@@ -45,17 +32,30 @@ export function SideRail() {
               key={key}
               href={href}
               aria-current={active ? 'page' : undefined}
-              className={`flex items-center gap-[11px] rounded-xl px-3 py-2.5 text-sm transition-colors duration-500 ease-calm ${
-                active
-                  ? 'bg-gogo-surface font-bold text-gogo-orange shadow-[0_1px_3px_rgba(62,35,18,0.06)]'
-                  : 'font-medium text-gogo-ink-2'
-              }`}
+              className={`flex items-center gap-[11px] rounded-[13px] px-3 py-2.5 text-sm transition-all duration-300 ${active ? 'bg-gogo-surface font-bold text-gogo-orange shadow-[0_5px_20px_rgba(62,35,18,0.06)]' : 'font-medium text-gogo-ink-2 hover:bg-gogo-surface/65 hover:text-gogo-ink'}`}
             >
               <Icon className="block h-[19px] w-[19px] shrink-0" />
               <span>{label}</span>
             </Link>
           )
         })}
+      </div>
+
+      <div className="mt-6 border-t border-gogo-ink/8 pt-4">
+        <div className="mb-2 px-3 text-[10.5px] font-bold uppercase tracking-[0.12em] text-gogo-ink-3">Account</div>
+        <Link
+          href="/dashboard/usage"
+          aria-current={usageActive ? 'page' : undefined}
+          className={`flex items-center gap-[11px] rounded-[13px] px-3 py-2.5 text-sm transition-all duration-300 ${usageActive ? 'bg-gogo-surface font-bold text-gogo-orange shadow-[0_5px_20px_rgba(62,35,18,0.06)]' : 'font-medium text-gogo-ink-2 hover:bg-gogo-surface/65 hover:text-gogo-ink'}`}
+        >
+          <UsageIcon className="block h-[19px] w-[19px] shrink-0" />
+          <span>Usage & plan</span>
+        </Link>
+      </div>
+
+      <div className="mt-auto rounded-[18px] border border-gogo-ink/8 bg-gogo-surface/65 p-3.5">
+        <div className="text-[12.5px] font-bold text-gogo-ink">AskGogo lives in WhatsApp</div>
+        <p className="mt-1 text-[11.5px] leading-5 text-gogo-ink-3">Use this dashboard to see, organise and control what Gogo remembers.</p>
       </div>
     </nav>
   )
