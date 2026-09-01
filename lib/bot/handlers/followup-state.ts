@@ -38,6 +38,36 @@ export async function getLatestFollowupState(telegramId: number, kind: string) {
   return items[0] || null
 }
 
+// Consume/clear only one follow-up kind for this user. The memories table stores
+// followup_state as JSON text, so resolve matching row ids first, then delete only
+// those rows. Best-effort: a failed clear must never crash the message pipeline.
+export async function clearFollowupState(telegramId: number, kind: string): Promise<void> {
+  try {
+    const { data } = await supabaseAdmin
+      .from('memories')
+      .select('id, content')
+      .eq('telegram_id', telegramId)
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    const ids = (data || [])
+      .filter((row: any) => {
+        try {
+          const parsed = JSON.parse(row.content)
+          return parsed?.type === 'followup_state' && parsed?.kind === kind
+        } catch {
+          return false
+        }
+      })
+      .map((row: any) => row.id)
+      .filter(Boolean)
+
+    if (ids.length) await supabaseAdmin.from('memories').delete().in('id', ids)
+  } catch (err: any) {
+    console.error('FOLLOWUP_STATE_CLEAR_FAILED:', err?.message || err)
+  }
+}
+
 // TTL guard shared by every follow-up consumer: a stored pending record is only honored for
 // `maxMinutes` (default 10). Missing/unparseable timestamps are treated as fresh (fail-open)
 // so a legacy record without created_at still works. Reads created_at off the row or the
