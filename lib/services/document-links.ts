@@ -13,7 +13,7 @@
  * Privacy invariants:
  *  - The token is random (crypto.randomBytes) and encodes NO user/document metadata.
  *  - The signed Supabase URL is never persisted; only the token row is.
- *  - Tokens carry an expiry (sensitive 7d / normal 30d) and support revocation.
+ *  - Tokens carry an expiry (sensitive 15m / normal 30d) and support revocation.
  *
  * Best-effort + non-fatal: a mint failure returns null so the caller can fall back
  * to a plain signed URL — retrieval still works, just with the ugly link.
@@ -25,12 +25,13 @@ import { getDocumentSignedUrl } from '@/lib/services/document-store'
 
 const TABLE = 'document_links'
 
-// Fresh Supabase signed-URL TTL used on every redirect. Deliberately short: the
-// short link itself can live for days, but each generated signed URL dies in ~2 min.
+// Fresh Supabase signed-URL TTL used on every redirect. Deliberately short: each
+// generated storage URL dies in ~2 min even while the branded token is still valid.
 const SIGNED_URL_TTL_SECONDS = 120
 
-// Token-level expiry windows (days). Sensitive documents expire sooner.
-const EXPIRY_DAYS_SENSITIVE = 7
+// Token-level expiry windows. Sensitive documents are bearer links to high-risk
+// material, so keep them short; users can ask again later to mint a fresh token.
+const EXPIRY_MINUTES_SENSITIVE = 15
 const EXPIRY_DAYS_NORMAL = 30
 
 const BASE_URL = (
@@ -47,6 +48,10 @@ function mintToken(): string {
 
 export function shortLinkUrl(token: string): string {
   return `${BASE_URL}/f/${token}`
+}
+
+function isoMinutesFromNow(minutes: number): string {
+  return new Date(Date.now() + minutes * 60 * 1000).toISOString()
 }
 
 function isoDaysFromNow(days: number): string {
@@ -83,11 +88,14 @@ export async function createDocumentShortLink(params: {
     if (existing?.token) return existing.token as string
 
     const token = mintToken()
+    const expiresAt = params.sensitive
+      ? isoMinutesFromNow(EXPIRY_MINUTES_SENSITIVE)
+      : isoDaysFromNow(EXPIRY_DAYS_NORMAL)
     const { error } = await supabaseAdmin.from(TABLE).insert({
       token,
       document_id: params.documentId,
       telegram_id: params.telegramId,
-      expires_at: isoDaysFromNow(params.sensitive ? EXPIRY_DAYS_SENSITIVE : EXPIRY_DAYS_NORMAL),
+      expires_at: expiresAt,
     })
     if (error) {
       console.error('SHORTLINK_INSERT_FAILED:', error.message)
