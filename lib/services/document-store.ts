@@ -162,6 +162,27 @@ export async function storeDocument(params: {
   return { id, storagePath }
 }
 
+// Signed URL for a stored file so retrieval can hand back the original. TTL is
+// short (default 10 min) since the link is delivered in-chat on demand. Returns
+// null on any failure (missing path, storage error) — never throws.
+export async function getDocumentSignedUrl(
+  storagePath: string,
+  ttlSeconds = 600,
+): Promise<string | null> {
+  try {
+    if (!storagePath) return null
+    const { data, error } = await supabaseAdmin.storage.from(BUCKET).createSignedUrl(storagePath, ttlSeconds)
+    if (error) {
+      console.error('DOCUMENT_SIGNED_URL_FAILED:', error.message)
+      return null
+    }
+    return data?.signedUrl ?? null
+  } catch (err: any) {
+    console.error('DOCUMENT_SIGNED_URL_FAILED:', err?.message || err)
+    return null
+  }
+}
+
 // ── Note documents (image DOCUMENT/OTHER + PDF non-ticket) ────────────────────
 
 function deriveNoteTitle(summary: string, medicalMode: boolean): string {

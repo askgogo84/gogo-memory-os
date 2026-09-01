@@ -63,6 +63,7 @@ import { handleBucketCommand } from '@/lib/bot/handlers/shared-memory'
 import { parsePdfTicket, parseImageTicket, classifyPdfDocument, readAndSummarizePdfDocument, type PdfClass } from '@/lib/services/pdf-reader'
 import { persistAndRemindTicket } from '@/lib/services/travel-tickets'
 import { saveDocumentNote, saveTicketDocument, deriveNoteTitleFromReader } from '@/lib/services/document-store'
+import { tryHandleAssetSave, isAssetRetrievalCommand, buildAssetRetrievalReply, buildAssetFieldReply } from '@/lib/services/asset-memory'
 import { describeCadence, formatReminderWhen, cleanReminderName } from '@/lib/services/reminder-series'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 
@@ -553,6 +554,16 @@ export async function POST(req: NextRequest) {
               }
             }
             if (!handledAsTicket) {
+              // Asset memory: payment proof / passport / ID → masked structured save
+              // (no OCR dump, no notes-list plaintext, no calendar). Returns null when
+              // it's not a structured asset (or on any error), so we fall through to the
+              // existing image-note path below unchanged.
+              const asset = await tryHandleAssetSave({ telegramId: resolvedUser.telegramId, mediaUrl: firstMediaUrl, contentType: firstMediaType, kind: 'image', caption: bodyText, messageId: inboundMessageSid || null, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN! })
+              if (asset) {
+                await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[asset] ${bodyText}` : '[asset]')
+                await saveConversation(resolvedUser.telegramId, 'assistant', asset.reply)
+                await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[asset]', reply: asset.reply })
+              } else {
               // Not food, not a ticket — treat as image note instead
               await sendWhatsAppMessage(from, '📝 Saving as a note...')
               const { readAndSummarizeImageNote } = await import('@/lib/services/image-note-reader')
@@ -562,6 +573,7 @@ export async function POST(req: NextRequest) {
               await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
               // Additive: durably store the document image (existing note behaviour unchanged).
               await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
+              }
             }
           } else {
           await sendWhatsAppMessage(from, '🥗 Analysing your meal...')
@@ -637,6 +649,15 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || `[${platform}]`, reply: mediaReply })
         } else {
+          // Asset memory gate first: payment proof / passport / ID → masked save.
+          // Null (not a structured asset / any error) falls through to the note path.
+          const asset = await tryHandleAssetSave({ telegramId: resolvedUser.telegramId, mediaUrl: firstMediaUrl, contentType: firstMediaType, kind: 'image', caption: bodyText, messageId: inboundMessageSid || null, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN! })
+          if (asset) {
+            await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[asset] ${bodyText}` : '[asset]')
+            await saveConversation(resolvedUser.telegramId, 'assistant', asset.reply)
+            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[asset]', reply: asset.reply })
+            return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+          }
           await sendWhatsAppMessage(from, 'Reading your note...')
           const imageReply = await readAndSummarizeImageNote({
             mediaUrl: firstMediaUrl,
@@ -701,6 +722,16 @@ export async function POST(req: NextRequest) {
         }
 
         if (!handledAsTicket) {
+          // Asset memory gate: payment proof / passport / ID PDFs → masked structured
+          // save (no OCR dump, no notes plaintext, no calendar). Null falls through to
+          // the existing summarise-and-save note path below unchanged.
+          const asset = await tryHandleAssetSave({ telegramId: resolvedUser.telegramId, mediaUrl: firstMediaUrl, contentType: firstMediaType, kind: 'pdf', caption: bodyText, messageId: inboundMessageSid || null, accountSid, authToken })
+          if (asset) {
+            await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[asset pdf] ${bodyText}` : '[asset pdf]')
+            await saveConversation(resolvedUser.telegramId, 'assistant', asset.reply)
+            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[asset pdf]', reply: asset.reply })
+            return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+          }
           // Not a ticket → summarise the document and save it to the notes list,
           // exactly like the image-note path (readAndSummarizeImageNote).
           const noteReply = await readAndSummarizePdfDocument({
@@ -1163,6 +1194,31 @@ _Reminder cancelled._`
       const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(reply, originalText) : reply
       await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: finalReply })
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // ── Asset memory retrieval ────────────────────────────────────────────────
+    // Both handlers CLAIM the turn only when they actually resolve to a stored
+    // document — otherwise they return null and we fall through to the freeform
+    // path unchanged (the existence gate that keeps this from hijacking messages).
+    // Field follow-up ("what was the reference number?") is tried first: it needs a
+    // fresh last_asset context and no asset noun, so it can't collide with retrieval.
+    {
+      const fieldReply = await buildAssetFieldReply(resolvedUser.telegramId, text)
+      if (fieldReply) {
+        await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', fieldReply)
+        await sendWhatsAppMessage(from, fieldReply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+      if (isAssetRetrievalCommand(text)) {
+        const assetReply = await buildAssetRetrievalReply(resolvedUser.telegramId, text)
+        if (assetReply) {
+          await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', assetReply)
+          await sendWhatsAppMessage(from, assetReply)
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        }
+      }
     }
 
     if (incoming.wasVoice) {
