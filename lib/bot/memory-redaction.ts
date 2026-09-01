@@ -12,6 +12,11 @@
 const SECRET_KEYWORDS =
   /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport|aadhaar|aadhar|ssn|cvv|cvc|card\s*number|account\s*number|credit\s*card|debit\s*card|api[\s_-]?key|secret\s*key|secret|security\s*code|routing\s*number|ifsc)\b/i
 
+// Sensitive values that may appear in conversation history. Keep this deliberately
+// conservative: it is only a prompt-boundary redactor, not a parser for the source data.
+const LABELED_SECRET_VALUE_RE =
+  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|card\s*number|account\s*number|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b\s*(?:is|:|=|-)?\s*([A-Z0-9][A-Z0-9\s._\-/]{2,})/gi
+
 // Heuristic: does this memory look like it carries a credential/identifier we must not
 // surface to the model?
 //   - keyword match (labelled secrets), OR
@@ -31,6 +36,22 @@ export function isSecretShapedMemory(content: string): boolean {
   const digitsOnly = text.replace(/[\s-]/g, '')
   if (/\d{8,}/.test(digitsOnly)) return true
   return false
+}
+
+// Redact sensitive VALUE spans while preserving the surrounding conversational turn.
+// This is used at the final freeform prompt boundary so old assistant replies containing
+// passport/account/etc. values cannot be re-fed to the LLM and echoed on a later turn.
+export function redactSecretShapedText(content: string): string {
+  if (!content) return content
+  let out = String(content)
+
+  // Preserve the label/context and replace only its value.
+  out = out.replace(LABELED_SECRET_VALUE_RE, (_match, label) => `${label} [sensitive detail withheld]`)
+
+  // Catch long unlabelled identifier-like digit runs that survived the labelled pass.
+  out = out.replace(/\b(?:\d[\s-]?){8,}\b/g, '[sensitive detail withheld]')
+
+  return out
 }
 
 // Drop every secret-shaped entry. Exported for reuse/testing alongside getMemories.
