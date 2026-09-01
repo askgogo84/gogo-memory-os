@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 
 export interface Message {
   role: 'user' | 'assistant'
@@ -48,8 +49,9 @@ RULES:
    "remind me every 2 hours to check the oven" -> REMINDER: 2026-07-16T17:00:00+05:30 | Check the oven | every_2h
    "take medicine every 3 days" -> REMINDER: 2026-07-19T09:00:00+05:30 | Take medicine | every_3d
 
-2. MEMORY: If user wants to save a fact, output on FIRST LINE:
+2. MEMORY: If user explicitly wants to save a concrete fact, output on FIRST LINE:
    MEMORY: [the fact]
+   Do NOT treat incidental uses of words like "save", "saved", "memory", or "remember" in meta-discussion as a request to store something. Only emit MEMORY when there is both a clear save/remember instruction and a concrete fact supplied by the user in the current turn.
 
 3. LIST: If user wants to manage a list, output on FIRST LINE:
    LIST_ADD: [list_name] | [item1, item2, item3]
@@ -85,12 +87,18 @@ RULES:
 
 CRITICAL: When the user gives a time or date, calculate the exact datetime yourself and output the REMINDER line. If the user gives NO time or date (e.g. "remind me about the thing"), do NOT guess a time and do NOT output a REMINDER line - instead reply in one short sentence asking when. The [message] field must be a short clean task label only (e.g. "Call the bank") - never include words like "today", "tomorrow", "at 1pm", or "day after".`
 
+  // Final prompt-boundary redaction. Conversation history is persisted separately from
+  // memories and can contain old assistant replies from before privacy fixes. Redact every
+  // historical turn immediately before it reaches Claude so stale passport/account/etc.
+  // values cannot be echoed or reused by the freeform model.
+  const safeHistory = history.map((m) => ({ ...m, content: redactSecretShapedText(m.content) }))
+
   const response = await client.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 1024,
     system: systemPrompt,
     messages: [
-      ...history.slice(-10),
+      ...safeHistory.slice(-10),
       { role: 'user', content: userMessage }
     ],
   })
