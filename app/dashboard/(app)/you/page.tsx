@@ -7,12 +7,6 @@ import { SignOutButton } from '@/components/dashboard/sign-out-button'
 
 export const dynamic = 'force-dynamic'
 
-// The "You" surface (frames 1h + the Friends section from 1g) — deliberately the
-// quietest screen. Identity, plan, linked-account status, friends, sign out. Fully
-// read-only: no plan change, no connect/disconnect, no add/remove friends this
-// phase. The one action is Sign out, which reuses the pre-built DELETE endpoint.
-
-// "+91 88845 01501" from a stored id that may or may not carry punctuation/prefix.
 function formatPhone(raw: string | null): string | null {
   if (!raw) return null
   const digits = raw.replace(/\D/g, '')
@@ -21,7 +15,6 @@ function formatPhone(raw: string | null): string | null {
   return raw
 }
 
-// "with Gogo since Jun 2024" from created_at.
 function memberSince(iso: string | null): string | null {
   if (!iso) return null
   const d = new Date(iso)
@@ -30,7 +23,6 @@ function memberSince(iso: string | null): string | null {
   return `with Gogo since ${label}`
 }
 
-// "3 Sep" for the renewal date.
 function shortDate(iso: string | null): string | null {
   if (!iso) return null
   const d = new Date(iso)
@@ -67,72 +59,58 @@ export default async function YouPage() {
   ]
 
   return (
-    // temporary desktop freeze — removed in this surface's own 5c phase
-    <div className="flex flex-col gap-5 lg:max-w-[480px]">
-      {/* Identity */}
+    <div className="flex flex-col gap-5 lg:max-w-[560px]">
       <header className="pt-1 text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/gogo-figure.png" alt="" className="mx-auto mb-3 h-[72px] w-[72px] select-none" />
-        <div className="font-serif text-[22px] font-semibold tracking-[-0.3px] text-gogo-ink">
-          {profile.name || 'You'}
-        </div>
+        <div className="font-serif text-[22px] font-semibold tracking-[-0.3px] text-gogo-ink">{profile.name || 'You'}</div>
         {subline && <div className="mt-1 text-[13px] font-medium text-gogo-ink-3">{subline}</div>}
       </header>
 
-      {/* Plan */}
       <div className="rounded-[18px] border border-gogo-ink/10 bg-gogo-surface px-[14px] py-3.5">
         <div className="text-[15px] font-semibold text-gogo-ink">{profile.planLabel}</div>
-        <div className="mt-0.5 text-[12.5px] text-gogo-ink-3">
-          {priceLine}
-          {renews ? ` · renews ${renews}` : ''}
-        </div>
+        <div className="mt-0.5 text-[12.5px] text-gogo-ink-3">{priceLine}{renews ? ` · renews ${renews}` : ''}</div>
       </div>
 
-      {/* Linked accounts — status only (read-only). Connected = plum dot, never
-          green; green is reserved for WhatsAppChip alone. */}
-      <div className="overflow-hidden rounded-[18px] border border-gogo-ink/10 bg-gogo-surface">
+      <section className="overflow-hidden rounded-[18px] border border-gogo-ink/10 bg-gogo-surface">
+        <div className="border-b border-gogo-ink/[0.06] px-[14px] py-3">
+          <div className="text-[12px] font-semibold uppercase tracking-[0.1em] text-gogo-ink-3">Connected accounts</div>
+        </div>
         {accounts.map((a) => (
-          <div
-            key={a.name}
-            className="flex items-center gap-3 border-b border-gogo-ink/[0.06] px-[14px] py-[13px] last:border-b-0"
-          >
+          <div key={a.name} className="flex items-center gap-3 border-b border-gogo-ink/[0.06] px-[14px] py-[13px] last:border-b-0">
             <span className={`h-2 w-2 shrink-0 rounded-full ${a.connected ? 'bg-gogo-plum' : 'bg-gogo-ink/20'}`} />
             <span className="flex-1 text-[14px] font-medium text-gogo-ink">{a.name}</span>
-            <span className="text-[12.5px] font-medium text-gogo-ink-3">
-              {a.connected ? 'Connected' : 'Not connected'}
-            </span>
+            <span className="text-[12.5px] font-medium text-gogo-ink-3">{a.connected ? 'Connected' : 'Not connected'}</span>
           </div>
         ))}
-      </div>
+      </section>
 
-      {/* Friends — the reminders-for-others contacts (IA §You). Read-only: no add,
-          no remove. Each row hands back to WhatsApp to nudge that person. */}
+      <section className="rounded-[18px] border border-gogo-orange/20 bg-gogo-orange-tint px-[16px] py-4">
+        <div className="flex items-start gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-[14px] font-bold text-gogo-ink shadow-sm">G</span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[14px] font-semibold text-gogo-ink">Use Google to sign in next time</div>
+            <p className="mt-1 text-[12.5px] leading-5 text-gogo-ink-2">Link one Google account to this AskGogo profile. After that, app.askgogo.in/dashboard opens with Google — no WhatsApp code needed.</p>
+            <a href="/api/dashboard/google/start?mode=link" className="mt-3 inline-flex rounded-full bg-gogo-ink px-4 py-2 text-[12.5px] font-semibold text-white no-underline">Link Google sign-in</a>
+          </div>
+        </div>
+      </section>
+
       <section className="flex flex-col gap-3">
         <h2 className="text-[12px] font-semibold uppercase tracking-[0.1em] text-gogo-ink-3">Friends</h2>
-
-        {friendsMax !== null && friends.ok && (
-          <QuotaBar label="Friend contacts" used={friends.count} limit={friendsMax} tone="sand" />
-        )}
-
+        {friendsMax !== null && friends.ok && <QuotaBar label="Friend contacts" used={friends.count} limit={friendsMax} tone="sand" />}
         {!friends.ok ? (
           <p className="text-[13px] text-gogo-ink-3">Couldn’t load your contacts.</p>
         ) : friends.contacts.length === 0 ? (
           <div className="rounded-[16px] border border-gogo-ink/10 bg-gogo-surface px-[14px] py-4 text-center">
             <p className="text-[13.5px] text-gogo-ink-2">No one on your reminder list yet.</p>
-            <div className="mt-3 flex justify-center">
-              <WhatsAppChip message="Gogo, remind a friend to…" />
-            </div>
+            <div className="mt-3 flex justify-center"><WhatsAppChip message="Gogo, remind a friend to…" /></div>
           </div>
         ) : (
           <ul className="flex flex-col gap-[9px]">
             {friends.contacts.map((c) => (
-              <li
-                key={c.name}
-                className="flex items-center gap-3 rounded-[16px] border border-gogo-ink/10 bg-gogo-surface px-[13px] py-3"
-              >
-                <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-gogo-orange-tint text-[13px] font-bold text-gogo-orange-deep">
-                  {c.initials}
-                </span>
+              <li key={c.name} className="flex items-center gap-3 rounded-[16px] border border-gogo-ink/10 bg-gogo-surface px-[13px] py-3">
+                <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-gogo-orange-tint text-[13px] font-bold text-gogo-orange-deep">{c.initials}</span>
                 <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-gogo-ink">{c.name}</span>
                 <WhatsAppChip message={`Gogo, remind ${c.name} to…`} label="Nudge" />
               </li>

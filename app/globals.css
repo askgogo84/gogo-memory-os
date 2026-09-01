@@ -13,44 +13,24 @@
   --font-serif: var(--font-fraunces);
 }
 
-/* ── AskGogo dashboard design tokens ───────────────────────────────────────────
-   Palette sampled from the logo (UI/UX brief §2), not eyeballed. Orange + plum is
-   the whole identity — warm, Indian, deliberately nothing like a cool SaaS blue.
-   These become Tailwind utilities: bg-gogo-orange, text-gogo-ink, text-gogo-ink/45…
-
-   The green rule (non-negotiable): WhatsApp green is NOT in this palette on
-   purpose. It lives only inside <WhatsAppChip>, so "green" always means
-   "this hands me back to the bot" and never leaks onto anything else. */
 @theme {
-  --color-gogo-orange: #f18219; /* primary accent: buttons, active nav, fills */
-  --color-gogo-orange-deep: #d67528; /* hover/pressed for orange */
-  --color-gogo-plum: #714c77; /* secondary: headers, chips, meter tail */
-  --color-gogo-plum-deep: #4d2a50; /* hover/pressed for plum */
-  --color-gogo-plum-tint: #f0eaf1; /* plum tint fill: count chips, personality card */
-  --color-gogo-ink: #3e2312; /* body + headings — warm near-black, not #000 */
-  /* Ink ramp: numbered off gogo-ink so the hierarchy is unmissable. These are
-     WARMER, greyer taupes — not gogo-ink at alpha — so meta text keeps its own
-     hue against cream instead of going translucent. ink-2 darkest → ink-4 faintest. */
-  --color-gogo-ink-2: #6b4a34; /* warm brown: secondary body, inactive pill labels */
-  --color-gogo-ink-3: #9a8778; /* muted taupe: dates, meta, eyebrow labels */
-  --color-gogo-ink-4: #b8a797; /* faint taupe: qty values, placeholders */
-  --color-gogo-sand: #e4a97d; /* soft fill: illustration backdrops, dividers */
-  --color-gogo-orange-tint: #fdf0e2; /* orange tint fill: count circles, avatar bg */
-  --color-gogo-cream: #fbf6ef; /* page background — the design's warm screen surface */
-  --color-gogo-rail: #f6efe5; /* desktop side rail: a touch deeper than cream so the rail reads as its own surface beside the column */
-  --color-gogo-surface: #ffffff; /* cards, sheets, inputs */
-
-  /* Motion (brief §4): slow float, gentle ease-in-out, never spring or bounce.
-     Deliberately slower than typical UI so the product reads as settled. */
+  --color-gogo-orange: #f18219;
+  --color-gogo-orange-deep: #d67528;
+  --color-gogo-plum: #714c77;
+  --color-gogo-plum-deep: #4d2a50;
+  --color-gogo-plum-tint: #f0eaf1;
+  --color-gogo-ink: #3e2312;
+  --color-gogo-ink-2: #6b4a34;
+  --color-gogo-ink-3: #9a8778;
+  --color-gogo-ink-4: #b8a797;
+  --color-gogo-sand: #e4a97d;
+  --color-gogo-orange-tint: #fdf0e2;
+  --color-gogo-cream: #fbf6ef;
+  --color-gogo-rail: #f6efe5;
+  --color-gogo-surface: #ffffff;
   --ease-calm: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Dark mode is kept for the marketing/other routes, but SCOPED OUT of the
-   dashboard. The whole dashboard identity is the warm cream/ink palette; if this
-   near-black override reaches it, the design system renders invisible on black.
-   Every /dashboard route is wrapped in `.dashboard-root` (app/dashboard/layout.tsx),
-   so `:root:not(:has(.dashboard-root))` applies the dark flip everywhere EXCEPT
-   pages that contain the dashboard. Scoped, not deleted. */
 @media (prefers-color-scheme: dark) {
   :root:not(:has(.dashboard-root)) {
     --background: #0a0a0a;
@@ -58,13 +38,41 @@
   }
 }
 
-/* Belt-and-suspenders: force light rendering inside the dashboard regardless of
-   OS preference, so form controls, scrollbars and any var(--background) reader
-   stay light even if the media query above ever changes. */
 .dashboard-root {
   --background: var(--color-gogo-cream);
   --foreground: var(--color-gogo-ink);
   color-scheme: light;
+  min-height: 100vh;
+  background: var(--color-gogo-cream);
+  transition: background-color 240ms ease, color 240ms ease;
+}
+
+.dashboard-root.theme-dark,
+.dashboard-root[data-theme='dark'] {
+  --color-gogo-orange: #f39a46;
+  --color-gogo-orange-deep: #ffad63;
+  --color-gogo-plum: #c6a1cf;
+  --color-gogo-plum-deep: #dfbfe6;
+  --color-gogo-plum-tint: #352b3b;
+  --color-gogo-ink: #f7eee7;
+  --color-gogo-ink-2: #dac8bb;
+  --color-gogo-ink-3: #ad9a8f;
+  --color-gogo-ink-4: #826f66;
+  --color-gogo-sand: #7d5946;
+  --color-gogo-orange-tint: #392a20;
+  --color-gogo-cream: #171311;
+  --color-gogo-rail: #201a17;
+  --color-gogo-surface: #27211e;
+  --background: #171311;
+  --foreground: #f7eee7;
+  color-scheme: dark;
+}
+
+.dashboard-root.theme-dark .dashboard-shell,
+.dashboard-root[data-theme='dark'] .dashboard-shell {
+  background-image:
+    radial-gradient(circle at 78% 10%, rgba(113, 76, 119, 0.15), transparent 36%),
+    radial-gradient(circle at 15% 88%, rgba(241, 130, 25, 0.08), transparent 34%);
 }
 
 body {

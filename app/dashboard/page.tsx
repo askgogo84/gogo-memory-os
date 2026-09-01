@@ -1,23 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { waLink } from '@/lib/product-urls'
 
-// ── Why this redeemer is a CLIENT-SIDE POST — and must stay one ────────────────
-// The magic link (…/dashboard?t=<token>) is delivered over WhatsApp. WhatsApp's
-// link-preview crawler FETCHES every URL it finds in a message — a plain GET.
-// A GET route handler (or a server-component redeem) would run against that
-// crawler fetch and BURN the single-use token before the user ever taps the
-// link, so every dashboard link would arrive already "expired".
-//
-// The crawler does not execute JavaScript. Redeeming from a client-side POST in
-// useEffect is therefore invisible to it and safe. DO NOT "simplify" this into a
-// GET route handler or a server-side redeem — that reintroduces the burn.
-
 const WA_DASHBOARD_LINK = waLink('dashboard')
-const CREAM = '#fbf6ef'
 
-type Phase = 'checking' | 'redeeming' | 'error' | 'no-token'
+type Phase = 'checking' | 'redeeming' | 'ready' | 'error'
 
 export default function Dashboard() {
   const [phase, setPhase] = useState<Phase>('checking')
@@ -25,33 +13,39 @@ export default function Dashboard() {
   const [submitting, setSubmitting] = useState(false)
   const [codeError, setCodeError] = useState(false)
 
-  useEffect(() => {
-    const token = new URLSearchParams(window.location.search).get('t')
-    if (!token) {
-      setPhase('no-token')
-      return
-    }
-    setPhase('redeeming')
-    fetch('/api/dashboard/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    })
-      .then((res) => {
-        if (res.ok) {
-          // Land on the app and drop ?t= from history in one replace, so the
-          // token never lingers in the URL bar or back-stack.
-          window.location.replace('/dashboard/today')
-        } else {
-          setPhase('error')
-        }
-      })
-      .catch(() => setPhase('error'))
+  const googleStatus = useMemo(() => {
+    if (typeof window === 'undefined') return ''
+    return new URLSearchParams(window.location.search).get('google') || ''
   }, [])
 
-  // Typed-code redeem. Same route, same generic-failure contract: any non-ok
-  // response is shown as one message — we never say wrong vs expired vs used.
-  // The code is sent as typed (with or without hyphen); the server normalises.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('t')
+
+    if (token) {
+      setPhase('redeeming')
+      fetch('/api/dashboard/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
+        .then((res) => {
+          if (res.ok) window.location.replace('/dashboard/today')
+          else setPhase('error')
+        })
+        .catch(() => setPhase('error'))
+      return
+    }
+
+    fetch('/api/dashboard/session/status', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.ok) window.location.replace('/dashboard/today')
+        else setPhase('ready')
+      })
+      .catch(() => setPhase('ready'))
+  }, [])
+
   const submitCode = (e: React.FormEvent) => {
     e.preventDefault()
     if (submitting || !code.trim()) return
@@ -63,9 +57,8 @@ export default function Dashboard() {
       body: JSON.stringify({ code: code.trim() }),
     })
       .then((res) => {
-        if (res.ok) {
-          window.location.replace('/dashboard/today')
-        } else {
+        if (res.ok) window.location.replace('/dashboard/today')
+        else {
           setCodeError(true)
           setSubmitting(false)
         }
@@ -76,114 +69,78 @@ export default function Dashboard() {
       })
   }
 
-  // Full-bleed cream fills the viewport at every width; the card floats centred
-  // on top. At 375px the card is full-width with the same 24px gutters and 64px
-  // top offset as before, so mobile is pixel-identical. On wider/taller screens
-  // the cream now reaches the edges and the card centres vertically.
-  const shell = (children: React.ReactNode) => (
-    <main
-      style={{
-        fontFamily: 'system-ui',
-        background: CREAM,
-        minHeight: '100vh',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: '64px 24px',
-        boxSizing: 'border-box',
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: 420,
-          textAlign: 'center',
-        }}
-      >
-        {children}
-      </div>
-    </main>
-  )
-
-  if (phase === 'redeeming' || phase === 'checking') {
-    return shell(<p style={{ color: '#666', fontSize: 15 }}>Signing you in…</p>)
+  if (phase === 'checking' || phase === 'redeeming') {
+    return (
+      <main className="min-h-screen bg-[#fbf6ef] text-[#3e2312] grid place-items-center px-6">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-11 w-11 rounded-2xl bg-[#f18219] text-white grid place-items-center text-xl">✦</div>
+          <p className="text-sm text-[#9a8778]">Opening your AskGogo dashboard…</p>
+        </div>
+      </main>
+    )
   }
 
-  const heading = phase === 'error' ? 'That link has expired.' : 'Your dashboard is here.'
-  const body =
-    phase === 'error'
-      ? 'Dashboard links work once and last 15 minutes. Enter the code AskGogo sent, or ask for a fresh one.'
-      : 'Message AskGogo on WhatsApp to get your private link and code.'
+  const googleMessage = googleStatus === 'unlinked'
+    ? 'This Google account is not linked to AskGogo yet. Open the dashboard once from WhatsApp, then connect Google from You.'
+    : googleStatus === 'expired'
+      ? 'That Google sign-in attempt expired. Please try again.'
+      : googleStatus === 'already-linked'
+        ? 'That Google account is already linked to another AskGogo profile.'
+        : googleStatus === 'error'
+          ? 'Google sign-in could not be completed. You can retry or use WhatsApp.'
+          : ''
 
-  return shell(
-    <>
-      <h1 style={{ fontSize: 24, margin: '0 0 12px' }}>{heading}</h1>
-      <p style={{ color: '#666', fontSize: 15, lineHeight: 1.6, margin: '0 0 28px' }}>
-        {body} Send <strong>dashboard</strong>.
-      </p>
+  return (
+    <main className="min-h-screen bg-[#fbf6ef] text-[#3e2312] flex items-center justify-center px-6 py-12">
+      <section className="w-full max-w-[1040px] overflow-hidden rounded-[34px] border border-[#eadfd3] bg-white shadow-[0_28px_90px_rgba(74,43,22,0.10)] grid md:grid-cols-[1.08fr_.92fr]">
+        <div className="p-8 md:p-14 bg-[radial-gradient(circle_at_top_left,#fff3e4_0,#fbf6ef_48%,#f4ebe2_100%)]">
+          <div className="inline-flex items-center gap-3 rounded-full border border-white/70 bg-white/80 px-4 py-2 shadow-sm">
+            <span className="grid h-8 w-8 place-items-center rounded-xl bg-[#f18219] text-white">✦</span>
+            <span className="font-semibold">AskGogo</span>
+          </div>
 
-      <form onSubmit={submitCode} style={{ margin: '0 0 28px' }}>
-        <input
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          autoComplete="one-time-code"
-          inputMode="text"
-          autoCapitalize="characters"
-          placeholder="Enter your code"
-          aria-label="Dashboard code"
-          style={{
-            width: '100%',
-            boxSizing: 'border-box',
-            padding: '14px 16px',
-            fontSize: 17,
-            letterSpacing: 2,
-            textAlign: 'center',
-            borderRadius: 12,
-            border: '1px solid #ddd6cc',
-            background: '#fff',
-            marginBottom: 12,
-          }}
-        />
-        <button
-          type="submit"
-          disabled={submitting || !code.trim()}
-          style={{
-            width: '100%',
-            padding: '14px 16px',
-            fontSize: 15,
-            fontWeight: 600,
-            color: '#fff',
-            background: '#1c1c1c',
-            border: 'none',
-            borderRadius: 100,
-            cursor: submitting || !code.trim() ? 'default' : 'pointer',
-            opacity: submitting || !code.trim() ? 0.5 : 1,
-          }}
-        >
-          {submitting ? 'Checking…' : 'Open dashboard'}
-        </button>
-        {codeError && (
-          <p style={{ color: '#a33', fontSize: 14, margin: '12px 0 0' }}>
-            That code didn't work. It may be wrong, expired, or already used — ask AskGogo for a fresh one.
-          </p>
-        )}
-      </form>
+          <div className="mt-12 max-w-xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#714c77]">Your personal control center</p>
+            <h1 className="mt-4 font-serif text-4xl md:text-6xl leading-[0.98] tracking-[-0.045em]">Everything AskGogo remembers, organised for you.</h1>
+            <p className="mt-6 max-w-lg text-base md:text-lg leading-7 text-[#6b4a34]">Reminders, memory, calendar, lists and your saved files — one secure dashboard, still powered by WhatsApp.</p>
+          </div>
 
-      <a
-        href={WA_DASHBOARD_LINK}
-        style={{
-          display: 'inline-block',
-          background: '#25D366',
-          color: '#fff',
-          padding: '12px 24px',
-          borderRadius: 100,
-          fontSize: 15,
-          fontWeight: 600,
-          textDecoration: 'none',
-        }}
-      >
-        Open WhatsApp →
-      </a>
-    </>,
+          <div className="mt-10 grid gap-3 text-sm text-[#6b4a34] sm:grid-cols-3">
+            <div className="rounded-2xl border border-white/80 bg-white/70 p-4"><strong className="block text-[#3e2312]">Memory</strong>Find saved notes and documents.</div>
+            <div className="rounded-2xl border border-white/80 bg-white/70 p-4"><strong className="block text-[#3e2312]">Today</strong>Your reminders and calendar.</div>
+            <div className="rounded-2xl border border-white/80 bg-white/70 p-4"><strong className="block text-[#3e2312]">Private</strong>Your session stays on this device.</div>
+          </div>
+        </div>
+
+        <div className="p-8 md:p-14 flex flex-col justify-center">
+          <p className="text-sm font-semibold text-[#714c77]">Welcome back</p>
+          <h2 className="mt-2 text-3xl font-semibold tracking-[-0.03em]">Open your dashboard</h2>
+          <p className="mt-2 text-sm leading-6 text-[#9a8778]">Google is the fastest way. WhatsApp remains available as the secure fallback.</p>
+
+          {googleMessage && <div className="mt-5 rounded-2xl bg-[#fdf0e2] px-4 py-3 text-sm leading-5 text-[#6b4a34]">{googleMessage}</div>}
+          {phase === 'error' && <div className="mt-5 rounded-2xl bg-[#fff1ee] px-4 py-3 text-sm text-[#8a3d31]">That WhatsApp link has expired or was already used. You can sign in with Google or request a fresh link.</div>}
+
+          <a href="/api/dashboard/google/start?mode=login" className="mt-7 flex h-13 items-center justify-center gap-3 rounded-2xl border border-[#ded7cf] bg-white px-5 font-semibold text-[#3e2312] shadow-sm transition hover:bg-[#fffaf5]">
+            <span className="grid h-7 w-7 place-items-center rounded-full border border-[#e6e0da] text-sm font-bold">G</span>
+            Continue with Google
+          </a>
+
+          <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-[0.14em] text-[#b8a797]"><span className="h-px flex-1 bg-[#eee5dc]" />or<span className="h-px flex-1 bg-[#eee5dc]" /></div>
+
+          <a href={WA_DASHBOARD_LINK} className="flex h-13 items-center justify-center rounded-2xl bg-[#25D366] px-5 font-semibold text-white transition hover:brightness-95">Send me a login link on WhatsApp</a>
+
+          <details className="mt-5 rounded-2xl border border-[#eee5dc] bg-[#fffdfa] p-4">
+            <summary className="cursor-pointer text-sm font-semibold">I already have a dashboard code</summary>
+            <form onSubmit={submitCode} className="mt-4">
+              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="ABCD-EFGH" aria-label="Dashboard code" className="w-full rounded-xl border border-[#ddd6cc] bg-white px-4 py-3 text-center text-base tracking-[0.16em] outline-none focus:border-[#f18219]" />
+              <button type="submit" disabled={submitting || !code.trim()} className="mt-3 w-full rounded-xl bg-[#3e2312] px-4 py-3 text-sm font-semibold text-white disabled:opacity-40">{submitting ? 'Checking…' : 'Open dashboard'}</button>
+              {codeError && <p className="mt-3 text-xs leading-5 text-[#a14a3b]">That code did not work. Ask AskGogo for a fresh dashboard link.</p>}
+            </form>
+          </details>
+
+          <p className="mt-6 text-xs leading-5 text-[#b8a797]">After you sign in, this browser stays signed in for up to 30 days unless you sign out.</p>
+        </div>
+      </section>
+    </main>
   )
 }
