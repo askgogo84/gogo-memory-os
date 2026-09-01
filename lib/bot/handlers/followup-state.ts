@@ -49,3 +49,18 @@ export function isFreshFollowupState(state: any, maxMinutes = 10): boolean {
   if (!Number.isFinite(createdAt)) return true
   return Date.now() - createdAt <= maxMinutes * 60 * 1000
 }
+
+// STRICT variant for asset / media references ("this", field follow-ups): fails CLOSED.
+// A record with a missing or unparseable timestamp is treated as STALE, never fresh — so a
+// "this"/field follow-up can never silently bind to an old or ambiguous asset from an earlier
+// turn (Case 5). Unlike isFreshFollowupState, there is no fail-open path: if we cannot prove
+// the state is recent, we expire it. Callers must also verify the record is the CURRENT one
+// (getLatestFollowupState returns newest-first), so ordering + this TTL together give an
+// explicit freshness rule for referenced media.
+export function isStrictlyFreshFollowupState(state: any, maxMinutes = 10): boolean {
+  const raw = state?.created_at || state?.payload?.created_at
+  if (!raw) return false
+  const createdAt = new Date(raw).getTime()
+  if (!Number.isFinite(createdAt)) return false
+  return Date.now() - createdAt <= maxMinutes * 60 * 1000
+}

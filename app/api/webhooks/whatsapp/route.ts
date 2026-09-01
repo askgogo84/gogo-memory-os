@@ -1211,7 +1211,7 @@ _Reminder cancelled._`
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
       if (isAssetRetrievalCommand(text)) {
-        const assetReply = await buildAssetRetrievalReply(resolvedUser.telegramId, text)
+        const assetReply = await buildAssetRetrievalReply(resolvedUser.telegramId, text, inboundMessageSid || null)
         if (assetReply) {
           await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
           await saveConversation(resolvedUser.telegramId, 'assistant', assetReply)

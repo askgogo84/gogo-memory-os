@@ -26,7 +26,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { storeDocument, getDocumentSignedUrl } from '@/lib/services/document-store'
 import { embedText } from '@/lib/services/embeddings'
 import { downloadTwilioMediaAsDataUrl } from '@/lib/services/image-note-reader'
-import { saveFollowupState, getLatestFollowupState, isFreshFollowupState } from '@/lib/bot/handlers/followup-state'
+import { saveFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState } from '@/lib/bot/handlers/followup-state'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -323,10 +323,15 @@ export async function saveAssetMemory(params: {
     })
 
     // Stash the doc id (id only — no values) so "what was the reference number?"
-    // can resolve without conversation history. JSON followup_state rows are
-    // excluded from both indexing and the freeform prompt.
+    // can resolve without conversation history. Keyed to the SOURCE message id (Case 5):
+    // the binding names the exact message that produced it, never "the most recent media".
+    // JSON followup_state rows are excluded from both indexing and the freeform prompt.
     if (stored.id && !stored.duplicate) {
-      await saveFollowupState(params.telegramId, 'last_asset', { docId: stored.id })
+      await saveFollowupState(params.telegramId, 'last_asset', {
+        docId: stored.id,
+        messageId: params.messageId ?? null,
+        source: 'save',
+      })
     }
 
     return { reply: buildConfirmation(ex) }
@@ -423,12 +428,77 @@ function fieldFromDoc(doc: any, keys: string[]): string | null {
   return null
 }
 
+// ── Sensitive-retrieval masking (Case 3) ──────────────────────────────────────
+// A sensitive document (passport / ID / payment proof) must NEVER render
+// documents.extracted wholesale. These helpers emit only the minimum useful
+// metadata: a clean title, the document type, expiry/status, and a MASKED
+// identifier — no DOB, address, birthplace, or any full number.
+
+// The one primary identifier for a sensitive doc, masked for chat. Only known
+// identifier keys are ever surfaced; anything else (DOB, address, birthplace,
+// passwords, tokens) is deliberately omitted. Returns null when none is on file.
+function maskedIdentifierLine(doc: any): string | null {
+  const f = (doc?.extracted?.fields || {}) as Record<string, string>
+  if (f.passport_number) return `Passport no. ${maskNumber(f.passport_number)}`
+  if (f.id_number) return `ID no. ${maskNumber(f.id_number)}`
+  if (f.account_number) return `A/c ${maskNumber(f.account_number)}`
+  if (f.reference_number) return `Ref. ${maskNumber(f.reference_number)}`
+  return null
+}
+
+// Masked default reply for a sensitive asset. Clean title + type/expiry + masked
+// identifier + the original file link (short-TTL signed URL) + a hint. Never
+// iterates extracted.fields, so no private field can leak by default.
+async function buildMaskedSensitiveReply(doc: any): Promise<string> {
+  const ex = (doc?.extracted || {}) as any
+  const f = (ex.fields || {}) as Record<string, string>
+  const assetType: string = ex.assetType || doc.doc_type || ''
+
+  let typeLabel = ''
+  if (assetType === 'passport') typeLabel = [fmt(f.nationality), 'Passport'].filter(Boolean).join(' ')
+  else if (assetType === 'id_document') typeLabel = fmt(f.document_kind) || 'ID document'
+  else if (assetType === 'payment_proof') typeLabel = 'Payment proof'
+  const expiry = ex.expiryHuman || fmt(f.expiry_date)
+  const line2 = [typeLabel, expiry ? `expires ${expiry}` : ''].filter(Boolean).join(' · ')
+
+  const lines: string[] = [`📄 ${doc.title || 'Document'}`]
+  if (line2) lines.push(line2)
+  const idLine = maskedIdentifierLine(doc)
+  if (idLine) lines.push(idLine)
+
+  if (doc.storage_path) {
+    const url = await getDocumentSignedUrl(doc.storage_path, 600)
+    if (url) lines.push(`\nOriginal file: ${url}\n_link valid ~10 min_`)
+  }
+  lines.push(`\nAsk me for a specific detail if you need it.`)
+  // Belt-and-braces: no full number can survive even if a title/summary held one.
+  return stripLongDigits(lines.join('\n'))
+}
+
+// Explicit single-field answer for a sensitive doc: returns ONLY the requested
+// field, nothing else. WhatsApp has no second factor, so the protections are (1)
+// one field not the blob and (2) this audit log — never a confirmation prompt.
+function buildSensitiveFieldReply(
+  telegramId: number,
+  doc: any,
+  requested: { keys: string[]; label: string },
+): string | null {
+  const val = fieldFromDoc(doc, requested.keys)
+  if (!val) return null
+  console.log('[asset-memory] AUDIT sensitive_field_access', {
+    telegramId,
+    docId: doc?.id,
+    field: requested.label,
+  })
+  return `${requested.label}: ${val}`
+}
+
+// Non-sensitive documents (invoice / generic / ticket notes): safe to show the
+// masked-at-save summary and the file. Never used for sensitive assets.
 async function buildAssetFileReply(telegramId: number, doc: any, requested?: { keys: string[]; label: string } | null): Promise<string> {
-  const sensitive = doc?.extracted?.privacyClass === 'sensitive'
   const lines: string[] = [`📎 ${doc.title || 'Document'}`]
   if (doc.summary) lines.push(doc.summary)
 
-  // Explicit single-field request → return only that field (full value, per spec).
   if (requested) {
     const val = fieldFromDoc(doc, requested.keys)
     if (val) lines.push(`\n${requested.label}: ${val}`)
@@ -439,9 +509,6 @@ async function buildAssetFileReply(telegramId: number, doc: any, requested?: { k
     const url = await getDocumentSignedUrl(doc.storage_path, 600)
     if (url) lines.push(`\nOriginal file: ${url}\n_link valid ~10 min_`)
   }
-  if (sensitive && !requested) {
-    lines.push(`\n_Sensitive details are masked. Ask for a specific field, e.g. "what was the reference number?"_`)
-  }
   return lines.join('\n')
 }
 
@@ -450,7 +517,7 @@ async function buildAssetFileReply(telegramId: number, doc: any, requested?: { k
  * documents-only slice of memory_embeddings; CLAIMS the turn only if a hit clears
  * the score floor — otherwise returns null so the caller falls through unchanged.
  */
-export async function buildAssetRetrievalReply(telegramId: number, text: string): Promise<string | null> {
+export async function buildAssetRetrievalReply(telegramId: number, text: string, messageId?: string | null): Promise<string | null> {
   try {
     const embedding = await embedText(text)
     const { data: hits } = await supabaseAdmin.rpc('match_documents', {
@@ -462,9 +529,29 @@ export async function buildAssetRetrievalReply(telegramId: number, text: string)
     if (!top) return null
     const doc = await fetchDocumentById(telegramId, String(top.source_id))
     if (!doc) return null
-    // Remember this asset so an immediate field follow-up resolves to it.
-    await saveFollowupState(telegramId, 'last_asset', { docId: doc.id })
-    return buildAssetFileReply(telegramId, doc, requestedField(text))
+    // Remember this asset so an immediate field follow-up resolves to it. Keyed to the
+    // retrieval message id (Case 5) and read back under a strict, fail-closed TTL.
+    await saveFollowupState(telegramId, 'last_asset', {
+      docId: doc.id,
+      messageId: messageId ?? null,
+      source: 'retrieval',
+    })
+
+    const sensitive = doc?.extracted?.privacyClass === 'sensitive'
+    const requested = requestedField(text)
+    if (sensitive) {
+      // Explicit single-field request → ONLY that field (logged). Otherwise the masked
+      // default: title, type, expiry, masked identifier, file link, hint. Sensitive
+      // retrieval ALWAYS claims the turn here so it can never fall through to the
+      // freeform path (which is what dumped full passport/DOB/birthplace into chat).
+      if (requested) {
+        const only = buildSensitiveFieldReply(telegramId, doc, requested)
+        if (only) return only
+        return `I don't have the ${requested.label.toLowerCase()} on file for this one.`
+      }
+      return await buildMaskedSensitiveReply(doc)
+    }
+    return buildAssetFileReply(telegramId, doc, requested)
   } catch (err: any) {
     console.error('[asset-memory] retrieval failed (non-fatal):', err?.message || err)
     return null
@@ -483,10 +570,17 @@ export async function buildAssetFieldReply(telegramId: number, text: string): Pr
   // Must be a bare field question (no asset noun) — otherwise let retrieval handle it.
   if (isAssetRetrievalCommand(text)) return null
   const state = await getLatestFollowupState(telegramId, 'last_asset')
-  if (!state || !isFreshFollowupState(state, 15) || !state.payload?.docId) return null
+  // Strict, fail-CLOSED freshness (Case 5): only the CURRENT last_asset, and only within
+  // the window, may answer. A missing/old/unparseable timestamp expires the binding, so
+  // "this"/a bare field question can never silently resolve to an unrelated older asset.
+  if (!state || !isStrictlyFreshFollowupState(state, 15) || !state.payload?.docId) return null
   const doc = await fetchDocumentById(telegramId, String(state.payload.docId))
   if (!doc) return null
   const val = fieldFromDoc(doc, req.keys)
   if (!val) return null
+  // Return ONLY the requested field. Audit the access (no confirmation prompt — see Case 3).
+  if (doc?.extracted?.privacyClass === 'sensitive') {
+    console.log('[asset-memory] AUDIT sensitive_field_access', { telegramId, docId: doc.id, field: req.label })
+  }
   return `${req.label}: ${val}`
 }
