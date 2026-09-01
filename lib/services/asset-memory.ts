@@ -27,7 +27,7 @@ import { storeDocument, getDocumentSignedUrl } from '@/lib/services/document-sto
 import { createDocumentShortLink, shortLinkUrl } from '@/lib/services/document-links'
 import { embedText } from '@/lib/services/embeddings'
 import { downloadTwilioMediaAsDataUrl } from '@/lib/services/image-note-reader'
-import { saveFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState } from '@/lib/bot/handlers/followup-state'
+import { saveFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, clearFollowupState } from '@/lib/bot/handlers/followup-state'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -412,6 +412,13 @@ function requestedField(text: string): { keys: string[]; label: string } | null 
   return null
 }
 
+// Secrets that must never be revealed in WhatsApp, even after an explicit confirm.
+const NEVER_REVEAL_RE = /\b(password|passcode|\bpin\b|otp|one[\s-]?time\s*password|cvv|cvc|api[\s_-]?key|auth(?:entication)?\s*token|access\s*token|secret(?:\s*key)?)\b/i
+
+function isVagueIdentifierRequest(text: string): boolean {
+  return /^\s*(?:what(?:'s|\s+is)|give\s+me|tell\s+me|show\s+me|reveal)\s+(?:the\s+)?(?:number|value|it)\s*[?.!]*\s*$/i.test(text || '')
+}
+
 async function fetchDocumentById(telegramId: number, id: string): Promise<any | null> {
   const { data } = await supabaseAdmin
     .from('documents')
@@ -489,6 +496,80 @@ function isSensitiveDoc(doc: any): boolean {
   return false
 }
 
+function primaryIdentifierRequest(doc: any): { keys: string[]; label: string } | null {
+  const kind = deriveAssetKind(doc)
+  if (kind === 'passport') return { keys: ['passport_number'], label: 'Passport number' }
+  if (kind === 'id_document') return { keys: ['id_number'], label: 'ID number' }
+  if (kind === 'payment_proof') return { keys: ['reference_number'], label: 'Reference number' }
+  return null
+}
+
+function sensitiveOwnerLabel(doc: any): string {
+  const f = (doc?.extracted?.fields || {}) as Record<string, string>
+  const name = fmt(f.name) || fmt(f.counterparty)
+  if (name) return `${name}'s`
+  const kind = deriveAssetKind(doc)
+  if (kind === 'passport') return `This passport's`
+  if (kind === 'id_document') return `This ID's`
+  return `This document's`
+}
+
+async function gateSensitiveFieldRequest(
+  telegramId: number,
+  doc: any,
+  requested: { keys: string[]; label: string },
+): Promise<string> {
+  if (NEVER_REVEAL_RE.test(requested.label) || requested.keys.some((k) => NEVER_REVEAL_RE.test(k))) {
+    await clearFollowupState(telegramId, 'pending_field_reveal')
+    return `🔒 I can't reveal ${requested.label.toLowerCase()} in chat.`
+  }
+
+  await clearFollowupState(telegramId, 'pending_field_reveal')
+  await saveFollowupState(telegramId, 'pending_field_reveal', {
+    docId: String(doc.id),
+    fieldKeys: requested.keys,
+    label: requested.label,
+  })
+  const confirm = `show ${requested.label.toLowerCase()}`
+  return `🔒 ${sensitiveOwnerLabel(doc)} ${requested.label.toLowerCase()} is sensitive. Reply "${confirm}" to reveal it here.`
+}
+
+async function buildAssetRevealConfirmation(telegramId: number, text: string): Promise<string | null> {
+  const pending = await getLatestFollowupState(telegramId, 'pending_field_reveal')
+  if (!pending) return null
+  if (!isStrictlyFreshFollowupState(pending, 2)) {
+    await clearFollowupState(telegramId, 'pending_field_reveal')
+    return null
+  }
+
+  const requested = requestedField(text)
+  const explicitReveal = /^\s*(?:show|reveal)\b/i.test(text || '')
+  const payload = pending.payload || {}
+  const pendingKeys = Array.isArray(payload.fieldKeys) ? payload.fieldKeys.map(String) : []
+  const pendingLabel = String(payload.label || '')
+  const fieldMatches = requested && requested.label.toLowerCase() === pendingLabel.toLowerCase()
+  if (!explicitReveal || !fieldMatches || !payload.docId || !pendingKeys.length) return null
+
+  // Consume before reading/rendering: a retry or downstream failure cannot reveal twice.
+  await clearFollowupState(telegramId, 'pending_field_reveal')
+
+  if (NEVER_REVEAL_RE.test(pendingLabel) || pendingKeys.some((k) => NEVER_REVEAL_RE.test(k))) {
+    return `🔒 I can't reveal ${pendingLabel.toLowerCase()} in chat.`
+  }
+
+  const doc = await fetchDocumentById(telegramId, String(payload.docId))
+  if (!doc || !isSensitiveDoc(doc)) return `I can't safely resolve that sensitive detail anymore.`
+  const val = fieldFromDoc(doc, pendingKeys)
+  if (!val) return `I don't have the ${pendingLabel.toLowerCase()} stored as a structured field. Open the original file instead.`
+
+  console.log('[asset-memory] AUDIT sensitive_field_access', {
+    telegramId,
+    docId: doc?.id,
+    field: pendingLabel,
+  })
+  return `${pendingLabel}: ${val}`
+}
+
 // The one primary identifier for a sensitive doc, masked for chat. Only known
 // identifier keys are ever surfaced; anything else (DOB, address, birthplace,
 // passwords, tokens) is deliberately omitted. Returns null when none is on file.
@@ -545,7 +626,7 @@ async function buildMaskedSensitiveReply(telegramId: number, doc: any): Promise<
   if (line2 && line2 !== displayTitle) lines.push(line2)
   const idLine = maskedIdentifierLine(doc)
   if (idLine) lines.push(idLine)
-  lines.push(`\nAsk me for a specific detail if you need it.`)
+  lines.push(`\nYou can ask for a specific non-secret detail.`)
 
   // Belt-and-braces: strip any run of 4+ digits from the FIELD-DERIVED text, so a
   // stray identifier can never survive even if a future field slips through.
@@ -556,24 +637,6 @@ async function buildMaskedSensitiveReply(telegramId: number, doc: any): Promise<
   const link = await buildOriginalFileLink(telegramId, doc, true)
   if (link) out += `\n\n${link}`
   return out
-}
-
-// Explicit single-field answer for a sensitive doc: returns ONLY the requested
-// field, nothing else. WhatsApp has no second factor, so the protections are (1)
-// one field not the blob and (2) this audit log — never a confirmation prompt.
-function buildSensitiveFieldReply(
-  telegramId: number,
-  doc: any,
-  requested: { keys: string[]; label: string },
-): string | null {
-  const val = fieldFromDoc(doc, requested.keys)
-  if (!val) return null
-  console.log('[asset-memory] AUDIT sensitive_field_access', {
-    telegramId,
-    docId: doc?.id,
-    field: requested.label,
-  })
-  return `${requested.label}: ${val}`
 }
 
 // Non-sensitive documents (invoice / generic / ticket notes): safe to show the
@@ -623,15 +686,9 @@ export async function buildAssetRetrievalReply(telegramId: number, text: string,
     const sensitive = isSensitiveDoc(doc)
     const requested = requestedField(text)
     if (sensitive) {
-      // Explicit single-field request → ONLY that field (logged). Otherwise the masked
-      // default: title, type, expiry, masked identifier, file link, hint. Sensitive
-      // retrieval ALWAYS claims the turn here so it can never fall through to the
-      // freeform path (which is what dumped full passport/DOB/birthplace into chat).
-      if (requested) {
-        const only = buildSensitiveFieldReply(telegramId, doc, requested)
-        if (only) return only
-        return `I don't have the ${requested.label.toLowerCase()} on file for this one.`
-      }
+      // Explicit sensitive fields require a second, one-shot confirmation. The first
+      // request claims the turn with a lock prompt and never reaches freeform.
+      if (requested) return await gateSensitiveFieldRequest(telegramId, doc, requested)
       return await buildMaskedSensitiveReply(telegramId, doc)
     }
     return buildAssetFileReply(telegramId, doc, requested)
@@ -644,26 +701,38 @@ export async function buildAssetRetrievalReply(telegramId: number, text: string,
 /**
  * Field follow-up with no asset named ("what was the reference number?"). Only
  * fires when a fresh last_asset context exists; otherwise returns null so the
- * message falls through to normal handling. This is the context-gated companion
- * to the shape-gated buildAssetRetrievalReply.
+ * message falls through to normal handling. Sensitive values require a two-step,
+ * one-shot confirmation and never fall through to freeform while context is fresh.
  */
 export async function buildAssetFieldReply(telegramId: number, text: string): Promise<string | null> {
-  const req = requestedField(text)
-  if (!req) return null
-  // Must be a bare field question (no asset noun) — otherwise let retrieval handle it.
+  // An explicit confirmation is checked first so "show passport number" consumes the
+  // exact pending doc+field binding before any new field request can re-arm it.
+  const confirmed = await buildAssetRevealConfirmation(telegramId, text)
+  if (confirmed) return confirmed
+
+  if (NEVER_REVEAL_RE.test(text || '')) {
+    return `🔒 I can't reveal passwords, PINs, OTPs, CVVs, API keys, tokens, or similar secrets in chat.`
+  }
+
+  // Retrieval phrases naming an asset are handled by buildAssetRetrievalReply below.
   if (isAssetRetrievalCommand(text)) return null
+
   const state = await getLatestFollowupState(telegramId, 'last_asset')
-  // Strict, fail-CLOSED freshness (Case 5): only the CURRENT last_asset, and only within
-  // the window, may answer. A missing/old/unparseable timestamp expires the binding, so
-  // "this"/a bare field question can never silently resolve to an unrelated older asset.
   if (!state || !isStrictlyFreshFollowupState(state, 15) || !state.payload?.docId) return null
   const doc = await fetchDocumentById(telegramId, String(state.payload.docId))
   if (!doc) return null
+
+  let req = requestedField(text)
+  if (!req && isVagueIdentifierRequest(text) && isSensitiveDoc(doc)) {
+    req = primaryIdentifierRequest(doc)
+  }
+  if (!req) return null
+
+  if (isSensitiveDoc(doc)) {
+    return await gateSensitiveFieldRequest(telegramId, doc, req)
+  }
+
   const val = fieldFromDoc(doc, req.keys)
   if (!val) return null
-  // Return ONLY the requested field. Audit the access (no confirmation prompt — see Case 3).
-  if (isSensitiveDoc(doc)) {
-    console.log('[asset-memory] AUDIT sensitive_field_access', { telegramId, docId: doc.id, field: req.label })
-  }
   return `${req.label}: ${val}`
 }
