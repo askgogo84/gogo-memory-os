@@ -434,6 +434,60 @@ function fieldFromDoc(doc: any, keys: string[]): string | null {
 // metadata: a clean title, the document type, expiry/status, and a MASKED
 // identifier — no DOB, address, birthplace, or any full number.
 
+// ── Fail-closed sensitivity detection (legacy-row compatible) ──────────────────
+// Legacy rows (written by the pre-asset-memory path) carry no privacyClass and no
+// assetType, so sensitivity CANNOT depend on the new metadata alone. We derive it
+// from multiple signals, and — critically — only from FIELD NAMES, doc_type and
+// title. Sensitive VALUES and free-text bodies (documents.summary) are never
+// inspected to decide sensitivity, so an unrelated mention of "passport" deep in a
+// generic document's body can't false-trigger, and no value can leak while deciding.
+
+// Identifier FIELD KEYS (names only) whose mere presence marks a doc sensitive.
+const SENSITIVE_FIELD_KEYS = [
+  'passport_number', 'id_number', 'aadhaar', 'aadhar', 'pan', 'pan_number',
+  'account_number', 'card_number', 'licence_number', 'license_number', 'national_id',
+]
+
+// Identity / financial document indicators. Applied ONLY to title + doc_type
+// (never summary/body). Fail-closed: broad enough that a real identity doc is
+// caught even when the new metadata is missing.
+const SENSITIVE_TITLE_RE =
+  /\b(passport|aadhaar|aadhar|pan\s*card|driving\s*licen[cs]e|driver'?s\s*licen[cs]e|identity\s*card|national\s*id(?:entity)?|government\s*id|govt\s*id|voter\s*id|residence\s*permit|bank\s*statement|account\s*statement|financial\s*account)\b/i
+
+// Normalise a legacy or new row to one of the structured kinds, using explicit
+// metadata first, then title/doc_type/field-name heuristics. Values are never read.
+function deriveAssetKind(doc: any): 'passport' | 'id_document' | 'payment_proof' | 'other' {
+  const ex = (doc?.extracted || {}) as any
+  const explicit = String(ex.assetType || '')
+  if (explicit === 'passport' || explicit === 'id_document' || explicit === 'payment_proof') return explicit
+  const hay = `${doc?.title || ''} ${doc?.doc_type || ''}`.toLowerCase()
+  const keys = Object.keys(ex.fields || {}).map((k) => k.toLowerCase())
+  if (/passport/.test(hay) || keys.includes('passport_number')) return 'passport'
+  if (/payment|receipt|transfer|\bupi\b|\bimps\b|\bneft\b|transaction/.test(hay)) return 'payment_proof'
+  if (
+    /aadhaar|aadhar|pan\s*card|driving\s*licen|driver'?s\s*licen|identity\s*card|national\s*id|government\s*id|govt\s*id|voter\s*id|residence\s*permit/.test(hay) ||
+    keys.some((k) => ['id_number', 'aadhaar', 'aadhar', 'pan', 'pan_number', 'national_id', 'licence_number', 'license_number', 'card_number', 'account_number'].includes(k))
+  ) return 'id_document'
+  return 'other'
+}
+
+// Fail-closed sensitivity, in priority order: explicit privacyClass/assetType →
+// doc_type/title indicators → sensitive identifier field NAMES. A strong passport/ID
+// signal from a LEGACY row (no new metadata) still returns true here, so retrieval
+// routes it to buildMaskedSensitiveReply instead of the free-text file renderer.
+function isSensitiveDoc(doc: any): boolean {
+  const ex = (doc?.extracted || {}) as any
+  // 1. explicit new-path metadata
+  if (ex.privacyClass === 'sensitive') return true
+  if (['passport', 'id_document', 'payment_proof'].includes(String(ex.assetType || ''))) return true
+  // 2 + 3. doc_type + title indicators (title/type only, never the body/summary)
+  if (SENSITIVE_TITLE_RE.test(`${doc?.title || ''} ${doc?.doc_type || ''}`)) return true
+  // 4. safe structural metadata: sensitive identifier field NAMES (keys only, no values)
+  const keys = Object.keys(ex.fields || {}).map((k) => k.toLowerCase())
+  if (keys.some((k) => SENSITIVE_FIELD_KEYS.includes(k))) return true
+  return false
+}
+
 // The one primary identifier for a sensitive doc, masked for chat. Only known
 // identifier keys are ever surfaced; anything else (DOB, address, birthplace,
 // passwords, tokens) is deliberately omitted. Returns null when none is on file.
@@ -452,17 +506,30 @@ function maskedIdentifierLine(doc: any): string | null {
 async function buildMaskedSensitiveReply(doc: any): Promise<string> {
   const ex = (doc?.extracted || {}) as any
   const f = (ex.fields || {}) as Record<string, string>
-  const assetType: string = ex.assetType || doc.doc_type || ''
+  const kind = deriveAssetKind(doc)
+
+  // Human noun for this kind (NOT derived from the stored title sentence).
+  const kindNoun =
+    kind === 'passport' ? 'Passport'
+    : kind === 'id_document' ? (fmt(f.document_kind) || 'ID')
+    : kind === 'payment_proof' ? 'Payment proof'
+    : 'Document'
+
+  // Clean display title assembled from structured fields only — e.g. "Srini's
+  // Passport". The stored documents.title (a free-text sentence for legacy rows,
+  // which may hold the number/DOB) is NEVER echoed.
+  const name = fmt(f.name) || fmt(f.counterparty)
+  const displayTitle = name ? `${name}'s ${kindNoun}` : kindNoun
 
   let typeLabel = ''
-  if (assetType === 'passport') typeLabel = [fmt(f.nationality), 'Passport'].filter(Boolean).join(' ')
-  else if (assetType === 'id_document') typeLabel = fmt(f.document_kind) || 'ID document'
-  else if (assetType === 'payment_proof') typeLabel = 'Payment proof'
+  if (kind === 'passport') typeLabel = [fmt(f.nationality), 'Passport'].filter(Boolean).join(' ')
+  else if (kind === 'id_document') typeLabel = fmt(f.document_kind) || 'ID document'
+  else if (kind === 'payment_proof') typeLabel = 'Payment proof'
   const expiry = ex.expiryHuman || fmt(f.expiry_date)
   const line2 = [typeLabel, expiry ? `expires ${expiry}` : ''].filter(Boolean).join(' · ')
 
-  const lines: string[] = [`📄 ${doc.title || 'Document'}`]
-  if (line2) lines.push(line2)
+  const lines: string[] = [`📄 ${displayTitle}`]
+  if (line2 && line2 !== displayTitle) lines.push(line2)
   const idLine = maskedIdentifierLine(doc)
   if (idLine) lines.push(idLine)
 
@@ -471,7 +538,8 @@ async function buildMaskedSensitiveReply(doc: any): Promise<string> {
     if (url) lines.push(`\nOriginal file: ${url}\n_link valid ~10 min_`)
   }
   lines.push(`\nAsk me for a specific detail if you need it.`)
-  // Belt-and-braces: no full number can survive even if a title/summary held one.
+  // Belt-and-braces: strip any run of 4+ digits from the FINAL assembled string, so
+  // a stray identifier can never survive even if a future field slips through.
   return stripLongDigits(lines.join('\n'))
 }
 
@@ -537,7 +605,9 @@ export async function buildAssetRetrievalReply(telegramId: number, text: string,
       source: 'retrieval',
     })
 
-    const sensitive = doc?.extracted?.privacyClass === 'sensitive'
+    // Fail-closed: legacy passport/ID rows carry no privacyClass, so derive sensitivity
+    // from title/doc_type/field-names too. A missed signal here is the leak path.
+    const sensitive = isSensitiveDoc(doc)
     const requested = requestedField(text)
     if (sensitive) {
       // Explicit single-field request → ONLY that field (logged). Otherwise the masked
@@ -579,7 +649,7 @@ export async function buildAssetFieldReply(telegramId: number, text: string): Pr
   const val = fieldFromDoc(doc, req.keys)
   if (!val) return null
   // Return ONLY the requested field. Audit the access (no confirmation prompt — see Case 3).
-  if (doc?.extracted?.privacyClass === 'sensitive') {
+  if (isSensitiveDoc(doc)) {
     console.log('[asset-memory] AUDIT sensitive_field_access', { telegramId, docId: doc.id, field: req.label })
   }
   return `${req.label}: ${val}`
