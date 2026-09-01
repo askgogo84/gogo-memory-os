@@ -24,6 +24,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { storeDocument, getDocumentSignedUrl } from '@/lib/services/document-store'
+import { createDocumentShortLink, shortLinkUrl } from '@/lib/services/document-links'
 import { embedText } from '@/lib/services/embeddings'
 import { downloadTwilioMediaAsDataUrl } from '@/lib/services/image-note-reader'
 import { saveFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState } from '@/lib/bot/handlers/followup-state'
@@ -503,7 +504,19 @@ function maskedIdentifierLine(doc: any): string | null {
 // Masked default reply for a sensitive asset. Clean title + type/expiry + masked
 // identifier + the original file link (short-TTL signed URL) + a hint. Never
 // iterates extracted.fields, so no private field can leak by default.
-async function buildMaskedSensitiveReply(doc: any): Promise<string> {
+// Branded original-file link line. Mints an opaque short-link token that maps to
+// this doc server-side, so the raw Supabase signed URL (path + signed token) never
+// reaches chat. Falls back to a plain short-lived signed URL only if minting fails,
+// so retrieval never loses the file. Returns null when there is no stored file.
+async function buildOriginalFileLink(telegramId: number, doc: any, sensitive: boolean): Promise<string | null> {
+  if (!doc?.storage_path) return null
+  const token = await createDocumentShortLink({ telegramId, documentId: String(doc.id), sensitive })
+  if (token) return `Open original: ${shortLinkUrl(token)}`
+  const url = await getDocumentSignedUrl(doc.storage_path, 120)
+  return url ? `Open original: ${url}` : null
+}
+
+async function buildMaskedSensitiveReply(telegramId: number, doc: any): Promise<string> {
   const ex = (doc?.extracted || {}) as any
   const f = (ex.fields || {}) as Record<string, string>
   const kind = deriveAssetKind(doc)
@@ -532,15 +545,17 @@ async function buildMaskedSensitiveReply(doc: any): Promise<string> {
   if (line2 && line2 !== displayTitle) lines.push(line2)
   const idLine = maskedIdentifierLine(doc)
   if (idLine) lines.push(idLine)
-
-  if (doc.storage_path) {
-    const url = await getDocumentSignedUrl(doc.storage_path, 600)
-    if (url) lines.push(`\nOriginal file: ${url}\n_link valid ~10 min_`)
-  }
   lines.push(`\nAsk me for a specific detail if you need it.`)
-  // Belt-and-braces: strip any run of 4+ digits from the FINAL assembled string, so
-  // a stray identifier can never survive even if a future field slips through.
-  return stripLongDigits(lines.join('\n'))
+
+  // Belt-and-braces: strip any run of 4+ digits from the FIELD-DERIVED text, so a
+  // stray identifier can never survive even if a future field slips through.
+  let out = stripLongDigits(lines.join('\n'))
+
+  // Append the branded short link AFTER masking, so stripLongDigits can never mutate
+  // the random token. The token carries no identifier and maps to the file server-side.
+  const link = await buildOriginalFileLink(telegramId, doc, true)
+  if (link) out += `\n\n${link}`
+  return out
 }
 
 // Explicit single-field answer for a sensitive doc: returns ONLY the requested
@@ -573,10 +588,8 @@ async function buildAssetFileReply(telegramId: number, doc: any, requested?: { k
     else lines.push(`\nI don't have the ${requested.label.toLowerCase()} on file for this one.`)
   }
 
-  if (doc.storage_path) {
-    const url = await getDocumentSignedUrl(doc.storage_path, 600)
-    if (url) lines.push(`\nOriginal file: ${url}\n_link valid ~10 min_`)
-  }
+  const link = await buildOriginalFileLink(telegramId, doc, false)
+  if (link) lines.push(`\n${link}`)
   return lines.join('\n')
 }
 
@@ -619,7 +632,7 @@ export async function buildAssetRetrievalReply(telegramId: number, text: string,
         if (only) return only
         return `I don't have the ${requested.label.toLowerCase()} on file for this one.`
       }
-      return await buildMaskedSensitiveReply(doc)
+      return await buildMaskedSensitiveReply(telegramId, doc)
     }
     return buildAssetFileReply(telegramId, doc, requested)
   } catch (err: any) {
