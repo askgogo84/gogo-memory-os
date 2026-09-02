@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildAssetRetrievalReply, isAssetRetrievalCommand } from '@/lib/services/asset-memory'
 
 const RETRIEVAL_VERB_RE = /\b(show me|find|send me|get me|pull up|do you have|where'?s|where is|open(?: my| the)?|retrieve)\b/i
+const RESERVED_RETRIEVAL_RE = /^(?:show|open|find|get|send)(?:\s+me)?\s+(?:my\s+)?(?:reminders?|tasks?|to-?dos?|lists?|calendar|events?|cards?|credit\s*cards?|emails?|mail|weather|briefing|today|memory|memories|preferences?|rules?|contacts?|expenses?|spending|saved\s+(?:reels?|videos?|posts?))\s*[?.!]*$/i
 
 const STOP = new Set([
   'show', 'me', 'find', 'send', 'get', 'pull', 'up', 'do', 'you', 'have', 'where', 'is',
@@ -54,7 +55,10 @@ export async function buildNaturalAssetRetrievalReply(
   messageId?: string | null,
 ): Promise<string | null> {
   const raw = String(text || '').trim()
-  if (!raw || !RETRIEVAL_VERB_RE.test(raw)) return null
+  if (!raw || !RETRIEVAL_VERB_RE.test(raw) || RESERVED_RETRIEVAL_RE.test(raw)) return null
+
+  const qTokens = tokens(raw)
+  if (!qTokens.length) return null
 
   const { data } = await supabaseAdmin
     .from('documents')
@@ -66,7 +70,6 @@ export async function buildNaturalAssetRetrievalReply(
   const docs = (data || []) as any[]
   if (!docs.length) return null
 
-  const qTokens = tokens(raw)
   const tokenDocFrequency = new Map<string, number>()
   for (const doc of docs) {
     const bag = new Set([
