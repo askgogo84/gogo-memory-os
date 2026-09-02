@@ -86,6 +86,9 @@ export function EmailPreferences() {
           <p className="mt-2 text-[11.5px] leading-5 text-gogo-ink-3">
             This is optional. You can pause it here or unsubscribe from any email. We do not enrol your connected Gmail address automatically.
           </p>
+          <a href="/api/dashboard/email-preview?day=0" target="_blank" rel="noreferrer" className="mt-3 inline-flex text-[12px] font-bold text-gogo-plum no-underline hover:text-gogo-plum-deep">
+            Preview the first Gogo Tip →
+          </a>
         </div>
 
         <form onSubmit={save} className="w-full lg:max-w-[430px]">
