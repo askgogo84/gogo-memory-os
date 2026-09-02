@@ -5,6 +5,7 @@ import { WhatsAppChip } from '@/components/dashboard/whatsapp-chip'
 import { QuotaBar } from '@/components/dashboard/quota-bar'
 import { SignOutButton } from '@/components/dashboard/sign-out-button'
 import { EmailPreferences } from '@/components/dashboard/email-preferences'
+import { DailyBriefEmail } from '@/components/dashboard/daily-brief-email'
 
 export const dynamic = 'force-dynamic'
 
@@ -148,6 +149,7 @@ export default async function YouPage() {
         </section>
       </div>
 
+      <div className="mt-4"><DailyBriefEmail /></div>
       <div className="mt-4"><EmailPreferences /></div>
 
       <section className="mt-4 flex flex-col gap-4 rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/70 p-5 shadow-[0_18px_50px_rgba(62,35,18,0.035)] sm:flex-row sm:items-center sm:justify-between">

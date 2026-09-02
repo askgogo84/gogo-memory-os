@@ -4,6 +4,9 @@ import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildMorningBriefing } from '@/lib/bot/handlers/morning-briefing'
 import { buildThrowbackLine } from '@/lib/bot/handlers/throwback'
+import { sendAskGogoEmail } from '@/lib/email/resend'
+import { renderDailyBriefEmail } from '@/lib/email/daily-brief'
+import { buildDailyBriefUnsubscribeUrl } from '@/lib/email/daily-brief-unsubscribe'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -42,7 +45,7 @@ function normalizePhone(value: string | null | undefined) {
   return (value || '').replace(/^whatsapp:/, '').trim()
 }
 
-async function alreadySentToday(telegramId: number, today: string) {
+async function alreadyWhatsappSentToday(telegramId: number, today: string) {
   const marker = `ASKGOGO_DAILY_BRIEFING_SENT:${today}`
 
   const { data } = await supabaseAdmin
@@ -55,11 +58,23 @@ async function alreadySentToday(telegramId: number, today: string) {
   return Boolean(data?.length)
 }
 
-async function markSentToday(telegramId: number, today: string) {
+async function markWhatsappSentToday(telegramId: number, today: string) {
   await supabaseAdmin.from('memories').insert({
     telegram_id: telegramId,
     content: `ASKGOGO_DAILY_BRIEFING_SENT:${today}`,
   })
+}
+
+async function alreadyEmailSentToday(telegramId: number, today: string) {
+  const { data, error } = await supabaseAdmin
+    .from('daily_brief_email_log')
+    .select('id')
+    .eq('telegram_id', telegramId)
+    .eq('local_date', today)
+    .limit(1)
+
+  if (error) throw new Error(`daily_brief_email_log read failed: ${error.message}`)
+  return Boolean(data?.length)
 }
 
 async function weekAheadSummary(telegramId: number): Promise<string | null> {
@@ -90,13 +105,14 @@ function secretMatches(provided: string | null, expected: string) {
 
 function isAuthorized(req: NextRequest) {
   const expected = process.env.CRON_SECRET
-  if (!expected) return true // no secret configured → open (matches prior behaviour)
-  // Prefer the Authorization: Bearer header (keeps the secret out of URLs/logs).
-  // The ?secret= query param is also accepted for parity with /api/cron/reminders
-  // and cron-job.org jobs — see the security note; use the header if you can.
+  if (!expected) return true
   const querySecret = new URL(req.url).searchParams.get('secret')
   const bearerSecret = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
   return secretMatches(bearerSecret, expected) || secretMatches(querySecret, expected)
+}
+
+function firstName(value: string | null | undefined) {
+  return (value || 'there').trim().split(/\s+/)[0] || 'there'
 }
 
 export async function GET(req: NextRequest) {
@@ -109,56 +125,109 @@ export async function GET(req: NextRequest) {
 
   const { data: users, error } = await supabaseAdmin
     .from('users')
-    .select('telegram_id, name, whatsapp_id, briefing_enabled, briefing_time, weekly_brief')
-    .eq('briefing_enabled', true)
-    .not('whatsapp_id', 'is', null)
-    .limit(100)
+    .select('telegram_id, name, whatsapp_id, email, briefing_enabled, briefing_time, weekly_brief, daily_brief_email_enabled')
+    .or('briefing_enabled.eq.true,daily_brief_email_enabled.eq.true')
+    .limit(150)
 
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   }
 
-  let sent = 0
+  let sentWhatsapp = 0
+  let sentEmail = 0
   let skipped = 0
   const failures: any[] = []
 
   for (const user of users || []) {
+    const telegramId = Number(user.telegram_id)
     try {
       if (!shouldRunForTime(user.briefing_time, nowMinutes)) {
         skipped++
         continue
       }
 
-      if (await alreadySentToday(Number(user.telegram_id), now.date)) {
-        skipped++
-        continue
-      }
-
       const phone = normalizePhone(user.whatsapp_id)
-      if (!phone) {
+      const recipient = String(user.email || '').trim().toLowerCase()
+
+      const whatsappEligible = user.briefing_enabled === true && Boolean(phone)
+      const emailEligible = user.daily_brief_email_enabled === true && Boolean(recipient)
+
+      const sendWhatsapp = whatsappEligible && !(await alreadyWhatsappSentToday(telegramId, now.date))
+      const sendEmail = emailEligible && !(await alreadyEmailSentToday(telegramId, now.date))
+
+      if (!sendWhatsapp && !sendEmail) {
         skipped++
         continue
       }
 
-      const briefing = await buildMorningBriefing(Number(user.telegram_id), user.name || 'there')
-      let reply = `☀️ *Good morning*\n\n${briefing}\n\nReply *plan my day* to turn this into reminders.`
+      const briefing = await buildMorningBriefing(telegramId, user.name || 'there')
+      const extraBlocks: string[] = []
 
-      // Sunday extras (1B Throwback + 1E week-ahead)
-      const istWeekday = new Date(`${now.date}T12:00:00+05:30`).getUTCDay() // 0 = Sunday
+      // Sunday extras (Throwback + optional week-ahead) are shared by WhatsApp and email.
+      const istWeekday = new Date(`${now.date}T12:00:00+05:30`).getUTCDay()
       if (istWeekday === 0) {
         if (user.weekly_brief) {
-          const wk = await weekAheadSummary(Number(user.telegram_id))
-          if (wk) reply += `\n\n${wk}`
+          const wk = await weekAheadSummary(telegramId)
+          if (wk) extraBlocks.push(wk)
         }
-        const tb = await buildThrowbackLine(Number(user.telegram_id))
-        if (tb) reply += `\n\n${tb}`
+        const tb = await buildThrowbackLine(telegramId)
+        if (tb) extraBlocks.push(tb)
       }
 
-      await sendWhatsAppMessage(phone, reply)
-      await markSentToday(Number(user.telegram_id), now.date)
-      sent++
+      const fullBriefing = [briefing, ...extraBlocks].filter(Boolean).join('\n\n')
+
+      if (sendWhatsapp) {
+        try {
+          const reply = `☀️ *Good morning*\n\n${fullBriefing}\n\nReply *plan my day* to turn this into reminders.`
+          await sendWhatsAppMessage(phone, reply)
+          await markWhatsappSentToday(telegramId, now.date)
+          sentWhatsapp++
+        } catch (err: any) {
+          failures.push({ telegram_id: telegramId, channel: 'whatsapp', error: err?.message || String(err) })
+        }
+      }
+
+      if (sendEmail) {
+        try {
+          const unsubscribeUrl = buildDailyBriefUnsubscribeUrl(telegramId, recipient)
+          const rendered = renderDailyBriefEmail({
+            firstName: firstName(user.name),
+            briefing: fullBriefing,
+            localDate: now.date,
+            unsubscribeUrl,
+          })
+
+          const send = await sendAskGogoEmail({
+            to: recipient,
+            subject: rendered.subject,
+            html: rendered.html,
+            text: rendered.text,
+            unsubscribeUrl,
+            idempotencyKey: `daily-brief/${telegramId}/${now.date}`,
+            stream: 'daily-brief',
+          })
+
+          if (!send.ok) throw new Error(send.error)
+
+          const { error: logError } = await supabaseAdmin.from('daily_brief_email_log').insert({
+            telegram_id: telegramId,
+            local_date: now.date,
+            email: recipient,
+            subject: rendered.subject,
+            provider_message_id: send.id,
+          })
+
+          if (logError && logError.code !== '23505') {
+            throw new Error(`daily brief log insert failed: ${logError.message}`)
+          }
+
+          sentEmail++
+        } catch (err: any) {
+          failures.push({ telegram_id: telegramId, channel: 'email', error: err?.message || String(err) })
+        }
+      }
     } catch (err: any) {
-      failures.push({ telegram_id: user.telegram_id, error: err?.message || String(err) })
+      failures.push({ telegram_id: user.telegram_id, channel: 'prepare', error: err?.message || String(err) })
     }
   }
 
@@ -166,7 +235,9 @@ export async function GET(req: NextRequest) {
     ok: true,
     date: now.date,
     istTime: `${String(now.hour).padStart(2, '0')}:${String(now.minute).padStart(2, '0')}`,
-    sent,
+    sent: sentWhatsapp,
+    sentWhatsapp,
+    sentEmail,
     skipped,
     failures,
   })
