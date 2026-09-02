@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { waLink } from '@/lib/product-urls'
 
 const WA_DASHBOARD_LINK = waLink('dashboard')
+const DASHBOARD_HOME = '/dashboard/home'
 
 type Phase = 'checking' | 'redeeming' | 'ready' | 'error'
 type OtpStep = 'phone' | 'code'
@@ -41,7 +42,7 @@ export default function Dashboard() {
         body: JSON.stringify({ token }),
       })
         .then((res) => {
-          if (res.ok) window.location.replace('/dashboard/today')
+          if (res.ok) window.location.replace(DASHBOARD_HOME)
           else setPhase('error')
         })
         .catch(() => setPhase('error'))
@@ -51,7 +52,7 @@ export default function Dashboard() {
     fetch('/api/dashboard/session/status', { cache: 'no-store' })
       .then((res) => res.json())
       .then((data) => {
-        if (data?.ok) window.location.replace('/dashboard/today')
+        if (data?.ok) window.location.replace(DASHBOARD_HOME)
         else setPhase('ready')
       })
       .catch(() => setPhase('ready'))
@@ -74,7 +75,7 @@ export default function Dashboard() {
       body: JSON.stringify({ code: code.trim() }),
     })
       .then((res) => {
-        if (res.ok) window.location.replace('/dashboard/today')
+        if (res.ok) window.location.replace(DASHBOARD_HOME)
         else {
           setCodeError(true)
           setSubmitting(false)
@@ -126,7 +127,7 @@ export default function Dashboard() {
         body: JSON.stringify({ challengeId, otp }),
       })
       if (res.ok) {
-        window.location.replace('/dashboard/today')
+        window.location.replace(DASHBOARD_HOME)
         return
       }
       setOtpError('That code is incorrect or has expired. Please try again or request a new code.')

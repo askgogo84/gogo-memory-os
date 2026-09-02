@@ -8,55 +8,56 @@ import { CardError } from '@/components/dashboard/card-error'
 
 export const dynamic = 'force-dynamic'
 
-// The Lists surface: every list the signed-in user owns, each expanding inline.
-// Identity is resolved ONLY from the session's telegram_id, never a URL; all
-// reads go through lib/dashboard/queries.ts. Server component — it reads and
-// renders; the inline-expand interaction lives in <ListCollection>. Read-only:
-// ticking items and creating lists arrive in a later phase.
-
 export default async function ListsPage() {
   const session = await getSession()
-  // The (app) layout guarantees a session; guard anyway so a missing one reads
-  // as an empty account, never a crash.
   const result = session ? await getLists(session.telegramId) : { ok: true as const, lists: [] }
 
-  // Header count line, derived from items already in hand (open = not done) — no
-  // extra query. Only shown when there's something to summarise.
   const lists = result.ok ? result.lists : []
   const openItems = lists.reduce((n, l) => n + l.items.filter((i) => !i.done).length, 0)
+  const totalItems = lists.reduce((n, l) => n + l.items.length, 0)
+  const completed = totalItems - openItems
   const hasLists = result.ok && lists.length > 0
 
   return (
-    // temporary desktop freeze — removed in this surface's own 5c phase
-    <div className="flex flex-col gap-5 lg:max-w-[480px]">
-      <header>
-        <h1 className="font-serif text-[25px] font-semibold tracking-[-0.4px] text-gogo-ink">Lists</h1>
+    <div className="w-full">
+      <header className="relative overflow-hidden rounded-[30px] border border-gogo-ink/8 bg-gogo-surface/75 px-7 py-6 shadow-[0_18px_55px_rgba(62,35,18,0.05)] backdrop-blur-xl">
+        <div className="pointer-events-none absolute -right-16 -top-28 h-72 w-72 rounded-full bg-gogo-orange/10 blur-3xl" />
+        <div className="relative flex flex-wrap items-end justify-between gap-5">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gogo-plum">Your collections</p>
+            <h1 className="mt-1 font-serif text-[36px] font-semibold tracking-[-0.8px] text-gogo-ink">Lists</h1>
+            <p className="mt-2 text-[13px] text-gogo-ink-3">
+              {hasLists ? `${lists.length} lists · ${openItems} open items · ${completed} completed` : 'Keep the small things out of your head.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <WhatsAppChip message="Gogo, start a new list" label="Start in WhatsApp" />
+            <ListCreate />
+          </div>
+        </div>
+
         {hasLists && (
-          <p className="mt-1 text-[13px] font-medium text-gogo-ink-3">
-            {lists.length} {lists.length === 1 ? 'list' : 'lists'} · {openItems} open{' '}
-            {openItems === 1 ? 'item' : 'items'}
-          </p>
+          <div className="relative mt-5 grid max-w-[620px] grid-cols-3 gap-2">
+            <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[10px] uppercase tracking-[0.12em] text-gogo-ink-3">Lists</div><div className="mt-1 font-serif text-[23px] font-semibold text-gogo-ink">{lists.length}</div></div>
+            <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[10px] uppercase tracking-[0.12em] text-gogo-ink-3">Open</div><div className="mt-1 font-serif text-[23px] font-semibold text-gogo-orange">{openItems}</div></div>
+            <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[10px] uppercase tracking-[0.12em] text-gogo-ink-3">Done</div><div className="mt-1 font-serif text-[23px] font-semibold text-emerald-700">{completed}</div></div>
+          </div>
         )}
       </header>
 
-      {/* Create is available whether or not any lists exist yet — including from the
-          empty state below. */}
-      <ListCreate />
-
-      {!result.ok ? (
-        // A read failure is not an empty account — show a retry, never a blank.
-        <CardError message="Couldn’t load your lists right now." />
-      ) : result.lists.length === 0 ? (
-        <EmptyState
-          message="No lists yet."
-          detail="Add items in WhatsApp; they show up here."
-          action={<WhatsAppChip message="Gogo, add milk to my groceries" />}
-        />
-      ) : (
-        // The add-affordance now lives contextually inside each expanded list
-        // (mockup 1d), so there's no separate bottom chip here.
-        <ListCollection lists={result.lists} />
-      )}
+      <div className="mt-5">
+        {!result.ok ? (
+          <CardError message="Couldn’t load your lists right now." />
+        ) : result.lists.length === 0 ? (
+          <EmptyState
+            message="No lists yet."
+            detail="Add items in WhatsApp; they show up here."
+            action={<WhatsAppChip message="Gogo, add milk to my groceries" />}
+          />
+        ) : (
+          <ListCollection lists={result.lists} />
+        )}
+      </div>
     </div>
   )
 }
