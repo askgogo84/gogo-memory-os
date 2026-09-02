@@ -16,6 +16,12 @@ function normalizePhone(input: string): string | null {
   return `whatsapp:${e164}`
 }
 
+function phoneLookupCandidates(whatsappId: string): string[] {
+  const e164 = whatsappId.replace(/^whatsapp:/, '')
+  const digits = e164.replace(/\D/g, '')
+  return Array.from(new Set([whatsappId, e164, digits]))
+}
+
 function otpPepper(): string | null {
   return (process.env.DASHBOARD_OTP_PEPPER || '').trim() || null
 }
@@ -70,18 +76,21 @@ export async function issueDashboardOtp(phoneInput: string, requestIpHash?: stri
     return { ok: false, reason: 'throttled', retryAfterSeconds: Math.ceil(cooldownLeft / 1000) }
   }
 
-  // Resolve only against an existing AskGogo WhatsApp identity. The endpoint
-  // intentionally returns the same outward response whether this exists or not.
-  const { data: user, error: userError } = await supabaseAdmin
+  // Existing users were historically stored in more than one WhatsApp format
+  // (for example `whatsapp:+91...` and `+91...`). Resolve across those formats
+  // and prefer the row that is actually linked to a dashboard telegram_id.
+  const { data: matchedUsers, error: userError } = await supabaseAdmin
     .from('users')
     .select('telegram_id, whatsapp_id')
-    .eq('whatsapp_id', whatsappId)
-    .maybeSingle()
+    .in('whatsapp_id', phoneLookupCandidates(whatsappId))
+    .limit(10)
 
   if (userError) {
     console.error('DASHBOARD_OTP_USER_LOOKUP_FAILED:', userError)
     return { ok: false, reason: 'error' }
   }
+
+  const user = (matchedUsers || []).find((row: any) => row?.telegram_id != null) || matchedUsers?.[0] || null
 
   const challengeId = makeChallengeId()
   const otp = makeOtp()
