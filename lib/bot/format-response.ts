@@ -1,7 +1,30 @@
-﻿import type { Channel } from './resolve-user'
+import type { Channel } from './resolve-user'
+
+function shortenCalendarOAuthLinks(text: string): string {
+  return text.replace(
+    /https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?[^\s]+/g,
+    (rawUrl) => {
+      try {
+        const url = new URL(rawUrl)
+        const redirectUri = url.searchParams.get('redirect_uri') || ''
+        const state = url.searchParams.get('state') || ''
+
+        // Only rewrite AskGogo's Google Calendar OAuth URL. Other Google links
+        // must stay untouched.
+        if (!redirectUri.includes('/api/calendar/callback') || !/^-?\d+$/.test(state)) {
+          return rawUrl
+        }
+
+        return `https://app.askgogo.in/calendar?id=${encodeURIComponent(state)}`
+      } catch {
+        return rawUrl
+      }
+    }
+  )
+}
 
 function cleanBaseText(text: string): string {
-  return (text || '')
+  return shortenCalendarOAuthLinks(text || '')
     .replace(/\r\n/g, '\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
