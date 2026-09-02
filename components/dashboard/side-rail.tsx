@@ -2,9 +2,18 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { TAB_ICONS, UsageIcon } from './icons'
-import { TABS } from './tab-bar'
+import { TodayIcon, MemoryIcon, CalendarIcon, ListsIcon, YouIcon, UsageIcon } from './icons'
 import { ThemeToggle } from './theme-toggle'
+
+const NAV = [
+  { key: 'home', label: 'Home', href: '/dashboard/home', Icon: TodayIcon },
+  { key: 'today', label: 'Today', href: '/dashboard/today', Icon: TodayIcon },
+  { key: 'memory', label: 'Memory', href: '/dashboard/memory', Icon: MemoryIcon },
+  { key: 'tasks', label: 'Tasks', href: '/dashboard/tasks', Icon: ListsIcon },
+  { key: 'calendar', label: 'Calendar', href: '/dashboard/calendar', Icon: CalendarIcon },
+  { key: 'lists', label: 'Lists', href: '/dashboard/lists', Icon: ListsIcon },
+  { key: 'you', label: 'You', href: '/dashboard/you', Icon: YouIcon },
+] as const
 
 export function SideRail() {
   const pathname = usePathname()
@@ -13,23 +22,22 @@ export function SideRail() {
   return (
     <nav className="relative z-20 hidden w-[244px] shrink-0 flex-col border-r border-gogo-ink/7 bg-gogo-rail/88 px-4 py-5 backdrop-blur-2xl lg:sticky lg:top-0 lg:flex lg:h-screen lg:self-start">
       <div className="flex items-center justify-between px-2 pb-6">
-        <div className="flex items-center gap-3">
+        <Link href="/dashboard/home" className="group flex items-center gap-3" aria-label="AskGogo Home">
           <div className="relative">
-            <div className="absolute inset-0 rounded-full bg-gogo-orange/20 blur-md" />
-            <img src="/gogo-figure.png" alt="" className="relative h-10 w-10 rounded-full" />
+            <div className="absolute inset-0 rounded-full bg-gogo-orange/20 blur-md transition group-hover:bg-gogo-orange/30" />
+            <img src="/gogo-figure.png" alt="" className="gogo-float relative h-10 w-10 rounded-full" />
           </div>
           <div>
             <div className="font-serif text-[19px] font-semibold tracking-[-0.35px] text-gogo-ink">AskGogo</div>
             <div className="text-[9.5px] font-bold uppercase tracking-[0.16em] text-gogo-ink-3">Your calm space</div>
           </div>
-        </div>
+        </Link>
         <ThemeToggle />
       </div>
 
       <div className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">Your world</div>
       <div className="flex flex-col gap-[3px]">
-        {TABS.map(({ key, label, href }) => {
-          const Icon = TAB_ICONS[key]
+        {NAV.map(({ key, label, href, Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`)
           return (
             <Link
