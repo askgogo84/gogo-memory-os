@@ -18,6 +18,7 @@ import {
 } from '@/lib/lists'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import { isCalendarListName } from '@/lib/data/calendar-word'
+import { buildNaturalAssetRetrievalReply } from '@/lib/services/asset-natural-retrieval'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
@@ -155,6 +156,16 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
       if (list) return formatList(list.list_name, list.items || [])
       // no such list → fall through to detectIntent / Claude unchanged
     }
+  }
+
+  // ── NATURAL ASSET RETRIEVAL ─────────────────────────────────────────────
+  // Title/brand-first retrieval must beat the freeform memory model. This resolves
+  // "show me Jopasu Dashboard & Tyre Polish" and "find my Jopasu polish" without
+  // requiring the user to say image/document/file, while declining weak matches so
+  // an unrelated semantic hit (e.g. a JTP estimate) can never impersonate the asset.
+  if (extra?.telegramId) {
+    const assetReply = await buildNaturalAssetRetrievalReply(extra.telegramId, text)
+    if (assetReply) return assetReply
   }
 
   // ── NUTRITION (before split — split parser matches breakfast/lunch/dinner) ─
