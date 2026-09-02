@@ -1,4 +1,5 @@
 'use client'
+// Preview redeploy marker: refreshes Vercel Preview env after OTP secret updates.
 
 import { useEffect, useMemo, useState } from 'react'
 import { waLink } from '@/lib/product-urls'
