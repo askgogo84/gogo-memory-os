@@ -7,6 +7,13 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const MAX_RULES = 20
 
+const PERSONALITY_PROMPTS: Record<string, string> = {
+  calm_companion: 'Use a calm, warm, capable tone. Be concise and reassuring without being sugary, patronizing, or vague.',
+  sharp_professional: 'Use a crisp professional tone. Lead with the answer, structure only when useful, and keep wording efficient.',
+  straight_talking_coach: 'Use a direct, action-oriented coaching tone. Be clear about the next move and avoid motivational fluff.',
+  quiet_minimalist: 'Use the shortest useful answer. Keep chatter low, avoid unnecessary headings, and surface only what matters.',
+}
+
 /** Detect a standing-instruction save. Returns the rule text, or null. */
 export function detectPreferenceSave(text: string): string | null {
   const t = (text || '').trim()
@@ -67,12 +74,29 @@ export async function forgetPreference(telegramId: number, match: string): Promi
   return hits.length
 }
 
-/** System-prompt block injected into every Claude call. Empty if no rules. */
+/** System-prompt block injected into every Claude freeform call. */
 export async function getPreferenceBlock(telegramId: number): Promise<string> {
-  const rules = await listPreferences(telegramId)
-  if (!rules.length) return ''
-  return (
-    `\n\nStanding preferences for this user (ALWAYS follow — they override defaults):\n` +
-    rules.map((r) => `- ${r.rule_text}`).join('\n')
-  )
+  const [rules, experienceResult] = await Promise.all([
+    listPreferences(telegramId),
+    supabaseAdmin
+      .from('user_experience_preferences')
+      .select('personality')
+      .eq('telegram_id', telegramId)
+      .maybeSingle(),
+  ])
+
+  const personality = String(experienceResult.data?.personality || 'calm_companion')
+  const tone = PERSONALITY_PROMPTS[personality] || PERSONALITY_PROMPTS.calm_companion
+  const parts = [
+    `\n\nAskGogo conversation style for this user:\n- ${tone}\n- Personality changes tone only. Never change facts, privacy rules, safety boundaries, or action semantics.`,
+  ]
+
+  if (rules.length) {
+    parts.push(
+      `\nStanding preferences for this user (ALWAYS follow — they override defaults):\n` +
+      rules.map((r) => `- ${r.rule_text}`).join('\n')
+    )
+  }
+
+  return parts.join('\n')
 }
