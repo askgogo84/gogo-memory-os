@@ -1,5 +1,10 @@
 import { addToList } from '@/lib/lists'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import {
+  armPendingAssetSave,
+  isExplicitAssetSaveCommand,
+  saveRecentMediaAsAsset,
+} from '@/lib/services/asset-memory'
 
 function extractSaveTitle(text: string) {
   return (text || '')
@@ -12,9 +17,8 @@ function extractSaveTitle(text: string) {
     .trim()
 }
 
-export function isSaveLastContextCommand(text: string) {
+function isLegacySaveLastContextCommand(text: string) {
   const lower = (text || '').toLowerCase().trim()
-
   return (
     lower.startsWith('save it as ') ||
     lower.startsWith('save this as ') ||
@@ -22,6 +26,10 @@ export function isSaveLastContextCommand(text: string) {
     lower.startsWith('remember it as ') ||
     lower.startsWith('remember this as ')
   )
+}
+
+export function isSaveLastContextCommand(text: string) {
+  return isExplicitAssetSaveCommand(text) || isLegacySaveLastContextCommand(text)
 }
 
 function extractUrl(text: string) {
@@ -37,14 +45,7 @@ function cleanTitle(title: string) {
 }
 
 function isSaveCommandText(text: string) {
-  const lower = (text || '').toLowerCase().trim()
-  return (
-    lower.startsWith('save it as ') ||
-    lower.startsWith('save this as ') ||
-    lower.startsWith('save that as ') ||
-    lower.startsWith('remember it as ') ||
-    lower.startsWith('remember this as ')
-  )
+  return isLegacySaveLastContextCommand(text) || isExplicitAssetSaveCommand(text)
 }
 
 function looksLikeBotFallback(content: string) {
@@ -62,8 +63,21 @@ export async function buildSaveLastContextReply(params: {
   telegramId: number
   text: string
 }) {
-  const title = cleanTitle(extractSaveTitle(params.text))
+  // Asset-memory Pass 2: first try to bind the command to the exact preceding
+  // media SID. If none exists (or it is stale), arm a one-next-media intent.
+  // Generic “save this as Claude counter” remains the old text/link workflow.
+  if (isExplicitAssetSaveCommand(params.text)) {
+    const recentMedia = await saveRecentMediaAsAsset(params.telegramId, params.text)
+    if (recentMedia) return recentMedia.reply
 
+    await armPendingAssetSave(params.telegramId, params.text)
+    return (
+      `📎 Send the image, screenshot, PDF or document you want me to save.\n\n` +
+      `I'll use the *next file only* and file it with this request.`
+    )
+  }
+
+  const title = cleanTitle(extractSaveTitle(params.text))
   if (!title) {
     return `What name should I save it as?\n\nExample:\n*Save it as Claude counter*`
   }
@@ -90,10 +104,7 @@ export async function buildSaveLastContextReply(params: {
 
   const original = String(lastUserItem.content || '').trim()
   const url = extractUrl(original)
-
-  const note = url
-    ? `${title}\nLink: ${url}`
-    : `${title}\n${original}`
+  const note = url ? `${title}\nLink: ${url}` : `${title}\n${original}`
 
   await addToList(params.telegramId, 'notes', [note])
 
