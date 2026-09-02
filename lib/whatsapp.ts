@@ -33,19 +33,10 @@ function normalizeWhatsAppAddress(value: string): string {
 export function sanitizeMarkdownForWhatsApp(input: string): string {
   let text = String(input ?? '')
 
-  // **bold** -> *bold* (WhatsApp uses single asterisks for bold)
   text = text.replace(/\*\*(.+?)\*\*/g, '*$1*')
-
-  // ## / ### (and #…######) headings -> *bold* heading text
   text = text.replace(/^[ \t]*#{1,6}[ \t]+(.+?)[ \t]*$/gm, '*$1*')
-
-  // strip any stray leading heading hashes left over (e.g. "#Heading", bare "## ")
   text = text.replace(/^[ \t]*#{1,6}[ \t]*/gm, '')
-
-  // "- " bullets -> "• " (preserve leading indentation)
   text = text.replace(/^([ \t]*)-[ \t]+/gm, '$1• ')
-
-  // strip citation markers like [1] [2] [3]
   text = text.replace(/[ \t]*\[\d+\]/g, '')
 
   return text
@@ -55,19 +46,17 @@ const WA_MAX_CHARS = 1550
 
 function splitIntoChunks(text: string): string[] {
   if (text.length <= WA_MAX_CHARS) return [text]
-  
+
   const chunks: string[] = []
-  // Split on double newlines (section breaks) to keep sections together
   const sections = text.split(/\n\n/)
   let current = ''
-  
+
   for (const section of sections) {
     const candidate = current ? current + '\n\n' + section : section
     if (candidate.length <= WA_MAX_CHARS) {
       current = candidate
     } else {
       if (current) chunks.push(current)
-      // If single section is too long, split on single newlines
       if (section.length > WA_MAX_CHARS) {
         const lines = section.split('\n')
         let lineChunk = ''
@@ -91,10 +80,6 @@ function splitIntoChunks(text: string): string[] {
   return chunks.filter(c => c.trim())
 }
 
-// Twilio status-callback URL for delivery-truth. Attached to a send ONLY when
-// this env var is present and non-empty, so an unset var means byte-identical
-// create() payloads to before this feature existed. Fail-open: a bad/absent URL
-// simply means no callback, never a dropped send.
 const statusCallbackUrl = (process.env.TWILIO_STATUS_CALLBACK_URL || '').trim()
 
 export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: string | null) {
@@ -105,15 +90,8 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
   let lastMessage: any = null
 
   for (let i = 0; i < chunks.length; i++) {
-    const payload: any = {
-      body: chunks[i],
-      from,
-      to,
-    }
-    // Only attach media to first chunk
-    if (i === 0 && mediaUrl && mediaUrl.trim()) {
-      payload.mediaUrl = [mediaUrl.trim()]
-    }
+    const payload: any = { body: chunks[i], from, to }
+    if (i === 0 && mediaUrl && mediaUrl.trim()) payload.mediaUrl = [mediaUrl.trim()]
 
     const message = await client.messages.create(payload)
     lastMessage = message
@@ -127,19 +105,12 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
       hasMedia: i === 0 && Boolean(mediaUrl),
     })
 
-    // Small delay between chunks to preserve order
-    if (i < chunks.length - 1) {
-      await new Promise(r => setTimeout(r, 300))
-    }
+    if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 300))
   }
 
   return lastMessage
 }
 
-// Business-initiated send via an approved WhatsApp utility template.
-// Outside the 24h customer-service window, freeform sends are ACCEPTED by
-// Twilio but dropped asynchronously with error 63016 (invisible to try/catch)
-// - the Jul 19 outage. Templates are the only reliable business-initiated path.
 export async function sendWhatsAppReminderTemplate(toNumber: string, label: string) {
   const contentSid = process.env.TWILIO_REMINDER_CONTENT_SID
   if (!contentSid) throw new Error('Missing TWILIO_REMINDER_CONTENT_SID')
@@ -157,10 +128,6 @@ export async function sendWhatsAppReminderTemplate(toNumber: string, label: stri
   return message
 }
 
-// Same business-initiated reminder send, but via the approved Quick-Reply buttons
-// template (Done / Snooze 10m / Move to 8pm). Also a Utility template, so the
-// out-of-24h-window delivery guarantee is preserved. {{1}} = emoji+label, an
-// identical content payload to sendWhatsAppReminderTemplate.
 export async function sendWhatsAppReminderButtons(toNumber: string, label: string) {
   const contentSid = process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID
   if (!contentSid) throw new Error('Missing TWILIO_REMINDER_BUTTONS_CONTENT_SID')
@@ -178,12 +145,33 @@ export async function sendWhatsAppReminderButtons(toNumber: string, label: strin
   return message
 }
 
+// Dashboard login OTP sent through an approved WhatsApp Authentication template.
+// The OTP is generated and verified by AskGogo; Twilio only delivers it. The
+// content template should use {{1}} for the six-digit code / copy-code button.
+export async function sendWhatsAppAuthOtp(toNumber: string, otp: string) {
+  const contentSid = (process.env.TWILIO_AUTH_OTP_CONTENT_SID || '').trim()
+  if (!contentSid) throw new Error('Missing TWILIO_AUTH_OTP_CONTENT_SID')
+  if (!/^\d{6}$/.test(otp)) throw new Error('Invalid dashboard OTP')
+
+  const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
+  const to = normalizeWhatsAppAddress(toNumber)
+  const payload: any = {
+    from,
+    to,
+    contentSid,
+    contentVariables: JSON.stringify({ '1': otp }),
+  }
+  if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
+
+  const message = await client.messages.create(payload)
+  console.log('WHATSAPP_AUTH_OTP_SENT:', { sid: message.sid, to, status: message.status })
+  return message
+}
+
 export async function sendWhatsAppTypingIndicator(messageSid?: string | null) {
   const sid = (messageSid || '').trim()
 
-  if (!sid || !accountSid || !authToken) {
-    return false
-  }
+  if (!sid || !accountSid || !authToken) return false
 
   const params = new URLSearchParams()
   params.append('messageId', sid)
