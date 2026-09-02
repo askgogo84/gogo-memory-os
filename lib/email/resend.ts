@@ -5,6 +5,7 @@ type SendEmailInput = {
   text: string
   unsubscribeUrl?: string | null
   idempotencyKey?: string | null
+  stream?: 'lifecycle' | 'daily-brief'
 }
 
 export type SendEmailResult =
@@ -41,7 +42,7 @@ export async function sendAskGogoEmail(input: SendEmailInput): Promise<SendEmail
         headers,
         tags: [
           { name: 'product', value: 'askgogo' },
-          { name: 'stream', value: 'lifecycle' },
+          { name: 'stream', value: input.stream || 'lifecycle' },
         ],
       }),
     })
