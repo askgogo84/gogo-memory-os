@@ -4,6 +4,7 @@ type SendEmailInput = {
   html: string
   text: string
   unsubscribeUrl?: string | null
+  idempotencyKey?: string | null
 }
 
 export type SendEmailResult =
@@ -29,6 +30,7 @@ export async function sendAskGogoEmail(input: SendEmailInput): Promise<SendEmail
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        ...(input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : {}),
       },
       body: JSON.stringify({
         from,
