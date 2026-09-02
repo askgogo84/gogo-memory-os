@@ -1,5 +1,6 @@
 -- WhatsApp OTP login challenges for the AskGogo dashboard.
 -- User-run migration. Safe to run more than once.
+-- Preview refresh after Twilio credentials were enabled for the Preview environment.
 
 create table if not exists public.dashboard_otp_challenges (
   challenge_id text primary key,
