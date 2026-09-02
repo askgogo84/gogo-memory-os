@@ -86,6 +86,17 @@ export default async function YouPage() {
         </div>
       </header>
 
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <a href="/dashboard/personalize" className="group flex items-center gap-4 rounded-[24px] border border-gogo-ink/8 bg-gogo-surface/76 p-4 shadow-[0_14px_38px_rgba(62,35,18,.035)] transition hover:-translate-y-0.5">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-[16px] bg-gogo-orange-tint"><img src="/gogo-figure.png" alt="" className="h-10 w-10 rounded-full object-cover" /></div>
+          <div><div className="text-[9px] font-bold uppercase tracking-[0.15em] text-gogo-orange">Personalize</div><div className="mt-1 font-serif text-[20px] font-semibold text-gogo-ink">Make Gogo feel like yours</div><div className="mt-1 text-[11px] text-gogo-ink-3">Personality + your comfort drink →</div></div>
+        </a>
+        <a href="/dashboard/learn" className="group flex items-center gap-4 rounded-[24px] border border-gogo-ink/8 bg-gogo-surface/76 p-4 shadow-[0_14px_38px_rgba(62,35,18,.035)] transition hover:-translate-y-0.5">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-[16px] bg-gogo-plum/9 text-xl">▶</div>
+          <div><div className="text-[9px] font-bold uppercase tracking-[0.15em] text-gogo-plum">Master Gogo</div><div className="mt-1 font-serif text-[20px] font-semibold text-gogo-ink">Learn one useful thing</div><div className="mt-1 text-[11px] text-gogo-ink-3">Short lessons + guided practice →</div></div>
+        </a>
+      </div>
+
       <div className="mt-5 grid gap-4 xl:grid-cols-12">
         <section className="xl:col-span-7 rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/80 p-6 shadow-[0_18px_50px_rgba(62,35,18,0.04)] backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
