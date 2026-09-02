@@ -3,6 +3,7 @@ import { getSession } from '@/lib/dashboard/session'
 import { TabBar } from '@/components/dashboard/tab-bar'
 import { SideRail } from '@/components/dashboard/side-rail'
 import { ThemeToggle } from '@/components/dashboard/theme-toggle'
+import { BreathingSpace } from '@/components/dashboard/breathing-space'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +19,8 @@ export default async function DashboardShell({ children }: { children: React.Rea
         <div className="absolute bottom-[-13rem] left-[36%] h-[28rem] w-[28rem] rounded-full bg-emerald-400/6 blur-[110px]" />
       </div>
       <SideRail />
-      <div className="fixed right-4 top-4 z-30 lg:hidden">
+      <BreathingSpace />
+      <div className="fixed right-20 top-4 z-30 lg:hidden">
         <ThemeToggle />
       </div>
       <main className="relative z-10 min-w-0 flex-1 px-5 pb-24 pt-6 lg:px-9 lg:pb-12 lg:pt-8 xl:px-12 2xl:px-16">{children}</main>
