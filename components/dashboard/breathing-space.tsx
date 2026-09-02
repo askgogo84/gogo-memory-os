@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from 'react'
 
 type Phase = { label: string; seconds: number; scale: number; hint: string }
-type Mode = { key: string; name: string; subtitle: string; phases: Phase[] }
+type Mode = { key: 'balance' | 'box' | 'relax'; name: string; subtitle: string; sound: string; phases: Phase[] }
 
 const MODES: Mode[] = [
   {
     key: 'balance',
     name: 'Balance',
     subtitle: '5–5 · steady and simple',
+    sound: 'Warm drone · soft chime',
     phases: [
       { label: 'Inhale', seconds: 5, scale: 1, hint: 'Breathe in gently through your nose.' },
       { label: 'Exhale', seconds: 5, scale: 0.68, hint: 'Let the breath leave slowly.' },
@@ -19,6 +20,7 @@ const MODES: Mode[] = [
     key: 'box',
     name: 'Stress reset',
     subtitle: '4–4–4–4 · grounded',
+    sound: 'Low bowl · grounding pulse',
     phases: [
       { label: 'Inhale', seconds: 4, scale: 1, hint: 'Fill slowly and comfortably.' },
       { label: 'Hold', seconds: 4, scale: 1, hint: 'Stay soft. No straining.' },
@@ -30,6 +32,7 @@ const MODES: Mode[] = [
     key: 'relax',
     name: 'Deep relax',
     subtitle: '4–7–8 · slow down',
+    sound: 'Deep ambient pad · distant bell',
     phases: [
       { label: 'Inhale', seconds: 4, scale: 1, hint: 'Breathe in softly.' },
       { label: 'Hold', seconds: 7, scale: 1, hint: 'Keep your shoulders relaxed.' },
@@ -38,51 +41,114 @@ const MODES: Mode[] = [
   },
 ]
 
-function startAmbientSound() {
+type AmbientHandle = { stop: () => void }
+
+function startAmbientSound(modeKey: Mode['key']): AmbientHandle | null {
   if (typeof window === 'undefined') return null
   const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
   if (!AudioCtx) return null
 
   const ctx: AudioContext = new AudioCtx()
   const master = ctx.createGain()
+  const toneBus = ctx.createGain()
+  const filter = ctx.createBiquadFilter()
+  const timers: number[] = []
+  const persistent: OscillatorNode[] = []
+  let stopped = false
+
   master.gain.setValueAtTime(0.0001, ctx.currentTime)
-  master.gain.exponentialRampToValueAtTime(0.022, ctx.currentTime + 1.8)
+  master.gain.exponentialRampToValueAtTime(modeKey === 'relax' ? 0.018 : 0.021, ctx.currentTime + 1.8)
+  filter.type = 'lowpass'
+  filter.frequency.value = modeKey === 'box' ? 760 : modeKey === 'relax' ? 1050 : 1500
+  filter.Q.value = 0.45
+  toneBus.connect(filter)
+  filter.connect(master)
   master.connect(ctx.destination)
 
-  const freqs = [220, 277.18, 329.63]
-  const oscillators = freqs.map((freq, index) => {
+  const preset = modeKey === 'balance'
+    ? { freqs: [220, 277.18, 329.63], gains: [0.32, 0.19, 0.14], detunes: [0, -5, 4] }
+    : modeKey === 'box'
+      ? { freqs: [110, 146.83, 220], gains: [0.38, 0.18, 0.11], detunes: [0, 3, -4] }
+      : { freqs: [82.41, 123.47, 164.81, 220], gains: [0.34, 0.18, 0.13, 0.08], detunes: [0, -4, 3, -7] }
+
+  preset.freqs.forEach((freq, index) => {
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
-    osc.type = 'sine'
+    osc.type = index === 0 ? 'sine' : 'triangle'
     osc.frequency.value = freq
-    osc.detune.value = index === 1 ? -5 : index === 2 ? 4 : 0
-    gain.gain.value = index === 0 ? 0.34 : 0.2
+    osc.detune.value = preset.detunes[index]
+    gain.gain.value = preset.gains[index]
     osc.connect(gain)
-    gain.connect(master)
+    gain.connect(toneBus)
     osc.start()
-    return osc
+    persistent.push(osc)
   })
 
+  // Very slow movement keeps the pad alive without turning it into a melody.
   const lfo = ctx.createOscillator()
   const lfoGain = ctx.createGain()
   lfo.type = 'sine'
-  lfo.frequency.value = 0.075
-  lfoGain.gain.value = 0.004
+  lfo.frequency.value = modeKey === 'box' ? 0.125 : modeKey === 'relax' ? 0.045 : 0.07
+  lfoGain.gain.value = modeKey === 'box' ? 0.005 : 0.0035
   lfo.connect(lfoGain)
   lfoGain.connect(master.gain)
   lfo.start()
+  persistent.push(lfo)
+
+  const ring = (frequency: number, duration = 3.4, level = 0.055) => {
+    if (stopped || ctx.state === 'closed') return
+    const now = ctx.currentTime
+    const bellGain = ctx.createGain()
+    const bell = ctx.createOscillator()
+    const shimmer = ctx.createOscillator()
+    const shimmerGain = ctx.createGain()
+
+    bell.type = 'sine'
+    shimmer.type = 'sine'
+    bell.frequency.setValueAtTime(frequency, now)
+    shimmer.frequency.setValueAtTime(frequency * 2.01, now)
+    bellGain.gain.setValueAtTime(0.0001, now)
+    bellGain.gain.exponentialRampToValueAtTime(level, now + 0.035)
+    bellGain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
+    shimmerGain.gain.setValueAtTime(level * 0.24, now)
+    shimmerGain.gain.exponentialRampToValueAtTime(0.0001, now + duration * 0.72)
+
+    bell.connect(bellGain)
+    shimmer.connect(shimmerGain)
+    bellGain.connect(master)
+    shimmerGain.connect(master)
+    bell.start(now)
+    shimmer.start(now)
+    bell.stop(now + duration + 0.05)
+    shimmer.stop(now + duration + 0.05)
+  }
+
+  if (modeKey === 'balance') {
+    const timer = window.setInterval(() => ring(659.25, 2.8, 0.032), 14000)
+    timers.push(timer)
+  } else if (modeKey === 'box') {
+    // A quiet bowl-like pulse every box cycle. The low fundamental helps this
+    // feel grounded rather than melodic.
+    const timer = window.setInterval(() => ring(174.61, 4.2, 0.045), 16000)
+    timers.push(timer)
+  } else {
+    const timer = window.setInterval(() => ring(440, 5.2, 0.027), 19000)
+    timers.push(timer)
+  }
 
   return {
     stop() {
+      if (stopped) return
+      stopped = true
+      timers.forEach((timer) => window.clearInterval(timer))
       try {
         master.gain.cancelScheduledValues(ctx.currentTime)
         master.gain.setValueAtTime(Math.max(master.gain.value, 0.0001), ctx.currentTime)
-        master.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.6)
+        master.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.7)
         window.setTimeout(() => {
-          oscillators.forEach((osc) => { try { osc.stop() } catch {} })
-          try { lfo.stop() } catch {}
+          persistent.forEach((osc) => { try { osc.stop() } catch {} })
           void ctx.close()
-        }, 650)
+        }, 760)
       } catch {
         void ctx.close()
       }
@@ -98,7 +164,7 @@ export function BreathingSpace() {
   const [running, setRunning] = useState(false)
   const [soundOn, setSoundOn] = useState(true)
   const [cycles, setCycles] = useState(0)
-  const ambientRef = useRef<ReturnType<typeof startAmbientSound>>(null)
+  const ambientRef = useRef<AmbientHandle | null>(null)
 
   const mode = MODES[modeIndex]
   const phase = mode.phases[phaseIndex]
@@ -145,7 +211,7 @@ export function BreathingSpace() {
     setRemaining(mode.phases[0].seconds)
     setCycles(0)
     setRunning(true)
-    if (soundOn && !ambientRef.current) ambientRef.current = startAmbientSound()
+    if (soundOn && !ambientRef.current) ambientRef.current = startAmbientSound(mode.key)
   }
 
   const toggleSound = () => {
@@ -155,7 +221,7 @@ export function BreathingSpace() {
         ambientRef.current?.stop()
         ambientRef.current = null
       } else if (running && !ambientRef.current) {
-        ambientRef.current = startAmbientSound()
+        ambientRef.current = startAmbientSound(mode.key)
       }
       return next
     })
@@ -183,26 +249,26 @@ export function BreathingSpace() {
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-[80] overflow-y-auto bg-[#1b120f]/88 px-4 py-5 backdrop-blur-2xl">
-          <div className="relative mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-[1180px] flex-col overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_50%_45%,rgba(196,151,193,.28),transparent_28%),radial-gradient(circle_at_78%_15%,rgba(231,174,102,.22),transparent_32%),linear-gradient(145deg,#291710,#4a2c1f_45%,#6f5940)] text-white shadow-2xl">
+        <div className="fixed inset-0 z-[80] overflow-y-auto bg-[#1b120f]/88 px-3 py-3 backdrop-blur-2xl sm:px-4 sm:py-5">
+          <div className="relative mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[1180px] flex-col overflow-hidden rounded-[26px] border border-white/10 bg-[radial-gradient(circle_at_50%_45%,rgba(196,151,193,.28),transparent_28%),radial-gradient(circle_at_78%_15%,rgba(231,174,102,.22),transparent_32%),linear-gradient(145deg,#291710,#4a2c1f_45%,#6f5940)] text-white shadow-2xl sm:min-h-[calc(100vh-2.5rem)] sm:rounded-[32px]">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(9,5,4,.12)_58%,rgba(9,5,4,.35)_100%)]" />
 
-            <header className="relative z-10 flex items-center justify-between px-5 py-5 sm:px-8">
+            <header className="relative z-10 flex items-center justify-between px-4 py-4 sm:px-8 sm:py-5">
               <button type="button" onClick={close} className="grid h-11 w-11 place-items-center rounded-full border border-white/20 bg-black/10 text-xl text-white/90 backdrop-blur" aria-label="Close breathing space">←</button>
-              <div className="text-center">
-                <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/55">Breathe with Gogo</div>
-                <div className="mt-1 text-sm font-semibold text-white/85">A quiet minute, whenever you need one.</div>
+              <div className="min-w-0 px-2 text-center">
+                <div className="text-[9px] font-bold uppercase tracking-[0.18em] text-white/55 sm:text-[10px] sm:tracking-[0.22em]">Breathe with Gogo</div>
+                <div className="mt-1 hidden text-sm font-semibold text-white/85 sm:block">A quiet minute, whenever you need one.</div>
               </div>
               <button type="button" onClick={toggleSound} className="grid h-11 w-11 place-items-center rounded-full border border-white/20 bg-black/10 text-white/90 backdrop-blur" aria-label={soundOn ? 'Mute ambient sound' : 'Turn on ambient sound'} title={soundOn ? 'Sound on' : 'Sound off'}>{soundOn ? '♪' : '×'}</button>
             </header>
 
-            <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-5 py-8 text-center sm:px-8">
-              <div className="mb-5 rounded-2xl border border-white/15 bg-white/88 px-4 py-3 text-left text-[#3e2312] shadow-lg">
+            <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-4 py-5 text-center sm:px-8 sm:py-8">
+              <div className="mb-4 max-w-[92vw] rounded-2xl border border-white/15 bg-white/88 px-4 py-3 text-left text-[#3e2312] shadow-lg sm:mb-5 sm:max-w-none">
                 <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#714c77]">AskGogo</div>
-                <div className="mt-1 text-sm font-semibold">{running ? phase.hint : 'Get comfortable. Let your shoulders soften. Begin when you’re ready.'}</div>
+                <div className="mt-1 text-[13px] font-semibold sm:text-sm">{running ? phase.hint : 'Get comfortable. Let your shoulders soften. Begin when you’re ready.'}</div>
               </div>
 
-              <div className="relative grid h-[250px] w-[250px] place-items-center sm:h-[300px] sm:w-[300px]">
+              <div className="relative grid h-[220px] w-[220px] place-items-center sm:h-[300px] sm:w-[300px]">
                 <div className="absolute inset-0 rounded-full border border-white/25 bg-white/5" />
                 <div
                   className="absolute inset-[18%] rounded-full bg-[radial-gradient(circle_at_40%_35%,#ffd7df_0%,#d998e0_34%,#7867ed_68%,#3f3c92_100%)] shadow-[0_0_65px_rgba(230,143,210,.38)]"
@@ -216,26 +282,27 @@ export function BreathingSpace() {
                 <div className="absolute inset-[31%] overflow-hidden rounded-full border border-white/30 bg-white/10 shadow-inner">
                   <img src="/gogo-figure.png" alt="Gogo meditating" className="h-full w-full object-cover" />
                 </div>
-                <div className="relative z-10 mt-[210px] rounded-full border border-white/15 bg-black/20 px-4 py-2 text-sm font-semibold text-white/90 backdrop-blur sm:mt-[250px]">
+                <div className="relative z-10 mt-[184px] rounded-full border border-white/15 bg-black/20 px-4 py-2 text-xs font-semibold text-white/90 backdrop-blur sm:mt-[250px] sm:text-sm">
                   {running ? `${phase.label} · ${remaining || phase.seconds}s` : mode.name}
                 </div>
               </div>
 
-              <div className="mt-8 min-h-12">
+              <div className="mt-6 min-h-12 sm:mt-8">
                 {running ? (
                   <div>
-                    <div className="text-3xl font-semibold tracking-[-0.04em]">{phase.label}</div>
-                    <div className="mt-1 text-sm text-white/60">Cycle {cycles + 1} · breathe only as comfortably as feels natural.</div>
+                    <div className="text-2xl font-semibold tracking-[-0.04em] sm:text-3xl">{phase.label}</div>
+                    <div className="mt-1 text-xs text-white/60 sm:text-sm">Cycle {cycles + 1} · breathe only as comfortably as feels natural.</div>
                   </div>
                 ) : (
                   <div>
-                    <div className="text-3xl font-semibold tracking-[-0.04em]">{mode.name}</div>
-                    <div className="mt-1 text-sm text-white/60">{mode.subtitle}</div>
+                    <div className="text-2xl font-semibold tracking-[-0.04em] sm:text-3xl">{mode.name}</div>
+                    <div className="mt-1 text-xs text-white/60 sm:text-sm">{mode.subtitle}</div>
+                    <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/40">{mode.sound}</div>
                   </div>
                 )}
               </div>
 
-              <div className="mt-7 flex flex-wrap justify-center gap-2">
+              <div className="mt-5 grid w-full max-w-[720px] grid-cols-1 gap-2 sm:mt-7 sm:grid-cols-3">
                 {MODES.map((item, index) => (
                   <button
                     key={item.key}
@@ -245,11 +312,12 @@ export function BreathingSpace() {
                   >
                     <div className="text-xs font-bold text-white/90">{item.name}</div>
                     <div className="mt-0.5 text-[10px] text-white/50">{item.subtitle}</div>
+                    <div className="mt-1 text-[9px] text-white/35">{item.sound}</div>
                   </button>
                 ))}
               </div>
 
-              <div className="mt-6 flex items-center justify-center gap-3">
+              <div className="mt-5 flex items-center justify-center gap-3 sm:mt-6">
                 {!running ? (
                   <button type="button" onClick={start} className="min-w-36 rounded-full bg-white px-6 py-3 text-sm font-bold text-[#3e2312] shadow-lg transition hover:scale-[1.02]">Begin</button>
                 ) : (
@@ -258,7 +326,7 @@ export function BreathingSpace() {
               </div>
             </main>
 
-            <footer className="relative z-10 px-6 pb-5 text-center text-[10.5px] text-white/45">If you feel light-headed or uncomfortable, stop and return to normal breathing.</footer>
+            <footer className="relative z-10 px-5 pb-4 text-center text-[10px] text-white/45 sm:px-6 sm:pb-5 sm:text-[10.5px]">If you feel light-headed or uncomfortable, stop and return to normal breathing.</footer>
           </div>
         </div>
       )}
