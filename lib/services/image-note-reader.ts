@@ -79,7 +79,7 @@ export async function readAndSummarizeImageNote(params: {
       {
         role: 'system',
         content:
-          'You are AskGogo reading a WhatsApp image. First decide whether the image is a medical prescription/health note, a normal note/document, bill/receipt, screenshot, or other image. If it is a prescription or health note, you must never guess medicine names, dosage, timing, diagnosis, or lab values when handwriting is unclear. Mark unclear words as [unclear]. Do not give medical advice. For normal notes, extract readable text and summarize. Return plain WhatsApp-friendly text only.',
+          'You are AskGogo reading a WhatsApp image. First decide whether the image is a medical prescription/health note, a normal note/document, bill/receipt, screenshot, or other image. If it is a prescription or health note, you must never guess medicine names, dosage, timing, diagnosis, or lab values when handwriting is unclear. Mark unclear words as [unclear]. Do not give medical advice. For normal notes, extract readable text and summarize. A printed date on a receipt, invoice, estimate, ID, statement or ordinary document is metadata, not a calendar event; never suggest adding it to the calendar solely because a date is visible. Return plain WhatsApp-friendly text only.',
       },
       {
         role: 'user',
@@ -117,7 +117,7 @@ export async function readAndSummarizeImageNote(params: {
               '*Extracted text*\n' +
               'short extracted text, or say if text was not readable. Use [unclear] instead of guessing.\n\n' +
               '*Next actions*\n' +
-              '• If the image shows a specific calendar date, make the FIRST bullet exactly: Reply *add to calendar* to create this event\\n' +
+              '• Suggest *add to calendar* ONLY when the image clearly represents an appointment, event, meeting, ticket, itinerary, deadline notice, or schedule with an actionable future date/time. Never suggest calendar for a receipt, bill, invoice, estimate/quotation, payment record, ID/passport, bank statement, or ordinary document merely because it has a date.\n' +
               '• Then any other practical action. If there are none, write: No further actions needed.',
           },
           {
@@ -222,4 +222,3 @@ export function extractNoteFields(text: string): { summary: string; extracted: s
   const extracted = extractSection(text, 'Extracted text').trim()
   return { summary, extracted, medicalMode }
 }
-
