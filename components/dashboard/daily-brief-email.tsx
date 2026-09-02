@@ -90,9 +90,14 @@ export function DailyBriefEmail() {
           <p className="mt-4 text-[13px] leading-6 text-gogo-ink-2">
             A personalized morning email built from your AskGogo calendar, reminders, travel and the same Daily Brief data you use on WhatsApp.
           </p>
-          <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-gogo-ink/8 bg-gogo-cream/55 px-3 py-2 text-[11.5px] text-gogo-ink-2">
-            <span className="h-2 w-2 rounded-full bg-gogo-orange" />
-            Scheduled for {formatTime(briefingTime)} IST
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-gogo-ink/8 bg-gogo-cream/55 px-3 py-2 text-[11.5px] text-gogo-ink-2">
+              <span className="h-2 w-2 rounded-full bg-gogo-orange" />
+              Scheduled for {formatTime(briefingTime)} IST
+            </div>
+            <a href="/api/dashboard/daily-brief-preview" target="_blank" rel="noreferrer" className="inline-flex rounded-full border border-gogo-ink/8 px-3 py-2 text-[11.5px] font-semibold text-gogo-plum no-underline hover:bg-gogo-cream/45">
+              Preview today’s email →
+            </a>
           </div>
           <p className="mt-2 text-[11.5px] leading-5 text-gogo-ink-3">
             To change the time, tell Gogo on WhatsApp: “set my briefing to 7:30 AM”. Email and WhatsApp can be switched on independently.
