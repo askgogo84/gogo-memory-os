@@ -4,6 +4,7 @@ import { TabBar } from '@/components/dashboard/tab-bar'
 import { SideRail } from '@/components/dashboard/side-rail'
 import { ThemeToggle } from '@/components/dashboard/theme-toggle'
 import { BreathingSpace } from '@/components/dashboard/breathing-space'
+import { MobileGogoChatButton } from '@/components/dashboard/mobile-gogo-chat-button'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,6 +21,7 @@ export default async function DashboardShell({ children }: { children: React.Rea
       </div>
       <SideRail />
       <BreathingSpace />
+      <MobileGogoChatButton />
       <div className="fixed right-20 top-4 z-30 lg:hidden">
         <ThemeToggle />
       </div>
