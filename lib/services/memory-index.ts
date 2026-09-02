@@ -19,6 +19,27 @@ function isIndexable(content: string): boolean {
   return true
 }
 
+// Asset-memory defense in depth. Sensitive document embeddings are useful for
+// labels such as a person's name and "passport", but must never contain the raw
+// identifier/date/amount that happened to appear in a user caption or model title.
+// The asset-memory writer already builds a label-only payload; this boundary makes
+// that invariant fail closed even if a future caller accidentally passes a value.
+function sanitizeSensitiveDocumentIndex(content: string, sourceTable?: string): string {
+  if (sourceTable !== 'documents') return content
+  const lower = (content || '').toLowerCase()
+  const looksSensitive = /\b(passport|identity\s*document|\bid\s*document|aadhaar|aadhar|pan\s*card|driving\s*licen[cs]e|payment\s*proof|bank\s*statement|account\s*statement)\b/.test(lower)
+  if (!looksSensitive) return content
+
+  return String(content || '')
+    // Alphanumeric identifiers such as S5863938, ABC123456, card/account refs.
+    .replace(/\b(?=[A-Za-z0-9-]{5,}\b)(?=[A-Za-z0-9-]*[A-Za-z])(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]+\b/g, '[redacted]')
+    // Numeric identifiers, dates, phone-like sequences and formatted amounts.
+    .replace(/\b\d[\d\s,./-]{2,}\d\b/g, '[redacted]')
+    .replace(/\[redacted\](?:\s*·\s*\[redacted\])+/g, '[redacted]')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 /**
  * Fire-and-forget: embed a saved memory and upsert into memory_embeddings.
  * NEVER throws — an embedding failure must not affect the user-facing save.
@@ -31,7 +52,8 @@ export async function indexMemory(params: {
   topic?: string | null
 }): Promise<void> {
   try {
-    const content = (params.content || '').slice(0, 2000).trim()
+    const raw = (params.content || '').slice(0, 2000).trim()
+    const content = sanitizeSensitiveDocumentIndex(raw, params.sourceTable)
     if (!isIndexable(content)) return
     const embedding = await embedText(content)
     await supabaseAdmin.from('memory_embeddings').upsert(
@@ -60,7 +82,7 @@ export async function unindexMemory(sourceId: string, sourceTable = 'memories'):
       .eq('source_table', sourceTable)
       .eq('source_id', sourceId)
   } catch (err: any) {
-    console.error('[memory-index] unindex failure:', err?.message)
+    console.error('[memory-index] unindex failure:', err?.message || err)
   }
 }
 
