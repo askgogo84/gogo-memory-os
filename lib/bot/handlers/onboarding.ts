@@ -9,6 +9,13 @@ export interface OnboardingState {
   userName?: string
 }
 
+const EMAIL_OPT_IN_PROMPT =
+  `\n\n📬 *Want Gogo Tips by email too?*\n` +
+  `One useful AskGogo idea a day for your first month — reminders, documents, lists, travel, memory and shortcuts.\n\n` +
+  `It’s completely optional. Open *Dashboard → You* and add the email you want to use:\n` +
+  `https://app.askgogo.in/dashboard/you\n\n` +
+  `_I won’t automatically use the Gmail account you connect to AskGogo._`
+
 // ── Step 1: Welcome menu ──────────────────────────────────────────────────────
 
 export function buildOnboardingMenu(userName?: string): string {
@@ -48,7 +55,8 @@ export function buildOnboardingFollowup(choice: number, userName?: string): stri
         `🔔 *Follow-up*\n` +
         `_“Remind me about Priya’s invoice if there’s no reply in 3 days.”_\n\n` +
         `You can type it or send a voice note.\n` +
-        `Say *my reminders* anytime to see what’s coming up.`
+        `Say *my reminders* anytime to see what’s coming up.` +
+        EMAIL_OPT_IN_PROMPT
       )
 
     case 2:
@@ -58,7 +66,8 @@ export function buildOnboardingFollowup(choice: number, userName?: string): stri
         `Open app.askgogo.in/record.html before a meeting. End the recording when you’re done and I’ll organise the notes.\n\n` +
         `📱 *WhatsApp voice note*\n` +
         `Send me a voice-note recap after a meeting and I’ll extract the summary, decisions and action items.\n\n` +
-        `Say *my meeting notes* to find past meetings, or *what’s pending* to see open follow-ups.`
+        `Say *my meeting notes* to find past meetings, or *what’s pending* to see open follow-ups.` +
+        EMAIL_OPT_IN_PROMPT
       )
 
     case 3:
@@ -69,7 +78,8 @@ export function buildOnboardingFollowup(choice: number, userName?: string): stri
         `▶️ Send a YouTube URL\n` +
         `📰 Send an article or web link\n\n` +
         `I’ll save the useful context so you can find it later.\n\n` +
-        `Try: _“find the reel I saved about marketing”_ or _“show my YouTube saves.”_`
+        `Try: _“find the reel I saved about marketing”_ or _“show my YouTube saves.”_` +
+        EMAIL_OPT_IN_PROMPT
       )
 
     case 4:
@@ -79,7 +89,8 @@ export function buildOnboardingFollowup(choice: number, userName?: string): stri
         `🧾 _“Split 3,000 between me, Srinivas and Mathew.”_\n` +
         `📊 _“Show my expenses this week.”_\n` +
         `📅 _“Remind me on the 1st to pay the house cleaner.”_\n\n` +
-        `Tell me naturally — I’ll work out the structure from the message.`
+        `Tell me naturally — I’ll work out the structure from the message.` +
+        EMAIL_OPT_IN_PROMPT
       )
 
     case 5:
@@ -96,7 +107,8 @@ export function buildOnboardingFollowup(choice: number, userName?: string): stri
         `_“Find the payment screenshot.”_\n\n` +
         `📋 *Lists*\n` +
         `_“Add milk to shopping list.”_\n\n` +
-        `For passwords, OTPs, PINs or other authentication secrets, use a dedicated password manager rather than saving them in chat.`
+        `For passwords, OTPs, PINs or other authentication secrets, use a dedicated password manager rather than saving them in chat.` +
+        EMAIL_OPT_IN_PROMPT
       )
 
     case 6:
@@ -118,7 +130,8 @@ export function buildOnboardingFollowup(choice: number, userName?: string): stri
         `• _“Remind me tomorrow at 9 to call Priya.”_\n` +
         `• _“What’s my day today?”_\n` +
         `• Send a screenshot and say _“save this.”_\n\n` +
-        `Say *help* anytime if you want the menu again.`
+        `Say *help* anytime if you want the menu again.` +
+        EMAIL_OPT_IN_PROMPT
       )
   }
 }
