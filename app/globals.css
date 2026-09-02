@@ -75,6 +75,19 @@
     radial-gradient(circle at 15% 88%, rgba(241, 130, 25, 0.08), transparent 34%);
 }
 
+@keyframes gogo-float {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-8px) rotate(1deg); }
+}
+
+.gogo-float {
+  animation: gogo-float 5.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gogo-float { animation: none; }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
