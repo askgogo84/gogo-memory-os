@@ -3,6 +3,7 @@ import { buildAssetRetrievalReply, isAssetRetrievalCommand } from '@/lib/service
 
 const RETRIEVAL_VERB_RE = /\b(show me|find|send me|get me|pull up|do you have|where'?s|where is|open(?: my| the)?|retrieve)\b/i
 const RESERVED_RETRIEVAL_RE = /^(?:show|open|find|get|send)(?:\s+me)?\s+(?:my\s+)?(?:reminders?|tasks?|to-?dos?|lists?|calendar|events?|cards?|credit\s*cards?|emails?|mail|weather|briefing|today|memory|memories|preferences?|rules?|contacts?|expenses?|spending|saved\s+(?:reels?|videos?|posts?))\s*[?.!]*$/i
+const SENSITIVE_REVEAL_CONFIRM_RE = /^\s*show\s+(?:the\s+)?(?:passport|id|reference)\s*(?:number|no)?\s*[?.!]*$/i
 
 const STOP = new Set([
   'show', 'me', 'find', 'send', 'get', 'pull', 'up', 'do', 'you', 'have', 'where', 'is',
@@ -55,7 +56,10 @@ export async function buildNaturalAssetRetrievalReply(
   messageId?: string | null,
 ): Promise<string | null> {
   const raw = String(text || '').trim()
-  if (!raw || !RETRIEVAL_VERB_RE.test(raw) || RESERVED_RETRIEVAL_RE.test(raw)) return null
+  // "show passport number" is the explicit confirmation phrase created by the
+  // sensitive-field gate. Decline it here so buildAssetFieldReply can consume the
+  // one-shot pending binding later in the WhatsApp route.
+  if (!raw || !RETRIEVAL_VERB_RE.test(raw) || RESERVED_RETRIEVAL_RE.test(raw) || SENSITIVE_REVEAL_CONFIRM_RE.test(raw)) return null
 
   const qTokens = tokens(raw)
   if (!qTokens.length) return null
