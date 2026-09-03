@@ -1,11 +1,18 @@
 'use client'
 
-import Link from 'next/link'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { GogoLesson } from '@/lib/dashboard/lessons'
 
 const AUTO_VERIFIED = new Set(['first-reminder', 'recurring-reminders'])
 type VerifyState = 'idle' | 'waiting' | 'checking' | 'done'
+type PracticeMessage = { role: 'user' | 'assistant'; content: string }
+
+function linkify(text: string) {
+  const parts = String(text || '').split(/(https?:\/\/[^\s]+)/g)
+  return parts.map((part, index) => /^https?:\/\//.test(part)
+    ? <a key={index} href={part} target="_blank" rel="noreferrer" className="font-semibold text-gogo-orange underline underline-offset-2">{part}</a>
+    : <span key={index}>{part}</span>)
+}
 
 export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[]; completedKeys: string[] }) {
   const [completed, setCompleted] = useState(new Set(completedKeys))
@@ -15,9 +22,18 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
   const [watched, setWatched] = useState(new Set<string>(completedKeys))
   const [playing, setPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [practiceOpen, setPracticeOpen] = useState(false)
+  const [practiceText, setPracticeText] = useState('')
+  const [practiceMessages, setPracticeMessages] = useState<PracticeMessage[]>([])
+  const [practiceSending, setPracticeSending] = useState(false)
+  const [practiceError, setPracticeError] = useState('')
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const lessonTopRef = useRef<HTMLDivElement | null>(null)
+  const practiceEndRef = useRef<HTMLDivElement | null>(null)
 
   const active = lessons.find((l) => l.key === activeKey) || lessons[0]
+  const activeIndex = lessons.findIndex((l) => l.key === activeKey)
+  const nextLesson = activeIndex >= 0 ? lessons[activeIndex + 1] : undefined
   const doneCount = completed.size
   const pct = lessons.length ? Math.round((doneCount / lessons.length) * 100) : 0
   const categories = useMemo(() => Array.from(new Set(lessons.map((l) => l.category))), [lessons])
@@ -25,14 +41,35 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
 
   const isUnlocked = (index: number) => index === 0 || completed.has(lessons[index - 1]?.key)
 
-  async function markDone(key: string) {
+  function resetPractice() {
+    setPracticeOpen(false)
+    setPracticeText('')
+    setPracticeMessages([])
+    setPracticeSending(false)
+    setPracticeError('')
+  }
+
+  function moveToNext(key: string, delay = 900) {
+    const index = lessons.findIndex((lesson) => lesson.key === key)
+    const next = lessons[index + 1]
+    if (!next) return
+    window.setTimeout(() => {
+      resetPractice()
+      setActiveKey(next.key)
+      window.requestAnimationFrame(() => lessonTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+    }, delay)
+  }
+
+  async function markDone(key: string, advance = true) {
     const response = await fetch('/api/dashboard/learning-progress', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lessonKey: key, action: 'complete' }),
     }).catch(() => null)
-    if (!response?.ok) return
+    if (!response?.ok) return false
     setCompleted((old) => new Set([...old, key]))
     setWatched((old) => new Set([...old, key]))
+    if (advance) moveToNext(key)
+    return true
   }
 
   async function startLesson(key: string) {
@@ -49,7 +86,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
     return true
   }
 
-  async function verifyLesson(key: string) {
+  async function verifyLesson(key: string, advance = false) {
     if (!AUTO_VERIFIED.has(key) || completed.has(key)) return false
     setVerifyState((current) => current === 'waiting' ? 'checking' : current)
     const response = await fetch('/api/dashboard/learning-progress', {
@@ -61,6 +98,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
     if (data?.completed) {
       setCompleted((old) => new Set([...old, key]))
       setVerifyState('done')
+      if (advance) moveToNext(key, 1200)
       return true
     }
     if (data?.reason === 'waiting_for_action') setVerifyState('waiting')
@@ -74,7 +112,42 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
       const started = await startLesson(lesson.key)
       if (!started) return
     }
-    if (lesson.prompt) window.location.href = `/dashboard/chat?prompt=${encodeURIComponent(lesson.prompt)}`
+    setPracticeMessages([])
+    setPracticeError('')
+    setPracticeText(lesson.prompt || '')
+    setPracticeOpen(true)
+    window.setTimeout(() => practiceEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
+  }
+
+  async function submitPractice(value?: string) {
+    const text = String(value ?? practiceText).trim()
+    if (!text || practiceSending || !active) return
+    setPracticeError('')
+    setPracticeText('')
+    setPracticeMessages((old) => [...old, { role: 'user', content: text }])
+    setPracticeSending(true)
+    try {
+      const response = await fetch('/api/dashboard/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      const data = await response.json().catch(() => ({})) as any
+      if (!response.ok) throw new Error(data?.message || 'practice_failed')
+      setPracticeMessages((old) => [...old, { role: 'assistant', content: String(data?.text || 'Done.') }])
+      if (AUTO_VERIFIED.has(active.key)) {
+        window.setTimeout(() => { void verifyLesson(active.key, true) }, 500)
+      }
+    } catch (error: any) {
+      setPracticeError(error?.message && error.message !== 'practice_failed' ? error.message : 'Gogo had trouble with that. Try once more.')
+    } finally {
+      setPracticeSending(false)
+    }
+  }
+
+  function onPracticeSubmit(event: FormEvent) {
+    event.preventDefault()
+    void submitPractice()
   }
 
   async function finishNarration() {
@@ -82,15 +155,19 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
     setPlaying(false)
     setProgress(1)
     setWatched((old) => new Set([...old, active.key]))
-    if (active.key === 'meet-gogo') await markDone(active.key)
+    if (active.key === 'meet-gogo') await markDone(active.key, true)
     else if (AUTO_VERIFIED.has(active.key)) await startLesson(active.key)
+    else if (active.prompt) window.setTimeout(() => { void openPractice(active) }, 250)
   }
 
   function toggleNarration() {
     const audio = audioRef.current
     if (!audio) return
     if (audio.paused) {
-      void audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
+      void audio.play().then(() => setPlaying(true)).catch(() => {
+        setPlaying(false)
+        setPracticeError('The lesson audio could not start. Refresh once and try again.')
+      })
     } else {
       audio.pause()
       setPlaying(false)
@@ -101,24 +178,29 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
     setVerifyState(completed.has(activeKey) ? 'done' : 'idle')
     setProgress(0)
     setPlaying(false)
+    resetPractice()
     if (audioRef.current) {
       audioRef.current.pause()
       audioRef.current.currentTime = 0
     }
     if (!AUTO_VERIFIED.has(activeKey) || completed.has(activeKey)) return
     let stopped = false
-    const check = async () => { if (!stopped) await verifyLesson(activeKey) }
+    const check = async () => { if (!stopped) await verifyLesson(activeKey, false) }
     void check()
     const timer = window.setInterval(() => { void check() }, 3000)
     return () => { stopped = true; window.clearInterval(timer) }
-  }, [activeKey, completed])
+  }, [activeKey])
+
+  useEffect(() => {
+    practiceEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [practiceMessages, practiceSending])
 
   const scene = progress < .18 ? 0 : progress < .52 ? 1 : progress < .78 ? 2 : 3
   const sceneCopy = active ? [
     { eyebrow: 'WHY IT HELPS', title: active.description, body: 'One useful behavior at a time. Gogo keeps the explanation short, then you do the real thing.' },
     { eyebrow: 'EXAMPLE', title: active.example || active.prompt || active.title, body: 'This is the kind of natural language Gogo understands.' },
     { eyebrow: 'WHAT GOGO DOES', title: active.result || 'Gogo handles the action and keeps the useful context.', body: 'No menus to learn. No special command syntax.' },
-    { eyebrow: 'YOUR TURN', title: active.tryText || 'Try this skill yourself now.', body: 'The next lesson stays locked until this one is completed.' },
+    { eyebrow: 'YOUR TURN', title: active.tryText || 'Try this skill yourself now.', body: 'Stay here. Practice below, and the next lesson unlocks in this same page.' },
   ][scene] : null
 
   return (
@@ -133,7 +215,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-gogo-ink/7"><div className="h-full rounded-full bg-gogo-orange transition-all" style={{ width: `${pct}%` }} /></div>
           <div className="mt-2 text-[10px] text-gogo-ink-4">{pct}% explored</div>
         </div>
-        <div className="mt-5 rounded-[18px] border border-gogo-orange/15 bg-gogo-orange-tint/55 px-4 py-3 text-[10.5px] leading-5 text-gogo-ink-2">Watch it. Try it. Gogo checks the real action where verification is available. Only then does the next skill unlock.</div>
+        <div className="mt-5 rounded-[18px] border border-gogo-orange/15 bg-gogo-orange-tint/55 px-4 py-3 text-[10.5px] leading-5 text-gogo-ink-2">Watch → try → verify → unlock. You stay inside this learning room throughout.</div>
         <div className="mt-5 space-y-5">
           {categories.map((category) => (
             <div key={category}>
@@ -155,7 +237,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
         </div>
       </aside>
 
-      <main className="min-w-0 overflow-hidden rounded-[30px] border border-gogo-ink/7 bg-gogo-surface/72 shadow-[0_24px_70px_rgba(62,35,18,.055)]">
+      <main ref={lessonTopRef} className="min-w-0 overflow-hidden rounded-[30px] border border-gogo-ink/7 bg-gogo-surface/72 shadow-[0_24px_70px_rgba(62,35,18,.055)]">
         {active && <div>
           <div className="relative overflow-hidden border-b border-gogo-ink/7 bg-gogo-rail/55 px-6 py-7 sm:px-8">
             <div className="pointer-events-none absolute -right-10 -top-24 h-72 w-72 rounded-full bg-gogo-plum/10 blur-3xl" />
@@ -199,13 +281,33 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
                 <img src="/gogo-float.gif" alt="Gogo" className="mx-auto h-24 w-24 object-contain" />
                 <div className="font-serif text-[22px] font-semibold text-gogo-ink">{watched.has(active.key) ? 'Your turn' : 'Watch first'}</div>
                 <p className="mt-2 text-[11px] leading-5 text-gogo-ink-3">{watched.has(active.key) ? (active.tryText || 'Try the real skill now.') : 'Finish Gogo’s short lesson before the practice step unlocks.'}</p>
-                {active.prompt && <button type="button" disabled={!watched.has(active.key)} onClick={() => void openPractice(active)} className={`mt-4 w-full rounded-full px-4 py-2.5 text-[11px] font-bold ${watched.has(active.key) ? 'bg-gogo-ink text-white' : 'cursor-not-allowed bg-gogo-ink/8 text-gogo-ink-4'}`}>Open Talk to Gogo</button>}
-                {!active.prompt && watched.has(active.key) && active.key !== 'meet-gogo' && !completed.has(active.key) && <button type="button" onClick={() => void markDone(active.key)} className="mt-4 w-full rounded-full border border-gogo-ink/8 bg-gogo-surface px-4 py-2.5 text-[11px] font-bold text-gogo-ink-2">I did it · unlock next</button>}
-                {active.prompt && !autoVerified && watched.has(active.key) && !completed.has(active.key) && <button type="button" onClick={() => void markDone(active.key)} className="mt-3 w-full rounded-full border border-gogo-ink/8 bg-gogo-surface px-4 py-2.5 text-[11px] font-bold text-gogo-ink-2">I completed the practice</button>}
-                {autoVerified && <div className={`mt-4 rounded-[16px] border px-4 py-3 text-[11px] font-bold ${completed.has(active.key) ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700' : 'border-gogo-orange/20 bg-gogo-orange-tint text-gogo-ink-2'}`}>{completed.has(active.key) || verifyState==='done' ? '✓ Skill complete · next lesson unlocked' : verifyState==='waiting'||verifyState==='checking' ? '● Waiting for Gogo to see your real action…' : 'Next lesson stays locked until you do it'}</div>}
-                {completed.has(active.key) && !autoVerified && <div className="mt-4 rounded-[16px] border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-[11px] font-bold text-emerald-700">✓ Skill complete · next lesson unlocked</div>}
+                {active.prompt && <button type="button" disabled={!watched.has(active.key)} onClick={() => void openPractice(active)} className={`mt-4 w-full rounded-full px-4 py-2.5 text-[11px] font-bold ${watched.has(active.key) ? 'bg-gogo-ink text-white' : 'cursor-not-allowed bg-gogo-ink/8 text-gogo-ink-4'}`}>{practiceOpen ? 'Practice open below ↓' : 'Practice here with Gogo'}</button>}
+                {!active.prompt && watched.has(active.key) && active.key !== 'meet-gogo' && !completed.has(active.key) && <button type="button" onClick={() => void markDone(active.key, true)} className="mt-4 w-full rounded-full border border-gogo-ink/8 bg-gogo-surface px-4 py-2.5 text-[11px] font-bold text-gogo-ink-2">I did it · continue</button>}
+                {autoVerified && <div className={`mt-4 rounded-[16px] border px-4 py-3 text-[11px] font-bold ${completed.has(active.key) ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700' : 'border-gogo-orange/20 bg-gogo-orange-tint text-gogo-ink-2'}`}>{completed.has(active.key) || verifyState==='done' ? '✓ Skill complete · moving to the next lesson…' : verifyState==='waiting'||verifyState==='checking' ? '● Waiting for Gogo to see your real action…' : 'Next lesson stays locked until you do it'}</div>}
+                {completed.has(active.key) && !autoVerified && <div className="mt-4 rounded-[16px] border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-[11px] font-bold text-emerald-700">✓ Skill complete · moving to the next lesson…</div>}
               </div>
             </div>
+
+            {practiceOpen && active.prompt && <div className="mt-5 overflow-hidden rounded-[26px] border border-gogo-orange/15 bg-gogo-surface shadow-[0_20px_55px_rgba(62,35,18,.06)]">
+              <div className="flex items-center gap-3 border-b border-gogo-ink/7 bg-gogo-orange-tint/45 px-5 py-4 sm:px-6">
+                <img src="/gogo-figure.png" alt="" className="h-11 w-11 rounded-full object-cover" />
+                <div className="min-w-0 flex-1"><div className="text-[9px] font-bold uppercase tracking-[.16em] text-gogo-orange">Practice without leaving the lesson</div><div className="font-serif text-[20px] font-semibold text-gogo-ink">Talk to Gogo here</div></div>
+                <button type="button" onClick={resetPractice} className="rounded-full border border-gogo-ink/8 bg-gogo-surface px-3 py-1.5 text-[11px] font-bold text-gogo-ink-3">Close</button>
+              </div>
+              <div className="max-h-[360px] overflow-y-auto px-5 py-5 sm:px-6">
+                {practiceMessages.length === 0 && <div className="rounded-[18px] border border-gogo-ink/7 bg-gogo-cream/60 px-4 py-3 text-[12px] leading-5 text-gogo-ink-2">Try the suggested phrase below, or change it to something real for you.</div>}
+                <div className="mt-3 flex flex-col gap-3">{practiceMessages.map((message,index)=><div key={index} className={`flex ${message.role==='user'?'justify-end':'justify-start'}`}><div className={`max-w-[86%] whitespace-pre-wrap rounded-[18px] px-4 py-3 text-[13px] leading-5 ${message.role==='user'?'rounded-br-[6px] bg-gogo-ink text-white':'rounded-bl-[6px] border border-gogo-ink/7 bg-gogo-cream text-gogo-ink'}`}>{linkify(message.content)}</div></div>)}{practiceSending && <div className="flex justify-start"><div className="rounded-[18px] rounded-bl-[6px] border border-gogo-ink/7 bg-gogo-cream px-4 py-3 text-[12px] text-gogo-ink-3">Gogo is working on it…</div></div>}<div ref={practiceEndRef} /></div>
+              </div>
+              <div className="border-t border-gogo-ink/7 bg-gogo-surface/88 px-5 py-4 sm:px-6">
+                {practiceError && <div className="mb-3 rounded-xl bg-red-500/8 px-3 py-2 text-[11px] text-red-700">{practiceError}</div>}
+                <form onSubmit={onPracticeSubmit} className="flex items-end gap-2 rounded-[18px] border border-gogo-ink/10 bg-gogo-cream/75 p-2">
+                  <textarea value={practiceText} onChange={(e)=>setPracticeText(e.target.value)} rows={1} maxLength={2000} placeholder="Try it with Gogo…" className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-3 py-2 text-[13px] text-gogo-ink outline-none placeholder:text-gogo-ink-4" />
+                  <button disabled={practiceSending || !practiceText.trim()} className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] bg-gogo-orange text-white disabled:opacity-40" aria-label="Send">↑</button>
+                </form>
+                {!autoVerified && practiceMessages.some((message)=>message.role==='assistant') && !completed.has(active.key) && <button type="button" onClick={() => void markDone(active.key, true)} className="mt-3 w-full rounded-full border border-gogo-ink/8 bg-gogo-surface px-4 py-2.5 text-[11px] font-bold text-gogo-ink-2">That worked · continue to {nextLesson?.title || 'finish'}</button>}
+                {autoVerified && <div className="mt-3 text-center text-[10px] text-gogo-ink-4">Gogo checks the real reminder automatically. When it is found, this same page moves you forward.</div>}
+              </div>
+            </div>}
           </div>
         </div>}
       </main>
