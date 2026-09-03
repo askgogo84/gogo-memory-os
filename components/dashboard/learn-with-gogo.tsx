@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { GogoLesson } from '@/lib/dashboard/lessons'
 
 const AUTO_VERIFIED = new Set(['first-reminder', 'recurring-reminders'])
+const MASTER_GOGO_PRESENTER = 'https://dnznrvs05pmza.cloudfront.net/kling-o3-pro/924560893566914607/Animate_this_exact_seated_Guide_Gogo_as_a_calm_teacher_speaking_directly_to_the_learner__Preserve_th.mp4?_jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJrZXlIYXNoIjoiOTNmOWI5ZDI3OGNkOTdmZiIsImJ1Y2tldCI6InJ1bndheS10YXNrLWFydGlmYWN0cyIsInN0YWdlIjoicHJvZCIsImV4cCI6MTc4ODU2NTU4Nn0.S_r9wv-pnAvKTp-ICKB9jlAq6OJUm7jT511oh7f9U1M'
+
 type VerifyState = 'idle' | 'waiting' | 'checking' | 'done'
 type PracticeMessage = { role: 'user' | 'assistant'; content: string }
 
@@ -28,6 +30,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
   const [practiceSending, setPracticeSending] = useState(false)
   const [practiceError, setPracticeError] = useState('')
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const presenterRef = useRef<HTMLVideoElement | null>(null)
   const lessonTopRef = useRef<HTMLDivElement | null>(null)
   const practiceEndRef = useRef<HTMLDivElement | null>(null)
 
@@ -47,6 +50,14 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
     setPracticeMessages([])
     setPracticeSending(false)
     setPracticeError('')
+  }
+
+  function showPractice(lesson: GogoLesson) {
+    setPracticeMessages([])
+    setPracticeError('')
+    setPracticeText(lesson.prompt || '')
+    setPracticeOpen(true)
+    window.setTimeout(() => practiceEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
   }
 
   function moveToNext(key: string, delay = 900) {
@@ -112,11 +123,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
       const started = await startLesson(lesson.key)
       if (!started) return
     }
-    setPracticeMessages([])
-    setPracticeError('')
-    setPracticeText(lesson.prompt || '')
-    setPracticeOpen(true)
-    window.setTimeout(() => practiceEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
+    showPractice(lesson)
   }
 
   async function submitPractice(value?: string) {
@@ -153,23 +160,43 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
   async function finishNarration() {
     if (!active) return
     setPlaying(false)
+    presenterRef.current?.pause()
     setProgress(1)
     setWatched((old) => new Set([...old, active.key]))
-    if (active.key === 'meet-gogo') await markDone(active.key, true)
-    else if (AUTO_VERIFIED.has(active.key)) await startLesson(active.key)
-    else if (active.prompt) window.setTimeout(() => { void openPractice(active) }, 250)
+
+    if (active.key === 'meet-gogo') {
+      await markDone(active.key, true)
+      return
+    }
+
+    if (AUTO_VERIFIED.has(active.key)) {
+      const started = await startLesson(active.key)
+      if (!started) return
+    }
+
+    if (active.prompt) {
+      window.setTimeout(() => showPractice(active), 250)
+    }
   }
 
   function toggleNarration() {
     const audio = audioRef.current
+    const presenter = presenterRef.current
     if (!audio) return
     if (audio.paused) {
-      void audio.play().then(() => setPlaying(true)).catch(() => {
+      void audio.play().then(() => {
+        setPlaying(true)
+        if (presenter) {
+          presenter.muted = true
+          void presenter.play().catch(() => {})
+        }
+      }).catch(() => {
         setPlaying(false)
         setPracticeError('The lesson audio could not start. Refresh once and try again.')
       })
     } else {
       audio.pause()
+      presenter?.pause()
       setPlaying(false)
     }
   }
@@ -182,6 +209,10 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
     if (audioRef.current) {
       audioRef.current.pause()
       audioRef.current.currentTime = 0
+    }
+    if (presenterRef.current) {
+      presenterRef.current.pause()
+      presenterRef.current.currentTime = 0
     }
     if (!AUTO_VERIFIED.has(activeKey) || completed.has(activeKey)) return
     let stopped = false
@@ -197,7 +228,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
 
   const scene = progress < .18 ? 0 : progress < .52 ? 1 : progress < .78 ? 2 : 3
   const sceneCopy = active ? [
-    { eyebrow: 'WHY IT HELPS', title: active.description, body: 'One useful behavior at a time. Gogo keeps the explanation short, then you do the real thing.' },
+    { eyebrow: 'WHY IT HELPS', title: active.description, body: 'Gogo explains one useful behavior, shows a real example, then you try it yourself.' },
     { eyebrow: 'EXAMPLE', title: active.example || active.prompt || active.title, body: 'This is the kind of natural language Gogo understands.' },
     { eyebrow: 'WHAT GOGO DOES', title: active.result || 'Gogo handles the action and keeps the useful context.', body: 'No menus to learn. No special command syntax.' },
     { eyebrow: 'YOUR TURN', title: active.tryText || 'Try this skill yourself now.', body: 'Stay here. Practice below, and the next lesson unlocks in this same page.' },
@@ -246,11 +277,12 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
 
           <div className="p-5 sm:p-8">
             <div className="overflow-hidden rounded-[28px] border border-gogo-ink/8 bg-[#2f1c13] shadow-[0_24px_70px_rgba(31,20,14,.14)]">
-              <div className="grid min-h-[420px] md:grid-cols-[38%_62%]">
-                <div className="relative flex items-end justify-center overflow-hidden bg-[radial-gradient(circle_at_45%_35%,rgba(241,130,25,.22),transparent_42%),linear-gradient(180deg,#4a2a1b,#2f1c13)] px-6 pt-8">
-                  <div className="absolute left-5 top-5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-bold uppercase tracking-[.17em] text-[#f7c79b]">MASTER GOGO</div>
-                  <img src="/gogo-figure.png" alt="Guide Gogo" className={`relative z-10 w-[78%] max-w-[300px] object-contain transition-transform duration-700 ${playing ? 'scale-[1.025]' : 'scale-100'}`} />
-                  <div className="pointer-events-none absolute bottom-4 h-14 w-52 rounded-full bg-black/25 blur-2xl" />
+              <div className="grid min-h-[420px] md:grid-cols-[43%_57%]">
+                <div className="relative min-h-[330px] overflow-hidden bg-[#f7efe2] md:min-h-[420px]">
+                  <img src="/gogo-figure.png" alt="Guide Gogo" className="absolute inset-0 h-full w-full object-contain opacity-50" />
+                  <video ref={presenterRef} src={MASTER_GOGO_PRESENTER} muted loop playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover object-left" />
+                  <div className="absolute left-5 top-5 z-10 rounded-full border border-gogo-ink/8 bg-white/75 px-3 py-1.5 text-[9px] font-bold uppercase tracking-[.17em] text-gogo-orange backdrop-blur">MASTER GOGO</div>
+                  <div className="absolute bottom-4 left-5 z-10 rounded-full border border-gogo-ink/8 bg-white/78 px-3 py-1.5 text-[9px] font-bold text-gogo-ink-2 backdrop-blur">{playing ? '● Gogo is explaining' : 'Ready when you are'}</div>
                 </div>
                 <div className="relative flex flex-col justify-between bg-[#fff9f2] p-7 sm:p-10">
                   <div>
@@ -264,9 +296,9 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
                     <div className="h-1.5 overflow-hidden rounded-full bg-gogo-ink/7"><div className="h-full rounded-full bg-gogo-orange transition-[width] duration-200" style={{ width: `${Math.max(progress * 100, 2)}%` }} /></div>
                     <div className="mt-4 flex items-center justify-between gap-3">
                       <button type="button" onClick={toggleNarration} className="inline-flex items-center gap-2 rounded-full bg-gogo-ink px-5 py-2.5 text-[11px] font-bold text-white"><span>{playing ? '❚❚' : '▶'}</span>{playing ? 'Pause Gogo' : progress > 0 ? 'Continue lesson' : 'Play lesson'}</button>
-                      <span className="text-[10px] text-gogo-ink-4">Mature Gogo voice · captions on screen</span>
+                      <span className="text-[10px] text-gogo-ink-4">Talking Gogo · mature voice · captions</span>
                     </div>
-                    {active.audioSrc && <audio ref={audioRef} src={active.audioSrc} preload="metadata" onTimeUpdate={(e) => { const a=e.currentTarget; if (a.duration) setProgress(Math.min(a.currentTime/a.duration,1)) }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => void finishNarration()} />}
+                    {active.audioSrc && <audio ref={audioRef} src={active.audioSrc} preload="metadata" onTimeUpdate={(e) => { const a=e.currentTarget; if (a.duration) setProgress(Math.min(a.currentTime/a.duration,1)) }} onPlay={() => { setPlaying(true); if (presenterRef.current) void presenterRef.current.play().catch(() => {}) }} onPause={() => { setPlaying(false); presenterRef.current?.pause() }} onEnded={() => void finishNarration()} />}
                   </div>
                 </div>
               </div>
