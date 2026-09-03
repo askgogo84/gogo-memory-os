@@ -1,12 +1,14 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { GogoLesson } from '@/lib/dashboard/lessons'
 
 export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[]; completedKeys: string[] }) {
   const [completed, setCompleted] = useState(new Set(completedKeys))
   const [activeKey, setActiveKey] = useState(lessons[0]?.key || '')
+  const [videoSpeed, setVideoSpeed] = useState(0.75)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
   const active = lessons.find((l) => l.key === activeKey) || lessons[0]
   const doneCount = completed.size
   const pct = lessons.length ? Math.round((doneCount / lessons.length) * 100) : 0
@@ -20,6 +22,11 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lessonKey: key, completed: true }),
     }).catch(() => null)
+  }
+
+  function changeVideoSpeed(speed: number) {
+    setVideoSpeed(speed)
+    if (videoRef.current) videoRef.current.playbackRate = speed
   }
 
   return (
@@ -78,10 +85,33 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
               {active.videoSrc ? (
                 <div>
                   <div className="overflow-hidden rounded-[24px] border border-gogo-ink/8 bg-black shadow-[0_22px_60px_rgba(31,20,14,.14)]">
-                    <video src={active.videoSrc} controls playsInline className="aspect-video w-full object-contain" onEnded={() => void markDone(active.key)} />
+                    <video
+                      ref={videoRef}
+                      src={active.videoSrc}
+                      controls
+                      playsInline
+                      className="aspect-video w-full object-contain"
+                      onLoadedMetadata={(e) => { e.currentTarget.playbackRate = videoSpeed }}
+                      onEnded={() => void markDone(active.key)}
+                    />
                   </div>
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="text-[11px] text-gogo-ink-4">Finish the video and it will be marked complete.</div>
+                    <div>
+                      <div className="text-[11px] text-gogo-ink-4">Finish the video and it will be marked complete.</div>
+                      <div className="mt-2 flex items-center gap-2 text-[10.5px] text-gogo-ink-4">
+                        <span className="font-bold uppercase tracking-[0.08em]">Speed</span>
+                        {[0.75, 1].map((speed) => (
+                          <button
+                            key={speed}
+                            type="button"
+                            onClick={() => changeVideoSpeed(speed)}
+                            className={`rounded-full border px-3 py-1.5 font-bold transition ${videoSpeed === speed ? 'border-gogo-orange/25 bg-gogo-orange-tint text-gogo-orange-deep' : 'border-gogo-ink/8 bg-gogo-cream text-gogo-ink-3'}`}
+                          >
+                            {speed}×
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <button type="button" onClick={() => void markDone(active.key)} className="rounded-full border border-gogo-ink/8 bg-gogo-cream px-4 py-2 text-[11px] font-bold text-gogo-ink-2">Mark watched</button>
                   </div>
                 </div>
