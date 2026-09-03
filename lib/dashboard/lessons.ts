@@ -6,6 +6,10 @@ export type GogoLesson = {
   description: string
   prompt?: string
   videoSrc?: string
+  audioSrc?: string
+  example?: string
+  result?: string
+  tryText?: string
   steps?: string[]
 }
 
@@ -15,8 +19,12 @@ export const GOGO_LESSONS: GogoLesson[] = [
     title: 'Meet Gogo',
     minutes: 1,
     category: 'Start here',
-    description: 'A quick overview of the second brain that lives with you on WhatsApp and the web.',
-    videoSrc: '/askgogo_demo.mp4',
+    description: 'Meet the calm second brain that lives with you on WhatsApp and the web.',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=86c1965d110146fe9427fd5e1e60696f',
+    example: 'Tell Gogo what you need — reminders, memory, lists, documents, meetings, travel and more.',
+    result: 'One Gogo. Same memory. WhatsApp + dashboard.',
+    tryText: 'Finish this short introduction to unlock your first real skill.',
+    steps: ['Talk naturally.', 'Gogo remembers useful context.', 'Your WhatsApp and dashboard stay in sync.'],
   },
   {
     key: 'first-reminder',
@@ -25,6 +33,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     category: 'Reminders',
     description: 'Say it naturally. Gogo turns a sentence into something you no longer need to hold in your head.',
     prompt: 'Remind me tomorrow at 10 AM to call Mom',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=3bf8e8d3c3ba45e1bb2d08bdb2f85501',
+    example: 'Remind me tomorrow at 10 AM to call Mom',
+    result: '✓ Reminder set · Call Mom · Tomorrow 10:00 AM',
+    tryText: 'Create one reminder you actually need.',
     steps: ['Tell Gogo what and when.', 'Gogo confirms the interpreted time.', 'Reply naturally if you want to move, snooze or change it.'],
   },
   {
@@ -34,6 +46,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     category: 'Memory',
     description: 'Give Gogo an image, screenshot, PDF or useful document and keep the original with the context that makes it useful later.',
     prompt: 'Save this',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=4ddf93a6430e43069e8ccc504415f1b3',
+    example: 'Save this',
+    result: '✓ Saved privately with useful context and the original file.',
+    tryText: 'Save one real image, screenshot, PDF or document.',
     steps: ['Say save this, then send the image or document — or send it first and say save this.', 'Gogo files the original privately with useful context.', 'Sensitive documents stay masked by default.'],
   },
   {
@@ -43,6 +59,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     category: 'Memory',
     description: 'Experience the magic of asking naturally for something you saved without remembering a filename or folder.',
     prompt: 'Show me what I saved about Jopasu',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=934540103f364ea99293d1f347e21105',
+    example: 'Show me what I saved about Jopasu',
+    result: 'Gogo finds the closest saved item and gives you the original when appropriate.',
+    tryText: 'Retrieve the item you saved in the previous lesson.',
     steps: ['Ask using the person, brand, amount or phrase you remember.', 'Gogo ranks the most likely saved item.', 'Open the original when you need the source file.'],
   },
   {
@@ -51,6 +71,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     minutes: 1,
     category: 'Capture',
     description: 'Send a voice note when typing is inconvenient. Gogo can turn speech into actions and notes.',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=08528f7488e34c2887f530c3bb34683f',
+    example: '🎙 “Remind me at 6 PM to call Srinivas.”',
+    result: 'Gogo understands the voice note and turns it into the right action.',
+    tryText: 'Send Gogo one useful voice note on WhatsApp.',
     steps: ['Open AskGogo on WhatsApp.', 'Hold the microphone and speak naturally.', 'For meetings, say meeting notes or use the recorder.'],
   },
   {
@@ -60,6 +84,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     category: 'Reminders',
     description: 'Daily, weekly and repeating routines without rebuilding the reminder each time.',
     prompt: 'Remind me every day at 6 PM to drink water',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=aff8e5b1a24b4afc8b9b5d326c206467',
+    example: 'Remind me every Monday at 9 AM to send the weekly report',
+    result: '↻ Recurring reminder · Every Monday · 9:00 AM',
+    tryText: 'Create one recurring reminder.',
     steps: ['Use everyday language such as every day or every Monday.', 'Gogo keeps the recurrence with the reminder.', 'You can change or resolve an occurrence later.'],
   },
   {
@@ -69,6 +97,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     category: 'Organize',
     description: 'Build grocery lists, project lists and tasks, then check things off from WhatsApp or the dashboard.',
     prompt: 'Add milk to my grocery list',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=7ba9053e7e324bbb9b66f93b345fddba',
+    example: 'Add milk to my grocery list',
+    result: '✓ Milk added to Grocery list',
+    tryText: 'Add one real item to a list.',
     steps: ['Name the item and list.', 'Ask to show the list any time.', 'Say done plus an item name to clear it.'],
   },
   {
@@ -77,6 +109,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     minutes: 1,
     category: 'Memory',
     description: 'Keep useful visual references and links without losing them inside old chats.',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=22e4cef5d9fb4d708fec6d53f34f3a2a',
+    example: 'Send a screenshot or useful link and tell Gogo why it matters.',
+    result: 'Gogo keeps the reference with enough context to find it later.',
+    tryText: 'Send one screenshot or useful link you want to keep.',
     steps: ['Send the screenshot or link.', 'Tell Gogo what it means if the context is not obvious.', 'Search for it later by the words you remember.'],
   },
   {
@@ -86,6 +122,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     category: 'Calendar',
     description: 'Bring Google Calendar into Today and let Gogo help around your real schedule.',
     prompt: 'Connect calendar',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=1d8871fbadfd49f7a64c76be57deed72',
+    example: 'Connect calendar',
+    result: 'Calendar connected · events can appear beside reminders in Today.',
+    tryText: 'Connect Google Calendar if you have not already.',
     steps: ['Connect Google Calendar once.', 'Your day can include real events alongside reminders.', 'Ask Gogo to create or move calendar events naturally.'],
   },
   {
@@ -95,6 +135,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     category: 'Planning',
     description: 'Bring meetings, reminders and priorities together so Gogo can help you see what matters now.',
     prompt: 'Plan my day',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=3bc6011d08f54c62bad84d9dd789edc8',
+    example: 'Plan my day',
+    result: 'Gogo brings together the important meetings, reminders and priorities.',
+    tryText: 'Ask Gogo to plan your real day.',
     steps: ['Ask Gogo to plan your day.', 'Review the important events and reminders together.', 'Turn anything missing into a reminder or task.'],
   },
   {
@@ -104,6 +148,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     category: 'Planning',
     description: 'Wake up to the day already organized — weather, calendar, reminders and travel when relevant.',
     prompt: 'Today',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=ac7d0bc3d5d94924bab98d17bfd14089',
+    example: 'Good morning · Weather · Calendar · Reminders · Travel when relevant',
+    result: 'Your day arrives already organized in one calm brief.',
+    tryText: 'Open Today and review your Daily Brief settings.',
     steps: ['Choose your briefing time.', 'Keep WhatsApp briefing and email briefing independently on or off.', 'Use Today to turn the important parts into actions.'],
   },
   {
@@ -113,6 +161,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     category: 'Meetings',
     description: 'Record a meeting, get the transcript, decisions and follow-ups, then turn actions into reminders.',
     prompt: 'Record meeting',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=ac43057b1edf42d59a7af428f40ea40a',
+    example: 'Record meeting',
+    result: 'Transcript · Decisions · Action items · Follow-up reminders',
+    tryText: 'Try the meeting recorder with a short real conversation.',
     steps: ['Start the AskGogo recorder from WhatsApp.', 'End the recording when the meeting is finished.', 'Review transcript, decisions and action items back in AskGogo.'],
   },
   {
@@ -121,6 +173,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     minutes: 1,
     category: 'Travel',
     description: 'Send a ticket or itinerary and let Gogo keep the travel details and timing close at hand.',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=14e4096ad65d4fe58e23d46d239cb575',
+    example: 'Send a flight ticket or itinerary to Gogo.',
+    result: 'Flight · route · date · timing · useful travel reminders',
+    tryText: 'Send one real ticket or itinerary when you have one.',
     steps: ['Send a ticket image or PDF.', 'Gogo extracts useful travel details.', 'Use Today and reminders around departure and check-in.'],
   },
   {
@@ -129,6 +185,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     minutes: 1,
     category: 'Your Gogo',
     description: 'Choose how Gogo speaks to you and the small touches that make your calm space feel like yours.',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=c6c15f164546491cb1be546c2ab7da77',
+    example: 'Calm companion · Sharp professional · Straight-talking coach · Quiet minimalist',
+    result: 'Same truth and memory — a tone and space that feel more like yours.',
+    tryText: 'Open Personalize Gogo and save your preferred style.',
     steps: ['Open Personalize Gogo.', 'Choose the personality that feels right.', 'Pick the comfort drink beside Gogo and save your Gogo.'],
   },
   {
@@ -137,6 +197,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     minutes: 1,
     category: 'Calm',
     description: 'Three breathing patterns with original ambient sound for a short reset inside the dashboard.',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=7cb79501cb9c46769e267538c788921a',
+    example: 'Balance · Stress Reset · Deep Relax',
+    result: 'A short guided reset without leaving your calm space.',
+    tryText: 'Complete one breathing cycle with Gogo.',
     steps: ['Tap the meditating Gogo button.', 'Choose Balance, Stress Reset or Deep Relax.', 'Turn sound on if you want the generated soundscape.'],
   },
   {
@@ -146,6 +210,10 @@ export const GOGO_LESSONS: GogoLesson[] = [
     category: 'Memory',
     description: 'Search across what Gogo has learned and saved using the way you naturally remember it.',
     prompt: 'What do you remember about my saved documents?',
+    audioSrc: 'https://www.aidocmaker.com/g0/audio?name=92a3aca1da4344489a2b37a01d956786',
+    example: 'What do you remember about my saved documents?',
+    result: 'Ask by names, brands, dates, amounts or phrases — not folders.',
+    tryText: 'Ask one natural question about something Gogo already knows.',
     steps: ['Ask naturally instead of browsing folders.', 'Use names, brands, dates, amounts or phrases as clues.', 'Open the relevant memory or original source when you need it.'],
   },
 ]
