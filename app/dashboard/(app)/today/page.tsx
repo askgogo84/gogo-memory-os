@@ -219,7 +219,7 @@ export default async function TodayPage() {
         )}
       </div>
 
-      <div className="hidden lg:block">
+      <div className="hidden lg:block [&>div]:mx-0 [&>div]:max-w-none">
         <TodayDesktop
           greeting={greeting}
           dayLine={dayLine(now, tz)}
