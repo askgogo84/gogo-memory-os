@@ -6,8 +6,8 @@ import { useRef } from 'react'
 
 const items = [
   { href: '/dashboard/home', label: 'Home', icon: '✦' },
-  { href: '/dashboard/chat', label: 'Talk to Gogo', icon: '◉' },
   { href: '/dashboard/today', label: 'Today', icon: '✦' },
+  { href: '/dashboard/chat', label: 'Talk to Gogo', icon: '◉' },
   { href: '/dashboard/memory', label: 'Memory', icon: '◇' },
   { href: '/dashboard/tasks', label: 'Tasks', icon: '☷' },
   { href: '/dashboard/calendar', label: 'Calendar', icon: '▣' },
