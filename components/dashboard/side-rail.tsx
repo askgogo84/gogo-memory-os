@@ -2,101 +2,96 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { TodayIcon, MemoryIcon, CalendarIcon, ListsIcon, YouIcon, UsageIcon } from './icons'
-import { ThemeToggle } from './theme-toggle'
+import { useRef } from 'react'
 
-const NAV = [
-  { key: 'home', label: 'Home', href: '/dashboard/home', Icon: TodayIcon },
-  { key: 'chat', label: 'Talk to Gogo', href: '/dashboard/chat', Icon: MemoryIcon },
-  { key: 'today', label: 'Today', href: '/dashboard/today', Icon: TodayIcon },
-  { key: 'memory', label: 'Memory', href: '/dashboard/memory', Icon: MemoryIcon },
-  { key: 'tasks', label: 'Tasks', href: '/dashboard/tasks', Icon: ListsIcon },
-  { key: 'calendar', label: 'Calendar', href: '/dashboard/calendar', Icon: CalendarIcon },
-  { key: 'lists', label: 'Lists', href: '/dashboard/lists', Icon: ListsIcon },
-  { key: 'you', label: 'You', href: '/dashboard/you', Icon: YouIcon },
-] as const
+const items = [
+  { href: '/dashboard/home', label: 'Home', icon: '✦' },
+  { href: '/dashboard/chat', label: 'Talk to Gogo', icon: '◉' },
+  { href: '/dashboard/today', label: 'Today', icon: '✦' },
+  { href: '/dashboard/memory', label: 'Memory', icon: '◇' },
+  { href: '/dashboard/tasks', label: 'Tasks', icon: '☷' },
+  { href: '/dashboard/calendar', label: 'Calendar', icon: '▣' },
+  { href: '/dashboard/lists', label: 'Lists', icon: '≡' },
+  { href: '/dashboard/you', label: 'You', icon: '♙' },
+]
 
-const GOGO_NAV = [
-  { key: 'learn', label: 'Learn with Gogo', href: '/dashboard/learn', Icon: ListsIcon },
-  { key: 'personalize', label: 'Personalize Gogo', href: '/dashboard/personalize', Icon: YouIcon },
-] as const
+const gogoItems = [
+  { href: '/dashboard/learn', label: 'Learn with Gogo', icon: '☷' },
+  { href: '/dashboard/personalize', label: 'Personalize Gogo', icon: '♙' },
+]
+
+const accountItems = [
+  { href: '/dashboard/usage', label: 'Usage & plan', icon: '◉' },
+]
+
+function navActive(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`)
+}
 
 export function SideRail() {
   const pathname = usePathname()
-  const usageActive = pathname === '/dashboard/usage' || pathname.startsWith('/dashboard/usage/')
+  const audioRef = useRef<AudioContext | null>(null)
 
-  return (
-    <nav className="relative z-20 hidden w-[244px] shrink-0 flex-col border-r border-gogo-ink/7 bg-gogo-rail/88 px-4 py-5 backdrop-blur-2xl lg:sticky lg:top-0 lg:flex lg:h-screen lg:self-start">
-      <div className="flex items-center justify-between px-2 pb-5">
-        <Link href="/dashboard/home" className="group flex items-center gap-3" aria-label="AskGogo Home">
-          <div className="relative">
-            <div className="absolute inset-0 rounded-full bg-gogo-orange/20 blur-md transition group-hover:bg-gogo-orange/30" />
-            <img src="/gogo-figure.png" alt="" className="gogo-float relative h-10 w-10 rounded-full" />
-          </div>
-          <div>
-            <div className="font-serif text-[19px] font-semibold tracking-[-0.35px] text-gogo-ink">AskGogo</div>
-            <div className="text-[9.5px] font-bold uppercase tracking-[0.16em] text-gogo-ink-3">Your calm space</div>
-          </div>
-        </Link>
-        <ThemeToggle />
-      </div>
+  function feedback() {
+    if (navigator.vibrate) navigator.vibrate(10)
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+      if (!AudioCtx) return
+      const ctx = audioRef.current || new AudioCtx()
+      audioRef.current = ctx
+      const oscillator = ctx.createOscillator()
+      const gain = ctx.createGain()
+      oscillator.frequency.value = 540
+      gain.gain.setValueAtTime(0.018, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.035)
+      oscillator.connect(gain)
+      gain.connect(ctx.destination)
+      oscillator.start()
+      oscillator.stop(ctx.currentTime + 0.035)
+    } catch {}
+  }
 
-      <div className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">Your world</div>
-      <div className="flex flex-col gap-[3px]">
-        {NAV.map(({ key, label, href, Icon }) => {
-          const active = pathname === href || pathname.startsWith(`${href}/`)
-          return (
-            <Link
-              key={key}
-              href={href}
-              aria-current={active ? 'page' : undefined}
-              className={`group flex items-center gap-[11px] rounded-[14px] px-3 py-2 text-sm transition-all duration-300 ${active ? 'bg-gogo-surface font-bold text-gogo-orange shadow-[0_8px_28px_rgba(62,35,18,0.07)]' : 'font-medium text-gogo-ink-2 hover:bg-gogo-surface/60 hover:text-gogo-ink'}`}
-            >
-              <span className={`grid h-8 w-8 place-items-center rounded-[11px] transition-colors ${active ? 'bg-gogo-orange-tint text-gogo-orange' : 'bg-gogo-surface/45 text-gogo-ink-3 group-hover:text-gogo-orange'}`}>
-                <Icon className="block h-[18px] w-[18px] shrink-0" />
-              </span>
-              <span>{label}</span>
-            </Link>
-          )
-        })}
-      </div>
-
-      <div className="mt-5 border-t border-gogo-ink/7 pt-4">
-        <div className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">Gogo</div>
-        <div className="flex flex-col gap-[3px]">
-          {GOGO_NAV.map(({ key, label, href, Icon }) => {
-            const active = pathname === href || pathname.startsWith(`${href}/`)
+  function NavGroup({ title, links }: { title: string; links: typeof items }) {
+    return (
+      <div className="mt-5">
+        <div className="px-3 text-[8px] font-bold uppercase tracking-[0.18em] text-gogo-ink-4">{title}</div>
+        <div className="mt-2 space-y-1">
+          {links.map((item) => {
+            const active = navActive(pathname, item.href)
             return (
-              <Link key={key} href={href} aria-current={active ? 'page' : undefined} className={`group flex items-center gap-[11px] rounded-[14px] px-3 py-2 text-sm transition-all duration-300 ${active ? 'bg-gogo-surface font-bold text-gogo-plum shadow-[0_8px_28px_rgba(62,35,18,0.07)]' : 'font-medium text-gogo-ink-2 hover:bg-gogo-surface/60 hover:text-gogo-ink'}`}>
-                <span className={`grid h-8 w-8 place-items-center rounded-[11px] ${active ? 'bg-gogo-plum/10 text-gogo-plum' : 'bg-gogo-surface/45 text-gogo-ink-3 group-hover:text-gogo-plum'}`}><Icon className="block h-[18px] w-[18px] shrink-0" /></span>
-                <span>{label}</span>
+              <Link key={item.href} href={item.href} onClick={feedback}
+                aria-current={active ? 'page' : undefined}
+                className={`group flex items-center gap-3 rounded-[13px] px-3 py-2.5 text-[11px] font-medium transition duration-150 active:scale-[.985] ${active ? 'bg-white text-gogo-orange shadow-[0_6px_18px_rgba(62,35,18,.07)] ring-1 ring-gogo-orange/10' : 'text-gogo-ink-2 hover:bg-white/65 hover:text-gogo-ink'}`}>
+                <span className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] transition ${active ? 'bg-gogo-orange/10 text-gogo-orange' : 'bg-white/70 text-gogo-ink-4 group-hover:bg-white'}`}>{item.icon}</span>
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {active && <span className="h-1.5 w-1.5 rounded-full bg-gogo-orange" aria-hidden="true" />}
               </Link>
             )
           })}
         </div>
       </div>
+    )
+  }
 
-      <div className="mt-5 border-t border-gogo-ink/7 pt-4">
-        <div className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">Account</div>
-        <Link
-          href="/dashboard/usage"
-          aria-current={usageActive ? 'page' : undefined}
-          className={`flex items-center gap-[11px] rounded-[14px] px-3 py-2 text-sm transition-all duration-300 ${usageActive ? 'bg-gogo-surface font-bold text-gogo-orange shadow-[0_8px_28px_rgba(62,35,18,0.07)]' : 'font-medium text-gogo-ink-2 hover:bg-gogo-surface/60 hover:text-gogo-ink'}`}
-        >
-          <span className={`grid h-8 w-8 place-items-center rounded-[11px] ${usageActive ? 'bg-gogo-orange-tint text-gogo-orange' : 'bg-gogo-surface/45 text-gogo-ink-3'}`}>
-            <UsageIcon className="block h-[18px] w-[18px] shrink-0" />
-          </span>
-          <span>Usage & plan</span>
-        </Link>
-      </div>
-
-      <div className="mt-auto overflow-hidden rounded-[20px] border border-gogo-ink/7 bg-gogo-surface/62 p-3.5 shadow-[0_14px_40px_rgba(62,35,18,0.04)]">
+  return (
+    <aside className="hidden h-screen w-[178px] shrink-0 border-r border-gogo-ink/7 bg-gogo-cream/70 px-3 py-5 lg:flex lg:flex-col xl:w-[190px]">
+      <div className="flex items-center justify-between px-2">
         <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.10)]" />
-          <div className="text-[11.5px] font-bold text-gogo-ink">One Gogo, everywhere</div>
+          <img src="/gogo-float.gif" alt="AskGogo" className="h-8 w-8 object-contain" />
+          <div><div className="font-serif text-[17px] font-semibold leading-none text-gogo-ink">AskGogo</div><div className="mt-1 text-[7px] font-semibold uppercase tracking-[0.16em] text-gogo-ink-4">Your calm space</div></div>
         </div>
-        <p className="mt-1.5 text-[10.5px] leading-4.5 text-gogo-ink-3">WhatsApp and this dashboard share the same memory, lists, reminders and actions.</p>
       </div>
-    </nav>
+
+      <NavGroup title="Your world" links={items} />
+      <div className="my-4 border-t border-gogo-ink/7" />
+      <NavGroup title="Gogo" links={gogoItems} />
+      <div className="my-4 border-t border-gogo-ink/7" />
+      <NavGroup title="Account" links={accountItems} />
+
+      <div className="mt-auto rounded-[16px] border border-gogo-ink/7 bg-white/65 p-3">
+        <div className="flex items-center gap-2 text-[8.5px] font-semibold text-gogo-ink-2"><span className="h-2 w-2 rounded-full bg-emerald-400" />One Gogo, everywhere</div>
+        <div className="mt-2 text-[8px] leading-4 text-gogo-ink-4">WhatsApp and this dashboard share the same memory, lists, reminders and actions.</div>
+      </div>
+    </aside>
   )
 }
