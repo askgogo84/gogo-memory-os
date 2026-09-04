@@ -44,6 +44,7 @@ export function GogoChat({ initialDrink = 'coffee' }: { initialDrink?: string })
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+  const [showTop, setShowTop] = useState(false)
   const endRef = useRef<HTMLDivElement | null>(null)
   const drink = DRINKS[initialDrink] || DRINKS.coffee
 
@@ -66,6 +67,13 @@ export function GogoChat({ initialDrink = 'coffee' }: { initialDrink?: string })
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, sending])
+
+  useEffect(() => {
+    const onScroll = () => setShowTop(window.scrollY > 480)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
 
   const empty = useMemo(() => !loading && messages.length === 0, [loading, messages.length])
 
@@ -120,7 +128,7 @@ export function GogoChat({ initialDrink = 'coffee' }: { initialDrink?: string })
         <a href="/dashboard/personalize" className="relative rounded-[16px] border border-gogo-ink/8 bg-gogo-surface/72 px-4 py-3 text-center text-[12px] font-bold text-gogo-ink-2 transition hover:text-gogo-orange">Change your Gogo space →</a>
       </aside>
 
-      <section className="flex min-w-0 flex-col">
+      <section className="relative flex min-w-0 flex-col">
         <header className="flex items-center gap-3 border-b border-gogo-ink/7 px-5 py-4 lg:px-7">
           <img src="/gogo-figure.png" alt="" className="h-10 w-10 rounded-full object-cover lg:hidden" />
           <div className="min-w-0">
@@ -157,6 +165,18 @@ export function GogoChat({ initialDrink = 'coffee' }: { initialDrink?: string })
             <div ref={endRef} />
           </div>
         </div>
+
+        {showTop && (
+          <button
+            type="button"
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            className="fixed bottom-24 right-6 z-40 grid h-11 w-11 place-items-center rounded-full border border-gogo-ink/10 bg-gogo-surface/95 text-lg font-bold text-gogo-ink shadow-[0_12px_34px_rgba(62,35,18,.14)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:text-gogo-orange lg:bottom-8 lg:right-8"
+            aria-label="Back to top"
+            title="Back to top"
+          >
+            ↑
+          </button>
+        )}
 
         <div className="border-t border-gogo-ink/7 bg-gogo-surface/82 px-4 py-4 backdrop-blur-xl sm:px-6 lg:px-8">
           <div className="mx-auto max-w-3xl">
