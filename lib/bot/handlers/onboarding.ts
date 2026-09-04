@@ -21,20 +21,25 @@ const EMAIL_OPT_IN_PROMPT =
 export function buildOnboardingMenu(userName?: string): string {
   const name = userName ? userName.split(' ')[0] : 'there'
   return (
-    `👋 *Hi ${name}, I’m Gogo.*\n\n` +
-    `I’m your personal memory and action assistant on WhatsApp.\n\n` +
-    `Send me the things you don’t want to keep in your head — reminders, documents, screenshots, lists, meetings, travel details, or simply something you want to remember. I’ll organise them and bring them back when you need them.\n\n` +
-    `*Try me now:*\n` +
-    `_“Remind me tomorrow at 10 AM to call Mom.”_\n\n` +
-    `Or just send me a photo, PDF or voice note. ✨\n\n` +
-    `*Want a quick tour? Pick one:*\n` +
+    `👋 *Hey ${name}, I’m Gogo — your second brain.*\n\n` +
+    `Tell me the things you don’t want to carry in your head. I can remember them, remind you at the right time, find your documents again, organise lists, help with meetings, travel and your day.\n\n` +
+    `*You don’t need commands. Just talk to me normally.*\n\n` +
+    `Try one:\n` +
+    `⏰ _“Remind me tomorrow at 10 AM to call Mom.”_\n` +
+    `🧠 _“Remember my passport expires in October 2033.”_\n` +
+    `📋 _“Make a grocery list.”_\n` +
+    `☀️ _“What do I have today?”_\n\n` +
+    `Or send me a photo, screenshot, PDF, link or voice note.\n\n` +
+    `🖥️ What you tell me here also appears in your private AskGogo dashboard.\n\n` +
+    `*Start with anything you don’t want to forget.* ✨\n\n` +
+    `Want a quick tour instead?\n` +
     `1️⃣ Reminders & follow-ups\n` +
     `2️⃣ Meeting notes & transcription\n` +
     `3️⃣ Save content\n` +
     `4️⃣ Expenses & finance\n` +
     `5️⃣ Notes, documents & memory\n` +
     `6️⃣ Show me everything\n\n` +
-    `_Reply with 1–6, or just start talking to me naturally._`
+    `_Reply with 1–6, or simply start talking to me._`
   )
 }
 
