@@ -81,6 +81,10 @@ async function getRuntimeErrors() {
 }
 
 export async function POST(req: NextRequest) {
+  if (process.env.VERCEL_ENV === 'production') {
+    return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
+  }
+
   try {
     const body = await req.json()
     const phone = (body.phone || '').replace(/\D/g, '')

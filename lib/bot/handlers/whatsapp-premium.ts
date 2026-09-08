@@ -71,10 +71,9 @@ Send a voice note in English, Hindi, Hinglish, Kannada, Tamil, Telugu or Malayal
 • Bangalore weather tomorrow
 • Next RCB match
 
-🚀 *Founder Beta*
+🚀 *AskGogo*
 • Pricing
 • Usage
-• Notify me
 • Invite friends
 
 Type or speak naturally. I’ll understand.`
@@ -83,80 +82,64 @@ Type or speak naturally. I’ll understand.`
 export function buildUpgradeReply() {
   return `💚 *AskGogo Plans*
 
-Starting at ₹99/month — less than a cup of chai/day. Every plan comes with a *7-day free trial*, cancel anytime.
+Start free, then upgrade anytime. Every paid plan starts with a *7-day free trial* and can be cancelled anytime.
+
+*Free* — ₹0
+• Try AskGogo with core reminders, memory and lists
 
 *Lite* — ₹99/month
 • 60 AI actions/month
 • 5 active reminders
 • 10 voice notes/month
 
-*Starter* — ₹149/month
-• 100 AI actions/month
-• 10 active reminders
-• 30 voice notes/month
-
-*Pro — most popular* — ₹199/month
+*Pro — most popular* — ₹299/month
 • 250 AI actions/month
 • 50 active reminders
+• 100 voice notes/month
 • Calendar + daily briefing
 • Web search
 
-Reply *lite*, *starter*, or *pro* and I'll send you a secure payment link. 🔒`
+*Power* — ₹499/month
+• 600 AI actions/month
+• 200 active reminders
+• 300 voice notes/month
+• Higher search + calendar limits
+• Priority access
+
+Reply *lite*, *pro*, or *power* and I'll send you the secure subscription link. 🔒`
 }
 
 export function buildNotifyMeReply(userName?: string) {
   const name = cleanName(userName)
 
-  return `✅ *You’re on the founder pricing list, ${name}*
+  return `✅ *Got it, ${name}*
 
-I’ll remember that you want early access when paid plans go live.
+Paid AskGogo plans are available from *₹99/month* with a *7-day free trial*.
 
-Plans will start at *₹99/month* — less than a cup of chai/day.
-
-Want priority Founder Beta access?
-Invite 3 friends who live on WhatsApp.
-
-Reply *invite friends* and I’ll give you a ready-to-send message.`
+Reply *pricing* to see Free, Lite, Pro and Power, or *upgrade* when you're ready.`
 }
 
 export function buildReferralReply() {
-  return `🎁 *Invite 3 friends to AskGogo*
+  return `🎁 *Invite friends to AskGogo*
 
 Copy and send this:
 
-“I’ve been testing AskGogo — an AI assistant on WhatsApp for reminders, calendar planning, weather, sports updates and daily briefings.
+“I’ve been testing AskGogo — an AI assistant on WhatsApp for reminders, memory, calendar planning, weather, sports updates and daily briefings.
 
 You can type or send voice notes in Indian languages.
 
 Try it here:
-${ASK_GOGO_WHATSAPP_LINK}”
-
-Founder beta users who invite friends will get priority early pricing when Razorpay goes live.`
+${ASK_GOGO_WHATSAPP_LINK}”`
 }
 
 export function buildPremiumWhatsappReply(
   intentType: string,
   userName?: string
 ) {
-  if (intentType === 'welcome_menu') {
-    return buildWelcomeReply(userName)
-  }
-
-  if (intentType === 'help_menu') {
-    return buildHelpReply()
-  }
-
-  if (intentType === 'upgrade_plan') {
-    return buildUpgradeReply()
-  }
-
-  if (intentType === 'referral_flow') {
-    return buildReferralReply()
-  }
-
-  if (intentType === 'notify_me') {
-    return buildNotifyMeReply(userName)
-  }
-
+  if (intentType === 'welcome_menu') return buildWelcomeReply(userName)
+  if (intentType === 'help_menu') return buildHelpReply()
+  if (intentType === 'upgrade_plan') return buildUpgradeReply()
+  if (intentType === 'referral_flow') return buildReferralReply()
+  if (intentType === 'notify_me') return buildNotifyMeReply(userName)
   return buildHelpReply()
 }

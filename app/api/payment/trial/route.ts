@@ -4,6 +4,13 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  // Paid-plan trials are now created through the Razorpay subscription flow.
+  // Keep this legacy helper available only on preview/dev so it cannot grant
+  // arbitrary production users a Pro entitlement without payment authorization.
+  if (process.env.VERCEL_ENV === 'production') {
+    return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
+  }
+
   try {
     const { telegramId, whatsappId } = await req.json()
     if (!telegramId && !whatsappId) {

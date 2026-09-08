@@ -1,4 +1,4 @@
-﻿import { supabaseAdmin } from '@/lib/supabase-admin'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getUserTimeZone } from './handlers/user-timezone'
 
 export type Channel = 'telegram' | 'whatsapp'
@@ -11,6 +11,7 @@ export type ResolvedUser = {
   whatsappId: string | null
   name: string
   tier: string
+  isNewUser?: boolean
   platform: Channel
   timezone: string
   rawUser: any
@@ -65,6 +66,7 @@ export async function resolveUser(params: {
       whatsappId: user?.whatsapp_id ?? null,
       name: user?.name || userName || 'Friend',
       tier: user?.tier || 'free',
+      isNewUser: false,
       platform: 'telegram',
       timezone: getUserTimeZone(user, user?.whatsapp_id),
       rawUser: user,
@@ -115,4 +117,3 @@ export async function resolveUser(params: {
     rawUser: user,
   }
 }
-

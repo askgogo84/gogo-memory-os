@@ -1,31 +1,25 @@
 import { createSubscription } from '@/lib/services/razorpay-subscriptions'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
-export type CheckoutPlanKey = 'lite' | 'starter' | 'pro' | 'pro_annual'
+export type CheckoutPlanKey = 'lite' | 'pro' | 'power'
 
 const PLAN_LABELS: Record<CheckoutPlanKey, string> = {
-  lite: 'AskGogo Lite (\u20b999/month)',
-  starter: 'AskGogo Starter (\u20b9149/month)',
-  pro: 'AskGogo Pro (\u20b9199/month)',
-  pro_annual: 'AskGogo Pro Annual (\u20b91,499/year)',
+  lite: 'AskGogo Lite (₹99/month)',
+  pro: 'AskGogo Pro (₹299/month)',
+  power: 'AskGogo Power (₹499/month)',
 }
 
-// Detects a plan choice from a chat message.
-// Accepts: "lite" / "starter" / "pro" / "pro annual" / "1".."4",
-// and verb forms like "subscribe pro", "get lite", "buy starter".
+// Detects a current paid plan choice from a chat message.
 export function parsePlanSelection(text: string): CheckoutPlanKey | null {
   const t = (text || '').toLowerCase().trim()
   if (!t) return null
-  if (/\b(pro\s*annual|annual\s*pro|pro\s*yearly|yearly\s*pro)\b/.test(t)) return 'pro_annual'
   const cleaned = t.replace(/^(subscribe|get|choose|select|start|buy|upgrade to|go with)\s+/i, '').trim()
   if (cleaned === 'lite' || cleaned === '1') return 'lite'
-  if (cleaned === 'starter' || cleaned === '2') return 'starter'
-  if (cleaned === 'pro' || cleaned === '3') return 'pro'
-  if (cleaned === 'pro annual' || cleaned === '4') return 'pro_annual'
+  if (cleaned === 'pro' || cleaned === '2') return 'pro'
+  if (cleaned === 'power' || cleaned === '3' || cleaned === 'founder' || cleaned === 'founder pro') return 'power'
   return null
 }
 
-// True if the user already has a live paid subscription (prevents duplicate mandates).
 async function hasActiveSubscription(telegramId: number, whatsappId: string | null): Promise<boolean> {
   const digits = String(whatsappId || '').replace(/\D/g, '').slice(-10)
   const clauses: string[] = [`telegram_id.eq.${telegramId}`]
@@ -53,7 +47,7 @@ export async function buildPlanCheckoutReply(
 
   try {
     if (await hasActiveSubscription(user.telegramId, user.whatsappId)) {
-      return `You're already on an active AskGogo plan. \ud83c\udf89\n\nReply *usage* to see your limits, or *cancel* if you'd like to stop.`
+      return `You're already on an active AskGogo plan. 🎉\n\nReply *usage* to see your limits, or *cancel* if you'd like to stop.`
     }
   } catch (err) {
     console.error('plan-checkout: active-sub check failed:', err)
@@ -75,7 +69,7 @@ export async function buildPlanCheckoutReply(
 
     const trialDays = Number(process.env.RAZORPAY_TRIAL_DAYS ?? '7')
     const trialLine = trialDays > 0
-      ? `First ${trialDays} days free \u2014 you won't be charged until then.`
+      ? `First ${trialDays} days free — you won't be charged until then.`
       : ''
 
     return [

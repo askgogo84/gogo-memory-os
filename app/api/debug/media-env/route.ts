@@ -1,4 +1,4 @@
-﻿import { NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,11 +8,14 @@ function mask(value?: string) {
     exists: true,
     length: value.length,
     startsWithHttps: value.startsWith('https://'),
-    value,
   }
 }
 
 export async function GET() {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ ok: false, error: 'Not found' }, { status: 404 })
+  }
+
   return NextResponse.json({
     ok: true,
     media_env: {

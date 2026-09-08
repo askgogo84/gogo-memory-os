@@ -4,18 +4,22 @@ import { getPlanLimits } from '@/lib/data/limits'
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ ok: false, error: 'Not found' }, { status: 404 })
+  }
+
   return NextResponse.json({
     ok: true,
-    version: 'fair-use-guardrails-v1',
+    version: 'fair-use-guardrails-v2',
     plans: getPlanLimits(),
     protected_features: [
       'monthly AI actions',
       'daily AI actions',
       'voice notes',
       'calendar events',
-      'active reminders and web searches are next patch',
+      'active reminders',
+      'web searches',
     ],
-    note: 'Usage logs are stored in memories using ASKGOGO_USAGE prefixes. users.daily_count is monthly AI action usage.',
     checked_at: new Date().toISOString(),
   })
 }

@@ -1,8 +1,12 @@
-﻿import { NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ ok: false, error: 'Not found' }, { status: 404 })
+  }
+
   return NextResponse.json({
     ok: true,
     version: 'voice-first-v1-gpt-4o-mini-transcribe',
@@ -10,11 +14,10 @@ export async function GET() {
       'WhatsApp voice note transcription',
       'Multilingual voice input',
       'Today command',
-      'Premium weather reply',
-      'Premium sports reply',
-      'Cleaner Gmail connect/read messages'
+      'weather reply',
+      'sports reply',
+      'Gmail connect/read messages',
     ],
-    required_env: ['OPENAI_API_KEY', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'],
-    deployed_at: new Date().toISOString(),
+    checked_at: new Date().toISOString(),
   })
 }
