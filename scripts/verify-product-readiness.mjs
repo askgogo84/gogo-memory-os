@@ -15,11 +15,19 @@ const check = (name, fn) => {
 console.log('Product readiness regression checks')
 
 const learn = read('components/dashboard/learn-with-gogo.tsx')
-check('Learn presenter uses permanent local animated Gogo asset', () => {
-  assert.match(learn, /src="\/gogo-float\.gif"/)
+const presenterRoute = read('app/api/dashboard/master-gogo-presenter/route.ts')
+check('Learn uses the seated Master Gogo presenter through a same-origin route', () => {
+  assert.match(learn, /<video/)
+  assert.match(learn, /\/api\/dashboard\/master-gogo-presenter/)
+  assert.match(learn, /presenterRef/)
+  assert.doesNotMatch(learn, /cloudfront\.net|_jwt=/)
 })
-check('Learn presenter has no expiring Runway/CloudFront signed URL', () => {
-  assert.doesNotMatch(learn, /cloudfront\.net|_jwt=|MASTER_GOGO_PRESENTER/)
+check('Master Gogo presenter is persisted in AskGogo storage', () => {
+  assert.match(presenterRoute, /SUPABASE_DOCUMENT_BUCKET/)
+  assert.match(presenterRoute, /_system\/learn\/master-gogo-presenter\.mp4/)
+  assert.match(presenterRoute, /\.download\(STORAGE_PATH\)/)
+  assert.match(presenterRoute, /\.upload\(/)
+  assert.match(presenterRoute, /X-AskGogo-Video-Source/)
 })
 
 const pay = read('app/pay/page.tsx')
