@@ -1,39 +1,31 @@
 import { getPlan, type AskGogoPlanKey } from './razorpay'
 
-// Subscription plan keys the checkout can offer.
-// 'pro_annual' bills yearly but grants the same entitlement as 'pro'.
-export type SubscriptionPlanKey = 'lite' | 'starter' | 'pro' | 'pro_annual'
+// Public recurring plans. Legacy Starter/annual plans are no longer sold.
+export type SubscriptionPlanKey = 'lite' | 'pro' | 'power'
 
-// Maps each subscription key -> the Vercel env var that holds the LIVE Razorpay plan_ id.
-// Set these in Vercel (values copied from the Razorpay Plans screen):
-//   RAZORPAY_PLAN_LITE, RAZORPAY_PLAN_STARTER, RAZORPAY_PLAN_PRO, RAZORPAY_PLAN_PRO_ANNUAL
-const PLAN_ID_ENV: Record<SubscriptionPlanKey, string> = {
-  lite: 'RAZORPAY_PLAN_LITE',
-  starter: 'RAZORPAY_PLAN_STARTER',
-  pro: 'RAZORPAY_PLAN_PRO',
-  pro_annual: 'RAZORPAY_PLAN_PRO_ANNUAL',
+const TOTAL_COUNT: Record<SubscriptionPlanKey, number> = {
+  lite: 120,
+  pro: 120,
+  power: 120,
 }
 
-// Razorpay caps billing cycles by frequency (monthly max 120, yearly max 100).
-// These values mean "runs until the customer cancels" in practice.
-const TOTAL_COUNT: Record<SubscriptionPlanKey, number> = {
-  lite: 120, // 10 years of monthly
-  starter: 120,
-  pro: 120,
-  pro_annual: 10, // 10 years of yearly
+const EXPECTED_AMOUNT_PAISE: Record<SubscriptionPlanKey, number> = {
+  lite: 9900,
+  pro: 29900,
+  power: 49900,
 }
 
 function normalizeSubKey(planKey?: string | null): SubscriptionPlanKey {
-  const clean = String(planKey || 'pro').toLowerCase().replace(/[\s-]+/g, '_')
-  if (clean === 'pro_annual' || clean === 'annual' || clean === 'yearly') return 'pro_annual'
-  if (clean === 'lite' || clean === 'starter' || clean === 'pro') return clean as SubscriptionPlanKey
+  const clean = String(planKey || 'pro').toLowerCase().trim().replace(/[\s-]+/g, '_')
+  if (clean === 'lite') return 'lite'
+  if (clean === 'power' || clean === 'founder' || clean === 'founder_pro') return 'power'
   return 'pro'
 }
 
-// The entitlement tier granted for a given subscription (pro_annual -> pro).
+// Power uses the existing founder entitlement key internally so no user migration is required.
 export function entitlementKeyFor(planKey?: string | null): AskGogoPlanKey {
   const sub = normalizeSubKey(planKey)
-  return sub === 'pro_annual' ? 'pro' : (sub as AskGogoPlanKey)
+  return sub === 'power' ? 'founder' : sub
 }
 
 function getAuthHeader() {
@@ -45,14 +37,92 @@ function getAuthHeader() {
   return 'Basic ' + Buffer.from(`${keyId}:${keySecret}`).toString('base64')
 }
 
-export function getPlanId(planKey?: string | null): string {
+function configuredPlanCandidates(sub: SubscriptionPlanKey) {
+  if (sub === 'lite') return [process.env.RAZORPAY_PLAN_LITE]
+  if (sub === 'pro') return [process.env.RAZORPAY_PLAN_PRO_299, process.env.RAZORPAY_PLAN_PRO]
+  return [process.env.RAZORPAY_PLAN_POWER, process.env.RAZORPAY_PLAN_FOUNDER]
+}
+
+function isExactPlan(plan: any, sub: SubscriptionPlanKey) {
+  return Boolean(
+    plan?.id &&
+    plan?.period === 'monthly' &&
+    Number(plan?.interval) === 1 &&
+    String(plan?.item?.currency || '').toUpperCase() === 'INR' &&
+    Number(plan?.item?.amount ?? plan?.item?.unit_amount) === EXPECTED_AMOUNT_PAISE[sub]
+  )
+}
+
+async function fetchRazorpayPlan(planId: string) {
+  const response = await fetch(`https://api.razorpay.com/v1/plans/${encodeURIComponent(planId)}`, {
+    headers: { Authorization: getAuthHeader() },
+    cache: 'no-store',
+  })
+  if (!response.ok) return null
+  return response.json()
+}
+
+/**
+ * Returns a LIVE Razorpay plan with the exact price we advertise.
+ * Old configured plan ids are validated before use, so an old ₹199 Pro plan can
+ * never accidentally charge a customer after the public price moved to ₹299.
+ * If configuration is stale, reuse an exact existing plan or create one once.
+ */
+export async function ensureRazorpayPlanId(planKey?: string | null): Promise<string> {
   const sub = normalizeSubKey(planKey)
-  const envName = PLAN_ID_ENV[sub]
-  const planId = process.env[envName]
-  if (!planId) {
-    throw new Error(`Missing plan ID env var ${envName} in Vercel (for plan "${sub}")`)
+
+  for (const candidate of configuredPlanCandidates(sub)) {
+    if (!candidate) continue
+    const plan = await fetchRazorpayPlan(candidate)
+    if (isExactPlan(plan, sub)) return plan.id
   }
-  return planId
+
+  const listResponse = await fetch('https://api.razorpay.com/v1/plans?count=100', {
+    headers: { Authorization: getAuthHeader() },
+    cache: 'no-store',
+  })
+
+  if (listResponse.ok) {
+    const collection = await listResponse.json()
+    const existing = (collection?.items || []).find((plan: any) => {
+      if (!isExactPlan(plan, sub)) return false
+      const key = String(plan?.notes?.askgogo_plan || '').toLowerCase()
+      const name = String(plan?.item?.name || '').toLowerCase()
+      return key === sub || name === `askgogo ${sub}` || (sub === 'power' && name === 'askgogo power')
+    })
+    if (existing?.id) return existing.id
+  }
+
+  const publicPlan = getPlan(sub)
+  const createResponse = await fetch('https://api.razorpay.com/v1/plans', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+    body: JSON.stringify({
+      period: 'monthly',
+      interval: 1,
+      item: {
+        name: `AskGogo ${sub === 'power' ? 'Power' : sub[0].toUpperCase() + sub.slice(1)}`,
+        amount: EXPECTED_AMOUNT_PAISE[sub],
+        currency: 'INR',
+        description: publicPlan.description,
+      },
+      notes: {
+        source: 'askgogo',
+        askgogo_plan: sub,
+        canonical_price_inr: String(EXPECTED_AMOUNT_PAISE[sub] / 100),
+      },
+    }),
+  })
+
+  const created = await createResponse.json()
+  if (!createResponse.ok || !isExactPlan(created, sub)) {
+    console.error('Razorpay plan ensure failed:', JSON.stringify(created))
+    throw new Error(created?.error?.description || `Could not create exact Razorpay ${sub} plan`)
+  }
+  return created.id
 }
 
 export type CreateSubscriptionResult = {
@@ -63,14 +133,6 @@ export type CreateSubscriptionResult = {
   entitlement: AskGogoPlanKey
 }
 
-/**
- * Creates a Razorpay Subscription (recurring auto-debit) and returns its
- * short_url — the link the customer opens to authorize the mandate.
- *
- * Free trial: controlled by env RAZORPAY_TRIAL_DAYS (default 7). When > 0,
- * the mandate is authorized now and the first debit lands `trialDays` later.
- * Set RAZORPAY_TRIAL_DAYS=0 to charge immediately.
- */
 export async function createSubscription(options: {
   planKey: string
   phone?: string | null
@@ -80,7 +142,7 @@ export async function createSubscription(options: {
   name?: string | null
 }): Promise<CreateSubscriptionResult> {
   const sub = normalizeSubKey(options.planKey)
-  const planId = getPlanId(sub)
+  const planId = await ensureRazorpayPlanId(sub)
   const entitlement = entitlementKeyFor(sub)
 
   const trialDays = Number(process.env.RAZORPAY_TRIAL_DAYS ?? '7')
@@ -93,8 +155,8 @@ export async function createSubscription(options: {
 
   const notes: Record<string, string> = {
     source: 'askgogo_whatsapp',
-    plan: entitlement, // entitlement tier the webhook grants (lite/starter/pro)
-    sub_plan: sub, // exact plan chosen (incl. pro_annual)
+    plan: entitlement,
+    sub_plan: sub,
     whatsapp_id: rawPhone || '',
     telegram_id: String(options.telegramId || ''),
     user_id: String(options.userId || ''),
@@ -122,7 +184,6 @@ export async function createSubscription(options: {
   const data = await response.json()
 
   if (!response.ok) {
-    // Surface Razorpay's real error so failures aren't silent.
     console.error('Razorpay subscription error:', JSON.stringify(data))
     throw new Error(data?.error?.description || 'Razorpay subscription creation failed')
   }
@@ -136,7 +197,6 @@ export async function createSubscription(options: {
   }
 }
 
-/** Convenience for building a WhatsApp message with the subscription link. */
 export function formatSubscriptionMessage(options: {
   planName: string
   shortUrl: string
@@ -158,7 +218,5 @@ export function formatSubscriptionMessage(options: {
     'After you authorize, your AskGogo access unlocks automatically and renews each cycle. Cancel anytime.',
     '',
     '- AskGogo',
-  ]
-    .filter(Boolean)
-    .join('\n')
+  ].filter(Boolean).join('\n')
 }
