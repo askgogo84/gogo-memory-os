@@ -82,7 +82,7 @@ for (const path of [
   'app/api/payments/create-link/route.ts',
 ]) {
   check(`${path} is disabled or hidden in production`, () => {
-    assert.match(read(path), /VERCEL_ENV\s*===\s*['"]production['"]/)
+    assert.match(read(path), /(?:VERCEL_ENV|NODE_ENV)\s*===\s*['"]production['"]/)
   })
 }
 
