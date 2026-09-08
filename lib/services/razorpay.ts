@@ -1,5 +1,7 @@
 import crypto from 'crypto'
 
+// Legacy internal keys are retained for existing entitlements/webhook records.
+// Publicly sold plans are Lite (99), Pro (299) and Power (499).
 export type AskGogoPlanKey = 'lite' | 'starter' | 'pro' | 'founder'
 
 export type AskGogoPlan = {
@@ -33,12 +35,13 @@ export const ASKGOGO_PLANS: Record<AskGogoPlanKey, AskGogoPlan> = {
       voiceNotesPerMonth: 10,
     },
   },
+  // Legacy tier kept only so existing Starter users continue to resolve safely.
   starter: {
     key: 'starter',
-    name: 'AskGogo Starter',
+    name: 'AskGogo Starter (legacy)',
     amountInRupees: 149,
     amountInPaise: 14900,
-    description: 'AskGogo Starter - organized daily reminders, notes and memory',
+    description: 'Legacy AskGogo Starter entitlement',
     validityDays: 30,
     limits: {
       aiActionsPerMonth: 100,
@@ -49,8 +52,8 @@ export const ASKGOGO_PLANS: Record<AskGogoPlanKey, AskGogoPlan> = {
   pro: {
     key: 'pro',
     name: 'AskGogo Pro',
-    amountInRupees: 199,
-    amountInPaise: 19900,
+    amountInRupees: 299,
+    amountInPaise: 29900,
     description: 'AskGogo Pro - calendar, daily planning, voice and web search',
     validityDays: 30,
     limits: {
@@ -61,12 +64,13 @@ export const ASKGOGO_PLANS: Record<AskGogoPlanKey, AskGogoPlan> = {
       calendarIntegration: true,
     },
   },
+  // founder is the legacy database entitlement key for the public Power plan.
   founder: {
     key: 'founder',
-    name: 'AskGogo Founder Pro',
+    name: 'AskGogo Power',
     amountInRupees: 499,
     amountInPaise: 49900,
-    description: 'AskGogo Founder Pro - power-user access and priority features',
+    description: 'AskGogo Power - power-user access and priority features',
     validityDays: 30,
     limits: {
       aiActionsPerMonth: 600,
@@ -80,7 +84,9 @@ export const ASKGOGO_PLANS: Record<AskGogoPlanKey, AskGogoPlan> = {
 }
 
 export function getPlan(planKey?: string | null): AskGogoPlan {
-  const clean = String(planKey || 'pro').toLowerCase().replace(/founder_pro/g, 'founder') as AskGogoPlanKey
+  const raw = String(planKey || 'pro').toLowerCase().trim().replace(/[\s-]+/g, '_')
+  const normalized = raw === 'power' || raw === 'founder_pro' ? 'founder' : raw
+  const clean = normalized as AskGogoPlanKey
   return ASKGOGO_PLANS[clean] || ASKGOGO_PLANS.pro
 }
 
@@ -139,9 +145,7 @@ export async function createPaymentLink(options: {
       customer.contact = String(options.customerPhone || options.whatsappId || '').replace(/^whatsapp:/i, '')
     }
 
-    if (options.customerEmail) {
-      customer.email = options.customerEmail
-    }
+    if (options.customerEmail) customer.email = options.customerEmail
 
     const response = await fetch('https://api.razorpay.com/v1/payment_links', {
       method: 'POST',
