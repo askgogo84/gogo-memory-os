@@ -1,10 +1,14 @@
-﻿import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchLatestEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  if (process.env.VERCEL_ENV === 'production') {
+    return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
+  }
+
   const url = new URL(req.url)
   const telegramId = url.searchParams.get('telegramId')
 
