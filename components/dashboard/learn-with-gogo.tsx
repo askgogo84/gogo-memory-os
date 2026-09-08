@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { GogoLesson } from '@/lib/dashboard/lessons'
 
 const AUTO_VERIFIED = new Set(['first-reminder', 'recurring-reminders'])
+const MASTER_GOGO_PRESENTER = '/api/dashboard/master-gogo-presenter'
 
 type VerifyState = 'idle' | 'waiting' | 'checking' | 'done'
 type PracticeMessage = { role: 'user' | 'assistant'; content: string }
@@ -29,6 +30,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
   const [practiceSending, setPracticeSending] = useState(false)
   const [practiceError, setPracticeError] = useState('')
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const presenterRef = useRef<HTMLVideoElement | null>(null)
   const lessonTopRef = useRef<HTMLDivElement | null>(null)
   const practiceEndRef = useRef<HTMLDivElement | null>(null)
 
@@ -159,6 +161,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
   async function finishNarration() {
     if (!active) return
     setPlaying(false)
+    presenterRef.current?.pause()
     setProgress(1)
     setWatched((old) => new Set([...old, active.key]))
 
@@ -179,16 +182,23 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
 
   function toggleNarration() {
     const audio = audioRef.current
+    const presenter = presenterRef.current
     if (!audio) return
     if (audio.paused) {
       void audio.play().then(() => {
         setPlaying(true)
+        if (presenter) {
+          presenter.muted = true
+          void presenter.play().catch(() => {})
+        }
       }).catch(() => {
         setPlaying(false)
+        presenter?.pause()
         setPracticeError('The lesson audio could not start. Refresh once and try again.')
       })
     } else {
       audio.pause()
+      presenter?.pause()
       setPlaying(false)
     }
   }
@@ -201,6 +211,10 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
     if (audioRef.current) {
       audioRef.current.pause()
       audioRef.current.currentTime = 0
+    }
+    if (presenterRef.current) {
+      presenterRef.current.pause()
+      presenterRef.current.currentTime = 0
     }
     if (!AUTO_VERIFIED.has(activeKey) || completed.has(activeKey)) return
     let stopped = false
@@ -270,9 +284,19 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
         <div className="p-4 sm:p-6 lg:p-7">
           <div className="overflow-hidden rounded-[26px] border border-gogo-ink/20 bg-[#fbf6ec]">
             <div className="grid min-h-[330px] lg:grid-cols-[42%_58%]">
-              <div className="relative flex min-h-[330px] items-center justify-center overflow-hidden bg-[#fff8df]">
-                <img src="/gogo-float.gif" alt="Master Gogo" className="h-[280px] w-[280px] max-w-[88%] object-contain" />
-                <div className="absolute left-4 top-4 rounded-full bg-white/80 px-3 py-1 text-[8px] font-bold uppercase tracking-[0.16em] text-gogo-orange backdrop-blur">Master Gogo</div>
+              <div className="relative min-h-[330px] overflow-hidden bg-[#f7efe2]">
+                <img src="/gogo-float.gif" alt="Master Gogo fallback" className="absolute inset-0 h-full w-full object-contain p-8 opacity-65" />
+                <video
+                  ref={presenterRef}
+                  src={MASTER_GOGO_PRESENTER}
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  className="absolute inset-0 h-full w-full object-cover object-left"
+                />
+                <div className="absolute left-4 top-4 z-10 rounded-full bg-white/80 px-3 py-1 text-[8px] font-bold uppercase tracking-[0.16em] text-gogo-orange backdrop-blur">Master Gogo</div>
+                <div className="absolute bottom-4 left-4 z-10 rounded-full bg-white/80 px-3 py-1 text-[8px] font-bold text-gogo-ink-2 backdrop-blur">{playing ? '● Gogo is explaining' : 'Ready when you are'}</div>
               </div>
               <div className="flex min-h-[330px] flex-col justify-center p-6 lg:p-8">
                 <div className="text-[8px] font-bold uppercase tracking-[0.18em] text-gogo-orange">{sceneCopy?.eyebrow}</div>
@@ -281,10 +305,18 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
                 {active?.example && <div className="mt-5 rounded-[16px] border border-gogo-ink/10 bg-white/80 px-4 py-3 text-[11px] font-medium text-gogo-ink-2">“{active.example}”</div>}
                 <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-gogo-ink/7"><div className="h-full rounded-full bg-gogo-orange transition-all" style={{ width: `${Math.max(5, progress * 100)}%` }} /></div>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <button type="button" onClick={toggleNarration} className="rounded-full bg-gogo-ink px-4 py-2 text-[10px] font-bold text-white active:scale-[.98]">{playing ? 'Pause lesson' : progress > 0 && progress < 1 ? 'Continue lesson' : 'Play lesson'}</button>
-                  <div className="text-[9px] text-gogo-ink-4">Animated Gogo · narration · captions</div>
+                  <button type="button" onClick={toggleNarration} className="rounded-full bg-gogo-ink px-4 py-2 text-[10px] font-bold text-white active:scale-[.98]">{playing ? 'Pause Gogo' : progress > 0 && progress < 1 ? 'Continue lesson' : 'Play lesson'}</button>
+                  <div className="text-[9px] text-gogo-ink-4">Talking Gogo · narration · captions</div>
                 </div>
-                <audio ref={audioRef} src={active?.audioSrc} preload="metadata" onTimeUpdate={(e) => { const a = e.currentTarget; if (a.duration) setProgress(a.currentTime / a.duration) }} onEnded={() => { void finishNarration() }} />
+                <audio
+                  ref={audioRef}
+                  src={active?.audioSrc}
+                  preload="metadata"
+                  onTimeUpdate={(e) => { const a = e.currentTarget; if (a.duration) setProgress(a.currentTime / a.duration) }}
+                  onPlay={() => { setPlaying(true); if (presenterRef.current) void presenterRef.current.play().catch(() => {}) }}
+                  onPause={() => { setPlaying(false); presenterRef.current?.pause() }}
+                  onEnded={() => { void finishNarration() }}
+                />
               </div>
             </div>
           </div>
