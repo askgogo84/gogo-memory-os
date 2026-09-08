@@ -1,6 +1,8 @@
 import { supabaseAdmin } from './supabase-admin'
 
-type PlanKey = 'free' | 'lite' | 'starter' | 'pro' | 'founder_pro' | 'imported'
+// Starter and founder_pro remain internal legacy entitlement keys so existing
+// accounts keep their access. Publicly sold plans are Free, Lite, Pro and Power.
+type PlanKey = 'free' | 'lite' | 'starter' | 'pro' | 'founder_pro'
 
 export type UsageKind =
   | 'ai_action'
@@ -24,7 +26,7 @@ type PlanLimit = {
 
 const LIMITS: Record<PlanKey, PlanLimit> = {
   free: {
-    label: 'Free Beta',
+    label: 'Free',
     priceInr: 0,
     monthlyActions: 25,
     dailyActions: 10,
@@ -48,7 +50,7 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
     costGuardrailInr: 60,
   },
   starter: {
-    label: 'Starter',
+    label: 'Starter (legacy)',
     priceInr: 149,
     monthlyActions: 100,
     dailyActions: 25,
@@ -61,7 +63,7 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
   },
   pro: {
     label: 'Pro',
-    priceInr: 199,
+    priceInr: 299,
     monthlyActions: 250,
     dailyActions: 60,
     activeReminders: 50,
@@ -72,7 +74,7 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
     costGuardrailInr: 210,
   },
   founder_pro: {
-    label: 'Founder Pro',
+    label: 'Power',
     priceInr: 499,
     monthlyActions: 600,
     dailyActions: 150,
@@ -127,6 +129,8 @@ function normalizeTier(tier?: string | null): PlanKey {
   if (clean === 'lite') return 'lite'
   if (clean === 'starter') return 'starter'
   if (clean === 'pro') return 'pro'
+  if (clean === 'power') return 'founder_pro'
+  if (clean === 'founder') return 'founder_pro'
   if (clean === 'founder_pro') return 'founder_pro'
   if (clean === 'founder-pro') return 'founder_pro'
   if (clean === 'founder pro') return 'founder_pro'
@@ -156,18 +160,15 @@ function usageLine(label: string, used: number, limit: number, suffix = '') {
 
 function recommendedPlan(tier: PlanKey) {
   if (tier === 'free') {
-    return `Lite — ₹99/month\n60 AI actions/month\nLess than a cup of chai/day.`
+    return `Lite — ₹99/month\n60 AI actions/month\nA simple step up for everyday use.`
   }
-  if (tier === 'lite') {
-    return `Starter — ₹149/month\n100 AI actions/month\nMore voice notes and reminders.`
-  }
-  if (tier === 'starter') {
-    return `Pro — ₹199/month\n250 AI actions/month\nCalendar power features and deeper usage.`
+  if (tier === 'lite' || tier === 'starter') {
+    return `Pro — ₹299/month\n250 AI actions/month\nMore voice, reminders, calendar and web search.`
   }
   if (tier === 'pro') {
-    return `Founder Pro — ₹499/month\n600 AI actions/month\nBest for power users.`
+    return `Power — ₹499/month\n600 AI actions/month\nHighest limits and priority access.`
   }
-  return `You’re already on the highest founder plan. 💚`
+  return `You’re already on the highest Power plan. 💚`
 }
 
 function buildLimitReachedMessage(params: {
@@ -176,13 +177,13 @@ function buildLimitReachedMessage(params: {
   limitValue: number
 }) {
   return (
-    `⚡ *You’ve used today’s free beta quota*\n\n` +
+    `⚡ *You’ve reached a plan limit*\n\n` +
     `You’re on the *${params.planLabel}* plan and have reached the ${params.limitLabel} limit of *${params.limitValue}*.\n\n` +
     `Upgrade to keep going:\n` +
     `• Lite — ₹99/month — 60 AI actions/month\n` +
-    `• Starter — ₹149/month — 100 AI actions/month\n` +
-    `• Pro — ₹199/month — 250 AI actions/month\n\n` +
-    `Reply *upgrade* to pick a plan (7-day free trial).\n` +
+    `• Pro — ₹299/month — 250 AI actions/month\n` +
+    `• Power — ₹499/month — 600 AI actions/month\n\n` +
+    `Reply *upgrade* to pick a plan.\n` +
     `Reply *usage* to see your current limits.`
   )
 }
@@ -462,8 +463,7 @@ export async function getUsageStatusReply(telegramId: number) {
     `${usageLine('Web searches', webUsed, plan.webSearchesMonthly, ' this month')}\n\n` +
     `💡 *Best next plan*\n` +
     `${recommendedPlan(tier)}\n\n` +
-    `Reply *pricing* to see all plans.\n` +
-    `Reply *notify me* for founder pricing.`
+    `Reply *pricing* to see all plans.`
   )
 }
 
