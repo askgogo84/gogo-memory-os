@@ -82,7 +82,7 @@ Type or speak naturally. I’ll understand.`
 export function buildUpgradeReply() {
   return `💚 *AskGogo Plans*
 
-Start free, then upgrade anytime. Paid plans start at ₹99/month.
+Start free, then upgrade anytime. Every paid plan starts with a *7-day free trial* and can be cancelled anytime.
 
 *Free* — ₹0
 • Try AskGogo with core reminders, memory and lists
@@ -106,7 +106,7 @@ Start free, then upgrade anytime. Paid plans start at ₹99/month.
 • Higher search + calendar limits
 • Priority access
 
-Reply *lite*, *pro*, or *power* and I'll send you a secure payment link. 🔒`
+Reply *lite*, *pro*, or *power* and I'll send you the secure subscription link. 🔒`
 }
 
 export function buildNotifyMeReply(userName?: string) {
@@ -114,7 +114,7 @@ export function buildNotifyMeReply(userName?: string) {
 
   return `✅ *Got it, ${name}*
 
-Paid AskGogo plans are available from *₹99/month*.
+Paid AskGogo plans are available from *₹99/month* with a *7-day free trial*.
 
 Reply *pricing* to see Free, Lite, Pro and Power, or *upgrade* when you're ready.`
 }
