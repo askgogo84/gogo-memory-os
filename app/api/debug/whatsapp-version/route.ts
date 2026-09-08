@@ -1,19 +1,22 @@
-﻿import { NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ ok: false, error: 'Not found' }, { status: 404 })
+  }
+
   return NextResponse.json({
     ok: true,
-    version: 'whatsapp-premium-v4',
+    version: 'whatsapp-premium-v5-free-lite-pro-power',
     message: 'AskGogo WhatsApp premium UX is deployed',
     expected_replies: {
-      hi: 'Premium AskGogo welcome message',
-      help: 'Premium AskGogo menu',
-      pricing: 'Starter ₹149, Pro ₹299, Family ₹399',
-      notify_me: 'Founder list confirmation',
+      hi: 'AskGogo welcome message',
+      help: 'AskGogo menu',
+      pricing: 'Free ₹0, Lite ₹99, Pro ₹299, Power ₹499',
       invite_friends: 'Referral share message',
     },
-    deployed_at: new Date().toISOString(),
+    checked_at: new Date().toISOString(),
   })
 }
