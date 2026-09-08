@@ -4,9 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "npm test && npm run typecheck",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test lib/services/meter.test.mjs && node --test lib/data/lists-core.test.mjs && node --test lib/dashboard/wall-time.test.mjs && npx --yes tsx scripts/verify-calendar-routing.mts && npx --yes tsx scripts/verify-cancel-matcher.mts && node scripts/verify-creditiq-routing.mjs && npx --yes tsx scripts/verify-interval-cadence.mts && node scripts/verify-list-routing.mjs && npx --yes tsx scripts/verify-memory-redaction.mts && node scripts/verify-nutrition-routing.mjs && node scripts/verify-onboarding-examples.mjs && npx --yes tsx scripts/verify-pending-followup.mts && npx --yes tsx scripts/verify-reminder-dedup.mts && npx --yes tsx scripts/verify-travel-reminders.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
