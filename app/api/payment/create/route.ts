@@ -5,28 +5,26 @@ import { createPaymentLink } from '@/lib/razorpay'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  // Retired one-time checkout. Production uses /api/subscription/create so
+  // Lite, Pro and Power all receive the same recurring + trial semantics.
+  if (process.env.VERCEL_ENV === 'production') {
+    return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
+  }
+
   try {
     const { telegramId, whatsappId, plan } = await req.json()
-
     const plans: Record<string, { amount: number; name: string }> = {
-      starter: { amount: 149, name: 'AskGogo Starter' },
+      lite: { amount: 99, name: 'AskGogo Lite' },
       pro: { amount: 299, name: 'AskGogo Pro' },
-      lifetime: { amount: 9999, name: 'AskGogo Lifetime' },
+      power: { amount: 499, name: 'AskGogo Power' },
     }
 
     const selected = plans[plan]
-    if (!selected) {
-      return NextResponse.json({ error: 'Invalid plan' }, { status: 400 })
-    }
+    if (!selected) return NextResponse.json({ error: 'Invalid plan' }, { status: 400 })
 
-    // Get user name
     let userName = 'AskGogo User'
     if (telegramId) {
-      const { data } = await supabaseAdmin
-        .from('users')
-        .select('name')
-        .eq('telegram_id', telegramId)
-        .single()
+      const { data } = await supabaseAdmin.from('users').select('name').eq('telegram_id', telegramId).single()
       if (data?.name) userName = data.name
     }
 
@@ -39,11 +37,8 @@ export async function POST(req: NextRequest) {
       plan,
     })
 
-    if (!url) {
-      return NextResponse.json({ error: 'Payment link creation failed' }, { status: 500 })
-    }
+    if (!url) return NextResponse.json({ error: 'Payment link creation failed' }, { status: 500 })
 
-    // Log pending payment
     await supabaseAdmin.from('payments').insert({
       telegram_id: telegramId || null,
       whatsapp_id: whatsappId || null,
