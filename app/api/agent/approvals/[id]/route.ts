@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const blocked = requireAgentMutationOrigin(request)
   if (blocked) return blocked
-  const session = await requireAgentSession()
+  const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
   const { id } = await context.params
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: 'invalid_approval' }, { status: 400 })
@@ -21,8 +21,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const status = decision === 'approve' ? 'approved' : 'rejected'
   const resolvedAt = new Date().toISOString()
 
-  // Conditional update makes the decision one-shot. A stale/replayed approval
-  // request cannot re-open, flip or execute an already resolved action.
   const { data, error } = await supabaseAdmin
     .from('agent_approvals')
     .update({ status, resolved_at: resolvedAt })
@@ -53,13 +51,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     run_id: data.run_id,
     event_type: decision === 'approve' ? 'approval_granted' : 'approval_rejected',
     message: `${decision === 'approve' ? 'Approved' : 'Rejected'}: ${data.title}`,
-    metadata_json: { approval_id: data.id, action_type: data.action_type, risk_level: data.risk_level },
+    metadata_json: { approval_id: data.id, action_type: data.action_type, risk_level: data.risk_level, surface: session.surface },
   })
   if (activityError) console.error('AGENT_APPROVAL_ACTIVITY_FAILED:', activityError)
 
-  // Approval only authorizes the next executor step. This route NEVER performs
-  // the external action itself. The executor must re-read the approval server-side
-  // and verify status === approved before acting.
   return NextResponse.json({ approval: {
     id: data.id,
     runId: data.run_id,
