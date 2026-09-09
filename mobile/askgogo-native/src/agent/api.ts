@@ -1,4 +1,4 @@
-import type { AgentApproval, AgentCommandResult, AgentGoal, AgentHomeSnapshot, AgentPermission } from './types'
+import type { AgentApproval, AgentCommandResult, AgentGoal, AgentHomeSnapshot, AgentPermission, AgentWatcher } from './types'
 import { getMobileAccessToken } from '../auth/session'
 
 const API_BASE = process.env.EXPO_PUBLIC_ASKGOGO_API_BASE_URL || 'https://app.askgogo.in'
@@ -59,6 +59,19 @@ export const agentApi = {
       body: JSON.stringify(patch),
     })
     return result.goal
+  },
+
+  createDeadlineWatcher: async (input: { title:string; deadline:string; notifyBeforeHours?:number; delivery?:'app'|'whatsapp'|'both'; goalId?:string }) => {
+    const result = await request<{ watcher: AgentWatcher }>('/api/agent/watchers', {
+      method:'POST',
+      body:JSON.stringify({ type:'deadline', ...input }),
+    })
+    return result.watcher
+  },
+
+  stopWatcher: async (watcherId:string) => {
+    const result = await request<{ watcher: AgentWatcher }>(`/api/agent/watchers/${encodeURIComponent(watcherId)}`, { method:'DELETE' })
+    return result.watcher
   },
 
   resolveApproval: async (approvalId: string, decision: 'approve' | 'reject') => {
