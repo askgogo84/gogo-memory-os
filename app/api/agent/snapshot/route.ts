@@ -23,8 +23,10 @@ export async function GET(request: Request) {
   if (!isAgentSession(session)) return session
   const tg = session.telegramId
 
-  const [runs, goals, ideas, approvals, permissions, artifacts] = await Promise.all([
+  const [runs, steps, watchers, goals, ideas, approvals, permissions, artifacts] = await Promise.all([
     supabaseAdmin.from('agent_runs').select('id, goal_id, title, summary, status, capability, progress, started_at, updated_at, next_check_at, why').eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(20),
+    supabaseAdmin.from('agent_steps').select('id, run_id, ordinal, tool_name, title, status, output_json, error, started_at, completed_at').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(120),
+    supabaseAdmin.from('agent_watchers').select('id, goal_id, type, condition_json, cadence_minutes, active, last_checked_at, next_check_at, created_at, updated_at').eq('telegram_id', tg).eq('active', true).order('created_at', { ascending: false }).limit(30),
     supabaseAdmin.from('agent_goals').select('id, title, outcome, status, progress, deadline, next_action, blockers').eq('telegram_id', tg).neq('status', 'cancelled').order('updated_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_ideas').select('id, title, reason, expected_value, action_label, source_refs, status, created_at, snoozed_until').eq('telegram_id', tg).in('status', ['new','snoozed']).order('created_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_approvals').select('id, run_id, action_type, title, description, payload_preview, risk_level, status, requested_at, resolved_at').eq('telegram_id', tg).eq('status', 'pending').order('requested_at', { ascending: false }).limit(20),
@@ -32,11 +34,24 @@ export async function GET(request: Request) {
     supabaseAdmin.from('agent_artifacts').select('id, type, title, subtitle, updated_at').eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(20),
   ])
 
-  const queryError = runs.error || goals.error || ideas.error || approvals.error || permissions.error || artifacts.error
+  const queryError = runs.error || steps.error || watchers.error || goals.error || ideas.error || approvals.error || permissions.error || artifacts.error
   if (queryError) {
     console.error('AGENT_SNAPSHOT_READ_FAILED:', queryError)
     return NextResponse.json({ error: 'read_failed' }, { status: 500 })
   }
+
+  const stepsByRun = new Map<string, any[]>()
+  for (const step of (steps.data || []) as any[]) {
+    const key = String(step.run_id)
+    const list = stepsByRun.get(key) || []
+    list.push({
+      id: step.id, ordinal: step.ordinal, toolName: step.tool_name, title: step.title,
+      status: step.status, output: step.output_json || {}, error: step.error || null,
+      startedAt: step.started_at || null, completedAt: step.completed_at || null,
+    })
+    stepsByRun.set(key, list)
+  }
+  for (const list of stepsByRun.values()) list.sort((a, b) => a.ordinal - b.ordinal)
 
   const permissionByCapability = new Map((permissions.data || []).map((p: any) => [p.capability, p]))
   const mergedPermissions = DEFAULT_PERMISSIONS.map((definition) => {
@@ -57,6 +72,19 @@ export async function GET(request: Request) {
       id: r.id, goalId: r.goal_id, title: r.title, summary: r.summary, status: r.status,
       capability: r.capability, progress: r.progress, startedAt: r.started_at,
       updatedAt: r.updated_at, nextCheckAt: r.next_check_at, why: r.why,
+      steps: stepsByRun.get(String(r.id)) || [],
+    })),
+    watchers: (watchers.data || []).map((w: any) => ({
+      id: w.id,
+      goalId: w.goal_id,
+      type: w.type,
+      title: String(w.condition_json?.title || 'Background watch'),
+      condition: w.condition_json || {},
+      cadenceMinutes: w.cadence_minutes,
+      active: w.active,
+      lastCheckedAt: w.last_checked_at,
+      nextCheckAt: w.next_check_at,
+      createdAt: w.created_at,
     })),
     goals: (goals.data || []).map((g: any) => ({
       id: g.id, title: g.title, outcome: g.outcome, status: g.status, progress: g.progress,

@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
+import { initializeBackgroundGoal } from '@/lib/agent/goal-engine'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 function cleanText(value: unknown, max: number): string {
   return String(value ?? '').trim().slice(0, max)
@@ -20,7 +22,7 @@ export async function GET(request: Request) {
 
   const { data, error } = await supabaseAdmin
     .from('agent_goals')
-    .select('id, title, outcome, status, progress, deadline, next_action, blockers, created_at, updated_at')
+    .select('id, title, outcome, status, progress, deadline, next_action, blockers, plan_json, created_at, updated_at')
     .eq('telegram_id', session.telegramId)
     .neq('status', 'cancelled')
     .order('updated_at', { ascending: false })
@@ -33,7 +35,7 @@ export async function GET(request: Request) {
   return NextResponse.json({ goals: (data || []).map((g: any) => ({
     id: g.id, title: g.title, outcome: g.outcome, status: g.status, progress: g.progress,
     deadline: g.deadline, nextAction: g.next_action, blockers: Array.isArray(g.blockers) ? g.blockers : [],
-    createdAt: g.created_at, updatedAt: g.updated_at,
+    plan: g.plan_json || null, createdAt: g.created_at, updatedAt: g.updated_at,
   })) })
 }
 
@@ -53,8 +55,8 @@ export async function POST(request: Request) {
   const now = new Date().toISOString()
   const { data, error } = await supabaseAdmin
     .from('agent_goals')
-    .insert({ telegram_id: session.telegramId, title, outcome, deadline, updated_at: now })
-    .select('id, title, outcome, status, progress, deadline, next_action, blockers, created_at, updated_at')
+    .insert({ telegram_id: session.telegramId, title, outcome, deadline, status:'active', updated_at: now })
+    .select('id, title, outcome, status, progress, deadline, next_action, blockers, plan_json, created_at, updated_at')
     .single()
 
   if (error || !data) {
@@ -70,9 +72,17 @@ export async function POST(request: Request) {
   })
   if (activityError) console.error('AGENT_GOAL_ACTIVITY_FAILED:', activityError)
 
+  let plan:any=null
+  try {
+    plan=await initializeBackgroundGoal({telegramId:session.telegramId,goalId:String(data.id),title,outcome})
+  } catch (initError:any) {
+    console.error('AGENT_GOAL_BACKGROUND_INIT_FAILED:', initError?.message || initError)
+    await supabaseAdmin.from('agent_goals').update({status:'blocked',blockers:['Background planning failed. Open the goal to retry.'],updated_at:new Date().toISOString()}).eq('id',data.id).eq('telegram_id',session.telegramId)
+  }
+
   return NextResponse.json({ goal: {
-    id: data.id, title: data.title, outcome: data.outcome, status: data.status, progress: data.progress,
-    deadline: data.deadline, nextAction: data.next_action, blockers: data.blockers || [],
-    createdAt: data.created_at, updatedAt: data.updated_at,
+    id: data.id, title: data.title, outcome: data.outcome, status: plan ? 'active' : 'blocked', progress: data.progress,
+    deadline: data.deadline, nextAction: plan?.steps?.[0]?.title || null, blockers: plan ? [] : ['Background planning failed. Open the goal to retry.'],
+    plan, createdAt: data.created_at, updatedAt: data.updated_at,
   } }, { status: 201 })
 }
