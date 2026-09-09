@@ -5,6 +5,7 @@ import { runAgentCommand } from '@/lib/agent/orchestrator'
 import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 import { tryPrepareTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
+import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -28,13 +29,12 @@ export async function POST(request: Request) {
     const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:session.surface, text })
     if (webWatch) return NextResponse.json(webWatch, { status:200 })
 
-    // Memory → Calendar is prepared first, but the calendar write itself is
-    // always held behind the existing one-shot calendar_change approval.
+    // Keep the deterministic, privacy-preserving specialist plans ahead of the
+    // general planner. They use structured fields without exposing sensitive
+    // document values to the planning model.
     const travelCalendar = await tryPrepareTravelCalendarPlan({ actor, surface:session.surface, text })
     if (travelCalendar) return NextResponse.json(travelCalendar, { status:travelCalendar.status === 'waiting_approval' ? 202 : 200 })
 
-    // Other compound plans run before the single-capability fallback. Each
-    // recognized plan persists visible steps and reuses existing AskGogo tools.
     const compound = await tryRunExpiryReminderPlan({
       actor,
       surface: session.surface,
@@ -43,6 +43,21 @@ export async function POST(request: Request) {
     })
     if (compound) return NextResponse.json(compound, { status: 200 })
 
+    // Muse-style outcome planning: when a request genuinely spans multiple
+    // capabilities, Gogo creates visible tool steps and stops at the first
+    // consequential operation until the user approves it.
+    const generalPlan = await tryRunGeneralPlan({
+      actor,
+      surface: session.surface,
+      text,
+      messageId: body?.messageId || null,
+    })
+    if (generalPlan) {
+      return NextResponse.json(generalPlan, { status: generalPlan.status === 'waiting_approval' ? 202 : 200 })
+    }
+
+    // Simple one-capability requests continue through the existing same-brain
+    // path so this upgrade remains additive and does not rewrite proven flows.
     const result = await runAgentCommand({
       actor,
       surface: session.surface,
