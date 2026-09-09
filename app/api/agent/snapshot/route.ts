@@ -15,8 +15,8 @@ const DEFAULT_PERMISSIONS = [
   ['payments', 'ask', true],
 ] as const
 
-export async function GET() {
-  const session = await requireAgentSession()
+export async function GET(request: Request) {
+  const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
   const tg = session.telegramId
 
@@ -47,6 +47,7 @@ export async function GET() {
   })
 
   return NextResponse.json({
+    surface: session.surface,
     runs: (runs.data || []).map((r: any) => ({
       id: r.id, goalId: r.goal_id, title: r.title, summary: r.summary, status: r.status,
       capability: r.capability, progress: r.progress, startedAt: r.started_at,
