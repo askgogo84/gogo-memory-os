@@ -1,4 +1,4 @@
-import type { AgentApproval, AgentCommandResult, AgentGoal, AgentHomeSnapshot, AgentPermission, AgentWatcher } from './types'
+import type { AgentApproval, AgentArtifactDetail, AgentCommandResult, AgentGoal, AgentHomeSnapshot, AgentPermission, AgentWatcher } from './types'
 import { getMobileAccessToken } from '../auth/session'
 
 const API_BASE = process.env.EXPO_PUBLIC_ASKGOGO_API_BASE_URL || 'https://app.askgogo.in'
@@ -35,6 +35,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const agentApi = {
   snapshot: () => request<AgentHomeSnapshot>('/api/agent/snapshot'),
+
+  artifact: async (artifactId:string) => {
+    const result=await request<{artifact:AgentArtifactDetail}>(`/api/agent/artifacts/${encodeURIComponent(artifactId)}`)
+    return result.artifact
+  },
 
   run: (text: string, context?: Record<string, unknown>) =>
     request<AgentCommandResult>('/api/agent/run', {
