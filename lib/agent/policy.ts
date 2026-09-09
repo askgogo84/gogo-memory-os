@@ -1,4 +1,16 @@
-export type AgentCapability = 'memory' | 'files' | 'email' | 'calendar' | 'browser' | 'contacts' | 'travel' | 'payments'
+export type AgentCapability =
+  | 'memory'
+  | 'files'
+  | 'reminders'
+  | 'lists'
+  | 'tasks'
+  | 'email'
+  | 'calendar'
+  | 'browser'
+  | 'contacts'
+  | 'travel'
+  | 'payments'
+
 export type AgentPermissionLevel = 'off' | 'read' | 'draft' | 'ask' | 'auto'
 export type AgentActionMode = 'read' | 'draft' | 'execute'
 export type AgentRiskLevel = 'low' | 'medium' | 'high'
@@ -32,12 +44,14 @@ function rank(level: AgentPermissionLevel): number {
  * Pure deterministic policy gate used before ANY agent executor is allowed to
  * perform work. The LLM never decides whether its own action is authorized.
  *
- * v1 safety invariant:
+ * Safety invariant:
  * - read requires read+
  * - draft requires draft+
  * - every irreversible action requires a one-shot approved approval record
  * - email/calendar/browser/travel/payments cannot auto-execute high/medium-risk
  *   consequential actions merely because a client asks for `auto`
+ * - reminders/lists/tasks can auto-execute only when explicitly allowed and the
+ *   classifier marks the operation reversible/low risk
  */
 export function evaluateAgentExecutionPolicy(input: AgentExecutionPolicyInput): AgentExecutionPolicyResult {
   if (input.permissionLevel === 'off') return { allowed: false, reason: 'permission_off' }
