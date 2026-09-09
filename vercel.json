@@ -9,6 +9,14 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/agent-watchers",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/agent-goals",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/followups",
       "schedule": "30 3 * * *"
     },
