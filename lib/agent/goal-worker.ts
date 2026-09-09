@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { processGoalReviewWatcher } from './goal-engine'
+import { sendAgentPush } from './push'
 
 export async function processDueGoalReviews(limit=20){
   const now=new Date()
@@ -13,7 +14,16 @@ export async function processDueGoalReviews(limit=20){
     checked++
     try{
       const result=await processGoalReviewWatcher(watcher,now)
-      if(result.triggered)triggered++
+      if(result.triggered){
+        triggered++
+        const title=String(watcher?.condition_json?.title||'Background Gogo').slice(0,140)
+        await sendAgentPush(String(watcher.telegram_id),{
+          title:'Gogo has a goal update',
+          body:title,
+          path:'/agent',
+          data:{goalId:String(watcher.goal_id||''),watcherId:String(watcher.id||'')},
+        }).catch((err:any)=>console.error('GOAL_PUSH_FAILED:',err?.message||err))
+      }
       if(result.failed)failed++
     }catch(err:any){failed++;console.error('GOAL_REVIEW_FAILED:',watcher.id,err?.message||err)}
   }
