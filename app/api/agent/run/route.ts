@@ -3,6 +3,7 @@ import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from 
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { runAgentCommand } from '@/lib/agent/orchestrator'
 import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
+import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -20,6 +21,11 @@ export async function POST(request: Request) {
 
   try {
     const actor = await resolveAgentActor(session)
+
+    // Read-only background web monitoring can be created directly from natural
+    // language. Safe Mode can still disable Browser monitoring server-side.
+    const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:session.surface, text })
+    if (webWatch) return NextResponse.json(webWatch, { status:200 })
 
     // Compound plans run before the single-capability fallback. Each recognized
     // plan persists visible steps and uses existing AskGogo tools for execution.
