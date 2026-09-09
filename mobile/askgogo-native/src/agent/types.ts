@@ -49,7 +49,7 @@ export interface AgentRun {
 export interface AgentWatcher {
   id: string
   goalId?: string | null
-  type: 'deadline' | 'calendar_change' | 'email_reply' | 'web_change' | 'application_status' | 'price_threshold' | 'travel_disruption'
+  type: 'deadline' | 'web_search' | 'calendar_change' | 'email_reply' | 'web_change' | 'application_status' | 'price_threshold' | 'travel_disruption'
   title: string
   condition: Record<string, unknown>
   cadenceMinutes: number
