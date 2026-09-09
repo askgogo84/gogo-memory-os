@@ -5,14 +5,17 @@ import { isAgentSession, requireAgentSession } from '@/lib/agent/session'
 export const dynamic = 'force-dynamic'
 
 const DEFAULT_PERMISSIONS = [
-  ['memory', 'read', false],
-  ['files', 'read', false],
-  ['email', 'draft', true],
-  ['calendar', 'ask', true],
-  ['browser', 'draft', true],
-  ['contacts', 'read', false],
-  ['travel', 'draft', true],
-  ['payments', 'ask', true],
+  { capability: 'memory', level: 'ask', irreversibleAlwaysAsk: false, label: 'Memory', description: 'Read and save private AskGogo memory.' },
+  { capability: 'files', level: 'ask', irreversibleAlwaysAsk: false, label: 'Files & documents', description: 'Read and save connected files and document context.' },
+  { capability: 'reminders', level: 'auto', irreversibleAlwaysAsk: false, label: 'Reminders', description: 'Create, move and snooze private reminders.' },
+  { capability: 'lists', level: 'auto', irreversibleAlwaysAsk: false, label: 'Lists', description: 'Read and update your AskGogo lists.' },
+  { capability: 'tasks', level: 'auto', irreversibleAlwaysAsk: false, label: 'Tasks', description: 'Read and update tasks and to-dos.' },
+  { capability: 'email', level: 'draft', irreversibleAlwaysAsk: true, label: 'Email', description: 'Read and draft email. Sending always asks.' },
+  { capability: 'calendar', level: 'ask', irreversibleAlwaysAsk: true, label: 'Calendar', description: 'Read calendar freely; changes require approval.' },
+  { capability: 'browser', level: 'draft', irreversibleAlwaysAsk: true, label: 'Browser', description: 'Research and prepare forms. Submission always asks.' },
+  { capability: 'contacts', level: 'read', irreversibleAlwaysAsk: false, label: 'Contacts', description: 'Read saved people and contact context.' },
+  { capability: 'travel', level: 'draft', irreversibleAlwaysAsk: true, label: 'Travel', description: 'Research and organize trips. Booking always asks.' },
+  { capability: 'payments', level: 'ask', irreversibleAlwaysAsk: true, label: 'Payments', description: 'Prepare payment actions. Spending always asks.' },
 ] as const
 
 export async function GET(request: Request) {
@@ -36,12 +39,14 @@ export async function GET(request: Request) {
   }
 
   const permissionByCapability = new Map((permissions.data || []).map((p: any) => [p.capability, p]))
-  const mergedPermissions = DEFAULT_PERMISSIONS.map(([capability, defaultLevel, irreversibleAlwaysAsk]) => {
-    const stored: any = permissionByCapability.get(capability)
+  const mergedPermissions = DEFAULT_PERMISSIONS.map((definition) => {
+    const stored: any = permissionByCapability.get(definition.capability)
     return {
-      capability,
-      level: stored?.level || defaultLevel,
-      irreversibleAlwaysAsk: stored?.irreversible_always_ask ?? irreversibleAlwaysAsk,
+      capability: definition.capability,
+      label: definition.label,
+      description: definition.description,
+      level: stored?.level || definition.level,
+      irreversibleAlwaysAsk: stored?.irreversible_always_ask ?? definition.irreversibleAlwaysAsk,
       updatedAt: stored?.updated_at || null,
     }
   })
@@ -64,8 +69,9 @@ export async function GET(request: Request) {
     })),
     approvals: (approvals.data || []).map((a: any) => ({
       id: a.id, runId: a.run_id, actionType: a.action_type, title: a.title,
-      description: a.description, preview: a.payload_preview, risk: a.risk_level,
+      description: a.description, preview: Array.isArray(a.payload_preview) ? a.payload_preview : [], risk: a.risk_level,
       status: a.status, requestedAt: a.requested_at, resolvedAt: a.resolved_at,
+      primaryLabel: 'Approve & run', secondaryLabel: 'Not now',
     })),
     permissions: mergedPermissions,
     artifacts: (artifacts.data || []).map((a: any) => ({
