@@ -12,6 +12,7 @@ create table if not exists mobile_link_requests (
   device_id text,
   device_name text,
   status text not null default 'pending' check (status in ('pending','approved','exchanged','expired')),
+  verify_attempts integer not null default 0 check (verify_attempts between 0 and 20),
   user_id uuid references users(id) on delete cascade,
   whatsapp_id text,
   created_at timestamptz not null default now(),
@@ -19,6 +20,8 @@ create table if not exists mobile_link_requests (
   approved_at timestamptz,
   exchanged_at timestamptz
 );
+
+alter table mobile_link_requests add column if not exists verify_attempts integer not null default 0;
 
 create index if not exists mobile_link_requests_status_expiry_idx
   on mobile_link_requests(status, expires_at);
@@ -41,6 +44,46 @@ create table if not exists mobile_sessions (
 create index if not exists mobile_sessions_user_active_idx
   on mobile_sessions(user_id, expires_at desc)
   where revoked_at is null;
+
+-- Atomic OTP verification. Both the 256-bit poll secret and the WhatsApp-only
+-- verification code must match the same pending request. Failed attempts are
+-- counted server-side and the request locks after 8 guesses.
+create or replace function mobile_verify_link(
+  p_poll_token_hash text,
+  p_code_hash text
+) returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_link mobile_link_requests%rowtype;
+begin
+  select * into v_link
+  from mobile_link_requests
+  where poll_token_hash = p_poll_token_hash
+    and status = 'pending'
+    and expires_at > now()
+  for update;
+
+  if not found then return false; end if;
+  if v_link.verify_attempts >= 8 then return false; end if;
+
+  if v_link.code_hash <> p_code_hash then
+    update mobile_link_requests
+      set verify_attempts = verify_attempts + 1
+    where id = v_link.id;
+    return false;
+  end if;
+
+  update mobile_link_requests
+    set status = 'approved', approved_at = now()
+  where id = v_link.id;
+  return true;
+end;
+$$;
+
+revoke all on function mobile_verify_link(text,text) from public;
 
 -- One atomic exchange: the server generates a random raw bearer token, passes
 -- only its SHA-256 hash here, and receives success/failure. The raw token is
@@ -94,5 +137,5 @@ revoke all on function mobile_exchange_link(text,text,text,text,text,timestamptz
 alter table mobile_link_requests enable row level security;
 alter table mobile_sessions enable row level security;
 
-comment on table mobile_link_requests is 'Short-lived native app pairing requests approved from the user’s AskGogo WhatsApp identity.';
+comment on table mobile_link_requests is 'Short-lived native app pairing requests verified by a code delivered to the user’s existing AskGogo WhatsApp identity.';
 comment on table mobile_sessions is 'Revocable native app bearer sessions tied to canonical users.id.';
