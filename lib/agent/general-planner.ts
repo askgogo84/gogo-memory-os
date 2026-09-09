@@ -1,0 +1,323 @@
+import Anthropic from '@anthropic-ai/sdk'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { searchWebResults } from '@/lib/web-search'
+import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { classifyAgentRequest, type AgentApprovalAction } from './classifier'
+import { dispatchThroughSameBrain } from './same-brain'
+import { evaluateAgentExecutionPolicy, type AgentCapability, type AgentPermissionLevel } from './policy'
+import type { AgentActor } from './actor'
+import type { AgentSurface } from './orchestrator'
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+
+const MAX_STEPS = 6
+const CONSEQUENTIAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments'])
+
+const DEFAULT_LEVEL: Record<AgentCapability, AgentPermissionLevel> = {
+  memory: 'ask', files: 'ask', reminders: 'auto', lists: 'auto', tasks: 'auto',
+  email: 'draft', calendar: 'ask', browser: 'draft', contacts: 'read', travel: 'draft', payments: 'ask',
+}
+
+export type GeneralPlanTool =
+  | 'memory'
+  | 'files'
+  | 'reminders'
+  | 'lists'
+  | 'tasks'
+  | 'email'
+  | 'calendar'
+  | 'web_search'
+  | 'travel'
+  | 'artifact'
+
+export type GeneralPlanStep = {
+  tool: GeneralPlanTool
+  title: string
+  instruction: string
+  artifactType?: 'trip' | 'application_tracker' | 'meeting_brief' | 'comparison' | 'goal_plan' | 'research_brief' | 'reward_summary'
+  artifactTitle?: string
+}
+
+export type GeneralPlan = {
+  title: string
+  reason: string
+  steps: GeneralPlanStep[]
+}
+
+export type GeneralPlanResult = {
+  runId: string
+  status: 'completed' | 'waiting_approval' | 'paused' | 'failed'
+  capability: AgentCapability
+  risk: 'low' | 'medium' | 'high'
+  text: string
+  approvalId?: string
+  approvalRequired?: boolean
+  handledBy: 'general-plan'
+}
+
+function safeLog(value: unknown, max = 900) {
+  return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
+}
+
+function parseJsonLoose(text: string): any | null {
+  const clean = String(text || '').replace(/```json|```/g, '').trim()
+  try { return JSON.parse(clean) } catch {}
+  const match = clean.match(/\{[\s\S]*\}/)
+  if (!match) return null
+  try { return JSON.parse(match[0]) } catch { return null }
+}
+
+function normalizeStep(raw: any): GeneralPlanStep | null {
+  const allowed = new Set<GeneralPlanTool>(['memory','files','reminders','lists','tasks','email','calendar','web_search','travel','artifact'])
+  const tool = String(raw?.tool || '') as GeneralPlanTool
+  if (!allowed.has(tool)) return null
+  const title = String(raw?.title || '').replace(/\s+/g, ' ').trim().slice(0, 140)
+  const instruction = String(raw?.instruction || '').replace(/\s+/g, ' ').trim().slice(0, 1000)
+  if (!title || !instruction) return null
+  const artifactTypes = new Set(['trip','application_tracker','meeting_brief','comparison','goal_plan','research_brief','reward_summary'])
+  const artifactType = artifactTypes.has(String(raw?.artifactType || '')) ? raw.artifactType : undefined
+  const artifactTitle = raw?.artifactTitle ? String(raw.artifactTitle).replace(/\s+/g, ' ').trim().slice(0, 180) : undefined
+  return { tool, title, instruction, artifactType, artifactTitle }
+}
+
+function normalizePlan(raw: any): GeneralPlan | null {
+  const title = String(raw?.title || '').replace(/\s+/g, ' ').trim().slice(0, 160)
+  const reason = String(raw?.reason || '').replace(/\s+/g, ' ').trim().slice(0, 500)
+  const steps = Array.isArray(raw?.steps) ? raw.steps.map(normalizeStep).filter(Boolean) as GeneralPlanStep[] : []
+  if (!title || steps.length < 2 || steps.length > MAX_STEPS) return null
+  return { title, reason: reason || 'This outcome needs more than one AskGogo capability.', steps }
+}
+
+function domainCount(text: string) {
+  const t = text.toLowerCase()
+  const domains = [
+    /\b(remind|reminder)\b/, /\b(calendar|meeting|appointment)\b/, /\b(email|mail|gmail)\b/,
+    /\b(passport|document|file|pdf|memory|remember)\b/, /\b(list|grocer|packing|task|todo)\b/,
+    /\b(flight|hotel|trip|travel|itinerary)\b/, /\b(search|research|web|online|price|compare)\b/,
+    /\b(report|brief|tracker|dashboard|artifact|document)\b/,
+  ]
+  return domains.filter(r => r.test(t)).length
+}
+
+/** Only invoke the expensive planner for genuinely cross-feature/outcome requests. */
+export function shouldUseGeneralPlanner(text: string) {
+  const t = String(text || '').trim()
+  if (t.length < 18) return false
+  if (domainCount(t) >= 2 && /\b(and|then|also|after|before|plus|while)\b/i.test(t)) return true
+  if (/\b(plan|arrange|organize|organise|handle|take care of|prepare everything|manage this|sort this out)\b/i.test(t) && domainCount(t) >= 1) return true
+  if (/\b(research|compare)\b/i.test(t) && /\b(report|brief|tracker|dashboard|save|remind|calendar)\b/i.test(t)) return true
+  return false
+}
+
+export async function planGeneralAgentRequest(text: string): Promise<GeneralPlan | null> {
+  if (!shouldUseGeneralPlanner(text)) return null
+  const prompt = `You are the planning layer for AskGogo, a private personal agent. Turn the user's outcome into 2-${MAX_STEPS} concrete steps using ONLY these tools:\n\nmemory, files, reminders, lists, tasks, email, calendar, web_search, travel, artifact\n\nRules:\n- The plan sees ONLY this user request. Never assume hidden values, credentials, document numbers or account data.\n- Each instruction must be self-contained and executable by that tool.\n- Use web_search only for public-web research; it can read/search but cannot submit forms.\n- email can read/draft/send, but sending will be stopped by a deterministic approval gate.\n- calendar can read/create/change; writes will be stopped by approval.\n- travel can read/organize; bookings will be stopped by approval.\n- payments/purchases are NOT an available planner tool; if the user asks to spend money, the relevant travel/browser flow must prepare only and the server will stop before purchase.\n- artifact creates a private structured output from the results of previous steps. It must be the last step if used.\n- Do not put secrets or guessed private values into instructions.\n- Return JSON only.\n\nShape:\n{"title":"short outcome","reason":"why multiple tools are needed","steps":[{"tool":"memory","title":"Find saved context","instruction":"Find my saved ..."},{"tool":"artifact","title":"Create a brief","instruction":"Create a concise private brief from this run","artifactType":"research_brief","artifactTitle":"..."}]}\n\nUser request: ${JSON.stringify(String(text || '').slice(0, 1800))}`
+  try {
+    const result = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 1200,
+      temperature: 0,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    const out = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    return normalizePlan(parseJsonLoose(out))
+  } catch (err: any) {
+    console.error('GENERAL_AGENT_PLAN_FAILED:', err?.message || err)
+    return null
+  }
+}
+
+async function permissionFor(tg: number, capability: AgentCapability): Promise<AgentPermissionLevel> {
+  const { data, error } = await supabaseAdmin.from('agent_permissions')
+    .select('level').eq('telegram_id', String(tg)).eq('capability', capability).maybeSingle()
+  if (error) throw new Error(`general_plan_permission_failed:${error.message}`)
+  return (data?.level as AgentPermissionLevel | undefined) || DEFAULT_LEVEL[capability]
+}
+
+function capabilityForStep(step: GeneralPlanStep): AgentCapability {
+  if (step.tool === 'web_search') return 'browser'
+  if (step.tool === 'artifact') return 'memory'
+  return step.tool as AgentCapability
+}
+
+function classifyStep(step: GeneralPlanStep) {
+  if (step.tool === 'web_search') return { capability:'browser' as const, mode:'read' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This only searches the public web.' }
+  if (step.tool === 'artifact') return { capability:'memory' as const, mode:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This creates a private AskGogo artifact.' }
+  const classified = classifyAgentRequest(step.instruction)
+  // The planner cannot broaden authorization by mislabelling a tool. Force the
+  // capability to the declared allowlisted tool, while keeping the deterministic
+  // classifier's mode/risk/irreversibility/approval decision.
+  return { ...classified, capability: capabilityForStep(step) }
+}
+
+async function addStep(tg: number, runId: string, ordinal: number, step: GeneralPlanStep) {
+  const { data, error } = await supabaseAdmin.from('agent_steps').insert({
+    telegram_id:String(tg), run_id:runId, ordinal, tool_name:step.tool,
+    title:step.title, status:'queued', input_json:{ instruction: step.instruction }, output_json:{},
+  }).select('id').single()
+  if (error || !data?.id) throw new Error(`general_plan_step_create_failed:${error?.message || 'unknown'}`)
+  return String(data.id)
+}
+
+async function updateStep(id: string, status: 'running'|'completed'|'failed'|'waiting_approval', output: Record<string,unknown> = {}, error?: string) {
+  const now = new Date().toISOString()
+  const patch:any = { status }
+  if (status === 'running') patch.started_at = now
+  if (status === 'completed' || status === 'failed') patch.completed_at = now
+  if (Object.keys(output).length) patch.output_json = output
+  if (error) patch.error = safeLog(error, 500)
+  const { error:e } = await supabaseAdmin.from('agent_steps').update(patch).eq('id', id)
+  if (e) throw new Error(`general_plan_step_update_failed:${e.message}`)
+}
+
+async function activity(tg: number, runId: string, eventType: string, message: string, metadata: Record<string,unknown> = {}) {
+  const { error } = await supabaseAdmin.from('agent_activity').insert({
+    telegram_id:String(tg), run_id:runId, event_type:eventType,
+    message:safeLog(message), metadata_json:metadata,
+  })
+  if (error) console.error('GENERAL_PLAN_ACTIVITY_FAILED:', error.message)
+}
+
+async function createArtifact(tg:number, runId:string, step:GeneralPlanStep) {
+  const { data: prior } = await supabaseAdmin.from('agent_steps')
+    .select('ordinal,title,tool_name,status,output_json').eq('run_id',runId).eq('telegram_id',String(tg)).order('ordinal',{ascending:true})
+  const sections = (prior || []).filter((x:any)=>x.status==='completed' && x.tool_name!=='artifact').map((x:any)=>({
+    title:x.title, tool:x.tool_name, result:x.output_json || {},
+  }))
+  const title = step.artifactTitle || step.title || 'AskGogo artifact'
+  const type = step.artifactType || 'research_brief'
+  const { data, error } = await supabaseAdmin.from('agent_artifacts').insert({
+    telegram_id:String(tg), type, title, subtitle:'Created by Gogo from a multi-step run', schema_version:1,
+    content_json:{ runId, sections }, source_refs:[{type:'agent_run',id:runId}],
+  }).select('id').single()
+  if (error || !data?.id) throw new Error(`general_plan_artifact_failed:${error?.message || 'unknown'}`)
+  return String(data.id)
+}
+
+async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPlanStep;stepId:string;messageId?:string|number|null}) {
+  const { actor, step } = params
+  if (step.tool === 'web_search') {
+    const results = await searchWebResults(step.instruction)
+    return {
+      text: results.length ? `Found ${results.length} public web results.` : 'No useful public web results found.',
+      output: { results: results.slice(0,5).map(r=>({title:r.title,url:r.url,snippet:r.snippet.slice(0,500)})) },
+    }
+  }
+  if (step.tool === 'artifact') {
+    const artifactId = await createArtifact(actor.legacyTelegramId, params.runId, step)
+    return { text:'Created a private AskGogo artifact.', output:{ artifactId, type:step.artifactType || 'research_brief' } }
+  }
+  const result = await dispatchThroughSameBrain({ actor, text:step.instruction, messageId:params.messageId })
+  return { text:result.text, output:{ reply:String(result.text || '').slice(0,3500), handledBy:result.handledBy } }
+}
+
+async function requestApproval(params:{actor:AgentActor;runId:string;step:GeneralPlanStep;stepId:string;ordinal:number;approvalAction:AgentApprovalAction;risk:'low'|'medium'|'high';reason:string}) {
+  const { data, error } = await supabaseAdmin.from('agent_approvals').insert({
+    telegram_id:String(params.actor.legacyTelegramId), run_id:params.runId,
+    action_type:params.approvalAction, title:params.step.title,
+    description:params.reason,
+    payload_preview:[
+      {label:'Next step',value:safeLog(params.step.title,180)},
+      {label:'Action',value:safeLog(params.step.instruction,500)},
+      {label:'Risk',value:params.risk},
+    ],
+    execution_payload:{ plan_type:'general_multi_tool', ordinal:params.ordinal, stepId:params.stepId },
+    risk_level:params.risk, status:'pending',
+  }).select('id').single()
+  if (error || !data?.id) throw new Error(`general_plan_approval_failed:${error?.message || 'unknown'}`)
+  await updateStep(params.stepId, 'waiting_approval')
+  await supabaseAdmin.from('agent_runs').update({
+    status:'waiting_approval', progress:Math.max(5,Math.round(((params.ordinal-1)/MAX_STEPS)*100)),
+    summary:`Waiting for approval: ${params.step.title}`, updated_at:new Date().toISOString(),
+  }).eq('id',params.runId).eq('telegram_id',String(params.actor.legacyTelegramId))
+  await activity(params.actor.legacyTelegramId,params.runId,'approval_requested',`Approval required: ${params.step.title}`,{approval_id:data.id,ordinal:params.ordinal})
+  return String(data.id)
+}
+
+async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan:GeneralPlan;stepIds:string[];startOrdinal:number;messageId?:string|number|null;approvedOrdinal?:number}) : Promise<GeneralPlanResult> {
+  const tg = params.actor.legacyTelegramId
+  let highestRisk:'low'|'medium'|'high'='low'
+  let lastText=''
+  for (let index=params.startOrdinal-1; index<params.plan.steps.length; index++) {
+    const ordinal=index+1
+    const step=params.plan.steps[index]
+    const stepId=params.stepIds[index]
+    const classified=classifyStep(step)
+    if (classified.risk==='high') highestRisk='high'; else if (classified.risk==='medium' && highestRisk==='low') highestRisk='medium'
+    const level=await permissionFor(tg,classified.capability)
+    const directPrivateApproval = classified.mode==='execute' && classified.risk==='low' && !classified.irreversible && !CONSEQUENTIAL.has(classified.capability)
+    const explicitlyApproved = params.approvedOrdinal===ordinal
+    const policy=evaluateAgentExecutionPolicy({
+      capability:classified.capability, permissionLevel:level, mode:classified.mode,
+      risk:classified.risk, irreversible:classified.irreversible,
+      approvalStatus:(explicitlyApproved||directPrivateApproval)?'approved':null,
+    })
+    if (!policy.allowed) {
+      if ((policy.reason==='approval_required'||policy.reason==='auto_not_allowed_for_consequential_action') && classified.approvalAction) {
+        const approvalId=await requestApproval({actor:params.actor,runId:params.runId,step,stepId,ordinal,approvalAction:classified.approvalAction,risk:classified.risk,reason:classified.why})
+        return {runId:params.runId,status:'waiting_approval',capability:classified.capability,risk:classified.risk,text:`I finished the safe steps. I need your approval before: ${step.title}`,approvalId,approvalRequired:true,handledBy:'general-plan'}
+      }
+      await updateStep(stepId,'failed',{},policy.reason)
+      await supabaseAdmin.from('agent_runs').update({status:'paused',summary:`Blocked by Gogo Safe Mode: ${policy.reason}`,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
+      return {runId:params.runId,status:'paused',capability:classified.capability,risk:classified.risk,text:`Gogo Safe Mode stopped at “${step.title}”: ${policy.reason}`,handledBy:'general-plan'}
+    }
+    await updateStep(stepId,'running')
+    try {
+      const result=await executeTool({actor:params.actor,runId:params.runId,step,stepId,messageId:params.messageId})
+      lastText=result.text
+      await updateStep(stepId,'completed',result.output)
+      const progress=Math.round((ordinal/params.plan.steps.length)*100)
+      await supabaseAdmin.from('agent_runs').update({status:'running',progress,summary:safeLog(result.text,1000),updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
+      await activity(tg,params.runId,'step_completed',`${step.title} completed.`,{ordinal,tool:step.tool})
+    } catch (err:any) {
+      const message=String(err?.message||'step_failed')
+      await updateStep(stepId,'failed',{},message).catch(()=>{})
+      await supabaseAdmin.from('agent_runs').update({status:'failed',progress:100,summary:`Failed at: ${step.title}`,error:safeLog(message,500),completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
+      await activity(tg,params.runId,'run_failed',`Failed at: ${step.title}`,{ordinal,tool:step.tool,error:safeLog(message,250)})
+      return {runId:params.runId,status:'failed',capability:classified.capability,risk:classified.risk,text:`I could not finish “${step.title}”.`,handledBy:'general-plan'}
+    }
+  }
+  const completedAt=new Date().toISOString()
+  await supabaseAdmin.from('agent_runs').update({status:'completed',progress:100,summary:safeLog(lastText||'Multi-step plan completed.',1800),completed_at:completedAt,updated_at:completedAt}).eq('id',params.runId).eq('telegram_id',String(tg))
+  await activity(tg,params.runId,'run_completed','Gogo completed the multi-tool plan.',{step_count:params.plan.steps.length})
+  return {runId:params.runId,status:'completed',capability:capabilityForStep(params.plan.steps[params.plan.steps.length-1]),risk:highestRisk,text:lastText||'Done. I completed the plan.',handledBy:'general-plan'}
+}
+
+export async function tryRunGeneralPlan(params:{actor:AgentActor;surface:AgentSurface;text:string;messageId?:string|number|null}):Promise<GeneralPlanResult|null>{
+  const plan=await planGeneralAgentRequest(params.text)
+  if(!plan)return null
+  const tg=params.actor.legacyTelegramId
+  const now=new Date().toISOString()
+  const firstCapability=capabilityForStep(plan.steps[0])
+  const {data:run,error}=await supabaseAdmin.from('agent_runs').insert({
+    telegram_id:String(tg),type:'general_plan',capability:firstCapability,status:'running',title:plan.title,
+    summary:'Gogo created a multi-tool plan.',progress:2,why:plan.reason,source:params.surface,
+    metadata_json:{input_text:String(params.text).slice(0,2000),plan_type:'general_multi_tool',plan},started_at:now,updated_at:now,
+  }).select('id').single()
+  if(error||!run?.id)throw new Error(`general_plan_run_create_failed:${error?.message||'unknown'}`)
+  const runId=String(run.id)
+  const stepIds:string[]=[]
+  for(let i=0;i<plan.steps.length;i++)stepIds.push(await addStep(tg,runId,i+1,plan.steps[i]))
+  await supabaseAdmin.from('agent_runs').update({metadata_json:{input_text:String(params.text).slice(0,2000),plan_type:'general_multi_tool',plan,stepIds}}).eq('id',runId).eq('telegram_id',String(tg))
+  await activity(tg,runId,'plan_created',`Gogo created a ${plan.steps.length}-step plan.`,{tools:plan.steps.map(s=>s.tool),surface:params.surface})
+  return executePlanFromOrdinal({actor:params.actor,runId,plan,stepIds,startOrdinal:1,messageId:params.messageId})
+}
+
+export async function resumeApprovedGeneralPlan(params:{actor:AgentActor;runId:string;messageId?:string|number|null}):Promise<GeneralPlanResult>{
+  const tg=params.actor.legacyTelegramId
+  const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json,status').eq('id',params.runId).eq('telegram_id',String(tg)).maybeSingle()
+  if(error)throw new Error(`agent_run_read_failed:${error.message}`)
+  if(!run)throw new Error('agent_run_not_found')
+  const meta:any=run.metadata_json||{}
+  if(meta.plan_type!=='general_multi_tool')throw new Error('not_general_plan')
+  const plan=normalizePlan(meta.plan)
+  const stepIds=Array.isArray(meta.stepIds)?meta.stepIds.map(String):[]
+  if(!plan||stepIds.length!==plan.steps.length)throw new Error('general_plan_metadata_invalid')
+  const {data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,execution_payload').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
+  const ordinal=Number(approval?.execution_payload?.ordinal||0)
+  if(!approval||!ordinal||ordinal>plan.steps.length)throw new Error('general_plan_approval_missing')
+  await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Approval received. Gogo is continuing the plan.',updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
+  const result=await executePlanFromOrdinal({actor:params.actor,runId:params.runId,plan,stepIds,startOrdinal:ordinal,messageId:params.messageId,approvedOrdinal:ordinal})
+  if(result.status!=='waiting_approval')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approval.id).eq('telegram_id',String(tg))
+  return result
+}
