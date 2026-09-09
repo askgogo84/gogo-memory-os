@@ -1,4 +1,4 @@
-import type { AgentApproval, AgentGoal, AgentHomeSnapshot, AgentPermission } from './types'
+import type { AgentApproval, AgentCommandResult, AgentGoal, AgentHomeSnapshot, AgentPermission } from './types'
 import { getMobileAccessToken } from '../auth/session'
 
 const API_BASE = process.env.EXPO_PUBLIC_ASKGOGO_API_BASE_URL || 'https://app.askgogo.in'
@@ -36,24 +36,50 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const agentApi = {
   snapshot: () => request<AgentHomeSnapshot>('/api/agent/snapshot'),
 
-  createGoal: (input: Pick<AgentGoal, 'title' | 'outcome' | 'deadline'>) =>
-    request<AgentGoal>('/api/agent/goals', { method: 'POST', body: JSON.stringify(input) }),
+  run: (text: string, context?: Record<string, unknown>) =>
+    request<AgentCommandResult>('/api/agent/run', {
+      method: 'POST',
+      body: JSON.stringify({ text, context: context || {} }),
+    }),
 
-  updateGoal: (goalId: string, patch: Partial<Pick<AgentGoal, 'title' | 'outcome' | 'status' | 'deadline'>>) =>
-    request<AgentGoal>(`/api/agent/goals/${encodeURIComponent(goalId)}`, {
+  executeRun: (runId: string) =>
+    request<AgentCommandResult>(`/api/agent/runs/${encodeURIComponent(runId)}/execute`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  createGoal: async (input: Pick<AgentGoal, 'title' | 'outcome' | 'deadline'>) => {
+    const result = await request<{ goal: AgentGoal }>('/api/agent/goals', { method: 'POST', body: JSON.stringify(input) })
+    return result.goal
+  },
+
+  updateGoal: async (goalId: string, patch: Partial<Pick<AgentGoal, 'title' | 'outcome' | 'status' | 'deadline'>>) => {
+    const result = await request<{ goal: AgentGoal }>(`/api/agent/goals/${encodeURIComponent(goalId)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
-    }),
+    })
+    return result.goal
+  },
 
-  resolveApproval: (approvalId: string, decision: 'approve' | 'reject') =>
-    request<AgentApproval>(`/api/agent/approvals/${encodeURIComponent(approvalId)}`, {
+  resolveApproval: async (approvalId: string, decision: 'approve' | 'reject') => {
+    const result = await request<{ approval: AgentApproval }>(`/api/agent/approvals/${encodeURIComponent(approvalId)}`, {
       method: 'POST',
       body: JSON.stringify({ decision }),
-    }),
+    })
+    return result.approval
+  },
 
-  updatePermission: (capability: AgentPermission['capability'], level: AgentPermission['level']) =>
-    request<AgentPermission>('/api/agent/permissions', {
+  approveAndExecute: async (approval: AgentApproval) => {
+    const resolved = await agentApi.resolveApproval(approval.id, 'approve')
+    const result = await agentApi.executeRun(approval.runId)
+    return { approval: resolved, result }
+  },
+
+  updatePermission: async (capability: AgentPermission['capability'], level: AgentPermission['level']) => {
+    const result = await request<{ permission: AgentPermission }>('/api/agent/permissions', {
       method: 'PUT',
       body: JSON.stringify({ capability, level }),
-    }),
+    })
+    return result.permission
+  },
 }
