@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
+import { evaluateAgentSentinel } from './sentinel'
 import { runSecureBrowser, type BrowserMode } from './secure-computer'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
@@ -43,8 +44,6 @@ export function parseBrowserCommand(text:string):BrowserCommand|null{
 async function permission(tg:number):Promise<AgentPermissionLevel>{
   const {data,error}=await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',String(tg)).eq('capability','browser').maybeSingle()
   if(error)throw new Error(`browser_permission_failed:${error.message}`)
-  // Browser defaults to ASK: read/draft work immediately, but every submit-like
-  // operation still stops for a one-shot approval.
   return (data?.level as AgentPermissionLevel|undefined)||'ask'
 }
 
@@ -91,17 +90,20 @@ async function approval(params:{actor:AgentActor;runId:string;stepId:string;comm
   return String(data.id)
 }
 
-async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:string;command:BrowserCommand;mode:BrowserMode}){
+async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:string;command:BrowserCommand;mode:BrowserMode;approved?:boolean}){
   const tg=params.actor.legacyTelegramId
+  const sentinel=evaluateAgentSentinel({
+    capability:'browser',mode:params.mode,risk:params.command.risk,irreversible:params.mode==='execute',
+    approved:params.approved===true,instruction:params.command.objective,url:params.command.url,actionCount:12,
+  })
+  if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
+
   await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Gogo is working in an isolated secure browser.',progress:45,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
   await supabaseAdmin.from('agent_steps').update({status:'running',started_at:new Date().toISOString()}).eq('id',params.stepId)
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   try{
     const result=await runSecureBrowser({userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode})
     const completedAt=new Date().toISOString()
-    // Never persist full page text or form values in Activity. Keep a compact,
-    // redacted result in the step; browser profile/cookies remain inside the
-    // user-specific secure computer rather than in agent logs.
     const compact={url:result.url,title:result.title,summary:result.summary,formCount:result.forms.length,actions:result.actions}
     await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:compact,completed_at:completedAt}).eq('id',params.stepId)
     await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(`${result.summary} ${result.title}`,1600),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',params.runId).eq('telegram_id',String(tg))
@@ -118,6 +120,11 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
 
 export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:AgentSurface;text:string}){
   const command=parseBrowserCommand(params.text);if(!command)return null
+  const sentinel=evaluateAgentSentinel({capability:'browser',mode:command.mode,risk:command.risk,irreversible:command.mode==='execute',approved:false,instruction:command.objective,url:command.url,actionCount:12})
+  if(!sentinel.allowed && sentinel.reason!=='approval_missing'){
+    return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Sentinel blocked this browser request: ${sentinel.reason}`,handledBy:'secure-browser' as const}
+  }
+
   const tg=params.actor.legacyTelegramId;const {runId,stepId}=await makeRun({actor:params.actor,surface:params.surface,command})
   const level=await permission(tg)
   const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:level,mode:command.mode,risk:command.risk,irreversible:command.mode==='execute',approvalStatus:null})
@@ -129,7 +136,7 @@ export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:Agen
     await supabaseAdmin.from('agent_runs').update({status:'paused',summary:`Browser blocked by Gogo Safe Mode: ${policy.reason}`,updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg))
     return {runId,status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Safe Mode blocked the browser action: ${policy.reason}`,handledBy:'secure-browser' as const}
   }
-  return executeBrowser({actor:params.actor,runId,stepId,command,mode:command.mode})
+  return executeBrowser({actor:params.actor,runId,stepId,command,mode:command.mode,approved:false})
 }
 
 export async function executeApprovedBrowserCommand(params:{actor:AgentActor;runId:string}){
@@ -143,9 +150,11 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
   const level=await permission(tg)
   const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:level,mode:'execute',risk:'high',irreversible:true,approvalStatus:'approved'})
   if(!policy.allowed)throw new Error(policy.reason)
+  const sentinel=evaluateAgentSentinel({capability:'browser',mode:'execute',risk:'high',irreversible:true,approved:true,instruction:command.objective,url:command.url,actionCount:12})
+  if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
   const {data:step}=await supabaseAdmin.from('agent_steps').select('id').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('tool_name','secure_browser').limit(1).maybeSingle()
   if(!step?.id)throw new Error('browser_step_missing')
-  const result=await executeBrowser({actor:params.actor,runId:params.runId,stepId:String(step.id),command,mode:'execute'})
+  const result=await executeBrowser({actor:params.actor,runId:params.runId,stepId:String(step.id),command,mode:'execute',approved:true})
   await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approved.id).eq('telegram_id',String(tg))
   return result
 }
