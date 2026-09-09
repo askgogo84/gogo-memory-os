@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { runAgentCommand } from '@/lib/agent/orchestrator'
+import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -19,6 +20,17 @@ export async function POST(request: Request) {
 
   try {
     const actor = await resolveAgentActor(session)
+
+    // Compound plans run before the single-capability fallback. Each recognized
+    // plan persists visible steps and uses existing AskGogo tools for execution.
+    const compound = await tryRunExpiryReminderPlan({
+      actor,
+      surface: session.surface,
+      text,
+      messageId: body?.messageId || null,
+    })
+    if (compound) return NextResponse.json(compound, { status: 200 })
+
     const result = await runAgentCommand({
       actor,
       surface: session.surface,
