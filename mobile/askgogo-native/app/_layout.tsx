@@ -14,9 +14,13 @@ export default function RootLayout() {
     void (async () => {
       const linked = await hasMobileSession()
       if (!alive) return
-      const onConnect = segments[0] === 'connect'
+      const first = segments[0]
+      const onConnect = first === 'connect'
+      const atRoot = !first
       if (!linked && !onConnect) router.replace('/connect')
-      if (linked && onConnect) router.replace('/')
+      // Until every visual dashboard tab is connected to live data, linked users
+      // land on the real Agent Hub instead of static preview cards.
+      if (linked && (onConnect || atRoot)) router.replace('/agent')
       setReady(true)
     })()
     return () => { alive = false }
