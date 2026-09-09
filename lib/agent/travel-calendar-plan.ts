@@ -128,6 +128,16 @@ async function userTimezone(telegramId:number){
   return String(data?.timezone||'Asia/Kolkata')
 }
 
+async function calendarEnabled(telegramId:number){
+  const {data,error}=await supabaseAdmin.from('agent_permissions')
+    .select('level')
+    .eq('telegram_id',String(telegramId))
+    .eq('capability','calendar')
+    .maybeSingle()
+  if(error)throw new Error(`agent_permission_unavailable:${error.message}`)
+  return String(data?.level||'ask')!=='off'
+}
+
 async function addStep(telegramId:number,runId:string,ordinal:number,toolName:string,title:string,status='queued'){
   const {data,error}=await supabaseAdmin.from('agent_steps').insert({telegram_id:String(telegramId),run_id:runId,ordinal,tool_name:toolName,title,status}).select('id').single()
   if(error||!data?.id)throw new Error(`agent_step_create_failed:${error?.message||'unknown'}`)
@@ -152,6 +162,18 @@ export async function tryPrepareTravelCalendarPlan(params:{actor:AgentActor;surf
   if(!plan)return null
   const tg=params.actor.legacyTelegramId
   const now=new Date().toISOString()
+
+  if(!(await calendarEnabled(tg))){
+    const {data:blocked,error}=await supabaseAdmin.from('agent_runs').insert({
+      telegram_id:String(tg),type:'compound',capability:'calendar',status:'paused',
+      title:`Find ${plan.target} and prepare Calendar event`,summary:'Blocked by Gogo Safe Mode: Calendar is off.',progress:0,
+      why:'Calendar access is disabled in Gogo Safe Mode.',source:params.surface,
+      metadata_json:{input_text:String(params.text).slice(0,2000),plan_type:'memory_ticket_to_calendar',target:plan.target},started_at:now,updated_at:now,
+    }).select('id').single()
+    if(error||!blocked?.id)throw new Error(`travel_calendar_run_create_failed:${error?.message||'unknown'}`)
+    return {runId:String(blocked.id),status:'paused' as const,capability:'calendar' as const,risk:'medium' as const,text:'Calendar access is off in Gogo Safe Mode. Turn Calendar back on before I prepare or add an event.',blockedReason:'calendar_permission_off',handledBy:'compound-plan' as const}
+  }
+
   const {data:run,error:runError}=await supabaseAdmin.from('agent_runs').insert({
     telegram_id:String(tg),type:'compound',capability:'calendar',status:'running',
     title:`Find ${plan.target} and prepare Calendar event`,summary:'Gogo is preparing a Memory → Calendar plan.',progress:5,
@@ -211,7 +233,9 @@ export async function tryPrepareTravelCalendarPlan(params:{actor:AgentActor;surf
     await activity(tg,runId,'approval_requested','Calendar approval required for the saved flight.',{approval_id:approval.id,route})
     return {runId,status:'waiting_approval' as const,capability:'calendar' as const,risk:'medium' as const,text:`I found ${route} and prepared the Calendar event. Review the flight/date/time and approve it before I add anything.`,approvalId:String(approval.id),approvalRequired:true,handledBy:'compound-plan' as const}
   }catch(err:any){
-    await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not prepare the Memory → Calendar plan.',error:String(err?.message||err).slice(0,500),completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg)).catch(()=>{})
+    try{
+      await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not prepare the Memory → Calendar plan.',error:String(err?.message||err).slice(0,500),completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg))
+    }catch{}
     throw err
   }
 }
@@ -225,6 +249,13 @@ export async function executeApprovedTravelCalendarPlan(params:{actor:AgentActor
   if(meta.plan_type!=='memory_ticket_to_calendar')throw new Error('not_travel_calendar_plan')
   const {data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('action_type','calendar_change').order('requested_at',{ascending:false}).limit(1).maybeSingle()
   if(approval?.status!=='approved')throw new Error('approval_required')
+
+  if(!(await calendarEnabled(tg))){
+    await supabaseAdmin.from('agent_runs').update({status:'paused',summary:'Blocked by Gogo Safe Mode: Calendar is off.',updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
+    await activity(tg,params.runId,'run_blocked','Approved Calendar action was blocked because Calendar access is off.',{reason:'calendar_permission_off'})
+    return {runId:params.runId,status:'paused' as const,capability:'calendar' as const,risk:'medium' as const,text:'Calendar access is now off in Gogo Safe Mode, so I did not write the event.',blockedReason:'calendar_permission_off',handledBy:'compound-plan' as const}
+  }
+
   const {data:claimed,error:claimError}=await supabaseAdmin.from('agent_runs').update({status:'running',progress:85,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg)).eq('status','queued').select('id').maybeSingle()
   if(claimError)throw new Error(`agent_run_claim_failed:${claimError.message}`)
   if(!claimed)throw new Error('agent_run_already_claimed')
@@ -239,7 +270,7 @@ export async function executeApprovedTravelCalendarPlan(params:{actor:AgentActor
     await activity(tg,params.runId,'run_completed','Gogo added the approved saved flight departure to Calendar.',{handled_by:'memory_ticket_to_calendar'})
     return {runId:params.runId,status:'completed' as const,capability:'calendar' as const,risk:'medium' as const,text:reply,handledBy:'compound-plan' as const,approvalRequired:false}
   }catch(err:any){
-    if(meta.stepId)await stepState(String(meta.stepId),'failed',{},String(err?.message||err)).catch(()=>{})
+    if(meta.stepId)try{await stepState(String(meta.stepId),'failed',{},String(err?.message||err))}catch{}
     const completedAt=new Date().toISOString()
     await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not add the approved flight to Calendar.',error:String(err?.message||err).slice(0,500),completed_at:completedAt,updated_at:completedAt}).eq('id',params.runId).eq('telegram_id',String(tg))
     await supabaseAdmin.from('agent_approvals').update({status:'failed',resolved_at:completedAt}).eq('id',approval.id).eq('telegram_id',String(tg))
