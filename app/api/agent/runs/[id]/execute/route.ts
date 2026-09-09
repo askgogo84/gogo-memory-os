@@ -4,6 +4,7 @@ import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from 
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { executeApprovedAgentRun } from '@/lib/agent/orchestrator'
 import { executeApprovedTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
+import { resumeApprovedGeneralPlan } from '@/lib/agent/general-planner'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -31,14 +32,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const planType = String((run.metadata_json as any)?.plan_type || '')
     const result = planType === 'memory_ticket_to_calendar'
       ? await executeApprovedTravelCalendarPlan({ actor, runId: id })
-      : await executeApprovedAgentRun({ actor, runId: id })
-    return NextResponse.json(result)
+      : planType === 'general_multi_tool'
+        ? await resumeApprovedGeneralPlan({ actor, runId: id })
+        : await executeApprovedAgentRun({ actor, runId: id })
+    return NextResponse.json(result, { status: result.status === 'waiting_approval' ? 202 : 200 })
   } catch (error: any) {
     const message = String(error?.message || '')
     console.error('AGENT_APPROVED_EXECUTION_FAILED:', message || error)
     if (message === 'agent_run_not_found') return NextResponse.json({ error: message }, { status: 404 })
     if (message === 'agent_run_already_claimed') return NextResponse.json({ error: message }, { status: 409 })
-    if (message === 'approval_required') return NextResponse.json({ error: message }, { status: 409 })
+    if (message === 'approval_required' || message === 'general_plan_approval_missing') return NextResponse.json({ error: message }, { status: 409 })
     return NextResponse.json({ error: 'agent_execution_failed' }, { status: 500 })
   }
 }
