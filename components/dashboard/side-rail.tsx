@@ -8,6 +8,7 @@ const items = [
   { href: '/dashboard/home', label: 'Home', icon: '✦' },
   { href: '/dashboard/today', label: 'Today', icon: '✦' },
   { href: '/dashboard/chat', label: 'Talk to Gogo', icon: '◉' },
+  { href: '/dashboard/agent', label: 'Gogo Agent', icon: '◎' },
   { href: '/dashboard/memory', label: 'Memory', icon: '◇' },
   { href: '/dashboard/tasks', label: 'Tasks', icon: '☷' },
   { href: '/dashboard/calendar', label: 'Calendar', icon: '▣' },
@@ -90,7 +91,7 @@ export function SideRail() {
 
       <div className="mt-auto rounded-[16px] border border-gogo-ink/7 bg-white/65 p-3">
         <div className="flex items-center gap-2 text-[8.5px] font-semibold text-gogo-ink-2"><span className="h-2 w-2 rounded-full bg-emerald-400" />One Gogo, everywhere</div>
-        <div className="mt-2 text-[8px] leading-4 text-gogo-ink-4">WhatsApp and this dashboard share the same memory, lists, reminders and actions.</div>
+        <div className="mt-2 text-[8px] leading-4 text-gogo-ink-4">WhatsApp and this dashboard share the same memory, lists, reminders and Agent activity.</div>
       </div>
     </aside>
   )
