@@ -14,6 +14,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
     "@supabase/supabase-js": "^2.103.3",
+    "@vercel/sandbox": "3.2.2",
     "assemblyai": "^4.33.2",
     "jszip": "^3.10.1",
     "next": "16.2.4",
