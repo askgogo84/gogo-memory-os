@@ -49,14 +49,9 @@ jobs:
       - name: Generate clean Android project
         run: npx expo prebuild --platform android --clean
 
-      # Release embeds the JS bundle so this artifact can run without Metro.
       - name: Build standalone release APK
         run: cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon
 
-      # Runtime gate: build success is not enough. Install the exact release APK,
-      # launch it on a clean Android emulator, and verify the crash-safe boot
-      # screen actually rendered. If the process dies or UI text is missing,
-      # capture logcat and fail before uploading an artifact to the user.
       - name: Install Android emulator image
         run: |
           sdkmanager "platforms;android-35" "system-images;android-35;google_apis;x86_64" "emulator"
@@ -64,16 +59,24 @@ jobs:
 
       - name: Boot Android emulator
         run: |
-          nohup emulator -avd askgogo-ci -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect >/tmp/askgogo-emulator.log 2>&1 &
-          adb wait-for-device
+          ACCEL="-accel off"
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm || true
+            ACCEL="-accel on"
+          fi
+          nohup emulator -avd askgogo-ci -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect $ACCEL >/tmp/askgogo-emulator.log 2>&1 &
           BOOT=""
-          for i in $(seq 1 90); do
-            BOOT=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-            if [ "$BOOT" = "1" ]; then break; fi
+          for i in $(seq 1 120); do
+            if adb get-state >/dev/null 2>&1; then
+              BOOT=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+              if [ "$BOOT" = "1" ]; then break; fi
+            fi
             sleep 2
           done
           if [ "$BOOT" != "1" ]; then
+            echo "Android emulator failed to boot within 240 seconds"
             cat /tmp/askgogo-emulator.log || true
+            adb devices || true
             exit 1
           fi
           adb shell input keyevent 82 || true
