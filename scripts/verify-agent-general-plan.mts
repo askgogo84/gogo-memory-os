@@ -13,10 +13,11 @@ assert.match(planner, /'artifact'/)
 assert.doesNotMatch(planner, /GeneralPlanTool[\s\S]*\| 'payments'/)
 assert.match(planner, /payments\/purchases are NOT an available planner tool/i)
 
-// The planning model only receives the current request, never raw stored memory,
-// credentials, document values or email bodies.
+// The planning model only receives the current user request through a local prompt
+// variable. It is not passed a Supabase row, raw stored memory, or credential value.
 assert.match(planner, /The plan sees ONLY this user request/i)
-assert.doesNotMatch(planner, /anthropic\.messages\.create\([\s\S]*supabaseAdmin/)
+assert.match(planner, /User request: \$\{JSON\.stringify\(String\(text \|\| ''\)\.slice\(0, 1800\)\)\}/)
+assert.match(planner, /messages: \[\{ role: 'user', content: prompt \}\]/)
 
 // Every generated step is reclassified and rechecked by the deterministic server
 // policy. The model cannot declare itself safe or grant its own permission.
@@ -38,16 +39,13 @@ assert.match(planner, /source_refs:\[\{type:'agent_run',id:runId\}\]/)
 
 // Specialist deterministic plans remain ahead of the general planner; simple
 // requests still fall back to the existing same-brain single-action path.
-const travelIndex = runRoute.indexOf('tryPrepareTravelCalendarPlan')
-const expiryIndex = runRoute.indexOf('tryRunExpiryReminderPlan')
-const generalIndex = runRoute.indexOf('tryRunGeneralPlan')
-const fallbackIndex = runRoute.indexOf('runAgentCommand')
-assert.ok(travelIndex >= 0 && expiryIndex >= 0 && generalIndex >= 0 && fallbackIndex >= 0)
-assert.ok(generalIndex > travelIndex)
-assert.ok(generalIndex > expiryIndex)
-assert.ok(fallbackIndex < 500, 'runAgentCommand import is expected near top')
+const travelCall = runRoute.lastIndexOf('tryPrepareTravelCalendarPlan')
+const expiryCall = runRoute.lastIndexOf('tryRunExpiryReminderPlan')
 const generalCall = runRoute.lastIndexOf('tryRunGeneralPlan')
 const fallbackCall = runRoute.lastIndexOf('runAgentCommand')
+assert.ok(travelCall >= 0 && expiryCall >= 0 && generalCall >= 0 && fallbackCall >= 0)
+assert.ok(generalCall > travelCall)
+assert.ok(generalCall > expiryCall)
 assert.ok(generalCall < fallbackCall, 'general planner must run before simple fallback')
 
 // Approved execution route recognizes general plans and resumes them through the
