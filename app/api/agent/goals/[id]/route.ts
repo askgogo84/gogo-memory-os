@@ -21,7 +21,7 @@ function parseDeadline(value: unknown): string | null | undefined | 'invalid' {
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const blocked = requireAgentMutationOrigin(request)
   if (blocked) return blocked
-  const session = await requireAgentSession()
+  const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
   const { id } = await context.params
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: 'invalid_goal' }, { status: 400 })
@@ -72,7 +72,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     telegram_id: session.telegramId,
     event_type: 'goal_updated',
     message: `Goal updated: ${data.title}`,
-    metadata_json: { goal_id: data.id, status: data.status },
+    metadata_json: { goal_id: data.id, status: data.status, surface: session.surface },
   })
   if (activityError) console.error('AGENT_GOAL_ACTIVITY_FAILED:', activityError)
 
