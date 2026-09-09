@@ -8,8 +8,8 @@ const CAPABILITIES = new Set(['memory','files','email','calendar','browser','con
 const LEVELS = new Set(['off','read','draft','ask','auto'])
 const ALWAYS_ASK = new Set(['email','calendar','browser','travel','payments'])
 
-export async function GET() {
-  const session = await requireAgentSession()
+export async function GET(request: Request) {
+  const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
 
   const { data, error } = await supabaseAdmin
@@ -27,7 +27,7 @@ export async function GET() {
 export async function PUT(request: Request) {
   const blocked = requireAgentMutationOrigin(request)
   if (blocked) return blocked
-  const session = await requireAgentSession()
+  const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
 
   const body = await request.json().catch(() => null) as any
@@ -66,7 +66,7 @@ export async function PUT(request: Request) {
     telegram_id: session.telegramId,
     event_type: 'permission_changed',
     message: `Agent permission changed: ${capability} → ${level}`,
-    metadata_json: { capability, level, irreversible_always_ask: irreversibleAlwaysAsk },
+    metadata_json: { capability, level, irreversible_always_ask: irreversibleAlwaysAsk, surface: session.surface },
   })
   if (activityError) console.error('AGENT_PERMISSION_ACTIVITY_FAILED:', activityError)
 
