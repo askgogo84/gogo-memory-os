@@ -1,7 +1,7 @@
 export type AgentRunStatus = 'queued' | 'running' | 'watching' | 'waiting_approval' | 'completed' | 'failed' | 'paused'
 export type AgentStepStatus = 'queued' | 'running' | 'waiting_approval' | 'completed' | 'failed' | 'cancelled'
 export type AgentRisk = 'low' | 'medium' | 'high'
-export type GoalStatus = 'active' | 'paused' | 'completed' | 'cancelled'
+export type GoalStatus = 'active' | 'blocked' | 'paused' | 'completed' | 'cancelled'
 export type IdeaStatus = 'new' | 'accepted' | 'dismissed' | 'snoozed'
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'executed' | 'failed'
 export type PermissionLevel = 'off' | 'read' | 'draft' | 'ask' | 'auto'
@@ -49,7 +49,7 @@ export interface AgentRun {
 export interface AgentWatcher {
   id: string
   goalId?: string | null
-  type: 'deadline' | 'web_search' | 'calendar_change' | 'email_reply' | 'web_change' | 'application_status' | 'price_threshold' | 'travel_disruption'
+  type: 'deadline' | 'web_search' | 'goal_review' | 'calendar_change' | 'email_reply' | 'web_change' | 'application_status' | 'price_threshold' | 'travel_disruption'
   title: string
   condition: Record<string, unknown>
   cadenceMinutes: number
@@ -57,6 +57,15 @@ export interface AgentWatcher {
   lastCheckedAt?: string | null
   nextCheckAt?: string | null
   createdAt: string
+}
+
+export interface AgentGoalPlanStep {
+  id: string
+  title: string
+  kind: 'web_search' | 'private_action' | 'artifact' | 'review'
+  instruction: string
+  status: 'pending' | 'completed' | 'blocked'
+  result?: Record<string, unknown>
 }
 
 export interface AgentGoal {
@@ -69,6 +78,7 @@ export interface AgentGoal {
   nextAction?: string
   blockers?: string[]
   watchers?: number
+  plan?: { version:1; steps:AgentGoalPlanStep[] } | null
 }
 
 export interface AgentIdea {
@@ -108,6 +118,13 @@ export interface AgentArtifact {
   title: string
   subtitle?: string
   updatedAt: string
+}
+
+export interface AgentArtifactDetail extends AgentArtifact {
+  schemaVersion: number
+  content: Record<string, unknown>
+  sourceRefs: Array<Record<string, unknown>>
+  createdAt: string
 }
 
 export interface AgentHomeSnapshot {
