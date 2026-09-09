@@ -42,8 +42,12 @@ assert.match(browser,/eq\('status','approved'\)/)
 assert.match(browser,/executeApprovedBrowserCommand/)
 
 // Full page text and filled values are deliberately not persisted to Activity.
-assert.match(browser,/Never persist full page text or form values in Activity/)
+// The returned pageText is only sent to the requesting surface, while Activity
+// records contain host/action-count or bounded error metadata.
+assert.match(browser,/text:`\$\{result\.summary\}[\s\S]*safe\(result\.pageText,1800\)/)
+assert.match(browser,/activity\(tg,params\.runId,'run_completed',result\.summary,\{host:new URL\(result\.url\)\.hostname,action_count:result\.actions\.length\}\)/)
 assert.doesNotMatch(browser,/metadata_json:\{[^}]*pageText/s)
+assert.doesNotMatch(browser,/activity\([^\n]*form[sVv]alue/s)
 
 // Both new and approved-run APIs route secure browser plans explicitly.
 assert.match(runRoute,/tryRunBrowserCommand/)
