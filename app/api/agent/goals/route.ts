@@ -14,8 +14,8 @@ function parseDeadline(value: unknown): string | null | 'invalid' {
   return Number.isFinite(date.getTime()) ? date.toISOString() : 'invalid'
 }
 
-export async function GET() {
-  const session = await requireAgentSession()
+export async function GET(request: Request) {
+  const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
 
   const { data, error } = await supabaseAdmin
@@ -40,7 +40,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const blocked = requireAgentMutationOrigin(request)
   if (blocked) return blocked
-  const session = await requireAgentSession()
+  const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
 
   const body = await request.json().catch(() => null) as any
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
     telegram_id: session.telegramId,
     event_type: 'goal_created',
     message: `Goal created: ${title}`,
-    metadata_json: { goal_id: data.id },
+    metadata_json: { goal_id: data.id, surface: session.surface },
   })
   if (activityError) console.error('AGENT_GOAL_ACTIVITY_FAILED:', activityError)
 
