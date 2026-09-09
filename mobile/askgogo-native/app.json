@@ -3,10 +3,11 @@
     "name": "AskGogo",
     "slug": "askgogo-native",
     "scheme": "askgogo",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#F7F1E9",
+    "newArchEnabled": false,
     "splash": {
       "backgroundColor": "#F7F1E9",
       "resizeMode": "contain"
