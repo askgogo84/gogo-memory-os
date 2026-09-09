@@ -46,6 +46,19 @@ export interface AgentRun {
   steps?: AgentStep[]
 }
 
+export interface AgentWatcher {
+  id: string
+  goalId?: string | null
+  type: 'deadline' | 'calendar_change' | 'email_reply' | 'web_change' | 'application_status' | 'price_threshold' | 'travel_disruption'
+  title: string
+  condition: Record<string, unknown>
+  cadenceMinutes: number
+  active: boolean
+  lastCheckedAt?: string | null
+  nextCheckAt?: string | null
+  createdAt: string
+}
+
 export interface AgentGoal {
   id: string
   title: string
@@ -100,6 +113,7 @@ export interface AgentArtifact {
 export interface AgentHomeSnapshot {
   surface?: 'web' | 'ios' | 'android'
   runs: AgentRun[]
+  watchers: AgentWatcher[]
   goals: AgentGoal[]
   ideas: AgentIdea[]
   approvals: AgentApproval[]
