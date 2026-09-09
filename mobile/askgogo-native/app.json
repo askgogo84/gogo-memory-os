@@ -24,7 +24,55 @@
         "backgroundColor": "#F7F1E9"
       }
     },
-    "plugins": ["expo-router", "expo-system-ui"],
+    "plugins": [
+      "expo-router",
+      "expo-system-ui",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow AskGogo to record voice notes and commands."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow AskGogo to choose images you want Gogo to remember or read.",
+          "cameraPermission": "Allow AskGogo to take photos of documents, notes and tickets.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-document-picker",
+      [
+        "expo-notifications",
+        {
+          "color": "#F47B20",
+          "defaultChannel": "gogo-updates"
+        }
+      ],
+      [
+        "expo-share-intent",
+        {
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsText": true,
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+            "NSExtensionActivationSupportsWebPageWithMaxCount": 1,
+            "NSExtensionActivationSupportsImageWithMaxCount": 1,
+            "NSExtensionActivationSupportsFileWithMaxCount": 1
+          },
+          "androidIntentFilters": [
+            "text/*",
+            "image/*",
+            "application/pdf",
+            "audio/*"
+          ],
+          "androidMultiIntentFilters": [
+            "image/*",
+            "audio/*",
+            "*/*"
+          ]
+        }
+      ]
+    ],
     "experiments": {
       "typedRoutes": true
     },
