@@ -47,9 +47,20 @@ async function searchWithTavily(query: string): Promise<WebSearchResult[]> {
   }))
 }
 
+export async function searchWebResults(query: string): Promise<WebSearchResult[]> {
+  const cleanQuery = cleanText(query).slice(0, 500)
+  if (!cleanQuery) return []
+  try {
+    return await searchWithTavily(cleanQuery)
+  } catch (err: any) {
+    console.error('searchWebResults failed:', err)
+    return []
+  }
+}
+
 export async function searchWeb(query: string): Promise<string> {
   try {
-    const results = await searchWithTavily(query)
+    const results = await searchWebResults(query)
 
     if (!results.length) {
       return ''
