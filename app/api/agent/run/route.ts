@@ -5,10 +5,12 @@ import { runAgentCommand } from '@/lib/agent/orchestrator'
 import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 import { tryPrepareTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
+import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+// First use of a user-specific Secure Computer may need to bootstrap Chromium.
+export const maxDuration = 300
 
 export async function POST(request: Request) {
   const blocked = requireAgentMutationOrigin(request)
@@ -24,10 +26,16 @@ export async function POST(request: Request) {
   try {
     const actor = await resolveAgentActor(session)
 
-    // Read-only background web monitoring can be created directly from natural
-    // language. Safe Mode can still disable Browser monitoring server-side.
+    // Background watch intent wins over direct browsing: "watch this URL" should
+    // remain a background job rather than opening an interactive browser run.
     const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:session.surface, text })
     if (webWatch) return NextResponse.json(webWatch, { status:200 })
+
+    // Direct URL tasks run inside a user-isolated Secure Computer. Read/draft
+    // operations may proceed according to Browser permission; submit/booking/
+    // purchase requests stop behind a one-shot approval.
+    const browser = await tryRunBrowserCommand({ actor, surface:session.surface, text })
+    if (browser) return NextResponse.json(browser, { status:browser.status === 'waiting_approval' ? 202 : 200 })
 
     // Keep the deterministic, privacy-preserving specialist plans ahead of the
     // general planner. They use structured fields without exposing sensitive
