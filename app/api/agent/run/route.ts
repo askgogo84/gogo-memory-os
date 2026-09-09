@@ -3,6 +3,7 @@ import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from 
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { runAgentCommand } from '@/lib/agent/orchestrator'
 import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
+import { tryPrepareTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
 
 export const dynamic = 'force-dynamic'
@@ -27,8 +28,13 @@ export async function POST(request: Request) {
     const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:session.surface, text })
     if (webWatch) return NextResponse.json(webWatch, { status:200 })
 
-    // Compound plans run before the single-capability fallback. Each recognized
-    // plan persists visible steps and uses existing AskGogo tools for execution.
+    // Memory → Calendar is prepared first, but the calendar write itself is
+    // always held behind the existing one-shot calendar_change approval.
+    const travelCalendar = await tryPrepareTravelCalendarPlan({ actor, surface:session.surface, text })
+    if (travelCalendar) return NextResponse.json(travelCalendar, { status:travelCalendar.status === 'waiting_approval' ? 202 : 200 })
+
+    // Other compound plans run before the single-capability fallback. Each
+    // recognized plan persists visible steps and reuses existing AskGogo tools.
     const compound = await tryRunExpiryReminderPlan({
       actor,
       surface: session.surface,
