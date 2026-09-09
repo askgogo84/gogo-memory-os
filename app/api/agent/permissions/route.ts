@@ -4,7 +4,7 @@ import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from 
 
 export const dynamic = 'force-dynamic'
 
-const CAPABILITIES = new Set(['memory','files','email','calendar','browser','contacts','travel','payments'])
+const CAPABILITIES = new Set(['memory','files','reminders','lists','tasks','email','calendar','browser','contacts','travel','payments'])
 const LEVELS = new Set(['off','read','draft','ask','auto'])
 const ALWAYS_ASK = new Set(['email','calendar','browser','travel','payments'])
 
@@ -36,9 +36,8 @@ export async function PUT(request: Request) {
   if (!CAPABILITIES.has(capability)) return NextResponse.json({ error: 'invalid_capability' }, { status: 400 })
   if (!LEVELS.has(level)) return NextResponse.json({ error: 'invalid_level' }, { status: 400 })
 
-  // v1 deliberately refuses automatic execution for capabilities that can cause
-  // an external consequence. We can selectively loosen this later only after a
-  // narrowly-scoped policy exists server-side.
+  // External/consequential capabilities may never be set to broad automatic
+  // execution. Reminders/lists/tasks can use auto for low-risk reversible work.
   if (level === 'auto' && ALWAYS_ASK.has(capability)) {
     return NextResponse.json({ error: 'auto_execution_not_available' }, { status: 409 })
   }
