@@ -1,4 +1,5 @@
 import type { AgentApproval, AgentGoal, AgentHomeSnapshot, AgentPermission } from './types'
+import { getMobileAccessToken } from '../auth/session'
 
 const API_BASE = process.env.EXPO_PUBLIC_ASKGOGO_API_BASE_URL || 'https://app.askgogo.in'
 
@@ -9,12 +10,13 @@ export class AgentApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = await getMobileAccessToken()
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    credentials: 'include',
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init.headers || {}),
     },
   })
@@ -31,11 +33,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>
 }
 
-/**
- * These endpoints are the mobile contract for Sprint B.
- * Until the authenticated backend routes land, screens use explicit preview data
- * and MUST label it as preview rather than pretending it is live user state.
- */
 export const agentApi = {
   snapshot: () => request<AgentHomeSnapshot>('/api/agent/snapshot'),
 
