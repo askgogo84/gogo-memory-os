@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
 import { exchangeWhatsAppLink, startWhatsAppOtp, verifyWhatsAppOtp, type WhatsAppOtpLink } from '../src/auth/link'
+import { registerForGogoNotifications } from '../src/native/notifications'
 
 const C = { bg:'#F6F0E8', paper:'#FFFDF9', ink:'#3A2418', muted:'#8C7769', line:'rgba(58,36,24,.11)', orange:'#F47B20', green:'#2E9B67' }
 
@@ -37,6 +38,10 @@ export default function ConnectAskGogo() {
       await verifyWhatsAppOtp({ pollToken:link.pollToken, code:clean })
       const session = await exchangeWhatsAppLink({ pollToken:link.pollToken, deviceName:`${Platform.OS} AskGogo` })
       if (!session.accessToken) throw new Error('session_failed')
+      // The mobile bearer session is now stored. Register this installation for
+      // Background Gogo notifications immediately; notification failure must not
+      // undo a successful WhatsApp identity link.
+      registerForGogoNotifications().catch((err:any)=>console.log('GOGO_NOTIFICATION_LINK_REGISTRATION_SKIPPED',String(err?.message||err)))
       setState('linked')
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       setTimeout(()=>router.replace('/agent'),700)
