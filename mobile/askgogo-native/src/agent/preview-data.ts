@@ -36,6 +36,7 @@ export const agentPreview: AgentHomeSnapshot = {
       why: 'The thread is connected to an active fundraising goal.',
     },
   ],
+  watchers: [],
   goals: [
     {
       id: 'goal-creditiq-uae',
