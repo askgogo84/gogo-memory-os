@@ -1,4 +1,5 @@
 export type AgentRunStatus = 'queued' | 'running' | 'watching' | 'waiting_approval' | 'completed' | 'failed' | 'paused'
+export type AgentStepStatus = 'queued' | 'running' | 'waiting_approval' | 'completed' | 'failed' | 'cancelled'
 export type AgentRisk = 'low' | 'medium' | 'high'
 export type GoalStatus = 'active' | 'paused' | 'completed' | 'cancelled'
 export type IdeaStatus = 'new' | 'accepted' | 'dismissed' | 'snoozed'
@@ -18,6 +19,18 @@ export type AgentCapability =
   | 'travel'
   | 'payments'
 
+export interface AgentStep {
+  id?: string
+  ordinal: number
+  toolName: string
+  title: string
+  status: AgentStepStatus
+  output?: Record<string, unknown>
+  error?: string | null
+  startedAt?: string | null
+  completedAt?: string | null
+}
+
 export interface AgentRun {
   id: string
   title: string
@@ -30,6 +43,7 @@ export interface AgentRun {
   updatedAt: string
   nextCheckAt?: string
   why?: string
+  steps?: AgentStep[]
 }
 
 export interface AgentGoal {
@@ -105,4 +119,5 @@ export interface AgentCommandResult {
   approvalId?: string
   approvalRequired?: boolean
   blockedReason?: string
+  steps?: AgentStep[]
 }
