@@ -52,61 +52,39 @@ jobs:
       - name: Build standalone release APK
         run: cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon
 
-      - name: Install Android emulator image
-        run: |
-          sdkmanager "platforms;android-35" "system-images;android-35;google_apis;x86_64" "emulator"
-          echo no | avdmanager create avd -n askgogo-ci -k "system-images;android-35;google_apis;x86_64" --force
-
-      - name: Boot Android emulator
-        run: |
-          ACCEL="-accel off"
-          if [ -e /dev/kvm ]; then
-            sudo chmod 666 /dev/kvm || true
-            ACCEL="-accel on"
-          fi
-          nohup emulator -avd askgogo-ci -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect $ACCEL >/tmp/askgogo-emulator.log 2>&1 &
-          BOOT=""
-          for i in $(seq 1 120); do
-            if adb get-state >/dev/null 2>&1; then
-              BOOT=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-              if [ "$BOOT" = "1" ]; then break; fi
+      - name: Android release launch smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            adb install -r mobile/askgogo-native/android/app/build/outputs/apk/release/app-release.apk
+            adb logcat -c
+            adb shell monkey -p in.askgogo.app -c android.intent.category.LAUNCHER 1
+            sleep 10
+            PID=$(adb shell pidof in.askgogo.app | tr -d '\r')
+            if [ -z "$PID" ]; then
+              echo "AskGogo process exited after launch"
+              adb logcat -d | tail -n 700
+              exit 1
             fi
-            sleep 2
-          done
-          if [ "$BOOT" != "1" ]; then
-            echo "Android emulator failed to boot within 240 seconds"
-            cat /tmp/askgogo-emulator.log || true
-            adb devices || true
-            exit 1
-          fi
-          adb shell input keyevent 82 || true
+            adb shell uiautomator dump /sdcard/askgogo-window.xml >/dev/null
+            adb pull /sdcard/askgogo-window.xml /tmp/askgogo-window.xml >/dev/null
+            if ! grep -q "AskGogo started successfully" /tmp/askgogo-window.xml; then
+              echo "AskGogo process is alive but crash-safe boot screen did not render"
+              cat /tmp/askgogo-window.xml || true
+              adb logcat -d | tail -n 700
+              exit 1
+            fi
+            echo "AskGogo release APK launched and rendered successfully"
 
-      - name: Smoke test standalone APK launch
-        run: |
-          APK="android/app/build/outputs/apk/release/app-release.apk"
-          adb install -r "$APK"
-          adb logcat -c
-          adb shell monkey -p in.askgogo.app -c android.intent.category.LAUNCHER 1
-          sleep 8
-          PID=$(adb shell pidof in.askgogo.app | tr -d '\r')
-          if [ -z "$PID" ]; then
-            echo "AskGogo process exited after launch"
-            adb logcat -d | tail -n 500
-            exit 1
-          fi
-          adb shell uiautomator dump /sdcard/askgogo-window.xml >/dev/null
-          adb pull /sdcard/askgogo-window.xml /tmp/askgogo-window.xml >/dev/null
-          if ! grep -q "AskGogo started successfully" /tmp/askgogo-window.xml; then
-            echo "AskGogo process is alive but boot screen did not render"
-            cat /tmp/askgogo-window.xml || true
-            adb logcat -d | tail -n 500
-            exit 1
-          fi
-          echo "AskGogo standalone APK launched and rendered successfully"
-
-      - name: Upload APK
+      - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
-          name: AskGogo-Android-Standalone
+          name: AskGogo-Android-Verified
           path: mobile/askgogo-native/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 14
