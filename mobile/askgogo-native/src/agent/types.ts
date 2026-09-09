@@ -8,6 +8,9 @@ export type PermissionLevel = 'off' | 'read' | 'draft' | 'ask' | 'auto'
 export type AgentCapability =
   | 'memory'
   | 'files'
+  | 'reminders'
+  | 'lists'
+  | 'tasks'
   | 'email'
   | 'calendar'
   | 'browser'
@@ -81,10 +84,25 @@ export interface AgentArtifact {
 }
 
 export interface AgentHomeSnapshot {
+  surface?: 'web' | 'ios' | 'android'
   runs: AgentRun[]
   goals: AgentGoal[]
   ideas: AgentIdea[]
   approvals: AgentApproval[]
   permissions: AgentPermission[]
   artifacts: AgentArtifact[]
+}
+
+export interface AgentCommandResult {
+  runId: string
+  status: 'completed' | 'waiting_approval' | 'paused' | 'failed'
+  capability: AgentCapability
+  risk: AgentRisk
+  text?: string
+  mediaUrl?: string | null
+  mediaType?: string | null
+  handledBy?: string
+  approvalId?: string
+  approvalRequired?: boolean
+  blockedReason?: string
 }
