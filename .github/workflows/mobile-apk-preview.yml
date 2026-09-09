@@ -49,12 +49,15 @@ jobs:
       - name: Generate clean Android project
         run: npx expo prebuild --platform android --clean
 
-      - name: Build debug APK
-        run: cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+      # A debug APK expects the Metro dev server and is not suitable for a
+      # standalone phone install. Release embeds the JS bundle so this artifact
+      # can be installed and opened without a development machine.
+      - name: Build standalone release APK
+        run: cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AskGogo-Android-Preview
-          path: mobile/askgogo-native/android/app/build/outputs/apk/debug/app-debug.apk
+          name: AskGogo-Android-Standalone
+          path: mobile/askgogo-native/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 14
