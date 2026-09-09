@@ -3,12 +3,11 @@ import { saveMobileSession } from './session'
 
 const API_BASE = process.env.EXPO_PUBLIC_ASKGOGO_API_BASE_URL || 'https://app.askgogo.in'
 
-export type MobileLinkRequest = {
+export type WhatsAppOtpLink = {
   linkId: string
-  code: string
   pollToken: string
   expiresAt: string
-  whatsappMessage: string
+  message: string
 }
 
 async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
@@ -26,19 +25,24 @@ export function mobilePlatform(): 'ios' | 'android' {
   return Platform.OS === 'ios' ? 'ios' : 'android'
 }
 
-export async function startWhatsAppLink(params: { deviceId?: string; deviceName?: string } = {}) {
-  return post<MobileLinkRequest>('/api/mobile/link/start', {
+export async function startWhatsAppOtp(params: {
+  whatsappNumber: string
+  deviceId?: string
+  deviceName?: string
+}) {
+  return post<WhatsAppOtpLink>('/api/mobile/link/otp/start', {
+    whatsappNumber: params.whatsappNumber,
     platform: mobilePlatform(),
     deviceId: params.deviceId || '',
     deviceName: params.deviceName || '',
   })
 }
 
-export async function getWhatsAppLinkStatus(pollToken: string) {
-  return post<{ status: 'pending' | 'approved' | 'exchanged' | 'expired'; approvedAt?: string | null; expiresAt?: string }>(
-    '/api/mobile/link/status',
-    { pollToken },
-  )
+export async function verifyWhatsAppOtp(params: { pollToken: string; code: string }) {
+  return post<{ approved: true }>('/api/mobile/link/otp/verify', {
+    pollToken: params.pollToken,
+    code: params.code,
+  })
 }
 
 export async function exchangeWhatsAppLink(params: {
