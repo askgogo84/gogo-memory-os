@@ -8,15 +8,17 @@ on:
       - ".github/workflows/mobile-apk-preview.yml"
   workflow_dispatch:
 
+concurrency:
+  group: askgogo-mobile-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-apk:
-    # GitHub Linux hosted runners do not expose KVM to this repository, so the
-    # Android emulator stayed offline and never reached the app. macOS provides
-    # hardware-accelerated Android emulation, making this a real runtime gate.
+    # Linux hosted runners did not expose usable KVM here. macOS provides
+    # hardware-accelerated Android emulation, so this is a real release runtime gate.
     runs-on: macos-14
     env:
       CI: "1"
-      NODE_ENV: production
     defaults:
       run:
         working-directory: mobile/askgogo-native
@@ -39,7 +41,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --include=dev
 
       - name: Align Expo SDK packages
         run: npx expo install --fix
