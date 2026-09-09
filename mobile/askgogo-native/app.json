@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "AskGogo",
+    "slug": "askgogo-native",
+    "scheme": "askgogo",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#F7F1E9",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "in.askgogo.app"
+    },
+    "android": {
+      "package": "in.askgogo.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#F7F1E9"
+      }
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "apiBaseUrl": "https://app.askgogo.in"
+    }
+  }
+}
