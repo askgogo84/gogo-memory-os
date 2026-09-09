@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { executeApprovedAgentRun } from '@/lib/agent/orchestrator'
+import { executeApprovedTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -17,13 +19,26 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   try {
     const actor = await resolveAgentActor(session)
-    const result = await executeApprovedAgentRun({ actor, runId: id })
+    const { data: run, error: runError } = await supabaseAdmin
+      .from('agent_runs')
+      .select('metadata_json')
+      .eq('id', id)
+      .eq('telegram_id', session.telegramId)
+      .maybeSingle()
+    if (runError) throw new Error(`agent_run_read_failed:${runError.message}`)
+    if (!run) return NextResponse.json({ error: 'agent_run_not_found' }, { status: 404 })
+
+    const planType = String((run.metadata_json as any)?.plan_type || '')
+    const result = planType === 'memory_ticket_to_calendar'
+      ? await executeApprovedTravelCalendarPlan({ actor, runId: id })
+      : await executeApprovedAgentRun({ actor, runId: id })
     return NextResponse.json(result)
   } catch (error: any) {
     const message = String(error?.message || '')
     console.error('AGENT_APPROVED_EXECUTION_FAILED:', message || error)
     if (message === 'agent_run_not_found') return NextResponse.json({ error: message }, { status: 404 })
     if (message === 'agent_run_already_claimed') return NextResponse.json({ error: message }, { status: 409 })
+    if (message === 'approval_required') return NextResponse.json({ error: message }, { status: 409 })
     return NextResponse.json({ error: 'agent_execution_failed' }, { status: 500 })
   }
 }
