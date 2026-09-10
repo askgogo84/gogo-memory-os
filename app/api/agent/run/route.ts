@@ -8,6 +8,7 @@ import { tryPrepareTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
+import { tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { tryRunCreditIQHotelResearch } from '@/lib/agent/creditiq-hotel-research'
 import { tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
@@ -84,6 +85,12 @@ export async function POST(request: Request) {
       messageId: body?.messageId || null,
     })
     if (compound) return respond(compound, 200)
+
+    // P0.8 Workspace meeting prep is a safe specialist mission: it may read the
+    // user's connected Gmail/attachment/Contacts/Calendar and create a private
+    // artifact, but it never sends mail or schedules an event in this phase.
+    const workspaceMeeting = await tryPrepareWorkspaceMeetingPlan({ actor, surface:session.surface, text })
+    if (workspaceMeeting) return respond(workspaceMeeting, 200)
 
     // Multi-step missions must be planned before single-feature fallbacks. This is
     // the Muse-style outcome path: memory/research/actions/approval/artifact can be
