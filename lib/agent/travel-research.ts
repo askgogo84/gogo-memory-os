@@ -309,15 +309,28 @@ async function addActivity(tg: number, runId: string, eventType: string, message
   if (error) console.error('TRAVEL_RESEARCH_ACTIVITY_FAILED:', error.message)
 }
 
+function formatRedemption(value: any) {
+  const summary = value?.redemption
+  if (!summary || typeof summary !== 'object' || !summary.verdictLabel) return ''
+  const best = summary.bestPath
+  const details: string[] = [`CreditIQ: ${safe(summary.verdictLabel,80)}`]
+  if (best?.label) details.push(safe(best.label,160))
+  if (Number.isFinite(Number(best?.bankPointsRequired)) && Number(best.bankPointsRequired) > 0) {
+    details.push(`${Math.round(Number(best.bankPointsRequired)).toLocaleString('en-IN')} points`)
+  }
+  if (best?.state && best.state !== 'EXECUTABLE') details.push('verification required')
+  return `\n${details.join(' · ')}`
+}
+
 function formatLiveFlight(value: any, index: number) {
   const price = Number.isFinite(Number(value.price)) ? `₹${Math.round(Number(value.price)).toLocaleString('en-IN')}` : 'price unavailable'
   const stops = Number.isFinite(Number(value.stops)) ? (Number(value.stops) === 0 ? 'non-stop' : `${Number(value.stops)} stop${Number(value.stops) === 1 ? '' : 's'}`) : ''
   const timing = [value.departure, value.arrival].filter(Boolean).join(' → ')
   const bits = [price, value.airline, timing, stops].filter(Boolean)
-  return `${index + 1}. ${bits.join(' · ')}${value.bookingLink ? `\nBooking/provider link: ${value.bookingLink}` : ''}`
+  return `${index + 1}. ${bits.join(' · ')}${formatRedemption(value)}${value.bookingLink ? `\nBooking/provider link: ${value.bookingLink}` : ''}`
 }
 
-async function tryCreditIQLive(context: TravelContext) {
+async function tryCreditIQLive(context: TravelContext, actor: AgentActor) {
   if (context.kind !== 'flight' || !context.origin?.code || !context.destination?.code || !context.startDate) return null
   return searchCreditIQLiveFlights({
     from: context.origin.code,
@@ -325,6 +338,7 @@ async function tryCreditIQLive(context: TravelContext) {
     date: context.startDate,
     dateTo: context.endDate || context.startDate,
     cabin: 'economy',
+    userLinkId: actor.creditiqUserId || null,
   })
 }
 
@@ -358,16 +372,21 @@ export async function tryRunTravelResearch(params: { actor: AgentActor; surface:
     // structured provider inventory to public search snippets whenever route/date
     // are concrete enough. If CreditIQ has no usable live response, fall back
     // honestly to the existing curated public-web research path.
-    const live = await tryCreditIQLive(context)
+    const live = await tryCreditIQLive(context, params.actor)
     if (live?.live && live.flights.length) {
       const completedAt = new Date().toISOString()
-      const output = { context, liveInventory:live, source:'creditiq', inventoryType:'live-provider' }
+      const output = { context, liveInventory:live, source:'creditiq', inventoryType:'live-provider', pointsAware:live.identity?.pointsAware === true }
       await supabaseAdmin.from('agent_steps').update({ status:'completed', output_json:output, completed_at:completedAt }).eq('id', String(step.id))
 
       const top = live.flights.slice(0, 8)
-      const text = `CreditIQ live travel · ${context.routeLabel} · ${context.whenLabel}\nProvider: ${live.source} · fetched ${live.fetchedAt}\n\n${top.map(formatLiveFlight).join('\n\n')}\n\nThese are provider-returned travel results through CreditIQ. Fares and availability can still change before checkout, so Gogo must reprice before any approved booking action.`
-      await supabaseAdmin.from('agent_runs').update({ status:'completed', summary:safe(text,1800), progress:100, completed_at:completedAt, updated_at:completedAt, metadata_json:{ plan_type:'travel_research', input_text:safe(params.text,1800), queries, context, travelEngine:'creditiq' } }).eq('id',runId).eq('telegram_id',String(tg))
-      await addActivity(tg,runId,'run_completed',`CreditIQ returned ${top.length} live travel options.`,{result_count:top.length,route:context.routeLabel,provider:live.source,travel_engine:'creditiq'})
+      const rewardsLine = live.identity?.pointsAware
+        ? `Rewards: linked CreditIQ wallet · ${live.identity.verifiedBalances} verified balance${live.identity.verifiedBalances === 1 ? '' : 's'}`
+        : live.identity?.linked
+          ? 'Rewards: CreditIQ is linked, but wallet balances were unavailable for this search'
+          : 'Rewards: CreditIQ account not linked · cash and sourced public redemption paths only'
+      const text = `CreditIQ live travel · ${context.routeLabel} · ${context.whenLabel}\nProvider: ${live.source} · fetched ${live.fetchedAt}\n${rewardsLine}\n\n${top.map(formatLiveFlight).join('\n\n')}\n\nThese are provider-returned travel results through CreditIQ. A projected redemption is never treated as executable until verified. Fares and availability can still change before checkout, so Gogo must reprice before any approved booking action.`
+      await supabaseAdmin.from('agent_runs').update({ status:'completed', summary:safe(text,1800), progress:100, completed_at:completedAt, updated_at:completedAt, metadata_json:{ plan_type:'travel_research', input_text:safe(params.text,1800), queries, context, travelEngine:'creditiq', pointsAware:live.identity?.pointsAware === true } }).eq('id',runId).eq('telegram_id',String(tg))
+      await addActivity(tg,runId,'run_completed',`CreditIQ returned ${top.length} live travel options.`,{result_count:top.length,route:context.routeLabel,provider:live.source,travel_engine:'creditiq',points_aware:live.identity?.pointsAware === true})
       return { runId, status:'completed' as const, capability:'travel' as const, risk:'low' as const, text, handledBy:'creditiq-travel' as const }
     }
 
