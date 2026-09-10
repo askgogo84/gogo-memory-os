@@ -16,6 +16,10 @@ export type CreditIQFlightResult = {
   bookingLink: string | null
   provider: string
   cabin: Cabin
+  live: boolean
+  cashFareVerifiedForCabin: boolean
+  awardGuide: any | null
+  redemption: any | null
 }
 
 export type CreditIQFlightSearch = {
@@ -24,6 +28,18 @@ export type CreditIQFlightSearch = {
   coverage: Record<string, unknown> | null
   flights: CreditIQFlightResult[]
   fetchedAt: string
+  identity?: {
+    linked: boolean
+    pointsAware: boolean
+    walletCards: number
+    verifiedBalances: number
+  }
+  bookingPolicy?: {
+    mode: string
+    requiresRepriceBeforeBooking: boolean
+    irreversiblePointsTransferAllowed: boolean
+  }
+  requiresServiceAuth?: boolean
 }
 
 export type CreditIQHotelSearch = {
@@ -69,18 +85,18 @@ function signedServiceHeaders(rawBody: string) {
     'Content-Type': 'application/json',
     'X-Gogo-Timestamp': timestamp,
     'X-Gogo-Signature': signature,
-    'User-Agent': 'AskGogo-Travel-Bridge/1.0',
+    'User-Agent': 'AskGogo-Travel-Bridge/2.0',
   }
 }
 
 /**
- * Cash/live flight inventory bridge into the existing CreditIQ provider stack.
+ * Signed CreditIQ flight + rewards decision bridge.
  *
- * CreditIQ owns provider orchestration, coverage/freshness labels and booking links.
- * Gogo owns intent, mission orchestration, approvals, memory and follow-up actions.
- *
- * This intentionally degrades to null: AskGogo must fall back honestly rather than
- * turn a CreditIQ outage into a fake "live fare" claim.
+ * CreditIQ owns live provider orchestration, wallet balances, sourced redemption
+ * rails and cash-vs-points decisioning. AskGogo sends only an already-linked
+ * CreditIQ user id and the travel intent. No CreditIQ cookie/session or card
+ * credential crosses the boundary. The response stays read-only and a provider
+ * handoff is always repriced before any later approved booking action.
  */
 export async function searchCreditIQLiveFlights(params: {
   from: string
@@ -88,6 +104,8 @@ export async function searchCreditIQLiveFlights(params: {
   date: string
   dateTo?: string
   cabin?: string
+  adults?: number
+  userLinkId?: string | null
 }): Promise<CreditIQFlightSearch | null> {
   const from = clean(params.from, 3).toUpperCase()
   const to = clean(params.to, 3).toUpperCase()
@@ -96,48 +114,83 @@ export async function searchCreditIQLiveFlights(params: {
   const cabin = normalizeCabin(params.cabin)
   if (!/^[A-Z]{3}$/.test(from) || !/^[A-Z]{3}$/.test(to) || !/^20\d{2}-\d{2}-\d{2}$/.test(date)) return null
 
-  const url = new URL(`${baseUrl()}/api/flights/search`)
-  url.searchParams.set('from', from)
-  url.searchParams.set('to', to)
-  url.searchParams.set('date_from', date)
-  url.searchParams.set('date_to', dateTo)
-  url.searchParams.set('cabin', cabin)
+  const rawBody = JSON.stringify({
+    userLinkId: clean(params.userLinkId || '', 200) || null,
+    type: 'flight',
+    origin: from,
+    destination: to,
+    departDate: date,
+    returnDate: dateTo !== date ? dateTo : null,
+    cabin,
+    adults: Math.max(1, Math.min(9, Number(params.adults || 1))),
+    limit: 20,
+    preferences: null,
+  })
+  const headers = signedServiceHeaders(rawBody)
+  if (!headers) {
+    return {
+      live:false,
+      source:'creditiq',
+      coverage:null,
+      flights:[],
+      fetchedAt:new Date().toISOString(),
+      requiresServiceAuth:true,
+    }
+  }
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 15_000)
+  const timeout = setTimeout(() => controller.abort(), 20_000)
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { Accept: 'application/json', 'User-Agent': 'AskGogo-Travel-Bridge/1.0' },
+    const response = await fetch(`${baseUrl()}/api/internal/gogo/travel/flights`, {
+      method: 'POST',
+      headers,
+      body: rawBody,
       signal: controller.signal,
       cache: 'no-store',
     })
     if (!response.ok) return null
     const body: any = await response.json().catch(() => null)
-    if (!body || !Array.isArray(body.flights) || body.flights.length === 0) return null
-    const source = clean(body.source || body.coverage?.provider || 'creditiq', 80)
+    if (!body || body?.contract !== 'gogo-creditiq-travel-v1' || !Array.isArray(body.flights)) return null
+
+    const source = clean(body?.inventory?.source || 'creditiq', 80)
+    const live = body?.inventory?.live === true
     const flights: CreditIQFlightResult[] = body.flights.slice(0, 30).map((f: any, index: number) => ({
       id: clean(f.id || `${source}-${index}`, 180),
-      price: finiteNumber(f.price ?? f.amount ?? f.totalPrice),
-      currency: clean(f.currency || body.providerCurrency || 'INR', 8).toUpperCase() || 'INR',
-      airline: clean(f.airline || f.airlines?.[0] || 'Multiple', 120),
+      price: finiteNumber(f.price),
+      currency: clean(f.currency || 'INR', 8).toUpperCase() || 'INR',
+      airline: clean(f.airline || 'Multiple', 120),
       from: clean(f.from || from, 8).toUpperCase(),
       to: clean(f.to || to, 8).toUpperCase(),
-      departure: clean(f.departure || f.departureAt || '', 80),
-      arrival: clean(f.arrival || f.arrivalAt || '', 80),
-      durationSeconds: finiteNumber(f.durationSeconds ?? (Number.isFinite(Number(f.duration)) ? Number(f.duration) * 3600 : null)),
+      departure: clean(f.departure || '', 80),
+      arrival: clean(f.arrival || '', 80),
+      durationSeconds: finiteNumber(f.durationSeconds),
       stops: finiteNumber(f.stops),
-      bookingLink: f.bookingLink || f.deep_link || f.deeplink ? clean(f.bookingLink || f.deep_link || f.deeplink, 1200) : null,
+      bookingLink: f.bookingLink ? clean(f.bookingLink, 1200) : null,
       provider: clean(f.provider || source, 80),
       cabin,
+      live: f.live === true && live,
+      cashFareVerifiedForCabin: f.cashFareVerifiedForCabin === true,
+      awardGuide: f.awardGuide && typeof f.awardGuide === 'object' ? f.awardGuide : null,
+      redemption: f.redemption && typeof f.redemption === 'object' ? f.redemption : null,
     }))
 
     return {
-      live: true,
+      live,
       source,
-      coverage: body.coverage && typeof body.coverage === 'object' ? body.coverage : null,
+      coverage: body?.inventory?.coverage && typeof body.inventory.coverage === 'object' ? body.inventory.coverage : null,
       flights,
-      fetchedAt: clean(body.coverage?.fetched_at || new Date().toISOString(), 80),
+      fetchedAt: clean(body?.inventory?.fetchedAt || new Date().toISOString(), 80),
+      identity: body?.identity && typeof body.identity === 'object' ? {
+        linked: body.identity.linked === true,
+        pointsAware: body.identity.pointsAware === true,
+        walletCards: Math.max(0, Number(body.identity.walletCards || 0)),
+        verifiedBalances: Math.max(0, Number(body.identity.verifiedBalances || 0)),
+      } : undefined,
+      bookingPolicy: body?.bookingPolicy && typeof body.bookingPolicy === 'object' ? {
+        mode: clean(body.bookingPolicy.mode || 'provider_handoff', 80),
+        requiresRepriceBeforeBooking: body.bookingPolicy.requiresRepriceBeforeBooking !== false,
+        irreversiblePointsTransferAllowed: false,
+      } : undefined,
     }
   } catch {
     return null
