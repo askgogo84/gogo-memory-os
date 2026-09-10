@@ -33,20 +33,16 @@ export async function POST(request: Request) {
       return NextResponse.json(result, { status })
     }
 
+    // Explicit background watches and explicit URL/browser commands are deterministic
+    // and should always win before open-ended planning.
     const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:session.surface, text })
     if (webWatch) return respond(webWatch, 200)
 
     const browser = await tryRunBrowserCommand({ actor, surface:session.surface, text })
     if (browser) return respond(browser, browser.status === 'waiting_approval' ? 202 : 200)
 
-    // Current-market travel research must run before saved-travel retrieval.
-    // The hardening pass removes mixed/off-window snippets and unverified fare signals.
-    const travelResearch = await tryRunTravelResearch({ actor, surface:session.surface, text })
-    if (travelResearch) {
-      const hardened = await hardenTravelResearchResult(travelResearch, text)
-      return respond(hardened, 200)
-    }
-
+    // Specialist cross-feature plans remain ahead of the general planner because
+    // they carry tighter deterministic parsing and approval semantics.
     const travelCalendar = await tryPrepareTravelCalendarPlan({ actor, surface:session.surface, text })
     if (travelCalendar) return respond(travelCalendar, travelCalendar.status === 'waiting_approval' ? 202 : 200)
 
@@ -58,6 +54,9 @@ export async function POST(request: Request) {
     })
     if (compound) return respond(compound, 200)
 
+    // Multi-step missions must be planned before single-feature fallbacks. This is
+    // the Muse-style outcome path: memory/research/actions/approval/artifact can be
+    // one run instead of a travel keyword collapsing the request into one search.
     const generalPlan = await tryRunGeneralPlan({
       actor,
       surface: session.surface,
@@ -65,6 +64,15 @@ export async function POST(request: Request) {
       messageId: body?.messageId || null,
     })
     if (generalPlan) return respond(generalPlan, generalPlan.status === 'waiting_approval' ? 202 : 200)
+
+    // Simple current-market travel research is a single-feature fallback. It still
+    // runs before saved-travel retrieval, and its output is hardened for direction,
+    // dates and fare claims.
+    const travelResearch = await tryRunTravelResearch({ actor, surface:session.surface, text })
+    if (travelResearch) {
+      const hardened = await hardenTravelResearchResult(travelResearch, text)
+      return respond(hardened, 200)
+    }
 
     const result = await runAgentCommand({
       actor,
