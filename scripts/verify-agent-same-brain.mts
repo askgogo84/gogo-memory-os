@@ -20,7 +20,7 @@ assert.match(sameBrain,/tryWorkspaceRead/)
 assert.match(sameBrain,/searchWorkspaceEmails/)
 assert.match(sameBrain,/searchWorkspaceContacts/)
 assert.match(sameBrain,/searchWorkspaceDrive/)
-assert.ok(sameBrain.indexOf('tryWorkspaceRead(params.actor,text)') < sameBrain.indexOf('routeLegacyFeatureIntent(params.actor.whatsappId')))
+assert.ok(sameBrain.indexOf('tryWorkspaceRead(params.actor,text)') < sameBrain.indexOf('routeLegacyFeatureIntent(params.actor.whatsappId'))
 assert.match(sameBrain,/I won't guess which person you mean/)
 assert.match(sameBrain,/I did not guess or fall back to another account/)
 
