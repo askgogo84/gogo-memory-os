@@ -22,7 +22,9 @@ after(whatsapp, 'tryRunGeneralPlan', 'tryRunTravelResearch', 'WhatsApp missions 
 assert.match(planner, /const MAX_STEPS = 10/)
 assert.match(planner, /Cover every explicit deliverable/i)
 assert.match(planner, /Prefer safe, reversible work first/i)
-assert.match(planner, /artifact MUST be the final step/i)
+assert.match(planner, /place the artifact after the safe preparatory work but BEFORE/i)
+assert.match(planner, /missingMissionInput/)
+assert.match(planner, /executeTaskStep/)
 
 // India-first compute: functions and per-user secure computers default to Mumbai.
 assert.deepEqual(vercel.regions, ['bom1'])
