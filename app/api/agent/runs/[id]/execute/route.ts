@@ -6,6 +6,7 @@ import { executeApprovedAgentRun } from '@/lib/agent/orchestrator'
 import { executeApprovedTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { resumeApprovedGeneralPlan } from '@/lib/agent/general-planner'
 import { executeApprovedBrowserCommand } from '@/lib/agent/browser-command'
+import { executeApprovedWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-approval'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -37,7 +38,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         ? await executeApprovedBrowserCommand({ actor, runId: id })
         : planType === 'general_multi_tool'
           ? await resumeApprovedGeneralPlan({ actor, runId: id })
-          : await executeApprovedAgentRun({ actor, runId: id })
+          : planType === 'workspace_meeting_prep'
+            ? await executeApprovedWorkspaceMeetingPlan({ actor, runId: id })
+            : await executeApprovedAgentRun({ actor, runId: id })
     return NextResponse.json(result, { status: result.status === 'waiting_approval' ? 202 : 200 })
   } catch (error: any) {
     const message = String(error?.message || '')
