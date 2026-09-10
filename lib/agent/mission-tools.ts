@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
-import { searchWebResults } from '@/lib/web-search'
+import { refreshAccessToken } from '@/lib/google-calendar'
+import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { dispatchThroughSameBrain } from './same-brain'
 import { buildTravelResearchContext, curateTravelResults, isPublicTravelResearchRequest } from './travel-research'
@@ -16,13 +17,27 @@ const MONTHS:Record<string,number>={
 function safe(value:unknown,max=1200){return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))}
 function pad(n:number){return String(n).padStart(2,'0')}
 
-function explicitDate(text:string){
-  let m=text.match(/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(20\d{2})\b/i)
-  if(m){const month=MONTHS[m[2].toLowerCase()];if(month)return `${m[3]}-${pad(month)}-${pad(Number(m[1]))}`}
-  m=text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/)
-  if(m)return `${m[1]}-${pad(Number(m[2]))}-${pad(Number(m[3]))}`
-  return null
+function explicitDates(text:string, defaultYear=new Date().getUTCFullYear()){
+  const out:string[]=[]
+  const add=(year:number,month:number,day:number)=>{
+    const d=new Date(Date.UTC(year,month-1,day))
+    if(d.getUTCFullYear()!==year||d.getUTCMonth()!==month-1||d.getUTCDate()!==day)return
+    const iso=`${year}-${pad(month)}-${pad(day)}`
+    if(!out.includes(iso))out.push(iso)
+  }
+  let m:RegExpExecArray|null
+  const dayMonth=/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(20\d{2}))?/gi
+  while((m=dayMonth.exec(text))){const month=MONTHS[m[2].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[1]))}
+  const monthDay=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:[,\s]+(20\d{2}))?/gi
+  while((m=monthDay.exec(text))){const month=MONTHS[m[1].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[2]))}
+  const iso=/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g
+  while((m=iso.exec(text)))add(Number(m[1]),Number(m[2]),Number(m[3]))
+  const numeric=/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/g
+  while((m=numeric.exec(text)))add(Number(m[3]),Number(m[2]),Number(m[1]))
+  return out
 }
+
+function explicitDate(text:string){return explicitDates(text)[0]||null}
 
 function to24Hour(hour:number,minute:number,ap:string){
   let h=hour
@@ -43,13 +58,14 @@ export function explicitMissionClock(text:string){
 
 function routeText(raw:string){
   const text=String(raw||'').replace(/\s+/g,' ').trim()
-  if(/\bfrom\s+[A-Za-z]{2,}(?:[ .'-]+[A-Za-z]{2,})*\s+to\s+[A-Za-z]{2,}/i.test(text))return text
-  const m=text.match(/\b(?:research|search|find|compare|check|plan)?\s*(?:flights?\s+)?([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,26}?)\s+to\s+([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,26}?)(?=\s+(?:flights?|flight|work\s+trip|trip|travel|on|for|next|this|tomorrow)\b|$)/i)
+  const stop='(?=\\s+(?:on|for|next|this|tomorrow|depart(?:ing|ure)?|flights?|work\\s+trip|business\\s+trip|trip|travel|only|around|at|with)\\b|[.,;]|$)'
+  let m=text.match(new RegExp(`\\bfrom\\s+([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)\\s+to\\s+([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)${stop}`,'i'))
+  if(!m)m=text.match(new RegExp(`\\b([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)\\s+to\\s+([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)${stop}`,'i'))
   if(!m?.[1]||!m?.[2])return text
   const origin=m[1].replace(/^(?:research|search|find|compare|check|plan)\s+/i,'').trim()
-  const destination=m[2].trim()
-  if(!origin||!destination)return text
-  return `Search flights from ${origin} to ${destination} for ${text}`
+  const destination=m[2].replace(/\s+(?:work|business)\s+trip$/i,'').trim()
+  const date=explicitDate(text)
+  return `Search flights from ${origin} to ${destination}${date?` on ${date}`:''}`
 }
 
 function travelContext(raw:string){
@@ -85,9 +101,7 @@ async function actorTimezone(actor:AgentActor){
   return normalizeTimezone(String(data?.timezone||'Asia/Kolkata'))
 }
 
-function destinationLabel(missionText:string){
-  return travelContext(missionText).context.destination?.label||'trip'
-}
+function destinationLabel(missionText:string){return travelContext(missionText).context.destination?.label||'trip'}
 
 export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
   const {actor,step,missionText}=params
@@ -124,17 +138,26 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
   return {text:result.text,output:{reminderId:String(data.id),message:String(data.message||''),remindAt:String(data.remind_at),timezone:String(data.timezone||''),verifiedStore:'reminders',handledBy:result.handledBy}}
 }
 
+function resultDatesAreInsideWindow(result:WebSearchResult,startDate?:string,endDate?:string){
+  if(!startDate||!endDate)return true
+  const defaultYear=Number(startDate.slice(0,4))
+  const dates=explicitDates(`${result.title} ${result.snippet}`,defaultYear)
+  if(!dates.length)return true
+  return dates.every(date=>date>=startDate&&date<=endDate)
+}
+
 export async function executeVerifiedMissionWebSearch(step:MissionStep){
   if(!isPublicTravelResearchRequest(step.instruction)){
     const results=await searchWebResults(step.instruction)
     return {text:results.length?`Found ${results.length} public web results.`:'No useful public web results found.',output:{results:results.slice(0,5).map(r=>({title:r.title,url:r.url,snippet:r.snippet.slice(0,500)}))}}
   }
   const {context,normalized}=travelContext(step.instruction)
-  const results=await searchWebResults(normalized)
-  const curated=curateTravelResults(results,context)
+  const raw=await searchWebResults(normalized)
+  const dateSafe=raw.filter(result=>resultDatesAreInsideWindow(result,context.startDate,context.endDate))
+  const curated=curateTravelResults(dateSafe,context)
   return {
     text:curated.length?`Found ${curated.length} direction/date-curated travel sources for ${context.routeLabel}.`:`No reliable direction/date-matched travel source was found for ${context.routeLabel}.`,
-    output:{context,results:curated,verifiedCuration:'travel-research'},
+    output:{context,results:curated,verifiedCuration:'travel-research',mixedDateResultsRejected:raw.length-dateSafe.length},
   }
 }
 
@@ -165,4 +188,77 @@ export async function executeVerifiedMissionMemory(params:{actor:AgentActor;step
   }
   const result=await dispatchThroughSameBrain({actor:params.actor,text:params.step.instruction,messageId:params.messageId})
   return {text:result.text,output:{reply:String(result.text||'').slice(0,3500),handledBy:result.handledBy}}
+}
+
+function calendarTitle(step:MissionStep){
+  const quoted=step.instruction.match(/(?:titled|called)\s+['“\"]([^'”\"]+)['”\"]/i)?.[1]
+  if(quoted)return safe(quoted,180)
+  const fromTitle=step.title.replace(/^(?:prepare|create|add|schedule)(?:\s+calendar)?\s+event(?:\s+for)?\s*/i,'').replace(/\s*\(approval required\)\s*$/i,'').trim()
+  return safe(fromTitle||'AskGogo event',180)
+}
+
+function addDaysIso(iso:string,days:number){
+  const d=new Date(`${iso}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate()+days)
+  return d.toISOString().slice(0,10)
+}
+
+export async function executeVerifiedMissionCalendar(params:{actor:AgentActor;step:MissionStep;missionText:string;runId:string}){
+  const year=Number(explicitDate(params.missionText)?.slice(0,4)||new Date().getUTCFullYear())
+  let dates=explicitDates(params.step.instruction,year)
+  if(dates.length<2){
+    const missionDates=explicitDates(params.missionText,year)
+    for(const date of missionDates)if(!dates.includes(date))dates.push(date)
+  }
+  const startDate=dates[0]
+  const endInclusive=dates[1]||dates[0]
+  if(!startDate||!endInclusive)throw new Error('mission_calendar_dates_missing')
+  const endExclusive=addDaysIso(endInclusive,1)
+  const title=calendarTitle(params.step)
+  const location=destinationLabel(params.missionText)
+
+  const {data:user,error:userError}=await supabaseAdmin.from('users')
+    .select('google_calendar_connected,google_refresh_token').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
+  if(userError)throw new Error(`mission_calendar_user_read_failed:${userError.message}`)
+  if(!user?.google_calendar_connected||!user?.google_refresh_token)throw new Error('calendar_not_connected')
+  const accessToken=await refreshAccessToken(user.google_refresh_token)
+  if(!accessToken)throw new Error('calendar_token_refresh_failed')
+
+  const {data:priorSteps}=await supabaseAdmin.from('agent_steps')
+    .select('tool_name,title,output_json').eq('run_id',params.runId).eq('telegram_id',String(params.actor.legacyTelegramId)).order('ordinal',{ascending:true})
+  const travel=(priorSteps||[]).find((s:any)=>s.tool_name==='web_search') as any
+  const travelResults=Array.isArray(travel?.output_json?.results)?travel.output_json.results.slice(0,3):[]
+  const {data:artifact}=await supabaseAdmin.from('agent_artifacts')
+    .select('id,title').eq('telegram_id',String(params.actor.legacyTelegramId))
+    .contains('source_refs',[{type:'agent_run',id:params.runId}]).order('created_at',{ascending:false}).limit(1).maybeSingle()
+
+  const description=[
+    'Prepared by AskGogo.',
+    artifact?.title?`Trip Brief: ${artifact.title} (AskGogo artifact ${artifact.id})`:null,
+    travelResults.length?`Flight research: ${travelResults.map((r:any)=>safe(`${r.source||''} ${r.title||''}`,140)).join(' | ')}`:null,
+    'No flight booking or payment was performed by this calendar action.',
+  ].filter(Boolean).join('\n')
+
+  const lookupParams=new URLSearchParams({
+    timeMin:`${startDate}T00:00:00Z`,timeMax:`${addDaysIso(endExclusive,1)}T00:00:00Z`,singleEvents:'true',
+    privateExtendedProperty:`askgogoRunId=${params.runId}`,
+  })
+  const lookup=await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${lookupParams}`,{headers:{Authorization:`Bearer ${accessToken}`},cache:'no-store'})
+  if(lookup.ok){
+    const found=await lookup.json().catch(()=>({}))
+    const existing=Array.isArray(found?.items)?found.items[0]:null
+    if(existing?.id)return {text:`Calendar event already exists: ${title}.`,output:{eventId:String(existing.id),title,startDate,endDate:endInclusive,location,reused:true,verifiedStore:'google-calendar'}}
+  }
+
+  const response=await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events',{
+    method:'POST',headers:{Authorization:`Bearer ${accessToken}`,'Content-Type':'application/json'},
+    body:JSON.stringify({
+      summary:title,description,location,
+      start:{date:startDate},end:{date:endExclusive},
+      extendedProperties:{private:{askgogoRunId:params.runId,source:'askgogo-agent'}},
+    }),
+  })
+  const data=await response.json().catch(()=>({}))
+  if(!response.ok||!data?.id)throw new Error(`mission_calendar_create_failed:${data?.error?.message||response.status}`)
+  return {text:`Added ${title} to Google Calendar for ${startDate} through ${endInclusive}.`,output:{eventId:String(data.id),htmlLink:String(data.htmlLink||''),title,startDate,endDate:endInclusive,location,reused:false,verifiedStore:'google-calendar'}}
 }
