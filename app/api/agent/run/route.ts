@@ -10,6 +10,7 @@ import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { attachWorkspaceMeetingApproval } from '@/lib/agent/workspace-meeting-approval'
+import { tryRunWorkspaceDriveContext } from '@/lib/agent/workspace-drive-context'
 import { tryRunCreditIQHotelResearch } from '@/lib/agent/creditiq-hotel-research'
 import { tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
@@ -96,6 +97,12 @@ export async function POST(request: Request) {
       const prepared = await attachWorkspaceMeetingApproval({ actor, result: workspaceMeeting })
       return respond(prepared, prepared.status === 'waiting_approval' ? 202 : 200)
     }
+
+    // P0.8 Drive/document context uses the same read-only Workspace consent as
+    // Gmail/Contacts. It deterministically finds one requested file, reads only
+    // supported text formats, creates a sourced private artifact and never mutates Drive.
+    const workspaceDrive = await tryRunWorkspaceDriveContext({ actor, surface:session.surface, text })
+    if (workspaceDrive) return respond(workspaceDrive, 200)
 
     // Multi-step missions must be planned before single-feature fallbacks. This is
     // the Muse-style outcome path: memory/research/actions/approval/artifact can be
