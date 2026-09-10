@@ -1,27 +1,24 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Instrument_Serif, Manrope } from "next/font/google";
+import { Geist_Mono, Newsreader, Onest } from "next/font/google";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
 
-// AskGogo website display face. Keep the product shell and public story feeling
-// like one brand rather than two separate applications.
-const instrumentSerif = Instrument_Serif({
-  variable: "--font-instrument-serif",
+// Final AskGogo website typography. The logged-in product uses the exact same
+// editorial/display voice so the handoff from askgogo.in to app.askgogo.in feels
+// like one product, not a separate SaaS dashboard.
+const newsreader = Newsreader({
+  variable: "--font-newsreader",
   subsets: ["latin"],
-  weight: "400",
+  weight: ["300", "400", "500", "600"],
+  style: ["normal", "italic"],
 });
 
-const manrope = Manrope({
-  variable: "--font-manrope",
+const onest = Onest({
+  variable: "--font-onest",
   subsets: ["latin"],
 });
 
@@ -32,6 +29,10 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://app.askgogo.in"),
   title: "AskGogo — Meet Gogo",
   description,
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    shortcut: "/icon.svg",
+  },
   openGraph: {
     type: "website",
     siteName: "AskGogo",
@@ -57,7 +58,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} ${manrope.variable} h-full antialiased`}
+      className={`${geistMono.variable} ${newsreader.variable} ${onest.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
