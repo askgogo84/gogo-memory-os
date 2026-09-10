@@ -1,74 +1,11 @@
+import Link from 'next/link'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getDashboardTasks, type DashboardTask } from '@/lib/dashboard/tasks'
-import { WhatsAppChip } from '@/components/dashboard/whatsapp-chip'
+import { getDashboardTasks } from '@/lib/dashboard/tasks'
 import { CardError } from '@/components/dashboard/card-error'
+import { TaskManager } from '@/components/dashboard/task-manager'
 
 export const dynamic = 'force-dynamic'
-
-function dateLabel(iso: string | null, tz: string): string {
-  if (!iso) return 'Saved in AskGogo'
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return 'Saved in AskGogo'
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: tz,
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  }).format(date)
-}
-
-function TaskBoard({
-  title,
-  subtitle,
-  tasks,
-  tone,
-  tz,
-  completed = false,
-}: {
-  title: string
-  subtitle: string
-  tasks: DashboardTask[]
-  tone: string
-  tz: string
-  completed?: boolean
-}) {
-  return (
-    <section className="min-h-[430px] rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/82 p-5 shadow-[0_20px_55px_rgba(62,35,18,0.05)] backdrop-blur-xl">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="font-serif text-[25px] font-semibold tracking-[-0.4px] text-gogo-ink">{title}</h2>
-          <p className="mt-1 text-[12px] text-gogo-ink-3">{subtitle}</p>
-        </div>
-        <span className={`grid h-9 min-w-9 place-items-center rounded-full px-2 text-[12px] font-bold ${tone}`}>{tasks.length}</span>
-      </div>
-
-      <div className="mt-5 space-y-3">
-        {tasks.length ? tasks.slice(0, 16).map((task) => (
-          <article key={task.id} className="rounded-[18px] border border-gogo-ink/8 bg-gogo-cream/48 px-4 py-3.5 transition hover:-translate-y-0.5 hover:bg-gogo-surface">
-            <div className="flex items-start gap-3">
-              <span className={`mt-1 h-3 w-3 shrink-0 rounded-full border-2 ${completed ? 'border-emerald-500 bg-emerald-100' : 'border-gogo-orange bg-gogo-surface'}`} />
-              <div className="min-w-0 flex-1">
-                <div className={`text-[14px] font-semibold leading-5 ${completed ? 'text-gogo-ink-3 line-through' : 'text-gogo-ink'}`}>{task.label}</div>
-                <div className="mt-1 text-[11px] text-gogo-ink-3">
-                  {completed ? `Completed ${dateLabel(task.doneAt || task.createdAt, tz)}` : `Added ${dateLabel(task.createdAt, tz)}`}
-                </div>
-              </div>
-            </div>
-          </article>
-        )) : (
-          <div className="grid min-h-[280px] place-items-center rounded-[20px] border border-dashed border-gogo-ink/10 bg-gogo-cream/25 text-center">
-            <div>
-              <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-gogo-surface text-gogo-orange">✓</div>
-              <div className="mt-3 font-serif text-[18px] font-semibold text-gogo-ink">{completed ? 'Nothing completed yet' : 'All clear'}</div>
-              <div className="mt-1 max-w-[260px] text-[12px] leading-5 text-gogo-ink-3">{completed ? 'Completed tasks will collect here quietly.' : 'No open tasks are waiting for you.'}</div>
-            </div>
-          </div>
-        )}
-      </div>
-    </section>
-  )
-}
 
 export default async function TasksPage() {
   const session = await getSession()
@@ -93,10 +30,7 @@ export default async function TasksPage() {
             <h1 className="mt-1 font-serif text-[38px] font-semibold tracking-[-0.9px] text-gogo-ink">Tasks</h1>
             <p className="mt-2 text-[13.5px] text-gogo-ink-3">{result.open.length} open · {result.completed.length} completed · separate from reminders</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <WhatsAppChip message="Gogo, add task: " label="New task" />
-            <WhatsAppChip message="Gogo, show my tasks" label="Manage with Gogo" />
-          </div>
+          <Link href="/dashboard/chat?prompt=show%20my%20tasks" className="rounded-full border border-gogo-orange/15 bg-gogo-orange/8 px-4 py-2.5 text-[11px] font-bold text-gogo-orange transition hover:bg-gogo-orange hover:text-white">Manage with Gogo →</Link>
         </div>
 
         <div className="relative mt-5 grid max-w-[520px] grid-cols-2 gap-2">
@@ -105,10 +39,7 @@ export default async function TasksPage() {
         </div>
       </header>
 
-      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <TaskBoard title="Open" subtitle="Things you still want to get done" tasks={result.open} tone="bg-gogo-orange-tint text-gogo-orange-deep" tz={tz} />
-        <TaskBoard title="Completed" subtitle="Recently cleared" tasks={result.completed} tone="bg-emerald-50 text-emerald-700" tz={tz} completed />
-      </div>
+      <TaskManager open={result.open} completed={result.completed} tz={tz} />
     </div>
   )
 }
