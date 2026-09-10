@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 const LEVELS = ['off','read','draft','ask','auto'] as const
 
 type Snapshot = {
-  runs:any[]; watchers:any[]; goals:any[]; ideas:any[]; approvals:any[]; permissions:any[]; artifacts:any[]
+  runs:any[]; watchers:any[]; goals:any[]; ideas:any[]; approvals:any[]; permissions:any[]; artifacts:any[]; runtime?:any
 }
 
 async function api(path:string, init:RequestInit={}){
@@ -87,6 +87,16 @@ export default function AgentDashboardPage(){
     finally{setBusy('')}
   }
 
+  async function resumeGoal(g:any){
+    if(!g?.id||busy)return
+    setBusy(`goal-resume:${g.id}`);setError('')
+    try{
+      const body=await api(`/api/agent/goals/${encodeURIComponent(g.id)}/resume`,{method:'POST',body:JSON.stringify({note:'Reviewed in AskGogo. Continue with the remaining safe steps.'})})
+      setResult(body?.nextAction?`Background Gogo resumed. Next: ${body.nextAction}`:'Background Gogo resumed.');await load(true)
+    }catch(e:any){setError(e?.message||'Could not resume this goal.')}
+    finally{setBusy('')}
+  }
+
   async function stopWatcher(id:string){
     setBusy(`watcher:${id}`)
     try{await api(`/api/agent/watchers/${encodeURIComponent(id)}`,{method:'DELETE'});await load(true)}
@@ -111,6 +121,8 @@ export default function AgentDashboardPage(){
 
   if(loading&&!snapshot)return <div className="mx-auto max-w-[1440px] py-16 text-sm text-gogo-ink-3">Opening Gogo Agent…</div>
 
+  const runtime=snapshot?.runtime||{}
+
   return <div className="mx-auto w-full max-w-[1440px] space-y-5 pb-10">
     <header className="relative overflow-hidden rounded-[34px] bg-[linear-gradient(135deg,#34190d_0%,#542b17_55%,#38233e_100%)] px-7 py-8 text-white shadow-[0_28px_70px_rgba(58,36,24,.20)] lg:px-9">
       <div className="pointer-events-none absolute -right-20 -top-28 h-72 w-72 rounded-full bg-gogo-orange/20 blur-[90px]" />
@@ -130,6 +142,14 @@ export default function AgentDashboardPage(){
       </div>
     </header>
 
+    <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+      <RuntimePill label="Control plane" value={`${runtime.controlPlaneRegion||'bom1'} · ${runtime.controlPlane||'Vercel'}`} />
+      <RuntimePill label="Secure computer" value={`${runtime.secureComputerRegion||'bom1'} · ${runtime.secureComputer||'Vercel Sandbox'}`} />
+      <RuntimePill label="Browser" value={runtime.browser||'Chromium + Playwright'} />
+      <RuntimePill label="Background" value={`watch ${runtime.watcherCadenceMinutes||15}m · goals ${runtime.goalReviewCadenceMinutes||15}m`} />
+      <RuntimePill label="Human auth" value={runtime.interactiveTakeover==='enabled'?'takeover enabled':'pauses safely'} />
+    </section>
+
     {error&&<div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] text-red-700">{error}</div>}
 
     <section className="relative overflow-hidden rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/92 p-6 shadow-[0_18px_55px_rgba(62,35,18,.07)]">
@@ -142,7 +162,7 @@ export default function AgentDashboardPage(){
     <div className="grid gap-5 xl:grid-cols-2">
       <Panel title="Approvals" eyebrow="You stay in control" badge={String(snapshot?.approvals?.length||0)}>{!snapshot?.approvals?.length?<Empty text="Nothing is waiting for your approval."/>:snapshot.approvals.map((a:any)=><Card key={a.id}><div className="flex items-start justify-between gap-3"><div><b>{a.title}</b><p>{a.description}</p><span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-1 text-[8px] font-bold uppercase text-amber-700">{a.risk} risk</span></div></div><div className="mt-3 flex gap-2"><button onClick={()=>resolveApproval(a,'reject')} className="btn-secondary">Reject</button><button onClick={()=>resolveApproval(a,'approve')} className="btn-primary">Approve & run</button></div></Card>)}</Panel>
       <Panel title="Background Gogo" eyebrow="Keeps watching" badge={String(snapshot?.watchers?.length||0)}>{!snapshot?.watchers?.length?<Empty text="No active watches. Ask Gogo to watch a price, deadline or change."/>:snapshot.watchers.map((w:any)=><Card key={w.id}><b>{w.title}</b><p>{w.type.replaceAll('_',' ')} · every {w.cadenceMinutes} min</p><p>Next: {w.nextCheckAt?new Date(w.nextCheckAt).toLocaleString():'—'}</p><button onClick={()=>stopWatcher(w.id)} className="mt-3 btn-secondary">Stop</button></Card>)}</Panel>
-      <Panel title="Goals" eyebrow="Longer outcomes" badge={String(snapshot?.goals?.length||0)}><div className="mb-3 flex gap-2"><input value={goal} onChange={e=>setGoal(e.target.value)} placeholder="Outcome for Background Gogo" className="input flex-1"/><button onClick={createGoal} className="btn-primary">Create</button></div>{!snapshot?.goals?.length?<Empty text="No active goals. Create one for work that should keep moving."/>:snapshot.goals.map((g:any)=><Card key={g.id}><div className="flex justify-between gap-3"><b>{g.title}</b><span>{g.progress||0}%</span></div><div className="mt-2 h-1.5 rounded-full bg-gogo-ink/8"><div className="h-1.5 rounded-full bg-gogo-orange" style={{width:`${Math.max(2,g.progress||0)}%`}}/></div><p>{g.nextAction||g.outcome}</p>{g.blockers?.length>0&&<p className="text-red-600">Blocked: {g.blockers.join(', ')}</p>}</Card>)}</Panel>
+      <Panel title="Goals" eyebrow="Longer outcomes" badge={String(snapshot?.goals?.length||0)}><div className="mb-3 flex gap-2"><input value={goal} onChange={e=>setGoal(e.target.value)} placeholder="Outcome for Background Gogo" className="input flex-1"/><button onClick={createGoal} className="btn-primary">Create</button></div>{!snapshot?.goals?.length?<Empty text="No active goals. Create one for work that should keep moving."/>:snapshot.goals.map((g:any)=><Card key={g.id}><div className="flex justify-between gap-3"><b>{g.title}</b><span>{g.progress||0}%</span></div><div className="mt-2 h-1.5 rounded-full bg-gogo-ink/8"><div className="h-1.5 rounded-full bg-gogo-orange" style={{width:`${Math.max(2,g.progress||0)}%`}}/></div><p>{g.nextAction||g.outcome}</p>{g.blockers?.length>0&&<><p className="text-red-600">Blocked: {g.blockers.join(', ')}</p><button onClick={()=>resumeGoal(g)} disabled={!!busy} className="mt-3 btn-primary">{busy===`goal-resume:${g.id}`?'Resuming…':'Reviewed · continue'}</button></>}</Card>)}</Panel>
       <Panel title="Ideas" eyebrow="Proactive suggestions" badge={String(snapshot?.ideas?.length||0)}>{!snapshot?.ideas?.length?<Empty text="No new proactive ideas right now."/>:snapshot.ideas.map((i:any)=><Card key={i.id}><b>{i.title}</b><p>{i.reason}</p><p className="text-gogo-orange">{i.expectedValue}</p></Card>)}</Panel>
     </div>
 
@@ -166,6 +186,7 @@ export default function AgentDashboardPage(){
   </div>
 }
 
+function RuntimePill({label,value}:{label:string;value:string}){return <div className="rounded-[18px] border border-gogo-ink/8 bg-gogo-surface/88 px-3.5 py-3 shadow-[0_10px_28px_rgba(58,36,24,.04)]"><div className="text-[8px] font-bold uppercase tracking-[.14em] text-gogo-ink-4">{label}</div><div className="mt-1 text-[10px] font-semibold text-gogo-ink">{value}</div></div>}
 function Panel({title,eyebrow,badge,children}:{title:string;eyebrow?:string;badge:string;children:React.ReactNode}){return <section className="rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/92 p-5 shadow-[0_16px_48px_rgba(58,36,24,.055)]"><div className="mb-4 flex items-start justify-between gap-4"><div>{eyebrow&&<div className="text-[8px] font-bold uppercase tracking-[.17em] text-gogo-orange">{eyebrow}</div>}<h2 className="mt-1 font-serif text-[23px] font-semibold tracking-[-.3px] text-gogo-ink">{title}</h2></div><span className="rounded-full border border-gogo-orange/10 bg-gogo-orange/8 px-2.5 py-1 text-[8px] font-bold uppercase tracking-wider text-gogo-orange">{badge}</span></div>{children}</section>}
 function Card({children}:{children:React.ReactNode}){return <div className="rounded-[17px] border border-gogo-ink/7 bg-gogo-cream/38 p-3.5 text-[10px] leading-4 text-gogo-ink-2 [&_b]:text-[11.5px] [&_b]:text-gogo-ink [&_p]:mt-1 [&_p]:text-[9.5px] [&_p]:text-gogo-ink-3">{children}</div>}
 function Empty({text}:{text:string}){return <div className="rounded-[18px] border border-dashed border-gogo-ink/10 bg-gogo-cream/25 px-4 py-7 text-center text-[9.5px] text-gogo-ink-4">{text}</div>}
