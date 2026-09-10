@@ -24,11 +24,20 @@ function explicitDate(text:string){
   return null
 }
 
-function explicitClock(text:string){
+function to24Hour(hour:number,minute:number,ap:string){
+  let h=hour
+  const marker=ap.toLowerCase()
+  if(marker==='pm'&&h<12)h+=12
+  if(marker==='am'&&h===12)h=0
+  if(h<0||h>23||minute<0||minute>59)return null
+  return `${pad(h)}:${pad(minute)}`
+}
+
+export function explicitMissionClock(text:string){
   const withMinutes=text.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)\b/i)
-  if(withMinutes)return `${withMinutes[1]}:${withMinutes[2]} ${withMinutes[3].toUpperCase()}`
+  if(withMinutes)return to24Hour(Number(withMinutes[1]),Number(withMinutes[2]),withMinutes[3])
   const hourOnly=text.match(/\b(\d{1,2})\s*(am|pm)\b/i)
-  if(hourOnly)return `${hourOnly[1]}:00 ${hourOnly[2].toUpperCase()}`
+  if(hourOnly)return to24Hour(Number(hourOnly[1]),0,hourOnly[2])
   return null
 }
 
@@ -56,7 +65,7 @@ function travelContext(raw:string){
 function plannedDeparture(missionText:string){
   if(!/\bplanned\s+departure(?:\s+time)?\b|\bdeparture\s+time\b/i.test(missionText))return null
   const date=explicitDate(missionText)
-  const time=explicitClock(missionText)
+  const time=explicitMissionClock(missionText)
   if(!date||!time)return null
   const timezone=/\bIST\b/i.test(missionText)?'Asia/Kolkata':null
   return {date,time,timezone}
