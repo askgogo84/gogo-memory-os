@@ -1,9 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { searchWebResults } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { classifyAgentRequest, type AgentApprovalAction } from './classifier'
 import { dispatchThroughSameBrain } from './same-brain'
+import {
+  executeVerifiedMissionMemory,
+  executeVerifiedMissionReminder,
+  executeVerifiedMissionWebSearch,
+} from './mission-tools'
 import { evaluateAgentExecutionPolicy, type AgentCapability, type AgentPermissionLevel } from './policy'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
@@ -89,14 +93,15 @@ function hasConcreteClock(text: string) {
   return /\b\d{1,2}:\d{2}\s*(?:am|pm)?\b|\b\d{1,2}\s*(?:am|pm)\b/i.test(text)
 }
 
-export function missingMissionInput(step: GeneralPlanStep): string | null {
+export function missingMissionInput(step: GeneralPlanStep, missionText = ''): string | null {
   const text = `${step.title} ${step.instruction}`
   const dependency = /selected\s+(?:flight|departure|return)|depends?\s+on\s+(?:the\s+)?(?:user'?s\s+)?flight|before\s+(?:the\s+)?(?:selected\s+)?departure|based\s+on\s+(?:the\s+)?selected\s+flight|exact\s+(?:date|time).*confirm|pause\s+here\s+to\s+confirm/i.test(text)
   if (!dependency) return null
-  if (step.tool === 'reminders' && !(hasConcreteDate(text) && hasConcreteClock(text))) {
+  const missionHasDeparture = /\bplanned\s+departure(?:\s+time)?\b|\bdeparture\s+time\b/i.test(missionText) && hasConcreteDate(missionText) && hasConcreteClock(missionText)
+  if (step.tool === 'reminders' && !(hasConcreteDate(text) && hasConcreteClock(text)) && !missionHasDeparture) {
     return 'Choose the departure date and time first so I can place the reminder exactly 24 hours before it.'
   }
-  if (step.tool === 'calendar' && !hasConcreteDate(text)) {
+  if (step.tool === 'calendar' && !hasConcreteDate(text) && !hasConcreteDate(missionText)) {
     return 'Choose the trip dates or flight first so I can prepare the correct calendar event.'
   }
   return null
@@ -152,7 +157,7 @@ export function shouldUseGeneralPlanner(text: string) {
 
 export async function planGeneralAgentRequest(text: string): Promise<GeneralPlan | null> {
   if (!shouldUseGeneralPlanner(text)) return null
-  const prompt = `You are the planning layer for AskGogo, a private personal agent. Turn the user's OUTCOME into 2-${MAX_STEPS} concrete executable steps using ONLY these tools:\n\nmemory, files, reminders, lists, tasks, email, calendar, web_search, travel, artifact\n\nMission rules:\n- Cover every explicit deliverable in the user's request. Do not collapse a multi-part mission into one search or one prose answer.\n- Prefer safe, reversible work first. Put consequential actions such as calendar changes, sends, bookings or external submissions after safe preparation so useful work can finish before an approval pause.\n- If the user says to use what AskGogo already knows, include a memory step near the beginning. Never reveal sensitive identifiers in the plan.\n- If the user explicitly names multiple tasks, use separate task steps when needed so every named task is represented. Each task instruction must literally include the task text; do not rely on hidden context from another step.\n- If the user requests a packing/list deliverable, include a lists step.\n- If the user requests a reminder, include a reminders step. If its exact trigger depends on a future choice that is not known yet, do not invent a date or flight; make the dependency explicit so execution pauses for the missing input.\n- If the user requests a brief/report/artifact, place the artifact after the safe preparatory work but BEFORE a later approval-required or unresolved-dependency step when the artifact can summarize the prepared plan. Do not block a useful draft artifact behind an approval unless it explicitly requires post-execution results.\n- The plan sees ONLY this user request. Never assume hidden values, credentials, document numbers or account data.\n- Each instruction must be self-contained and executable by that tool.\n- Use web_search only for public-web research; it can read/search but cannot submit forms.\n- email can read/draft/send, but sending will be stopped by a deterministic approval gate.\n- calendar can read/create/change; writes will be stopped by approval.\n- travel can read/organize; bookings will be stopped by approval.\n- payments/purchases are NOT an available planner tool; if the user asks to spend money, prepare only and let deterministic browser/travel execution stop before purchase.\n- artifact creates a private structured output from the results of previous steps.\n- Do not put secrets or guessed private values into instructions.\n- Return JSON only.\n\nShape:\n{"title":"short outcome","reason":"why multiple tools are needed","steps":[{"tool":"memory","title":"Review relevant context","instruction":"Find relevant saved context for this trip without revealing sensitive identifiers."},{"tool":"tasks","title":"Create check-in task","instruction":"Create task: Complete web check-in"},{"tool":"artifact","title":"Create trip brief","instruction":"Create a concise private brief from this run","artifactType":"trip","artifactTitle":"Mumbai work trip brief"}]}\n\nUser request: ${JSON.stringify(String(text || '').slice(0, 1800))}`
+  const prompt = `You are the planning layer for AskGogo, a private personal agent. Turn the user's OUTCOME into 2-${MAX_STEPS} concrete executable steps using ONLY these tools:\n\nmemory, files, reminders, lists, tasks, email, calendar, web_search, travel, artifact\n\nMission rules:\n- Cover every explicit deliverable in the user's request. Do not collapse a multi-part mission into one search or one prose answer.\n- Prefer safe, reversible work first. Put consequential actions such as calendar changes, sends, bookings or external submissions after safe preparation so useful work can finish before an approval pause.\n- If the user says to use what AskGogo already knows, include a memory step near the beginning. Never reveal sensitive identifiers in the plan.\n- If the user explicitly names multiple tasks, use separate task steps when needed so every named task is represented. Each task instruction must literally include the task text; do not rely on hidden context from another step.\n- If the user requests a packing/list deliverable, include a lists step.\n- If the user requests a reminder, include a reminders step. If its exact trigger depends on a future choice that is not known yet, do not invent a date or flight; make the dependency explicit so execution pauses for the missing input.\n- For flight research, phrase the executable instruction as “Search flights from ORIGIN to DESTINATION on DATE” so route direction and date can be verified deterministically.\n- If the user requests a brief/report/artifact, place the artifact after the safe preparatory work but BEFORE a later approval-required or unresolved-dependency step when the artifact can summarize the prepared plan. Do not block a useful draft artifact behind an approval unless it explicitly requires post-execution results.\n- The plan sees ONLY this user request. Never assume hidden values, credentials, document numbers or account data.\n- Each instruction must be self-contained and executable by that tool.\n- Use web_search only for public-web research; it can read/search but cannot submit forms.\n- email can read/draft/send, but sending will be stopped by a deterministic approval gate.\n- calendar can read/create/change; writes will be stopped by approval.\n- travel can read/organize; bookings will be stopped by approval.\n- payments/purchases are NOT an available planner tool; if the user asks to spend money, prepare only and let deterministic browser/travel execution stop before purchase.\n- artifact creates a private structured output from the results of previous steps.\n- Do not put secrets or guessed private values into instructions.\n- Return JSON only.\n\nShape:\n{"title":"short outcome","reason":"why multiple tools are needed","steps":[{"tool":"memory","title":"Review relevant context","instruction":"Find relevant saved context for this trip without revealing sensitive identifiers."},{"tool":"web_search","title":"Research flight options","instruction":"Search flights from Bengaluru to Mumbai on 15 September 2026"},{"tool":"tasks","title":"Create check-in task","instruction":"Create task: Complete web check-in"},{"tool":"artifact","title":"Create trip brief","instruction":"Create a concise private brief from this run","artifactType":"trip","artifactTitle":"Mumbai work trip brief"}]}\n\nUser request: ${JSON.stringify(String(text || '').slice(0, 1800))}`
   try {
     const result = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
@@ -256,20 +261,16 @@ async function executeTaskStep(actor: AgentActor, step: GeneralPlanStep) {
   return { text:`Created task: ${text}`, output:{ todoId:String(data.id), text:String(data.text||text), reused:false, verifiedStore:'todos' } }
 }
 
-async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPlanStep;stepId:string;messageId?:string|number|null}) {
+async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPlanStep;stepId:string;missionText:string;messageId?:string|number|null}) {
   const { actor, step } = params
-  if (step.tool === 'web_search') {
-    const results = await searchWebResults(step.instruction)
-    return {
-      text: results.length ? `Found ${results.length} public web results.` : 'No useful public web results found.',
-      output: { results: results.slice(0,5).map(r=>({title:r.title,url:r.url,snippet:r.snippet.slice(0,500)})) },
-    }
-  }
+  if (step.tool === 'web_search') return executeVerifiedMissionWebSearch(step)
   if (step.tool === 'artifact') {
     const artifactId = await createArtifact(actor.legacyTelegramId, params.runId, step)
     return { text:'Created a private AskGogo artifact.', output:{ artifactId, type:step.artifactType || 'research_brief' } }
   }
   if (step.tool === 'tasks') return executeTaskStep(actor, step)
+  if (step.tool === 'reminders') return executeVerifiedMissionReminder({actor,step,missionText:params.missionText,messageId:params.messageId})
+  if (step.tool === 'memory') return executeVerifiedMissionMemory({actor,step,missionText:params.missionText,messageId:params.messageId})
   const result = await dispatchThroughSameBrain({ actor, text:step.instruction, messageId:params.messageId })
   return { text:result.text, output:{ reply:String(result.text || '').slice(0,3500), handledBy:result.handledBy } }
 }
@@ -310,7 +311,7 @@ async function pauseForInput(params:{actor:AgentActor;runId:string;stepId:string
   return {runId:params.runId,status:'paused',capability:capabilityForStep(params.step),risk:'low',text:`I completed everything I safely could. I need one detail before I continue: ${params.question}`,inputRequired:true,handledBy:'general-plan'}
 }
 
-async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan:GeneralPlan;stepIds:string[];startOrdinal:number;messageId?:string|number|null;approvedOrdinal?:number}) : Promise<GeneralPlanResult> {
+async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan:GeneralPlan;stepIds:string[];startOrdinal:number;missionText:string;messageId?:string|number|null;approvedOrdinal?:number}) : Promise<GeneralPlanResult> {
   const tg = params.actor.legacyTelegramId
   let highestRisk:'low'|'medium'|'high'='low'
   let lastText=''
@@ -318,7 +319,7 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
     const ordinal=index+1
     const step=params.plan.steps[index]
     const stepId=params.stepIds[index]
-    const question = missingMissionInput(step)
+    const question = missingMissionInput(step, params.missionText)
     if (question) return pauseForInput({actor:params.actor,runId:params.runId,stepId,ordinal,totalSteps:params.plan.steps.length,step,question})
 
     const classified=classifyStep(step)
@@ -342,7 +343,7 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
     }
     await updateStep(stepId,'running')
     try {
-      const result=await executeTool({actor:params.actor,runId:params.runId,step,stepId,messageId:params.messageId})
+      const result=await executeTool({actor:params.actor,runId:params.runId,step,stepId,missionText:params.missionText,messageId:params.messageId})
       lastText=result.text
       await updateStep(stepId,'completed',result.output)
       const progress=Math.round((ordinal/params.plan.steps.length)*100)
@@ -379,7 +380,7 @@ export async function tryRunGeneralPlan(params:{actor:AgentActor;surface:AgentSu
   for(let i=0;i<plan.steps.length;i++)stepIds.push(await addStep(tg,runId,i+1,plan.steps[i]))
   await supabaseAdmin.from('agent_runs').update({metadata_json:{input_text:String(params.text).slice(0,2000),plan_type:'general_multi_tool',plan,stepIds}}).eq('id',runId).eq('telegram_id',String(tg))
   await activity(tg,runId,'plan_created',`Gogo created a ${plan.steps.length}-step plan.`,{tools:plan.steps.map(s=>s.tool),surface:params.surface})
-  return executePlanFromOrdinal({actor:params.actor,runId,plan,stepIds,startOrdinal:1,messageId:params.messageId})
+  return executePlanFromOrdinal({actor:params.actor,runId,plan,stepIds,startOrdinal:1,missionText:params.text,messageId:params.messageId})
 }
 
 export async function resumeApprovedGeneralPlan(params:{actor:AgentActor;runId:string;messageId?:string|number|null}):Promise<GeneralPlanResult>{
@@ -396,7 +397,7 @@ export async function resumeApprovedGeneralPlan(params:{actor:AgentActor;runId:s
   const ordinal=Number(approval?.execution_payload?.ordinal||0)
   if(!approval||!ordinal||ordinal>plan.steps.length)throw new Error('general_plan_approval_missing')
   await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Approval received. Gogo is continuing the plan.',updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
-  const result=await executePlanFromOrdinal({actor:params.actor,runId:params.runId,plan,stepIds,startOrdinal:ordinal,messageId:params.messageId,approvedOrdinal:ordinal})
+  const result=await executePlanFromOrdinal({actor:params.actor,runId:params.runId,plan,stepIds,startOrdinal:ordinal,missionText:String(meta.input_text||''),messageId:params.messageId,approvedOrdinal:ordinal})
   if(result.status!=='waiting_approval')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approval.id).eq('telegram_id',String(tg))
   return result
 }
