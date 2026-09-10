@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createHash } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { detectHumanAuthGate } from './browser-auth-gate'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 const PLAYWRIGHT_VERSION = '1.63.0'
@@ -28,6 +29,8 @@ export type SecureBrowserResult = {
   forms:Array<{action:string;method:string;inputs:Array<{selector:string;name:string;type:string;label:string}>}>
   actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed'}>
   sandboxName:string
+  blockReason?: 'human_auth_required'
+  authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
 }
 
 function safeText(value:unknown,max=1200){
@@ -44,8 +47,6 @@ function allowedHosts(url:string){
   if(u.protocol!=='https:'&&u.protocol!=='http:')throw new Error('browser_url_not_http')
   const hostname=u.hostname.toLowerCase()
   if(!hostname||hostname==='localhost'||hostname.endsWith('.local'))throw new Error('browser_private_host_blocked')
-  // The sandbox firewall also blocks direct private-network access. Limit the
-  // browser to the requested site family rather than giving agent code open egress.
   return {hostname,allow:{[hostname]:[],[`*.${hostname}`]:[]}}
 }
 
@@ -57,6 +58,9 @@ const clean = s => String(s||'').replace(/\s+/g,' ').trim();
 async function model(page){
   return await page.evaluate(() => {
     const clean = s => String(s||'').replace(/\s+/g,' ').trim();
+    const visible = el => {
+      try { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'; } catch { return true; }
+    };
     const inputs = el => {
       const id=el.id||''; const name=el.getAttribute('name')||''; const type=(el.getAttribute('type')||el.tagName||'').toLowerCase();
       const label=id ? clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||'') : '';
@@ -68,10 +72,10 @@ async function model(page){
     return {
       url:location.href,title:document.title,
       text:clean(document.body?.innerText||'').slice(0,18000),
-      links:Array.from(document.querySelectorAll('a[href]')).slice(0,80).map(a=>({text:clean(a.textContent).slice(0,160),href:a.href})),
-      forms:Array.from(document.forms).slice(0,12).map(f=>({
+      links:Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0,80).map(a=>({text:clean(a.textContent).slice(0,160),href:a.href})),
+      forms:Array.from(document.forms).filter(visible).slice(0,12).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
-        inputs:Array.from(f.querySelectorAll('input,textarea,select')).slice(0,50).map(inputs)
+        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,50).map(inputs)
       }))
     };
   });
@@ -95,7 +99,7 @@ async function isSubmit(page,selector){
         else if(a.kind==='fill') await page.locator(a.selector).first().fill(a.value,{timeout:12000});
         else if(a.kind==='select') await page.locator(a.selector).first().selectOption(a.value,{timeout:12000});
         else if(a.kind==='check') await page.locator(a.selector).first().check({timeout:12000});
-        else if(a.kind==='wait') await page.waitForTimeout(Math.min(5000,Math.max(100,Number(a.ms)||500)));
+        else if(a.kind==='wait') await page.waitForTimeout(Math.min(5000,Math.max(100,Number(a.ms)||500));
         else if(a.kind==='click'){
           if(payload.mode!=='execute' && await isSubmit(page,a.selector)){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
           await page.locator(a.selector).first().click({timeout:12000});
@@ -114,10 +118,6 @@ async function isSubmit(page,selector){
 
 async function getComputer(userId:string,targetUrl:string){
   const name=userSandboxName(userId)
-  // Setup egress is deliberately narrow. npm/Playwright hosts are available only
-  // while the browser dependency is being bootstrapped; target-site egress is set
-  // immediately before running user work. India launch defaults the isolated VM
-  // to Mumbai (bom1), while allowing an explicit environment override later.
   const setupPolicy={allow:{
     'registry.npmjs.org':[], '*.npmjs.org':[], 'cdn.playwright.dev':[], '*.playwright.dev':[],
     'playwright.azureedge.net':[], '*.azureedge.net':[],
@@ -187,11 +187,25 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
   const target=new URL(params.url)
   if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
   const first=await inspect(params.userId,target.toString())
+
+  // Passwords, OTPs, passkeys, CAPTCHAs and payment authentication are human
+  // boundaries. Stop before the model plans any fill/click actions. The persistent
+  // browser profile remains in the user's sandbox for future secure takeover.
+  const authGate=detectHumanAuthGate(first.page)
+  if(authGate.required){
+    await first.sandbox.stop().catch(()=>{})
+    return {
+      status:'blocked',url:String(first.page.url||target),title:safeText(first.page.title,300),
+      summary:authGate.message||'Human authentication is required before Gogo can continue.',
+      pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',
+      forms:[],actions:[],sandboxName:first.name,blockReason:'human_auth_required',authReason:authGate.reason,
+    }
+  }
+
   const actions=await planActions(params.objective,first.page,params.mode)
   let page=first.page
   let actionLog:any[]=[]
   if(actions.length){
-    // Re-apply the target-only network policy before executing the planned work.
     const {allow}=allowedHosts(target.toString());await first.sandbox.updateNetworkPolicy({allow} as any)
     const payload=Buffer.from(JSON.stringify({url:target.toString(),mode:params.mode,actions})).toString('base64')
     const result=await first.sandbox.runCommand('node',['gogo-browser.js',payload])
