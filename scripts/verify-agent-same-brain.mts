@@ -34,4 +34,20 @@ assert.match(workspace,/MAX_FILE_TEXT = 60_000/)
 assert.match(workspace,/redactSecretShapedText/)
 assert.doesNotMatch(workspace,/console\.log\([^\n]*(?:gmail_access_token|refreshToken|Authorization)/)
 
-console.log('✅ Agent planner step dispatch is non-recursive and uses shared deterministic stores + bounded Workspace reads')
+// "Use the attached brief" must read the actual bounded attachment, never use a
+// Gmail snippet as a substitute. Supported office/PDF/text formats are extracted
+// server-side; multiple equally plausible attachments pause rather than guess.
+assert.match(workspace,/MAX_ATTACHMENT_BYTES = 8 \* 1024 \* 1024/)
+assert.match(workspace,/format=full/)
+assert.match(workspace,/\/attachments\//)
+assert.match(workspace,/readWorkspaceEmailBrief/)
+assert.match(workspace,/pdf-parse/)
+assert.match(workspace,/jszip/)
+assert.match(workspace,/xlsx/)
+assert.match(workspace,/status:'ambiguous'/)
+assert.match(sameBrain,/readWorkspaceEmailBrief/)
+assert.match(sameBrain,/no readable attachment matched the brief request/)
+assert.match(sameBrain,/I won't guess which brief you mean/)
+assert.match(sameBrain,/I did not substitute the email snippet for the document/)
+
+console.log('✅ Agent planner dispatch uses bounded Workspace reads + real Gmail attachment briefs')
