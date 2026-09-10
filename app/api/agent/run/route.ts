@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { runAgentCommand } from '@/lib/agent/orchestrator'
@@ -31,6 +32,35 @@ export async function POST(request: Request) {
     const respond = async (result:any, status:number) => {
       await attachRunToThread(session.telegramId, result?.runId, thread?.id || null)
       return NextResponse.json(result, { status })
+    }
+
+    // Browser retries / impatient double-clicks must not create two live missions and
+    // two approval cards. Reuse an identical active run started in the last 90 seconds.
+    // We intentionally dedupe only ACTIVE runs, so intentionally repeating a completed
+    // mission later still works.
+    const cutoff = new Date(Date.now() - 90_000).toISOString()
+    const { data: recentActive, error: dedupeError } = await supabaseAdmin
+      .from('agent_runs')
+      .select('id,status,title,summary,capability,metadata_json,started_at')
+      .eq('telegram_id', String(session.telegramId))
+      .in('status', ['queued','running','waiting_approval'])
+      .gte('started_at', cutoff)
+      .order('started_at', { ascending: false })
+      .limit(8)
+    if (dedupeError) console.error('AGENT_RUN_DEDUPE_READ_FAILED:', dedupeError.message)
+    const duplicate = (recentActive || []).find((row:any) =>
+      String(row?.metadata_json?.input_text || '').trim() === text
+    )
+    if (duplicate?.id) {
+      return respond({
+        runId: String(duplicate.id),
+        status: duplicate.status,
+        capability: duplicate.capability || 'memory',
+        risk: 'low',
+        text: duplicate.summary || 'Gogo is already working on this outcome.',
+        handledBy: 'active-run-dedupe',
+        deduplicated: true,
+      }, duplicate.status === 'waiting_approval' ? 202 : 200)
     }
 
     // Explicit background watches and explicit URL/browser commands are deterministic
