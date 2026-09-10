@@ -5,6 +5,7 @@ const page = readFileSync(new URL('../app/dashboard/(app)/tasks/page.tsx', impor
 const manager = readFileSync(new URL('../components/dashboard/task-manager.tsx', import.meta.url), 'utf8')
 const route = readFileSync(new URL('../app/api/dashboard/tasks/route.ts', import.meta.url), 'utf8')
 
+// Release gate: Tasks must remain a first-class in-dashboard to-do surface.
 let failed = 0
 function check(ok:boolean, label:string){
   if(ok) console.log(`✓ ${label}`)
