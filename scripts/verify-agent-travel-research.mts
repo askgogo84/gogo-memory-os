@@ -1,4 +1,5 @@
 import { buildTravelResearchContext, curateTravelResults, isPublicTravelResearchRequest } from '../lib/agent/travel-research'
+import { sanitizeTravelResearchText } from '../lib/agent/travel-research-sanitize'
 
 const cases: Array<[string, boolean]> = [
   ['find a cheap flight to mumbai next week from bangalore', true],
@@ -23,7 +24,8 @@ for (const [text, expected] of cases) {
 }
 
 const fixedNow = new Date('2026-09-10T04:00:00Z')
-const route = buildTravelResearchContext('find a cheap flight to mumbai next week from bangalore', fixedNow)
+const request = 'find a cheap flight to mumbai next week from bangalore'
+const route = buildTravelResearchContext(request, fixedNow)
 if (route.origin?.code !== 'BLR' || route.destination?.code !== 'BOM' || route.routeLabel !== 'BLR → BOM' || route.startDate !== '2026-09-14' || route.endDate !== '2026-09-20') {
   failed++
   console.error('✗ route/date parsing failed', route)
@@ -61,5 +63,23 @@ if (!inr || inr.inrFare !== '₹4,321' || inr.dateRelevance !== 'matched') {
   console.error('✗ date-matched INR fare signal was not preserved', inr)
 } else console.log('✓ date-matched INR fare signal is preserved with verification caveat')
 
+const raw = `Current public search · BLR → BOM · 14 Sep 2026 – 20 Sep 2026\nI did not use your saved tickets.\n\n1. Ixigo — Bengaluru to Mumbai Flights, Fares @₹4106\nDate signal: 14 Sep 2026, 20 Sep 2026 · inside your requested window\nPublic snippet mentions ₹4106 · verify on the source before booking\n14 Sep 2026 fare ₹5,109\nOpen source: https://ixigo.example/blr-bom\n\n2. Momondo — Cheap Flights from Bengaluru to Mumbai\nDate signal: 20 Sep 2026 · inside your requested window\nINR fare: not verified in the public snippet\n20 Sep 2026 option. 26 Sep 2026 and 27 Sep 2026 options also shown.\nOpen source: https://momondo.example/blr-bom\n\n3. EaseMyTrip — Bangalore to Mumbai Flight Tickets from ₹4333\nDate: route page found · exact requested date not verified\nPublic snippet mentions ₹4333 · verify on the source before booking\nGeneral route page with fare ₹4,984 but no requested date.\nOpen source: https://easemytrip.example/blr-bom\n\nThese are public-web sources, not guaranteed live inventory.`
+
+const hardened = sanitizeTravelResearchText(raw, request, fixedNow)
+if (hardened.includes('Momondo') || hardened.includes('26 Sep 2026') || hardened.includes('27 Sep 2026')) {
+  failed++
+  console.error('✗ mixed-week result survived hardening', hardened)
+} else console.log('✓ mixed-week snippets are excluded entirely')
+
+if (hardened.includes('₹4333') || hardened.includes('₹4,984')) {
+  failed++
+  console.error('✗ unverified-date INR fare survived hardening', hardened)
+} else console.log('✓ unverified-date INR fares are suppressed')
+
+if (!hardened.includes('Ixigo') || !hardened.includes('₹4106')) {
+  failed++
+  console.error('✗ valid in-window fare was removed', hardened)
+} else console.log('✓ in-window INR fare remains visible with verification language')
+
 if (failed) process.exit(1)
-console.log('✅ Agent travel research routing, date and fare curation checks passed')
+console.log('✅ Agent travel research routing, date, fare and output hardening checks passed')
