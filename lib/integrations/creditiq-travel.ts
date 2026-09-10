@@ -2,6 +2,19 @@ import { createHmac } from 'node:crypto'
 
 type Cabin = 'economy' | 'premium_economy' | 'business' | 'first'
 
+type CreditIQIdentity = {
+  linked: boolean
+  pointsAware: boolean
+  walletCards: number
+  verifiedBalances: number
+}
+
+type CreditIQBookingPolicy = {
+  mode: string
+  requiresRepriceBeforeBooking: boolean
+  irreversiblePointsTransferAllowed: boolean
+}
+
 export type CreditIQFlightResult = {
   id: string
   price: number | null
@@ -28,17 +41,8 @@ export type CreditIQFlightSearch = {
   coverage: Record<string, unknown> | null
   flights: CreditIQFlightResult[]
   fetchedAt: string
-  identity?: {
-    linked: boolean
-    pointsAware: boolean
-    walletCards: number
-    verifiedBalances: number
-  }
-  bookingPolicy?: {
-    mode: string
-    requiresRepriceBeforeBooking: boolean
-    irreversiblePointsTransferAllowed: boolean
-  }
+  identity?: CreditIQIdentity
+  bookingPolicy?: CreditIQBookingPolicy
   requiresServiceAuth?: boolean
 }
 
@@ -48,6 +52,8 @@ export type CreditIQHotelSearch = {
   coverage: Record<string, unknown> | null
   hotels: any[]
   fetchedAt: string
+  identity?: CreditIQIdentity
+  bookingPolicy?: CreditIQBookingPolicy
   requiresServiceAuth?: boolean
 }
 
@@ -86,6 +92,25 @@ function signedServiceHeaders(rawBody: string) {
     'X-Gogo-Timestamp': timestamp,
     'X-Gogo-Signature': signature,
     'User-Agent': 'AskGogo-Travel-Bridge/2.0',
+  }
+}
+
+function parseIdentity(value: any): CreditIQIdentity | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  return {
+    linked: value.linked === true,
+    pointsAware: value.pointsAware === true,
+    walletCards: Math.max(0, Number(value.walletCards || 0)),
+    verifiedBalances: Math.max(0, Number(value.verifiedBalances || 0)),
+  }
+}
+
+function parseBookingPolicy(value: any): CreditIQBookingPolicy | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  return {
+    mode: clean(value.mode || 'provider_handoff', 80),
+    requiresRepriceBeforeBooking: value.requiresRepriceBeforeBooking !== false,
+    irreversiblePointsTransferAllowed: false,
   }
 }
 
@@ -180,17 +205,8 @@ export async function searchCreditIQLiveFlights(params: {
       coverage: body?.inventory?.coverage && typeof body.inventory.coverage === 'object' ? body.inventory.coverage : null,
       flights,
       fetchedAt: clean(body?.inventory?.fetchedAt || new Date().toISOString(), 80),
-      identity: body?.identity && typeof body.identity === 'object' ? {
-        linked: body.identity.linked === true,
-        pointsAware: body.identity.pointsAware === true,
-        walletCards: Math.max(0, Number(body.identity.walletCards || 0)),
-        verifiedBalances: Math.max(0, Number(body.identity.verifiedBalances || 0)),
-      } : undefined,
-      bookingPolicy: body?.bookingPolicy && typeof body.bookingPolicy === 'object' ? {
-        mode: clean(body.bookingPolicy.mode || 'provider_handoff', 80),
-        requiresRepriceBeforeBooking: body.bookingPolicy.requiresRepriceBeforeBooking !== false,
-        irreversiblePointsTransferAllowed: false,
-      } : undefined,
+      identity: parseIdentity(body?.identity),
+      bookingPolicy: parseBookingPolicy(body?.bookingPolicy),
     }
   } catch {
     return null
@@ -200,9 +216,11 @@ export async function searchCreditIQLiveFlights(params: {
 }
 
 /**
- * Signed, read-only hotel bridge into CreditIQ's existing Booking.com / Skyscanner /
- * Hotelbeds provider orchestration. The shared secret is server-only; no end-user
- * CreditIQ cookie/session is copied into AskGogo.
+ * Signed, read-only hotel + rewards bridge into CreditIQ's existing Booking.com /
+ * Skyscanner / Hotelbeds provider orchestration. The linked user id is an opaque
+ * CreditIQ identity only; wallet/card data remains inside CreditIQ and comes back
+ * as a compact decision summary per property. Exact award-night availability is
+ * never inferred from a chain match, and every provider handoff must be repriced.
  */
 export async function searchCreditIQLiveHotels(params: {
   destination: string
@@ -210,14 +228,18 @@ export async function searchCreditIQLiveHotels(params: {
   checkout: string
   adults?: number
   rooms?: number
+  userLinkId?: string | null
 }): Promise<CreditIQHotelSearch | null> {
   const rawBody = JSON.stringify({
+    userLinkId: clean(params.userLinkId || '', 200) || null,
+    type: 'hotel',
     destination: clean(params.destination, 160),
     checkin: clean(params.checkin, 10),
     checkout: clean(params.checkout, 10),
     adults: Math.max(1, Math.min(9, Number(params.adults || 1))),
     rooms: Math.max(1, Math.min(5, Number(params.rooms || 1))),
     limit: 30,
+    preferences: null,
   })
   const headers = signedServiceHeaders(rawBody)
   if (!headers) {
@@ -225,7 +247,7 @@ export async function searchCreditIQLiveHotels(params: {
   }
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 15_000)
+  const timeout = setTimeout(() => controller.abort(), 20_000)
   try {
     const response = await fetch(`${baseUrl()}/api/internal/gogo/travel/hotels`, {
       method: 'POST',
@@ -236,14 +258,21 @@ export async function searchCreditIQLiveHotels(params: {
     })
     if (!response.ok) return null
     const body: any = await response.json().catch(() => null)
+    if (!body || body?.contract !== 'gogo-creditiq-travel-v1') return null
     const hotels = Array.isArray(body?.hotels) ? body.hotels : Array.isArray(body?.offers) ? body.offers : []
     if (!hotels.length) return null
+    const source = clean(body?.inventory?.source || body?.coverage?.provider || body?.source || 'creditiq',80)
+    const live = body?.inventory?.live === true
     return {
-      live:true,
-      source:clean(body?.coverage?.provider || body?.source || 'creditiq',80),
-      coverage:body?.coverage && typeof body.coverage === 'object' ? body.coverage : null,
+      live,
+      source,
+      coverage:body?.inventory?.coverage && typeof body.inventory.coverage === 'object'
+        ? body.inventory.coverage
+        : body?.coverage && typeof body.coverage === 'object' ? body.coverage : null,
       hotels:hotels.slice(0,50),
-      fetchedAt:clean(body?.coverage?.fetched_at || new Date().toISOString(),80),
+      fetchedAt:clean(body?.inventory?.fetchedAt || body?.coverage?.fetched_at || new Date().toISOString(),80),
+      identity: parseIdentity(body?.identity),
+      bookingPolicy: parseBookingPolicy(body?.bookingPolicy),
     }
   } catch {
     return null
