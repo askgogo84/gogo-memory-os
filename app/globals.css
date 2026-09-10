@@ -1,41 +1,43 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f5f3ee;
-  --foreground: #0b0908;
+  --background: #f6f1e8;
+  --foreground: #16130f;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-manrope);
+  --font-sans: var(--font-onest);
   --font-mono: var(--font-geist-mono);
-  --font-serif: var(--font-instrument-serif);
+  --font-serif: var(--font-newsreader);
 }
 
 @theme {
-  /* Canonical AskGogo website palette. */
+  /* Final AskGogo website palette — shared by askgogo.in and app.askgogo.in. */
   --color-gogo-orange: #ef7a27;
   --color-gogo-orange-deep: #d86417;
+  --color-gogo-teal: #157a6e;
+  --color-gogo-teal-soft: #dff1ed;
   --color-gogo-plum: #76556f;
   --color-gogo-plum-deep: #53384f;
-  --color-gogo-plum-tint: #f0e9ef;
-  --color-gogo-ink: #0b0908;
-  --color-gogo-ink-2: #4f4a45;
-  --color-gogo-ink-3: #7b746d;
-  --color-gogo-ink-4: #a29b94;
+  --color-gogo-plum-tint: #eee6ed;
+  --color-gogo-ink: #16130f;
+  --color-gogo-ink-2: #3a342d;
+  --color-gogo-ink-3: #5c554c;
+  --color-gogo-ink-4: #8a8178;
   --color-gogo-sand: #d9b08f;
   --color-gogo-orange-tint: #fff0e5;
-  --color-gogo-cream: #f5f3ee;
-  --color-gogo-rail: #efe9e1;
+  --color-gogo-cream: #f6f1e8;
+  --color-gogo-rail: #eee7dc;
   --color-gogo-surface: #fffdf9;
   --ease-calm: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(:has(.dashboard-root)) {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #0e1614;
+    --foreground: #f6f1e8;
   }
 }
 
@@ -52,6 +54,8 @@
 .dashboard-root[data-theme='dark'] {
   --color-gogo-orange: #f39a46;
   --color-gogo-orange-deep: #ffad63;
+  --color-gogo-teal: #8fe3cf;
+  --color-gogo-teal-soft: #203d38;
   --color-gogo-plum: #c6a1cf;
   --color-gogo-plum-deep: #dfbfe6;
   --color-gogo-plum-tint: #352b3b;
@@ -61,43 +65,43 @@
   --color-gogo-ink-4: #826f66;
   --color-gogo-sand: #7d5946;
   --color-gogo-orange-tint: #392a20;
-  --color-gogo-cream: #171311;
-  --color-gogo-rail: #201a17;
-  --color-gogo-surface: #27211e;
-  --background: #171311;
+  --color-gogo-cream: #121a18;
+  --color-gogo-rail: #18221f;
+  --color-gogo-surface: #202a27;
+  --background: #121a18;
   --foreground: #f7eee7;
   color-scheme: dark;
 }
 
 .dashboard-shell {
   background-image:
-    radial-gradient(circle at 78% 10%, rgba(118,85,111,.07), transparent 34%),
-    radial-gradient(circle at 14% 88%, rgba(239,122,39,.06), transparent 30%);
+    radial-gradient(circle at 78% 8%, rgba(21,122,110,.09), transparent 32%),
+    radial-gradient(circle at 12% 92%, rgba(239,122,39,.07), transparent 30%);
 }
 
 .dashboard-root.theme-dark .dashboard-shell,
 .dashboard-root[data-theme='dark'] .dashboard-shell {
   background-image:
-    radial-gradient(circle at 78% 10%, rgba(118,85,111,.15), transparent 36%),
-    radial-gradient(circle at 15% 88%, rgba(239,122,39,.08), transparent 34%);
+    radial-gradient(circle at 78% 8%, rgba(143,227,207,.10), transparent 35%),
+    radial-gradient(circle at 12% 92%, rgba(239,122,39,.08), transparent 32%);
 }
 
 .dashboard-rail {
   background:
-    radial-gradient(circle at 20% 0%, rgba(255,255,255,.94), transparent 34%),
-    linear-gradient(180deg, #f8f5f0 0%, #f1ece5 58%, #ece5dd 100%);
-  box-shadow: inset -1px 0 0 rgba(11,9,8,.035), 16px 0 45px rgba(45,32,22,.035);
+    radial-gradient(circle at 18% 0%, rgba(255,255,255,.94), transparent 33%),
+    linear-gradient(180deg, #f9f5ed 0%, #f2eadf 58%, #ece3d8 100%);
+  box-shadow: inset -1px 0 0 rgba(22,19,15,.04), 16px 0 45px rgba(45,32,22,.035);
 }
 
 .dashboard-brand-wordmark {
-  font-family: var(--font-instrument-serif), Georgia, serif;
+  font-family: var(--font-newsreader), Georgia, serif;
   letter-spacing: -.025em;
 }
 
 .dashboard-nav-active {
-  border-color: rgba(239,122,39,.22);
-  background: linear-gradient(135deg, rgba(255,253,249,.98), rgba(255,240,229,.92));
-  box-shadow: 0 10px 28px rgba(45,32,22,.07), inset 0 0 0 1px rgba(255,255,255,.44);
+  border-color: rgba(21,122,110,.22);
+  background: linear-gradient(135deg, rgba(255,253,249,.99), rgba(223,241,237,.76));
+  box-shadow: 0 10px 28px rgba(45,32,22,.07), inset 0 0 0 1px rgba(255,255,255,.52);
 }
 
 .dashboard-nav-active::before {
@@ -108,63 +112,63 @@
   bottom: 9px;
   width: 3px;
   border-radius: 999px;
-  background: linear-gradient(180deg, #ef7a27, #d86417);
+  background: linear-gradient(180deg, #157a6e, #0f665c);
 }
 
 .dashboard-rail-status {
-  background: linear-gradient(145deg, #2c1a13, #211612 58%, #3a2b38 130%);
+  background: linear-gradient(145deg, #122722, #17332d 58%, #221d20 130%);
   color: #fffaf5;
 }
 
 .dashboard-root.theme-dark .dashboard-rail,
 .dashboard-root[data-theme='dark'] .dashboard-rail {
   background:
-    radial-gradient(circle at 18% 0%, rgba(99,77,66,.28), transparent 32%),
-    linear-gradient(180deg, #221b18 0%, #1c1715 62%, #181311 100%);
+    radial-gradient(circle at 18% 0%, rgba(73,110,101,.18), transparent 32%),
+    linear-gradient(180deg, #17211e 0%, #141d1b 62%, #111816 100%);
   box-shadow: inset -1px 0 0 rgba(255,255,255,.04), 16px 0 45px rgba(0,0,0,.12);
 }
 
 .dashboard-root.theme-dark .dashboard-nav-active,
 .dashboard-root[data-theme='dark'] .dashboard-nav-active {
-  border-color: rgba(243,154,70,.22);
-  background: linear-gradient(135deg, rgba(57,42,32,.96), rgba(43,35,32,.94));
+  border-color: rgba(143,227,207,.22);
+  background: linear-gradient(135deg, rgba(31,58,51,.96), rgba(38,45,42,.94));
   box-shadow: 0 10px 28px rgba(0,0,0,.20), inset 0 0 0 1px rgba(255,255,255,.03);
 }
 
 .dashboard-root.theme-dark .dashboard-rail-status,
 .dashboard-root[data-theme='dark'] .dashboard-rail-status {
-  background: linear-gradient(145deg, #2f2420, #231b18 58%, #302335 130%);
+  background: linear-gradient(145deg, #17312b, #162522 58%, #2a2529 130%);
   border: 1px solid rgba(255,255,255,.06);
 }
 
 .zen-home {
   background:
-    radial-gradient(circle at 50% 10%, rgba(255,255,255,.98), rgba(250,248,243,.94) 34%, rgba(243,240,233,.88) 68%, rgba(236,229,235,.68) 100%);
+    radial-gradient(circle at 50% 8%, rgba(255,255,255,.98), rgba(250,247,240,.95) 34%, rgba(246,241,232,.90) 68%, rgba(223,241,237,.50) 100%);
 }
 
 .zen-hero-card {
-  background: linear-gradient(180deg, rgba(255,255,255,.80), rgba(255,253,249,.66));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.78), 0 24px 70px rgba(45,32,22,.06);
+  background: linear-gradient(180deg, rgba(255,255,255,.86), rgba(255,253,249,.74));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.82), 0 24px 70px rgba(45,32,22,.06);
 }
 
 .zen-home-glass,
 .zen-home-pill {
-  border-color: rgba(255,255,255,.78);
-  background: rgba(255,255,255,.72);
+  border-color: rgba(255,255,255,.82);
+  background: rgba(255,255,255,.76);
 }
 
-.zen-home-glass:hover { background: rgba(255,255,255,.90); }
-.zen-memory-accent { color: #047857; }
+.zen-home-glass:hover { background: rgba(255,255,255,.94); }
+.zen-memory-accent { color: #157a6e; }
 
 .dashboard-root.theme-dark .zen-home,
 .dashboard-root[data-theme='dark'] .zen-home {
   background:
-    radial-gradient(circle at 50% 18%, rgba(61,49,44,.98), rgba(42,34,31,.96) 38%, rgba(31,26,24,.98) 72%, rgba(39,31,42,.96) 100%);
+    radial-gradient(circle at 50% 18%, rgba(31,52,47,.98), rgba(26,38,35,.96) 38%, rgba(20,29,27,.98) 72%, rgba(35,30,35,.96) 100%);
 }
 
 .dashboard-root.theme-dark .zen-hero-card,
 .dashboard-root[data-theme='dark'] .zen-hero-card {
-  background: linear-gradient(180deg, rgba(49,41,37,.82), rgba(37,31,29,.78));
+  background: linear-gradient(180deg, rgba(36,51,47,.84), rgba(29,38,35,.78));
   border-color: rgba(255,255,255,.07);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.035), 0 24px 70px rgba(0,0,0,.22);
 }
@@ -174,14 +178,14 @@
 .dashboard-root[data-theme='dark'] .zen-home-glass,
 .dashboard-root[data-theme='dark'] .zen-home-pill {
   border-color: rgba(255,255,255,.08);
-  background: rgba(39,33,30,.82);
+  background: rgba(31,43,40,.84);
   box-shadow: 0 18px 50px rgba(0,0,0,.16);
 }
 
 .dashboard-root.theme-dark .zen-home-glass:hover,
-.dashboard-root[data-theme='dark'] .zen-home-glass:hover { background: rgba(48,41,37,.92); }
+.dashboard-root[data-theme='dark'] .zen-home-glass:hover { background: rgba(40,54,50,.92); }
 .dashboard-root.theme-dark .zen-memory-accent,
-.dashboard-root[data-theme='dark'] .zen-memory-accent { color: #6ee7b7; }
+.dashboard-root[data-theme='dark'] .zen-memory-accent { color: #8fe3cf; }
 
 @keyframes gogo-float { 0%,100%{transform:translateY(0) rotate(-1deg)} 50%{transform:translateY(-8px) rotate(1deg)} }
 @keyframes gogoBreath { 0%,100%{transform:scale(1)} 50%{transform:scale(1.025)} }
@@ -212,5 +216,5 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-manrope), Manrope, system-ui, sans-serif;
+  font-family: var(--font-onest), Onest, system-ui, sans-serif;
 }
