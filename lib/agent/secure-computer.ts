@@ -99,7 +99,7 @@ async function isSubmit(page,selector){
         else if(a.kind==='fill') await page.locator(a.selector).first().fill(a.value,{timeout:12000});
         else if(a.kind==='select') await page.locator(a.selector).first().selectOption(a.value,{timeout:12000});
         else if(a.kind==='check') await page.locator(a.selector).first().check({timeout:12000});
-        else if(a.kind==='wait') await page.waitForTimeout(Math.min(5000,Math.max(100,Number(a.ms)||500));
+        else if(a.kind==='wait') await page.waitForTimeout(Math.min(5000,Math.max(100,Number(a.ms)||500)));
         else if(a.kind==='click'){
           if(payload.mode!=='execute' && await isSubmit(page,a.selector)){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
           await page.locator(a.selector).first().click({timeout:12000});
@@ -188,9 +188,6 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
   if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
   const first=await inspect(params.userId,target.toString())
 
-  // Passwords, OTPs, passkeys, CAPTCHAs and payment authentication are human
-  // boundaries. Stop before the model plans any fill/click actions. The persistent
-  // browser profile remains in the user's sandbox for future secure takeover.
   const authGate=detectHumanAuthGate(first.page)
   if(authGate.required){
     await first.sandbox.stop().catch(()=>{})
