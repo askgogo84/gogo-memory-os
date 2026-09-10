@@ -61,6 +61,28 @@ function usefulTimes(value: unknown) {
     .sort((a,b) => n(b.count)-n(a.count))
 }
 
+function daypartForClock(value: string) {
+  const match = String(value || '').trim().match(/\b(\d{1,2})(?::\d{2})?\s*(am|pm)\b/i)
+  if (!match) return null
+  let hour = Number(match[1])
+  if (!Number.isFinite(hour) || hour < 1 || hour > 12) return null
+  const marker = match[2].toLowerCase()
+  if (marker === 'pm' && hour !== 12) hour += 12
+  if (marker === 'am' && hour === 12) hour = 0
+  if (hour >= 5 && hour < 12) return 'morning'
+  if (hour >= 12 && hour < 17) return 'afternoon'
+  if (hour >= 17 && hour < 21) return 'evening'
+  return 'late-night'
+}
+
+function usualTimeReason(value: string) {
+  const daypart = daypartForClock(value)
+  if (!daypart) {
+    return `You have chosen ${value} repeatedly. Gogo can suggest it first when you ask for a reminder without giving an exact time.`
+  }
+  return `You have chosen ${value} repeatedly. Gogo can suggest it first when you ask for a ${daypart} reminder without giving an exact time.`
+}
+
 async function upsertInsight(telegramId:number, item:InsightCandidate) {
   const { data: existing } = await supabaseAdmin
     .from('user_insights')
@@ -158,7 +180,7 @@ export async function generateUserInsights(telegramId: number) {
       source_refs:[{type:'profile_pattern',field:'common_times',value:topTime.value,count,last_seen:topTime.last_seen||null}],
       actionable:{
         title:'Use your usual reminder time',
-        reason:`You have chosen ${topTime.value} repeatedly. Gogo can suggest it first when you say “morning” without giving an exact time.`,
+        reason:usualTimeReason(String(topTime.value)),
         expectedValue:'Less back-and-forth while you stay in control of the final time.',
         actionLabel:'Use as suggested time',
         valueScore:0.72,
