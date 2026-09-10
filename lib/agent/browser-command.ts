@@ -103,10 +103,23 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   try{
     const result=await runSecureBrowser({userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode})
-    const completedAt=new Date().toISOString()
+    const at=new Date().toISOString()
+
+    if(result.status==='blocked' && result.blockReason==='human_auth_required'){
+      const compact={url:result.url,title:result.title,summary:result.summary,blockReason:result.blockReason,authReason:result.authReason||null}
+      await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:compact,error:'human_auth_required',completed_at:at}).eq('id',params.stepId)
+      await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:'human_auth_required',updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
+      await activity(tg,params.runId,'human_auth_required','Gogo paused at a human authentication boundary.',{host:new URL(result.url).hostname,auth_reason:result.authReason||'unknown'})
+      return {
+        runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
+        text:`${result.summary}\n\nGogo paused before authentication. Passwords, OTPs, passkeys and payment-auth values are not requested, inferred or stored by the agent.`,
+        blockedReason:'human_auth_required' as const,handledBy:'secure-browser' as const,
+      }
+    }
+
     const compact={url:result.url,title:result.title,summary:result.summary,formCount:result.forms.length,actions:result.actions}
-    await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:compact,completed_at:completedAt}).eq('id',params.stepId)
-    await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(`${result.summary} ${result.title}`,1600),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',params.runId).eq('telegram_id',String(tg))
+    await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:compact,completed_at:at}).eq('id',params.stepId)
+    await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(`${result.summary} ${result.title}`,1600),progress:100,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
     await activity(tg,params.runId,'run_completed',result.summary,{host:new URL(result.url).hostname,action_count:result.actions.length})
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
   }catch(err:any){
@@ -155,6 +168,6 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
   const {data:step}=await supabaseAdmin.from('agent_steps').select('id').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('tool_name','secure_browser').limit(1).maybeSingle()
   if(!step?.id)throw new Error('browser_step_missing')
   const result=await executeBrowser({actor:params.actor,runId:params.runId,stepId:String(step.id),command,mode:'execute',approved:true})
-  await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approved.id).eq('telegram_id',String(tg))
+  if(result.status!=='paused')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approved.id).eq('telegram_id',String(tg))
   return result
 }
