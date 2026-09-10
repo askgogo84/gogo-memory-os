@@ -13,6 +13,17 @@ export function TodayIcon({ className }: IconProps) {
   )
 }
 
+export function AgentIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className ?? base} aria-hidden="true">
+      <circle cx="12" cy="12" r="7.8" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="2.6" fill="currentColor" />
+      <path d="M12 1.9v3M12 19.1v3M1.9 12h3M19.1 12h3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" opacity=".55" />
+      <path d="M17.5 6.5l-2.1 2.1M8.6 15.4l-2.1 2.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity=".35" />
+    </svg>
+  )
+}
+
 export function MemoryIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={className ?? base} aria-hidden="true">
@@ -73,6 +84,7 @@ export function WhatsAppIcon({ className }: IconProps) {
 
 export const TAB_ICONS = {
   today: TodayIcon,
+  agent: AgentIcon,
   memory: MemoryIcon,
   calendar: CalendarIcon,
   lists: ListsIcon,
