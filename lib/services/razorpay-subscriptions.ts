@@ -1,31 +1,33 @@
 import { getPlan, type AskGogoPlanKey } from './razorpay'
 
-// Public recurring plans. Legacy Starter/annual plans are no longer sold.
-export type SubscriptionPlanKey = 'lite' | 'pro' | 'power'
+// Public recurring plans. Database entitlements remain legacy-stable via
+// entitlementKeyFor(), while Razorpay products use the new public names/prices.
+export type SubscriptionPlanKey = 'essential' | 'plus' | 'pro'
 
 const TOTAL_COUNT: Record<SubscriptionPlanKey, number> = {
-  lite: 120,
+  essential: 120,
+  plus: 120,
   pro: 120,
-  power: 120,
 }
 
 const EXPECTED_AMOUNT_PAISE: Record<SubscriptionPlanKey, number> = {
-  lite: 9900,
-  pro: 29900,
-  power: 49900,
+  essential: 24900,
+  plus: 49900,
+  pro: 99900,
 }
 
 function normalizeSubKey(planKey?: string | null): SubscriptionPlanKey {
-  const clean = String(planKey || 'pro').toLowerCase().trim().replace(/[\s-]+/g, '_')
-  if (clean === 'lite') return 'lite'
-  if (clean === 'power' || clean === 'founder' || clean === 'founder_pro') return 'power'
-  return 'pro'
+  const clean = String(planKey || 'plus').toLowerCase().trim().replace(/[\s-]+/g, '_')
+  if (clean === 'essential' || clean === 'lite') return 'essential'
+  if (clean === 'pro' || clean === 'gogo_pro' || clean === 'power' || clean === 'founder' || clean === 'founder_pro') return 'pro'
+  return 'plus'
 }
 
-// Power uses the existing founder entitlement key internally so no user migration is required.
 export function entitlementKeyFor(planKey?: string | null): AskGogoPlanKey {
   const sub = normalizeSubKey(planKey)
-  return sub === 'power' ? 'founder' : sub
+  if (sub === 'essential') return 'lite'
+  if (sub === 'pro') return 'founder'
+  return 'pro'
 }
 
 function getAuthHeader() {
@@ -38,9 +40,9 @@ function getAuthHeader() {
 }
 
 function configuredPlanCandidates(sub: SubscriptionPlanKey) {
-  if (sub === 'lite') return [process.env.RAZORPAY_PLAN_LITE]
-  if (sub === 'pro') return [process.env.RAZORPAY_PLAN_PRO_299, process.env.RAZORPAY_PLAN_PRO]
-  return [process.env.RAZORPAY_PLAN_POWER, process.env.RAZORPAY_PLAN_FOUNDER]
+  if (sub === 'essential') return [process.env.RAZORPAY_PLAN_ESSENTIAL, process.env.RAZORPAY_PLAN_LITE]
+  if (sub === 'plus') return [process.env.RAZORPAY_PLAN_PLUS]
+  return [process.env.RAZORPAY_PLAN_GOGO_PRO, process.env.RAZORPAY_PLAN_POWER, process.env.RAZORPAY_PLAN_FOUNDER]
 }
 
 function isExactPlan(plan: any, sub: SubscriptionPlanKey) {
@@ -63,10 +65,10 @@ async function fetchRazorpayPlan(planId: string) {
 }
 
 /**
- * Returns a LIVE Razorpay plan with the exact price we advertise.
- * Old configured plan ids are validated before use, so an old ₹199 Pro plan can
- * never accidentally charge a customer after the public price moved to ₹299.
- * If configuration is stale, reuse an exact existing plan or create one once.
+ * Returns a LIVE Razorpay plan with the exact public price. Stale configured IDs
+ * are validated before use; when no exact plan exists, Razorpay is asked to create
+ * the canonical plan once. This makes the code migration itself update Razorpay
+ * safely on the first real checkout without editing old customer mandates.
  */
 export async function ensureRazorpayPlanId(planKey?: string | null): Promise<string> {
   const sub = normalizeSubKey(planKey)
@@ -86,14 +88,15 @@ export async function ensureRazorpayPlanId(planKey?: string | null): Promise<str
     const collection = await listResponse.json()
     const existing = (collection?.items || []).find((plan: any) => {
       if (!isExactPlan(plan, sub)) return false
-      const key = String(plan?.notes?.askgogo_plan || '').toLowerCase()
+      const key = String(plan?.notes?.askgogo_public_plan || plan?.notes?.askgogo_plan || '').toLowerCase()
       const name = String(plan?.item?.name || '').toLowerCase()
-      return key === sub || name === `askgogo ${sub}` || (sub === 'power' && name === 'askgogo power')
+      return key === sub || name === `gogo ${sub}` || name === `askgogo ${sub}`
     })
     if (existing?.id) return existing.id
   }
 
-  const publicPlan = getPlan(sub)
+  const entitlement = entitlementKeyFor(sub)
+  const publicPlan = getPlan(entitlement)
   const createResponse = await fetch('https://api.razorpay.com/v1/plans', {
     method: 'POST',
     headers: {
@@ -104,14 +107,16 @@ export async function ensureRazorpayPlanId(planKey?: string | null): Promise<str
       period: 'monthly',
       interval: 1,
       item: {
-        name: `AskGogo ${sub === 'power' ? 'Power' : sub[0].toUpperCase() + sub.slice(1)}`,
+        name: `Gogo ${sub[0].toUpperCase() + sub.slice(1)}`,
         amount: EXPECTED_AMOUNT_PAISE[sub],
         currency: 'INR',
         description: publicPlan.description,
       },
       notes: {
         source: 'askgogo',
-        askgogo_plan: sub,
+        product: 'askgogo',
+        askgogo_public_plan: sub,
+        entitlement,
         canonical_price_inr: String(EXPECTED_AMOUNT_PAISE[sub] / 100),
       },
     }),
@@ -155,8 +160,9 @@ export async function createSubscription(options: {
 
   const notes: Record<string, string> = {
     source: 'askgogo_whatsapp',
+    product: 'askgogo',
     plan: entitlement,
-    sub_plan: sub,
+    public_plan: sub,
     whatsapp_id: rawPhone || '',
     telegram_id: String(options.telegramId || ''),
     user_id: String(options.userId || ''),
@@ -215,7 +221,7 @@ export function formatSubscriptionMessage(options: {
     '',
     `Set it up here (one-time authorization): ${options.shortUrl}`,
     '',
-    'After you authorize, your AskGogo access unlocks automatically and renews each cycle. Cancel anytime.',
+    'After you authorize, your Gogo access unlocks automatically and renews each cycle. Cancel anytime.',
     '',
     '- AskGogo',
   ].filter(Boolean).join('\n')
