@@ -3,43 +3,41 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export type DashboardTask = {
   id: string
   label: string
-  remindAt: string
-  sent: boolean
-  recurring: boolean
+  createdAt: string | null
+  doneAt: string | null
+  done: boolean
 }
 
 export type DashboardTasks = {
   ok: true
-  today: DashboardTask[]
-  upcoming: DashboardTask[]
+  open: DashboardTask[]
   completed: DashboardTask[]
 } | { ok: false }
 
-function dayKey(iso: string, tz: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(iso))
-}
-
-export async function getDashboardTasks(telegramId: string, tz = 'Asia/Kolkata'): Promise<DashboardTasks> {
+export async function getDashboardTasks(telegramId: string): Promise<DashboardTasks> {
   const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, today: [], upcoming: [], completed: [] }
+  if (!Number.isFinite(tgNum)) return { ok: true, open: [], completed: [] }
 
   try {
-    const now = new Date()
-    const from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
-    const to = new Date(now.getTime() + 120 * 24 * 60 * 60 * 1000).toISOString()
+    const { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('whatsapp_id')
+      .eq('telegram_id', tgNum)
+      .maybeSingle()
+
+    if (userError) {
+      console.error('DASHBOARD_TASK_USER_FAILED:', userError)
+      return { ok: false }
+    }
+
+    const whatsappId = String(user?.whatsapp_id || '').trim()
+    if (!whatsappId) return { ok: true, open: [], completed: [] }
 
     const { data, error } = await supabaseAdmin
-      .from('reminders')
-      .select('id, message, remind_at, sent, is_recurring')
-      .eq('telegram_id', tgNum)
-      .gte('remind_at', from)
-      .lte('remind_at', to)
-      .order('remind_at', { ascending: true })
+      .from('todos')
+      .select('id, text, done, created_at, done_at')
+      .eq('whatsapp_id', whatsappId)
+      .order('created_at', { ascending: false })
       .limit(250)
 
     if (error) {
@@ -47,33 +45,22 @@ export async function getDashboardTasks(telegramId: string, tz = 'Asia/Kolkata')
       return { ok: false }
     }
 
-    const todayKey = dayKey(now.toISOString(), tz)
     const rows: DashboardTask[] = (data || []).map((row: any) => ({
       id: String(row.id),
-      label: String(row.message || 'Reminder'),
-      remindAt: String(row.remind_at),
-      sent: row.sent === true,
-      recurring: row.is_recurring === true,
+      label: String(row.text || 'Task').replace(/\s+/g, ' ').trim(),
+      createdAt: row.created_at ? String(row.created_at) : null,
+      doneAt: row.done_at ? String(row.done_at) : null,
+      done: row.done === true,
     }))
-
-    const today: DashboardTask[] = []
-    const upcoming: DashboardTask[] = []
-    const completed: DashboardTask[] = []
-
-    for (const task of rows) {
-      if (task.sent || new Date(task.remindAt).getTime() < now.getTime()) {
-        completed.push(task)
-        continue
-      }
-      if (dayKey(task.remindAt, tz) === todayKey) today.push(task)
-      else upcoming.push(task)
-    }
 
     return {
       ok: true,
-      today: today.slice(0, 60),
-      upcoming: upcoming.slice(0, 100),
-      completed: completed.slice(-60).reverse(),
+      open: rows.filter(task => !task.done),
+      completed: rows.filter(task => task.done).sort((a, b) => {
+        const aMs = new Date(a.doneAt || a.createdAt || 0).getTime()
+        const bMs = new Date(b.doneAt || b.createdAt || 0).getTime()
+        return bMs - aMs
+      }),
     }
   } catch (error) {
     console.error('DASHBOARD_TASKS_FAILED:', error)
