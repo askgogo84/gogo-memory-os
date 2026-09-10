@@ -18,6 +18,24 @@ const DEFAULT_PERMISSIONS = [
   { capability: 'payments', level: 'ask', irreversibleAlwaysAsk: true, label: 'Payments', description: 'Prepare payment actions. Spending always asks.' },
 ] as const
 
+function runtimeStatus() {
+  return {
+    controlPlane: 'Vercel',
+    controlPlaneRegion: process.env.VERCEL_REGION || 'bom1',
+    secureComputer: 'Vercel Sandbox',
+    secureComputerRegion: process.env.GOGO_SANDBOX_REGION || 'bom1',
+    browser: 'Chromium + Playwright',
+    browserProfile: 'persistent-per-user',
+    backgroundEngine: 'Supabase state + Vercel cron',
+    watcherCadenceMinutes: 15,
+    goalReviewCadenceMinutes: 15,
+    reminderCadenceMinutes: 1,
+    sentinel: 'enforced',
+    humanAuth: 'pause-required',
+    interactiveTakeover: process.env.GOGO_BROWSER_TAKEOVER_ENABLED === 'true' ? 'enabled' : 'not-yet-enabled',
+  }
+}
+
 export async function GET(request: Request) {
   const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
@@ -68,6 +86,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     surface: session.surface,
+    runtime: runtimeStatus(),
     runs: (runs.data || []).map((r: any) => ({
       id: r.id, goalId: r.goal_id, title: r.title, summary: r.summary, status: r.status,
       capability: r.capability, progress: r.progress, startedAt: r.started_at,
