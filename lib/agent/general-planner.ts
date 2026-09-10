@@ -5,6 +5,7 @@ import { classifyAgentRequest, type AgentApprovalAction } from './classifier'
 import { dispatchThroughSameBrain } from './same-brain'
 import {
   executeVerifiedMissionCalendar,
+  executeVerifiedMissionList,
   executeVerifiedMissionMemory,
   executeVerifiedMissionReminder,
   executeVerifiedMissionWebSearch,
@@ -304,6 +305,7 @@ async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPla
     return { text:'Created a private AskGogo artifact.', output:{ artifactId, type:step.artifactType || 'research_brief' } }
   }
   if (step.tool === 'tasks') return executeTaskStep(actor, step)
+  if (step.tool === 'lists') return executeVerifiedMissionList({actor,step,missionText:params.missionText})
   if (step.tool === 'reminders') return executeVerifiedMissionReminder({actor,step,missionText:params.missionText,messageId:params.messageId})
   if (step.tool === 'memory') return executeVerifiedMissionMemory({actor,step,missionText:params.missionText,messageId:params.messageId})
   if (step.tool === 'calendar') return executeVerifiedMissionCalendar({actor,step,missionText:params.missionText,runId:params.runId})
