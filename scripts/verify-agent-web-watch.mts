@@ -21,7 +21,7 @@ for (const c of cases) {
   const parsed = parseWebWatchCommand(c.text)
   assert.ok(parsed, `should parse: ${c.text}`)
   assert.equal(parsed.query, c.query)
-  assert.equal(parsed.cadenceMinutes, 60)
+  assert.equal(parsed.cadenceMinutes, 15)
   assert.equal(parsed.delivery, 'both')
 }
 
