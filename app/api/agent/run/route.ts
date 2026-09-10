@@ -9,6 +9,7 @@ import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
+import { attachWorkspaceMeetingApproval } from '@/lib/agent/workspace-meeting-approval'
 import { tryRunCreditIQHotelResearch } from '@/lib/agent/creditiq-hotel-research'
 import { tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
@@ -86,11 +87,15 @@ export async function POST(request: Request) {
     })
     if (compound) return respond(compound, 200)
 
-    // P0.8 Workspace meeting prep is a safe specialist mission: it may read the
-    // user's connected Gmail/attachment/Contacts/Calendar and create a private
-    // artifact, but it never sends mail or schedules an event in this phase.
+    // P0.8 Workspace meeting prep reads Gmail/attachments/Contacts/Calendar and
+    // prepares the reply + proposed invite first. If the attendee and slot are
+    // unambiguous, Gogo then creates one exact Calendar approval card. Nothing is
+    // scheduled and the Gmail reply remains unsent until the user acts.
     const workspaceMeeting = await tryPrepareWorkspaceMeetingPlan({ actor, surface:session.surface, text })
-    if (workspaceMeeting) return respond(workspaceMeeting, 200)
+    if (workspaceMeeting) {
+      const prepared = await attachWorkspaceMeetingApproval({ actor, result: workspaceMeeting })
+      return respond(prepared, prepared.status === 'waiting_approval' ? 202 : 200)
+    }
 
     // Multi-step missions must be planned before single-feature fallbacks. This is
     // the Muse-style outcome path: memory/research/actions/approval/artifact can be
