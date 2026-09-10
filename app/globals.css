@@ -1,33 +1,34 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f5f3ee;
+  --foreground: #0b0908;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-karla);
+  --font-sans: var(--font-manrope);
   --font-mono: var(--font-geist-mono);
-  --font-serif: var(--font-fraunces);
+  --font-serif: var(--font-instrument-serif);
 }
 
 @theme {
-  --color-gogo-orange: #f18219;
-  --color-gogo-orange-deep: #d66b14;
-  --color-gogo-plum: #714c77;
-  --color-gogo-plum-deep: #4d2a50;
-  --color-gogo-plum-tint: #f0eaf1;
-  --color-gogo-ink: #3e2312;
-  --color-gogo-ink-2: #6b4a34;
-  --color-gogo-ink-3: #8f7767;
-  --color-gogo-ink-4: #ad9989;
-  --color-gogo-sand: #e4a97d;
-  --color-gogo-orange-tint: #fdf0e2;
-  --color-gogo-cream: #faf3ea;
-  --color-gogo-rail: #f2e6d9;
-  --color-gogo-surface: #ffffff;
+  /* Canonical AskGogo website palette. */
+  --color-gogo-orange: #ef7a27;
+  --color-gogo-orange-deep: #d86417;
+  --color-gogo-plum: #76556f;
+  --color-gogo-plum-deep: #53384f;
+  --color-gogo-plum-tint: #f0e9ef;
+  --color-gogo-ink: #0b0908;
+  --color-gogo-ink-2: #4f4a45;
+  --color-gogo-ink-3: #7b746d;
+  --color-gogo-ink-4: #a29b94;
+  --color-gogo-sand: #d9b08f;
+  --color-gogo-orange-tint: #fff0e5;
+  --color-gogo-cream: #f5f3ee;
+  --color-gogo-rail: #efe9e1;
+  --color-gogo-surface: #fffdf9;
   --ease-calm: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -68,24 +69,35 @@
   color-scheme: dark;
 }
 
+.dashboard-shell {
+  background-image:
+    radial-gradient(circle at 78% 10%, rgba(118,85,111,.07), transparent 34%),
+    radial-gradient(circle at 14% 88%, rgba(239,122,39,.06), transparent 30%);
+}
+
 .dashboard-root.theme-dark .dashboard-shell,
 .dashboard-root[data-theme='dark'] .dashboard-shell {
   background-image:
-    radial-gradient(circle at 78% 10%, rgba(113, 76, 119, 0.15), transparent 36%),
-    radial-gradient(circle at 15% 88%, rgba(241, 130, 25, 0.08), transparent 34%);
+    radial-gradient(circle at 78% 10%, rgba(118,85,111,.15), transparent 36%),
+    radial-gradient(circle at 15% 88%, rgba(239,122,39,.08), transparent 34%);
 }
 
 .dashboard-rail {
   background:
     radial-gradient(circle at 20% 0%, rgba(255,255,255,.94), transparent 34%),
-    linear-gradient(180deg, #fbf4ec 0%, #f4e8dc 58%, #efe1d3 100%);
-  box-shadow: inset -1px 0 0 rgba(62,35,18,.035), 16px 0 45px rgba(62,35,18,.035);
+    linear-gradient(180deg, #f8f5f0 0%, #f1ece5 58%, #ece5dd 100%);
+  box-shadow: inset -1px 0 0 rgba(11,9,8,.035), 16px 0 45px rgba(45,32,22,.035);
+}
+
+.dashboard-brand-wordmark {
+  font-family: var(--font-instrument-serif), Georgia, serif;
+  letter-spacing: -.025em;
 }
 
 .dashboard-nav-active {
-  border-color: rgba(241,130,25,.25);
-  background: linear-gradient(135deg, rgba(255,255,255,.97), rgba(253,240,226,.94));
-  box-shadow: 0 10px 28px rgba(62,35,18,.08), inset 0 0 0 1px rgba(255,255,255,.42);
+  border-color: rgba(239,122,39,.22);
+  background: linear-gradient(135deg, rgba(255,253,249,.98), rgba(255,240,229,.92));
+  box-shadow: 0 10px 28px rgba(45,32,22,.07), inset 0 0 0 1px rgba(255,255,255,.44);
 }
 
 .dashboard-nav-active::before {
@@ -96,12 +108,12 @@
   bottom: 9px;
   width: 3px;
   border-radius: 999px;
-  background: linear-gradient(180deg, #f18219, #d66b14);
+  background: linear-gradient(180deg, #ef7a27, #d86417);
 }
 
 .dashboard-rail-status {
-  background: linear-gradient(145deg, #4a2a18, #332017 58%, #4d2a50 130%);
-  color: #fff9f4;
+  background: linear-gradient(145deg, #2c1a13, #211612 58%, #3a2b38 130%);
+  color: #fffaf5;
 }
 
 .dashboard-root.theme-dark .dashboard-rail,
@@ -127,28 +139,22 @@
 
 .zen-home {
   background:
-    radial-gradient(circle at 50% 10%, rgba(255,255,255,.98), rgba(255,247,237,.92) 34%, rgba(246,228,212,.82) 68%, rgba(235,218,234,.62) 100%);
+    radial-gradient(circle at 50% 10%, rgba(255,255,255,.98), rgba(250,248,243,.94) 34%, rgba(243,240,233,.88) 68%, rgba(236,229,235,.68) 100%);
 }
 
 .zen-hero-card {
-  background:
-    linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,250,245,.62));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.75), 0 24px 70px rgba(62,35,18,.07);
+  background: linear-gradient(180deg, rgba(255,255,255,.80), rgba(255,253,249,.66));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.78), 0 24px 70px rgba(45,32,22,.06);
 }
 
 .zen-home-glass,
 .zen-home-pill {
-  border-color: rgba(255,255,255,.76);
-  background: rgba(255,255,255,.70);
+  border-color: rgba(255,255,255,.78);
+  background: rgba(255,255,255,.72);
 }
 
-.zen-home-glass:hover {
-  background: rgba(255,255,255,.88);
-}
-
-.zen-memory-accent {
-  color: #047857;
-}
+.zen-home-glass:hover { background: rgba(255,255,255,.90); }
+.zen-memory-accent { color: #047857; }
 
 .dashboard-root.theme-dark .zen-home,
 .dashboard-root[data-theme='dark'] .zen-home {
@@ -173,30 +179,38 @@
 }
 
 .dashboard-root.theme-dark .zen-home-glass:hover,
-.dashboard-root[data-theme='dark'] .zen-home-glass:hover {
-  background: rgba(48,41,37,.92);
-}
-
+.dashboard-root[data-theme='dark'] .zen-home-glass:hover { background: rgba(48,41,37,.92); }
 .dashboard-root.theme-dark .zen-memory-accent,
-.dashboard-root[data-theme='dark'] .zen-memory-accent {
-  color: #6ee7b7;
-}
+.dashboard-root[data-theme='dark'] .zen-memory-accent { color: #6ee7b7; }
 
-@keyframes gogo-float {
-  0%, 100% { transform: translateY(0) rotate(-1deg); }
-  50% { transform: translateY(-8px) rotate(1deg); }
-}
+@keyframes gogo-float { 0%,100%{transform:translateY(0) rotate(-1deg)} 50%{transform:translateY(-8px) rotate(1deg)} }
+@keyframes gogoBreath { 0%,100%{transform:scale(1)} 50%{transform:scale(1.025)} }
+@keyframes gogoBreathDeep { 0%,100%{transform:scale(1)} 50%{transform:scale(1.09)} }
+@keyframes gogoBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+@keyframes gogoLean { 0%,100%{transform:rotate(0deg)} 50%{transform:rotate(-4deg)} }
+@keyframes gogoOrbit { to{transform:rotate(360deg)} }
+@keyframes gogoGlow { 0%,100%{opacity:.75} 50%{opacity:1} }
+@keyframes gogoMemory { 0%{transform:translate(28px,-34px) scale(1);opacity:0} 15%{opacity:1} 70%{transform:translate(2px,4px) scale(.55);opacity:.9} 100%{transform:translate(0,8px) scale(.1);opacity:0} }
+@keyframes gogoPulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+@keyframes gogoRing { 0%{transform:scale(.9);opacity:.5} 100%{transform:scale(1.35);opacity:0} }
+@keyframes gogoSpark { 0%,100%{transform:scale(0);opacity:0} 20%,60%{transform:scale(1);opacity:1} }
+@keyframes gogoWave { 0%,100%{transform:rotate(0deg)} 50%{transform:rotate(-14deg)} }
+@keyframes gogoSway { 0%,100%{transform:rotate(0deg)} 50%{transform:rotate(5deg)} }
 
-.gogo-float {
-  animation: gogo-float 5.5s ease-in-out infinite;
-}
+.gogo-float { animation: gogo-float 5.5s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
   .gogo-float { animation: none; }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-manrope), Manrope, system-ui, sans-serif;
 }
