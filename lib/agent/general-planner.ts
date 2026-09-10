@@ -10,7 +10,7 @@ import type { AgentSurface } from './orchestrator'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
-const MAX_STEPS = 6
+const MAX_STEPS = 10
 const CONSEQUENTIAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments'])
 
 const DEFAULT_LEVEL: Record<AgentCapability, AgentPermissionLevel> = {
@@ -92,7 +92,7 @@ function domainCount(text: string) {
   const t = text.toLowerCase()
   const domains = [
     /\b(remind|reminder)\b/, /\b(calendar|meeting|appointment)\b/, /\b(email|mail|gmail)\b/,
-    /\b(passport|document|file|pdf|memory|remember)\b/, /\b(list|grocer|packing|task|todo)\b/,
+    /\b(passport|document|file|pdf|memory|remember|know about me|already know)\b/, /\b(list|grocer|packing|task|todo)\b/,
     /\b(flight|hotel|trip|travel|itinerary)\b/, /\b(search|research|web|online|price|compare)\b/,
     /\b(report|brief|tracker|dashboard|artifact|document)\b/,
   ]
@@ -106,16 +106,17 @@ export function shouldUseGeneralPlanner(text: string) {
   if (domainCount(t) >= 2 && /\b(and|then|also|after|before|plus|while)\b/i.test(t)) return true
   if (/\b(plan|arrange|organize|organise|handle|take care of|prepare everything|manage this|sort this out)\b/i.test(t) && domainCount(t) >= 1) return true
   if (/\b(research|compare)\b/i.test(t) && /\b(report|brief|tracker|dashboard|save|remind|calendar)\b/i.test(t)) return true
+  if (/\b(use anything relevant|use what you know|already know about me)\b/i.test(t) && domainCount(t) >= 2) return true
   return false
 }
 
 export async function planGeneralAgentRequest(text: string): Promise<GeneralPlan | null> {
   if (!shouldUseGeneralPlanner(text)) return null
-  const prompt = `You are the planning layer for AskGogo, a private personal agent. Turn the user's outcome into 2-${MAX_STEPS} concrete steps using ONLY these tools:\n\nmemory, files, reminders, lists, tasks, email, calendar, web_search, travel, artifact\n\nRules:\n- The plan sees ONLY this user request. Never assume hidden values, credentials, document numbers or account data.\n- Each instruction must be self-contained and executable by that tool.\n- Use web_search only for public-web research; it can read/search but cannot submit forms.\n- email can read/draft/send, but sending will be stopped by a deterministic approval gate.\n- calendar can read/create/change; writes will be stopped by approval.\n- travel can read/organize; bookings will be stopped by approval.\n- payments/purchases are NOT an available planner tool; if the user asks to spend money, the relevant travel/browser flow must prepare only and the server will stop before purchase.\n- artifact creates a private structured output from the results of previous steps. It must be the last step if used.\n- Do not put secrets or guessed private values into instructions.\n- Return JSON only.\n\nShape:\n{"title":"short outcome","reason":"why multiple tools are needed","steps":[{"tool":"memory","title":"Find saved context","instruction":"Find my saved ..."},{"tool":"artifact","title":"Create a brief","instruction":"Create a concise private brief from this run","artifactType":"research_brief","artifactTitle":"..."}]}\n\nUser request: ${JSON.stringify(String(text || '').slice(0, 1800))}`
+  const prompt = `You are the planning layer for AskGogo, a private personal agent. Turn the user's OUTCOME into 2-${MAX_STEPS} concrete executable steps using ONLY these tools:\n\nmemory, files, reminders, lists, tasks, email, calendar, web_search, travel, artifact\n\nMission rules:\n- Cover every explicit deliverable in the user's request. Do not collapse a multi-part mission into one search or one prose answer.\n- Prefer safe, reversible work first. Put consequential actions such as calendar changes, sends, bookings or external submissions after safe preparation so useful work can finish before an approval pause.\n- If the user says to use what AskGogo already knows, include a memory step near the beginning. Never reveal sensitive identifiers in the plan.\n- If the user explicitly names multiple tasks, use separate task steps when needed so every named task is represented. Each task instruction must literally include the task text; do not rely on hidden context from another step.\n- If the user requests a packing/list deliverable, include a lists step.\n- If the user requests a reminder, include a reminders step. If its exact trigger depends on a future choice that is not known yet, do not invent a date or flight; make the dependency explicit so the step can pause or ask rather than fabricate.\n- If the user requests a final brief/report/artifact, artifact MUST be the final step.\n- The plan sees ONLY this user request. Never assume hidden values, credentials, document numbers or account data.\n- Each instruction must be self-contained and executable by that tool.\n- Use web_search only for public-web research; it can read/search but cannot submit forms.\n- email can read/draft/send, but sending will be stopped by a deterministic approval gate.\n- calendar can read/create/change; writes will be stopped by approval.\n- travel can read/organize; bookings will be stopped by approval.\n- payments/purchases are NOT an available planner tool; if the user asks to spend money, prepare only and let deterministic browser/travel execution stop before purchase.\n- artifact creates a private structured output from the results of previous steps.\n- Do not put secrets or guessed private values into instructions.\n- Return JSON only.\n\nShape:\n{"title":"short outcome","reason":"why multiple tools are needed","steps":[{"tool":"memory","title":"Review relevant context","instruction":"Find relevant saved context for this trip without revealing sensitive identifiers."},{"tool":"tasks","title":"Create check-in task","instruction":"Create task: Complete web check-in"},{"tool":"artifact","title":"Create trip brief","instruction":"Create a concise private brief from this run","artifactType":"trip","artifactTitle":"Mumbai work trip brief"}]}\n\nUser request: ${JSON.stringify(String(text || '').slice(0, 1800))}`
   try {
     const result = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
-      max_tokens: 1200,
+      max_tokens: 2200,
       temperature: 0,
       messages: [{ role: 'user', content: prompt }],
     })
