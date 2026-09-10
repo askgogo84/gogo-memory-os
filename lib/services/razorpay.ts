@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 
-// Legacy internal keys are retained for existing entitlements/webhook records.
-// Publicly sold plans are Lite (99), Pro (299) and Power (499).
+// Database entitlement keys are intentionally stable. Public names/prices have
+// changed, but existing users/webhook records continue to resolve safely.
 export type AskGogoPlanKey = 'lite' | 'starter' | 'pro' | 'founder'
 
 export type AskGogoPlan = {
@@ -22,20 +22,23 @@ export type AskGogoPlan = {
 }
 
 export const ASKGOGO_PLANS: Record<AskGogoPlanKey, AskGogoPlan> = {
+  // lite is the stable entitlement behind public Gogo Essential.
   lite: {
     key: 'lite',
-    name: 'AskGogo Lite',
-    amountInRupees: 99,
-    amountInPaise: 9900,
-    description: 'AskGogo Lite - casual personal use inside WhatsApp',
+    name: 'Gogo Essential',
+    amountInRupees: 249,
+    amountInPaise: 24900,
+    description: 'Gogo Essential - let Gogo help with everyday memory, calendar, connected work and light Agent missions',
     validityDays: 30,
     limits: {
-      aiActionsPerMonth: 60,
-      activeReminders: 5,
-      voiceNotesPerMonth: 10,
+      aiActionsPerMonth: 120,
+      activeReminders: 20,
+      voiceNotesPerMonth: 20,
+      webSearchPerMonth: 15,
+      calendarIntegration: true,
     },
   },
-  // Legacy tier kept only so existing Starter users continue to resolve safely.
+  // Legacy Starter is retained only for existing historical records.
   starter: {
     key: 'starter',
     name: 'AskGogo Starter (legacy)',
@@ -49,34 +52,35 @@ export const ASKGOGO_PLANS: Record<AskGogoPlanKey, AskGogoPlan> = {
       voiceNotesPerMonth: 30,
     },
   },
+  // pro is the stable entitlement behind public Gogo Plus.
   pro: {
     key: 'pro',
-    name: 'AskGogo Pro',
-    amountInRupees: 299,
-    amountInPaise: 29900,
-    description: 'AskGogo Pro - calendar, daily planning, voice and web search',
+    name: 'Gogo Plus',
+    amountInRupees: 499,
+    amountInPaise: 49900,
+    description: 'Gogo Plus - let Gogo handle multi-step missions, connected apps, background work and travel intelligence',
     validityDays: 30,
     limits: {
-      aiActionsPerMonth: 250,
-      activeReminders: 50,
-      voiceNotesPerMonth: 100,
-      webSearchPerMonth: 30,
+      aiActionsPerMonth: 300,
+      activeReminders: 75,
+      voiceNotesPerMonth: 120,
+      webSearchPerMonth: 45,
       calendarIntegration: true,
     },
   },
-  // founder is the legacy database entitlement key for the public Power plan.
+  // founder is the stable entitlement behind public Gogo Pro.
   founder: {
     key: 'founder',
-    name: 'AskGogo Power',
-    amountInRupees: 499,
-    amountInPaise: 49900,
-    description: 'AskGogo Power - power-user access and priority features',
+    name: 'Gogo Pro',
+    amountInRupees: 999,
+    amountInPaise: 99900,
+    description: 'Gogo Pro - highest Agent, background, voice and Secure Computer capacity with priority capabilities',
     validityDays: 30,
     limits: {
-      aiActionsPerMonth: 600,
-      activeReminders: 200,
-      voiceNotesPerMonth: 300,
-      webSearchPerMonth: 100,
+      aiActionsPerMonth: 750,
+      activeReminders: 250,
+      voiceNotesPerMonth: 350,
+      webSearchPerMonth: 120,
       calendarIntegration: true,
       priorityAccess: true,
     },
@@ -85,9 +89,19 @@ export const ASKGOGO_PLANS: Record<AskGogoPlanKey, AskGogoPlan> = {
 
 export function getPlan(planKey?: string | null): AskGogoPlan {
   const raw = String(planKey || 'pro').toLowerCase().trim().replace(/[\s-]+/g, '_')
-  const normalized = raw === 'power' || raw === 'founder_pro' ? 'founder' : raw
-  const clean = normalized as AskGogoPlanKey
-  return ASKGOGO_PLANS[clean] || ASKGOGO_PLANS.pro
+  const aliases: Record<string, AskGogoPlanKey> = {
+    essential: 'lite',
+    lite: 'lite',
+    starter: 'starter',
+    plus: 'pro',
+    gogo_plus: 'pro',
+    pro: 'pro', // legacy entitlement key; public Gogo Pro uses gogo_pro/founder
+    gogo_pro: 'founder',
+    power: 'founder',
+    founder: 'founder',
+    founder_pro: 'founder',
+  }
+  return ASKGOGO_PLANS[aliases[raw] || 'pro']
 }
 
 function getAuthHeader() {
@@ -216,7 +230,7 @@ export function formatPaymentLinkMessage(options: {
     `Amount: Rs.${options.amountInRupees}/month`,
     `Pay here: ${options.paymentUrl}`,
     '',
-    'Once payment is complete, your AskGogo access will be updated automatically.',
+    'Once payment is complete, your Gogo access will be updated automatically.',
     '',
     '- AskGogo',
   ].join('\n')
