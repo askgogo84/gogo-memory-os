@@ -5,9 +5,12 @@ const planner = readFileSync(new URL('../lib/agent/general-planner.ts', import.m
 const runRoute = readFileSync(new URL('../app/api/agent/run/route.ts', import.meta.url), 'utf8')
 const executeRoute = readFileSync(new URL('../app/api/agent/runs/[id]/execute/route.ts', import.meta.url), 'utf8')
 
-// Planner is bounded and allowlisted. Purchases are never delegated as an LLM
-// planner tool; financial commitment remains behind existing deterministic paths.
-assert.match(planner, /const MAX_STEPS = 6/)
+// Planner is bounded and allowlisted, but deep enough for a real personal-agent
+// mission (memory + research + lists + tasks + reminder + approval + artifact).
+assert.match(planner, /const MAX_STEPS = 10/)
+assert.match(planner, /Cover every explicit deliverable/i)
+assert.match(planner, /Prefer safe, reversible work first/i)
+assert.match(planner, /artifact MUST be the final step/i)
 assert.match(planner, /'web_search'/)
 assert.match(planner, /'artifact'/)
 assert.doesNotMatch(planner, /GeneralPlanTool[\s\S]*\| 'payments'/)
@@ -19,7 +22,7 @@ assert.match(planner, /The plan sees ONLY this user request/i)
 assert.match(planner, /User request: \$\{JSON\.stringify\(String\(text \|\| ''\)\.slice\(0, 1800\)\)\}/)
 assert.match(planner, /messages: \[\{ role: 'user', content: prompt \}\]/)
 
-// Every generated step is reclassified and rechecked by the deterministic server
+// Every generated step is reclassified and rechecked by deterministic server
 // policy. The model cannot declare itself safe or grant its own permission.
 assert.match(planner, /classifyAgentRequest\(step\.instruction\)/)
 assert.match(planner, /evaluateAgentExecutionPolicy/)
@@ -37,15 +40,18 @@ assert.match(planner, /approvedOrdinal===ordinal/)
 assert.match(planner, /from\('agent_artifacts'\)/)
 assert.match(planner, /source_refs:\[\{type:'agent_run',id:runId\}\]/)
 
-// Specialist deterministic plans remain ahead of the general planner; simple
-// requests still fall back to the existing same-brain single-action path.
-const travelCall = runRoute.lastIndexOf('tryPrepareTravelCalendarPlan')
+// Specialist deterministic cross-feature plans remain ahead of the general planner.
+// BUT simple travel research must be after the general planner, otherwise a multi-
+// feature trip mission collapses into a one-step fare search.
+const travelCalendarCall = runRoute.lastIndexOf('tryPrepareTravelCalendarPlan')
 const expiryCall = runRoute.lastIndexOf('tryRunExpiryReminderPlan')
 const generalCall = runRoute.lastIndexOf('tryRunGeneralPlan')
+const travelResearchCall = runRoute.lastIndexOf('tryRunTravelResearch')
 const fallbackCall = runRoute.lastIndexOf('runAgentCommand')
-assert.ok(travelCall >= 0 && expiryCall >= 0 && generalCall >= 0 && fallbackCall >= 0)
-assert.ok(generalCall > travelCall)
+assert.ok(travelCalendarCall >= 0 && expiryCall >= 0 && generalCall >= 0 && travelResearchCall >= 0 && fallbackCall >= 0)
+assert.ok(generalCall > travelCalendarCall)
 assert.ok(generalCall > expiryCall)
+assert.ok(generalCall < travelResearchCall, 'multi-step planner must run before simple travel research')
 assert.ok(generalCall < fallbackCall, 'general planner must run before simple fallback')
 
 // Approved execution route recognizes general plans and resumes them through the
