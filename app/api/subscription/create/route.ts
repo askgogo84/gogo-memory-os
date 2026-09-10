@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 
-type PublicPlan = 'lite' | 'pro' | 'power'
+type PublicPlan = 'essential' | 'plus' | 'pro'
 
 function sameOrigin(req: NextRequest) {
   const origin = req.headers.get('origin')
@@ -18,9 +18,9 @@ function sameOrigin(req: NextRequest) {
 
 function normalizePlan(value: unknown): PublicPlan | null {
   const plan = String(value || '').toLowerCase().trim().replace(/[\s-]+/g, '_')
-  if (plan === 'lite') return 'lite'
-  if (plan === 'pro') return 'pro'
-  if (plan === 'power' || plan === 'founder' || plan === 'founder_pro') return 'power'
+  if (plan === 'essential' || plan === 'lite') return 'essential'
+  if (plan === 'plus' || plan === 'gogo_plus') return 'plus'
+  if (plan === 'pro' || plan === 'gogo_pro' || plan === 'power' || plan === 'founder' || plan === 'founder_pro') return 'pro'
   return null
 }
 
