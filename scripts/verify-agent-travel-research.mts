@@ -88,6 +88,11 @@ if (!bridgeSource.includes('/api/internal/gogo/travel/flights')) {
   console.error('✗ CreditIQ flight bridge is not using the signed internal service endpoint')
 } else console.log('✓ flight research uses the signed CreditIQ service endpoint')
 
+if (!bridgeSource.includes('/api/internal/gogo/travel/hotels')) {
+  failed++
+  console.error('✗ CreditIQ hotel bridge is not using the signed internal service endpoint')
+} else console.log('✓ hotel research uses the signed CreditIQ service endpoint')
+
 if (!bridgeSource.includes('X-Gogo-Signature') || !bridgeSource.includes('CREDITIQ_GOGO_SERVICE_SECRET')) {
   failed++
   console.error('✗ CreditIQ service signature contract is missing')
@@ -104,6 +109,7 @@ if (!bridgeSource.includes('irreversiblePointsTransferAllowed: false')) {
 } else console.log('✓ irreversible points transfers remain disabled at the bridge boundary')
 
 const travelSource = readFileSync(new URL('../lib/agent/travel-research.ts', import.meta.url), 'utf8')
+const hotelSource = readFileSync(new URL('../lib/agent/creditiq-hotel-research.ts', import.meta.url), 'utf8')
 const actorSource = readFileSync(new URL('../lib/agent/actor.ts', import.meta.url), 'utf8')
 if (!actorSource.includes("from('wa_creditiq_links')") || !actorSource.includes('consumer_user_id')) {
   failed++
@@ -112,13 +118,28 @@ if (!actorSource.includes("from('wa_creditiq_links')") || !actorSource.includes(
 
 if (!travelSource.includes('userLinkId: actor.creditiqUserId || null')) {
   failed++
-  console.error('✗ linked CreditIQ identity is not passed into the signed travel decision bridge')
-} else console.log('✓ linked users get CreditIQ wallet-aware travel decisions')
+  console.error('✗ linked CreditIQ identity is not passed into the signed flight decision bridge')
+} else console.log('✓ linked users get CreditIQ wallet-aware flight decisions')
+
+if (!hotelSource.includes('userLinkId: params.actor.creditiqUserId || null')) {
+  failed++
+  console.error('✗ linked CreditIQ identity is not passed into the signed hotel decision bridge')
+} else console.log('✓ linked users get CreditIQ wallet-aware hotel decisions')
 
 if (!travelSource.includes('projected redemption is never treated as executable')) {
   failed++
-  console.error('✗ travel copy does not preserve projected-vs-executable redemption safety')
-} else console.log('✓ projected redemptions remain clearly verification-gated')
+  console.error('✗ flight copy does not preserve projected-vs-executable redemption safety')
+} else console.log('✓ projected flight redemptions remain clearly verification-gated')
+
+if (!hotelSource.includes('Projected redemption is never treated as executable until verified')) {
+  failed++
+  console.error('✗ hotel copy does not preserve projected-vs-executable redemption safety')
+} else console.log('✓ projected hotel redemptions remain clearly verification-gated')
+
+if (!hotelSource.includes('does not prove award-night availability or an exact points price')) {
+  failed++
+  console.error('✗ hotel chain matching could be mistaken for verified award inventory')
+} else console.log('✓ hotel loyalty discovery never claims award-night availability or exact points pricing')
 
 if (failed) process.exit(1)
-console.log('✅ Agent travel research routing, date, fare, identity and signed CreditIQ bridge checks passed')
+console.log('✅ Agent travel research routing, date, fare, identity and signed CreditIQ flight + hotel rewards checks passed')
