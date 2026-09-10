@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 
 const engine=readFileSync(new URL('../lib/agent/goal-engine.ts',import.meta.url),'utf8')
 const route=readFileSync(new URL('../app/api/agent/goals/route.ts',import.meta.url),'utf8')
+const resume=readFileSync(new URL('../app/api/agent/goals/[id]/resume/route.ts',import.meta.url),'utf8')
 const cron=readFileSync(new URL('../app/api/cron/agent-goals/route.ts',import.meta.url),'utf8')
 const vercel=readFileSync(new URL('../vercel.json',import.meta.url),'utf8')
 
@@ -19,4 +20,15 @@ assert.match(route,/initializeBackgroundGoal/)
 assert.match(cron,/CRON_SECRET/)
 assert.doesNotMatch(cron,/searchParams\.get\('secret'\)/)
 assert.match(vercel,/\/api\/cron\/agent-goals/)
+
+// A human review must not strand a goal forever. The resume route resolves one
+// blocked step, clears blockers, reactivates/creates the goal-review watcher and
+// wakes it immediately. It never executes the blocked consequential action itself.
+assert.match(resume,/status==='blocked'/)
+assert.match(resume,/humanReviewed:true/)
+assert.match(resume,/blockers:\[\]/)
+assert.match(resume,/type,'goal_review'/)
+assert.match(resume,/next_check_at:now/)
+assert.doesNotMatch(resume,/dispatchThroughSameBrain|runSecureBrowser|sendWhatsAppMessage/)
+
 console.log('agent background goals verification passed')
