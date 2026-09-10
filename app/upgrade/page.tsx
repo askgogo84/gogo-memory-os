@@ -1,36 +1,21 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSession } from '@/lib/dashboard/session'
 import { waLink } from '@/lib/product-urls'
+import { GOGO_INDIA_PLANS } from '@/lib/pricing/gogo-plans'
 
 export const dynamic = 'force-dynamic'
 
 const WA_DASHBOARD_LINK = waLink('dashboard')
 
-type PublicPlan = 'lite' | 'pro' | 'power'
+type PaidPlan = 'essential' | 'plus' | 'pro'
 
-const PLANS: Record<PublicPlan, { amount: number; name: string; features: string[] }> = {
-  lite: {
-    amount: 99,
-    name: 'Lite',
-    features: ['60 AI actions/month', '5 active reminders', '10 voice notes/month'],
-  },
-  pro: {
-    amount: 299,
-    name: 'Pro',
-    features: ['250 AI actions/month', '50 active reminders', '100 voice notes/month', 'Calendar + daily briefing', '30 web searches/month'],
-  },
-  power: {
-    amount: 499,
-    name: 'Power',
-    features: ['600 AI actions/month', '200 active reminders', '300 voice notes/month', '100 web searches/month', 'Calendar + priority access'],
-  },
-}
+const PAID: PaidPlan[] = ['essential','plus','pro']
 
-function normalizePlan(value?: string): PublicPlan {
-  const clean = String(value || 'pro').toLowerCase().trim().replace(/[\s-]+/g, '_')
-  if (clean === 'lite') return 'lite'
-  if (clean === 'power' || clean === 'founder' || clean === 'founder_pro') return 'power'
-  return 'pro'
+function normalizePlan(value?: string): PaidPlan {
+  const clean = String(value || 'plus').toLowerCase().trim().replace(/[\s-]+/g, '_')
+  if (clean === 'essential' || clean === 'lite') return 'essential'
+  if (clean === 'pro' || clean === 'gogo_pro' || clean === 'power' || clean === 'founder' || clean === 'founder_pro') return 'pro'
+  return 'plus'
 }
 
 function digitsOnly(value?: string | null) {
@@ -44,21 +29,20 @@ export default async function UpgradePage({
 }) {
   const params = await searchParams
   const planKey = normalizePlan(params.plan)
-  const selected = PLANS[planKey]
+  const selected = GOGO_INDIA_PLANS[planKey]
 
   const session = await getSession()
   const telegramId = session ? parseInt(session.telegramId, 10) : null
 
   if (!telegramId || Number.isNaN(telegramId)) {
     return (
-      <main style={{ fontFamily: 'system-ui', maxWidth: 480, margin: '0 auto', padding: '64px 24px', textAlign: 'center' }}>
-        <h1 style={{ fontSize: 24, margin: '0 0 12px' }}>Sign in to upgrade.</h1>
-        <p style={{ color: '#666', fontSize: 15, lineHeight: 1.6, margin: '0 0 28px' }}>
-          Message AskGogo on WhatsApp and send <strong>dashboard</strong> to get your private link, then come back here.
-        </p>
-        <a href={WA_DASHBOARD_LINK} style={{ display: 'inline-block', background: '#25D366', color: '#fff', padding: '12px 24px', borderRadius: 100, fontSize: 15, fontWeight: 600, textDecoration: 'none' }}>
-          Open WhatsApp →
-        </a>
+      <main className="min-h-screen bg-gogo-cream px-6 py-20 text-center text-gogo-ink">
+        <div className="mx-auto max-w-md rounded-[32px] border border-gogo-ink/8 bg-gogo-surface p-8 shadow-[0_28px_80px_rgba(22,19,15,.08)]">
+          <div className="text-[10px] font-semibold uppercase tracking-[.18em] text-gogo-teal">AskGogo</div>
+          <h1 className="mt-3 font-serif text-4xl font-normal">Sign in to upgrade.</h1>
+          <p className="mt-4 text-sm leading-6 text-gogo-ink-3">Message Gogo on WhatsApp and send <strong>dashboard</strong> to get your private link, then come back here.</p>
+          <a href={WA_DASHBOARD_LINK} className="mt-7 inline-flex rounded-full bg-gogo-ink px-6 py-3 text-sm font-semibold text-gogo-cream">Open WhatsApp →</a>
+        </div>
       </main>
     )
   }
@@ -74,38 +58,42 @@ export default async function UpgradePage({
   const checkoutHref = `/pay?plan=${planKey}${phoneParam}`
 
   return (
-    <main style={{ fontFamily: 'system-ui', maxWidth: 480, margin: '0 auto', padding: '40px 20px', textAlign: 'center' }}>
-      <h1 style={{ fontSize: 28, marginBottom: 8 }}>Upgrade to AskGogo {selected.name}</h1>
-      <p style={{ color: '#666', marginBottom: 32 }}>7-day free trial · then monthly · cancel anytime</p>
-      <div style={{ fontSize: 56, fontWeight: 300, marginBottom: 8 }}>
-        <span style={{ fontSize: 24, verticalAlign: 'top' }}>₹</span>
-        {selected.amount.toLocaleString('en-IN')}
-        <span style={{ fontSize: 16, color: '#999' }}>/month</span>
+    <main className="min-h-screen bg-gogo-cream px-5 py-10 text-gogo-ink sm:px-8">
+      <div className="mx-auto max-w-4xl">
+        <div className="text-center">
+          <div className="text-[10px] font-semibold uppercase tracking-[.18em] text-gogo-teal">Choose how much Gogo carries</div>
+          <h1 className="mt-3 font-serif text-5xl font-normal tracking-[-.03em] sm:text-6xl">{selected.name}</h1>
+          <p className="mt-3 text-sm text-gogo-ink-3">{selected.positioning}</p>
+          <div className="mt-6 font-serif text-6xl font-normal">₹{selected.priceInrMonthly.toLocaleString('en-IN')}<span className="font-sans text-base text-gogo-ink-4">/month</span></div>
+          <p className="mt-2 text-xs text-gogo-ink-4">7-day free trial · monthly · cancel anytime</p>
+        </div>
+
+        <div className="mx-auto mt-8 max-w-xl rounded-[30px] border border-gogo-ink/8 bg-gogo-surface p-6 shadow-[0_24px_70px_rgba(22,19,15,.07)] sm:p-8">
+          <ul className="grid gap-3 text-sm text-gogo-ink-2">
+            {selected.highlights.map((feature) => (
+              <li key={feature} className="flex gap-3 border-b border-gogo-ink/6 pb-3 last:border-0 last:pb-0"><span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-gogo-teal" />{feature}</li>
+            ))}
+          </ul>
+          {phoneDigits ? (
+            <a href={checkoutHref} className="mt-7 flex min-h-13 items-center justify-center rounded-full bg-gogo-ink px-6 text-sm font-semibold text-gogo-cream transition hover:bg-gogo-teal">
+              Start 7-day free trial →
+            </a>
+          ) : (
+            <a href={WA_DASHBOARD_LINK} className="mt-7 flex min-h-13 items-center justify-center rounded-full bg-gogo-ink px-6 text-sm font-semibold text-gogo-cream">
+              Open WhatsApp to continue →
+            </a>
+          )}
+        </div>
+
+        <div className="mt-7 flex flex-wrap justify-center gap-2">
+          {PAID.filter((key) => key !== planKey).map((key) => (
+            <a key={key} href={`/upgrade?plan=${key}`} className="rounded-full border border-gogo-ink/10 bg-gogo-surface px-4 py-2 text-xs font-semibold text-gogo-ink-3 hover:border-gogo-teal/30 hover:text-gogo-teal">
+              {GOGO_INDIA_PLANS[key].name} · ₹{GOGO_INDIA_PLANS[key].priceInrMonthly}
+            </a>
+          ))}
+        </div>
+        <p className="mt-6 text-center text-xs text-gogo-ink-4">Secured by Razorpay. New subscriptions use the current Gogo plan and price; existing subscriptions are not changed automatically.</p>
       </div>
-      <ul style={{ listStyle: 'none', padding: 0, margin: '32px 0', textAlign: 'left' }}>
-        {selected.features.map((feature) => (
-          <li key={feature} style={{ padding: '10px 0', borderBottom: '1px solid #eee', fontSize: 14, display: 'flex', gap: 10, alignItems: 'center' }}>
-            <span style={{ color: '#22c55e' }}>✓</span> {feature}
-          </li>
-        ))}
-      </ul>
-      {phoneDigits ? (
-        <a href={checkoutHref} style={{ display: 'block', background: '#0a0a0f', color: '#fff', padding: 16, borderRadius: 100, fontSize: 16, fontWeight: 500, textDecoration: 'none', marginBottom: 16 }}>
-          Start 7-day free trial →
-        </a>
-      ) : (
-        <a href={WA_DASHBOARD_LINK} style={{ display: 'block', background: '#25D366', color: '#fff', padding: 16, borderRadius: 100, fontSize: 16, fontWeight: 500, textDecoration: 'none', marginBottom: 16 }}>
-          Open WhatsApp to continue →
-        </a>
-      )}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginTop: 20 }}>
-        {(['lite', 'pro', 'power'] as PublicPlan[]).filter((key) => key !== planKey).map((key) => (
-          <a key={key} href={`/upgrade?plan=${key}`} style={{ color: '#666', fontSize: 13, textDecoration: 'underline' }}>
-            View {PLANS[key].name}
-          </a>
-        ))}
-      </div>
-      <p style={{ fontSize: 12, color: '#999', marginTop: 20 }}>Secured by Razorpay. You authorize once; billing begins after the free trial.</p>
     </main>
   )
 }
