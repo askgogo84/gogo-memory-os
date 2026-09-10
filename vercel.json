@@ -18,6 +18,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/agent-learning",
+      "schedule": "17 * * * *"
+    },
+    {
       "path": "/api/followups",
       "schedule": "30 3 * * *"
     },
