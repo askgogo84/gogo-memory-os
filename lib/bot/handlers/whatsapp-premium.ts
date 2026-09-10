@@ -7,9 +7,7 @@ export type PremiumWhatsappIntent =
   | 'referral_flow'
   | 'notify_me'
 
-const ASK_GOGO_WHATSAPP_LINK =
-  process.env.ASK_GOGO_WHATSAPP_JOIN_LINK ||
-  waLink('Hi AskGogo')
+const ASK_GOGO_WHATSAPP_LINK = process.env.ASK_GOGO_WHATSAPP_JOIN_LINK || waLink('Hi Gogo')
 
 function cleanName(name?: string) {
   const n = (name || '').trim()
@@ -19,123 +17,125 @@ function cleanName(name?: string) {
 
 export function buildWelcomeReply(userName?: string) {
   const name = cleanName(userName)
+  return `Hey ${name}, I’m *Gogo* 👋
 
-  return `Hey ${name}, I’m *AskGogo* 👋
+Your personal AI inside AskGogo — I remember, plan, act and keep working when you’re away.
 
-Your AI assistant inside WhatsApp.
-
-Use me by *typing or sending a voice note*.
-
-I can help you with:
-• reminders
-• calendar planning
-• today briefing
-• weather
-• sports updates
-• lists and notes
-• quick drafts
-• web search
+Use me by typing or sending a voice note.
 
 Try:
-1. Send a voice note: “Remind me in 10 mins to call Rahul”
-2. Connect calendar
-3. Today
-4. Show my reminders
-5. Bangalore weather tomorrow
+• “What do I have today?”
+• “Remember this for me.”
+• “Plan my Mumbai work trip.”
+• “Watch this price and tell me when it drops.”
+• “Add this to my calendar.”
+• “Find that document I sent you.”
 
-Built for people who live on WhatsApp.`
+Important actions such as sending, booking, paying or changing your calendar still stop for your approval.`
 }
 
 export function buildHelpReply() {
-  return `✨ *AskGogo Menu*
+  return `✨ *Gogo Menu*
 
-🎙️ *Voice first*
-Send a voice note in English, Hindi, Hinglish, Kannada, Tamil, Telugu or Malayalam.
+🧠 *Gogo Memory*
+• Remember this
+• Find my saved document
+• What do you know about my Mumbai trip?
 
-⏰ *Reminders*
-• Remind me in 20 mins to call Rahul
+⚡ *Gogo Agent*
+• Plan my trip
+• Prepare me for tomorrow
+• Research this and create a brief
+
+👀 *Background Gogo*
+• Watch this price
+• Tell me when applications open
+
+⏰ *Reminders & tasks*
+• Remind me tomorrow at 8am
 • Show my reminders
-• Cancel water reminder
-• Snooze 10 mins
-• Move it to 8 pm
-• Done
+• Add a task
 
 📅 *Calendar*
 • Connect calendar
-• Today
-• What’s on my calendar today?
-• Add meeting tomorrow at 4 pm
+• What’s on today?
+• Prepare a meeting for tomorrow
 
-☀️ *Daily*
-• Morning briefing
-• Bangalore weather tomorrow
-• Next RCB match
+🎙️ *Voice*
+Send a voice note in supported languages and talk naturally.
 
-🚀 *AskGogo*
+💳 *Plans*
 • Pricing
 • Usage
-• Invite friends
+• Upgrade
 
-Type or speak naturally. I’ll understand.`
+Just tell Gogo the outcome — you don’t need to learn commands.`
 }
 
 export function buildUpgradeReply() {
-  return `💚 *AskGogo Plans*
+  return `🟢 *Gogo Plans*
 
-Start free, then upgrade anytime. Every paid plan starts with a *7-day free trial* and can be cancelled anytime.
+Start free. Paid plans include a *7-day free trial* and can be cancelled anytime.
 
-*Free* — ₹0
-• Try AskGogo with core reminders, memory and lists
+*Gogo Free* — ₹0
+Meet Gogo
+• Core memory, tasks, lists and reminders
+• Basic Daily Gogo
+• Limited everyday AI use
 
-*Lite* — ₹99/month
-• 60 AI actions/month
-• 5 active reminders
-• 10 voice notes/month
+*Gogo Essential* — ₹249/month
+Let Gogo help
+• More Gogo capacity
+• WhatsApp + Calendar
+• Light connected work
+• Live flight search
+• Light Agent missions
+• 1 Background Gogo watch
 
-*Pro — most popular* — ₹299/month
-• 250 AI actions/month
-• 50 active reminders
-• 100 voice notes/month
-• Calendar + daily briefing
-• Web search
+*Gogo Plus — most popular* — ₹499/month
+Let Gogo handle it
+• Multi-step Gogo Agent
+• Gmail, Calendar, Drive & Contacts
+• Background Gogo
+• Goals & Ideas
+• Live flights + hotels
+• Cash vs points travel intelligence
+• Voice + artifacts + Secure Computer allowance
 
-*Power* — ₹499/month
-• 600 AI actions/month
-• 200 active reminders
-• 300 voice notes/month
-• Higher search + calendar limits
-• Priority access
+*Gogo Pro* — ₹999/month
+Gogo, take it from here
+• Highest Agent capacity
+• More Background Gogo, Goals and voice
+• More Secure Computer time
+• Priority capabilities
+• Advanced travel + booking/transaction preparation
 
-Reply *lite*, *pro*, or *power* and I'll send you the secure subscription link. 🔒`
+Reply *essential*, *plus*, or *pro* and I’ll send the secure Razorpay subscription link. 🔒`
 }
 
 export function buildNotifyMeReply(userName?: string) {
   const name = cleanName(userName)
-
   return `✅ *Got it, ${name}*
 
-Paid AskGogo plans are available from *₹99/month* with a *7-day free trial*.
+Gogo paid plans start at *₹249/month* with a *7-day free trial*.
 
-Reply *pricing* to see Free, Lite, Pro and Power, or *upgrade* when you're ready.`
+Reply *pricing* to see Gogo Essential, Gogo Plus and Gogo Pro, or *upgrade* when you’re ready.`
 }
 
 export function buildReferralReply() {
-  return `🎁 *Invite friends to AskGogo*
+  return `🎁 *Invite someone to meet Gogo*
 
 Copy and send this:
 
-“I’ve been testing AskGogo — an AI assistant on WhatsApp for reminders, memory, calendar planning, weather, sports updates and daily briefings.
+“I’ve been testing Gogo on AskGogo — a personal AI that remembers, plans, acts and keeps working in the background.
 
-You can type or send voice notes in Indian languages.
+It works through WhatsApp and the AskGogo dashboard, with memory, reminders, Agent missions, connected apps and approvals for important actions.
 
-Try it here:
+Try Gogo here:
 ${ASK_GOGO_WHATSAPP_LINK}”`
 }
 
-export function buildPremiumWhatsappReply(
-  intentType: string,
-  userName?: string
-) {
+export function buildPremiumWhatsappReply(intentType: string, userName?: string) {
   if (intentType === 'welcome_menu') return buildWelcomeReply(userName)
   if (intentType === 'help_menu') return buildHelpReply()
   if (intentType === 'upgrade_plan') return buildUpgradeReply()
