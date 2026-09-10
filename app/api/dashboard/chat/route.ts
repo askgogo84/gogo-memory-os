@@ -7,6 +7,7 @@ import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
 import { isPublicTravelResearchRequest, tryRunTravelResearch } from '@/lib/agent/travel-research'
+import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { resolveAgentActor } from '@/lib/agent/actor'
 
 export const dynamic = 'force-dynamic'
@@ -96,11 +97,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ text: dayReply, handledBy: 'dashboard-day' })
     }
 
-    // Keep Talk to Gogo and Gogo Agent consistent for current-market travel
+    const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+
+    // One Gogo everywhere: a genuinely multi-step outcome entered in Talk to Gogo
+    // becomes the same resumable Agent run users see in Gogo Agent and WhatsApp.
+    const mission = await tryRunGeneralPlan({
+      actor,
+      surface:'web',
+      text,
+      messageId:`web-${randomUUID()}`,
+    })
+    if (mission) {
+      const suffix = mission.status === 'waiting_approval'
+        ? '\n\nI paused at a consequential step. Open Gogo Agent to review and approve or reject it.'
+        : ''
+      const reply = `${mission.text || ''}${suffix}`
+      await saveConversation(user.telegram_id, text, reply)
+      return NextResponse.json({ text: reply, handledBy: mission.handledBy, runId: mission.runId, status: mission.status })
+    }
+
+    // Keep Talk to Gogo and Gogo Agent consistent for simple current-market travel
     // research. A request for cheap/current fares must not fall back to a saved
     // ticket merely because it was asked in chat rather than on the Agent page.
     if (isPublicTravelResearchRequest(text)) {
-      const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
       const travel = await tryRunTravelResearch({ actor, surface:'web', text })
       if (travel) {
         await saveConversation(user.telegram_id, text, travel.text)
