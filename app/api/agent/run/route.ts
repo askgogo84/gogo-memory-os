@@ -8,6 +8,7 @@ import { tryPrepareTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
+import { tryRunCreditIQHotelResearch } from '@/lib/agent/creditiq-hotel-research'
 import { tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { attachRunToThread, resolveThreadForUser } from '@/lib/agent/thread-context'
@@ -95,9 +96,16 @@ export async function POST(request: Request) {
     })
     if (generalPlan) return respond(generalPlan, generalPlan.status === 'waiting_approval' ? 202 : 200)
 
+    // Live hotels are supplied by CreditIQ through a signed service bridge. If the
+    // service is not configured or returns no live inventory, this returns null and
+    // the hardened public-web travel fallback remains available.
+    const liveHotels = await tryRunCreditIQHotelResearch({ actor, surface:session.surface, text })
+    if (liveHotels) return respond(liveHotels, 200)
+
     // Simple current-market travel research is a single-feature fallback. It still
     // runs before saved-travel retrieval, and its output is hardened for direction,
-    // dates and fare claims.
+    // dates and fare claims. Flight requests prefer CreditIQ live inventory inside
+    // this path before falling back to public search.
     const travelResearch = await tryRunTravelResearch({ actor, surface:session.surface, text })
     if (travelResearch) {
       const hardened = await hardenTravelResearchResult(travelResearch, text)
