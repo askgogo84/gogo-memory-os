@@ -6,6 +6,7 @@ import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 const PLAYWRIGHT_VERSION = '1.63.0'
 const MAX_ACTIONS = 12
+const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
 
 export type BrowserMode = 'read' | 'draft' | 'execute'
 
@@ -115,13 +116,14 @@ async function getComputer(userId:string,targetUrl:string){
   const name=userSandboxName(userId)
   // Setup egress is deliberately narrow. npm/Playwright hosts are available only
   // while the browser dependency is being bootstrapped; target-site egress is set
-  // immediately before running user work.
+  // immediately before running user work. India launch defaults the isolated VM
+  // to Mumbai (bom1), while allowing an explicit environment override later.
   const setupPolicy={allow:{
     'registry.npmjs.org':[], '*.npmjs.org':[], 'cdn.playwright.dev':[], '*.playwright.dev':[],
     'playwright.azureedge.net':[], '*.azureedge.net':[],
   }} as any
   const sandbox=await Sandbox.getOrCreate({
-    name, runtime:'node24', timeout:20*60*1000, persistent:true,
+    name, runtime:'node24', region:SANDBOX_REGION, timeout:20*60*1000, persistent:true,
     resources:{vcpus:1}, networkPolicy:setupPolicy,
   } as any)
   const check=await sandbox.runCommand('bash',['-lc',`test -f node_modules/playwright/package.json && echo ready || echo missing`])
