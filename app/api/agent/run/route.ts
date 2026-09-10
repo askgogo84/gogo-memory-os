@@ -8,6 +8,7 @@ import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { tryRunTravelResearch } from '@/lib/agent/travel-research'
+import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { attachRunToThread, resolveThreadForUser } from '@/lib/agent/thread-context'
 
 export const dynamic = 'force-dynamic'
@@ -39,9 +40,12 @@ export async function POST(request: Request) {
     if (browser) return respond(browser, browser.status === 'waiting_approval' ? 202 : 200)
 
     // Current-market travel research must run before saved-travel retrieval.
-    // This prevents queries like “find a cheap flight…” from returning an old ticket.
+    // The hardening pass removes mixed/off-window snippets and unverified fare signals.
     const travelResearch = await tryRunTravelResearch({ actor, surface:session.surface, text })
-    if (travelResearch) return respond(travelResearch, 200)
+    if (travelResearch) {
+      const hardened = await hardenTravelResearchResult(travelResearch, text)
+      return respond(hardened, 200)
+    }
 
     const travelCalendar = await tryPrepareTravelCalendarPlan({ actor, surface:session.surface, text })
     if (travelCalendar) return respond(travelCalendar, travelCalendar.status === 'waiting_approval' ? 202 : 200)
