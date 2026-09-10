@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { explicitMissionClock } from '../lib/agent/mission-tools'
+import { parseLocalDateTime } from '../lib/timezone'
 
 const planner = readFileSync(new URL('../lib/agent/general-planner.ts', import.meta.url), 'utf8')
 const missionTools = readFileSync(new URL('../lib/agent/mission-tools.ts', import.meta.url), 'utf8')
@@ -56,11 +58,19 @@ assert.match(missionTools, /remind_at:dueIso/)
 assert.match(missionTools, /verifiedStore:'reminders'/)
 assert.match(missionTools, /mission_reminder_write_unverified/)
 
+// Exact India test case: 15 Sep 2026 08:00 IST minus 24h must be 14 Sep 08:00 IST
+// (= 02:30 UTC). This blocks AM/PM-format regressions in the mission adapter.
+assert.equal(explicitMissionClock('planned departure time 15 September 2026 at 8:00 AM IST'), '08:00')
+assert.equal(explicitMissionClock('planned departure time at 8 PM IST'), '20:00')
+const departure = parseLocalDateTime({ date:'2026-09-15', time:'08:00', timezone:'Asia/Kolkata' }).dueAtUtc
+assert.equal(new Date(departure.getTime() - 24 * 3600_000).toISOString(), '2026-09-14T02:30:00.000Z')
+
 // Mission-internal travel research is curated by the same direction/date layer as
 // standalone travel research, and mission Memory must verify the requested route
 // before accepting a saved ticket as relevant context.
 assert.match(missionTools, /curateTravelResults/)
 assert.match(missionTools, /verifiedCuration:'travel-research'/)
+assert.match(missionTools, /routeText/)
 assert.match(missionTools, /doc_type','ticket'/)
 assert.match(missionTools, /verifiedRelevance:true/)
 assert.match(missionTools, /No saved flight matched this mission/)
