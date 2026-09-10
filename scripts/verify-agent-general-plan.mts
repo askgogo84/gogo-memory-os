@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 
 const planner = readFileSync(new URL('../lib/agent/general-planner.ts', import.meta.url), 'utf8')
 const missionTools = readFileSync(new URL('../lib/agent/mission-tools.ts', import.meta.url), 'utf8')
+const calendarRead = readFileSync(new URL('../lib/agent/calendar-read.ts', import.meta.url), 'utf8')
 const runRoute = readFileSync(new URL('../app/api/agent/run/route.ts', import.meta.url), 'utf8')
 const executeRoute = readFileSync(new URL('../app/api/agent/runs/[id]/execute/route.ts', import.meta.url), 'utf8')
 
@@ -25,16 +26,12 @@ assert.match(planner, /permissionFor\(tg,classified\.capability\)/)
 assert.match(planner, /status:'waiting_approval'/)
 assert.match(planner, /agent_approvals/)
 
-// Repeated active submissions are server-deduped before a second planner run can
-// create duplicate tasks, reminders or approvals.
 assert.match(runRoute, /Date\.now\(\) - 90_000/)
 assert.match(runRoute, /\.in\('status', \['queued','running','waiting_approval'\]\)/)
 assert.match(runRoute, /metadata_json\?\.input_text/)
 assert.match(runRoute, /handledBy: 'active-run-dedupe'/)
 assert.match(runRoute, /deduplicated: true/)
 
-// Tasks are verified against the real todos store and anti-duplicate prose is not
-// allowed to become part of the saved task name.
 assert.match(planner, /async function executeTaskStep/)
 assert.match(planner, /from\('todos'\)/)
 assert.match(planner, /verifiedStore:'todos'/)
@@ -42,8 +39,6 @@ assert.match(planner, /(?:create\|add).*or\\s\+verify/)
 assert.match(planner, /if\\s\+it\\s\+does\\s\+not\\s\+already\\s\+exist/)
 assert.match(planner, /if \(step\.tool === 'tasks'\) return executeTaskStep/)
 
-// Lists are deterministic mission tools too: a green list step must resolve/write the
-// actual lists store rather than return generic prose or public-web search results.
 assert.match(planner, /executeVerifiedMissionList/)
 assert.match(planner, /if \(step\.tool === 'lists'\) return executeVerifiedMissionList/)
 assert.match(missionTools, /getAllLists/)
@@ -60,8 +55,6 @@ assert.match(planner, /missionText:params\.missionText/)
 assert.match(planner, /missionText:params\.text/)
 assert.match(planner, /missionText:String\(meta\.input_text\|\|''\)/)
 
-// Exact reminder date/time in the step is preferred over NLP fallback. This protects
-// “14 Sep at 8 AM IST” from being converted into an unrelated “tomorrow” reminder.
 assert.match(missionTools, /const exactDate=explicitDate\(step\.instruction\)/)
 assert.match(missionTools, /const exactTime=explicitMissionClock\(step\.instruction\)/)
 assert.match(missionTools, /persistMissionReminder/)
@@ -70,8 +63,6 @@ assert.match(missionTools, /verifiedStore:'reminders'/)
 assert.match(missionTools, /mission_reminder_write_unverified/)
 assert.equal(new Date('2026-09-15T08:00:00+05:30').getTime() - 24 * 3600_000, new Date('2026-09-14T02:30:00Z').getTime())
 
-// Exact-date travel missions may only surface results whose snippet actually carries
-// an in-window date signal; mixed/off-date pages are rejected.
 assert.match(missionTools, /resultDatesAreInsideWindow/)
 assert.match(missionTools, /dates\.every\(date=>date>=startDate&&date<=endDate\)/)
 assert.match(missionTools, /mixedDateResultsRejected/)
@@ -82,11 +73,25 @@ assert.match(missionTools, /doc_type','ticket'/)
 assert.match(missionTools, /verifiedRelevance:true/)
 assert.match(missionTools, /No saved flight matched this mission/)
 
-// Calendar is a deterministic approval boundary and approved execution writes an
-// idempotent all-day event carrying a per-run AskGogo marker.
+// Calendar mutations remain approval-bound and idempotent, while availability
+// reads are a separate no-write implementation. This is the P0.8 safety invariant:
+// “find me a free slot” must never create an event.
 assert.match(planner, /if \(step\.tool === 'calendar'\)/)
 assert.match(planner, /approvalAction:'calendar_change'/)
 assert.match(planner, /executeVerifiedMissionCalendar/)
+assert.match(missionTools, /isCalendarWriteStep/)
+assert.match(missionTools, /if\(!isCalendarWriteStep\(params\.step\)\)/)
+assert.match(missionTools, /executeReadOnlyCalendarStep/)
+assert.match(calendarRead, /fetchPrimaryCalendarEvents/)
+assert.match(calendarRead, /availableSlots/)
+assert.match(calendarRead, /durationMinutes/)
+assert.match(calendarRead, /mutated:false/)
+assert.doesNotMatch(calendarRead, /method:\s*['"]POST['"]/)
+assert.doesNotMatch(calendarRead, /createCalendarEvent/)
+assert.match(calendarRead, /next week/)
+assert.match(calendarRead, /9\*60/)
+assert.match(calendarRead, /18\*60/)
+
 assert.match(missionTools, /google_calendar_connected,google_refresh_token/)
 assert.match(missionTools, /refreshAccessToken/)
 assert.match(missionTools, /privateExtendedProperty:`askgogoRunId=\$\{params\.runId\}`/)
@@ -128,4 +133,4 @@ assert.ok(generalCall < fallbackCall, 'general planner must run before simple fa
 assert.match(executeRoute, /planType === 'general_multi_tool'/)
 assert.match(executeRoute, /resumeApprovedGeneralPlan/)
 
-console.log('agent general planner verification passed')
+console.log('agent general planner + read-only calendar availability verification passed')
