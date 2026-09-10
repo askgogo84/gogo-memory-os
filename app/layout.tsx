@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Fraunces, Karla } from "next/font/google";
+import { Geist, Geist_Mono, Instrument_Serif, Manrope } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,34 +12,30 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// Display serif for dashboard page titles (UI/UX brief §3: high-contrast serif
-// for display, sans for everything else). Warm + high-contrast to sit with the
-// orange/plum palette rather than the cool elegance of a Didone.
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
+// AskGogo website display face. Keep the product shell and public story feeling
+// like one brand rather than two separate applications.
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-instrument-serif",
   subsets: ["latin"],
-  weight: ["400", "600"],
+  weight: "400",
 });
 
-// Body / clean sans (UI/UX brief §3). Karla is the "everything else" face — it
-// becomes the --font-sans in @theme (see globals.css). Geist stays loaded above
-// so other routes can still reference it via --font-geist-sans.
-const karla = Karla({
-  variable: "--font-karla",
+const manrope = Manrope({
+  variable: "--font-manrope",
   subsets: ["latin"],
 });
 
 const description =
-  "Your AI assistant that lives in WhatsApp — reminders, memory, calendar, money, health — no app, no login, just a message.";
+  "Meet Gogo — your personal AI that remembers, plans, acts and keeps working when you're away.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://app.askgogo.in"),
-  title: "AskGogo",
+  title: "AskGogo — Meet Gogo",
   description,
   openGraph: {
     type: "website",
     siteName: "AskGogo",
-    title: "AskGogo",
+    title: "AskGogo — Meet Gogo",
     description,
     url: "https://app.askgogo.in",
     images: [
@@ -47,7 +43,7 @@ export const metadata: Metadata = {
         url: "/askgogo-og.png",
         width: 1200,
         height: 630,
-        alt: "AskGogo",
+        alt: "AskGogo — Meet Gogo",
       },
     ],
   },
@@ -61,7 +57,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} ${karla.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} ${manrope.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
