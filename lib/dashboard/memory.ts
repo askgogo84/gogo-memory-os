@@ -27,6 +27,7 @@ export type DashboardMemoryItem = {
 export type DashboardMemory = { ok: true; items: DashboardMemoryItem[] } | { ok: false }
 
 const SENSITIVE_TITLE_RE = /\b(passport|aadhaar|aadhar|pan\s*card|driving\s+licen[cs]e|identity\s+card|national\s+id|government\s+id|govt\s+id|voter\s+id|residence\s+permit|bank\s+statement|account\s+statement)\b/i
+const GENERATED_TITLE_PREFIX_RE = /^(?:the\s+)?(?:document|image|photo|screenshot|file)\s+(?:(?:appears|seems)\s+to\s+be|(?:appears|seems)\s+to\s+show|shows|contains|depicts|looks\s+like|is)\s+(?:an?\s+|the\s+)?/i
 
 function stripIdentifiers(text: string): string {
   return String(text || '')
@@ -62,8 +63,33 @@ function holderName(ex: any): string | null {
   return name.trim().split(/\s+/).slice(0, 2).join(' ')
 }
 
-function safeTitle(doc: RawDoc, sensitive: boolean): string {
-  const ex = extractedObject(doc)
+function sentenceCase(text: string): string {
+  const value = text.replace(/\s+/g, ' ').trim()
+  if (!value) return value
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+function compactGeneratedTitle(raw: string): string | null {
+  if (!GENERATED_TITLE_PREFIX_RE.test(raw)) return null
+
+  let value = raw.replace(GENERATED_TITLE_PREFIX_RE, '').trim()
+  value = value.split(/[.;!?]/, 1)[0].trim()
+  value = value.replace(/\s+(?:that|which)\s+.*$/i, '').trim()
+  value = value.replace(/^(?:a|an|the)\s+/i, '').trim()
+
+  if (!value) return null
+  if (/^product\s+for\s+car\s+care\b/i.test(value)) return 'Car care product'
+  if (/^official\s+notice\s+or\s+guideline\b/i.test(value)) return 'Official notice / guideline'
+  if (/^official\s+notice\b/i.test(value)) return 'Official notice'
+
+  const words = value.split(/\s+/).filter(Boolean)
+  const compact = words.slice(0, 7).join(' ')
+  return sentenceCase(compact.length > 54 ? `${compact.slice(0, 51).trim()}…` : compact)
+}
+
+export function buildMemoryDisplayTitle(doc: Pick<RawDoc, 'doc_type' | 'title' | 'extracted' | 'mime'>, sensitive = false): string {
+  const fullDoc = doc as RawDoc
+  const ex = extractedObject(fullDoc)
   const type = String(ex.assetType || doc.doc_type || '').toLowerCase()
   if (type === 'passport' || /passport/i.test(doc.title || '')) {
     const who = holderName(ex)
@@ -75,8 +101,17 @@ function safeTitle(doc: RawDoc, sensitive: boolean): string {
     const who = holderName(ex)
     return who ? `${who}'s ${kind}` : kind
   }
+
+  const kind = deriveKind(fullDoc)
   const raw = stripIdentifiers(doc.title || '')
-  if (!raw || sensitive) return deriveKind(doc) === 'identity' ? 'Identity document' : 'Saved document'
+  if (!raw || sensitive) return kind === 'identity' ? 'Identity document' : kind === 'image' ? 'Saved image' : 'Saved document'
+
+  const compact = compactGeneratedTitle(raw)
+  if (compact) return compact
+
+  const sentenceLike = /[.!?]$/.test(raw) || raw.split(/\s+/).length > 12
+  if (sentenceLike) return kind === 'image' ? 'Saved image' : kind === 'travel' ? 'Travel document' : 'Saved document'
+
   return raw.length > 72 ? raw.slice(0, 69) + '…' : raw
 }
 
@@ -125,7 +160,7 @@ export async function getDashboardMemory(telegramId: string): Promise<DashboardM
       }
       return {
         id: String(doc.id),
-        title: safeTitle(doc, sensitive),
+        title: buildMemoryDisplayTitle(doc, sensitive),
         kind: deriveKind(doc),
         subtitle: safeSubtitle(doc, sensitive),
         savedAt: doc.created_at,
