@@ -25,10 +25,32 @@ function explicitDate(text:string){
 }
 
 function explicitClock(text:string){
-  const m=text.match(/\b(\d{1,2})(?::(\d{2}))\s*(am|pm)\b/i) || text.match(/\b(\d{1,2})\s*(am|pm)\b/i)
-  if(!m)return null
-  if(m.length>=4)return `${m[1]}:${m[2]} ${m[3].toUpperCase()}`
-  return `${m[1]}:00 ${m[2].toUpperCase()}`
+  const withMinutes=text.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)\b/i)
+  if(withMinutes)return `${withMinutes[1]}:${withMinutes[2]} ${withMinutes[3].toUpperCase()}`
+  const hourOnly=text.match(/\b(\d{1,2})\s*(am|pm)\b/i)
+  if(hourOnly)return `${hourOnly[1]}:00 ${hourOnly[2].toUpperCase()}`
+  return null
+}
+
+function routeText(raw:string){
+  const text=String(raw||'').replace(/\s+/g,' ').trim()
+  if(/\bfrom\s+[A-Za-z]{2,}(?:[ .'-]+[A-Za-z]{2,})*\s+to\s+[A-Za-z]{2,}/i.test(text))return text
+  const m=text.match(/\b(?:research|search|find|compare|check|plan)?\s*(?:flights?\s+)?([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,26}?)\s+to\s+([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,26}?)(?=\s+(?:flights?|flight|work\s+trip|trip|travel|on|for|next|this|tomorrow)\b|$)/i)
+  if(!m?.[1]||!m?.[2])return text
+  const origin=m[1].replace(/^(?:research|search|find|compare|check|plan)\s+/i,'').trim()
+  const destination=m[2].trim()
+  if(!origin||!destination)return text
+  return `Search flights from ${origin} to ${destination} for ${text}`
+}
+
+function travelContext(raw:string){
+  const normalized=routeText(raw)
+  const context=buildTravelResearchContext(normalized)
+  if(!context.startDate){
+    const date=explicitDate(raw)
+    if(date){context.startDate=date;context.endDate=date;context.whenLabel=date;context.searchWhen=date}
+  }
+  return {context,normalized}
 }
 
 function plannedDeparture(missionText:string){
@@ -55,8 +77,7 @@ async function actorTimezone(actor:AgentActor){
 }
 
 function destinationLabel(missionText:string){
-  const c=buildTravelResearchContext(missionText)
-  return c.destination?.label||'trip'
+  return travelContext(missionText).context.destination?.label||'trip'
 }
 
 export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
@@ -95,15 +116,12 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
 }
 
 export async function executeVerifiedMissionWebSearch(step:MissionStep){
-  const results=await searchWebResults(step.instruction)
   if(!isPublicTravelResearchRequest(step.instruction)){
+    const results=await searchWebResults(step.instruction)
     return {text:results.length?`Found ${results.length} public web results.`:'No useful public web results found.',output:{results:results.slice(0,5).map(r=>({title:r.title,url:r.url,snippet:r.snippet.slice(0,500)}))}}
   }
-  const context=buildTravelResearchContext(step.instruction)
-  if(!context.startDate){
-    const date=explicitDate(step.instruction)
-    if(date){context.startDate=date;context.endDate=date;context.whenLabel=date;context.searchWhen=date}
-  }
+  const {context,normalized}=travelContext(step.instruction)
+  const results=await searchWebResults(normalized)
   const curated=curateTravelResults(results,context)
   return {
     text:curated.length?`Found ${curated.length} direction/date-curated travel sources for ${context.routeLabel}.`:`No reliable direction/date-matched travel source was found for ${context.routeLabel}.`,
@@ -114,7 +132,9 @@ export async function executeVerifiedMissionWebSearch(step:MissionStep){
 function includesAny(hay:string,values:string[]){const lower=hay.toLowerCase();return values.some(v=>v&&lower.includes(v.toLowerCase()))}
 
 export async function executeVerifiedMissionMemory(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
-  const context=buildTravelResearchContext(params.missionText)
+  const {context}=travelContext(params.missionText)
+  const missionDate=explicitDate(params.missionText)
+  if(missionDate&&!context.startDate){context.startDate=missionDate;context.endDate=missionDate}
   const travelMission=context.kind==='flight'&&context.origin&&context.destination&&/\b(flight|trip|travel|mumbai|bengaluru|bangalore)\b/i.test(params.missionText)
   if(travelMission){
     const {data,error}=await supabaseAdmin.from('documents').select('id,title,summary,extracted,doc_date,created_at')
