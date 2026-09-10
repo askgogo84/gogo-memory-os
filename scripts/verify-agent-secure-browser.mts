@@ -12,6 +12,12 @@ assert.match(computer,/createHash\('sha256'\)/)
 assert.match(computer,/gogo-browser-/)
 assert.match(computer,/persistent:true/)
 
+// India launch defaults each per-user secure browser microVM to Mumbai while
+// keeping an explicit environment override for later regional expansion.
+assert.match(computer,/GOGO_SANDBOX_REGION/)
+assert.match(computer,/\|\| 'bom1'/)
+assert.match(computer,/region:SANDBOX_REGION/)
+
 // Setup egress is explicit, then policy is replaced with the requested target
 // family before user browser work runs.
 assert.match(computer,/networkPolicy:setupPolicy/)
