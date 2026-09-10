@@ -16,7 +16,11 @@ type TravelContext = {
   whenLabel: string
   searchWhen: string
   routeLabel: string
+  startDate?: string
+  endDate?: string
 }
+
+type DateRelevance = 'matched' | 'unknown' | 'mismatched'
 
 const PLACES: Record<string, Place> = {
   bangalore: { label: 'Bengaluru', code: 'BLR', aliases: ['bangalore','bengaluru','blr'] },
@@ -41,6 +45,13 @@ const PLACES: Record<string, Place> = {
   dxb: { label: 'Dubai', code: 'DXB', aliases: ['dubai','dxb'] },
 }
 
+const INDIA_CODES = new Set(['BLR','BOM','DEL','HYD','MAA','CCU','PNQ','GOI','GOX'])
+const MONTHS: Record<string, number> = {
+  jan:0, january:0, feb:1, february:1, mar:2, march:2, apr:3, april:3, may:4,
+  jun:5, june:5, jul:6, july:6, aug:7, august:7, sep:8, sept:8, september:8,
+  oct:9, october:9, nov:10, november:10, dec:11, december:11,
+}
+
 function esc(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -53,16 +64,22 @@ function placeFrom(raw: string | undefined): Place | undefined {
   return { label, aliases: [cleaned] }
 }
 
-function extractSegment(text: string, marker: 'from' | 'to') {
+function extractSegment(text: string, marker: 'from' | 'to' | 'in') {
   const stop = marker === 'from'
     ? '(?=\\s+(?:to|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip)\\b|$)'
-    : '(?=\\s+(?:from|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip)\\b|$)'
+    : marker === 'to'
+      ? '(?=\\s+(?:from|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip)\\b|$)'
+      : '(?=\\s+(?:next|this|tomorrow|on|for|under|below|with|from|to)\\b|$)'
   const re = new RegExp(`\\b${marker}\\s+([a-zA-Z][a-zA-Z .'-]{1,42}?)${stop}`, 'i')
   return text.match(re)?.[1]?.trim()
 }
 
 function fmtDate(date: Date) {
   return new Intl.DateTimeFormat('en-GB', { day:'numeric', month:'short', year:'numeric', timeZone:'UTC' }).format(date)
+}
+
+function isoDay(date: Date) {
+  return date.toISOString().slice(0, 10)
 }
 
 function nextWeekRange(now: Date) {
@@ -72,7 +89,7 @@ function nextWeekRange(now: Date) {
   monday.setUTCDate(base.getUTCDate() + (8 - day))
   const sunday = new Date(monday)
   sunday.setUTCDate(monday.getUTCDate() + 6)
-  return { label:`${fmtDate(monday)} – ${fmtDate(sunday)}`, search:`${fmtDate(monday)} ${fmtDate(sunday)}` }
+  return { label:`${fmtDate(monday)} – ${fmtDate(sunday)}`, search:`${fmtDate(monday)} ${fmtDate(sunday)}`, startDate:isoDay(monday), endDate:isoDay(sunday) }
 }
 
 function thisWeekRange(now: Date) {
@@ -80,7 +97,7 @@ function thisWeekRange(now: Date) {
   const day = base.getUTCDay() || 7
   const sunday = new Date(base)
   sunday.setUTCDate(base.getUTCDate() + (7 - day))
-  return { label:`${fmtDate(base)} – ${fmtDate(sunday)}`, search:`${fmtDate(base)} ${fmtDate(sunday)}` }
+  return { label:`${fmtDate(base)} – ${fmtDate(sunday)}`, search:`${fmtDate(base)} ${fmtDate(sunday)}`, startDate:isoDay(base), endDate:isoDay(sunday) }
 }
 
 function normalizeWhen(text: string, now = new Date()) {
@@ -90,11 +107,11 @@ function normalizeWhen(text: string, now = new Date()) {
   if (/\bnext month\b/.test(t)) {
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
     const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 2, 0))
-    return { label:new Intl.DateTimeFormat('en-GB',{month:'long',year:'numeric',timeZone:'UTC'}).format(start), search:`${fmtDate(start)} ${fmtDate(end)}` }
+    return { label:new Intl.DateTimeFormat('en-GB',{month:'long',year:'numeric',timeZone:'UTC'}).format(start), search:`${fmtDate(start)} ${fmtDate(end)}`, startDate:isoDay(start), endDate:isoDay(end) }
   }
   if (/\btomorrow\b/.test(t)) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1))
-    return { label:fmtDate(d), search:fmtDate(d) }
+    return { label:fmtDate(d), search:fmtDate(d), startDate:isoDay(d), endDate:isoDay(d) }
   }
   const dateish = text.match(/\b(?:\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2})(?:\s*(?:-|–|to)\s*(?:\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}))?/i)?.[0]
   if (dateish) return { label:dateish, search:`${dateish} ${now.getUTCFullYear()}` }
@@ -114,22 +131,20 @@ export function buildTravelResearchContext(rawText: string, now = new Date()): T
     destination ||= placeFrom(pair?.[2])
   }
 
-  if (kind === 'hotel' && !destination) destination = placeFrom(extractSegment(text, 'in') as any)
+  if (kind === 'hotel' && !destination) destination = placeFrom(extractSegment(text, 'in'))
 
   const when = normalizeWhen(text, now)
   const routeLabel = origin && destination
     ? `${origin.code || origin.label} → ${destination.code || destination.label}`
     : destination ? destination.label : 'Travel search'
-  return { kind, origin, destination, whenLabel:when.label, searchWhen:when.search, routeLabel }
+  return { kind, origin, destination, whenLabel:when.label, searchWhen:when.search, routeLabel, startDate:when.startDate, endDate:when.endDate }
 }
 
 export function isPublicTravelResearchRequest(rawText: string) {
   const text = String(rawText || '').trim()
   const t = text.toLowerCase()
   if (!/\b(flight|flights|airfare|fare|fares|hotel|hotels|travel|trip)\b/.test(t)) return false
-
   if (/\b(my\s+(flight|ticket|booking|reservation|pnr|boarding pass|itinerary)|saved\s+(flight|ticket|booking)|show\s+my\s+(flight|ticket)|find\s+my\s+(flight|ticket))\b/.test(t)) return false
-
   return /\b(cheap|cheapest|best\s+(fare|price|deal)|compare|comparison|price|prices|fare|fares|deal|deals|available|availability|options|search|research|look\s+for|find\s+(a|me\s+a)|next\s+week|this\s+week|next\s+month)\b/.test(t)
 }
 
@@ -158,18 +173,87 @@ function sourceLabel(url: string) {
   } catch { return 'Source' }
 }
 
-function cleanSnippet(value: string) {
-  return safe(value, 260)
+function domesticIndia(context: TravelContext) {
+  return Boolean(context.origin?.code && context.destination?.code && INDIA_CODES.has(context.origin.code) && INDIA_CODES.has(context.destination.code))
+}
+
+function parseDateMentions(text: string, context: TravelContext) {
+  const out: Date[] = []
+  const defaultYear = Number(context.startDate?.slice(0,4) || new Date().getUTCFullYear())
+  const add = (year:number, month:number, day:number) => {
+    if (year < 2020 || year > 2100 || month < 0 || month > 11 || day < 1 || day > 31) return
+    const d = new Date(Date.UTC(year,month,day))
+    if (d.getUTCFullYear() === year && d.getUTCMonth() === month && d.getUTCDate() === day) out.push(d)
+  }
+
+  const dayMonth = /\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(20\d{2}))?/gi
+  let m: RegExpExecArray | null
+  while ((m = dayMonth.exec(text))) add(Number(m[3] || defaultYear), MONTHS[m[2].toLowerCase()], Number(m[1]))
+
+  const monthDay = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:[,\s]+(20\d{2}))?/gi
+  while ((m = monthDay.exec(text))) add(Number(m[3] || defaultYear), MONTHS[m[1].toLowerCase()], Number(m[2]))
+
+  const numeric = /\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/g
+  while ((m = numeric.exec(text))) add(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+
+  const seen = new Set<string>()
+  return out.filter(d => {
+    const key = isoDay(d)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function dateRelevance(result: WebSearchResult, context: TravelContext): { relevance: DateRelevance; signals: string[] } {
+  if (!context.startDate || !context.endDate) return { relevance:'unknown', signals:[] }
+  const dates = parseDateMentions(`${result.title} ${result.snippet}`, context)
+  if (!dates.length) return { relevance:'unknown', signals:[] }
+  const hits = dates.filter(d => {
+    const iso = isoDay(d)
+    return iso >= context.startDate! && iso <= context.endDate!
+  })
+  if (!hits.length) return { relevance:'mismatched', signals:dates.map(fmtDate).slice(0,4) }
+  return { relevance:'matched', signals:hits.map(fmtDate).slice(0,4) }
+}
+
+function extractInrFare(text: string) {
+  const m = String(text || '').match(/(?:₹|INR\s*|Rs\.?\s*)([\d,]+(?:\.\d{1,2})?)/i)
+  return m ? `₹${m[1]}` : undefined
+}
+
+function hasForeignCurrency(text: string) {
+  return /(?:US\$|\$|USD\b|UAH\b|AED\b|EUR\b|€|GBP\b|£)\s*[\d,.]*/i.test(text)
+}
+
+function stripForeignPrices(text: string) {
+  return text.replace(/(?:US\$|\$|USD\s*|UAH\s*|AED\s*|EUR\s*|€|GBP\s*|£)\s*[\d,.]+/gi, '').replace(/\s{2,}/g,' ').trim()
+}
+
+function cleanTitle(value: string, context: TravelContext) {
+  const title = safe(value, 150)
+  return domesticIndia(context) ? stripForeignPrices(title).replace(/\s*[–—-]\s*$/,'').trim() : title
+}
+
+function cleanSnippet(value: string, context: TravelContext) {
+  let snippet = safe(value, 280)
     .replace(/\b(?:book now|click here|promo code|checkout)\b.*$/i, '')
     .replace(/\s*[|]{1,2}\s*/g, ' · ')
     .trim()
+  if (domesticIndia(context)) snippet = stripForeignPrices(snippet)
+  return snippet
 }
 
 export function curateTravelResults(results: WebSearchResult[], context: TravelContext) {
   const seen = new Set<string>()
+  const directional = Boolean(context.kind === 'flight' && context.origin && context.destination)
   return results
-    .map(result => ({ result, score:directionScore(result, context) }))
-    .filter(x => x.score >= 0)
+    .map(result => {
+      const dates = dateRelevance(result, context)
+      const score = directionScore(result, context) + (dates.relevance === 'matched' ? 3 : 0)
+      return { result, score, dates }
+    })
+    .filter(x => (directional ? x.score > 0 : x.score >= 0) && x.dates.relevance !== 'mismatched')
     .sort((a,b) => b.score - a.score)
     .filter(({result}) => {
       try {
@@ -181,22 +265,37 @@ export function curateTravelResults(results: WebSearchResult[], context: TravelC
       } catch { return false }
     })
     .slice(0, 4)
-    .map(({result}) => ({
-      title:safe(result.title, 150),
-      source:sourceLabel(result.url),
-      url:result.url,
-      snippet:cleanSnippet(result.snippet),
-    }))
+    .map(({result, dates}) => {
+      const combined = `${result.title} ${result.snippet}`
+      const inrFare = extractInrFare(combined)
+      const foreignCurrencyOnly = domesticIndia(context) && !inrFare && hasForeignCurrency(combined)
+      return {
+        title:cleanTitle(result.title, context),
+        source:sourceLabel(result.url),
+        url:result.url,
+        snippet:cleanSnippet(result.snippet, context),
+        dateRelevance:dates.relevance,
+        dateSignals:dates.signals,
+        inrFare,
+        foreignCurrencyOnly,
+      }
+    })
+}
+
+function humanDateFromIso(iso: string | undefined) {
+  if (!iso) return ''
+  return fmtDate(new Date(`${iso}T00:00:00Z`))
 }
 
 function buildQueries(context: TravelContext, original: string) {
   if (context.kind === 'flight' && context.origin && context.destination) {
     const origin = `${context.origin.label}${context.origin.code ? ` ${context.origin.code}` : ''}`
     const dest = `${context.destination.label}${context.destination.code ? ` ${context.destination.code}` : ''}`
+    const dates = [context.startDate, context.endDate].filter(Boolean).map(humanDateFromIso)
     return [
-      `${origin} to ${dest} flights ${context.searchWhen} fares INR IndiGo Air India Akasa Google Flights`,
-      `cheap flights ${origin} to ${dest} ${context.searchWhen} one way fare`,
-    ]
+      `${origin} to ${dest} flights ${context.searchWhen} fare INR direct`,
+      ...dates.map(date => `${origin} to ${dest} flight ${date} fare INR IndiGo Air India Akasa`),
+    ].slice(0,3)
   }
   if (context.kind === 'hotel' && context.destination) {
     return [`hotels in ${context.destination.label} ${context.searchWhen} rates availability`, String(original).trim()]
@@ -244,11 +343,20 @@ export async function tryRunTravelResearch(params: { actor: AgentActor; surface:
 
     const intro = `Current public search · ${context.routeLabel} · ${context.whenLabel}\nI did not use your saved tickets.`
     const text = curated.length
-      ? `${intro}\n\n${curated.map((r,i) => `${i + 1}. ${r.source} — ${r.title}\n${r.snippet || 'Open the source to check the current fare and schedule.'}\n${r.url}`).join('\n\n')}\n\nThese are public-web search results, not guaranteed live inventory. Verify the exact date, baggage, cancellation terms and final INR fare before paying.`
-      : `${intro}\n\nI couldn't find enough direction-matched public results to show confidently. Try exact travel dates (for example, “BLR to BOM on 16 Sep 2026”) and I’ll search again.`
+      ? `${intro}\n\n${curated.map((r,i) => {
+          const dateLine = r.dateRelevance === 'matched'
+            ? `Date signal: ${r.dateSignals.join(', ')} · inside your requested window`
+            : `Date: route page found · exact requested date not verified`
+          const fareLine = r.inrFare
+            ? `Public snippet mentions ${r.inrFare} · verify on the source before booking`
+            : `INR fare: not verified in the public snippet`
+          const detail = r.snippet ? `\n${r.snippet}` : ''
+          return `${i + 1}. ${r.source} — ${r.title}\n${dateLine}\n${fareLine}${detail}\nOpen source: ${r.url}`
+        }).join('\n\n')}\n\nThese are public-web sources, not guaranteed live inventory. I hide off-date results and do not treat foreign-currency snippets as an INR fare. Verify the exact flight, baggage, cancellation terms and final INR price on the provider page before paying.`
+      : `${intro}\n\nI couldn't find a direction- and date-relevant public result that I can show confidently. Try an exact travel date (for example, “BLR to BOM on 16 Sep 2026”). I will not substitute a different week or reverse route.`
 
     await supabaseAdmin.from('agent_runs').update({ status:'completed', summary:safe(text,1800), progress:100, completed_at:completedAt, updated_at:completedAt }).eq('id',runId).eq('telegram_id',String(tg))
-    await addActivity(tg,runId,'run_completed',curated.length ? `Found ${curated.length} direction-matched public travel sources.` : 'No direction-matched public travel results found.',{result_count:curated.length,route:context.routeLabel})
+    await addActivity(tg,runId,'run_completed',curated.length ? `Found ${curated.length} curated public travel sources.` : 'No reliable date-relevant public travel results found.',{result_count:curated.length,route:context.routeLabel})
 
     return { runId, status:'completed' as const, capability:'travel' as const, risk:'low' as const, text, handledBy:'travel-research' as const }
   } catch (error:any) {
