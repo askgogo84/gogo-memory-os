@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { routeFeatureIntent } from '@/lib/feature-intents'
+import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
@@ -21,9 +21,11 @@ async function saveFeatureConversation(telegramId: number, userText: string, ass
 }
 
 /**
- * App requests use the exact same feature router and production message engine
- * that WhatsApp uses. This is the key same-brain boundary: no native-only
- * reminder/list/calendar implementation and no second memory silo.
+ * Planner steps use the mature deterministic feature layer directly, followed by
+ * the normal message engine. They deliberately DO NOT call the Agent-enhanced
+ * routeFeatureIntent wrapper because that wrapper can start a new Agent mission;
+ * allowing a plan step to invoke it would create planner → router → planner
+ * recursion and split one user outcome into nested runs.
  */
 export async function dispatchThroughSameBrain(params: {
   actor: AgentActor
@@ -33,7 +35,7 @@ export async function dispatchThroughSameBrain(params: {
   const text = String(params.text || '').trim().slice(0, 2000)
   if (!text) throw new Error('empty_agent_request')
 
-  const featureReply = await routeFeatureIntent(params.actor.whatsappId, text, {
+  const featureReply = await routeLegacyFeatureIntent(params.actor.whatsappId, text, {
     telegramId: params.actor.legacyTelegramId,
     caption: text,
   })
@@ -54,7 +56,7 @@ export async function dispatchThroughSameBrain(params: {
     text,
     userName: params.actor.name || 'Gogo',
     messageType: 'text',
-    messageId: params.messageId ?? `native-${randomUUID()}`,
+    messageId: params.messageId ?? `agent-step-${randomUUID()}`,
   })
 
   return {
