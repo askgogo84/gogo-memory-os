@@ -38,7 +38,7 @@ export function parseWebWatchCommand(text: string) {
     query,
     triggerKeywords,
     delivery: 'both',
-    cadenceMinutes: 60,
+    cadenceMinutes: 15,
   })
 }
 
