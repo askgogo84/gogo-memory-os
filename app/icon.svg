@@ -1,13 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="AskGogo">
-  <title>AskGogo</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Gogo">
+  <title>Gogo</title>
   <defs>
-    <linearGradient id="ag-ic" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2AE372"/><stop offset="1" stop-color="#12B85C"/>
-    </linearGradient>
+    <radialGradient id="face" cx="40%" cy="28%" r="78%">
+      <stop offset="0" stop-color="#FFFDF8"/>
+      <stop offset="0.62" stop-color="#F4E8D8"/>
+      <stop offset="1" stop-color="#E7D3B8"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="55%">
+      <stop offset="0" stop-color="#FFB06A" stop-opacity=".98"/>
+      <stop offset=".55" stop-color="#EF7A27" stop-opacity=".58"/>
+      <stop offset="1" stop-color="#EF7A27" stop-opacity="0"/>
+    </radialGradient>
   </defs>
-  <rect x="0" y="0" width="96" height="96" rx="24" fill="url(#ag-ic)"/>
-  <path d="M22 92 L22 74 L42 88 Z" fill="#12B85C"/>
-  <text x="48" y="70" font-size="66" font-weight="800" fill="#ffffff" text-anchor="middle"
-        font-family="Poppins, Nunito, system-ui, sans-serif">g</text>
-  <circle cx="76" cy="20" r="8" fill="#FF7A00"/>
+  <rect width="96" height="96" rx="24" fill="#F6F1E8"/>
+  <g fill="#2C1A13">
+    <circle cx="24" cy="39" r="8"/><circle cx="30" cy="28" r="9"/><circle cx="42" cy="21" r="10"/>
+    <circle cx="55" cy="20" r="10"/><circle cx="68" cy="25" r="9"/><circle cx="76" cy="36" r="8"/>
+    <circle cx="48" cy="28" r="11"/><circle cx="35" cy="35" r="8"/><circle cx="62" cy="34" r="8"/>
+  </g>
+  <path d="M48 29c19 0 32 14 33 33 1 19-13 29-33 29S14 81 15 62c1-19 14-33 33-33Z" fill="url(#face)" stroke="rgba(22,19,15,.08)" stroke-width="1.5"/>
+  <circle cx="48" cy="72" r="18" fill="url(#glow)"/>
+  <circle cx="34" cy="59" r="3.5" fill="#EF7A27" opacity=".18"/>
+  <circle cx="62" cy="59" r="3.5" fill="#EF7A27" opacity=".18"/>
+  <path d="M34 52q4 3 8 0M54 52q4 3 8 0" fill="none" stroke="#2C1A13" stroke-width="2.4" stroke-linecap="round"/>
+  <circle cx="76" cy="78" r="8" fill="#157A6E" stroke="#F6F1E8" stroke-width="4"/>
 </svg>
