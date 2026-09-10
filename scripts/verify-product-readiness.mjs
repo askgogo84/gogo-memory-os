@@ -3,13 +3,8 @@ import assert from 'node:assert/strict'
 
 const read = (path) => fs.readFileSync(path, 'utf8')
 const check = (name, fn) => {
-  try {
-    fn()
-    console.log(`  ✓ ${name}`)
-  } catch (error) {
-    console.error(`  ✗ ${name}`)
-    throw error
-  }
+  try { fn(); console.log(`  ✓ ${name}`) }
+  catch (error) { console.error(`  ✗ ${name}`); throw error }
 }
 
 console.log('Product readiness regression checks')
@@ -31,11 +26,11 @@ check('Master Gogo presenter is persisted in AskGogo storage', () => {
 })
 
 const pay = read('app/pay/page.tsx')
-check('Pay page sells only Lite, Pro and Power', () => {
-  assert.match(pay, /name: 'Lite'.*amount: 99/s)
-  assert.match(pay, /name: 'Pro'.*amount: 299/s)
-  assert.match(pay, /name: 'Power'.*amount: 499/s)
-  assert.doesNotMatch(pay, /name: 'Starter'|name: 'Lifetime'|name: 'Founder Pro'/)
+check('Pay page sells only Essential, Plus and Pro at canonical prices', () => {
+  assert.match(pay, /name:'Gogo Essential'.*amount:249/s)
+  assert.match(pay, /name:'Gogo Plus'.*amount:499/s)
+  assert.match(pay, /name:'Gogo Pro'.*amount:999/s)
+  assert.doesNotMatch(pay, /amount:\s*99\b|amount:\s*299\b|name:'Lite'|name:'Power'/)
 })
 check('Pay page uses recurring subscription checkout and trial copy', () => {
   assert.match(pay, /\/api\/subscription\/create/)
@@ -44,11 +39,10 @@ check('Pay page uses recurring subscription checkout and trial copy', () => {
 })
 
 const upgrade = read('app/upgrade/page.tsx')
-check('Dashboard upgrade shows canonical Lite Pro Power prices', () => {
-  assert.match(upgrade, /amount: 99/)
-  assert.match(upgrade, /amount: 299/)
-  assert.match(upgrade, /amount: 499/)
-  assert.doesNotMatch(upgrade, /amount: 149|amount: 9999|name: 'Starter'|name: 'Lifetime'/)
+check('Dashboard upgrade uses canonical Gogo plan catalog', () => {
+  assert.match(upgrade, /GOGO_INDIA_PLANS/)
+  assert.match(upgrade, /'essential','plus','pro'/)
+  assert.doesNotMatch(upgrade, /amount:\s*99\b|amount:\s*299\b|name:\s*'Lite'|name:\s*'Power'/)
 })
 check('Dashboard upgrade does not create a payment/subscription during render', () => {
   assert.doesNotMatch(upgrade, /createPaymentLink|createSubscription/)
@@ -56,13 +50,13 @@ check('Dashboard upgrade does not create a payment/subscription during render', 
 })
 
 const whatsapp = read('lib/bot/handlers/whatsapp-premium.ts')
-check('WhatsApp pricing is Free/Lite/Pro/Power with 7-day trial', () => {
-  assert.match(whatsapp, /\*Free\* — ₹0/)
-  assert.match(whatsapp, /\*Lite\* — ₹99\/month/)
-  assert.match(whatsapp, /\*Pro — most popular\* — ₹299\/month/)
-  assert.match(whatsapp, /\*Power\* — ₹499\/month/)
+check('WhatsApp pricing is Free/Essential/Plus/Pro with 7-day trial', () => {
+  assert.match(whatsapp, /\*Gogo Free\* — ₹0/)
+  assert.match(whatsapp, /\*Gogo Essential\* — ₹249\/month/)
+  assert.match(whatsapp, /\*Gogo Plus — most popular\* — ₹499\/month/)
+  assert.match(whatsapp, /\*Gogo Pro\* — ₹999\/month/)
   assert.match(whatsapp, /7-day free trial/)
-  assert.doesNotMatch(whatsapp, /\*Starter\*|₹199\/month|\*Founder Pro\*/)
+  assert.doesNotMatch(whatsapp, /\*Lite\* — ₹99|\*Power\* — ₹499|₹299\/month/)
 })
 
 const subscription = read('app/api/subscription/create/route.ts')
@@ -71,6 +65,16 @@ check('Public subscription endpoint has origin, plan and phone validation', () =
   assert.match(subscription, /invalid_plan/)
   assert.match(subscription, /invalid_phone/)
   assert.match(subscription, /already_subscribed/)
+  assert.match(subscription, /'essential' \| 'plus' \| 'pro'/)
+})
+
+const razorpaySubs = read('lib/services/razorpay-subscriptions.ts')
+check('Razorpay plans are exact-price validated before checkout', () => {
+  assert.match(razorpaySubs, /essential:\s*24900/)
+  assert.match(razorpaySubs, /plus:\s*49900/)
+  assert.match(razorpaySubs, /pro:\s*99900/)
+  assert.match(razorpaySubs, /isExactPlan/)
+  assert.match(razorpaySubs, /Could not create exact Razorpay/)
 })
 
 for (const path of [
