@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
+import { searchCreditIQLiveFlights } from '@/lib/integrations/creditiq-travel'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
@@ -308,6 +309,25 @@ async function addActivity(tg: number, runId: string, eventType: string, message
   if (error) console.error('TRAVEL_RESEARCH_ACTIVITY_FAILED:', error.message)
 }
 
+function formatLiveFlight(value: any, index: number) {
+  const price = Number.isFinite(Number(value.price)) ? `₹${Math.round(Number(value.price)).toLocaleString('en-IN')}` : 'price unavailable'
+  const stops = Number.isFinite(Number(value.stops)) ? (Number(value.stops) === 0 ? 'non-stop' : `${Number(value.stops)} stop${Number(value.stops) === 1 ? '' : 's'}`) : ''
+  const timing = [value.departure, value.arrival].filter(Boolean).join(' → ')
+  const bits = [price, value.airline, timing, stops].filter(Boolean)
+  return `${index + 1}. ${bits.join(' · ')}${value.bookingLink ? `\nBooking/provider link: ${value.bookingLink}` : ''}`
+}
+
+async function tryCreditIQLive(context: TravelContext) {
+  if (context.kind !== 'flight' || !context.origin?.code || !context.destination?.code || !context.startDate) return null
+  return searchCreditIQLiveFlights({
+    from: context.origin.code,
+    to: context.destination.code,
+    date: context.startDate,
+    dateTo: context.endDate || context.startDate,
+    cabin: 'economy',
+  })
+}
+
 export async function tryRunTravelResearch(params: { actor: AgentActor; surface: AgentSurface; text: string }) {
   if (!isPublicTravelResearchRequest(params.text)) return null
 
@@ -318,30 +338,47 @@ export async function tryRunTravelResearch(params: { actor: AgentActor; surface:
 
   const { data: run, error: runError } = await supabaseAdmin.from('agent_runs').insert({
     telegram_id:String(tg), type:'travel_research', capability:'travel', status:'running',
-    title:`Travel research · ${context.routeLabel}`, summary:'Gogo is checking current public travel sources.', progress:20,
-    why:'This asks for current public travel options, not a saved ticket.', source:params.surface,
+    title:`Travel research · ${context.routeLabel}`, summary:'Gogo is checking CreditIQ travel intelligence and current travel sources.', progress:20,
+    why:'This asks for current travel options, not a saved ticket.', source:params.surface,
     metadata_json:{ plan_type:'travel_research', input_text:safe(params.text,1800), queries, context }, started_at:now, updated_at:now,
   }).select('id').single()
   if (runError || !run?.id) throw new Error(`travel_research_run_create_failed:${runError?.message || 'unknown'}`)
 
   const runId = String(run.id)
   const { data: step, error: stepError } = await supabaseAdmin.from('agent_steps').insert({
-    telegram_id:String(tg), run_id:runId, ordinal:1, tool_name:'web_search', title:'Search current public travel options', status:'running',
-    input_json:{ queries }, output_json:{}, started_at:now,
+    telegram_id:String(tg), run_id:runId, ordinal:1, tool_name:'travel', title:'Search CreditIQ live travel inventory', status:'running',
+    input_json:{ queries, context }, output_json:{}, started_at:now,
   }).select('id').single()
   if (stepError || !step?.id) throw new Error(`travel_research_step_create_failed:${stepError?.message || 'unknown'}`)
 
   await addActivity(tg, runId, 'run_started', `Gogo started current travel research for ${context.routeLabel}.`, { queries })
 
   try {
+    // CreditIQ is Gogo's specialist live travel/rewards intelligence layer. Prefer
+    // structured provider inventory to public search snippets whenever route/date
+    // are concrete enough. If CreditIQ has no usable live response, fall back
+    // honestly to the existing curated public-web research path.
+    const live = await tryCreditIQLive(context)
+    if (live?.live && live.flights.length) {
+      const completedAt = new Date().toISOString()
+      const output = { context, liveInventory:live, source:'creditiq', inventoryType:'live-provider' }
+      await supabaseAdmin.from('agent_steps').update({ status:'completed', output_json:output, completed_at:completedAt }).eq('id', String(step.id))
+
+      const top = live.flights.slice(0, 8)
+      const text = `CreditIQ live travel · ${context.routeLabel} · ${context.whenLabel}\nProvider: ${live.source} · fetched ${live.fetchedAt}\n\n${top.map(formatLiveFlight).join('\n\n')}\n\nThese are provider-returned travel results through CreditIQ. Fares and availability can still change before checkout, so Gogo must reprice before any approved booking action.`
+      await supabaseAdmin.from('agent_runs').update({ status:'completed', summary:safe(text,1800), progress:100, completed_at:completedAt, updated_at:completedAt, metadata_json:{ plan_type:'travel_research', input_text:safe(params.text,1800), queries, context, travelEngine:'creditiq' } }).eq('id',runId).eq('telegram_id',String(tg))
+      await addActivity(tg,runId,'run_completed',`CreditIQ returned ${top.length} live travel options.`,{result_count:top.length,route:context.routeLabel,provider:live.source,travel_engine:'creditiq'})
+      return { runId, status:'completed' as const, capability:'travel' as const, risk:'low' as const, text, handledBy:'creditiq-travel' as const }
+    }
+
     const batches = await Promise.all(queries.map(q => searchWebResults(q)))
     const curated = curateTravelResults(batches.flat(), context)
     const completedAt = new Date().toISOString()
-    const output = { context, results:curated }
+    const output = { context, results:curated, source:'public-web-fallback', inventoryType:'research' }
 
     await supabaseAdmin.from('agent_steps').update({ status:'completed', output_json:output, completed_at:completedAt }).eq('id', String(step.id))
 
-    const intro = `Current public search · ${context.routeLabel} · ${context.whenLabel}\nI did not use your saved tickets.`
+    const intro = `Current public search fallback · ${context.routeLabel} · ${context.whenLabel}\nCreditIQ did not return usable live inventory for this request. I did not use your saved tickets.`
     const text = curated.length
       ? `${intro}\n\n${curated.map((r,i) => {
           const dateLine = r.dateRelevance === 'matched'
@@ -353,10 +390,10 @@ export async function tryRunTravelResearch(params: { actor: AgentActor; surface:
           const detail = r.snippet ? `\n${r.snippet}` : ''
           return `${i + 1}. ${r.source} — ${r.title}\n${dateLine}\n${fareLine}${detail}\nOpen source: ${r.url}`
         }).join('\n\n')}\n\nThese are public-web sources, not guaranteed live inventory. I hide off-date results and do not treat foreign-currency snippets as an INR fare. Verify the exact flight, baggage, cancellation terms and final INR price on the provider page before paying.`
-      : `${intro}\n\nI couldn't find a direction- and date-relevant public result that I can show confidently. Try an exact travel date (for example, “BLR to BOM on 16 Sep 2026”). I will not substitute a different week or reverse route.`
+      : `${intro}\n\nI couldn't find a direction- and date-relevant result that I can show confidently. I will not substitute a different week or reverse route.`
 
     await supabaseAdmin.from('agent_runs').update({ status:'completed', summary:safe(text,1800), progress:100, completed_at:completedAt, updated_at:completedAt }).eq('id',runId).eq('telegram_id',String(tg))
-    await addActivity(tg,runId,'run_completed',curated.length ? `Found ${curated.length} curated public travel sources.` : 'No reliable date-relevant public travel results found.',{result_count:curated.length,route:context.routeLabel})
+    await addActivity(tg,runId,'run_completed',curated.length ? `Found ${curated.length} curated public travel sources after CreditIQ fallback.` : 'No reliable travel results found.',{result_count:curated.length,route:context.routeLabel,travel_engine:'public-web-fallback'})
 
     return { runId, status:'completed' as const, capability:'travel' as const, risk:'low' as const, text, handledBy:'travel-research' as const }
   } catch (error:any) {
