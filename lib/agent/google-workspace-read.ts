@@ -7,9 +7,11 @@ const MAX_EMAILS = 6
 const MAX_CONTACTS = 8
 const MAX_FILES = 8
 const MAX_FILE_TEXT = 60_000
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+const MAX_ATTACHMENT_MESSAGES = 3
 
 const STOP = new Set([
-  'about','after','attached','attachment','before','brief','drive','email','emails','file','files','find','from','gmail','google','inbox','latest','message','messages','read','recent','search','show','the','this','with','workspace','unread','please','look','looking','need','meeting',
+  'about','after','attached','attachment','attachments','before','brief','drive','email','emails','file','files','find','from','gmail','google','inbox','latest','message','messages','read','recent','search','show','the','this','with','workspace','unread','please','look','looking','need','meeting','document','documents','use','using',
 ])
 
 function clean(value: unknown, max = 1200) {
@@ -179,4 +181,166 @@ export async function readWorkspaceDriveText(actor:AgentActor,file:{id:string;mi
     return {supported:false,name:clean(file.name||'file',240),mimeType:mime,text:''}
   }
   return {supported:true,name:clean(file.name||'file',240),mimeType:mime,text}
+}
+
+type GmailAttachmentCandidate = {
+  messageId:string
+  subject:string
+  filename:string
+  mimeType:string
+  attachmentId?:string
+  inlineData?:string
+  declaredSize:number
+  score:number
+}
+
+function decodeBase64Url(value:string) {
+  return Buffer.from(String(value||'').replace(/-/g,'+').replace(/_/g,'/'),'base64')
+}
+
+function flattenMimeParts(part:any, out:any[] = []) {
+  if(!part)return out
+  out.push(part)
+  for(const child of Array.isArray(part?.parts)?part.parts:[])flattenMimeParts(child,out)
+  return out
+}
+
+function attachmentSupported(filename:string,mimeType:string) {
+  const name=filename.toLowerCase()
+  const mime=mimeType.toLowerCase()
+  return /^text\//.test(mime) || ['application/json','application/xml','application/pdf'].includes(mime) ||
+    /\.(txt|md|csv|json|xml|html?|pdf|docx|pptx|xlsx)$/i.test(name) ||
+    ['application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.presentationml.presentation','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].includes(mime)
+}
+
+function attachmentScore(filename:string,subject:string,input:string,messageRank:number) {
+  const terms=workspaceSearchTerms(input,6).map(x=>x.toLowerCase())
+  const hay=`${filename} ${subject}`.toLowerCase()
+  let score=Math.max(0,6-messageRank)
+  if(/brief|agenda|proposal|meeting|notes|deck|presentation|report/i.test(filename))score+=4
+  for(const term of terms)if(hay.includes(term))score+=2
+  return score
+}
+
+async function gmailFullMessage(actor:AgentActor,messageId:string) {
+  const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`)
+  if(!response.ok)throw new Error(`workspace_email_full_failed:${response.status}`)
+  return response.json() as Promise<any>
+}
+
+async function collectAttachmentCandidates(actor:AgentActor,messages:any[],input:string) {
+  const candidates:GmailAttachmentCandidate[]=[]
+  for(let rank=0;rank<Math.min(MAX_ATTACHMENT_MESSAGES,messages.length);rank++) {
+    const meta=messages[rank]
+    if(!meta?.id)continue
+    const full=await gmailFullMessage(actor,String(meta.id))
+    const subject=clean(meta.subject||header(full?.payload?.headers||[],'Subject')||'(No subject)',240)
+    for(const part of flattenMimeParts(full?.payload)) {
+      const filename=clean(part?.filename||'',240)
+      const mimeType=String(part?.mimeType||'application/octet-stream')
+      const attachmentId=String(part?.body?.attachmentId||'')
+      const inlineData=String(part?.body?.data||'')
+      const declaredSize=Number(part?.body?.size||0)||0
+      if(!filename||(!attachmentId&&!inlineData)||!attachmentSupported(filename,mimeType))continue
+      candidates.push({
+        messageId:String(meta.id),subject,filename,mimeType,
+        attachmentId:attachmentId||undefined,inlineData:inlineData||undefined,declaredSize,
+        score:attachmentScore(filename,subject,input,rank),
+      })
+    }
+  }
+  return candidates
+}
+
+async function fetchAttachmentBytes(actor:AgentActor,candidate:GmailAttachmentCandidate) {
+  if(candidate.declaredSize>MAX_ATTACHMENT_BYTES)throw new Error('workspace_attachment_too_large')
+  if(candidate.inlineData) {
+    const bytes=decodeBase64Url(candidate.inlineData)
+    if(bytes.length>MAX_ATTACHMENT_BYTES)throw new Error('workspace_attachment_too_large')
+    return bytes
+  }
+  if(!candidate.attachmentId)throw new Error('workspace_attachment_missing')
+  const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(candidate.messageId)}/attachments/${encodeURIComponent(candidate.attachmentId)}`)
+  if(!response.ok)throw new Error(`workspace_attachment_fetch_failed:${response.status}`)
+  const data:any=await response.json()
+  const bytes=decodeBase64Url(String(data?.data||''))
+  if(bytes.length>MAX_ATTACHMENT_BYTES)throw new Error('workspace_attachment_too_large')
+  return bytes
+}
+
+function xmlText(xml:string) {
+  return xml
+    .replace(/<w:tab\/?\s*>/g,'\t').replace(/<w:br\/?\s*>/g,'\n')
+    .replace(/<a:br\/?\s*>/g,'\n').replace(/<[^>]+>/g,' ')
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'")
+    .replace(/\s+/g,' ').trim()
+}
+
+async function extractOfficeText(bytes:Buffer,kind:'docx'|'pptx') {
+  const JSZip=(await import('jszip')).default
+  const zip=await JSZip.loadAsync(bytes)
+  const names=Object.keys(zip.files).filter(name=>kind==='docx'?name==='word/document.xml':/^ppt\/slides\/slide\d+\.xml$/.test(name)).slice(0,80)
+  const chunks:string[]=[]
+  for(const name of names) {
+    const xml=await zip.file(name)?.async('string')
+    if(xml)chunks.push(xmlText(xml))
+    if(chunks.join('\n').length>=MAX_FILE_TEXT)break
+  }
+  return chunks.join('\n').slice(0,MAX_FILE_TEXT)
+}
+
+async function extractAttachmentText(bytes:Buffer,filename:string,mimeType:string) {
+  const name=filename.toLowerCase(),mime=mimeType.toLowerCase()
+  if(/^text\//.test(mime)||['application/json','application/xml'].includes(mime)||/\.(txt|md|csv|json|xml|html?)$/i.test(name)) {
+    return bytes.toString('utf8').slice(0,MAX_FILE_TEXT)
+  }
+  if(mime==='application/pdf'||name.endsWith('.pdf')) {
+    const pdf:any=await import('pdf-parse')
+    if(typeof pdf.PDFParse!=='function')throw new Error('workspace_pdf_parser_unavailable')
+    const parser=new pdf.PDFParse({data:bytes})
+    try {
+      const result=await parser.getText()
+      return String(result?.text||'').slice(0,MAX_FILE_TEXT)
+    } finally {
+      await parser.destroy?.()
+    }
+  }
+  if(mime==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'||name.endsWith('.docx'))return extractOfficeText(bytes,'docx')
+  if(mime==='application/vnd.openxmlformats-officedocument.presentationml.presentation'||name.endsWith('.pptx'))return extractOfficeText(bytes,'pptx')
+  if(mime==='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'||name.endsWith('.xlsx')) {
+    const XLSX:any=await import('xlsx')
+    const book=XLSX.read(bytes,{type:'buffer'})
+    const chunks=book.SheetNames.slice(0,20).map((sheet:string)=>`[${sheet}]\n${XLSX.utils.sheet_to_csv(book.Sheets[sheet])}`)
+    return chunks.join('\n\n').slice(0,MAX_FILE_TEXT)
+  }
+  throw new Error('workspace_attachment_unsupported')
+}
+
+export type WorkspaceEmailBriefResult =
+  | {status:'found';filename:string;mimeType:string;subject:string;text:string}
+  | {status:'none'}
+  | {status:'ambiguous';attachments:Array<{filename:string;subject:string}>}
+  | {status:'too_large';filename:string}
+  | {status:'unreadable';filename:string}
+
+export async function readWorkspaceEmailBrief(actor:AgentActor,messages:any[],input:string):Promise<WorkspaceEmailBriefResult> {
+  const candidates=await collectAttachmentCandidates(actor,messages,input)
+  if(!candidates.length)return {status:'none'}
+  candidates.sort((a,b)=>b.score-a.score||a.filename.localeCompare(b.filename))
+  const top=candidates[0]
+  const tied=candidates.filter(x=>x.score===top.score)
+  if(tied.length>1) {
+    return {status:'ambiguous',attachments:tied.slice(0,6).map(x=>({filename:x.filename,subject:x.subject}))}
+  }
+  try {
+    const bytes=await fetchAttachmentBytes(actor,top)
+    const extracted=await extractAttachmentText(bytes,top.filename,top.mimeType)
+    const text=clean(extracted,MAX_FILE_TEXT)
+    if(!text)return {status:'unreadable',filename:top.filename}
+    return {status:'found',filename:top.filename,mimeType:top.mimeType,subject:top.subject,text}
+  } catch(err:any) {
+    if(String(err?.message||'')==='workspace_attachment_too_large')return {status:'too_large',filename:top.filename}
+    console.error('WORKSPACE_ATTACHMENT_READ_FAILED:',String(err?.message||'unknown').slice(0,120))
+    return {status:'unreadable',filename:top.filename}
+  }
 }
