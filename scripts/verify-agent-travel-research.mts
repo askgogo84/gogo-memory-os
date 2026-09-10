@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { buildTravelResearchContext, curateTravelResults, isPublicTravelResearchRequest } from '../lib/agent/travel-research'
 import { sanitizeTravelResearchText } from '../lib/agent/travel-research-sanitize'
 
@@ -81,5 +82,26 @@ if (!hardened.includes('Ixigo') || !hardened.includes('₹4106')) {
   console.error('✗ valid in-window fare was removed', hardened)
 } else console.log('✓ in-window INR fare remains visible with verification language')
 
+const bridgeSource = readFileSync(new URL('../lib/integrations/creditiq-travel.ts', import.meta.url), 'utf8')
+if (!bridgeSource.includes('/api/internal/gogo/travel/flights')) {
+  failed++
+  console.error('✗ CreditIQ flight bridge is not using the signed internal service endpoint')
+} else console.log('✓ flight research uses the signed CreditIQ service endpoint')
+
+if (!bridgeSource.includes('X-Gogo-Signature') || !bridgeSource.includes('CREDITIQ_GOGO_SERVICE_SECRET')) {
+  failed++
+  console.error('✗ CreditIQ service signature contract is missing')
+} else console.log('✓ CreditIQ service requests are HMAC signed server-to-server')
+
+if (bridgeSource.includes('`${baseUrl()}/api/flights/search`')) {
+  failed++
+  console.error('✗ unsigned public CreditIQ flight endpoint is still used by AskGogo')
+} else console.log('✓ unsigned public flight API is not used by the AskGogo bridge')
+
+if (!bridgeSource.includes('irreversiblePointsTransferAllowed: false')) {
+  failed++
+  console.error('✗ points-transfer safety boundary is not pinned in the AskGogo bridge')
+} else console.log('✓ irreversible points transfers remain disabled at the bridge boundary')
+
 if (failed) process.exit(1)
-console.log('✅ Agent travel research routing, date, fare and output hardening checks passed')
+console.log('✅ Agent travel research routing, date, fare and signed CreditIQ bridge checks passed')
