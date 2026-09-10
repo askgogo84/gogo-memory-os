@@ -5,6 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,6 +35,14 @@ async function resolveDashboardUser(telegramId: string) {
     .eq('telegram_id', tg)
     .maybeSingle()
   return data || null
+}
+
+async function saveConversation(telegramId: number | string, userText: string, assistantText: string) {
+  const { error } = await supabaseAdmin.from('conversations').insert([
+    { telegram_id: telegramId, role: 'user', content: userText },
+    { telegram_id: telegramId, role: 'assistant', content: assistantText },
+  ])
+  if (error) console.error('DASHBOARD_CHAT_CONVERSATION_SAVE_FAILED:', error.message)
 }
 
 export async function GET() {
@@ -76,7 +85,16 @@ export async function POST(req: NextRequest) {
   if (!text) return NextResponse.json({ error: 'empty_message' }, { status: 400 })
 
   try {
-    // Match WhatsApp's feature layer first so web chat operates the same reminders,
+    // Dashboard-private context comes first. Vague personal-day questions must
+    // never fall through to public web search or generic LLM guessing.
+    const dayIntent = detectDashboardDayIntent(text)
+    if (dayIntent) {
+      const dayReply = await getDashboardDayReply(session.telegramId, dayIntent)
+      await saveConversation(user.telegram_id, text, dayReply)
+      return NextResponse.json({ text: dayReply, handledBy: 'dashboard-day' })
+    }
+
+    // Match WhatsApp's feature layer next so web chat operates the same reminders,
     // lists, expenses, nutrition and Asset Memory instead of creating a second brain.
     const featureReply = await routeFeatureIntent(String(user.whatsapp_id), text, {
       telegramId: Number(user.telegram_id),
@@ -84,11 +102,8 @@ export async function POST(req: NextRequest) {
     })
 
     if (featureReply) {
-      await supabaseAdmin.from('conversations').insert([
-        { telegram_id: user.telegram_id, role: 'user', content: text },
-        { telegram_id: user.telegram_id, role: 'assistant', content: featureReply },
-      ])
-      return NextResponse.json({ text: redactSecretShapedText(featureReply) })
+      await saveConversation(user.telegram_id, text, featureReply)
+      return NextResponse.json({ text: redactSecretShapedText(featureReply), handledBy: 'feature-intent' })
     }
 
     const result = await processIncomingMessage({
@@ -104,6 +119,7 @@ export async function POST(req: NextRequest) {
       text: redactSecretShapedText(result.text),
       mediaUrl: result.mediaUrl || null,
       mediaType: result.mediaType || null,
+      handledBy: result.handledBy || 'same-brain',
     })
   } catch (error: any) {
     console.error('DASHBOARD_CHAT_FAILED:', error?.message || error)
