@@ -103,5 +103,22 @@ if (!bridgeSource.includes('irreversiblePointsTransferAllowed: false')) {
   console.error('✗ points-transfer safety boundary is not pinned in the AskGogo bridge')
 } else console.log('✓ irreversible points transfers remain disabled at the bridge boundary')
 
+const travelSource = readFileSync(new URL('../lib/agent/travel-research.ts', import.meta.url), 'utf8')
+const actorSource = readFileSync(new URL('../lib/agent/actor.ts', import.meta.url), 'utf8')
+if (!actorSource.includes("from('wa_creditiq_links')") || !actorSource.includes('consumer_user_id')) {
+  failed++
+  console.error('✗ Agent actor does not resolve the existing CreditIQ account link')
+} else console.log('✓ Agent actor carries only the opaque linked CreditIQ consumer id')
+
+if (!travelSource.includes('userLinkId: actor.creditiqUserId || null')) {
+  failed++
+  console.error('✗ linked CreditIQ identity is not passed into the signed travel decision bridge')
+} else console.log('✓ linked users get CreditIQ wallet-aware travel decisions')
+
+if (!travelSource.includes('projected redemption is never treated as executable')) {
+  failed++
+  console.error('✗ travel copy does not preserve projected-vs-executable redemption safety')
+} else console.log('✓ projected redemptions remain clearly verification-gated')
+
 if (failed) process.exit(1)
-console.log('✅ Agent travel research routing, date, fare and signed CreditIQ bridge checks passed')
+console.log('✅ Agent travel research routing, date, fare, identity and signed CreditIQ bridge checks passed')
