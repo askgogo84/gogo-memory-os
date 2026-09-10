@@ -6,9 +6,20 @@ import { waLink } from '@/lib/product-urls'
 
 const WA_DASHBOARD_LINK = waLink('dashboard')
 const DASHBOARD_HOME = '/dashboard/home'
+const SESSION_CHECK_TIMEOUT_MS = 8000
 
 type Phase = 'checking' | 'redeeming' | 'ready' | 'error'
 type OtpStep = 'phone' | 'code'
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = SESSION_CHECK_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
 
 export default function Dashboard() {
   const [phase, setPhase] = useState<Phase>('checking')
@@ -36,7 +47,7 @@ export default function Dashboard() {
 
     if (token) {
       setPhase('redeeming')
-      fetch('/api/dashboard/session', {
+      fetchWithTimeout('/api/dashboard/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
@@ -49,7 +60,7 @@ export default function Dashboard() {
       return
     }
 
-    fetch('/api/dashboard/session/status', { cache: 'no-store' })
+    fetchWithTimeout('/api/dashboard/session/status', { cache: 'no-store' })
       .then((res) => res.json())
       .then((data) => {
         if (data?.ok) window.location.replace(DASHBOARD_HOME)
