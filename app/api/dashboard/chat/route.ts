@@ -6,6 +6,8 @@ import { routeFeatureIntent } from '@/lib/feature-intents'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
+import { isPublicTravelResearchRequest, tryRunTravelResearch } from '@/lib/agent/travel-research'
+import { resolveAgentActor } from '@/lib/agent/actor'
 
 export const dynamic = 'force-dynamic'
 
@@ -92,6 +94,18 @@ export async function POST(req: NextRequest) {
       const dayReply = await getDashboardDayReply(session.telegramId, dayIntent)
       await saveConversation(user.telegram_id, text, dayReply)
       return NextResponse.json({ text: dayReply, handledBy: 'dashboard-day' })
+    }
+
+    // Keep Talk to Gogo and Gogo Agent consistent for current-market travel
+    // research. A request for cheap/current fares must not fall back to a saved
+    // ticket merely because it was asked in chat rather than on the Agent page.
+    if (isPublicTravelResearchRequest(text)) {
+      const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+      const travel = await tryRunTravelResearch({ actor, surface:'web', text })
+      if (travel) {
+        await saveConversation(user.telegram_id, text, travel.text)
+        return NextResponse.json({ text: travel.text, handledBy: travel.handledBy })
+      }
     }
 
     // Match WhatsApp's feature layer next so web chat operates the same reminders,
