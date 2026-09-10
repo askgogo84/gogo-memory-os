@@ -4,7 +4,7 @@ import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-in
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { buildGmailConnectUrl } from '@/lib/google-gmail'
-import { readWorkspaceDriveText, searchWorkspaceContacts, searchWorkspaceDrive, searchWorkspaceEmails } from './google-workspace-read'
+import { readWorkspaceDriveText, readWorkspaceEmailBrief, searchWorkspaceContacts, searchWorkspaceDrive, searchWorkspaceEmails } from './google-workspace-read'
 import type { AgentActor } from './actor'
 
 export type SameBrainResult = {
@@ -30,7 +30,10 @@ function workspaceConnectionReply(actor:AgentActor) {
 }
 
 function isEmailRead(text:string) {
-  return /\b(email|emails|gmail|inbox|mail)\b/i.test(text) && /\b(find|show|read|latest|recent|unread|search|look for|check)\b/i.test(text) && !/\b(send|reply|forward|compose)\b/i.test(text)
+  return /\b(email|emails|gmail|inbox|mail)\b/i.test(text) && /\b(find|show|read|latest|recent|unread|search|look for|check|attached|attachment|brief)\b/i.test(text) && !/\b(send|forward|compose)\b/i.test(text)
+}
+function wantsEmailAttachment(text:string) {
+  return /\b(attached|attachment|attachments|brief|document|deck|proposal|pdf)\b/i.test(text)
 }
 function isContactRead(text:string) {
   return /\b(contact|contacts|email address|phone number|how do i reach|address for)\b/i.test(text) && /\b(find|show|look up|search|resolve|get|what is|what's)\b/i.test(text)
@@ -44,6 +47,22 @@ async function tryWorkspaceRead(actor:AgentActor,text:string):Promise<string|nul
     if(isEmailRead(text)) {
       const result=await searchWorkspaceEmails(actor,text)
       if(!result.messages.length)return 'I searched your connected Gmail and did not find a matching recent message. I did not invent one.'
+
+      if(wantsEmailAttachment(text)) {
+        const brief=await readWorkspaceEmailBrief(actor,result.messages,text)
+        if(brief.status==='found') {
+          const email=result.messages.find((m:any)=>m.subject===brief.subject)||result.messages[0]
+          return `I found the matching email${email?.from?` from ${email.from}`:''}: ${brief.subject}\n\nAttached file: ${brief.filename}\n\n${brief.text.slice(0,5000)}`
+        }
+        if(brief.status==='ambiguous') {
+          const choices=brief.attachments.map((a:any,index:number)=>`${index+1}. ${a.filename} — ${a.subject}`).join('\n')
+          return `I found more than one equally plausible readable attachment. I won't guess which brief you mean:\n\n${choices}`
+        }
+        if(brief.status==='too_large')return `I found the attachment “${brief.filename}”, but it is larger than Gogo's safe read limit. I did not partially read it and pretend it was complete.`
+        if(brief.status==='unreadable')return `I found the attachment “${brief.filename}”, but I couldn't extract reliable text from it. I did not invent its contents.`
+        return 'I found matching email context, but no readable attachment matched the brief request. I did not substitute the email snippet for the document.'
+      }
+
       const lines=result.messages.slice(0,5).map((m:any,index:number)=>`${index+1}. ${m.subject}\nFrom: ${m.from}${m.date?`\nDate: ${m.date}`:''}${m.snippet?`\n${m.snippet}`:''}`)
       return `I found these in your connected Gmail:\n\n${lines.join('\n\n')}`
     }
