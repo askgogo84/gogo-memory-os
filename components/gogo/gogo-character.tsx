@@ -53,7 +53,7 @@ export function GogoCharacter({state='calm',size=72,dark=false,animate=true,show
       </defs>
 
       {state==='breathing'&&<><circle cx="60" cy="70" r="50" fill="none" stroke="#EF7A27" strokeOpacity=".35" style={{transformBox:'fill-box',transformOrigin:'center',animation:animate?'gogoRing 8s ease-out infinite':'none'}}/><circle cx="60" cy="70" r="50" fill="none" stroke="#EF7A27" strokeOpacity=".22" style={{transformBox:'fill-box',transformOrigin:'center',animation:animate?'gogoRing 8s ease-out 4s infinite':'none'}}/></>}
-      {state==='secure'&&<path d="M60 6 C80 14 96 16 108 18 C108 60 96 92 60 114 C24 92 12 60 12 18 C24 16 40 14 60 6Z" fill="#F6F1E8" fillOpacity={dark?.08:.55} stroke="#EF7A27" strokeOpacity=".5" strokeWidth="2.5" strokeDasharray="6 5" style={{transformBox:'fill-box',transformOrigin:'center',animation:animate?'gogoGlow 4s ease-in-out infinite':'none'}}/>}
+      {state==='secure'&&<path d="M60 6 C80 14 96 16 108 18 C108 60 96 92 60 114 C24 92 12 60 12 18 C24 16 40 14 60 6Z" fill="#F6F1E8" fillOpacity={dark ? .08 : .55} stroke="#EF7A27" strokeOpacity=".5" strokeWidth="2.5" strokeDasharray="6 5" style={{transformBox:'fill-box',transformOrigin:'center',animation:animate?'gogoGlow 4s ease-in-out infinite':'none'}}/>}
       {state==='thinking'&&<g style={{transformBox:'fill-box',transformOrigin:'center',animation:animate?'gogoOrbit 6s linear infinite':'none'}}><circle cx="60" cy="16" r="3.2" fill="#EF7A27"/><circle cx="104" cy="60" r="2.4" fill="#EF7A27" fillOpacity=".7"/><circle cx="18" cy="72" r="1.8" fill="#EF7A27" fillOpacity=".5"/></g>}
 
       <g style={{transformBox:'fill-box',transformOrigin:'center 90%',animation:animate?ANIM[state]:'none',opacity:state==='sleeping'?.82:1}}>
