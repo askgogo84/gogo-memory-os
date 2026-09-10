@@ -6,6 +6,7 @@ export type AgentActor = {
   legacyTelegramId: number
   whatsappId: string
   name: string
+  creditiqUserId: string | null
 }
 
 export async function resolveAgentActor(session: AgentSession): Promise<AgentActor> {
@@ -25,10 +26,27 @@ export async function resolveAgentActor(session: AgentSession): Promise<AgentAct
   const legacyTelegramId = Number(data.telegram_id)
   if (!Number.isFinite(legacyTelegramId)) throw new Error('legacy_identity_missing')
 
+  // CreditIQ linkage is deliberately best-effort. The AskGogo actor keeps only
+  // the opaque CreditIQ consumer id; card/account data remains inside CreditIQ.
+  // A missing link must never block ordinary Gogo missions.
+  let creditiqUserId: string | null = null
+  try {
+    const { data: link, error: linkError } = await supabaseAdmin
+      .from('wa_creditiq_links')
+      .select('consumer_user_id')
+      .eq('sender', whatsappId)
+      .maybeSingle()
+    if (linkError) console.error('agent_actor_creditiq_link_lookup_failed:', linkError.message)
+    else if (link?.consumer_user_id) creditiqUserId = String(link.consumer_user_id)
+  } catch (linkError) {
+    console.error('agent_actor_creditiq_link_lookup_failed:', linkError)
+  }
+
   return {
     userId: String(data.id),
     legacyTelegramId,
     whatsappId,
     name: String(data.name || 'Gogo'),
+    creditiqUserId,
   }
 }
