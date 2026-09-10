@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
+import { checkCostAllowance, COST_ESTIMATES_PAISE, getCostBudget, recordCostEvent } from '@/lib/services/cost-guard'
+import { adaptiveWatcherCadence } from './watch-cost-policy'
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
 
@@ -18,6 +20,7 @@ export type WebSearchWatcherCondition = {
   triggerKeywords: string[]
   delivery: WatcherDelivery
   cadenceMinutes: number
+  burstUntil?: string | null
 }
 
 function validDate(value: unknown): string | null {
@@ -42,12 +45,13 @@ export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition
   const title = String(input?.title || '').trim().slice(0, 180)
   const query = String(input?.query || '').replace(/\s+/g, ' ').trim().slice(0, 500)
   const triggerKeywords = Array.isArray(input?.triggerKeywords)
-    ? Array.from(new Set(input.triggerKeywords.map((x:any)=>String(x || '').trim().toLowerCase()).filter(Boolean))).slice(0, 12)
+    ? Array.from(new Set(input.triggerKeywords.map((x:any)=>String(x || '').trim().toLowerCase()).filter(Boolean))).slice(0, 12) as string[]
     : []
   const delivery = normalizeDelivery(input?.delivery)
   const cadenceMinutes = Math.max(15, Math.min(24 * 60, Math.floor(Number(input?.cadenceMinutes || 60))))
+  const burstUntil = input?.burstUntil ? validDate(input.burstUntil) : null
   if (!title || !query) return null
-  return { title, query, triggerKeywords, delivery, cadenceMinutes }
+  return { title, query, triggerKeywords, delivery, cadenceMinutes, burstUntil }
 }
 
 export async function createDeadlineWatcher(params: {
@@ -85,7 +89,7 @@ export async function createWebSearchWatcher(params: {
     condition_json: params.condition,
     cadence_minutes: params.condition.cadenceMinutes,
     active: true,
-    last_state_json: {},
+    last_state_json: { quietChecks:0 },
     next_check_at: new Date().toISOString(),
   }).select('id, type, condition_json, cadence_minutes, active, next_check_at, created_at').single()
   if (error || !data) throw new Error(`agent_watcher_create_failed:${error?.message || 'unknown'}`)
@@ -144,6 +148,7 @@ async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDeliver
   const phone = String(data?.whatsapp_id || '').trim()
   if (!phone) return
   await sendWhatsAppMessage(phone, message)
+  await recordCostEvent({ telegramId, category:'whatsapp_outbound', metadata:{ source:'background_gogo' } })
 }
 
 function searchFingerprint(results: WebSearchResult[]) {
@@ -153,6 +158,16 @@ function searchFingerprint(results: WebSearchResult[]) {
 
 function resultText(result: WebSearchResult) {
   return `${result.title} ${result.snippet} ${result.url}`.toLowerCase()
+}
+
+async function activeWebWatchCount(telegramId:string) {
+  const { count, error } = await supabaseAdmin.from('agent_watchers')
+    .select('id', { count:'exact', head:true })
+    .eq('telegram_id', telegramId)
+    .eq('type', 'web_search')
+    .eq('active', true)
+  if (error) throw new Error(`agent_watcher_count_failed:${error.message}`)
+  return Math.max(1, count || 1)
 }
 
 async function processDeadlineWatcher(watcher:any, now:Date) {
@@ -197,13 +212,64 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     return { triggered:false, failed:true }
   }
 
-  const results = await searchWebResults(condition.query)
-  const nextCheckAt = new Date(now.getTime() + condition.cadenceMinutes * 60_000).toISOString()
-  if (!results.length) {
+  const telegramId = String(watcher.telegram_id)
+  const budget = await getCostBudget(telegramId)
+  if (budget.activeWebWatchersMax <= 0) {
     await supabaseAdmin.from('agent_watchers').update({
+      active:false,
       last_checked_at:now.toISOString(),
-      next_check_at:nextCheckAt,
-      last_state_json:{ ...(watcher.last_state_json || {}), lastEmptyAt:now.toISOString() },
+      last_state_json:{ ...(watcher.last_state_json || {}), costGuard:'plan_not_eligible', stoppedAt:now.toISOString() },
+      next_check_at:null,
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  const allowance = await checkCostAllowance(telegramId, COST_ESTIMATES_PAISE.web_search_basic)
+  const currentQuiet = Math.max(0, Number(watcher.last_state_json?.quietChecks || 0))
+  const activeCount = await activeWebWatchCount(telegramId)
+  if (!allowance.allowed) {
+    const deferMinutes = allowance.state?.maxWatcherCadenceMinutes || budget.maxWatcherCadenceMinutes || 1440
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:deferMinutes,
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + deferMinutes * 60_000).toISOString(),
+      last_state_json:{
+        ...(watcher.last_state_json || {}),
+        quietChecks:currentQuiet,
+        costGuard:'deferred',
+        costGuardReason:allowance.reason || 'budget',
+        costDeferredAt:now.toISOString(),
+      },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  const results = await searchWebResults(condition.query)
+  await recordCostEvent({
+    telegramId,
+    category:'web_search_basic',
+    metadata:{ source:'background_gogo', watcher_id:String(watcher.id) },
+  })
+
+  if (!results.length) {
+    const quietChecks = currentQuiet + 1
+    const cadenceMinutes = adaptiveWatcherCadence({
+      budget,
+      activeWatcherCount:activeCount,
+      quietChecks,
+      material:false,
+      usageRatio:allowance.state?.usageRatio || 0,
+      burstUntil:condition.burstUntil,
+      now,
+    })
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:cadenceMinutes,
+      condition_json:{ ...condition, cadenceMinutes },
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), quietChecks, lastEmptyAt:now.toISOString(), costGuard:'ok' },
       updated_at:now.toISOString(),
     }).eq('id', watcher.id)
     return { triggered:false, failed:false }
@@ -219,18 +285,38 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   const newlyMatchedKeywords = matchedKeywords.filter(keyword => !previousMatches.includes(keyword))
   const changed = fingerprint !== watcher.last_state_json?.fingerprint
   const material = !isBaseline && changed && (condition.triggerKeywords.length ? newlyMatchedKeywords.length > 0 : newUrls.length > 0)
+  const quietChecks = material || isBaseline ? 0 : currentQuiet + 1
+  const cadenceMinutes = adaptiveWatcherCadence({
+    budget,
+    activeWatcherCount:activeCount,
+    quietChecks,
+    material,
+    usageRatio:allowance.state?.usageRatio || 0,
+    burstUntil:condition.burstUntil,
+    now,
+  })
 
   if (material) {
     const lead = results.find(r => newUrls.includes(r.url)) || results[0] || null
-    await createWebIdea(String(watcher.telegram_id), condition, String(watcher.id), lead, newlyMatchedKeywords)
-    await sendWhatsAppIfWanted(String(watcher.telegram_id), condition.delivery, `🔎 Background Gogo found a meaningful web update\n\n${condition.title}${lead?.title ? `\n${lead.title}` : ''}\n\nI’ve added the update to Ideas in the app.`).catch(err => console.error('AGENT_WATCHER_WHATSAPP_FAILED:', err?.message || err))
-    await writeActivity(String(watcher.telegram_id), `Background Gogo found a web update: ${condition.title}`, { watcher_id:watcher.id, type:'web_search', new_urls:newUrls.slice(0,5), matched_keywords:newlyMatchedKeywords })
+    await createWebIdea(telegramId, condition, String(watcher.id), lead, newlyMatchedKeywords)
+    await sendWhatsAppIfWanted(telegramId, condition.delivery, `🔎 Background Gogo found a meaningful web update\n\n${condition.title}${lead?.title ? `\n${lead.title}` : ''}\n\nI’ve added the update to Ideas in the app.`).catch(err => console.error('AGENT_WATCHER_WHATSAPP_FAILED:', err?.message || err))
+    await writeActivity(telegramId, `Background Gogo found a web update: ${condition.title}`, { watcher_id:watcher.id, type:'web_search', new_urls:newUrls.slice(0,5), matched_keywords:newlyMatchedKeywords })
   }
 
   await supabaseAdmin.from('agent_watchers').update({
+    cadence_minutes:cadenceMinutes,
+    condition_json:{ ...condition, cadenceMinutes },
     last_checked_at:now.toISOString(),
-    next_check_at:nextCheckAt,
-    last_state_json:{ fingerprint, urls:currentUrls, matchedKeywords, baselineAt:watcher.last_state_json?.baselineAt || now.toISOString(), lastTriggeredAt:material ? now.toISOString() : watcher.last_state_json?.lastTriggeredAt || null },
+    next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
+    last_state_json:{
+      fingerprint,
+      urls:currentUrls,
+      matchedKeywords,
+      quietChecks,
+      baselineAt:watcher.last_state_json?.baselineAt || now.toISOString(),
+      lastTriggeredAt:material ? now.toISOString() : watcher.last_state_json?.lastTriggeredAt || null,
+      costGuard:'ok',
+    },
     updated_at:now.toISOString(),
   }).eq('id', watcher.id)
   return { triggered:material, failed:false }
