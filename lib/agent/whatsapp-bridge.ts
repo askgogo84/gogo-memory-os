@@ -6,6 +6,8 @@ import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-c
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
 import { tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
+import { tryRunTravelResearch } from './travel-research'
+import { hardenTravelResearchResult } from './travel-research-sanitize'
 import { executeApprovedAgentRun } from './orchestrator'
 import { initializeBackgroundGoal } from './goal-engine'
 
@@ -115,7 +117,7 @@ async function tryCreateGoal(actor: AgentActor, text: string): Promise<WhatsAppA
   await supabaseAdmin.from('agent_activity').insert({
     telegram_id:String(actor.legacyTelegramId), event_type:'goal_created',
     message:`Goal created on WhatsApp: ${goal.title}`.slice(0,900), metadata_json:{goal_id:data.id,surface:'whatsapp'},
-  }).then(({ error }) => { if (error) console.error('WHATSAPP_AGENT_GOAL_ACTIVITY_FAILED:', error.message) })
+  }).then(({ error }) => { if (error) console.error('WHATSAPP_AGENT_APPROVAL_ACTIVITY_FAILED:', error.message) })
   try {
     const plan = await initializeBackgroundGoal({telegramId:String(actor.legacyTelegramId),goalId:String(data.id),title:goal.title,outcome:goal.outcome})
     return { text:`Goal created: *${goal.title}*\n\nBackground Gogo has a ${plan.steps.length}-step plan and will keep reviewing it. You can track progress in *Dashboard → Gogo Agent*.`, status:'active', handledBy:'whatsapp-agent-goal' }
@@ -155,8 +157,16 @@ export async function tryRunWhatsAppAgent(params: {
   const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (compound) return { ...compound, handledBy:compound.handledBy }
 
+  // Multi-step missions run before simple single-feature travel research so an
+  // outcome like “plan my trip, create tasks and remind me” stays one Agent run.
   const general = await tryRunGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (general) return { ...general, text:`${general.text || ''}${general.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(general.handledBy || 'general-plan') }
+
+  const travel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
+  if (travel) {
+    const hardened = await hardenTravelResearchResult(travel, params.text)
+    return { ...hardened, handledBy:String(hardened.handledBy || 'travel-research') }
+  }
 
   return null
 }
