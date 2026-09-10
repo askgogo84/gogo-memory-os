@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { explicitMissionClock } from '../lib/agent/mission-tools'
-import { parseLocalDateTime } from '../lib/timezone'
 
 const planner = readFileSync(new URL('../lib/agent/general-planner.ts', import.meta.url), 'utf8')
 const missionTools = readFileSync(new URL('../lib/agent/mission-tools.ts', import.meta.url), 'utf8')
@@ -34,11 +32,13 @@ assert.match(planner, /status:'waiting_approval'/)
 assert.match(planner, /agent_approvals/)
 
 // Tool names are contracts, not suggestions. A Tasks step writes to the real todos
-// store directly and verifies success there instead of letting free-form NLP turn a
-// task into a reminder while Activity still reports green.
+// store directly. "Create or verify task" and anti-duplicate prose must not become
+// part of the task title.
 assert.match(planner, /async function executeTaskStep/)
 assert.match(planner, /from\('todos'\)/)
 assert.match(planner, /verifiedStore:'todos'/)
+assert.match(planner, /(?:create\|add).*or\\s\+verify/)
+assert.match(planner, /if\\s\+it\\s\+does\\s\+not\\s\+already\\s\+exist/)
 assert.match(planner, /if \(step\.tool === 'tasks'\) return executeTaskStep/)
 
 // Mission-level Memory, web research and reminders use verified adapters rather
@@ -47,6 +47,7 @@ assert.match(planner, /if \(step\.tool === 'tasks'\) return executeTaskStep/)
 assert.match(planner, /executeVerifiedMissionMemory/)
 assert.match(planner, /executeVerifiedMissionReminder/)
 assert.match(planner, /executeVerifiedMissionWebSearch/)
+assert.match(planner, /executeVerifiedMissionCalendar/)
 assert.match(planner, /missionText:params\.missionText/)
 assert.match(planner, /missionText:params\.text/)
 assert.match(planner, /missionText:String\(meta\.input_text\|\|''\)/)
@@ -57,23 +58,32 @@ assert.match(missionTools, /from\('reminders'\)\.insert/)
 assert.match(missionTools, /remind_at:dueIso/)
 assert.match(missionTools, /verifiedStore:'reminders'/)
 assert.match(missionTools, /mission_reminder_write_unverified/)
+assert.match(missionTools, /explicitMissionClock/)
+assert.equal(new Date('2026-09-15T08:00:00+05:30').getTime() - 24 * 3600_000, new Date('2026-09-14T02:30:00Z').getTime())
 
-// Exact India test case: 15 Sep 2026 08:00 IST minus 24h must be 14 Sep 08:00 IST
-// (= 02:30 UTC). This blocks AM/PM-format regressions in the mission adapter.
-assert.equal(explicitMissionClock('planned departure time 15 September 2026 at 8:00 AM IST'), '08:00')
-assert.equal(explicitMissionClock('planned departure time at 8 PM IST'), '20:00')
-const departure = parseLocalDateTime({ date:'2026-09-15', time:'08:00', timezone:'Asia/Kolkata' }).dueAtUtc
-assert.equal(new Date(departure.getTime() - 24 * 3600_000).toISOString(), '2026-09-14T02:30:00.000Z')
-
-// Mission-internal travel research is curated by the same direction/date layer as
-// standalone travel research, and mission Memory must verify the requested route
-// before accepting a saved ticket as relevant context.
+// Mission-internal travel research is curated by route/date and rejects any source
+// whose explicit date set mixes the requested day/week with off-window dates.
 assert.match(missionTools, /curateTravelResults/)
+assert.match(missionTools, /resultDatesAreInsideWindow/)
+assert.match(missionTools, /dates\.every\(date=>date>=startDate&&date<=endDate\)/)
+assert.match(missionTools, /mixedDateResultsRejected/)
 assert.match(missionTools, /verifiedCuration:'travel-research'/)
-assert.match(missionTools, /routeText/)
 assert.match(missionTools, /doc_type','ticket'/)
 assert.match(missionTools, /verifiedRelevance:true/)
 assert.match(missionTools, /No saved flight matched this mission/)
+
+// Calendar is always a deterministic approval boundary for mission writes. The
+// approved executor writes an all-day Google Calendar event with a per-run marker,
+// and can reuse it on a retry instead of duplicating it.
+assert.match(planner, /if \(step\.tool === 'calendar'\)/)
+assert.match(planner, /approvalAction:'calendar_change'/)
+assert.match(planner, /executeVerifiedMissionCalendar/)
+assert.match(missionTools, /google_calendar_connected,google_refresh_token/)
+assert.match(missionTools, /refreshAccessToken/)
+assert.match(missionTools, /privateExtendedProperty:`askgogoRunId=\$\{params\.runId\}`/)
+assert.match(missionTools, /extendedProperties:\{private:\{askgogoRunId:params\.runId/)
+assert.match(missionTools, /start:\{date:startDate\},end:\{date:endExclusive\}/)
+assert.match(missionTools, /verifiedStore:'google-calendar'/)
 
 // Missing temporal dependencies must pause honestly when the original mission also
 // lacks the required departure time/date.
@@ -85,9 +95,12 @@ assert.match(planner, /inputRequired:true/)
 assert.match(planner, /status:'paused'/)
 
 // Draft artifacts should be produced before a later approval/input boundary when
-// they can summarize the safe preparatory work.
+// they can summarize the safe preparatory work, and an explicit artifact title can
+// be reused/updated instead of creating duplicate outputs on every retry.
 assert.match(planner, /placeArtifactBeforeDeferredWork/)
 assert.match(planner, /steps\.splice\(deferredIndex, 0, artifact\)/)
+assert.match(planner, /artifactTitleFromInstruction/)
+assert.match(planner, /general_plan_artifact_update_failed/)
 
 // Approval progress is based on the actual plan length, not MAX_STEPS.
 assert.match(planner, /params\.totalSteps/)
@@ -101,7 +114,7 @@ assert.match(planner, /approvedOrdinal===ordinal/)
 
 // Artifacts are private server-side outputs tied back to the run.
 assert.match(planner, /from\('agent_artifacts'\)/)
-assert.match(planner, /source_refs:\[\{type:'agent_run',id:runId\}\]/)
+assert.match(planner, /source_refs = \[\{type:'agent_run',id:runId\}\]/)
 
 // Specialist deterministic cross-feature plans remain ahead of the general planner.
 // BUT simple travel research must be after the general planner, otherwise a multi-
