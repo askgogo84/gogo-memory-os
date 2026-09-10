@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { refreshAccessToken } from '@/lib/google-calendar'
+import { addToListDetailed, getAllLists, getList } from '@/lib/data/lists'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { dispatchThroughSameBrain } from './same-brain'
@@ -13,6 +14,8 @@ const MONTHS:Record<string,number>={
   jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,
   jul:7,july:7,aug:8,august:8,sep:9,sept:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12,
 }
+
+const DEFAULT_BUSINESS_PACKING=['Laptop','Charger','Phone charger','Power bank','ID proof','Work clothes','Undergarments','Toiletries','Notebook and pen']
 
 function safe(value:unknown,max=1200){return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))}
 function pad(n:number){return String(n).padStart(2,'0')}
@@ -89,9 +92,9 @@ function plannedDeparture(missionText:string){
 
 function beforeOffset(step:MissionStep){
   const text=`${step.title} ${step.instruction}`
-  let m=text.match(/\b(\d{1,3})\s*hours?\s+before\b/i)
+  let m=text.match(/\b(\d{1,3})\s*(?:-|\s)?hours?\s+(?:before|pre[- ]?departure)\b/i)
   if(m)return Number(m[1])*3600_000
-  m=text.match(/\b(\d{1,3})\s*days?\s+before\b/i)
+  m=text.match(/\b(\d{1,3})\s*(?:-|\s)?days?\s+(?:before|pre[- ]?departure)\b/i)
   if(m)return Number(m[1])*24*3600_000
   return null
 }
@@ -103,8 +106,40 @@ async function actorTimezone(actor:AgentActor){
 
 function destinationLabel(missionText:string){return travelContext(missionText).context.destination?.label||'trip'}
 
+function reminderMessage(step:MissionStep,missionText:string,hours?:number){
+  const quoted=step.instruction.match(/(?:message|saying|text)\s*:?[\s]*['“\"]([^'”\"]+)['”\"]/i)?.[1]
+  if(quoted)return safe(quoted,500)
+  const destination=destinationLabel(missionText)
+  return hours ? `${destination} trip departure in ${hours} hours — confirm packing and check-in status.` : safe(step.title,500)
+}
+
+async function persistMissionReminder(params:{actor:AgentActor;date:string;time:string;timezone:string;message:string}){
+  const parsed=parseLocalDateTime({date:params.date,time:params.time,timezone:params.timezone})
+  if(parsed.dueAtUtc.getTime()<=Date.now())throw new Error('mission_reminder_time_in_past')
+  const dueIso=parsed.dueAtUtc.toISOString()
+  const {data:candidates,error:readError}=await supabaseAdmin.from('reminders')
+    .select('id,message,remind_at,timezone').eq('telegram_id',params.actor.legacyTelegramId).eq('remind_at',dueIso).eq('sent',false).limit(10)
+  if(readError)throw new Error(`mission_reminder_verify_failed:${readError.message}`)
+  const destination=destinationLabel(params.message).toLowerCase()
+  const existing=(candidates||[]).find((r:any)=>destination==='trip'||String(r.message||'').toLowerCase().includes(destination)) || (candidates||[])[0]
+  if(existing?.id)return {text:`Reminder already set for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(existing.id),message:String(existing.message||params.message),remindAt:String(existing.remind_at||dueIso),timezone:String(existing.timezone||params.timezone),reused:true,verifiedStore:'reminders'}}
+  const {data,error}=await supabaseAdmin.from('reminders').insert({
+    telegram_id:params.actor.legacyTelegramId,chat_id:params.actor.legacyTelegramId,whatsapp_to:params.actor.whatsappId,
+    message:params.message,remind_at:dueIso,sent:false,timezone:params.timezone,
+  }).select('id,message,remind_at,timezone').single()
+  if(error||!data?.id||!data.remind_at)throw new Error(`mission_reminder_create_failed:${error?.message||'missing_due_time'}`)
+  return {text:`Created reminder for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(data.id),message:String(data.message||params.message),remindAt:String(data.remind_at),timezone:String(data.timezone||params.timezone),reused:false,verifiedStore:'reminders'}}
+}
+
 export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
   const {actor,step,missionText}=params
+  const exactDate=explicitDate(step.instruction)
+  const exactTime=explicitMissionClock(step.instruction)
+  if(exactDate&&exactTime){
+    const timezone=normalizeTimezone(/\bIST\b/i.test(step.instruction)?'Asia/Kolkata':await actorTimezone(actor))
+    return persistMissionReminder({actor,date:exactDate,time:exactTime,timezone,message:reminderMessage(step,missionText)})
+  }
+
   const departure=plannedDeparture(missionText)
   const offset=beforeOffset(step)
   if(departure&&offset){
@@ -113,19 +148,9 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
     const due=new Date(parsed.dueAtUtc.getTime()-offset)
     if(due.getTime()<=Date.now())throw new Error('mission_reminder_time_in_past')
     const hours=Math.round(offset/3600_000)
-    const destination=destinationLabel(missionText)
-    const message=`${destination} trip departure in ${hours} hours — confirm packing and check-in status.`
-    const dueIso=due.toISOString()
-    const {data:existing,error:readError}=await supabaseAdmin.from('reminders')
-      .select('id,message,remind_at').eq('telegram_id',actor.legacyTelegramId).eq('message',message).eq('remind_at',dueIso).limit(1).maybeSingle()
-    if(readError)throw new Error(`mission_reminder_verify_failed:${readError.message}`)
-    if(existing?.id)return {text:`Reminder already set for ${departure.date} ${departure.time} minus ${hours} hours.`,output:{reminderId:String(existing.id),message,remindAt:dueIso,timezone,reused:true,verifiedStore:'reminders'}}
-    const {data,error}=await supabaseAdmin.from('reminders').insert({
-      telegram_id:actor.legacyTelegramId,chat_id:actor.legacyTelegramId,whatsapp_to:actor.whatsappId,
-      message,remind_at:dueIso,sent:false,timezone,
-    }).select('id,message,remind_at').single()
-    if(error||!data?.id||!data.remind_at)throw new Error(`mission_reminder_create_failed:${error?.message||'missing_due_time'}`)
-    return {text:`Created reminder for ${dueIso} (${timezone}).`,output:{reminderId:String(data.id),message:String(data.message||message),remindAt:String(data.remind_at),timezone,reused:false,verifiedStore:'reminders'}}
+    const localDue=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(due)
+    const values:Record<string,string>={};for(const p of localDue)if(p.type!=='literal')values[p.type]=p.value
+    return persistMissionReminder({actor,date:`${values.year}-${values.month}-${values.day}`,time:`${values.hour}:${values.minute}`,timezone,message:reminderMessage(step,missionText,hours)})
   }
 
   const startedAt=new Date().toISOString()
@@ -136,6 +161,55 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
   const due=data?.remind_at?new Date(data.remind_at):null
   if(!data?.id||!due||!Number.isFinite(due.getTime())||due.getTime()<=Date.now())throw new Error('mission_reminder_write_unverified')
   return {text:result.text,output:{reminderId:String(data.id),message:String(data.message||''),remindAt:String(data.remind_at),timezone:String(data.timezone||''),verifiedStore:'reminders',handledBy:result.handledBy}}
+}
+
+function listWords(value:string){
+  const stop=new Set(['create','review','update','use','or','my','existing','list','business','trip','work','the','a','an','for','and','with','without','items','existing','retrieve','find','add','missing','ensure','included'])
+  return value.toLowerCase().replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter(w=>w.length>2&&!stop.has(w))
+}
+
+function requestedListName(step:MissionStep,missionText:string){
+  const quoted=step.instruction.match(/(?:list\s+)?(?:titled|called)\s+['“\"]([^'”\"]+)['”\"]/i)?.[1]
+  if(quoted)return safe(quoted,180)
+  const destination=destinationLabel(missionText)
+  if(/\bpacking\b/i.test(`${step.title} ${step.instruction}`))return `${destination} work trip packing`
+  return safe(step.title.replace(/^(?:create|review|update|use|retrieve|find)\s+/i,'').replace(/\blist\b/i,'').trim()||'mission list',180)
+}
+
+function itemsToEnsure(step:MissionStep,creating:boolean){
+  const text=`${step.title} ${step.instruction}`
+  const items:string[]=[]
+  const add=(v:string)=>{if(!items.some(x=>x.toLowerCase()===v.toLowerCase()))items.push(v)}
+  if(/\blaptop\b/i.test(text))add('Laptop')
+  if(/\bcharger\b/i.test(text))add('Charger')
+  if(/\bphone charger\b/i.test(text))add('Phone charger')
+  if(/\bpower bank\b/i.test(text))add('Power bank')
+  const itemClause=step.instruction.match(/\bitems?\s*:\s*([^.;]+)/i)?.[1]
+  if(itemClause)itemClause.split(/,|\band\b/i).map(x=>x.trim()).filter(Boolean).forEach(add)
+  if(creating&&/\bpacking\b/i.test(text)&&items.length<4)DEFAULT_BUSINESS_PACKING.forEach(add)
+  return items
+}
+
+export async function executeVerifiedMissionList(params:{actor:AgentActor;step:MissionStep;missionText:string}){
+  const all=await getAllLists(params.actor.legacyTelegramId)
+  const text=`${params.step.title} ${params.step.instruction}`
+  const words=listWords(text)
+  const destination=destinationLabel(params.missionText).toLowerCase()
+  const ranked=(all||[]).map((row:any)=>{
+    const name=String(row.list_name||'').toLowerCase()
+    let score=words.reduce((n,w)=>n+(name.includes(w)?1:0),0)
+    if(/\bpacking\b/i.test(text)&&name.includes('packing'))score+=5
+    if(destination!=='trip'&&name.includes(destination))score+=5
+    return {row,score}
+  }).filter((x:any)=>x.score>0).sort((a:any,b:any)=>b.score-a.score)
+  const chosen=ranked[0]?.row||null
+  const listName=chosen?.list_name||requestedListName(params.step,params.missionText)
+  const ensure=itemsToEnsure(params.step,!chosen)
+  if(ensure.length)await addToListDetailed(params.actor.legacyTelegramId,listName,ensure)
+  const verified=await getList(params.actor.legacyTelegramId,listName)
+  if(!verified?.id)throw new Error('mission_list_write_unverified')
+  const items=Array.isArray(verified.items)?verified.items:[]
+  return {text:`Using ${verified.list_name} with ${items.length} items.`,output:{listId:String(verified.id),listName:String(verified.list_name),itemCount:items.length,items:items.slice(0,80),reused:Boolean(chosen),verifiedStore:'lists'}}
 }
 
 function resultDatesAreInsideWindow(result:WebSearchResult,startDate?:string,endDate?:string){
@@ -154,10 +228,12 @@ export async function executeVerifiedMissionWebSearch(step:MissionStep){
   const {context,normalized}=travelContext(step.instruction)
   const raw=await searchWebResults(normalized)
   const dateSafe=raw.filter(result=>resultDatesAreInsideWindow(result,context.startDate,context.endDate))
-  const curated=curateTravelResults(dateSafe,context)
+  const curatedBase=curateTravelResults(dateSafe,context)
+  const exactDateQuery=Boolean(context.startDate&&context.endDate&&context.startDate===context.endDate)
+  const curated=exactDateQuery?curatedBase.filter((r:any)=>r.dateRelevance==='matched'):curatedBase
   return {
     text:curated.length?`Found ${curated.length} direction/date-curated travel sources for ${context.routeLabel}.`:`No reliable direction/date-matched travel source was found for ${context.routeLabel}.`,
-    output:{context,results:curated,verifiedCuration:'travel-research',mixedDateResultsRejected:raw.length-dateSafe.length},
+    output:{context,results:curated,verifiedCuration:'travel-research',mixedDateResultsRejected:raw.length-dateSafe.length,exactDateRequired:exactDateQuery},
   }
 }
 
