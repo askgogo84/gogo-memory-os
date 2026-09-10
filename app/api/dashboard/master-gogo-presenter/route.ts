@@ -19,22 +19,40 @@ function videoResponse(bytes: Uint8Array, source: 'storage' | 'seeded') {
   })
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const probe = new URL(request.url).searchParams.get('probe') === '1'
+
   try {
     const { data: stored } = await supabaseAdmin.storage.from(BUCKET).download(STORAGE_PATH)
     if (stored) {
       const storedBytes = new Uint8Array(await stored.arrayBuffer())
-      if (storedBytes.byteLength) return videoResponse(storedBytes, 'storage')
+      if (storedBytes.byteLength) {
+        if (probe) {
+          return Response.json({
+            ok: true,
+            source: 'storage',
+            contentType: 'video/mp4',
+            contentLength: storedBytes.byteLength,
+          })
+        }
+        return videoResponse(storedBytes, 'storage')
+      }
     }
 
     const upstream = await fetch(MASTER_GOGO_SOURCE, { cache: 'no-store' })
     if (!upstream.ok) {
       console.error('Master Gogo presenter source failed:', upstream.status)
-      return new Response('Presenter unavailable', { status: 502 })
+      return probe
+        ? Response.json({ ok: false, source: 'upstream', status: upstream.status }, { status: 502 })
+        : new Response('Presenter unavailable', { status: 502 })
     }
 
     const bytes = new Uint8Array(await upstream.arrayBuffer())
-    if (!bytes.byteLength) return new Response('Presenter unavailable', { status: 502 })
+    if (!bytes.byteLength) {
+      return probe
+        ? Response.json({ ok: false, source: 'upstream', status: upstream.status, contentLength: 0 }, { status: 502 })
+        : new Response('Presenter unavailable', { status: 502 })
+    }
 
     const { error: uploadError } = await supabaseAdmin.storage.from(BUCKET).upload(
       STORAGE_PATH,
@@ -43,9 +61,20 @@ export async function GET() {
     )
     if (uploadError) console.error('Master Gogo presenter storage seed failed:', uploadError.message)
 
+    if (probe) {
+      return Response.json({
+        ok: true,
+        source: 'seeded',
+        contentType: upstream.headers.get('content-type') || 'video/mp4',
+        contentLength: bytes.byteLength,
+      })
+    }
+
     return videoResponse(bytes, 'seeded')
   } catch (error) {
     console.error('Master Gogo presenter failed:', error)
-    return new Response('Presenter unavailable', { status: 502 })
+    return probe
+      ? Response.json({ ok: false, source: 'error' }, { status: 502 })
+      : new Response('Presenter unavailable', { status: 502 })
   }
 }
