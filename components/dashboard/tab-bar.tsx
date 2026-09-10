@@ -4,14 +4,14 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { TAB_ICONS } from './icons'
 
-// Mobile keeps five primary destinations. Usage remains available from the desktop
-// rail / You surface; Memory earns a primary slot because saved knowledge is one of
-// AskGogo's core jobs.
+// Mobile prioritises the product promise: daily context, agentic work and memory.
+// Talk to Gogo remains available as the floating action button, while Calendar
+// stays primary because it is one of the most common approval-backed actions.
 export const TABS = [
   { key: 'today', label: 'Today', href: '/dashboard/today' },
+  { key: 'agent', label: 'Agent', href: '/dashboard/agent' },
   { key: 'memory', label: 'Memory', href: '/dashboard/memory' },
   { key: 'calendar', label: 'Calendar', href: '/dashboard/calendar' },
-  { key: 'lists', label: 'Lists', href: '/dashboard/lists' },
   { key: 'you', label: 'You', href: '/dashboard/you' },
 ] as const
 
@@ -19,7 +19,7 @@ export function TabBar() {
   const pathname = usePathname()
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-[480px] border-t border-gogo-ink/8 bg-gogo-surface/95 shadow-[0_-8px_30px_rgba(62,35,18,0.04)] backdrop-blur-xl lg:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-[480px] border-t border-gogo-ink/8 bg-gogo-surface/95 shadow-[0_-8px_30px_rgba(45,32,22,0.04)] backdrop-blur-xl lg:hidden">
       {TABS.map(({ key, label, href }) => {
         const Icon = TAB_ICONS[key]
         const active = pathname === href || pathname.startsWith(`${href}/`)
