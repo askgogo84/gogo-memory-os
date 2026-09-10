@@ -1,7 +1,9 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getCostBudget } from '@/lib/services/cost-guard'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { createWebSearchWatcher, normalizeWebSearchWatcher } from './watchers'
+import { initialWatcherCadence, isUrgentWatchRequest, watcherUpgradeMessage } from './watch-cost-policy'
 
 function clean(value: unknown, max = 1000) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -38,6 +40,8 @@ export function parseWebWatchCommand(text: string) {
     query,
     triggerKeywords,
     delivery: 'both',
+    // Parsing stays capability-neutral. The effective cadence is replaced at
+    // creation time by the user's plan + COGS policy.
     cadenceMinutes: 15,
   })
 }
@@ -57,8 +61,8 @@ export async function tryCreateWebWatchFromCommand(params: {
   surface: AgentSurface
   text: string
 }) {
-  const condition = parseWebWatchCommand(params.text)
-  if (!condition) return null
+  const parsed = parseWebWatchCommand(params.text)
+  if (!parsed) return null
 
   const tg = String(params.actor.legacyTelegramId)
   if (!(await browserWatchAllowed(params.actor.legacyTelegramId))) {
@@ -72,6 +76,51 @@ export async function tryCreateWebWatchFromCommand(params: {
     }
   }
 
+  const budget = await getCostBudget(tg)
+  if (budget.activeWebWatchersMax <= 0) {
+    return {
+      runId: 'watch-plan-blocked',
+      status: 'paused' as const,
+      capability: 'browser' as const,
+      risk: 'low' as const,
+      text: watcherUpgradeMessage(budget.planCode),
+      blockedReason: 'plan_background_watch_unavailable',
+    }
+  }
+
+  const { count, error: countError } = await supabaseAdmin.from('agent_watchers')
+    .select('id', { count:'exact', head:true })
+    .eq('telegram_id', tg)
+    .eq('type', 'web_search')
+    .eq('active', true)
+  if (countError) throw new Error(`agent_watcher_count_failed:${countError.message}`)
+  const activeWatcherCount = count || 0
+  if (activeWatcherCount >= budget.activeWebWatchersMax) {
+    return {
+      runId: 'watch-plan-limit',
+      status: 'paused' as const,
+      capability: 'browser' as const,
+      risk: 'low' as const,
+      text: watcherUpgradeMessage(budget.planCode),
+      blockedReason: 'plan_background_watch_limit',
+    }
+  }
+
+  const urgent = isUrgentWatchRequest(params.text)
+  const cadenceMinutes = initialWatcherCadence({
+    budget,
+    urgent,
+    activeWatcherCount: activeWatcherCount + 1,
+  })
+  const burstUntil = urgent && budget.burstHours > 0
+    ? new Date(Date.now() + budget.burstHours * 3600_000).toISOString()
+    : null
+  const condition = {
+    ...parsed,
+    cadenceMinutes,
+    burstUntil,
+  }
+
   const now = new Date().toISOString()
   const { data: run, error: runError } = await supabaseAdmin.from('agent_runs').insert({
     telegram_id: tg,
@@ -79,11 +128,14 @@ export async function tryCreateWebWatchFromCommand(params: {
     capability: 'browser',
     status: 'completed',
     title: condition.title,
-    summary: `Background Gogo will check every ${condition.cadenceMinutes} minutes and surface meaningful new results.`,
+    summary: `Background Gogo is watching adaptively. It starts around every ${condition.cadenceMinutes} minutes and slows down when nothing changes.`,
     progress: 100,
     why: 'You asked Gogo to keep watching instead of repeatedly checking the web yourself.',
     source: params.surface,
-    metadata_json: { input_text: clean(params.text, 2000), watcher_type:'web_search', query:condition.query },
+    metadata_json: {
+      input_text: clean(params.text, 2000), watcher_type:'web_search', query:condition.query,
+      plan_code:budget.planCode, adaptive:true, burst_until:burstUntil,
+    },
     started_at: now,
     updated_at: now,
   }).select('id').single()
@@ -94,8 +146,11 @@ export async function tryCreateWebWatchFromCommand(params: {
     telegram_id: tg,
     run_id: String(run.id),
     event_type: 'watcher_created',
-    message: `Background Gogo is watching the web: ${condition.query}`.slice(0, 900),
-    metadata_json: { watcher_id:watcher.id, type:'web_search', cadence_minutes:condition.cadenceMinutes },
+    message: `Background Gogo is watching the web adaptively: ${condition.query}`.slice(0, 900),
+    metadata_json: {
+      watcher_id:watcher.id, type:'web_search', cadence_minutes:condition.cadenceMinutes,
+      plan_code:budget.planCode, burst_until:burstUntil,
+    },
   })
 
   return {
@@ -103,7 +158,7 @@ export async function tryCreateWebWatchFromCommand(params: {
     status: 'completed' as const,
     capability: 'browser' as const,
     risk: 'low' as const,
-    text: `Background Gogo is now watching “${condition.query}”. I’ll establish a baseline on the first check, then surface meaningful new results in Ideas${condition.delivery !== 'app' ? ' and WhatsApp' : ''}.`,
+    text: `Background Gogo is now watching “${condition.query}”. I’ll establish a baseline first, then adapt the check frequency based on changes and your plan so quiet watches don’t waste your Gogo capacity. Meaningful updates appear in Ideas${condition.delivery !== 'app' ? ' and WhatsApp' : ''}.`,
     handledBy: 'background-web-watch',
   }
 }
