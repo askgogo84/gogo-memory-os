@@ -1,3 +1,5 @@
+import { createHmac } from 'node:crypto'
+
 type Cabin = 'economy' | 'premium_economy' | 'business' | 'first'
 
 export type CreditIQFlightResult = {
@@ -49,6 +51,26 @@ function normalizeCabin(value: string | undefined): Cabin {
 function finiteNumber(value: unknown): number | null {
   const n = Number(value)
   return Number.isFinite(n) ? n : null
+}
+
+function serviceSecret() {
+  return String(process.env.CREDITIQ_GOGO_SERVICE_SECRET || '').trim()
+}
+
+function signedServiceHeaders(rawBody: string) {
+  const secret = serviceSecret()
+  if (!secret) return null
+  const timestamp = String(Date.now())
+  const signature = createHmac('sha256', secret)
+    .update(`${timestamp}.${rawBody}`)
+    .digest('hex')
+  return {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    'X-Gogo-Timestamp': timestamp,
+    'X-Gogo-Signature': signature,
+    'User-Agent': 'AskGogo-Travel-Bridge/1.0',
+  }
 }
 
 /**
@@ -125,10 +147,9 @@ export async function searchCreditIQLiveFlights(params: {
 }
 
 /**
- * Hotel bridge contract. CreditIQ's hotel endpoint is authenticated today, so Gogo
- * must use the forthcoming signed service endpoint instead of borrowing a user's
- * CreditIQ browser cookie. Keeping this client contract here lets mission code switch
- * to live hotels without another architecture change once service auth is enabled.
+ * Signed, read-only hotel bridge into CreditIQ's existing Booking.com / Skyscanner /
+ * Hotelbeds provider orchestration. The shared secret is server-only; no end-user
+ * CreditIQ cookie/session is copied into AskGogo.
  */
 export async function searchCreditIQLiveHotels(params: {
   destination: string
@@ -137,27 +158,26 @@ export async function searchCreditIQLiveHotels(params: {
   adults?: number
   rooms?: number
 }): Promise<CreditIQHotelSearch | null> {
-  const serviceToken = String(process.env.CREDITIQ_GOGO_SERVICE_TOKEN || '').trim()
-  if (!serviceToken) return { live:false, source:'creditiq', coverage:null, hotels:[], fetchedAt:new Date().toISOString(), requiresServiceAuth:true }
+  const rawBody = JSON.stringify({
+    destination: clean(params.destination, 160),
+    checkin: clean(params.checkin, 10),
+    checkout: clean(params.checkout, 10),
+    adults: Math.max(1, Math.min(9, Number(params.adults || 1))),
+    rooms: Math.max(1, Math.min(5, Number(params.rooms || 1))),
+    limit: 30,
+  })
+  const headers = signedServiceHeaders(rawBody)
+  if (!headers) {
+    return { live:false, source:'creditiq', coverage:null, hotels:[], fetchedAt:new Date().toISOString(), requiresServiceAuth:true }
+  }
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 15_000)
   try {
     const response = await fetch(`${baseUrl()}/api/internal/gogo/travel/hotels`, {
       method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'X-Gogo-Service-Token': serviceToken,
-        'User-Agent': 'AskGogo-Travel-Bridge/1.0',
-      },
-      body: JSON.stringify({
-        destination: clean(params.destination, 160),
-        checkin: clean(params.checkin, 10),
-        checkout: clean(params.checkout, 10),
-        adults: Math.max(1, Math.min(9, Number(params.adults || 1))),
-        rooms: Math.max(1, Math.min(5, Number(params.rooms || 1))),
-      }),
+      headers,
+      body: rawBody,
       signal: controller.signal,
       cache: 'no-store',
     })
