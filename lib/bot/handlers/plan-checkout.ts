@@ -1,22 +1,22 @@
 import { createSubscription } from '@/lib/services/razorpay-subscriptions'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
-export type CheckoutPlanKey = 'lite' | 'pro' | 'power'
+export type CheckoutPlanKey = 'essential' | 'plus' | 'pro'
 
 const PLAN_LABELS: Record<CheckoutPlanKey, string> = {
-  lite: 'AskGogo Lite (₹99/month)',
-  pro: 'AskGogo Pro (₹299/month)',
-  power: 'AskGogo Power (₹499/month)',
+  essential: 'Gogo Essential (₹249/month)',
+  plus: 'Gogo Plus (₹499/month)',
+  pro: 'Gogo Pro (₹999/month)',
 }
 
-// Detects a current paid plan choice from a chat message.
+// Detect current paid-plan choices while preserving old reply words as aliases.
 export function parsePlanSelection(text: string): CheckoutPlanKey | null {
   const t = (text || '').toLowerCase().trim()
   if (!t) return null
   const cleaned = t.replace(/^(subscribe|get|choose|select|start|buy|upgrade to|go with)\s+/i, '').trim()
-  if (cleaned === 'lite' || cleaned === '1') return 'lite'
-  if (cleaned === 'pro' || cleaned === '2') return 'pro'
-  if (cleaned === 'power' || cleaned === '3' || cleaned === 'founder' || cleaned === 'founder pro') return 'power'
+  if (cleaned === 'essential' || cleaned === 'lite' || cleaned === '1') return 'essential'
+  if (cleaned === 'plus' || cleaned === 'gogo plus' || cleaned === '2') return 'plus'
+  if (cleaned === 'pro' || cleaned === 'gogo pro' || cleaned === 'power' || cleaned === '3' || cleaned === 'founder' || cleaned === 'founder pro') return 'pro'
   return null
 }
 
@@ -43,11 +43,11 @@ export async function buildPlanCheckoutReply(
   user: { telegramId: number; whatsappId: string | null; name: string },
   planKey: CheckoutPlanKey
 ): Promise<string> {
-  const label = PLAN_LABELS[planKey] || PLAN_LABELS.pro
+  const label = PLAN_LABELS[planKey] || PLAN_LABELS.plus
 
   try {
     if (await hasActiveSubscription(user.telegramId, user.whatsappId)) {
-      return `You're already on an active AskGogo plan. 🎉\n\nReply *usage* to see your limits, or *cancel* if you'd like to stop.`
+      return `You're already on an active Gogo plan. 🎉\n\nReply *usage* to see your capacity, or *cancel* if you'd like to stop.`
     }
   } catch (err) {
     console.error('plan-checkout: active-sub check failed:', err)
@@ -73,12 +73,12 @@ export async function buildPlanCheckoutReply(
       : ''
 
     return [
-      `Great choice! Here's your ${label} setup link:`,
+      `Here's your ${label} setup link:`,
       '',
       result.shortUrl,
       '',
       trialLine,
-      `Tap it, authorize once, and your plan activates automatically. Cancel anytime by replying *cancel*.`,
+      `Tap it, authorize once, and Gogo unlocks automatically. Cancel anytime by replying *cancel*.`,
     ].filter(Boolean).join('\n')
   } catch (err) {
     console.error('plan-checkout: createSubscription failed:', err)
