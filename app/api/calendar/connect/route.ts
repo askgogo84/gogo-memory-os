@@ -1,16 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUrl } from '@/lib/google-calendar'
+import { getAuthUrl, verifyCalendarConnectToken } from '@/lib/google-calendar'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const telegramId = searchParams.get('id')
+  const telegramId = verifyCalendarConnectToken(searchParams.get('token') || '')
 
   if (!telegramId) {
-    return NextResponse.json({ error: 'Missing id' }, { status: 400 })
+    return NextResponse.json({ ok:false, error:'Invalid or expired connection link' }, { status:401 })
   }
 
-  const authUrl = getAuthUrl(parseInt(telegramId))
-  return NextResponse.redirect(authUrl)
+  try {
+    return NextResponse.redirect(getAuthUrl(telegramId))
+  } catch (err) {
+    console.error('CALENDAR_CONNECT_URL_FAILED:', err)
+    return NextResponse.json({ ok:false, error:'Calendar connection is temporarily unavailable' }, { status:503 })
+  }
 }
