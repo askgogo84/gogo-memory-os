@@ -4,8 +4,23 @@
 
 import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
+import { dispatchThroughSameBrain } from '@/lib/agent/same-brain'
+import { buildGmailConnectUrl } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
+
+function isSimpleWorkspaceRead(text:string) {
+  const t=String(text||'')
+  const gmail=/\b(email|emails|gmail|inbox|mail)\b/i.test(t) && /\b(find|show|read|latest|recent|unread|search|look for|check|attached|attachment|brief)\b/i.test(t) && !/\b(send|forward|compose)\b/i.test(t)
+  const contact=/\b(contact|contacts|email address|phone number|how do i reach|address for)\b/i.test(t) && /\b(find|show|look up|search|resolve|get|what is|what's)\b/i.test(t)
+  const drive=/\b(google drive|drive file|google doc|google sheet|in drive)\b/i.test(t) && /\b(find|show|read|search|open|use|look for|get)\b/i.test(t)
+  return gmail||contact||drive
+}
+
+function isWorkspaceConnect(text:string) {
+  const t=String(text||'').toLowerCase()
+  return /\b(connect|link|reconnect|refresh)\b/.test(t) && /\b(gmail|google workspace|google account|email)\b/.test(t)
+}
 
 export async function routeFeatureIntent(
   phone: string,
@@ -39,6 +54,25 @@ export async function routeFeatureIntent(
       platform: 'whatsapp',
       timezone: String(data.timezone || 'Asia/Kolkata'),
       rawUser: data,
+    }
+
+    if (isWorkspaceConnect(text)) {
+      const url=buildGmailConnectUrl(user.telegramId)
+      return url
+        ? `Connect Google Workspace here:\n${url}\n\nThis gives Gogo only the read-only Gmail, Contacts and Drive context you approve. Sending email, changing files or scheduling still requires the normal approval boundary.`
+        : 'Google Workspace connection is temporarily unavailable. Please try again shortly.'
+    }
+
+    // Simple private reads should work on WhatsApp too, even though they are not
+    // multi-tool Agent missions. Reuse the exact same deterministic server-side
+    // Workspace reader as Dashboard/Agent so every surface is one Gogo.
+    if (isSimpleWorkspaceRead(text)) {
+      const actor={
+        userId:String(user.id),legacyTelegramId:user.telegramId,
+        whatsappId:String(user.whatsappId||phone),name:String(user.name||'Gogo'),
+      }
+      const result=await dispatchThroughSameBrain({actor,text})
+      return result.text || null
     }
 
     const agent = await tryRunWhatsAppAgent({ user, text })
