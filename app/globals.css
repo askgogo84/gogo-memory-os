@@ -15,18 +15,18 @@
 
 @theme {
   --color-gogo-orange: #f18219;
-  --color-gogo-orange-deep: #d67528;
+  --color-gogo-orange-deep: #d66b14;
   --color-gogo-plum: #714c77;
   --color-gogo-plum-deep: #4d2a50;
   --color-gogo-plum-tint: #f0eaf1;
   --color-gogo-ink: #3e2312;
   --color-gogo-ink-2: #6b4a34;
-  --color-gogo-ink-3: #9a8778;
-  --color-gogo-ink-4: #b8a797;
+  --color-gogo-ink-3: #8f7767;
+  --color-gogo-ink-4: #ad9989;
   --color-gogo-sand: #e4a97d;
   --color-gogo-orange-tint: #fdf0e2;
-  --color-gogo-cream: #fbf6ef;
-  --color-gogo-rail: #f6efe5;
+  --color-gogo-cream: #faf3ea;
+  --color-gogo-rail: #f2e6d9;
   --color-gogo-surface: #ffffff;
   --ease-calm: cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -75,22 +75,75 @@
     radial-gradient(circle at 15% 88%, rgba(241, 130, 25, 0.08), transparent 34%);
 }
 
-/* Zen Home keeps its immersive atmosphere in both themes. Hard-coded white
-   glass caused light panels to sit underneath light dark-mode text, so these
-   surfaces deliberately switch together with the dashboard theme. */
+.dashboard-rail {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(255,255,255,.94), transparent 34%),
+    linear-gradient(180deg, #fbf4ec 0%, #f4e8dc 58%, #efe1d3 100%);
+  box-shadow: inset -1px 0 0 rgba(62,35,18,.035), 16px 0 45px rgba(62,35,18,.035);
+}
+
+.dashboard-nav-active {
+  border-color: rgba(241,130,25,.25);
+  background: linear-gradient(135deg, rgba(255,255,255,.97), rgba(253,240,226,.94));
+  box-shadow: 0 10px 28px rgba(62,35,18,.08), inset 0 0 0 1px rgba(255,255,255,.42);
+}
+
+.dashboard-nav-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f18219, #d66b14);
+}
+
+.dashboard-rail-status {
+  background: linear-gradient(145deg, #4a2a18, #332017 58%, #4d2a50 130%);
+  color: #fff9f4;
+}
+
+.dashboard-root.theme-dark .dashboard-rail,
+.dashboard-root[data-theme='dark'] .dashboard-rail {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(99,77,66,.28), transparent 32%),
+    linear-gradient(180deg, #221b18 0%, #1c1715 62%, #181311 100%);
+  box-shadow: inset -1px 0 0 rgba(255,255,255,.04), 16px 0 45px rgba(0,0,0,.12);
+}
+
+.dashboard-root.theme-dark .dashboard-nav-active,
+.dashboard-root[data-theme='dark'] .dashboard-nav-active {
+  border-color: rgba(243,154,70,.22);
+  background: linear-gradient(135deg, rgba(57,42,32,.96), rgba(43,35,32,.94));
+  box-shadow: 0 10px 28px rgba(0,0,0,.20), inset 0 0 0 1px rgba(255,255,255,.03);
+}
+
+.dashboard-root.theme-dark .dashboard-rail-status,
+.dashboard-root[data-theme='dark'] .dashboard-rail-status {
+  background: linear-gradient(145deg, #2f2420, #231b18 58%, #302335 130%);
+  border: 1px solid rgba(255,255,255,.06);
+}
+
 .zen-home {
   background:
-    radial-gradient(circle at 50% 18%, rgba(255,255,255,.96), rgba(255,247,236,.86) 38%, rgba(241,221,203,.64) 72%, rgba(230,209,229,.44) 100%);
+    radial-gradient(circle at 50% 10%, rgba(255,255,255,.98), rgba(255,247,237,.92) 34%, rgba(246,228,212,.82) 68%, rgba(235,218,234,.62) 100%);
+}
+
+.zen-hero-card {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,250,245,.62));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.75), 0 24px 70px rgba(62,35,18,.07);
 }
 
 .zen-home-glass,
 .zen-home-pill {
-  border-color: rgba(255,255,255,.62);
-  background: rgba(255,255,255,.50);
+  border-color: rgba(255,255,255,.76);
+  background: rgba(255,255,255,.70);
 }
 
 .zen-home-glass:hover {
-  background: rgba(255,255,255,.70);
+  background: rgba(255,255,255,.88);
 }
 
 .zen-memory-accent {
@@ -103,18 +156,25 @@
     radial-gradient(circle at 50% 18%, rgba(61,49,44,.98), rgba(42,34,31,.96) 38%, rgba(31,26,24,.98) 72%, rgba(39,31,42,.96) 100%);
 }
 
+.dashboard-root.theme-dark .zen-hero-card,
+.dashboard-root[data-theme='dark'] .zen-hero-card {
+  background: linear-gradient(180deg, rgba(49,41,37,.82), rgba(37,31,29,.78));
+  border-color: rgba(255,255,255,.07);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.035), 0 24px 70px rgba(0,0,0,.22);
+}
+
 .dashboard-root.theme-dark .zen-home-glass,
 .dashboard-root.theme-dark .zen-home-pill,
 .dashboard-root[data-theme='dark'] .zen-home-glass,
 .dashboard-root[data-theme='dark'] .zen-home-pill {
   border-color: rgba(255,255,255,.08);
-  background: rgba(39,33,30,.74);
+  background: rgba(39,33,30,.82);
   box-shadow: 0 18px 50px rgba(0,0,0,.16);
 }
 
 .dashboard-root.theme-dark .zen-home-glass:hover,
 .dashboard-root[data-theme='dark'] .zen-home-glass:hover {
-  background: rgba(48,41,37,.88);
+  background: rgba(48,41,37,.92);
 }
 
 .dashboard-root.theme-dark .zen-memory-accent,
