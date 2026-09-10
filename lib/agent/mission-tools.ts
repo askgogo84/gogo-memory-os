@@ -5,6 +5,7 @@ import { addToListDetailed, getAllLists, getList } from '@/lib/data/lists'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { dispatchThroughSameBrain } from './same-brain'
+import { executeReadOnlyCalendarStep } from './calendar-read'
 import { buildTravelResearchContext, curateTravelResults, isPublicTravelResearchRequest } from './travel-research'
 import type { AgentActor } from './actor'
 
@@ -279,7 +280,18 @@ function addDaysIso(iso:string,days:number){
   return d.toISOString().slice(0,10)
 }
 
+function isCalendarWriteStep(step:MissionStep){
+  return /\b(add|create|change|move|schedule|write|modify|prepare|invite|cancel|delete|event\s+titled|spanning)\b/i.test(`${step.title} ${step.instruction}`)
+}
+
 export async function executeVerifiedMissionCalendar(params:{actor:AgentActor;step:MissionStep;missionText:string;runId:string}){
+  // A Calendar read is a fundamentally different capability from a mutation. The
+  // general planner already classifies it as low-risk/read-only; keep the tool
+  // implementation aligned so “find a free slot” can NEVER create an event.
+  if(!isCalendarWriteStep(params.step)){
+    return executeReadOnlyCalendarStep({actor:params.actor,instruction:params.step.instruction,missionText:params.missionText})
+  }
+
   const year=Number(explicitDate(params.missionText)?.slice(0,4)||new Date().getUTCFullYear())
   let dates=explicitDates(params.step.instruction,year)
   if(dates.length<2){
