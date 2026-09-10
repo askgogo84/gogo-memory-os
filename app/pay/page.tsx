@@ -4,18 +4,18 @@ import { Suspense, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 const PLANS = {
-  lite:  { key: 'lite',  name: 'Lite',  amount: 99,  color: '#16a34a', emoji: '🌱' },
-  pro:   { key: 'pro',   name: 'Pro',   amount: 299, color: '#7c3aed', emoji: '🚀' },
-  power: { key: 'power', name: 'Power', amount: 499, color: '#b45309', emoji: '⚡' },
+  essential: { key:'essential', name:'Gogo Essential', amount:249, tagline:'Let Gogo help', accent:'#157A6E' },
+  plus: { key:'plus', name:'Gogo Plus', amount:499, tagline:'Let Gogo handle it', accent:'#EF7A27' },
+  pro: { key:'pro', name:'Gogo Pro', amount:999, tagline:'Gogo, take it from here', accent:'#76556F' },
 } as const
 
 type PlanKey = keyof typeof PLANS
 
 function normalizePlan(value: string | null): PlanKey {
-  const key = String(value || 'pro').toLowerCase().replace(/[\s-]+/g, '_')
-  if (key === 'lite') return 'lite'
-  if (key === 'power' || key === 'founder' || key === 'founder_pro') return 'power'
-  return 'pro'
+  const key = String(value || 'plus').toLowerCase().replace(/[\s-]+/g, '_')
+  if (key === 'essential' || key === 'lite') return 'essential'
+  if (key === 'pro' || key === 'gogo_pro' || key === 'power' || key === 'founder' || key === 'founder_pro') return 'pro'
+  return 'plus'
 }
 
 function PayContent() {
@@ -44,7 +44,7 @@ function PayContent() {
       })
       const data = await res.json().catch(() => ({}))
       if (res.status === 409 && data?.error === 'already_subscribed') {
-        throw new Error('This WhatsApp number already has an active AskGogo plan.')
+        throw new Error('This WhatsApp number already has an active Gogo plan.')
       }
       if (!res.ok || !data?.success || !data?.short_url) {
         throw new Error('Could not start the subscription. Please try again.')
@@ -57,30 +57,33 @@ function PayContent() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px', background: '#f8fafc', fontFamily: 'system-ui,sans-serif' }}>
-      <div style={{ background: '#fff', borderRadius: 20, padding: '36px 32px', maxWidth: 420, width: '100%', boxShadow: '0 4px 32px rgba(0,0,0,.08)' }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: plan.color, letterSpacing: '0.1em', textTransform: 'uppercase' as const, marginBottom: 6 }}>
-          {plan.emoji} AskGogo {plan.name}
+    <div className="flex min-h-screen items-center justify-center bg-gogo-cream px-4 py-8 font-sans text-gogo-ink">
+      <div className="w-full max-w-[430px] rounded-[32px] border border-gogo-ink/8 bg-gogo-surface p-7 shadow-[0_28px_80px_rgba(22,19,15,.09)] sm:p-9">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[.16em] text-gogo-teal">AskGogo</div>
+            <h1 className="mt-1 font-serif text-4xl font-normal tracking-[-.03em]">{plan.name}</h1>
+          </div>
+          <span className="h-3 w-3 rounded-full" style={{background:plan.accent}} />
         </div>
-        <div style={{ fontSize: 48, fontWeight: 800, color: '#0f172a', lineHeight: 1, marginBottom: 8 }}>
-          ₹{plan.amount}<span style={{ fontSize: 16, fontWeight: 400, color: '#94a3b8' }}>/month</span>
+        <p className="mt-2 text-sm text-gogo-ink-3">{plan.tagline}</p>
+        <div className="mt-5 font-serif text-6xl font-normal leading-none">₹{plan.amount}<span className="font-sans text-base font-normal text-gogo-ink-4">/month</span></div>
+        <p className="mt-3 text-sm leading-6 text-gogo-ink-3">7-day free trial. Authorize once with Razorpay; billing starts after the trial and renews monthly. Cancel anytime.</p>
+
+        <div className="my-6 h-px bg-gogo-ink/7" />
+        <label className="mb-2 block text-xs font-semibold text-gogo-ink-2">Your WhatsApp number</label>
+        <div className="flex overflow-hidden rounded-[16px] border border-gogo-ink/12 bg-gogo-cream/45 focus-within:border-gogo-teal/45">
+          <span className="flex items-center border-r border-gogo-ink/8 px-3 text-sm font-semibold text-gogo-ink-2">🇮🇳 +91</span>
+          <input type="tel" inputMode="numeric" placeholder="98765 43210" value={phone} onChange={e => { setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setError('') }} className="min-w-0 flex-1 bg-transparent px-4 py-3.5 text-base outline-none" />
         </div>
-        <p style={{ color: '#475569', fontSize: 13, lineHeight: 1.5, margin: '0 0 20px' }}>
-          7-day free trial. Authorize once with Razorpay; billing starts after the trial and renews monthly. Cancel anytime.
-        </p>
-        <div style={{ borderTop: '1px solid #f1f5f9', margin: '20px 0' }} />
-        <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>Your WhatsApp Number</label>
-        <div style={{ display: 'flex', alignItems: 'center', border: '1.5px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', marginBottom: 6 }}>
-          <span style={{ padding: '12px 10px', fontSize: 14, fontWeight: 600, color: '#374151', borderRight: '1px solid #e2e8f0', background: '#f1f5f9' }}>🇮🇳 +91</span>
-          <input type="tel" inputMode="numeric" placeholder="98765 43210" value={phone} onChange={e => { setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setError('') }} style={{ flex: 1, border: 'none', background: 'transparent', padding: '12px 14px', fontSize: 16, outline: 'none', color: '#0f172a' }} />
-        </div>
-        <p style={{ fontSize: 12, color: '#94a3b8', margin: '0 0 4px' }}>Use the same number you use with AskGogo on WhatsApp.</p>
-        {error && <p style={{ color: '#dc2626', fontSize: 13, margin: '8px 0' }}>{error}</p>}
-        <button onClick={handlePay} disabled={status === 'loading'} style={{ display: 'block', width: '100%', padding: '14px', borderRadius: 10, border: 'none', color: '#fff', fontSize: 16, fontWeight: 700, marginTop: 16, background: status === 'loading' ? '#94a3b8' : plan.color, cursor: status === 'loading' ? 'not-allowed' : 'pointer' }}>
+        <p className="mt-2 text-xs text-gogo-ink-4">Use the same number you use with Gogo on WhatsApp.</p>
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+
+        <button onClick={handlePay} disabled={status === 'loading'} className="mt-6 w-full rounded-full bg-gogo-ink px-5 py-3.5 text-base font-semibold text-gogo-cream transition hover:bg-gogo-teal disabled:cursor-not-allowed disabled:opacity-50">
           {status === 'loading' ? 'Preparing secure subscription…' : 'Start 7-day free trial →'}
         </button>
-        <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 10, textAlign: 'center' as const }}>🔒 Secured by Razorpay · UPI · Cards</p>
-        <button onClick={() => window.history.back()} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 13, cursor: 'pointer', marginTop: 8, textDecoration: 'underline', display: 'block', width: '100%', textAlign: 'center' as const }}>← Back</button>
+        <p className="mt-3 text-center text-xs text-gogo-ink-4">Secured by Razorpay · UPI · Cards</p>
+        <button onClick={() => window.history.back()} className="mt-3 block w-full text-center text-xs text-gogo-ink-4 underline">← Back</button>
       </div>
     </div>
   )
@@ -88,7 +91,7 @@ function PayContent() {
 
 export default function PayPage() {
   return (
-    <Suspense fallback={<div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading…</div>}>
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-gogo-cream">Loading…</div>}>
       <PayContent />
     </Suspense>
   )
