@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const planner = readFileSync(new URL('../lib/agent/general-planner.ts', import.meta.url), 'utf8')
+const missionTools = readFileSync(new URL('../lib/agent/mission-tools.ts', import.meta.url), 'utf8')
 const runRoute = readFileSync(new URL('../app/api/agent/run/route.ts', import.meta.url), 'utf8')
 const executeRoute = readFileSync(new URL('../app/api/agent/runs/[id]/execute/route.ts', import.meta.url), 'utf8')
 
@@ -38,12 +39,37 @@ assert.match(planner, /from\('todos'\)/)
 assert.match(planner, /verifiedStore:'todos'/)
 assert.match(planner, /if \(step\.tool === 'tasks'\) return executeTaskStep/)
 
-// Missing temporal dependencies must pause honestly. A "24 hours before selected
-// departure" reminder/calendar action cannot invent a timestamp from unrelated
-// history and then be marked completed.
+// Mission-level Memory, web research and reminders use verified adapters rather
+// than free-form fallbacks. The original mission text is propagated on first run
+// and after approval so relative timing/relevance can be checked deterministically.
+assert.match(planner, /executeVerifiedMissionMemory/)
+assert.match(planner, /executeVerifiedMissionReminder/)
+assert.match(planner, /executeVerifiedMissionWebSearch/)
+assert.match(planner, /missionText:params\.missionText/)
+assert.match(planner, /missionText:params\.text/)
+assert.match(planner, /missionText:String\(meta\.input_text\|\|''\)/)
+
+// Reminder success requires an actual future remind_at row. A green Agent step
+// cannot be emitted merely because an NLP handler returned reassuring prose.
+assert.match(missionTools, /from\('reminders'\)\.insert/)
+assert.match(missionTools, /remind_at:dueIso/)
+assert.match(missionTools, /verifiedStore:'reminders'/)
+assert.match(missionTools, /mission_reminder_write_unverified/)
+
+// Mission-internal travel research is curated by the same direction/date layer as
+// standalone travel research, and mission Memory must verify the requested route
+// before accepting a saved ticket as relevant context.
+assert.match(missionTools, /curateTravelResults/)
+assert.match(missionTools, /verifiedCuration:'travel-research'/)
+assert.match(missionTools, /doc_type','ticket'/)
+assert.match(missionTools, /verifiedRelevance:true/)
+assert.match(missionTools, /No saved flight matched this mission/)
+
+// Missing temporal dependencies must pause honestly when the original mission also
+// lacks the required departure time/date.
 assert.match(planner, /export function missingMissionInput/)
+assert.match(planner, /missionHasDeparture/)
 assert.match(planner, /Choose the departure date and time first/i)
-assert.match(planner, /event_type:eventType/)
 assert.match(planner, /'input_required'/)
 assert.match(planner, /inputRequired:true/)
 assert.match(planner, /status:'paused'/)
