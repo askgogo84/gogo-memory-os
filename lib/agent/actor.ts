@@ -6,7 +6,7 @@ export type AgentActor = {
   legacyTelegramId: number
   whatsappId: string
   name: string
-  creditiqUserId: string | null
+  creditiqUserId?: string | null
 }
 
 export async function resolveAgentActor(session: AgentSession): Promise<AgentActor> {
