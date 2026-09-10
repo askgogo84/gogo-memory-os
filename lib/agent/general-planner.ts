@@ -52,6 +52,7 @@ export type GeneralPlanResult = {
   text: string
   approvalId?: string
   approvalRequired?: boolean
+  inputRequired?: boolean
   handledBy: 'general-plan'
 }
 
@@ -80,10 +81,49 @@ function normalizeStep(raw: any): GeneralPlanStep | null {
   return { tool, title, instruction, artifactType, artifactTitle }
 }
 
+function hasConcreteDate(text: string) {
+  return /\b20\d{2}-\d{1,2}-\d{1,2}\b|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+20\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2},?\s+20\d{2}\b/i.test(text)
+}
+
+function hasConcreteClock(text: string) {
+  return /\b\d{1,2}:\d{2}\s*(?:am|pm)?\b|\b\d{1,2}\s*(?:am|pm)\b/i.test(text)
+}
+
+export function missingMissionInput(step: GeneralPlanStep): string | null {
+  const text = `${step.title} ${step.instruction}`
+  const dependency = /selected\s+(?:flight|departure|return)|depends?\s+on\s+(?:the\s+)?(?:user'?s\s+)?flight|before\s+(?:the\s+)?(?:selected\s+)?departure|based\s+on\s+(?:the\s+)?selected\s+flight|exact\s+(?:date|time).*confirm|pause\s+here\s+to\s+confirm/i.test(text)
+  if (!dependency) return null
+  if (step.tool === 'reminders' && !(hasConcreteDate(text) && hasConcreteClock(text))) {
+    return 'Choose the departure date and time first so I can place the reminder exactly 24 hours before it.'
+  }
+  if (step.tool === 'calendar' && !hasConcreteDate(text)) {
+    return 'Choose the trip dates or flight first so I can prepare the correct calendar event.'
+  }
+  return null
+}
+
+function shouldPrepareBefore(step: GeneralPlanStep) {
+  if (missingMissionInput(step)) return true
+  if (step.tool === 'calendar' && /\b(add|create|change|move|schedule|write|modify)\b/i.test(step.instruction)) return true
+  if (step.tool === 'email' && /\b(send|reply|forward)\b/i.test(step.instruction)) return true
+  return false
+}
+
+function placeArtifactBeforeDeferredWork(steps: GeneralPlanStep[]) {
+  const artifactIndex = steps.findIndex(step => step.tool === 'artifact')
+  const deferredIndex = steps.findIndex(shouldPrepareBefore)
+  if (artifactIndex >= 0 && deferredIndex >= 0 && artifactIndex > deferredIndex) {
+    const [artifact] = steps.splice(artifactIndex, 1)
+    steps.splice(deferredIndex, 0, artifact)
+  }
+  return steps
+}
+
 function normalizePlan(raw: any): GeneralPlan | null {
   const title = String(raw?.title || '').replace(/\s+/g, ' ').trim().slice(0, 160)
   const reason = String(raw?.reason || '').replace(/\s+/g, ' ').trim().slice(0, 500)
-  const steps = Array.isArray(raw?.steps) ? raw.steps.map(normalizeStep).filter(Boolean) as GeneralPlanStep[] : []
+  const rawSteps = Array.isArray(raw?.steps) ? raw.steps.map(normalizeStep).filter(Boolean) as GeneralPlanStep[] : []
+  const steps = placeArtifactBeforeDeferredWork(rawSteps)
   if (!title || steps.length < 2 || steps.length > MAX_STEPS) return null
   return { title, reason: reason || 'This outcome needs more than one AskGogo capability.', steps }
 }
@@ -112,7 +152,7 @@ export function shouldUseGeneralPlanner(text: string) {
 
 export async function planGeneralAgentRequest(text: string): Promise<GeneralPlan | null> {
   if (!shouldUseGeneralPlanner(text)) return null
-  const prompt = `You are the planning layer for AskGogo, a private personal agent. Turn the user's OUTCOME into 2-${MAX_STEPS} concrete executable steps using ONLY these tools:\n\nmemory, files, reminders, lists, tasks, email, calendar, web_search, travel, artifact\n\nMission rules:\n- Cover every explicit deliverable in the user's request. Do not collapse a multi-part mission into one search or one prose answer.\n- Prefer safe, reversible work first. Put consequential actions such as calendar changes, sends, bookings or external submissions after safe preparation so useful work can finish before an approval pause.\n- If the user says to use what AskGogo already knows, include a memory step near the beginning. Never reveal sensitive identifiers in the plan.\n- If the user explicitly names multiple tasks, use separate task steps when needed so every named task is represented. Each task instruction must literally include the task text; do not rely on hidden context from another step.\n- If the user requests a packing/list deliverable, include a lists step.\n- If the user requests a reminder, include a reminders step. If its exact trigger depends on a future choice that is not known yet, do not invent a date or flight; make the dependency explicit so the step can pause or ask rather than fabricate.\n- If the user requests a final brief/report/artifact, artifact MUST be the final step.\n- The plan sees ONLY this user request. Never assume hidden values, credentials, document numbers or account data.\n- Each instruction must be self-contained and executable by that tool.\n- Use web_search only for public-web research; it can read/search but cannot submit forms.\n- email can read/draft/send, but sending will be stopped by a deterministic approval gate.\n- calendar can read/create/change; writes will be stopped by approval.\n- travel can read/organize; bookings will be stopped by approval.\n- payments/purchases are NOT an available planner tool; if the user asks to spend money, prepare only and let deterministic browser/travel execution stop before purchase.\n- artifact creates a private structured output from the results of previous steps.\n- Do not put secrets or guessed private values into instructions.\n- Return JSON only.\n\nShape:\n{"title":"short outcome","reason":"why multiple tools are needed","steps":[{"tool":"memory","title":"Review relevant context","instruction":"Find relevant saved context for this trip without revealing sensitive identifiers."},{"tool":"tasks","title":"Create check-in task","instruction":"Create task: Complete web check-in"},{"tool":"artifact","title":"Create trip brief","instruction":"Create a concise private brief from this run","artifactType":"trip","artifactTitle":"Mumbai work trip brief"}]}\n\nUser request: ${JSON.stringify(String(text || '').slice(0, 1800))}`
+  const prompt = `You are the planning layer for AskGogo, a private personal agent. Turn the user's OUTCOME into 2-${MAX_STEPS} concrete executable steps using ONLY these tools:\n\nmemory, files, reminders, lists, tasks, email, calendar, web_search, travel, artifact\n\nMission rules:\n- Cover every explicit deliverable in the user's request. Do not collapse a multi-part mission into one search or one prose answer.\n- Prefer safe, reversible work first. Put consequential actions such as calendar changes, sends, bookings or external submissions after safe preparation so useful work can finish before an approval pause.\n- If the user says to use what AskGogo already knows, include a memory step near the beginning. Never reveal sensitive identifiers in the plan.\n- If the user explicitly names multiple tasks, use separate task steps when needed so every named task is represented. Each task instruction must literally include the task text; do not rely on hidden context from another step.\n- If the user requests a packing/list deliverable, include a lists step.\n- If the user requests a reminder, include a reminders step. If its exact trigger depends on a future choice that is not known yet, do not invent a date or flight; make the dependency explicit so execution pauses for the missing input.\n- If the user requests a brief/report/artifact, place the artifact after the safe preparatory work but BEFORE a later approval-required or unresolved-dependency step when the artifact can summarize the prepared plan. Do not block a useful draft artifact behind an approval unless it explicitly requires post-execution results.\n- The plan sees ONLY this user request. Never assume hidden values, credentials, document numbers or account data.\n- Each instruction must be self-contained and executable by that tool.\n- Use web_search only for public-web research; it can read/search but cannot submit forms.\n- email can read/draft/send, but sending will be stopped by a deterministic approval gate.\n- calendar can read/create/change; writes will be stopped by approval.\n- travel can read/organize; bookings will be stopped by approval.\n- payments/purchases are NOT an available planner tool; if the user asks to spend money, prepare only and let deterministic browser/travel execution stop before purchase.\n- artifact creates a private structured output from the results of previous steps.\n- Do not put secrets or guessed private values into instructions.\n- Return JSON only.\n\nShape:\n{"title":"short outcome","reason":"why multiple tools are needed","steps":[{"tool":"memory","title":"Review relevant context","instruction":"Find relevant saved context for this trip without revealing sensitive identifiers."},{"tool":"tasks","title":"Create check-in task","instruction":"Create task: Complete web check-in"},{"tool":"artifact","title":"Create trip brief","instruction":"Create a concise private brief from this run","artifactType":"trip","artifactTitle":"Mumbai work trip brief"}]}\n\nUser request: ${JSON.stringify(String(text || '').slice(0, 1800))}`
   try {
     const result = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
@@ -144,10 +184,8 @@ function capabilityForStep(step: GeneralPlanStep): AgentCapability {
 function classifyStep(step: GeneralPlanStep) {
   if (step.tool === 'web_search') return { capability:'browser' as const, mode:'read' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This only searches the public web.' }
   if (step.tool === 'artifact') return { capability:'memory' as const, mode:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This creates a private AskGogo artifact.' }
+  if (step.tool === 'tasks') return { capability:'tasks' as const, mode:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This creates or updates a private AskGogo task.' }
   const classified = classifyAgentRequest(step.instruction)
-  // The planner cannot broaden authorization by mislabelling a tool. Force the
-  // capability to the declared allowlisted tool, while keeping the deterministic
-  // classifier's mode/risk/irreversibility/approval decision.
   return { ...classified, capability: capabilityForStep(step) }
 }
 
@@ -195,6 +233,29 @@ async function createArtifact(tg:number, runId:string, step:GeneralPlanStep) {
   return String(data.id)
 }
 
+function taskTextForStep(step: GeneralPlanStep) {
+  const titleMatch = step.title.match(/(?:create|add)\s+(?:a\s+)?task\s*:?\s*(.+)$/i)
+  if (titleMatch?.[1]) return safeLog(titleMatch[1], 500)
+  const instruction = step.instruction.replace(/^(?:please\s+)?(?:create|add)\s+(?:a\s+)?task\s*:?\s*/i, '').trim()
+  return safeLog(instruction, 500)
+}
+
+async function executeTaskStep(actor: AgentActor, step: GeneralPlanStep) {
+  const text = taskTextForStep(step)
+  if (!text) throw new Error('task_text_missing')
+  const { data: existing, error: readError } = await supabaseAdmin.from('todos')
+    .select('id,text').eq('whatsapp_id', actor.whatsappId).eq('done', false).ilike('text', text).limit(1).maybeSingle()
+  if (readError) throw new Error(`task_verify_failed:${readError.message}`)
+  if (existing?.id) {
+    return { text:`Task already open: ${text}`, output:{ todoId:String(existing.id), text, reused:true, verifiedStore:'todos' } }
+  }
+  const { data, error } = await supabaseAdmin.from('todos').insert({
+    whatsapp_id:actor.whatsappId, text, done:false, created_at:new Date().toISOString(),
+  }).select('id,text').single()
+  if (error || !data?.id) throw new Error(`task_create_failed:${error?.message || 'unknown'}`)
+  return { text:`Created task: ${text}`, output:{ todoId:String(data.id), text:String(data.text||text), reused:false, verifiedStore:'todos' } }
+}
+
 async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPlanStep;stepId:string;messageId?:string|number|null}) {
   const { actor, step } = params
   if (step.tool === 'web_search') {
@@ -208,11 +269,12 @@ async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPla
     const artifactId = await createArtifact(actor.legacyTelegramId, params.runId, step)
     return { text:'Created a private AskGogo artifact.', output:{ artifactId, type:step.artifactType || 'research_brief' } }
   }
+  if (step.tool === 'tasks') return executeTaskStep(actor, step)
   const result = await dispatchThroughSameBrain({ actor, text:step.instruction, messageId:params.messageId })
   return { text:result.text, output:{ reply:String(result.text || '').slice(0,3500), handledBy:result.handledBy } }
 }
 
-async function requestApproval(params:{actor:AgentActor;runId:string;step:GeneralPlanStep;stepId:string;ordinal:number;approvalAction:AgentApprovalAction;risk:'low'|'medium'|'high';reason:string}) {
+async function requestApproval(params:{actor:AgentActor;runId:string;step:GeneralPlanStep;stepId:string;ordinal:number;totalSteps:number;approvalAction:AgentApprovalAction;risk:'low'|'medium'|'high';reason:string}) {
   const { data, error } = await supabaseAdmin.from('agent_approvals').insert({
     telegram_id:String(params.actor.legacyTelegramId), run_id:params.runId,
     action_type:params.approvalAction, title:params.step.title,
@@ -227,12 +289,25 @@ async function requestApproval(params:{actor:AgentActor;runId:string;step:Genera
   }).select('id').single()
   if (error || !data?.id) throw new Error(`general_plan_approval_failed:${error?.message || 'unknown'}`)
   await updateStep(params.stepId, 'waiting_approval')
+  const progress = Math.max(5, Math.round(((params.ordinal - 1) / Math.max(1, params.totalSteps)) * 100))
   await supabaseAdmin.from('agent_runs').update({
-    status:'waiting_approval', progress:Math.max(5,Math.round(((params.ordinal-1)/MAX_STEPS)*100)),
+    status:'waiting_approval', progress,
     summary:`Waiting for approval: ${params.step.title}`, updated_at:new Date().toISOString(),
   }).eq('id',params.runId).eq('telegram_id',String(params.actor.legacyTelegramId))
   await activity(params.actor.legacyTelegramId,params.runId,'approval_requested',`Approval required: ${params.step.title}`,{approval_id:data.id,ordinal:params.ordinal})
   return String(data.id)
+}
+
+async function pauseForInput(params:{actor:AgentActor;runId:string;stepId:string;ordinal:number;totalSteps:number;step:GeneralPlanStep;question:string}):Promise<GeneralPlanResult> {
+  const progress = Math.max(2, Math.round(((params.ordinal - 1) / Math.max(1, params.totalSteps)) * 100))
+  await supabaseAdmin.from('agent_steps').update({
+    status:'queued', output_json:{ inputRequired:true, question:params.question },
+  }).eq('id',params.stepId)
+  await supabaseAdmin.from('agent_runs').update({
+    status:'paused', progress, summary:`Waiting for your input: ${params.question}`, updated_at:new Date().toISOString(),
+  }).eq('id',params.runId).eq('telegram_id',String(params.actor.legacyTelegramId))
+  await activity(params.actor.legacyTelegramId,params.runId,'input_required',params.question,{ordinal:params.ordinal,tool:params.step.tool})
+  return {runId:params.runId,status:'paused',capability:capabilityForStep(params.step),risk:'low',text:`I completed everything I safely could. I need one detail before I continue: ${params.question}`,inputRequired:true,handledBy:'general-plan'}
 }
 
 async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan:GeneralPlan;stepIds:string[];startOrdinal:number;messageId?:string|number|null;approvedOrdinal?:number}) : Promise<GeneralPlanResult> {
@@ -243,6 +318,9 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
     const ordinal=index+1
     const step=params.plan.steps[index]
     const stepId=params.stepIds[index]
+    const question = missingMissionInput(step)
+    if (question) return pauseForInput({actor:params.actor,runId:params.runId,stepId,ordinal,totalSteps:params.plan.steps.length,step,question})
+
     const classified=classifyStep(step)
     if (classified.risk==='high') highestRisk='high'; else if (classified.risk==='medium' && highestRisk==='low') highestRisk='medium'
     const level=await permissionFor(tg,classified.capability)
@@ -255,7 +333,7 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
     })
     if (!policy.allowed) {
       if ((policy.reason==='approval_required'||policy.reason==='auto_not_allowed_for_consequential_action') && classified.approvalAction) {
-        const approvalId=await requestApproval({actor:params.actor,runId:params.runId,step,stepId,ordinal,approvalAction:classified.approvalAction,risk:classified.risk,reason:classified.why})
+        const approvalId=await requestApproval({actor:params.actor,runId:params.runId,step,stepId,ordinal,totalSteps:params.plan.steps.length,approvalAction:classified.approvalAction,risk:classified.risk,reason:classified.why})
         return {runId:params.runId,status:'waiting_approval',capability:classified.capability,risk:classified.risk,text:`I finished the safe steps. I need your approval before: ${step.title}`,approvalId,approvalRequired:true,handledBy:'general-plan'}
       }
       await updateStep(stepId,'failed',{},policy.reason)
