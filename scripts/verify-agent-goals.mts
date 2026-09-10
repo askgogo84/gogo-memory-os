@@ -27,7 +27,7 @@ assert.match(vercel,/\/api\/cron\/agent-goals/)
 assert.match(resume,/status==='blocked'/)
 assert.match(resume,/humanReviewed:true/)
 assert.match(resume,/blockers:\[\]/)
-assert.match(resume,/type,'goal_review'/)
+assert.match(resume,/eq\('type','goal_review'\)|type:'goal_review'/)
 assert.match(resume,/next_check_at:now/)
 assert.doesNotMatch(resume,/dispatchThroughSameBrain|runSecureBrowser|sendWhatsAppMessage/)
 
