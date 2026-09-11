@@ -9,6 +9,7 @@ import { tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
 import { tryRunTravelResearch } from './travel-research'
 import { hardenTravelResearchResult } from './travel-research-sanitize'
 import { executeApprovedAgentRun } from './orchestrator'
+import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { initializeBackgroundGoal } from './goal-engine'
 
 export type WhatsAppAgentResult = {
@@ -91,7 +92,9 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
       ? await executeApprovedBrowserCommand({ actor, runId:String(data.run_id) })
       : planType === 'general_multi_tool'
         ? await resumeApprovedGeneralPlan({ actor, runId:String(data.run_id) })
-        : await executeApprovedAgentRun({ actor, runId:String(data.run_id) })
+        : planType === 'life_event_checkin'
+          ? await executeApprovedLifeEventCheckin({ actor, runId:String(data.run_id) })
+          : await executeApprovedAgentRun({ actor, runId:String(data.run_id) })
   const suffix = result.status === 'waiting_approval' ? '\n\nAnother consequential step is ready. Reply *APPROVE* to continue or *REJECT* to stop.' : ''
   return { text:`${result.text || 'Approved and executed.'}${suffix}`, runId:String(data.run_id), status:result.status, handledBy:'whatsapp-agent-approval' }
 }
