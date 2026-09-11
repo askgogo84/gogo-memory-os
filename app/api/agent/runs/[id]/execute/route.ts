@@ -7,6 +7,7 @@ import { executeApprovedTravelCalendarPlan } from '@/lib/agent/travel-calendar-p
 import { resumeApprovedGeneralPlan } from '@/lib/agent/general-planner'
 import { executeApprovedBrowserCommand } from '@/lib/agent/browser-command'
 import { executeApprovedWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-approval'
+import { executeApprovedLifeEventCheckin } from '@/lib/agent/life-event-execution'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -40,7 +41,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           ? await resumeApprovedGeneralPlan({ actor, runId: id })
           : planType === 'workspace_meeting_prep'
             ? await executeApprovedWorkspaceMeetingPlan({ actor, runId: id })
-            : await executeApprovedAgentRun({ actor, runId: id })
+            : planType === 'life_event_checkin'
+              ? await executeApprovedLifeEventCheckin({ actor, runId: id })
+              : await executeApprovedAgentRun({ actor, runId: id })
     return NextResponse.json(result, { status: result.status === 'waiting_approval' ? 202 : 200 })
   } catch (error: any) {
     const message = String(error?.message || '')
