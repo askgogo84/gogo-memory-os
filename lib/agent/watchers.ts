@@ -4,6 +4,13 @@ import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { checkCostAllowance, COST_ESTIMATES_PAISE, getCostBudget, recordCostEvent } from '@/lib/services/cost-guard'
 import { adaptiveWatcherCadence } from './watch-cost-policy'
+import {
+  appendBoundedHistory,
+  assessWebWatchResult,
+  canonicalWatcherUrl,
+  watcherResultSignature,
+  webWatchAlertAllowed,
+} from './watcher-quality'
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
 
@@ -89,7 +96,7 @@ export async function createWebSearchWatcher(params: {
     condition_json: params.condition,
     cadence_minutes: params.condition.cadenceMinutes,
     active: true,
-    last_state_json: { quietChecks:0 },
+    last_state_json: { quietChecks:0, seenUrls:[], seenSignatures:[], alertTimes:[] },
     next_check_at: new Date().toISOString(),
   }).select('id, type, condition_json, cadence_minutes, active, next_check_at, created_at').single()
   if (error || !data) throw new Error(`agent_watcher_create_failed:${error?.message || 'unknown'}`)
@@ -121,18 +128,18 @@ async function createDeadlineIdea(telegramId: string, condition: DeadlineWatcher
   if (error) console.error('AGENT_WATCHER_IDEA_FAILED:', error.message)
 }
 
-async function createWebIdea(telegramId: string, condition: WebSearchWatcherCondition, watcherId: string, result: WebSearchResult | null, matchedKeywords: string[]) {
+async function createWebIdea(telegramId: string, condition: WebSearchWatcherCondition, watcherId: string, result: WebSearchResult | null, matchedKeywords: string[], relevance = 0.8) {
   const detail = matchedKeywords.length
-    ? `New result matched: ${matchedKeywords.join(', ')}.`
-    : 'A new top web result appeared since the previous check.'
+    ? `A new relevant result matched: ${matchedKeywords.join(', ')}.`
+    : 'A new result materially matched this watch.'
   const sourceRefs:any[] = [{ type:'watcher', id:watcherId }]
   if (result?.url) sourceRefs.push({ type:'url', url:result.url })
   const { error } = await supabaseAdmin.from('agent_ideas').insert({
     telegram_id: telegramId,
     title: condition.title,
     reason: detail,
-    expected_value: result?.title ? `${result.title}${result.snippet ? ` — ${result.snippet.slice(0, 180)}` : ''}` : 'Open the latest results to review what changed.',
-    value_score: matchedKeywords.length ? 0.92 : 0.78,
+    expected_value: result?.title ? `${result.title}${result.snippet ? ` — ${result.snippet.slice(0, 180)}` : ''}` : 'Open the latest result to review what changed.',
+    value_score: Math.max(0.78, Math.min(0.96, relevance)),
     action_label: 'Review update',
     source_refs: sourceRefs,
     status: 'new',
@@ -152,12 +159,8 @@ async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDeliver
 }
 
 function searchFingerprint(results: WebSearchResult[]) {
-  const stable = results.slice(0, 5).map(r => `${r.title.toLowerCase()}\n${r.url.toLowerCase()}`).join('\n---\n')
+  const stable = results.slice(0, 5).map(r => `${r.title.toLowerCase()}\n${canonicalWatcherUrl(r.url)}`).join('\n---\n')
   return createHash('sha256').update(stable).digest('hex')
-}
-
-function resultText(result: WebSearchResult) {
-  return `${result.title} ${result.snippet} ${result.url}`.toLowerCase()
 }
 
 async function activeWebWatchCount(telegramId:string) {
@@ -275,16 +278,34 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     return { triggered:false, failed:false }
   }
 
-  const fingerprint = searchFingerprint(results)
-  const currentUrls = results.slice(0, 5).map(r => r.url).filter(Boolean)
-  const previousUrls = Array.isArray(watcher.last_state_json?.urls) ? watcher.last_state_json.urls : []
+  const topResults = results.slice(0, 5)
+  const fingerprint = searchFingerprint(topResults)
   const isBaseline = !watcher.last_state_json?.fingerprint
-  const newUrls = currentUrls.filter((url:string) => !previousUrls.includes(url))
-  const matchedKeywords = condition.triggerKeywords.filter(keyword => results.some(r => resultText(r).includes(keyword)))
-  const previousMatches = Array.isArray(watcher.last_state_json?.matchedKeywords) ? watcher.last_state_json.matchedKeywords : []
-  const newlyMatchedKeywords = matchedKeywords.filter(keyword => !previousMatches.includes(keyword))
-  const changed = fingerprint !== watcher.last_state_json?.fingerprint
-  const material = !isBaseline && changed && (condition.triggerKeywords.length ? newlyMatchedKeywords.length > 0 : newUrls.length > 0)
+  const priorSeenUrls = Array.isArray(watcher.last_state_json?.seenUrls)
+    ? watcher.last_state_json.seenUrls
+    : Array.isArray(watcher.last_state_json?.urls) ? watcher.last_state_json.urls : []
+  const priorSeenSignatures = Array.isArray(watcher.last_state_json?.seenSignatures) ? watcher.last_state_json.seenSignatures : []
+
+  const assessments = topResults.map(result => ({
+    result,
+    quality: assessWebWatchResult({
+      query: condition.query,
+      title: result.title,
+      snippet: result.snippet,
+      url: result.url,
+      triggerKeywords: condition.triggerKeywords,
+      seenUrls: priorSeenUrls,
+      seenSignatures: priorSeenSignatures,
+    }),
+  }))
+  const candidate = assessments.find(item => item.quality.eligible) || null
+  const alertGate = webWatchAlertAllowed({
+    now,
+    lastAlertAt: watcher.last_state_json?.lastAlertAt || watcher.last_state_json?.lastTriggeredAt || null,
+    alertTimes: Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : [],
+  })
+  const material = !isBaseline && Boolean(candidate) && alertGate.allowed
+  const suppressedReason = !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
   const quietChecks = material || isBaseline ? 0 : currentQuiet + 1
   const cadenceMinutes = adaptiveWatcherCadence({
     budget,
@@ -296,12 +317,29 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     now,
   })
 
-  if (material) {
-    const lead = results.find(r => newUrls.includes(r.url)) || results[0] || null
-    await createWebIdea(telegramId, condition, String(watcher.id), lead, newlyMatchedKeywords)
-    await sendWhatsAppIfWanted(telegramId, condition.delivery, `🔎 Background Gogo found a meaningful web update\n\n${condition.title}${lead?.title ? `\n${lead.title}` : ''}\n\nI’ve added the update to Ideas in the app.`).catch(err => console.error('AGENT_WATCHER_WHATSAPP_FAILED:', err?.message || err))
-    await writeActivity(telegramId, `Background Gogo found a web update: ${condition.title}`, { watcher_id:watcher.id, type:'web_search', new_urls:newUrls.slice(0,5), matched_keywords:newlyMatchedKeywords })
+  if (material && candidate) {
+    await createWebIdea(telegramId, condition, String(watcher.id), candidate.result, candidate.quality.matchedKeywords, candidate.quality.relevance)
+    await sendWhatsAppIfWanted(
+      telegramId,
+      condition.delivery,
+      `🔎 Gogo found a high-signal update\n\n${condition.title}\n${candidate.result.title}\n\nI saved the source in Ideas. I’ll stay quiet unless something materially different appears.`,
+    ).catch(err => console.error('AGENT_WATCHER_WHATSAPP_FAILED:', err?.message || err))
+    await writeActivity(telegramId, `Background Gogo found a high-signal web update: ${condition.title}`, {
+      watcher_id:watcher.id,
+      type:'web_search',
+      source_url:candidate.quality.canonicalUrl,
+      relevance:candidate.quality.relevance,
+      matched_keywords:candidate.quality.matchedKeywords,
+    })
   }
+
+  const currentUrls = topResults.map(result => canonicalWatcherUrl(result.url)).filter(Boolean)
+  const currentSignatures = topResults.map(result => watcherResultSignature(result.title, result.snippet || ''))
+  const seenUrls = appendBoundedHistory(priorSeenUrls, currentUrls)
+  const seenSignatures = appendBoundedHistory(priorSeenSignatures, currentSignatures)
+  const alertTimes = material
+    ? [...alertGate.recentAlertTimes, now.toISOString()]
+    : alertGate.recentAlertTimes
 
   await supabaseAdmin.from('agent_watchers').update({
     cadence_minutes:cadenceMinutes,
@@ -311,10 +349,17 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     last_state_json:{
       fingerprint,
       urls:currentUrls,
-      matchedKeywords,
+      seenUrls,
+      seenSignatures,
       quietChecks,
       baselineAt:watcher.last_state_json?.baselineAt || now.toISOString(),
       lastTriggeredAt:material ? now.toISOString() : watcher.last_state_json?.lastTriggeredAt || null,
+      lastAlertAt:material ? now.toISOString() : watcher.last_state_json?.lastAlertAt || null,
+      alertTimes,
+      suppressedReason,
+      suppressedAt:suppressedReason ? now.toISOString() : null,
+      candidateReason:candidate?.quality.reason || assessments[0]?.quality.reason || 'none',
+      candidateRelevance:candidate?.quality.relevance || 0,
       costGuard:'ok',
     },
     updated_at:now.toISOString(),
