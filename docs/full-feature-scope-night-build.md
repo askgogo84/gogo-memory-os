@@ -61,25 +61,28 @@ This is the complete implementation/test scope recovered from prior AskGogo work
 - Flight disruption watcher.
 - DigiYatra / country capability packs (NEXT).
 
-## Purchase / delivery lifecycle
+## Purchase / delivery lifecycle — BUILDING
 - Order confirmation -> Life Event.
 - Delivery tracking watcher.
 - Notify only on meaningful status/ETA changes.
 - Delivery-to-read-receipt lifecycle.
 - Warranty-end extraction and proactive reminder.
 - Return/refund deadline reminder when evidence exists.
+- Planner/actions implemented; dedicated external delivery executor remains NEXT.
 
-## Bills / subscriptions
+## Bills / subscriptions — BUILDING
 - Bill due-date extraction and reminder.
 - Renewal/subscription date extraction.
 - Proactive renewal notice before charge.
 - Payment stays approval-gated; no silent autopay.
 - Cancellation/deadline watcher where supported.
+- Planner/actions implemented; dedicated provider executor remains NEXT.
 
-## Documents / identity lifecycle
+## Documents / identity lifecycle — BUILDING
 - Semantic retrieval by meaning, not filename.
 - Lease/policy/licence/passport/warranty expiry reminders.
 - Personal details vault: encrypted/masked, explicit reveal, never fabricate missing value.
+- 30-day + 7-day expiry actions and renewal-prep planning implemented for document Life Events.
 
 ## Health/wellness records
 - Health documents/prescriptions can be classified and stored as documents.
