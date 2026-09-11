@@ -47,7 +47,7 @@ This is the complete implementation/test scope recovered from prior AskGogo work
 - Atomic execution and fail-closed uncertain state.
 - Secure human takeover UI (NEXT until implemented).
 
-## Travel autonomous lifecycle
+## Travel autonomous lifecycle — LIVE/GATED
 - Flight ticket -> durable Life Event.
 - Check-in open-time scheduling.
 - Verified airline deep-link only.
