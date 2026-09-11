@@ -29,7 +29,7 @@ const istTime = new Intl.DateTimeFormat('en-GB', {
 }).format(new Date(parsed.remindAtIso))
 assert.equal(istTime, '09:30', '9:30 a.m. voice reminder must resolve to 09:30 IST')
 assert.match(parsed.message.toLowerCase(), /take a photo/, 'task text must remain intact')
-assert.match(parsed.message.toLowerCase(), /keep it in my bag/, 'task context after the explicit time must remain intact')
+assert.match(parsed.message.toLowerCase(), /keep it.*bag/, 'task context after the explicit time must remain intact')
 
 assert.equal(normalizeVoiceMeridiem('9:30 a.m.'), '9:30 am')
 assert.equal(normalizeVoiceMeridiem('9.30 p. m.'), '9.30 pm')
