@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { buildGmailConnectUrl } from '@/lib/google-gmail'
 import { readWorkspaceDriveText, searchWorkspaceDrive } from './google-workspace-read'
+import { readWorkspaceDriveBinaryText } from './google-workspace-drive-binary'
 import type { AgentActor } from './actor'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -86,12 +87,13 @@ async function finishRun(actor:AgentActor,runId:string,params:{status:'completed
   }).then(({error})=>{if(error)console.error('WORKSPACE_DRIVE_ACTIVITY_FAILED:',error.message)})
 }
 
-async function createArtifact(actor:AgentActor,runId:string,file:DriveFile,answer:string){
+async function createArtifact(actor:AgentActor,runId:string,file:DriveFile,answer:string,extraction?:string){
   const content={
     answer:safe(answer,MAX_ANSWER),
     source:{
       provider:'google-drive',id:String(file.id),name:safe(file.name,240),mimeType:String(file.mimeType||''),
       modifiedTime:String(file.modifiedTime||''),webViewLink:String(file.webViewLink||''),
+      extraction:extraction||'native-text',
     },
     safety:{readOnly:true,mutationsAllowed:false,credentialsStored:false},
   }
@@ -158,19 +160,22 @@ export async function tryRunWorkspaceDriveContext(params:{actor:AgentActor;surfa
     }
 
     const file=choice.file
-    const read=await readWorkspaceDriveText(actor,file)
+    const nativeRead=await readWorkspaceDriveText(actor,file)
+    const read:any=nativeRead.supported?nativeRead:await readWorkspaceDriveBinaryText(actor,file)
     if(!read.supported){
-      const summary=`I found ${safe(file.name,180)}, but this Drive file type is not yet safe for text extraction in Gogo.`
-      await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_drive_context',input_text:text,mutationsAllowed:false,fileId:file.id,mimeType:file.mimeType}})
+      const sizeNote=read.reason==='too_large'?' It is larger than Gogo’s bounded 8 MB document-reader limit.':''
+      const summary=`I found ${safe(file.name,180)}, but this Drive file could not be safely extracted.${sizeNote}`
+      await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_drive_context',input_text:text,mutationsAllowed:false,fileId:file.id,mimeType:file.mimeType,readFailure:read.reason||'unsupported'}})
       return {runId,status:'paused',capability:'files',risk:'low',text:`${summary} I did not pretend to read it.`,handledBy:'workspace-drive-context'}
     }
 
+    const extraction=String(read.extraction||'native-text')
     const answer=await answerFromDocument(text,read.text,file)
-    const artifactId=await createArtifact(actor,runId,file,answer)
+    const artifactId=await createArtifact(actor,runId,file,answer,extraction)
     const summary=`Read ${safe(file.name,180)} from Google Drive and saved a private sourced context artifact. No Drive file was changed.`
     const metadata={
       plan_type:'workspace_drive_context',input_text:text,mutationsAllowed:false,
-      fileId:file.id,fileName:safe(file.name,240),mimeType:file.mimeType,artifactId,
+      fileId:file.id,fileName:safe(file.name,240),mimeType:file.mimeType,extraction,artifactId,
     }
     await finishRun(actor,runId,{status:'completed',summary,metadata})
     return {
