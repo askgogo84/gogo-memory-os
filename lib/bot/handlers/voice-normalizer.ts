@@ -1,4 +1,4 @@
-﻿const NUMBER_WORDS: Record<string, string> = {
+const NUMBER_WORDS: Record<string, string> = {
   zero: '0',
   one: '1',
   two: '2',
@@ -70,8 +70,19 @@ function normalizeReminderWords(text: string) {
     .replace(/\bremind cheyyu\b/gi, 'remind me')
 }
 
+/**
+ * Voice providers commonly return meridiem markers as “a.m.” / “p.m.” (and
+ * occasionally “a. m.” / “p. m.”). Normalize them before punctuation cleanup
+ * so an explicit 9:30 a.m. can never be mistaken for an ambiguous bare “9”.
+ */
+export function normalizeVoiceMeridiem(text: string) {
+  return (text || '')
+    .replace(/\ba\s*\.\s*m\s*\.?/gi, 'am')
+    .replace(/\bp\s*\.\s*m\s*\.?/gi, 'pm')
+}
+
 function cleanupVoiceText(text: string) {
-  return text
+  return normalizeVoiceMeridiem(text)
     .replace(/[“”]/g, '"')
     .replace(/[.]+$/g, '')
     .replace(/\s+/g, ' ')
