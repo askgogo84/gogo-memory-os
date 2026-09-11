@@ -1,9 +1,21 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runSecureBrowser } from './secure-computer'
+import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
+import { evaluateAgentSentinel } from './sentinel'
 import type { AgentActor } from './actor'
 
 function safe(value: unknown, max = 600) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
+}
+
+async function browserPermission(telegramId: string): Promise<AgentPermissionLevel> {
+  const { data, error } = await supabaseAdmin.from('agent_permissions')
+    .select('level')
+    .eq('telegram_id', telegramId)
+    .eq('capability', 'browser')
+    .maybeSingle()
+  if (error) throw new Error(`life_event_browser_permission_failed:${error.message}`)
+  return (data?.level as AgentPermissionLevel | undefined) || 'ask'
 }
 
 export async function executeApprovedLifeEventCheckin(params: { actor: AgentActor; runId: string }) {
@@ -44,6 +56,30 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
   const confirmation = String(event.confirmation_ref || '').trim()
   const url = String(meta.checkin_url || (event.metadata_json as any)?.checkInUrl || '').trim()
   if (!confirmation || !url) throw new Error('checkin_context_incomplete')
+
+  // Re-check permission and Sentinel at execution time. A user can revoke Browser
+  // access after approving but before execution, and that revocation must win.
+  const permissionLevel = await browserPermission(tg)
+  const policy = evaluateAgentExecutionPolicy({
+    capability: 'browser',
+    permissionLevel,
+    mode: 'execute',
+    risk: 'high',
+    irreversible: true,
+    approvalStatus: 'approved',
+  })
+  if (!policy.allowed) throw new Error(policy.reason)
+  const sentinel = evaluateAgentSentinel({
+    capability: 'browser',
+    mode: 'execute',
+    risk: 'high',
+    irreversible: true,
+    approved: true,
+    instruction: 'Submit the already-approved airline web check-in without buying add-ons or handling credentials.',
+    url,
+    actionCount: 12,
+  })
+  if (!sentinel.allowed) throw new Error(`sentinel_${sentinel.reason}`)
 
   const pref: any = event.preferences_json || {}
   const seatPreference = safe(pref.seatPreference || pref.seat_preference || '', 100)
