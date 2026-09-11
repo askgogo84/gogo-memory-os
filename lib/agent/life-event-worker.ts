@@ -40,12 +40,12 @@ async function resolveActor(telegramId: string): Promise<AgentActor> {
 async function claimAction(action: any, now: Date) {
   const leaseUntil = new Date(now.getTime() + LEASE_MINUTES * 60_000).toISOString()
   const expectedStatus = String(action.status || 'queued')
-  const { data, error } = await supabaseAdmin.from('life_event_actions')
+  let query = supabaseAdmin.from('life_event_actions')
     .update({ status: 'running', updated_at: now.toISOString(), payload_json: { ...(action.payload_json || {}), leaseUntil } })
     .eq('id', action.id)
     .eq('status', expectedStatus)
-    .select('id')
-    .maybeSingle()
+  if (expectedStatus === 'running' && action.updated_at) query = query.eq('updated_at', action.updated_at)
+  const { data, error } = await query.select('id').maybeSingle()
   if (error) {
     console.error('LIFE_EVENT_ACTION_CLAIM_FAILED:', action.id, error.message)
     return false
@@ -246,11 +246,25 @@ async function requestFlightCheckinApproval(params: { telegramId: string; event:
   return { status: 'waiting_approval' as const, runId, approvalId }
 }
 
+async function stopUncertainReclaimedCheckin(telegramId: string, event: any, action: any) {
+  const runId = await createRun({
+    telegramId, event, action, status: 'paused',
+    summary: 'A previous approved check-in attempt lost its execution lease. Gogo will not retry automatically because the airline may already have processed it.',
+    metadata: { plan_type: 'life_event_checkin_uncertain' },
+  })
+  await markAction(String(action.id), 'blocked', { ...(action.payload_json || {}), blockedReason: 'checkin_execution_uncertain', reclaimedAt: new Date().toISOString() })
+  await supabaseAdmin.from('life_events').update({ lifecycle_state: 'needs_attention', updated_at: new Date().toISOString() }).eq('id', event.id).eq('telegram_id', telegramId)
+  await activity(telegramId, runId, 'life_event_checkin_uncertain', 'Gogo did not retry a stale approved airline check-in because the prior execution outcome is uncertain.', { life_event_id: event.id, action_key: action.action_key })
+  await sendAgentPush(telegramId, { title: 'Please verify airline check-in', body: 'A previous approved check-in attempt ended without reliable confirmation. Gogo will not retry automatically.', path: '/agent', data: { runId, lifeEventId: String(event.id) } }).catch(() => {})
+  return { status: 'blocked' as const, runId }
+}
+
 async function processAction(action: any, event: any, telegramId: string) {
   if (action.action_key === 'prepare-web-checkin' && event.event_type === 'travel' && event.subtype === 'flight') {
     return prepareFlightCheckin({ telegramId, event, action })
   }
   if (action.action_key === 'checkin-submit-approval' && event.event_type === 'travel' && event.subtype === 'flight') {
+    if (action.status === 'running') return stopUncertainReclaimedCheckin(telegramId, event, action)
     return requestFlightCheckinApproval({ telegramId, event, action })
   }
 
@@ -264,9 +278,6 @@ async function processAction(action: any, event: any, telegramId: string) {
     return { status: 'completed' as const, runId }
   }
 
-  // email_watch / monitor / calendar_draft belong to dedicated connector executors.
-  // Back them off so unsupported rows do not occupy every due-action batch and starve
-  // newer check-in/notification work while those executors are being added.
   await deferAction(action, DEFER_PENDING_EXECUTOR_MINUTES, { executorPending: true })
   return { status: 'deferred' as const }
 }
