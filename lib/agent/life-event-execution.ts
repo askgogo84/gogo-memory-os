@@ -19,10 +19,12 @@ async function browserPermission(telegramId: string): Promise<AgentPermissionLev
 }
 
 function hasCheckinSuccessEvidence(result: { actions?: Array<{kind:string;status:string}>; title?: string; pageText?: string }) {
-  const submitted = Array.isArray(result.actions) && result.actions.some(a => a.kind === 'submit' && a.status === 'done')
+  const successful = Array.isArray(result.actions) ? result.actions.filter(a => a.status === 'done') : []
+  const finalAction = successful[successful.length - 1]
+  const finalSubmitSucceeded = finalAction?.kind === 'submit'
   const confirmationText = `${result.title || ''} ${result.pageText || ''}`.toLowerCase()
-  const confirmed = /\b(check[- ]?in (?:complete|completed|successful|confirmed)|you(?:'|’)re checked in|checked in successfully|boarding pass|check[- ]?in confirmation)\b/i.test(confirmationText)
-  return submitted && confirmed
+  const terminalConfirmation = /\b(check[- ]?in (?:is )?(?:complete|completed|successful|confirmed)|you(?:'|’)re checked in|you are checked in|checked in successfully|check[- ]?in confirmation(?: number)?|boarding pass (?:is )?(?:ready|available|issued|generated)|download (?:your )?boarding pass)\b/i.test(confirmationText)
+  return finalSubmitSucceeded && terminalConfirmation
 }
 
 export async function executeApprovedLifeEventCheckin(params: { actor: AgentActor; runId: string }) {
@@ -64,8 +66,6 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
   const url = String(meta.checkin_url || (event.metadata_json as any)?.checkInUrl || '').trim()
   if (!confirmation || !url) throw new Error('checkin_context_incomplete')
 
-  // Re-check permission and Sentinel at execution time. A user can revoke Browser
-  // access after approving but before execution, and that revocation must win.
   const permissionLevel = await browserPermission(tg)
   const policy = evaluateAgentExecutionPolicy({
     capability: 'browser',
@@ -88,9 +88,6 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
   })
   if (!sentinel.allowed) throw new Error(`sentinel_${sentinel.reason}`)
 
-  // One approval must be able to launch at most one irreversible browser attempt.
-  // Approval resolution moves the run from waiting_approval -> queued. Claim only
-  // that exact state so double taps/retries/concurrent surfaces cannot submit twice.
   const now = new Date().toISOString()
   const { data: claimed, error: claimError } = await supabaseAdmin.from('agent_runs').update({
     status: 'running', progress: 55,
@@ -118,12 +115,47 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     ? `Use the remembered seat preference "${seatPreference}" only when it is free. Do not purchase a paid seat or add-on.`
     : 'Use free seat allocation only. Do not purchase a paid seat or add-on.'
 
-  const result = await runSecureBrowser({
-    userId: params.actor.userId,
-    url,
-    mode: 'execute',
-    objective: `Complete the already-approved airline web check-in for ${safe(event.title, 180)}. Booking reference/PNR: ${confirmation}. ${seatInstruction} Do not buy baggage, meals, upgrades, insurance, priority boarding, or any other paid add-on. Use an explicit final submit action only for the ordinary check-in confirmation. If a password, OTP, CAPTCHA, passkey, passport/identity verification, payment authentication, or any new charge/terms beyond ordinary check-in appears, stop before that step and return control to the user.`,
-  })
+  let result: Awaited<ReturnType<typeof runSecureBrowser>>
+  try {
+    result = await runSecureBrowser({
+      userId: params.actor.userId,
+      url,
+      mode: 'execute',
+      objective: `Complete the already-approved airline web check-in for ${safe(event.title, 180)}. Booking reference/PNR: ${confirmation}. ${seatInstruction} Do not buy baggage, meals, upgrades, insurance, priority boarding, or any other paid add-on. Use an explicit final submit action only for the ordinary check-in confirmation. If a password, OTP, CAPTCHA, passkey, passport/identity verification, payment authentication, or any new charge/terms beyond ordinary check-in appears, stop before that step and return control to the user.`,
+    })
+  } catch (error: any) {
+    const at = new Date().toISOString()
+    const reason = safe(error?.message || 'secure_browser_execution_failed', 400)
+    await Promise.all([
+      supabaseAdmin.from('agent_runs').update({
+        status: 'paused', progress: 65,
+        summary: 'Gogo lost reliable execution evidence during airline check-in, so it stopped and will not retry automatically.',
+        error: 'checkin_execution_uncertain', updated_at: at,
+      }).eq('id', params.runId).eq('telegram_id', tg).eq('status', 'running'),
+      supabaseAdmin.from('life_event_actions').update({
+        status: 'blocked',
+        payload_json: { ...(action.payload_json as any || {}), blockedReason: 'checkin_execution_uncertain', attemptedAt: at, executionError: reason },
+        updated_at: at,
+      }).eq('id', lifeEventActionId).eq('telegram_id', tg).eq('status', 'running'),
+      supabaseAdmin.from('life_events').update({ lifecycle_state: 'needs_attention', updated_at: at })
+        .eq('id', lifeEventId).eq('telegram_id', tg),
+    ])
+    await supabaseAdmin.from('agent_activity').insert({
+      telegram_id: tg, run_id: params.runId, event_type: 'life_event_checkin_uncertain',
+      message: 'Gogo stopped after losing reliable execution evidence during airline check-in and will not retry automatically.',
+      metadata_json: { life_event_id: lifeEventId, action_id: lifeEventActionId },
+    }).catch(() => {})
+    return {
+      runId: params.runId,
+      status: 'paused' as const,
+      capability: 'travel' as const,
+      risk: 'high' as const,
+      handledBy: 'life-event-checkin' as const,
+      blockedReason: 'checkin_execution_uncertain' as const,
+      text: 'I lost reliable confirmation while the airline flow was running. I stopped and will not retry automatically because a second attempt could duplicate an irreversible check-in. Please verify the airline status before continuing.',
+    }
+  }
+
   const at = new Date().toISOString()
 
   if (result.status === 'blocked') {
@@ -152,9 +184,6 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     }
   }
 
-  // A browser planner returning "completed" is not proof of airline check-in.
-  // Require both an actual successful submit action and confirmation-page evidence.
-  // If either is absent, fail closed and leave the approval unconsumed.
   if (!hasCheckinSuccessEvidence(result)) {
     await supabaseAdmin.from('agent_runs').update({
       status: 'paused', progress: 70,
@@ -178,14 +207,14 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
       risk: 'high' as const,
       handledBy: 'life-event-checkin' as const,
       blockedReason: 'checkin_confirmation_not_verified' as const,
-      text: 'I reached the airline flow, but I could not verify a successful check-in confirmation. I did not mark you as checked in or consume the approval as executed.',
+      text: 'I reached the airline flow, but I could not verify a successful final check-in confirmation. I did not mark you as checked in or consume the approval as executed.',
     }
   }
 
   await Promise.all([
     supabaseAdmin.from('agent_runs').update({
       status: 'completed', progress: 100,
-      summary: 'Approved airline web check-in completed and was verified from the airline confirmation page. Gogo will continue watching for the boarding pass/confirmation.',
+      summary: 'Approved airline web check-in completed and was verified from the airline confirmation page.',
       completed_at: at, updated_at: at,
     }).eq('id', params.runId).eq('telegram_id', tg).eq('status', 'running'),
     supabaseAdmin.from('life_event_actions').update({
