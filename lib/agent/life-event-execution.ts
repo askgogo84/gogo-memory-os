@@ -18,6 +18,13 @@ async function browserPermission(telegramId: string): Promise<AgentPermissionLev
   return (data?.level as AgentPermissionLevel | undefined) || 'ask'
 }
 
+function hasCheckinSuccessEvidence(result: { actions?: Array<{kind:string;status:string}>; title?: string; pageText?: string }) {
+  const submitted = Array.isArray(result.actions) && result.actions.some(a => a.kind === 'submit' && a.status === 'done')
+  const confirmationText = `${result.title || ''} ${result.pageText || ''}`.toLowerCase()
+  const confirmed = /\b(check[- ]?in (?:complete|completed|successful|confirmed)|you(?:'|’)re checked in|checked in successfully|boarding pass|check[- ]?in confirmation)\b/i.test(confirmationText)
+  return submitted && confirmed
+}
+
 export async function executeApprovedLifeEventCheckin(params: { actor: AgentActor; runId: string }) {
   const tg = String(params.actor.legacyTelegramId)
   const { data: run, error: runError } = await supabaseAdmin.from('agent_runs')
@@ -81,28 +88,41 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
   })
   if (!sentinel.allowed) throw new Error(`sentinel_${sentinel.reason}`)
 
+  // One approval must be able to launch at most one irreversible browser attempt.
+  // Approval resolution moves the run from waiting_approval -> queued. Claim only
+  // that exact state so double taps/retries/concurrent surfaces cannot submit twice.
+  const now = new Date().toISOString()
+  const { data: claimed, error: claimError } = await supabaseAdmin.from('agent_runs').update({
+    status: 'running', progress: 55,
+    summary: 'Approved check-in is running in Gogo Secure Computer.',
+    updated_at: now,
+  }).eq('id', params.runId).eq('telegram_id', tg).eq('status', 'queued').select('id').maybeSingle()
+  if (claimError) throw new Error(`life_event_checkin_claim_failed:${claimError.message}`)
+  if (!claimed?.id) throw new Error('agent_run_already_claimed')
+
+  const { data: actionClaim, error: actionClaimError } = await supabaseAdmin.from('life_event_actions')
+    .update({ status: 'running', updated_at: now })
+    .eq('id', lifeEventActionId).eq('telegram_id', tg).eq('status', 'waiting_approval')
+    .select('id').maybeSingle()
+  if (actionClaimError || !actionClaim?.id) {
+    await supabaseAdmin.from('agent_runs').update({ status: 'paused', error: 'life_event_action_already_claimed', updated_at: new Date().toISOString() })
+      .eq('id', params.runId).eq('telegram_id', tg).eq('status', 'running')
+    throw new Error('agent_run_already_claimed')
+  }
+  await supabaseAdmin.from('life_events').update({ lifecycle_state: 'in_progress', updated_at: now })
+    .eq('id', lifeEventId).eq('telegram_id', tg)
+
   const pref: any = event.preferences_json || {}
   const seatPreference = safe(pref.seatPreference || pref.seat_preference || '', 100)
   const seatInstruction = seatPreference
     ? `Use the remembered seat preference "${seatPreference}" only when it is free. Do not purchase a paid seat or add-on.`
     : 'Use free seat allocation only. Do not purchase a paid seat or add-on.'
 
-  const now = new Date().toISOString()
-  await supabaseAdmin.from('agent_runs').update({
-    status: 'running', progress: 55,
-    summary: 'Approved check-in is running in Gogo Secure Computer.',
-    updated_at: now,
-  }).eq('id', params.runId).eq('telegram_id', tg)
-  await supabaseAdmin.from('life_event_actions').update({ status: 'running', updated_at: now })
-    .eq('id', lifeEventActionId).eq('telegram_id', tg)
-  await supabaseAdmin.from('life_events').update({ lifecycle_state: 'in_progress', updated_at: now })
-    .eq('id', lifeEventId).eq('telegram_id', tg)
-
   const result = await runSecureBrowser({
     userId: params.actor.userId,
     url,
     mode: 'execute',
-    objective: `Complete the already-approved airline web check-in for ${safe(event.title, 180)}. Booking reference/PNR: ${confirmation}. ${seatInstruction} Do not buy baggage, meals, upgrades, insurance, priority boarding, or any other paid add-on. If a password, OTP, CAPTCHA, passkey, passport/identity verification, payment authentication, or any new charge/terms beyond ordinary check-in appears, stop before that step and return control to the user.`,
+    objective: `Complete the already-approved airline web check-in for ${safe(event.title, 180)}. Booking reference/PNR: ${confirmation}. ${seatInstruction} Do not buy baggage, meals, upgrades, insurance, priority boarding, or any other paid add-on. Use an explicit final submit action only for the ordinary check-in confirmation. If a password, OTP, CAPTCHA, passkey, passport/identity verification, payment authentication, or any new charge/terms beyond ordinary check-in appears, stop before that step and return control to the user.`,
   })
   const at = new Date().toISOString()
 
@@ -110,12 +130,12 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     await supabaseAdmin.from('agent_runs').update({
       status: 'paused', progress: 65, summary: safe(result.summary || 'Gogo paused at a secure human step.', 1000),
       error: result.blockReason || 'human_auth_required', updated_at: at,
-    }).eq('id', params.runId).eq('telegram_id', tg)
+    }).eq('id', params.runId).eq('telegram_id', tg).eq('status', 'running')
     await supabaseAdmin.from('life_event_actions').update({
       status: 'blocked',
       payload_json: { ...(action.payload_json as any || {}), blockedReason: result.blockReason || 'human_auth_required', authReason: result.authReason || null, blockedAt: at },
       updated_at: at,
-    }).eq('id', lifeEventActionId).eq('telegram_id', tg)
+    }).eq('id', lifeEventActionId).eq('telegram_id', tg).eq('status', 'running')
     await supabaseAdmin.from('agent_activity').insert({
       telegram_id: tg, run_id: params.runId, event_type: 'human_auth_required',
       message: 'Gogo paused approved airline check-in at a human authentication or protected step.',
@@ -132,17 +152,47 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     }
   }
 
+  // A browser planner returning "completed" is not proof of airline check-in.
+  // Require both an actual successful submit action and confirmation-page evidence.
+  // If either is absent, fail closed and leave the approval unconsumed.
+  if (!hasCheckinSuccessEvidence(result)) {
+    await supabaseAdmin.from('agent_runs').update({
+      status: 'paused', progress: 70,
+      summary: 'Gogo could not verify that airline check-in completed, so it did not mark the trip as checked in.',
+      error: 'checkin_confirmation_not_verified', updated_at: at,
+    }).eq('id', params.runId).eq('telegram_id', tg).eq('status', 'running')
+    await supabaseAdmin.from('life_event_actions').update({
+      status: 'blocked',
+      payload_json: { ...(action.payload_json as any || {}), blockedReason: 'checkin_confirmation_not_verified', attemptedAt: at, browserUrl: result.url },
+      updated_at: at,
+    }).eq('id', lifeEventActionId).eq('telegram_id', tg).eq('status', 'running')
+    await supabaseAdmin.from('agent_activity').insert({
+      telegram_id: tg, run_id: params.runId, event_type: 'life_event_checkin_unverified',
+      message: 'Gogo stopped because the airline site did not provide enough evidence to verify a successful check-in.',
+      metadata_json: { life_event_id: lifeEventId, action_id: lifeEventActionId },
+    })
+    return {
+      runId: params.runId,
+      status: 'paused' as const,
+      capability: 'travel' as const,
+      risk: 'high' as const,
+      handledBy: 'life-event-checkin' as const,
+      blockedReason: 'checkin_confirmation_not_verified' as const,
+      text: 'I reached the airline flow, but I could not verify a successful check-in confirmation. I did not mark you as checked in or consume the approval as executed.',
+    }
+  }
+
   await Promise.all([
     supabaseAdmin.from('agent_runs').update({
       status: 'completed', progress: 100,
-      summary: 'Approved airline web check-in completed. Gogo will continue watching for the boarding pass/confirmation.',
+      summary: 'Approved airline web check-in completed and was verified from the airline confirmation page. Gogo will continue watching for the boarding pass/confirmation.',
       completed_at: at, updated_at: at,
-    }).eq('id', params.runId).eq('telegram_id', tg),
+    }).eq('id', params.runId).eq('telegram_id', tg).eq('status', 'running'),
     supabaseAdmin.from('life_event_actions').update({
       status: 'completed',
-      payload_json: { ...(action.payload_json as any || {}), executedAt: at, resultUrl: result.url },
+      payload_json: { ...(action.payload_json as any || {}), executedAt: at, resultUrl: result.url, verified: true },
       updated_at: at,
-    }).eq('id', lifeEventActionId).eq('telegram_id', tg),
+    }).eq('id', lifeEventActionId).eq('telegram_id', tg).eq('status', 'running'),
     supabaseAdmin.from('life_events').update({ lifecycle_state: 'watching', updated_at: at })
       .eq('id', lifeEventId).eq('telegram_id', tg),
     supabaseAdmin.from('agent_approvals').update({ status: 'executed', executed_at: at })
@@ -150,7 +200,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
   ])
   await supabaseAdmin.from('agent_activity').insert({
     telegram_id: tg, run_id: params.runId, event_type: 'life_event_checkin_completed',
-    message: 'Approved airline web check-in completed in Gogo Secure Computer.',
+    message: 'Approved airline web check-in completed and was verified from the airline confirmation page.',
     metadata_json: { life_event_id: lifeEventId, action_id: lifeEventActionId, provider: event.provider || null },
   })
 
@@ -160,6 +210,6 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     capability: 'travel' as const,
     risk: 'high' as const,
     handledBy: 'life-event-checkin' as const,
-    text: 'Done. I completed the approved airline check-in without purchasing a paid seat or add-on. I’ll keep the trip in a watching state for the boarding pass/confirmation flow.',
+    text: 'Done. I completed and verified the approved airline check-in without purchasing a paid seat or add-on. I’ll keep the trip in a watching state for the boarding pass/confirmation flow.',
   }
 }
