@@ -26,6 +26,11 @@ const requiredSequences = [
   'Sequence E — Background Gogo: watch → detect → notify','Sequence F — Google Workspace autonomous brain',
   'Sequence G — Secure Computer + Sentinel','Sequence H — Travel intelligence → calendar → lifecycle',
   'Sequence I — Autonomous flight check-in','Sequence J — Proactive daily brain','Sequence K — India launch / production readiness',
+  'Sequence L — Documents / identity / expiry lifecycle','Sequence M — Purchase / delivery / warranty lifecycle',
+  'Sequence N — Bills / subscriptions lifecycle','Sequence O — Friend / family / circle',
+  'Sequence P — Voice / multilingual India flows','Sequence Q — Expenses / receipts / split',
+  'Sequence R — Meetings / founder mode','Sequence S — Health/wellness document reminders',
+  'Sequence T — Monetisation / metering / integrations',
 ]
 for (const sequence of requiredSequences) assert.ok(matrix.includes(sequence), `canonical autonomous brain matrix lost sequence: ${sequence}`)
 
