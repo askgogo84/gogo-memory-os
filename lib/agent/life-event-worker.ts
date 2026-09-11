@@ -6,6 +6,7 @@ import { evaluateAgentSentinel } from './sentinel'
 import type { AgentActor } from './actor'
 
 const LEASE_MINUTES = 10
+const DEFER_PENDING_EXECUTOR_MINUTES = 60
 
 function safe(value: unknown, max = 600) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -38,10 +39,11 @@ async function resolveActor(telegramId: string): Promise<AgentActor> {
 
 async function claimAction(action: any, now: Date) {
   const leaseUntil = new Date(now.getTime() + LEASE_MINUTES * 60_000).toISOString()
+  const expectedStatus = String(action.status || 'queued')
   const { data, error } = await supabaseAdmin.from('life_event_actions')
     .update({ status: 'running', updated_at: now.toISOString(), payload_json: { ...(action.payload_json || {}), leaseUntil } })
     .eq('id', action.id)
-    .in('status', ['queued','ready'])
+    .eq('status', expectedStatus)
     .select('id')
     .maybeSingle()
   if (error) {
@@ -56,6 +58,21 @@ async function markAction(id: string, status: 'completed' | 'blocked' | 'ready' 
     .update({ status, payload_json: extra, updated_at: new Date().toISOString() })
     .eq('id', id)
   if (error) throw new Error(`life_event_action_update_failed:${error.message}`)
+}
+
+async function deferAction(action: any, minutes: number, extra: Record<string, unknown> = {}) {
+  const now = new Date()
+  const dueAt = new Date(now.getTime() + Math.max(1, minutes) * 60_000).toISOString()
+  const { error } = await supabaseAdmin.from('life_event_actions')
+    .update({
+      status: 'ready',
+      due_at: dueAt,
+      payload_json: { ...(action.payload_json || {}), ...extra, deferredUntil: dueAt },
+      updated_at: now.toISOString(),
+    })
+    .eq('id', action.id)
+    .eq('status', 'running')
+  if (error) throw new Error(`life_event_action_defer_failed:${error.message}`)
 }
 
 async function createRun(params: { telegramId: string; event: any; action: any; status: string; summary: string; metadata?: Record<string, unknown> }) {
@@ -175,7 +192,7 @@ async function requestFlightCheckinApproval(params: { telegramId: string; event:
     .maybeSingle()
   if (prepared.error) throw new Error(`life_event_prepare_state_failed:${prepared.error.message}`)
   if (prepared.data?.status !== 'completed') {
-    await markAction(String(action.id), 'ready', { ...(action.payload_json || {}), waitingFor: 'prepare-web-checkin' })
+    await deferAction(action, 5, { waitingFor: 'prepare-web-checkin' })
     return { status: 'deferred' as const }
   }
 
@@ -247,27 +264,53 @@ async function processAction(action: any, event: any, telegramId: string) {
     return { status: 'completed' as const, runId }
   }
 
-  // email_watch / monitor / calendar_draft are intentionally left queued for their
-  // dedicated connector executors. Do not fake completion or create noisy polling.
-  await markAction(String(action.id), 'ready', { ...(action.payload_json || {}), executorPending: true })
+  // email_watch / monitor / calendar_draft belong to dedicated connector executors.
+  // Back them off so unsupported rows do not occupy every due-action batch and starve
+  // newer check-in/notification work while those executors are being added.
+  await deferAction(action, DEFER_PENDING_EXECUTOR_MINUTES, { executorPending: true })
   return { status: 'deferred' as const }
+}
+
+function sortDueActions(rows: any[]) {
+  return rows.sort((a, b) => {
+    const ad = a.due_at ? new Date(a.due_at).getTime() : 0
+    const bd = b.due_at ? new Date(b.due_at).getTime() : 0
+    if (ad !== bd) return ad - bd
+    return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+  })
 }
 
 export async function processDueLifeEventActions(limit = 12) {
   const now = new Date()
-  const { data, error } = await supabaseAdmin.from('life_event_actions')
-    .select('id,life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,status,payload_json,created_at')
-    .in('status', ['queued','ready'])
-    .not('due_at', 'is', null)
-    .lte('due_at', now.toISOString())
-    .order('due_at', { ascending: true })
-    .order('created_at', { ascending: true })
-    .limit(limit)
-  if (error) throw new Error(`life_event_due_read_failed:${error.message}`)
+  const staleBefore = new Date(now.getTime() - LEASE_MINUTES * 60_000).toISOString()
+  const select = 'id,life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,status,payload_json,created_at,updated_at'
+  const [dueResult, staleResult] = await Promise.all([
+    supabaseAdmin.from('life_event_actions')
+      .select(select)
+      .in('status', ['queued','ready'])
+      .not('due_at', 'is', null)
+      .lte('due_at', now.toISOString())
+      .order('due_at', { ascending: true })
+      .order('created_at', { ascending: true })
+      .limit(limit),
+    supabaseAdmin.from('life_event_actions')
+      .select(select)
+      .eq('status', 'running')
+      .lte('updated_at', staleBefore)
+      .order('updated_at', { ascending: true })
+      .limit(limit),
+  ])
+  if (dueResult.error) throw new Error(`life_event_due_read_failed:${dueResult.error.message}`)
+  if (staleResult.error) throw new Error(`life_event_stale_read_failed:${staleResult.error.message}`)
 
-  let checked = 0, claimed = 0, completed = 0, waitingApproval = 0, blocked = 0, deferred = 0, failed = 0
-  for (const action of (data || []) as any[]) {
+  const byId = new Map<string, any>()
+  for (const row of [...(staleResult.data || []), ...(dueResult.data || [])] as any[]) byId.set(String(row.id), row)
+  const rows = sortDueActions([...byId.values()]).slice(0, limit)
+
+  let checked = 0, claimed = 0, completed = 0, waitingApproval = 0, blocked = 0, deferred = 0, failed = 0, reclaimed = 0
+  for (const action of rows) {
     checked++
+    if (action.status === 'running') reclaimed++
     if (!(await claimAction(action, now))) continue
     claimed++
     try {
@@ -290,5 +333,5 @@ export async function processDueLifeEventActions(limit = 12) {
       await activity(String(action.telegram_id), null, 'life_event_step_failed', 'A Background Gogo life-event step failed safely.', { life_event_id: action.life_event_id, action_key: action.action_key }).catch(() => {})
     }
   }
-  return { checked, claimed, completed, waitingApproval, blocked, deferred, failed }
+  return { checked, claimed, completed, waitingApproval, blocked, deferred, failed, reclaimed }
 }
