@@ -1,12 +1,24 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runSecureBrowser } from './secure-computer'
 import { sendAgentPush } from './push'
+import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
+import { evaluateAgentSentinel } from './sentinel'
 import type { AgentActor } from './actor'
 
 const LEASE_MINUTES = 10
 
 function safe(value: unknown, max = 600) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
+}
+
+async function browserPermission(telegramId: string): Promise<AgentPermissionLevel> {
+  const { data, error } = await supabaseAdmin.from('agent_permissions')
+    .select('level')
+    .eq('telegram_id', telegramId)
+    .eq('capability', 'browser')
+    .maybeSingle()
+  if (error) throw new Error(`life_event_browser_permission_failed:${error.message}`)
+  return (data?.level as AgentPermissionLevel | undefined) || 'ask'
 }
 
 async function resolveActor(telegramId: string): Promise<AgentActor> {
@@ -39,7 +51,7 @@ async function claimAction(action: any, now: Date) {
   return Boolean(data?.id)
 }
 
-async function markAction(id: string, status: 'completed' | 'blocked' | 'ready', extra: Record<string, unknown> = {}) {
+async function markAction(id: string, status: 'completed' | 'blocked' | 'ready' | 'waiting_approval', extra: Record<string, unknown> = {}) {
   const { error } = await supabaseAdmin.from('life_event_actions')
     .update({ status, payload_json: extra, updated_at: new Date().toISOString() })
     .eq('id', id)
@@ -103,11 +115,27 @@ async function prepareFlightCheckin(params: { telegramId: string; event: any; ac
     return { status: 'blocked' as const, runId }
   }
 
+  const permissionLevel = await browserPermission(telegramId)
+  const policy = evaluateAgentExecutionPolicy({
+    capability: 'browser', permissionLevel, mode: 'draft', risk: 'medium', irreversible: false, approvalStatus: null,
+  })
+  const sentinel = evaluateAgentSentinel({
+    capability: 'browser', mode: 'draft', risk: 'medium', irreversible: false, approved: false,
+    instruction: 'Prepare airline web check-in without submitting, purchasing, authenticating or paying.', url, actionCount: 12,
+  })
+  if (!policy.allowed || !sentinel.allowed) {
+    const reason = !policy.allowed ? policy.reason : sentinel.reason
+    await markAction(String(action.id), 'blocked', { ...(payload || {}), blockedReason: reason })
+    const runId = await createRun({ telegramId, event, action, status: 'paused', summary: `Gogo Safe Mode blocked background check-in preparation: ${reason}.` })
+    await activity(telegramId, runId, 'life_event_blocked', 'Background airline check-in preparation was blocked by Gogo Safe Mode.', { life_event_id: event.id, reason })
+    return { status: 'blocked' as const, runId }
+  }
+
   const actor = await resolveActor(telegramId)
   const runId = await createRun({
     telegramId, event, action, status: 'running',
     summary: 'Gogo is opening the airline site in the isolated Secure Computer and preparing the check-in form without submitting it.',
-    metadata: { checkin_url: url, provider: event.provider || null, confirmation_ref_present: true },
+    metadata: { checkin_url: url, provider: event.provider || null, confirmation_ref_present: true, permission_level: permissionLevel },
   })
 
   try {
