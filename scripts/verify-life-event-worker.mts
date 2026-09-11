@@ -3,6 +3,7 @@ import fs from 'node:fs'
 
 const worker = fs.readFileSync('lib/agent/life-event-worker.ts', 'utf8')
 const execution = fs.readFileSync('lib/agent/life-event-execution.ts', 'utf8')
+const secureComputer = fs.readFileSync('lib/agent/secure-computer.ts', 'utf8')
 const executeRoute = fs.readFileSync('app/api/agent/runs/[id]/execute/route.ts', 'utf8')
 const whatsappBridge = fs.readFileSync('lib/agent/whatsapp-bridge.ts', 'utf8')
 const cronRoute = fs.readFileSync('app/api/cron/life-events/route.ts', 'utf8')
@@ -27,11 +28,12 @@ assert.match(worker, /password, OTP, CAPTCHA, passkey/i)
 assert.match(worker, /deferAction\(action, DEFER_PENDING_EXECUTOR_MINUTES/)
 assert.match(worker, /due_at:\s*dueAt/)
 assert.match(worker, /eq\('status', 'running'\)/)
+assert.match(worker, /expectedStatus === 'running'.*eq\('updated_at', action\.updated_at\)/s)
 assert.match(worker, /staleBefore/)
 assert.match(worker, /reclaimed/)
+assert.match(worker, /stopUncertainReclaimedCheckin/)
+assert.match(worker, /checkin_execution_uncertain/)
 
-// Booking reference can be used transiently inside the isolated browser objective,
-// but the run metadata must only record that it exists, not the value itself.
 assert.match(worker, /confirmation_ref_present:\s*true/)
 assert.doesNotMatch(worker, /metadata:\s*\{[^}]*confirmationRef:/s)
 
@@ -46,8 +48,12 @@ assert.match(execution, /eq\('status',\s*'approved'\)/)
 assert.match(execution, /eq\('status', 'queued'\)/)
 assert.match(execution, /agent_run_already_claimed/)
 assert.match(execution, /hasCheckinSuccessEvidence/)
-assert.match(execution, /kind === 'submit' && a\.status === 'done'/)
+assert.match(execution, /finalAction\?\.kind === 'submit'/)
+assert.match(execution, /terminalConfirmation/)
+assert.doesNotMatch(execution, /\|boarding pass\|/)
 assert.match(execution, /checkin_confirmation_not_verified/)
+assert.match(execution, /checkin_execution_uncertain/)
+assert.match(execution, /will not retry automatically/i)
 assert.match(execution, /Use free seat allocation only/)
 assert.match(execution, /Do not buy baggage, meals, upgrades, insurance, priority boarding/)
 assert.match(execution, /mode:\s*'execute'/)
@@ -55,9 +61,11 @@ assert.match(execution, /human_auth_required/)
 assert.match(execution, /status:\s*'executed'/)
 assert.match(execution, /lifecycle_state:\s*'watching'/)
 
-// SQL-promoted tickets must receive a checkInUrl for the exact carriers whose
-// deep links are verified in the TypeScript airline registry. Unknown carriers
-// remain unset so the browser worker fails closed instead of inventing a URL.
+assert.match(secureComputer, /isPotentialSubmit/)
+assert.match(secureComputer, /payload\.mode!=='execute' && await isPotentialSubmit/)
+assert.match(secureComputer, /check\\s\*-\?\\s\*in/)
+assert.match(secureComputer, /confirm\(\?:ation\)\?/)
+
 assert.match(checkinMigration, /when '6E' then 'https:\/\/www\.goindigo\.in\/web-check-in\.html'/)
 assert.match(checkinMigration, /when 'AI' then 'https:\/\/www\.airindia\.com\/in\/en\/manage\/web-checkin\.html'/)
 assert.match(checkinMigration, /when 'IX' then 'https:\/\/www\.airindiaexpress\.com\/checkin-home'/)
