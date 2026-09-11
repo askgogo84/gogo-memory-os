@@ -5,6 +5,7 @@ const worker = fs.readFileSync('lib/agent/life-event-worker.ts', 'utf8')
 const execution = fs.readFileSync('lib/agent/life-event-execution.ts', 'utf8')
 const executeRoute = fs.readFileSync('app/api/agent/runs/[id]/execute/route.ts', 'utf8')
 const cronRoute = fs.readFileSync('app/api/cron/life-events/route.ts', 'utf8')
+const checkinMigration = fs.readFileSync('supabase/life-events-v2-checkin-url.sql', 'utf8')
 const vercel = fs.readFileSync('vercel.json', 'utf8')
 
 assert.match(worker, /prepare-web-checkin/)
@@ -43,6 +44,16 @@ assert.match(execution, /mode:\s*'execute'/)
 assert.match(execution, /human_auth_required/)
 assert.match(execution, /status:\s*'executed'/)
 assert.match(execution, /lifecycle_state:\s*'watching'/)
+
+// SQL-promoted tickets must receive a checkInUrl for the exact carriers whose
+// deep links are verified in the TypeScript airline registry. Unknown carriers
+// remain unset so the browser worker fails closed instead of inventing a URL.
+assert.match(checkinMigration, /when '6E' then 'https:\/\/www\.goindigo\.in\/web-check-in\.html'/)
+assert.match(checkinMigration, /when 'AI' then 'https:\/\/www\.airindia\.com\/in\/en\/manage\/web-checkin\.html'/)
+assert.match(checkinMigration, /when 'IX' then 'https:\/\/www\.airindiaexpress\.com\/checkin-home'/)
+assert.match(checkinMigration, /when 'EY' then 'https:\/\/www\.etihad\.com\/en\/manage\/check-in'/)
+assert.match(checkinMigration, /checkInUrlVerified/)
+assert.match(checkinMigration, /Backfill existing promoted flights/)
 
 assert.match(executeRoute, /executeApprovedLifeEventCheckin/)
 assert.match(executeRoute, /planType === 'life_event_checkin'/)
