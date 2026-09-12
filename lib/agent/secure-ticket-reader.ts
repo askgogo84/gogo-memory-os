@@ -45,6 +45,16 @@ function allowedHosts(url: string) {
   return allow
 }
 
+function safeFailureCode(error: unknown) {
+  const message = String((error as any)?.message || error || '')
+  if (message.startsWith('ticket_browser_bootstrap_failed')) return 'ticket_browser_bootstrap_failed'
+  if (message.startsWith('ticket_browser_failed')) return 'ticket_browser_failed'
+  if (message.startsWith('ticket_browser_empty_output')) return 'ticket_browser_empty_output'
+  if (message.startsWith('missing_ticket_reader_payload')) return 'missing_ticket_reader_payload'
+  if (message.startsWith('secure_browser_')) return message.split(':')[0].slice(0, 120)
+  return 'ticket_reader_failed'
+}
+
 const SCRIPT = String.raw`
 const { chromium } = require('playwright');
 const encoded = process.argv[2];
@@ -139,7 +149,7 @@ async function computer(userId: string, url: string) {
   const check = await sandbox.runCommand({ cmd: 'bash', args: ['-lc', 'test -f node_modules/playwright/package.json && echo ready || echo missing'] })
   if ((await check.stdout()).trim() !== 'ready') {
     const install = await sandbox.runCommand({ cmd: 'bash', args: ['-lc', `npm init -y >/dev/null 2>&1 || true; npm install --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION} && npx playwright install --with-deps chromium`] })
-    if (install.exitCode !== 0) throw new Error(`ticket_browser_bootstrap_failed:${String(await install.stderr()).slice(0,500)}`)
+    if (install.exitCode !== 0) throw new Error('ticket_browser_bootstrap_failed')
   }
   await sandbox.writeFiles([{ path: 'gogo-ticket-reader.js', stream: Buffer.from(SCRIPT) }])
   await sandbox.updateNetworkPolicy({ allow: allowedHosts(url) } as any)
@@ -164,7 +174,7 @@ async function fallbackSecureComputer(params: { userId: string; url: string }): 
       return { status: 'completed', url: result.url || params.url, title: result.title || '', pageText: result.pageText || '', usefulLinks: [] }
     }
   } catch (error: any) {
-    console.error('SECURE_TICKET_READER_FALLBACK_FAILED:', error?.stack || error?.message || error)
+    console.error('SECURE_TICKET_READER_FALLBACK_FAILED:', safeFailureCode(error))
   }
   return { status: 'failed', url: params.url, title: '', pageText: '', usefulLinks: [] }
 }
@@ -175,7 +185,7 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     sandbox = await computer(params.userId, params.url)
     const payload = Buffer.from(JSON.stringify({ url: params.url })).toString('base64')
     const result = await sandbox.runCommand({ cmd: 'node', args: ['gogo-ticket-reader.js', payload] })
-    if (result.exitCode !== 0) throw new Error(`ticket_browser_failed:${String(await result.stderr()).slice(0,700)}`)
+    if (result.exitCode !== 0) throw new Error('ticket_browser_failed')
     const stdout = await result.stdout()
     const lines = String(stdout || '').trim().split('\n').filter(Boolean)
     if (!lines.length) throw new Error('ticket_browser_empty_output')
@@ -193,7 +203,7 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
       usefulLinks: Array.isArray(page.links) ? page.links.slice(0, 30) : [], credential: page.credential || undefined,
     }
   } catch (error: any) {
-    console.error('SECURE_TICKET_READER_FAILED:', error?.stack || error?.message || error)
+    console.error('SECURE_TICKET_READER_FAILED:', safeFailureCode(error))
     return fallbackSecureComputer(params)
   } finally {
     if (sandbox) await sandbox.stop().catch(() => {})
