@@ -5,10 +5,11 @@
 import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
 import { dispatchThroughSameBrain } from '@/lib/agent/same-brain'
-import { registerLifeEvent } from '@/lib/agent/life-event-engine'
+import { closeBookingLink, isEventCredentialRetrieval, retrieveEventCredential } from '@/lib/agent/booking-closure'
 import { buildGmailConnectUrl } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isBookingOrEventLinkText } from '@/lib/services/whatsapp-preview-routing'
+import { sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 
 function isSimpleWorkspaceRead(text:string) {
@@ -24,66 +25,33 @@ function isWorkspaceConnect(text:string) {
   return /\b(connect|link|reconnect|refresh)\b/.test(t) && /\b(gmail|google workspace|google account|email)\b/.test(t)
 }
 
-function firstUrl(text:string) {
-  const match=String(text||'').match(/https?:\/\/[^\s<>]+/i)
-  return match ? match[0].replace(/[),.;!?]+$/,'') : ''
-}
-
-function bookingProvider(text:string,url:string) {
-  const hay=`${text} ${url}`.toLowerCase()
-  if(/bookmyshow|bmsurl\.co/.test(hay))return 'BookMyShow'
-  if(/district\.in/.test(hay))return 'District'
-  if(/insider\.in/.test(hay))return 'Insider'
-  if(/paytm\.com/.test(hay))return 'Paytm'
-  return 'Booking provider'
-}
-
-function bookingTitle(text:string) {
-  const raw=String(text||'').replace(/https?:\/\/\S+/gi,' ').replace(/\s+/g,' ').trim()
-  const watching=raw.match(/we(?:'|’)re\s+watching\s+(.+?)(?=\.\s*(?:find|here|ticket)|\s+find\s+ticket|$)/i)
-  if(watching?.[1])return watching[1].trim().slice(0,180)
-  const details=raw.match(/booking\s+details\s*[-–:]\s*(.+?)(?=\.|$)/i)
-  if(details?.[1] && !/bookmyshow/i.test(details[1]))return details[1].trim().slice(0,180)
-  const movie=raw.match(/\b(?:movie|film)\s*[:\-]\s*(.+?)(?=\.|$)/i)
-  if(movie?.[1])return movie[1].trim().slice(0,180)
-  return 'Event booking'
-}
-
-async function handleBookingEventLink(text:string,telegramId:number) {
-  if(!isBookingOrEventLinkText(text))return null
-  const url=firstUrl(text)
-  const provider=bookingProvider(text,url)
-  const title=bookingTitle(text)
-
-  try {
-    await registerLifeEvent({
-      telegramId,
-      eventType:'event',
-      subtype:/movie|watching|cinema|theatre/i.test(text)?'movie_booking':'event_booking',
-      source:'whatsapp_booking_link',
-      title,
-      provider,
-      metadata:{ bookingUrl:url||null, schedulePending:true },
-      sourceRefs:url ? [{ source:'whatsapp', kind:'booking_link', url }] : [{ source:'whatsapp', kind:'booking_text' }],
-    })
-  } catch(err:any) {
-    // Recognition should still work even if persistence has a transient failure.
-    console.error('BOOKING_LINK_LIFE_EVENT_SAVE_FAILED:',err?.message||err)
-  }
-
-  return `🎟️ *Booking received*\n\n*${title}*\n${provider}${url?`\n${url}`:''}\n\nI’ve recognised this as an event booking — not a photo/document. I’ll keep it with your events.\n\nIf the forwarded message doesn’t include the *date, time and venue*, send the booking confirmation/screenshot and I’ll complete the event details and calendar flow.`
-}
-
 export async function routeFeatureIntent(
   phone: string,
   text: string,
   extra?: { telegramId?: number; caption?: string },
 ): Promise<string | null> {
-  // Booking/event links are deterministic first-class inputs. They must beat generic
-  // URL/image handling so WhatsApp preview thumbnails cannot become fake documents.
-  if(extra?.telegramId) {
-    const booking=await handleBookingEventLink(text,extra.telegramId)
-    if(booking)return booking
+  // Ticket retrieval is deterministic and beats generic memory/search. The actual
+  // provider-issued QR/PDF is sent as WhatsApp media, not reconstructed by Gogo.
+  if (extra?.telegramId && isEventCredentialRetrieval(text)) {
+    const ticket = await retrieveEventCredential(extra.telegramId)
+    if (ticket) {
+      await sendWhatsAppMediaMessage(phone, ticket.caption, ticket.mediaUrl).catch((err:any) => console.error('EVENT_TICKET_MEDIA_SEND_FAILED:', err?.message || err))
+      return `Sent your saved provider-issued ticket/QR for *${ticket.caption.match(/\*([^*]+)\*/)?.[1] || 'the event'}*. I kept it attached to the same Life Event so you do not need to reopen the booking provider.`
+    }
+  }
+
+  // Booking/event links are first-class missions. Resolve provider + connected Gmail
+  // in parallel, capture the real credential, create reminder/calendar/change-watch,
+  // and only then report the closure state.
+  if (extra?.telegramId && isBookingOrEventLinkText(text)) {
+    const booking = await closeBookingLink({ telegramId: extra.telegramId, text })
+    if (booking) {
+      if (booking.credentialUrl) {
+        const caption = `${booking.details?.title ? `🎟️ ${booking.details.title}\n` : ''}Provider-issued ticket / QR saved by AskGogo.`
+        await sendWhatsAppMediaMessage(phone, caption, booking.credentialUrl).catch((err:any) => console.error('BOOKING_CREDENTIAL_MEDIA_SEND_FAILED:', err?.message || err))
+      }
+      return booking.text
+    }
   }
 
   const legacy = await routeLegacyFeatureIntent(phone, text, extra)
@@ -122,9 +90,6 @@ export async function routeFeatureIntent(
         : 'Google Workspace connection is temporarily unavailable. Please try again shortly.'
     }
 
-    // Simple private reads should work on WhatsApp too, even though they are not
-    // multi-tool Agent missions. Reuse the exact same deterministic server-side
-    // Workspace reader as Dashboard/Agent so every surface is one Gogo.
     if (isSimpleWorkspaceRead(text)) {
       const actor={
         userId:String(user.id),legacyTelegramId:user.telegramId,
@@ -137,7 +102,6 @@ export async function routeFeatureIntent(
     const agent = await tryRunWhatsAppAgent({ user, text })
     return agent?.text || null
   } catch (err: any) {
-    // Agent enhancement must never break the mature WhatsApp fallback path.
     console.error('WHATSAPP_AGENT_BRIDGE_FAILED:', err?.message || err)
     return null
   }
