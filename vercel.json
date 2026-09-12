@@ -23,7 +23,7 @@
     },
     {
       "path": "/api/cron/booking-events",
-      "schedule": "17 * * * *"
+      "schedule": "* * * * *"
     },
     {
       "path": "/api/cron/agent-learning",
