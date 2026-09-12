@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { runSecureBrowser } from './secure-computer'
 
 const PLAYWRIGHT_VERSION = '1.63.0'
 const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
@@ -49,7 +50,6 @@ const { chromium } = require('playwright');
 const payload = JSON.parse(Buffer.from(process.argv[2], 'base64').toString('utf8'));
 const profile='/vercel/sandbox/browser-profile';
 const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
-const safeLabel=el=>clean([el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('alt'),el.id,el.className].filter(Boolean).join(' ')).slice(0,240);
 const visible=el=>{try{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return false}};
 const bad=/\b(pay|purchase|buy|confirm purchase|place order|book now|checkout|refund|cancel booking|delete)\b/i;
 const useful=/\b(share|download|show ticket|view ticket|ticket|qr|barcode|pass|wallet)\b/i;
@@ -144,6 +144,29 @@ async function computer(userId: string, url: string) {
   return sandbox
 }
 
+async function fallbackSecureComputer(params: { userId: string; url: string }): Promise<SecureTicketReadResult> {
+  try {
+    const result = await runSecureBrowser({
+      userId: params.userId,
+      url: params.url,
+      mode: 'read',
+      objective: 'Read this confirmed booking/ticket page. Do not submit, purchase, cancel, authenticate, or change anything.',
+    })
+    if (result.status === 'blocked') {
+      return {
+        status: 'blocked', url: result.url || params.url, title: result.title || '', pageText: '', usefulLinks: [],
+        blockReason: 'human_auth_required', authReason: result.authReason,
+      }
+    }
+    if (result.status === 'completed' || result.status === 'prepared') {
+      return { status: 'completed', url: result.url || params.url, title: result.title || '', pageText: result.pageText || '', usefulLinks: [] }
+    }
+  } catch (error: any) {
+    console.error('SECURE_TICKET_READER_FALLBACK_FAILED:', error?.message || error)
+  }
+  return { status: 'failed', url: params.url, title: '', pageText: '', usefulLinks: [] }
+}
+
 export async function readProviderTicketPage(params: { userId: string; url: string }): Promise<SecureTicketReadResult> {
   let sandbox: any = null
   try {
@@ -169,7 +192,7 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     }
   } catch (error: any) {
     console.error('SECURE_TICKET_READER_FAILED:', error?.message || error)
-    return { status: 'failed', url: params.url, title: '', pageText: '', usefulLinks: [] }
+    return fallbackSecureComputer(params)
   } finally {
     if (sandbox) await sandbox.stop().catch(() => {})
   }
