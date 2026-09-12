@@ -22,6 +22,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/life-event-email",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/agent-learning",
       "schedule": "17 * * * *"
     },
