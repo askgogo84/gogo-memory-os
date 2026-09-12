@@ -1,7 +1,9 @@
+import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { refreshGmailAccessToken } from '@/lib/google-gmail'
 import type { AgentActor } from './actor'
 
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 const MAX_MESSAGES = 8
 const MAX_BYTES = 8 * 1024 * 1024
 
@@ -57,15 +59,31 @@ async function bytesFor(actor: AgentActor, messageId: string, part: any) {
   return b.length <= MAX_BYTES ? b : null
 }
 
-function scoreCredential(params: { mime: string; filename: string; body: string; subject: string }) {
-  const hay = `${params.filename} ${params.subject} ${params.body}`.toLowerCase()
+function filenameEvidence(filename: string) {
+  return /\b(ticket|e-?ticket|boarding|pass|qr|qrcode|barcode|entry|voucher)\b/i.test(String(filename || '').replace(/[_-]+/g, ' '))
+}
+
+async function verifyImageCredential(bytes: Buffer, mimeType: string) {
+  if (!bytes.length || bytes.length > MAX_BYTES) return false
+  if (!/^image\/(png|jpe?g|webp|gif)$/i.test(mimeType)) return false
+  try {
+    const r = await anthropic.messages.create({
+      model: 'claude-haiku-4-5', max_tokens: 20, temperature: 0,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: mimeType as any, data: bytes.toString('base64') } },
+        { type: 'text', text: 'Is this image itself a usable event/movie/concert entry credential, QR code, barcode, e-ticket, or ticket/pass that a venue could scan or inspect? Reply exactly TICKET_CREDENTIAL or OTHER. Logos, posters, banners and marketing images are OTHER.' },
+      ] }],
+    })
+    const answer = r.content[0]?.type === 'text' ? r.content[0].text.trim().toUpperCase() : ''
+    return answer === 'TICKET_CREDENTIAL'
+  } catch { return false }
+}
+
+function messageEvidence(body: string, subject: string) {
+  const hay = `${subject} ${body}`.toLowerCase()
   let score = 0
-  if (/qr|qrcode|barcode/.test(hay)) score += 12
-  if (/boarding pass|movie ticket|e-?ticket|entry pass|show ticket|your ticket|booking confirmation/.test(hay)) score += 8
-  if (/scan (?:this|at)|present this|entry/.test(hay)) score += 5
-  if (/ticket|pass|qr|barcode/.test(params.filename.toLowerCase())) score += 8
-  if (params.mime === 'application/pdf') score += 4
-  if (params.mime.startsWith('image/')) score += 3
+  if (/\b(boarding pass|movie ticket|e-?ticket|entry pass|show ticket|your ticket|booking confirmation)\b/.test(hay)) score += 5
+  if (/\b(scan (?:this|at)|present this|entry)\b/.test(hay)) score += 3
   return score
 }
 
@@ -97,23 +115,44 @@ export async function findGmailTicketEvidence(actor: AgentActor, queryText: stri
     const subject = clean(header(msg?.payload?.headers || [], 'Subject'), 240)
     const from = clean(header(msg?.payload?.headers || [], 'From'), 240)
     const bodyText = clean(parts.map(textFromPart).filter(Boolean).join('\n'), 12000)
+    const msgScore = messageEvidence(bodyText, subject)
     let candidate: GmailTicketEvidence['credential'] | undefined
     let candidateScore = 0
+
     for (const part of parts) {
       const mime = String(part?.mimeType || '').toLowerCase()
       if (!(mime.startsWith('image/') || mime === 'application/pdf')) continue
       const filename = clean(part?.filename || '', 240)
-      const score = scoreCredential({ mime, filename, body: bodyText, subject })
-      if (score < 8 || score <= candidateScore) continue
       const bytes = await bytesFor(actor, id, part)
       if (!bytes?.length) continue
-      candidate = { bytes, mimeType: mime || 'application/octet-stream', filename: filename || (mime === 'application/pdf' ? 'ticket.pdf' : 'ticket.png'), source: 'gmail' }
-      candidateScore = score
+
+      if (mime.startsWith('image/')) {
+        // Message-level words like "booking confirmation" are NOT attachment-local
+        // evidence: an airline/provider logo sees those words too. Verify pixels.
+        const imageIsCredential = await verifyImageCredential(bytes, mime)
+        if (!imageIsCredential) continue
+        const score = 20 + (filenameEvidence(filename) ? 4 : 0) + msgScore
+        if (score > candidateScore) {
+          candidate = { bytes, mimeType: mime, filename: filename || 'ticket-qr.png', source: 'gmail' }
+          candidateScore = score
+        }
+        continue
+      }
+
+      // PDFs need ticket-shaped attachment-local evidence as well. This prevents a
+      // generic brochure/invoice attached to a confirmation email becoming the pass.
+      if (mime === 'application/pdf' && filenameEvidence(filename) && msgScore >= 3) {
+        const score = 14 + msgScore
+        if (score > candidateScore) {
+          candidate = { bytes, mimeType: mime, filename: filename || 'ticket.pdf', source: 'gmail' }
+          candidateScore = score
+        }
+      }
     }
-    const messageScore = scoreCredential({ mime: '', filename: '', body: bodyText, subject })
+
     const evidence: GmailTicketEvidence = { messageId: id, threadId: String(msg?.threadId || ''), subject, from, bodyText, credential: candidate }
-    const total = messageScore + candidateScore
+    const total = msgScore + candidateScore
     if (!best || total > best.score) best = { evidence, score: total }
   }
-  return best && best.score >= 8 ? best.evidence : null
+  return best && best.score >= 5 ? best.evidence : null
 }
