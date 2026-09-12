@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { closeBookingLink } from './booking-closure'
 import { sendWhatsAppMediaMessage, sendWhatsAppMessage } from '@/lib/channels/whatsapp'
+import { clearFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 
 const LEASE_MINUTES = 10
 const RETRY_MINUTES = 10
@@ -19,7 +20,20 @@ function requiresDeviceHandoff(row:any,result:any){
   return Boolean(result?.needsUserAuth&&isBookMyShowUrl(row?.payload_json?.bookingUrl))
 }
 
+async function armTicketScreenshot(row:any,result:any){
+  const telegramId=Number(row.telegram_id);if(!telegramId)return
+  await clearFollowupState(telegramId,'pending_asset_save')
+  await saveFollowupState(telegramId,'pending_asset_save',{
+    commandText:'save this as BookMyShow ticket screenshot',
+    oneNextMedia:true,
+    bookingHandoff:true,
+    lifeEventId:result?.lifeEventId||row.life_event_id||null,
+    created_at:new Date().toISOString(),
+  })
+}
+
 async function blockForDeviceHandoff(row:any,result:any){
+  const now=new Date().toISOString()
   const payload={
     ...(row.payload_json||{}),
     lastError:'provider_cloudflare_challenge',
@@ -27,6 +41,7 @@ async function blockForDeviceHandoff(row:any,result:any){
     unresolvedAttempts:Number(row.payload_json?.unresolvedAttempts||0)+1,
     providerBlock:'cloudflare',
     deviceHandoffRequired:true,
+    screenshotRequestedAt:now,
     lastResolution:{
       status:result?.details?.status||null,
       title:result?.details?.title||null,
@@ -38,7 +53,7 @@ async function blockForDeviceHandoff(row:any,result:any){
   await supabaseAdmin.from('life_event_actions').update({
     status:'blocked',
     due_at:null,
-    updated_at:new Date().toISOString(),
+    updated_at:now,
     payload_json:payload,
   }).eq('id',row.id).eq('status','running')
 }
@@ -123,6 +138,7 @@ export async function processQueuedBookingClosures(limit=6){
           reason:'provider_cloudflare_challenge',
           title:safe(result.details?.title||'',180),
         })
+        await armTicketScreenshot(row,result).catch((err:any)=>console.error('BOOKING_SCREENSHOT_ARM_FAILED:',err?.message||err))
         await sendWhatsAppMessage(to,
           `🎟️ *${result.details?.title||'Booking saved'}*\n\nI saved your BookMyShow booking. BookMyShow requires the ticket to be opened on your phone. Open the link and send me the ticket screenshot — I’ll save the details, QR, reminder and calendar entry automatically.`
         )
