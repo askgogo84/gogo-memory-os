@@ -4,7 +4,7 @@ import { refreshGmailAccessToken } from '@/lib/google-gmail'
 import type { AgentActor } from './actor'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
-const MAX_MESSAGES = 8
+const MAX_MESSAGES = 12
 const MAX_BYTES = 8 * 1024 * 1024
 
 function clean(v: unknown, max = 4000) { return String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max) }
@@ -82,9 +82,25 @@ async function verifyImageCredential(bytes: Buffer, mimeType: string) {
 function messageEvidence(body: string, subject: string) {
   const hay = `${subject} ${body}`.toLowerCase()
   let score = 0
-  if (/\b(boarding pass|movie ticket|e-?ticket|entry pass|show ticket|your ticket|booking confirmation)\b/.test(hay)) score += 5
-  if (/\b(scan (?:this|at)|present this|entry)\b/.test(hay)) score += 3
+  if (/\b(boarding pass|movie ticket|e-?ticket|entry pass|show ticket|your ticket|booking confirmation|booking confirmed|confirmation)\b/.test(hay)) score += 5
+  if (/\b(scan (?:this|at)|present this|entry|seat|screen|auditorium|showtime)\b/.test(hay)) score += 3
+  if (/bookmyshow|bms/.test(hay)) score += 2
   return score
+}
+
+function queryPlans(queryText: string) {
+  const terms = clean(queryText, 500).replace(/https?:\/\/\S+/g, ' ').split(/[^A-Za-z0-9]+/).filter(x => x.length > 2)
+  const provider = terms.find(x => /bookmyshow|district|insider|ticketmaster/i.test(x))
+  const stop = new Set(['booking','ticket','tickets','movie','show','event','concert','provider','find','details','there','watching','the','and','for','with','from'])
+  const titleTerms = terms.filter(x => !stop.has(x.toLowerCase()) && !/bookmyshow|district|insider|ticketmaster|qrcode|barcode|qr/i.test(x)).slice(0, 4)
+  const plans = [
+    [...terms.slice(0, 5), 'newer_than:1y'].join(' '),
+    [provider, ...titleTerms.slice(0, 2), 'newer_than:1y'].filter(Boolean).join(' '),
+    [...titleTerms.slice(0, 3), 'newer_than:1y'].join(' '),
+    [provider, 'newer_than:1y'].filter(Boolean).join(' '),
+    '"booking confirmation" newer_than:1y',
+  ]
+  return [...new Set(plans.map(x => x.trim()).filter(Boolean))]
 }
 
 export type GmailTicketEvidence = {
@@ -99,15 +115,22 @@ export type GmailTicketEvidence = {
 export async function findGmailTicketEvidence(actor: AgentActor, queryText: string): Promise<GmailTicketEvidence | null> {
   const creds = await token(actor)
   if (!creds) return null
-  const terms = clean(queryText, 500).replace(/https?:\/\/\S+/g, ' ').split(/[^A-Za-z0-9]+/).filter(x => x.length > 2).slice(0, 8)
-  const q = [...terms, 'newer_than:1y'].join(' ')
-  const list = await gmailFetch(actor, `https://gmail.googleapis.com/gmail/v1/users/me/messages?${new URLSearchParams({ q, maxResults: String(MAX_MESSAGES) })}`)
-  if (!list) return null
-  const data: any = await list.json().catch(() => ({}))
-  const ids = (Array.isArray(data?.messages) ? data.messages : []).map((x: any) => String(x?.id || '')).filter(Boolean).slice(0, MAX_MESSAGES)
+
+  const ids: string[] = []
+  for (const q of queryPlans(queryText)) {
+    const list = await gmailFetch(actor, `https://gmail.googleapis.com/gmail/v1/users/me/messages?${new URLSearchParams({ q, maxResults: String(MAX_MESSAGES) })}`)
+    if (!list) continue
+    const data: any = await list.json().catch(() => ({}))
+    for (const item of Array.isArray(data?.messages) ? data.messages : []) {
+      const id = String(item?.id || '')
+      if (id && !ids.includes(id)) ids.push(id)
+      if (ids.length >= MAX_MESSAGES) break
+    }
+    if (ids.length >= MAX_MESSAGES) break
+  }
 
   let best: { evidence: GmailTicketEvidence; score: number } | null = null
-  for (const id of ids) {
+  for (const id of ids.slice(0, MAX_MESSAGES)) {
     const r = await gmailFetch(actor, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`)
     if (!r) continue
     const msg: any = await r.json().catch(() => ({}))
@@ -127,8 +150,6 @@ export async function findGmailTicketEvidence(actor: AgentActor, queryText: stri
       if (!bytes?.length) continue
 
       if (mime.startsWith('image/')) {
-        // Message-level words like "booking confirmation" are NOT attachment-local
-        // evidence: an airline/provider logo sees those words too. Verify pixels.
         const imageIsCredential = await verifyImageCredential(bytes, mime)
         if (!imageIsCredential) continue
         const score = 20 + (filenameEvidence(filename) ? 4 : 0) + msgScore
@@ -139,8 +160,6 @@ export async function findGmailTicketEvidence(actor: AgentActor, queryText: stri
         continue
       }
 
-      // PDFs need ticket-shaped attachment-local evidence as well. This prevents a
-      // generic brochure/invoice attached to a confirmation email becoming the pass.
       if (mime === 'application/pdf' && filenameEvidence(filename) && msgScore >= 3) {
         const score = 14 + msgScore
         if (score > candidateScore) {
