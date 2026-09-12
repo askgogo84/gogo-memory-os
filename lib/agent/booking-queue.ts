@@ -30,6 +30,16 @@ async function existingByUrl(telegramId: number, url: string) {
   }) || null
 }
 
+function bookingWorkerDueAt(now: Date) {
+  // The generic life-event cron runs earlier in the minute than the dedicated
+  // booking cron. Make booking closure visible just before the dedicated worker
+  // so it cannot be consumed by the generic prepare-step handler first.
+  const due = new Date(now)
+  due.setUTCSeconds(45, 0)
+  if (due.getTime() <= now.getTime()) due.setUTCMinutes(due.getUTCMinutes() + 1)
+  return due.toISOString()
+}
+
 export async function queueBookingClosure(params: { telegramId: number; text: string; whatsappTo: string }) {
   const url = firstUrl(params.text)
   if (!url) return null
@@ -49,23 +59,28 @@ export async function queueBookingClosure(params: { telegramId: number; text: st
     })
   }
   const lifeEventId = String(event.id)
-  const now = new Date().toISOString()
+  const nowDate = new Date()
+  const now = nowDate.toISOString()
+  const dueAt = bookingWorkerDueAt(nowDate)
   const payload = {
     originalText: String(params.text || '').slice(0, 4000),
     whatsappTo: params.whatsappTo,
     bookingUrl: url,
     queuedAt: now,
+    dedicatedWorker: 'booking-events',
   }
 
   // One action per Life Event makes webhook retries/repeated forwards idempotent.
+  // browser_prepare is intentionally NOT the generic prepare action type: the
+  // dedicated booking worker owns this action key and performs the real closure.
   const { error } = await supabaseAdmin.from('life_event_actions').upsert({
     life_event_id: lifeEventId,
     telegram_id: String(params.telegramId),
     action_key: 'booking-closure',
-    action_type: 'prepare',
+    action_type: 'browser_prepare',
     capability: 'browser',
     title: `Resolve ${safe(title, 160)} booking`,
-    due_at: now,
+    due_at: dueAt,
     requires_approval: false,
     irreversible: false,
     status: 'ready',
