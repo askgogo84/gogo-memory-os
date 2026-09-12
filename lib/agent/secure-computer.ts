@@ -3,9 +3,9 @@ import { createHash } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
-const PLAYWRIGHT_VERSION = '1.63.0'
 const MAX_ACTIONS = 12
 const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
 
@@ -55,7 +55,7 @@ const { chromium } = require('playwright');
 const encoded = process.argv[2];
 if (!encoded) throw new Error('missing_secure_browser_payload');
 const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
-const profile = '/vercel/sandbox/browser-profile';
+const profile = '${BROWSER_PROFILE_DIR}';
 const clean = s => String(s||'').replace(/\s+/g,' ').trim();
 async function model(page){
   return await page.evaluate(() => {
@@ -124,20 +124,11 @@ async function isPotentialSubmit(page,selector){
 
 async function getComputer(userId:string,targetUrl:string){
   const name=userSandboxName(userId)
-  const setupPolicy={allow:{
-    'registry.npmjs.org':[], '*.npmjs.org':[], 'cdn.playwright.dev':[], '*.playwright.dev':[],
-    'playwright.azureedge.net':[], '*.azureedge.net':[],
-  }} as any
   const sandbox=await Sandbox.getOrCreate({
-    name, runtime:'node24', region:SANDBOX_REGION, timeout:20*60*1000, persistent:true,
-    resources:{vcpus:1}, networkPolicy:setupPolicy,
+    name, image:SANDBOX_IMAGE, region:SANDBOX_REGION, timeout:20*60*1000, persistent:true,
+    resources:{vcpus:1}, networkPolicy:BROWSER_SETUP_NETWORK,
   } as any)
-  const check=await sandbox.runCommand({cmd:'bash',args:['-lc',`if [ -f node_modules/playwright/package.json ]; then node -e "const fs=require('fs');const {chromium}=require('playwright');process.stdout.write(fs.existsSync(chromium.executablePath())?'ready':'missing')"; else echo missing; fi`]})
-  const state=(await check.stdout()).trim()
-  if(state!=='ready'){
-    const install=await sandbox.runCommand({cmd:'bash',args:['-lc',`npm init -y >/dev/null 2>&1 || true; npm install --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION} && npx playwright install --with-deps chromium`]})
-    if(install.exitCode!==0)throw new Error(`secure_browser_bootstrap_failed:${safeText(await install.stderr(),500)}`)
-  }
+  await ensureBrowserRuntime(sandbox)
   await sandbox.writeFiles([{path:'gogo-browser.js',content:Buffer.from(BROWSER_SCRIPT)}])
   const {allow}=allowedHosts(targetUrl)
   await sandbox.updateNetworkPolicy({allow} as any)
