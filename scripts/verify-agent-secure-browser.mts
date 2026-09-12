@@ -35,8 +35,9 @@ assert.match(ticket,/networkPolicy: BROWSER_SETUP_NETWORK/)
 assert.match(bootstrap,/vercel\/sandbox\/node:24/)
 assert.doesNotMatch(computer,/runtime:\s*'node24'/)
 assert.doesNotMatch(ticket,/runtime:\s*'node24'/)
-// 2. Working dir / profile is /vercel (HOME), never the non-existent /vercel/sandbox.
-assert.match(bootstrap,/\/vercel\/browser-profile/)
+// 2. Use the managed image's canonical workspace/profile path.
+assert.match(bootstrap,/\/home\/vercel-sandbox/)
+assert.match(bootstrap,/browser-profile/)
 assert.doesNotMatch(computer,/\/vercel\/sandbox/)
 assert.doesNotMatch(ticket,/\/vercel\/sandbox/)
 // 3. Chromium binary installed as the sandbox user WITHOUT --with-deps; OS libs
@@ -58,6 +59,10 @@ assert.match(bootstrap,/security\.ubuntu\.com/)
 // 6. Pinned Playwright version lives in the shared bootstrap.
 assert.match(bootstrap,/playwright@\$\{PLAYWRIGHT_VERSION\}/)
 assert.match(bootstrap,/PLAYWRIGHT_VERSION = '1\.63\.0'/)
+// 7. Readiness requires a real Chromium launch, not only a binary-on-disk check.
+assert.match(bootstrap,/chromium\.launch\(\{headless:true\}\)/)
+assert.match(bootstrap,/chromium_launch_probe_failed/)
+assert.match(bootstrap,/updateNetworkPolicy\(BROWSER_SETUP_NETWORK/)
 
 // Real Chromium/Playwright is installed inside the microVM, not in the Next.js
 // function process. Browser code is a fixed script; the LLM only proposes a small
