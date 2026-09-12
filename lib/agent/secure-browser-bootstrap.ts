@@ -18,8 +18,9 @@
 //     the user's cache; `--with-deps` would try to apt as a non-root user and
 //     fail.
 //  5. The sandbox firewall is an L7 (HTTPS) proxy: plain-HTTP :80 is not
-//     forwarded, so the default http:// Ubuntu apt sources must be rewritten to
-//     https:// before `apt-get`.
+//     forwarded, so Ubuntu apt sources must be rewritten to https:// before
+//     `apt-get`, regardless of whether the image uses sources.list, *.list, or
+//     deb822 *.sources files.
 //  6. Playwright downloads its browser blobs from cdn.playwright.dev, which
 //     redirects to storage.googleapis.com — both must be reachable during setup.
 //  7. `Sandbox.getOrCreate` can resume an existing persistent sandbox. Creation
@@ -56,10 +57,10 @@ export const BROWSER_SETUP_NETWORK = {
   },
 } as const
 
-// apt over the sandbox firewall must use HTTPS (the proxy does not forward
-// plain-HTTP :80), so rewrite the default http:// Ubuntu sources first.
-const APT_TO_HTTPS =
-  'sed -i "s#http://archive.ubuntu.com#https://archive.ubuntu.com#g; s#http://security.ubuntu.com#https://security.ubuntu.com#g" /etc/apt/sources.list.d/ubuntu.sources'
+// Vercel's managed images may use either classic sources.list/*.list files or
+// deb822 *.sources files. Rewrite whichever files actually exist; never assume a
+// single distro-specific path.
+const APT_TO_HTTPS = `for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do [ -f "$f" ] || continue; sed -i 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g; s#http://security.ubuntu.com#https://security.ubuntu.com#g' "$f"; done`
 
 // The only trustworthy readiness signal is a real launch. A browser executable
 // can exist while required shared libraries are still missing.
