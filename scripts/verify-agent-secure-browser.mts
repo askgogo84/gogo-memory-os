@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const computer=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
+const ticket=readFileSync(new URL('../lib/agent/secure-ticket-reader.ts',import.meta.url),'utf8')
+const bootstrap=readFileSync(new URL('../lib/agent/secure-browser-bootstrap.ts',import.meta.url),'utf8')
 const browser=readFileSync(new URL('../lib/agent/browser-command.ts',import.meta.url),'utf8')
 const runRoute=readFileSync(new URL('../app/api/agent/run/route.ts',import.meta.url),'utf8')
 const execRoute=readFileSync(new URL('../app/api/agent/runs/[id]/execute/route.ts',import.meta.url),'utf8')
@@ -20,16 +22,46 @@ assert.match(computer,/region:SANDBOX_REGION/)
 
 // Setup egress is explicit, then policy is replaced with the requested target
 // family before user browser work runs.
-assert.match(computer,/networkPolicy:setupPolicy/)
+assert.match(computer,/networkPolicy:BROWSER_SETUP_NETWORK/)
 assert.match(computer,/updateNetworkPolicy\(\{allow\}/)
-assert.match(computer,/registry\.npmjs\.org/)
-assert.match(computer,/cdn\.playwright\.dev/)
+
+// Both browser surfaces share the ONE proven bootstrap and never drift.
+assert.match(computer,/ensureBrowserRuntime\(sandbox\)/)
+assert.match(ticket,/ensureBrowserRuntime\(sandbox\)/)
+assert.match(ticket,/networkPolicy: BROWSER_SETUP_NETWORK/)
+
+// --- Proven Vercel Sandbox bootstrap invariants (verified live) ---
+// 1. Supported image form, NOT the deprecated runtime:'node24'.
+assert.match(bootstrap,/vercel\/sandbox\/node:24/)
+assert.doesNotMatch(computer,/runtime:\s*'node24'/)
+assert.doesNotMatch(ticket,/runtime:\s*'node24'/)
+// 2. Working dir / profile is /vercel (HOME), never the non-existent /vercel/sandbox.
+assert.match(bootstrap,/\/vercel\/browser-profile/)
+assert.doesNotMatch(computer,/\/vercel\/sandbox/)
+assert.doesNotMatch(ticket,/\/vercel\/sandbox/)
+// 3. Chromium binary installed as the sandbox user WITHOUT --with-deps; OS libs
+//    installed separately as root (sudo) — the managed image ships no browser libs.
+assert.match(bootstrap,/npx playwright install chromium/)
+assert.doesNotMatch(bootstrap,/install --with-deps/)
+assert.match(bootstrap,/npx playwright install-deps chromium/)
+assert.match(bootstrap,/sudo:\s*true/)
+// 4. apt must go over HTTPS (the sandbox firewall is an L7 proxy; :80 is not forwarded).
+assert.match(bootstrap,/https:\/\/archive\.ubuntu\.com/)
+assert.match(bootstrap,/apt-get update/)
+// 5. Setup egress covers npm, the Playwright CDN + its googleapis blob redirect,
+//    and the Ubuntu apt archives.
+assert.match(bootstrap,/registry\.npmjs\.org/)
+assert.match(bootstrap,/cdn\.playwright\.dev/)
+assert.match(bootstrap,/storage\.googleapis\.com/)
+assert.match(bootstrap,/archive\.ubuntu\.com/)
+assert.match(bootstrap,/security\.ubuntu\.com/)
+// 6. Pinned Playwright version lives in the shared bootstrap.
+assert.match(bootstrap,/playwright@\$\{PLAYWRIGHT_VERSION\}/)
+assert.match(bootstrap,/PLAYWRIGHT_VERSION = '1\.63\.0'/)
 
 // Real Chromium/Playwright is installed inside the microVM, not in the Next.js
 // function process. Browser code is a fixed script; the LLM only proposes a small
 // allowlisted action JSON sequence.
-assert.match(computer,/playwright@\$\{PLAYWRIGHT_VERSION\}/)
-assert.match(computer,/playwright install --with-deps chromium/)
 assert.match(computer,/MAX_ACTIONS = 12/)
 assert.match(computer,/Allowed action kinds: goto, click, fill, select, check, wait, submit/)
 assert.doesNotMatch(computer,/\beval\s*\(/)

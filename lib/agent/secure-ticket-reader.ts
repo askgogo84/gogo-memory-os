@@ -2,8 +2,8 @@ import { createHash } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
 import { detectHumanAuthGate } from './browser-auth-gate'
 import { runSecureBrowser } from './secure-computer'
+import { BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
-const PLAYWRIGHT_VERSION = '1.63.0'
 const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
 
 export type TicketCredential = {
@@ -60,7 +60,7 @@ const { chromium } = require('playwright');
 const encoded = process.argv[2];
 if (!encoded) throw new Error('missing_ticket_reader_payload');
 const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
-const profile='/vercel/sandbox/browser-profile';
+const profile='${BROWSER_PROFILE_DIR}';
 const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
 const visible=el=>{try{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return false}};
 const bad=/\b(pay|purchase|buy|confirm purchase|place order|book now|checkout|refund|cancel booking|delete)\b/i;
@@ -139,17 +139,14 @@ async function captureCredential(page){
 
 async function computer(userId: string, url: string) {
   const sandbox = await Sandbox.getOrCreate({
-    name: sandboxName(userId), runtime: 'node24', region: SANDBOX_REGION,
+    name: sandboxName(userId), image: SANDBOX_IMAGE, region: SANDBOX_REGION,
     timeout: 20 * 60 * 1000, persistent: true, resources: { vcpus: 1 },
-    networkPolicy: { allow: {
-      'registry.npmjs.org': [], '*.npmjs.org': [], 'cdn.playwright.dev': [], '*.playwright.dev': [],
-      'playwright.azureedge.net': [], '*.azureedge.net': [],
-    } },
+    networkPolicy: BROWSER_SETUP_NETWORK,
   } as any)
-  const check = await sandbox.runCommand({ cmd: 'bash', args: ['-lc', 'test -f node_modules/playwright/package.json && echo ready || echo missing'] })
-  if ((await check.stdout()).trim() !== 'ready') {
-    const install = await sandbox.runCommand({ cmd: 'bash', args: ['-lc', `npm init -y >/dev/null 2>&1 || true; npm install --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION} && npx playwright install --with-deps chromium`] })
-    if (install.exitCode !== 0) throw new Error('ticket_browser_bootstrap_failed')
+  try {
+    await ensureBrowserRuntime(sandbox)
+  } catch {
+    throw new Error('ticket_browser_bootstrap_failed')
   }
   await sandbox.writeFiles([{ path: 'gogo-ticket-reader.js', content: Buffer.from(SCRIPT) }])
   await sandbox.updateNetworkPolicy({ allow: allowedHosts(url) } as any)
