@@ -30,7 +30,7 @@ assert.match(computer,/ensureBrowserRuntime\(sandbox\)/)
 assert.match(ticket,/ensureBrowserRuntime\(sandbox\)/)
 assert.match(ticket,/networkPolicy: BROWSER_SETUP_NETWORK/)
 
-// --- Proven Vercel Sandbox bootstrap invariants (verified live) ---
+// --- Vercel Sandbox bootstrap invariants ---
 // 1. Supported image form, NOT the deprecated runtime:'node24'.
 assert.match(bootstrap,/vercel\/sandbox\/node:24/)
 assert.doesNotMatch(computer,/runtime:\s*'node24'/)
@@ -41,21 +41,27 @@ assert.match(bootstrap,/browser-profile/)
 assert.doesNotMatch(computer,/\/vercel\/sandbox/)
 assert.doesNotMatch(ticket,/\/vercel\/sandbox/)
 // 3. Chromium binary installed as the sandbox user WITHOUT --with-deps; OS libs
-//    installed separately as root (sudo) — the managed image ships no browser libs.
+//    installed separately as root with whichever package manager the image has.
 assert.match(bootstrap,/npx playwright install chromium/)
 assert.doesNotMatch(bootstrap,/install --with-deps/)
-assert.match(bootstrap,/npx playwright install-deps chromium/)
 assert.match(bootstrap,/sudo:\s*true/)
-// 4. apt must go over HTTPS (the sandbox firewall is an L7 proxy; :80 is not forwarded).
+assert.match(bootstrap,/command -v apt-get/)
+assert.match(bootstrap,/npx playwright install-deps chromium/)
+assert.match(bootstrap,/command -v dnf/)
+assert.match(bootstrap,/dnf install -y --skip-broken/)
+assert.match(bootstrap,/command -v yum/)
+// 4. apt must go over HTTPS when that path is used.
 assert.match(bootstrap,/https:\/\/archive\.ubuntu\.com/)
 assert.match(bootstrap,/apt-get update/)
-// 5. Setup egress covers npm, the Playwright CDN + its googleapis blob redirect,
-//    and the Ubuntu apt archives.
+// 5. Setup egress covers npm, Playwright/browser redirects, Ubuntu apt repos,
+//    and Amazon Linux package repositories used by dnf-based sandboxes.
 assert.match(bootstrap,/registry\.npmjs\.org/)
 assert.match(bootstrap,/cdn\.playwright\.dev/)
 assert.match(bootstrap,/storage\.googleapis\.com/)
 assert.match(bootstrap,/archive\.ubuntu\.com/)
 assert.match(bootstrap,/security\.ubuntu\.com/)
+assert.match(bootstrap,/cdn\.amazonlinux\.com/)
+assert.match(bootstrap,/amazonaws\.com/)
 // 6. Pinned Playwright version lives in the shared bootstrap.
 assert.match(bootstrap,/playwright@\$\{PLAYWRIGHT_VERSION\}/)
 assert.match(bootstrap,/PLAYWRIGHT_VERSION = '1\.63\.0'/)
