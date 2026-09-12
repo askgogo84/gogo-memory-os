@@ -138,7 +138,7 @@ async function getComputer(userId:string,targetUrl:string){
     const install=await sandbox.runCommand({cmd:'bash',args:['-lc',`npm init -y >/dev/null 2>&1 || true; npm install --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION} && npx playwright install --with-deps chromium`]})
     if(install.exitCode!==0)throw new Error(`secure_browser_bootstrap_failed:${safeText(await install.stderr(),500)}`)
   }
-  await sandbox.writeFiles([{path:'gogo-browser.js',stream:Buffer.from(BROWSER_SCRIPT)}])
+  await sandbox.writeFiles([{path:'gogo-browser.js',content:Buffer.from(BROWSER_SCRIPT)}])
   const {allow}=allowedHosts(targetUrl)
   await sandbox.updateNetworkPolicy({allow} as any)
   return {sandbox,name}
