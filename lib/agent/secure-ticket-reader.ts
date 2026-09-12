@@ -126,11 +126,17 @@ async function captureCredential(page){
     await page.waitForTimeout(1800);
     const tried=await clickUseful(page);
     await page.waitForTimeout(800);
-    const data=await page.evaluate(()=>({
-      url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,22000),
-      shareData:window.__gogoShareData||null,
-      links:Array.from(document.querySelectorAll('a[href]')).filter(visible).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).filter(x=>/ticket|pass|qr|barcode|download|share|wallet/i.test(x.text+' '+x.href)).slice(0,30)
-    }));
+    // page.evaluate runs in the browser realm. Helpers from this Node script are
+    // not captured there, so define clean/visible inside the callback itself.
+    const data=await page.evaluate(()=>{
+      const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+      const visible=el=>{try{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return false}};
+      return {
+        url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,22000),
+        shareData:window.__gogoShareData||null,
+        links:Array.from(document.querySelectorAll('a[href]')).filter(visible).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).filter(x=>/ticket|pass|qr|barcode|download|share|wallet/i.test(x.text+' '+x.href)).slice(0,30)
+      };
+    });
     data.tried=tried; data.credential=await captureCredential(page);
     console.log(JSON.stringify(data));
   }finally{await context.close();}
