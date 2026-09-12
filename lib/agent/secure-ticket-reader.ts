@@ -26,8 +26,6 @@ export type SecureTicketReadResult = {
 
 function sandboxName(userId: string) {
   const digest = createHash('sha256').update(String(userId)).digest('hex').slice(0, 24)
-  // Deliberately reuse the Secure Computer sandbox/profile so a user-assisted login
-  // can resume the same provider session later without copying credentials into Gogo.
   return `gogo-browser-${digest}`
 }
 
@@ -147,12 +145,15 @@ async function computer(userId: string, url: string) {
 }
 
 export async function readProviderTicketPage(params: { userId: string; url: string }): Promise<SecureTicketReadResult> {
-  const sandbox = await computer(params.userId, params.url)
+  let sandbox: any = null
   try {
+    sandbox = await computer(params.userId, params.url)
     const payload = Buffer.from(JSON.stringify({ url: params.url })).toString('base64')
     const result = await sandbox.runCommand('node', ['gogo-ticket-reader.js', payload])
     if (result.exitCode !== 0) throw new Error('ticket_browser_failed')
-    const lines = (await result.stdout()).trim().split('\n')
+    const stdout = await result.stdout()
+    const lines = String(stdout || '').trim().split('\n').filter(Boolean)
+    if (!lines.length) throw new Error('ticket_browser_empty_output')
     const page: any = JSON.parse(lines[lines.length - 1])
     const gate = detectHumanAuthGate({ title: page.title, text: page.text, forms: [] })
     if (gate.required) {
@@ -166,10 +167,10 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
       pageText: String(page.text || '').slice(0, 16000), shareData: page.shareData || undefined,
       usefulLinks: Array.isArray(page.links) ? page.links.slice(0, 30) : [], credential: page.credential || undefined,
     }
-  } catch (error) {
-    console.error('SECURE_TICKET_READER_FAILED:', error)
+  } catch (error: any) {
+    console.error('SECURE_TICKET_READER_FAILED:', error?.message || error)
     return { status: 'failed', url: params.url, title: '', pageText: '', usefulLinks: [] }
   } finally {
-    await sandbox.stop().catch(() => {})
+    if (sandbox) await sandbox.stop().catch(() => {})
   }
 }
