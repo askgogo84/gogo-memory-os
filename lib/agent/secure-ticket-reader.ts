@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { detectProviderChallenge, PROVIDER_CLOUDFLARE_CHALLENGE, DEVICE_HANDOFF_REQUIRED } from './provider-challenge'
 import { runSecureBrowser } from './secure-computer'
 import { BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
@@ -21,8 +22,9 @@ export type SecureTicketReadResult = {
   shareData?: { title?: string; text?: string; url?: string }
   usefulLinks: Array<{ text: string; href: string }>
   credential?: TicketCredential
-  blockReason?: 'human_auth_required'
+  blockReason?: 'human_auth_required' | 'provider_cloudflare_challenge'
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
+  handoff?: 'device_handoff_required'
 }
 
 function sandboxName(userId: string) {
@@ -227,6 +229,18 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
       credentialFound: Boolean(page.credential),
       textLength: String(page.text || '').length,
     })
+    const challenge = detectProviderChallenge({ title: page.title, text: page.text })
+    if (challenge.challenged) {
+      console.warn('SECURE_TICKET_READER_PROVIDER_CHALLENGE:', {
+        url: String(page.url || params.url).slice(0, 500),
+        reason: challenge.reason,
+        handoff: DEVICE_HANDOFF_REQUIRED,
+      })
+      return {
+        status: 'blocked', url: String(page.url || params.url), title: String(page.title || '').slice(0, 300),
+        pageText: '', usefulLinks: [], blockReason: PROVIDER_CLOUDFLARE_CHALLENGE, handoff: DEVICE_HANDOFF_REQUIRED,
+      }
+    }
     const gate = detectHumanAuthGate({ title: page.title, text: page.text, forms: [] })
     if (gate.required) {
       return {
