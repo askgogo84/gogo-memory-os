@@ -66,6 +66,7 @@ import { saveDocumentNote, saveTicketDocument, deriveNoteTitleFromReader } from 
 import { tryHandleAssetSave, isAssetRetrievalCommand, buildAssetRetrievalReply, buildAssetFieldReply } from '@/lib/services/asset-memory'
 import { describeCadence, formatReminderWhen, cleanReminderName } from '@/lib/services/reminder-series'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
+import { shouldTreatMediaAsLinkPreview } from '@/lib/services/whatsapp-preview-routing'
 
 // Detect WhatsApp link preview cards (any website shared as a card)
 // These come as: Body = "Site Title | Site Name" + MediaUrl0 = thumbnail
@@ -393,6 +394,9 @@ export async function POST(req: NextRequest) {
 
     const firstMediaUrl = String(formData.get('MediaUrl0') || '')
     const firstMediaType = String(formData.get('MediaContentType0') || '')
+    const isKnownSocialPreview = isInstagramReelPreview(bodyText) || detectInstagramPreviewCard(bodyText) || detectLinkedInPreviewCard(bodyText) || detectReelUrl(bodyText) !== null
+    const previewThumbnailOnly = shouldTreatMediaAsLinkPreview({ bodyText, mediaType: firstMediaType, numMedia, mediaUrl: firstMediaUrl }) && !isKnownSocialPreview
+    if (previewThumbnailOnly) console.log('WHATSAPP_LINK_PREVIEW_MEDIA_IGNORED:', { body: bodyText.slice(0, 180), mediaType: firstMediaType })
 
     // Instagram/LinkedIn video cards come as video/mp4 — handle them FIRST before image branch
     const isVideoMedia = firstMediaType.startsWith('video/')
@@ -427,7 +431,7 @@ export async function POST(req: NextRequest) {
       // Real user-sent video — fall through to Claude
     }
 
-    if (numMedia > 0 && firstMediaUrl && isImageContentType(firstMediaType)) {
+    if (numMedia > 0 && firstMediaUrl && isImageContentType(firstMediaType) && !previewThumbnailOnly) {
       try {
         await saveRecentImageContext({ telegramId: resolvedUser.telegramId, mediaUrl: firstMediaUrl, contentType: firstMediaType })
         const hasPendingSkinCheck = await getRecentPendingSkinCheckRequest(resolvedUser.telegramId)
