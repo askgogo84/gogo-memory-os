@@ -8,6 +8,41 @@ const MAX_UNRESOLVED_ATTEMPTS = 6
 
 function safe(v:unknown,max=400){return String(v??'').replace(/\s+/g,' ').trim().slice(0,max)}
 
+function isBookMyShowUrl(value:unknown){
+  try{
+    const host=new URL(String(value||'')).hostname.toLowerCase().replace(/^www\./,'')
+    return host==='bmsurl.co'||host==='bookmyshow.com'||host.endsWith('.bookmyshow.com')
+  }catch{return false}
+}
+
+function requiresDeviceHandoff(row:any,result:any){
+  return Boolean(result?.needsUserAuth&&isBookMyShowUrl(row?.payload_json?.bookingUrl))
+}
+
+async function blockForDeviceHandoff(row:any,result:any){
+  const payload={
+    ...(row.payload_json||{}),
+    lastError:'provider_cloudflare_challenge',
+    retryAt:null,
+    unresolvedAttempts:Number(row.payload_json?.unresolvedAttempts||0)+1,
+    providerBlock:'cloudflare',
+    deviceHandoffRequired:true,
+    lastResolution:{
+      status:result?.details?.status||null,
+      title:result?.details?.title||null,
+      needsUserAuth:Boolean(result?.needsUserAuth),
+      credentialSaved:Boolean(result?.credentialUrl),
+      lifeEventId:result?.lifeEventId||row.life_event_id,
+    },
+  }
+  await supabaseAdmin.from('life_event_actions').update({
+    status:'blocked',
+    due_at:null,
+    updated_at:new Date().toISOString(),
+    payload_json:payload,
+  }).eq('id',row.id).eq('status','running')
+}
+
 async function defer(row:any,reason:string,result?:any){
   const previousAttempts=Number(row.payload_json?.unresolvedAttempts||0)
   const unresolvedAttempts=previousAttempts+1
@@ -79,6 +114,22 @@ export async function processQueuedBookingClosures(limit=6){
       if(!text||!to)throw new Error('booking_closure_context_missing')
       const result=await closeBookingLink({telegramId:Number(row.telegram_id),text})
       if(!result)throw new Error('booking_closure_no_result')
+
+      if(requiresDeviceHandoff(row,result)){
+        console.warn('BOOKING_PROVIDER_DEVICE_HANDOFF_REQUIRED:',{
+          actionId:row.id,
+          lifeEventId:result.lifeEventId||row.life_event_id,
+          provider:'BookMyShow',
+          reason:'provider_cloudflare_challenge',
+          title:safe(result.details?.title||'',180),
+        })
+        await sendWhatsAppMessage(to,
+          `🎟️ *${result.details?.title||'Booking saved'}*\n\nBookMyShow protected this ticket from background access, so I couldn't read the private ticket/QR from the cloud. I've saved the booking link and stopped background retries.\n\nOnce AskGogo device access is available, I can finish this through your phone session. If a matching confirmation reaches your connected Gmail, I can also complete it from there.`
+        )
+        await blockForDeviceHandoff(row,result)
+        deferred++
+        continue
+      }
 
       const unresolvedReason=resolutionReason(result)
       if(unresolvedReason){
