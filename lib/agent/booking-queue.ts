@@ -74,11 +74,12 @@ export async function queueBookingClosure(params: { telegramId: number; text: st
   }, { onConflict: 'life_event_id,action_key' })
   if (error) throw new Error(`booking_closure_queue_failed:${error.message}`)
 
-  await supabaseAdmin.from('life_events').update({
+  const { error: eventUpdateError } = await supabaseAdmin.from('life_events').update({
     lifecycle_state: 'captured',
     metadata_json: { ...(event.metadata_json || {}), bookingUrl: url, closureQueued: true, closureQueuedAt: now },
     updated_at: now,
-  }).eq('id', lifeEventId).eq('telegram_id', String(params.telegramId)).catch(() => {})
+  }).eq('id', lifeEventId).eq('telegram_id', String(params.telegramId))
+  if (eventUpdateError) console.error('BOOKING_CLOSURE_EVENT_UPDATE_FAILED:', eventUpdateError.message)
 
   return {
     lifeEventId,
