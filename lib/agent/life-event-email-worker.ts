@@ -201,23 +201,25 @@ async function processBoardingPassWatch(action: any, event: any, telegramId: str
   let best = ranked.find((row: any) => row.match.accepted) || null
   let attachment: Awaited<ReturnType<typeof readWorkspaceEmailBrief>> | null = null
 
-  if (!best && emailResult.messages.length) {
-    attachment = await readWorkspaceEmailBrief(actor, emailResult.messages, searchText)
-    if (attachment.status === 'found') {
-      for (const row of ranked) {
-        const match = scoreBoardingPassCandidate({
-          subject: row.message.subject,
-          from: row.message.from,
-          snippet: row.message.snippet,
-          attachmentText: attachment.text,
-          provider: event.provider,
-          confirmationRef,
-          flightNo,
-        })
-        if (match.accepted) {
-          best = { message: row.message, match }
-          break
-        }
+  // Attachment evidence is evaluated one Gmail message at a time. Never apply
+  // text from one message's attachment to another message's metadata.
+  if (!best) {
+    for (const row of ranked.slice(0, 3)) {
+      const candidateAttachment = await readWorkspaceEmailBrief(actor, [row.message], searchText)
+      if (candidateAttachment.status !== 'found') continue
+      const match = scoreBoardingPassCandidate({
+        subject: row.message.subject,
+        from: row.message.from,
+        snippet: row.message.snippet,
+        attachmentText: candidateAttachment.text,
+        provider: event.provider,
+        confirmationRef,
+        flightNo,
+      })
+      if (match.accepted) {
+        best = { message: row.message, match }
+        attachment = candidateAttachment
+        break
       }
     }
   }
@@ -231,9 +233,7 @@ async function processBoardingPassWatch(action: any, event: any, telegramId: str
     return { status: 'deferred' as const, matched: false }
   }
 
-  if (!attachment && emailResult.messages.length) {
-    attachment = await readWorkspaceEmailBrief(actor, [best.message], searchText)
-  }
+  if (!attachment) attachment = await readWorkspaceEmailBrief(actor, [best.message], searchText)
 
   const at = new Date().toISOString()
   const boardingPass = {
