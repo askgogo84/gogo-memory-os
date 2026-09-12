@@ -3,6 +3,7 @@ import { createHash } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { detectProviderChallenge, PROVIDER_CLOUDFLARE_CHALLENGE, DEVICE_HANDOFF_REQUIRED } from './provider-challenge'
 import { BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -29,8 +30,11 @@ export type SecureBrowserResult = {
   forms:Array<{action:string;method:string;inputs:Array<{selector:string;name:string;type:string;label:string}>}>
   actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed'}>
   sandboxName:string
-  blockReason?: 'human_auth_required'
+  blockReason?: 'human_auth_required' | 'provider_cloudflare_challenge'
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
+  // Set when a provider anti-bot challenge (Cloudflare) blocks the server browser;
+  // the task must move to the user's authenticated device instead of retrying.
+  handoff?: 'device_handoff_required'
 }
 
 function safeText(value:unknown,max=1200){
@@ -187,6 +191,19 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
     const first=await inspect(params.userId,target.toString())
+
+    // Provider anti-bot challenge (Cloudflare) is IP/reputation based — retrying
+    // from the sandbox will keep failing. Stop and hand off to the user's device.
+    const challenge=detectProviderChallenge({title:first.page.title,text:first.page.text})
+    if(challenge.challenged){
+      await first.sandbox.stop().catch(()=>{})
+      return {
+        status:'blocked',url:String(first.page.url||target),title:safeText(first.page.title,300),
+        summary:'This site is protected by an anti-bot challenge that only your own signed-in device can pass.',
+        pageText:'Gogo stopped at a provider anti-bot challenge and did not retry. Open the link on your device where you are already signed in.',
+        forms:[],actions:[],sandboxName:first.name,blockReason:PROVIDER_CLOUDFLARE_CHALLENGE,handoff:DEVICE_HANDOFF_REQUIRED,
+      }
+    }
 
     const authGate=detectHumanAuthGate(first.page)
     if(authGate.required){

@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { detectProviderChallenge, PROVIDER_CLOUDFLARE_CHALLENGE, DEVICE_HANDOFF_REQUIRED } from './provider-challenge'
 import { runSecureBrowser } from './secure-computer'
 import { BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
@@ -21,8 +22,12 @@ export type SecureTicketReadResult = {
   shareData?: { title?: string; text?: string; url?: string }
   usefulLinks: Array<{ text: string; href: string }>
   credential?: TicketCredential
-  blockReason?: 'human_auth_required'
+  blockReason?: 'human_auth_required' | 'provider_cloudflare_challenge'
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
+  // When a provider anti-bot challenge (Cloudflare) blocks the server browser,
+  // the only legitimate route is the user's authenticated device. This flags that
+  // handoff so callers stop server-side retries.
+  handoff?: 'device_handoff_required'
 }
 
 function sandboxName(userId: string) {
@@ -187,6 +192,16 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     const lines = String(stdout || '').trim().split('\n').filter(Boolean)
     if (!lines.length) throw new Error('ticket_browser_empty_output')
     const page: any = JSON.parse(lines[lines.length - 1])
+    // A provider anti-bot challenge (Cloudflare) is IP/reputation based: retrying
+    // from the sandbox — or falling back to the sandbox browser — hits the same
+    // block. Detect it deterministically and hand off to the user's device.
+    const challenge = detectProviderChallenge({ title: page.title, text: page.text })
+    if (challenge.challenged) {
+      return {
+        status: 'blocked', url: String(page.url || params.url), title: String(page.title || '').slice(0, 300),
+        pageText: '', usefulLinks: [], blockReason: PROVIDER_CLOUDFLARE_CHALLENGE, handoff: DEVICE_HANDOFF_REQUIRED,
+      }
+    }
     const gate = detectHumanAuthGate({ title: page.title, text: page.text, forms: [] })
     if (gate.required) {
       return {
