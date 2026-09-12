@@ -10,6 +10,7 @@ import { tryRunTravelResearch } from './travel-research'
 import { hardenTravelResearchResult } from './travel-research-sanitize'
 import { executeApprovedAgentRun } from './orchestrator'
 import { executeApprovedLifeEventCheckin } from './life-event-execution'
+import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
 
 export type WhatsAppAgentResult = {
@@ -94,7 +95,9 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
         ? await resumeApprovedGeneralPlan({ actor, runId:String(data.run_id) })
         : planType === 'life_event_checkin'
           ? await executeApprovedLifeEventCheckin({ actor, runId:String(data.run_id) })
-          : await executeApprovedAgentRun({ actor, runId:String(data.run_id) })
+          : planType === 'booking_event_calendar'
+            ? await executeApprovedBookingCalendar({ actor, runId:String(data.run_id) })
+            : await executeApprovedAgentRun({ actor, runId:String(data.run_id) })
   const suffix = result.status === 'waiting_approval' ? '\n\nAnother consequential step is ready. Reply *APPROVE* to continue or *REJECT* to stop.' : ''
   return { text:`${result.text || 'Approved and executed.'}${suffix}`, runId:String(data.run_id), status:result.status, handledBy:'whatsapp-agent-approval' }
 }
@@ -160,8 +163,6 @@ export async function tryRunWhatsAppAgent(params: {
   const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (compound) return { ...compound, handledBy:compound.handledBy }
 
-  // Multi-step missions run before simple single-feature travel research so an
-  // outcome like “plan my trip, create tasks and remind me” stays one Agent run.
   const general = await tryRunGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (general) return { ...general, text:`${general.text || ''}${general.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(general.handledBy || 'general-plan') }
 
