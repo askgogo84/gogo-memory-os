@@ -52,7 +52,9 @@ function allowedHosts(url:string){
 
 const BROWSER_SCRIPT=String.raw`
 const { chromium } = require('playwright');
-const payload = JSON.parse(Buffer.from(process.argv[2], 'base64').toString('utf8'));
+const encoded = process.argv[2];
+if (!encoded) throw new Error('missing_secure_browser_payload');
+const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
 const profile = '/vercel/sandbox/browser-profile';
 const clean = s => String(s||'').replace(/\s+/g,' ').trim();
 async function model(page){
@@ -79,12 +81,6 @@ async function model(page){
       }))
     };
   });
-}
-async function isSubmit(page,selector){
-  try{return await page.locator(selector).first().evaluate(el=>{
-    const t=(el.getAttribute('type')||'').toLowerCase();
-    return t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null;
-  });}catch{return false;}
 }
 async function isPotentialSubmit(page,selector){
   try{return await page.locator(selector).first().evaluate(el=>{
@@ -136,10 +132,10 @@ async function getComputer(userId:string,targetUrl:string){
     name, runtime:'node24', region:SANDBOX_REGION, timeout:20*60*1000, persistent:true,
     resources:{vcpus:1}, networkPolicy:setupPolicy,
   } as any)
-  const check=await sandbox.runCommand('bash',['-lc',`test -f node_modules/playwright/package.json && echo ready || echo missing`])
+  const check=await sandbox.runCommand({cmd:'bash',args:['-lc','test -f node_modules/playwright/package.json && echo ready || echo missing']})
   const state=(await check.stdout()).trim()
   if(state!=='ready'){
-    const install=await sandbox.runCommand('bash',['-lc',`npm init -y >/dev/null 2>&1 || true; npm install --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION} && npx playwright install --with-deps chromium`])
+    const install=await sandbox.runCommand({cmd:'bash',args:['-lc',`npm init -y >/dev/null 2>&1 || true; npm install --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION} && npx playwright install --with-deps chromium`]})
     if(install.exitCode!==0)throw new Error(`secure_browser_bootstrap_failed:${safeText(await install.stderr(),500)}`)
   }
   await sandbox.writeFiles([{path:'gogo-browser.js',stream:Buffer.from(BROWSER_SCRIPT)}])
@@ -176,9 +172,11 @@ function normalizeActions(raw:any,initialUrl:string):BrowserAction[]{
 async function inspect(userId:string,url:string){
   const {sandbox,name}=await getComputer(userId,url)
   const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[]})).toString('base64')
-  const result=await sandbox.runCommand('node',['gogo-browser.js',payload])
+  const result=await sandbox.runCommand({cmd:'node',args:['gogo-browser.js',payload]})
   if(result.exitCode!==0)throw new Error(`secure_browser_read_failed:${safeText(await result.stderr(),700)}`)
-  const stdout=await result.stdout();const lines=stdout.trim().split('\n');const parsed=JSON.parse(lines[lines.length-1])
+  const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
+  if(!lines.length)throw new Error('secure_browser_empty_output')
+  const parsed=JSON.parse(lines[lines.length-1])
   return {sandbox,name,page:parsed}
 }
 
@@ -194,38 +192,45 @@ async function planActions(objective:string,page:any,mode:BrowserMode):Promise<B
 }
 
 export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode}):Promise<SecureBrowserResult>{
-  const target=new URL(params.url)
-  if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
-  const first=await inspect(params.userId,target.toString())
+  try {
+    const target=new URL(params.url)
+    if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
+    const first=await inspect(params.userId,target.toString())
 
-  const authGate=detectHumanAuthGate(first.page)
-  if(authGate.required){
-    await first.sandbox.stop().catch(()=>{})
-    return {
-      status:'blocked',url:String(first.page.url||target),title:safeText(first.page.title,300),
-      summary:authGate.message||'Human authentication is required before Gogo can continue.',
-      pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',
-      forms:[],actions:[],sandboxName:first.name,blockReason:'human_auth_required',authReason:authGate.reason,
+    const authGate=detectHumanAuthGate(first.page)
+    if(authGate.required){
+      await first.sandbox.stop().catch(()=>{})
+      return {
+        status:'blocked',url:String(first.page.url||target),title:safeText(first.page.title,300),
+        summary:authGate.message||'Human authentication is required before Gogo can continue.',
+        pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',
+        forms:[],actions:[],sandboxName:first.name,blockReason:'human_auth_required',authReason:authGate.reason,
+      }
     }
-  }
 
-  const actions=await planActions(params.objective,first.page,params.mode)
-  let page=first.page
-  let actionLog:any[]=[]
-  if(actions.length){
-    const {allow}=allowedHosts(target.toString());await first.sandbox.updateNetworkPolicy({allow} as any)
-    const payload=Buffer.from(JSON.stringify({url:target.toString(),mode:params.mode,actions})).toString('base64')
-    const result=await first.sandbox.runCommand('node',['gogo-browser.js',payload])
-    if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
-    const stdout=await result.stdout();const lines=stdout.trim().split('\n');page=JSON.parse(lines[lines.length-1]);actionLog=page.actions||[]
-  }
-  await first.sandbox.stop().catch(()=>{})
-  const prepared=params.mode==='draft' && actions.some(a=>a.kind==='submit')
-  return {
-    status:prepared?'prepared':'completed',url:String(page.url||target),title:safeText(page.title,300),
-    summary:params.mode==='read'?'Gogo read the page in an isolated browser.':prepared?'Gogo prepared the browser flow and stopped before submit.':'Gogo completed the approved browser flow.',
-    pageText:safeText(page.text,6000),forms:Array.isArray(page.forms)?page.forms.slice(0,12):[],
-    actions:actionLog.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed'})),
-    sandboxName:first.name,
+    const actions=await planActions(params.objective,first.page,params.mode)
+    let page=first.page
+    let actionLog:any[]=[]
+    if(actions.length){
+      const {allow}=allowedHosts(target.toString());await first.sandbox.updateNetworkPolicy({allow} as any)
+      const payload=Buffer.from(JSON.stringify({url:target.toString(),mode:params.mode,actions})).toString('base64')
+      const result=await first.sandbox.runCommand({cmd:'node',args:['gogo-browser.js',payload]})
+      if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
+      const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
+      if(!lines.length)throw new Error('secure_browser_action_empty_output')
+      page=JSON.parse(lines[lines.length-1]);actionLog=page.actions||[]
+    }
+    await first.sandbox.stop().catch(()=>{})
+    const prepared=params.mode==='draft' && actions.some(a=>a.kind==='submit')
+    return {
+      status:prepared?'prepared':'completed',url:String(page.url||target),title:safeText(page.title,300),
+      summary:params.mode==='read'?'Gogo read the page in an isolated browser.':prepared?'Gogo prepared the browser flow and stopped before submit.':'Gogo completed the approved browser flow.',
+      pageText:safeText(page.text,6000),forms:Array.isArray(page.forms)?page.forms.slice(0,12):[],
+      actions:actionLog.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed'})),
+      sandboxName:first.name,
+    }
+  } catch (error:any) {
+    console.error('SECURE_BROWSER_FAILED:', error?.stack || error?.message || error)
+    throw error
   }
 }
