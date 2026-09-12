@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
 const closure = fs.readFileSync('lib/agent/booking-closure.ts','utf8')
+const queue = fs.readFileSync('lib/agent/booking-queue.ts','utf8')
+const closureWorker = fs.readFileSync('lib/agent/booking-closure-worker.ts','utf8')
 const ticketReader = fs.readFileSync('lib/agent/secure-ticket-reader.ts','utf8')
 const gmail = fs.readFileSync('lib/agent/gmail-ticket-credential.ts','utf8')
 const calendar = fs.readFileSync('lib/agent/booking-calendar-execution.ts','utf8')
@@ -12,65 +14,70 @@ const watcher = fs.readFileSync('lib/agent/booking-change-worker.ts','utf8')
 const cron = fs.readFileSync('app/api/cron/booking-events/route.ts','utf8')
 const vercel = fs.readFileSync('vercel.json','utf8')
 
-// Provider page + Share button should be a real source of the ticket credential.
 assert.match(ticketReader,/navigator,'share'/)
 assert.match(ticketReader,/__gogoShareData/)
 assert.match(ticketReader,/share\|download\|show ticket\|view ticket\|ticket\|qr\|barcode\|pass\|wallet/i)
 assert.match(ticketReader,/screenshot\(\{type:'png'/)
 assert.match(ticketReader,/provider_page/)
 assert.match(ticketReader,/human_auth_required/)
-assert.match(ticketReader,/bookmyshow\.com/)
 
-// Gmail is a parallel source for confirmations, QR images and PDFs.
+// Gmail is read-only and image credentials require attachment-local pixel evidence.
 assert.match(gmail,/gmail_connected/)
-assert.match(gmail,/messages\?/) 
-assert.match(gmail,/application\/pdf/)
-assert.match(gmail,/mime\.startsWith\('image\/'\)/)
-assert.match(gmail,/qr\|qrcode\|barcode/)
-assert.match(gmail,/booking confirmation/)
+assert.match(gmail,/verifyImageCredential/)
+assert.match(gmail,/TICKET_CREDENTIAL/)
+assert.match(gmail,/Logos, posters, banners and marketing images are OTHER/)
+assert.match(gmail,/filenameEvidence/)
 assert.doesNotMatch(gmail,/method:\s*['"](?:POST|PATCH|DELETE)['"]/)
 
-// Closure must resolve sources, store the provider-issued credential, schedule a
-// reminder, prepare calendar approval and arm a change watch.
-assert.match(closure,/findGmailTicketEvidence/)
-assert.match(closure,/readProviderTicketPage/)
-assert.match(closure,/storeCredential/)
-assert.match(closure,/providerIssued:\s*true/)
-assert.match(closure,/event_ticket/)
+// WhatsApp only queues bounded work; browser/Gmail closure runs from Background Gogo.
+assert.match(feature,/queueBookingClosure/)
+assert.doesNotMatch(feature,/await closeBookingLink/)
+assert.match(queue,/action_key:\s*'booking-closure'/)
+assert.match(queue,/status:\s*'ready'/)
+assert.match(closureWorker,/closeBookingLink/)
+assert.match(closureWorker,/sendWhatsAppMediaMessage/)
+assert.match(cron,/processQueuedBookingClosures/)
+assert.match(vercel,/"schedule": "\* \* \* \* \*"/)
+
+// Server-side provider fetches manually revalidate every redirect.
+assert.match(closure,/TRUSTED_PROVIDER_HOSTS/)
+assert.match(closure,/redirect:'manual'/)
+assert.match(closure,/trustedProviderUrl\(next\)/)
+assert.doesNotMatch(closure,/redirect:\s*['"]follow['"]/)
+
+// Only confirmed/rescheduled bookings can create reminders/calendar/watch.
+assert.match(closure,/details\.status==='confirmed'\|\|details\.status==='rescheduled'/)
+assert.match(closure,/details\.status==='cancelled'/)
+assert.match(closure,/details\.status==='unknown'/)
 assert.match(closure,/ensureReminder/)
-assert.match(closure,/2 \* 3600_000/)
 assert.match(closure,/prepareBookingCalendarApproval/)
 assert.match(closure,/booking-change-watch/)
-assert.match(closure,/show my movie ticket/i)
-assert.match(closure,/getDocumentSignedUrl/)
-assert.match(closure,/retrieveEventCredential/)
+assert.match(closure,/providerIssued:true/)
+assert.match(closure,/retrieveEventCredential\(telegramId:number,requestText:string\)/)
+assert.match(closure,/queryTokens\(requestText\)/)
 assert.doesNotMatch(closure,/generate.*qr/i)
 
-// WhatsApp must actually send the saved credential media and the same approval
-// executor must work from both WhatsApp and dashboard.
-assert.match(feature,/sendWhatsAppMediaMessage/)
-assert.match(feature,/retrieveEventCredential/)
-assert.match(feature,/closeBookingLink/)
+// Calendar remains approval-gated and idempotent by Life Event, not run ID.
+assert.match(calendar,/existingPending/)
+assert.match(calendar,/eventIdForLifeEvent/)
+assert.match(calendar,/booking-life-event:/)
+assert.match(calendar,/action_type:'calendar_change'/)
+assert.match(calendar,/eq\('status','approved'\)/)
+assert.match(calendar,/create_booking_calendar_event/)
+assert.doesNotMatch(calendar,/sendUpdates=all/)
+
 assert.match(whatsapp,/booking_event_calendar/)
 assert.match(whatsapp,/executeApprovedBookingCalendar/)
 assert.match(executeRoute,/booking_event_calendar/)
 assert.match(executeRoute,/executeApprovedBookingCalendar/)
 
-// Calendar remains approval-gated and provider actions are not modified.
-assert.match(calendar,/status:\s*'waiting_approval'/)
-assert.match(calendar,/action_type:\s*'calendar_change'/)
-assert.match(calendar,/eq\('status', 'approved'\)/)
-assert.match(calendar,/create_booking_calendar_event/)
-assert.match(calendar,/Provider:/)
-assert.doesNotMatch(calendar,/sendUpdates=all/)
-
-// Background closure keeps watching and cron is protected.
-assert.match(watcher,/booking-change-watch/)
-assert.match(watcher,/cancellation|cancelled/i)
-assert.match(watcher,/venue change/i)
+// Change monitoring uses valid DB lifecycle states and stops after one cancellation alert.
+assert.match(watcher,/lifecycle_state:cancelled\?'cancelled':'watching'/)
+assert.doesNotMatch(watcher,/needs_attention/)
+assert.match(watcher,/cancellationNotified:true/)
+assert.match(watcher,/await complete\(row\.id/)
 assert.match(watcher,/sendAgentPush/)
 assert.match(cron,/CRON_SECRET/)
 assert.match(cron,/processBookingChangeWatches/)
-assert.match(vercel,/\/api\/cron\/booking-events/)
 
-console.log('✅ Booking closure regression passed: provider Share/QR + Gmail + calendar + reminder + retrieval + change watch')
+console.log('✅ Booking closure regression passed: queued provider Share/QR + verified Gmail + calendar + reminder + retrieval + change watch')
