@@ -5,8 +5,10 @@
 import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
 import { dispatchThroughSameBrain } from '@/lib/agent/same-brain'
+import { registerLifeEvent } from '@/lib/agent/life-event-engine'
 import { buildGmailConnectUrl } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isBookingOrEventLinkText } from '@/lib/services/whatsapp-preview-routing'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 
 function isSimpleWorkspaceRead(text:string) {
@@ -22,11 +24,68 @@ function isWorkspaceConnect(text:string) {
   return /\b(connect|link|reconnect|refresh)\b/.test(t) && /\b(gmail|google workspace|google account|email)\b/.test(t)
 }
 
+function firstUrl(text:string) {
+  const match=String(text||'').match(/https?:\/\/[^\s<>]+/i)
+  return match ? match[0].replace(/[),.;!?]+$/,'') : ''
+}
+
+function bookingProvider(text:string,url:string) {
+  const hay=`${text} ${url}`.toLowerCase()
+  if(/bookmyshow|bmsurl\.co/.test(hay))return 'BookMyShow'
+  if(/district\.in/.test(hay))return 'District'
+  if(/insider\.in/.test(hay))return 'Insider'
+  if(/paytm\.com/.test(hay))return 'Paytm'
+  return 'Booking provider'
+}
+
+function bookingTitle(text:string) {
+  const raw=String(text||'').replace(/https?:\/\/\S+/gi,' ').replace(/\s+/g,' ').trim()
+  const watching=raw.match(/we(?:'|’)re\s+watching\s+(.+?)(?=\.\s*(?:find|here|ticket)|\s+find\s+ticket|$)/i)
+  if(watching?.[1])return watching[1].trim().slice(0,180)
+  const details=raw.match(/booking\s+details\s*[-–:]\s*(.+?)(?=\.|$)/i)
+  if(details?.[1] && !/bookmyshow/i.test(details[1]))return details[1].trim().slice(0,180)
+  const movie=raw.match(/\b(?:movie|film)\s*[:\-]\s*(.+?)(?=\.|$)/i)
+  if(movie?.[1])return movie[1].trim().slice(0,180)
+  return 'Event booking'
+}
+
+async function handleBookingEventLink(text:string,telegramId:number) {
+  if(!isBookingOrEventLinkText(text))return null
+  const url=firstUrl(text)
+  const provider=bookingProvider(text,url)
+  const title=bookingTitle(text)
+
+  try {
+    await registerLifeEvent({
+      telegramId,
+      eventType:'event',
+      subtype:/movie|watching|cinema|theatre/i.test(text)?'movie_booking':'event_booking',
+      source:'whatsapp_booking_link',
+      title,
+      provider,
+      metadata:{ bookingUrl:url||null, schedulePending:true },
+      sourceRefs:url ? [{ source:'whatsapp', kind:'booking_link', url }] : [{ source:'whatsapp', kind:'booking_text' }],
+    })
+  } catch(err:any) {
+    // Recognition should still work even if persistence has a transient failure.
+    console.error('BOOKING_LINK_LIFE_EVENT_SAVE_FAILED:',err?.message||err)
+  }
+
+  return `🎟️ *Booking received*\n\n*${title}*\n${provider}${url?`\n${url}`:''}\n\nI’ve recognised this as an event booking — not a photo/document. I’ll keep it with your events.\n\nIf the forwarded message doesn’t include the *date, time and venue*, send the booking confirmation/screenshot and I’ll complete the event details and calendar flow.`
+}
+
 export async function routeFeatureIntent(
   phone: string,
   text: string,
   extra?: { telegramId?: number; caption?: string },
 ): Promise<string | null> {
+  // Booking/event links are deterministic first-class inputs. They must beat generic
+  // URL/image handling so WhatsApp preview thumbnails cannot become fake documents.
+  if(extra?.telegramId) {
+    const booking=await handleBookingEventLink(text,extra.telegramId)
+    if(booking)return booking
+  }
+
   const legacy = await routeLegacyFeatureIntent(phone, text, extra)
   if (legacy) return legacy
   if (!extra?.telegramId) return null
