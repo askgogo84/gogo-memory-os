@@ -151,7 +151,7 @@ async function computer(userId: string, url: string) {
     const install = await sandbox.runCommand({ cmd: 'bash', args: ['-lc', `npm init -y >/dev/null 2>&1 || true; npm install --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION} && npx playwright install --with-deps chromium`] })
     if (install.exitCode !== 0) throw new Error('ticket_browser_bootstrap_failed')
   }
-  await sandbox.writeFiles([{ path: 'gogo-ticket-reader.js', stream: Buffer.from(SCRIPT) }])
+  await sandbox.writeFiles([{ path: 'gogo-ticket-reader.js', content: Buffer.from(SCRIPT) }])
   await sandbox.updateNetworkPolicy({ allow: allowedHosts(url) } as any)
   return sandbox
 }
