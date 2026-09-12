@@ -12,7 +12,7 @@ const whatsapp = fs.readFileSync('lib/agent/whatsapp-bridge.ts','utf8')
 const executeRoute = fs.readFileSync('app/api/agent/runs/[id]/execute/route.ts','utf8')
 const watcher = fs.readFileSync('lib/agent/booking-change-worker.ts','utf8')
 const cron = fs.readFileSync('app/api/cron/booking-events/route.ts','utf8')
-const vercel = fs.readFileSync('vercel.json','utf8')
+const vercel = JSON.parse(fs.readFileSync('vercel.json','utf8')) as { crons?: Array<{path:string;schedule:string}> }
 
 assert.match(ticketReader,/navigator,'share'/)
 assert.match(ticketReader,/__gogoShareData/)
@@ -21,7 +21,6 @@ assert.match(ticketReader,/screenshot\(\{type:'png'/)
 assert.match(ticketReader,/provider_page/)
 assert.match(ticketReader,/human_auth_required/)
 
-// Gmail is read-only and image credentials require attachment-local pixel evidence.
 assert.match(gmail,/gmail_connected/)
 assert.match(gmail,/verifyImageCredential/)
 assert.match(gmail,/TICKET_CREDENTIAL/)
@@ -29,7 +28,6 @@ assert.match(gmail,/Logos, posters, banners and marketing images are OTHER/)
 assert.match(gmail,/filenameEvidence/)
 assert.doesNotMatch(gmail,/method:\s*['"](?:POST|PATCH|DELETE)['"]/)
 
-// WhatsApp only queues bounded work; browser/Gmail closure runs from Background Gogo.
 assert.match(feature,/queueBookingClosure/)
 assert.doesNotMatch(feature,/await closeBookingLink/)
 assert.match(queue,/action_key:\s*'booking-closure'/)
@@ -37,15 +35,14 @@ assert.match(queue,/status:\s*'ready'/)
 assert.match(closureWorker,/closeBookingLink/)
 assert.match(closureWorker,/sendWhatsAppMediaMessage/)
 assert.match(cron,/processQueuedBookingClosures/)
-assert.match(vercel,/"schedule": "\* \* \* \* \*"/)
+const bookingCron = (vercel.crons || []).find(x => x.path === '/api/cron/booking-events')
+assert.equal(bookingCron?.schedule, '* * * * *', 'booking closure queue must run every minute')
 
-// Server-side provider fetches manually revalidate every redirect.
 assert.match(closure,/TRUSTED_PROVIDER_HOSTS/)
 assert.match(closure,/redirect:'manual'/)
 assert.match(closure,/trustedProviderUrl\(next\)/)
 assert.doesNotMatch(closure,/redirect:\s*['"]follow['"]/)
 
-// Only confirmed/rescheduled bookings can create reminders/calendar/watch.
 assert.match(closure,/details\.status==='confirmed'\|\|details\.status==='rescheduled'/)
 assert.match(closure,/details\.status==='cancelled'/)
 assert.match(closure,/details\.status==='unknown'/)
@@ -57,7 +54,6 @@ assert.match(closure,/retrieveEventCredential\(telegramId:number,requestText:str
 assert.match(closure,/queryTokens\(requestText\)/)
 assert.doesNotMatch(closure,/generate.*qr/i)
 
-// Calendar remains approval-gated and idempotent by Life Event, not run ID.
 assert.match(calendar,/existingPending/)
 assert.match(calendar,/eventIdForLifeEvent/)
 assert.match(calendar,/booking-life-event:/)
@@ -71,7 +67,6 @@ assert.match(whatsapp,/executeApprovedBookingCalendar/)
 assert.match(executeRoute,/booking_event_calendar/)
 assert.match(executeRoute,/executeApprovedBookingCalendar/)
 
-// Change monitoring uses valid DB lifecycle states and stops after one cancellation alert.
 assert.match(watcher,/lifecycle_state:cancelled\?'cancelled':'watching'/)
 assert.doesNotMatch(watcher,/needs_attention/)
 assert.match(watcher,/cancellationNotified:true/)
