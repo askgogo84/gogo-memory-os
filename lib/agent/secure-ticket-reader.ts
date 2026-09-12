@@ -62,19 +62,29 @@ if (!encoded) throw new Error('missing_ticket_reader_payload');
 const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
 const profile='${BROWSER_PROFILE_DIR}';
 const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
-const visible=el=>{try{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return false}};
 const bad=/\b(pay|purchase|buy|confirm purchase|place order|book now|checkout|refund|cancel booking|delete)\b/i;
-const useful=/\b(share|download|show ticket|view ticket|ticket|qr|barcode|pass|wallet)\b/i;
+const useful=/\b(share|download|show ticket|view ticket|your ticket|ticket|qr|barcode|pass|wallet|details|more actions)\b/i;
+const mobileUA='Mozilla/5.0 (Linux; Android 16; CPH2745) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
+async function waitForTicket(page){
+  const marker=/\b(your ticket|booking id|ticket\(s\)|audi\s*\d+|seat(?:s)?|qr-|showtime|find venue)\b/i;
+  const deadline=Date.now()+12000;
+  while(Date.now()<deadline){
+    const text=clean(await page.locator('body').innerText().catch(()=>''));
+    if(marker.test(text))return true;
+    await page.waitForTimeout(650);
+  }
+  return false;
+}
 async function clickUseful(page){
   const loc=page.locator('button,a,[role="button"]');
-  const n=Math.min(await loc.count(),120);
+  const n=Math.min(await loc.count(),140);
   const tried=[];
   for(let i=0;i<n;i++){
     const el=loc.nth(i); let label='';
     try{label=clean(await el.innerText().catch(()=>'' )||await el.getAttribute('aria-label')||await el.getAttribute('title')||'')}catch{}
     if(!label||!useful.test(label)||bad.test(label))continue;
     tried.push(label.slice(0,120));
-    try{await el.click({timeout:3500});await page.waitForTimeout(900)}catch{}
+    try{await el.click({timeout:3500});await page.waitForTimeout(1000)}catch{}
     const share=await page.evaluate(()=>window.__gogoShareData||null).catch(()=>null);
     if(share)break;
   }
@@ -84,18 +94,18 @@ async function candidateScore(el){
   return await el.evaluate(node=>{
     const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
     const attrs=[node.getAttribute('alt'),node.getAttribute('title'),node.getAttribute('aria-label'),node.getAttribute('src'),node.id,node.className].filter(Boolean).join(' ').toLowerCase();
-    const near=clean(node.parentElement?.innerText||node.closest('div')?.innerText||'').slice(0,500).toLowerCase();
+    const near=clean(node.parentElement?.innerText||node.closest('div')?.innerText||'').slice(0,700).toLowerCase();
     let s=0;
     if(/qr|qrcode|barcode/.test(attrs))s+=12;
     if(/ticket|pass|entry|scan/.test(attrs))s+=5;
-    if(/qr|barcode|scan (?:this|at)|show this|entry/.test(near))s+=7;
+    if(/qr|barcode|scan (?:this|at)|show this|entry|booking id|ticket\(s\)/.test(near))s+=7;
     if(node.tagName==='CANVAS')s+=2;
     return s;
   }).catch(()=>0);
 }
 async function captureCredential(page){
   const selectors='img,canvas,svg,[class*="qr" i],[id*="qr" i],[class*="barcode" i],[id*="barcode" i]';
-  const loc=page.locator(selectors); const n=Math.min(await loc.count(),100); let best=null,bestScore=0;
+  const loc=page.locator(selectors); const n=Math.min(await loc.count(),120); let best=null,bestScore=0;
   for(let i=0;i<n;i++){
     const el=loc.nth(i);
     try{
@@ -112,7 +122,18 @@ async function captureCredential(page){
   }catch{return null;}
 }
 (async()=>{
-  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:1000}});
+  const context=await chromium.launchPersistentContext(profile,{
+    headless:true,
+    viewport:{width:412,height:915},
+    screen:{width:412,height:915},
+    deviceScaleFactor:2,
+    isMobile:true,
+    hasTouch:true,
+    locale:'en-IN',
+    timezoneId:'Asia/Kolkata',
+    userAgent:mobileUA,
+    colorScheme:'light',
+  });
   await context.addInitScript(()=>{
     window.__gogoShareData=null;
     try{
@@ -123,21 +144,26 @@ async function captureCredential(page){
   const page=context.pages()[0]||await context.newPage();
   try{
     await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:45000});
-    await page.waitForTimeout(1800);
+    await page.waitForLoadState('networkidle',{timeout:12000}).catch(()=>{});
+    await page.waitForTimeout(2200);
+    let ticketRendered=await waitForTicket(page);
     const tried=await clickUseful(page);
-    await page.waitForTimeout(800);
-    // page.evaluate runs in the browser realm. Helpers from this Node script are
-    // not captured there, so define clean/visible inside the callback itself.
+    await page.waitForLoadState('networkidle',{timeout:8000}).catch(()=>{});
+    await page.waitForTimeout(1200);
+    if(!ticketRendered)ticketRendered=await waitForTicket(page);
     const data=await page.evaluate(()=>{
       const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
       const visible=el=>{try{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return false}};
       return {
-        url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,22000),
+        url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,30000),
         shareData:window.__gogoShareData||null,
-        links:Array.from(document.querySelectorAll('a[href]')).filter(visible).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).filter(x=>/ticket|pass|qr|barcode|download|share|wallet/i.test(x.text+' '+x.href)).slice(0,30)
+        links:Array.from(document.querySelectorAll('a[href]')).filter(visible).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).filter(x=>/ticket|pass|qr|barcode|download|share|wallet|venue/i.test(x.text+' '+x.href)).slice(0,40)
       };
     });
-    data.tried=tried; data.credential=await captureCredential(page);
+    data.tried=tried;
+    data.mobileContext=true;
+    data.ticketRendered=ticketRendered;
+    data.credential=await captureCredential(page);
     console.log(JSON.stringify(data));
   }finally{await context.close();}
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
@@ -193,6 +219,14 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     const lines = String(stdout || '').trim().split('\n').filter(Boolean)
     if (!lines.length) throw new Error('ticket_browser_empty_output')
     const page: any = JSON.parse(lines[lines.length - 1])
+    console.info('SECURE_TICKET_READER_RESULT:', {
+      url: String(page.url || params.url).slice(0, 500),
+      title: String(page.title || '').slice(0, 180),
+      mobileContext: Boolean(page.mobileContext),
+      ticketRendered: Boolean(page.ticketRendered),
+      credentialFound: Boolean(page.credential),
+      textLength: String(page.text || '').length,
+    })
     const gate = detectHumanAuthGate({ title: page.title, text: page.text, forms: [] })
     if (gate.required) {
       return {
@@ -202,8 +236,8 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     }
     return {
       status: 'completed', url: String(page.url || params.url), title: String(page.title || '').slice(0, 300),
-      pageText: String(page.text || '').slice(0, 16000), shareData: page.shareData || undefined,
-      usefulLinks: Array.isArray(page.links) ? page.links.slice(0, 30) : [], credential: page.credential || undefined,
+      pageText: String(page.text || '').slice(0, 24000), shareData: page.shareData || undefined,
+      usefulLinks: Array.isArray(page.links) ? page.links.slice(0, 40) : [], credential: page.credential || undefined,
     }
   } catch (error: any) {
     console.error('SECURE_TICKET_READER_FAILED:', safeFailureCode(error))
