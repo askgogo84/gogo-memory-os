@@ -21,7 +21,8 @@ export async function processQueuedBookingClosures(limit=6){
       if(result.credentialUrl){const caption=`${result.details?.title?`🎟️ ${result.details.title}\n`:''}Provider-issued ticket / QR saved by AskGogo.`;await sendWhatsAppMediaMessage(to,caption,result.credentialUrl)}
       await sendWhatsAppMessage(to,result.text)
       await complete(row,result);completed++
-      await supabaseAdmin.from('agent_activity').insert({telegram_id:String(row.telegram_id),event_type:'booking_closure_completed',message:`Booking closure completed for ${safe(result.details?.title||'event',180)}.`,metadata_json:{life_event_id:result.lifeEventId||row.life_event_id,credential_saved:Boolean(result.credentialUrl),calendar_approval_id:result.approvalId||null}}).catch(()=>{})
+      const { error: activityError } = await supabaseAdmin.from('agent_activity').insert({telegram_id:String(row.telegram_id),event_type:'booking_closure_completed',message:`Booking closure completed for ${safe(result.details?.title||'event',180)}.`,metadata_json:{life_event_id:result.lifeEventId||row.life_event_id,credential_saved:Boolean(result.credentialUrl),calendar_approval_id:result.approvalId||null}})
+      if(activityError) console.error('BOOKING_CLOSURE_ACTIVITY_FAILED:',activityError.message)
     }catch(err:any){failed++;console.error('BOOKING_CLOSURE_WORKER_FAILED:',err?.message||err);await defer(row,err?.message||'booking_closure_failed');deferred++}
   }
   return{checked,completed,deferred,failed}
