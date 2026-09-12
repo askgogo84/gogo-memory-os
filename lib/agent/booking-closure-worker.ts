@@ -124,7 +124,7 @@ export async function processQueuedBookingClosures(limit=6){
           title:safe(result.details?.title||'',180),
         })
         await sendWhatsAppMessage(to,
-          `🎟️ *${result.details?.title||'Booking saved'}*\n\nBookMyShow protected this ticket from background access, so I couldn't read the private ticket/QR from the cloud. I've saved the booking link and stopped background retries.\n\nOnce AskGogo device access is available, I can finish this through your phone session. If a matching confirmation reaches your connected Gmail, I can also complete it from there.`
+          `🎟️ *${result.details?.title||'Booking saved'}*\n\nI saved your BookMyShow booking. BookMyShow requires the ticket to be opened on your phone. Open the link and send me the ticket screenshot — I’ll save the details, QR, reminder and calendar entry automatically.`
         )
         await blockForDeviceHandoff(row,result)
         deferred++
