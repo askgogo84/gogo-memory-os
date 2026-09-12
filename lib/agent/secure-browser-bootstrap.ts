@@ -22,6 +22,9 @@
 //     https:// before `apt-get`.
 //  6. Playwright downloads its browser blobs from cdn.playwright.dev, which
 //     redirects to storage.googleapis.com — both must be reachable during setup.
+//  7. `Sandbox.getOrCreate` can resume an existing persistent sandbox. Creation
+//     options do not replace the network policy on a resumed session, so setup
+//     egress must be explicitly restored before readiness checks or downloads.
 
 export const PLAYWRIGHT_VERSION = '1.63.0'
 
@@ -64,6 +67,12 @@ const READY_CHECK =
  * Throws Error('secure_browser_bootstrap_failed:<detail>') on failure.
  */
 export async function ensureBrowserRuntime(sandbox: any): Promise<void> {
+  // A named persistent sandbox may have been resumed after a prior request
+  // locked egress down to a booking-provider host. getOrCreate() does not replace
+  // that existing session policy, so restore bootstrap egress before touching
+  // npm/Playwright/apt. Callers lock it back to the target host after setup.
+  await sandbox.updateNetworkPolicy(BROWSER_SETUP_NETWORK as any)
+
   const check = await sandbox.runCommand({ cmd: 'bash', args: ['-lc', READY_CHECK] })
   if ((await check.stdout()).trim() === 'ready') return
 
