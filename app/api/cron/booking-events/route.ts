@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { processQueuedBookingClosures } from '@/lib/agent/booking-closure-worker'
 import { processBookingChangeWatches } from '@/lib/agent/booking-change-worker'
 
 export const dynamic = 'force-dynamic'
@@ -16,8 +17,11 @@ function authorized(request: Request) {
 export async function GET(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
-    const result = await processBookingChangeWatches()
-    return NextResponse.json({ ok: true, ...result })
+    const [closures, watches] = await Promise.all([
+      processQueuedBookingClosures(),
+      processBookingChangeWatches(),
+    ])
+    return NextResponse.json({ ok: true, closures, watches })
   } catch (err: any) {
     console.error('BOOKING_EVENT_CRON_FAILED:', err?.message || err)
     return NextResponse.json({ ok: false, error: 'booking_event_worker_failed' }, { status: 500 })
