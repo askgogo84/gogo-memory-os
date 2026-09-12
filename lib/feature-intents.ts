@@ -5,7 +5,8 @@
 import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
 import { dispatchThroughSameBrain } from '@/lib/agent/same-brain'
-import { closeBookingLink, isEventCredentialRetrieval, retrieveEventCredential } from '@/lib/agent/booking-closure'
+import { isEventCredentialRetrieval, retrieveEventCredential } from '@/lib/agent/booking-closure'
+import { queueBookingClosure } from '@/lib/agent/booking-queue'
 import { buildGmailConnectUrl } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isBookingOrEventLinkText } from '@/lib/services/whatsapp-preview-routing'
@@ -30,28 +31,20 @@ export async function routeFeatureIntent(
   text: string,
   extra?: { telegramId?: number; caption?: string },
 ): Promise<string | null> {
-  // Ticket retrieval is deterministic and beats generic memory/search. The actual
-  // provider-issued QR/PDF is sent as WhatsApp media, not reconstructed by Gogo.
+  // Retrieval stays synchronous because it is a bounded DB + signed-URL lookup.
   if (extra?.telegramId && isEventCredentialRetrieval(text)) {
-    const ticket = await retrieveEventCredential(extra.telegramId)
+    const ticket = await retrieveEventCredential(extra.telegramId, text)
     if (ticket) {
       await sendWhatsAppMediaMessage(phone, ticket.caption, ticket.mediaUrl).catch((err:any) => console.error('EVENT_TICKET_MEDIA_SEND_FAILED:', err?.message || err))
-      return `Sent your saved provider-issued ticket/QR for *${ticket.caption.match(/\*([^*]+)\*/)?.[1] || 'the event'}*. I kept it attached to the same Life Event so you do not need to reopen the booking provider.`
+      return `Sent the provider-issued ticket/QR for *${ticket.title}*. It stays attached to the same Life Event.`
     }
   }
 
-  // Booking/event links are first-class missions. Resolve provider + connected Gmail
-  // in parallel, capture the real credential, create reminder/calendar/change-watch,
-  // and only then report the closure state.
+  // Full booking closure can open a real browser, inspect provider Share/QR actions
+  // and reconcile Gmail. Never hold the 60-second WhatsApp webhook open for that.
   if (extra?.telegramId && isBookingOrEventLinkText(text)) {
-    const booking = await closeBookingLink({ telegramId: extra.telegramId, text })
-    if (booking) {
-      if (booking.credentialUrl) {
-        const caption = `${booking.details?.title ? `🎟️ ${booking.details.title}\n` : ''}Provider-issued ticket / QR saved by AskGogo.`
-        await sendWhatsAppMediaMessage(phone, caption, booking.credentialUrl).catch((err:any) => console.error('BOOKING_CREDENTIAL_MEDIA_SEND_FAILED:', err?.message || err))
-      }
-      return booking.text
-    }
+    const queued = await queueBookingClosure({ telegramId: extra.telegramId, text, whatsappTo: phone })
+    if (queued) return queued.text
   }
 
   const legacy = await routeLegacyFeatureIntent(phone, text, extra)
@@ -91,10 +84,7 @@ export async function routeFeatureIntent(
     }
 
     if (isSimpleWorkspaceRead(text)) {
-      const actor={
-        userId:String(user.id),legacyTelegramId:user.telegramId,
-        whatsappId:String(user.whatsappId||phone),name:String(user.name||'Gogo'),
-      }
+      const actor={ userId:String(user.id),legacyTelegramId:user.telegramId, whatsappId:String(user.whatsappId||phone),name:String(user.name||'Gogo') }
       const result=await dispatchThroughSameBrain({actor,text})
       return result.text || null
     }
