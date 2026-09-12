@@ -132,7 +132,7 @@ async function getComputer(userId:string,targetUrl:string){
     name, runtime:'node24', region:SANDBOX_REGION, timeout:20*60*1000, persistent:true,
     resources:{vcpus:1}, networkPolicy:setupPolicy,
   } as any)
-  const check=await sandbox.runCommand({cmd:'bash',args:['-lc','test -f node_modules/playwright/package.json && echo ready || echo missing']})
+  const check=await sandbox.runCommand({cmd:'bash',args:['-lc',`if [ -f node_modules/playwright/package.json ]; then node -e "const fs=require('fs');const {chromium}=require('playwright');process.stdout.write(fs.existsSync(chromium.executablePath())?'ready':'missing')"; else echo missing; fi`]})
   const state=(await check.stdout()).trim()
   if(state!=='ready'){
     const install=await sandbox.runCommand({cmd:'bash',args:['-lc',`npm init -y >/dev/null 2>&1 || true; npm install --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION} && npx playwright install --with-deps chromium`]})
