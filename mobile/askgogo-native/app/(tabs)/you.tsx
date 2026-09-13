@@ -17,7 +17,7 @@ export default function You(){
   const safeMode=useMemo(()=>{const ps=snap?.permissions.filter(p=>GUARDED.includes(p.capability))||[];return !ps.length||ps.every(p=>p.level!=='auto')},[snap])
   async function toggleSafe(next:boolean){if(!snap||saving)return;setSaving(true);try{const level=next?'ask':'auto';const changes=await Promise.all(GUARDED.map(c=>agentApi.updatePermission(c,level)));setSnap({...snap,permissions:snap.permissions.map(p=>changes.find(c=>c.capability===p.capability)||p)})}finally{setSaving(false)}}
   async function signOut(){await clearMobileSession();r.replace('/connect')}
-  const go=(section:string)=>r.push({pathname:'/settings',params:{section}} as any)
+  const go=(section:string)=>r.push({pathname:'/(tabs)/settings',params:{section}} as any)
   return <ScrollView style={{flex:1,backgroundColor:t.paper}} contentContainerStyle={[s.wrap,{paddingTop:i.top+22,paddingBottom:96+i.bottom}]}>
     <View style={s.profile}><Gogo state="calm" size={48}/><View><Text style={[s.name,{color:t.ink}]}>You</Text><Text style={[s.sub,{color:t.ink3}]}>Same Gogo everywhere</Text></View></View>
     <View style={[s.safe,{backgroundColor:t.surface}]}><View style={{flex:1}}><Text style={[s.safeTitle,{color:t.ink}]}>Safe Mode</Text><Text style={[s.safeBody,{color:t.ink2}]}>Gogo asks before it sends, books, buys, shares or cancels.</Text></View><Switch value={safeMode} disabled={!snap||saving} onValueChange={toggleSafe} trackColor={{false:'#D8D2CC',true:'#F26B1D'}} thumbColor="#fff"/></View>
