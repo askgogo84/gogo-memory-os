@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { reserveCurrentCost } from '@/lib/services/cost-guard'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -26,31 +27,16 @@ export async function downloadTwilioMediaAsDataUrl(params: {
   contentType: string
 }) {
   const { mediaUrl, contentType } = params
-
-  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
-    throw new Error('Missing Twilio credentials for media download')
-  }
-
-  const auth = Buffer.from(
-    `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`
-  ).toString('base64')
-
-  const mediaResponse = await fetch(mediaUrl, {
-    headers: { Authorization: `Basic ${auth}` },
-  })
-
+  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) throw new Error('Missing Twilio credentials for media download')
+  const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
+  const mediaResponse = await fetch(mediaUrl, {headers: { Authorization: `Basic ${auth}` }})
   if (!mediaResponse.ok) {
     const body = await mediaResponse.text().catch(() => '')
     throw new Error(`Twilio image download failed: ${mediaResponse.status} ${body}`)
   }
-
   const arrayBuffer = await mediaResponse.arrayBuffer()
   const sizeMb = arrayBuffer.byteLength / (1024 * 1024)
-
-  if (sizeMb > 18) {
-    throw new Error('Image is too large. Please send a smaller image.')
-  }
-
+  if (sizeMb > 18) throw new Error('Image is too large. Please send a smaller image.')
   const base64 = Buffer.from(arrayBuffer).toString('base64')
   return `data:${normalizeMime(contentType)};base64,${base64}`
 }
@@ -61,17 +47,15 @@ export async function readAndSummarizeImageNote(params: {
   userCaption?: string
   expectedPatientName?: string | null
 }) {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('Missing OPENAI_API_KEY')
-  }
+  if (!process.env.OPENAI_API_KEY) throw new Error('Missing OPENAI_API_KEY')
+  const allowance=await reserveCurrentCost('vision_image',{provider:'openai',model:'gpt-4o',purpose:'image_note'})
+  if(!allowance.allowed)throw new Error('monthly_cogs_budget_reached')
 
   const dataUrl = await downloadTwilioMediaAsDataUrl(params)
   const captionMedicalMode = isLikelyMedicalImage(params.userCaption)
   const expectedName = (params.expectedPatientName || '').trim()
 
   const response = await openai.chat.completions.create({
-    // Use stronger vision for all images now because users are sending receipts/prescriptions/handwritten notes.
-    // The prompt auto-switches to medical-safe output when it sees a prescription/clinic/medical note.
     model: 'gpt-4o',
     temperature: 0,
     max_tokens: 1200,
@@ -120,10 +104,7 @@ export async function readAndSummarizeImageNote(params: {
               '• Suggest *add to calendar* ONLY when the image clearly represents an appointment, event, meeting, ticket, itinerary, deadline notice, or schedule with an actionable future date/time. Never suggest calendar for a receipt, bill, invoice, estimate/quotation, payment record, ID/passport, bank statement, or ordinary document merely because it has a date.\n' +
               '• Then any other practical action. If there are none, write: No further actions needed.',
           },
-          {
-            type: 'image_url',
-            image_url: { url: dataUrl, detail: 'high' },
-          },
+          { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
         ],
       },
     ],
@@ -153,14 +134,10 @@ function titleFromSummary(summaryLines: string[], kind = 'Image note') {
     .replace(/^a\s+/i, '')
     .replace(/\.$/, '')
     .trim()
-
   const title = clean.length > 48 ? clean.slice(0, 45).trim() + '...' : clean
   return title ? `${kind} — ${title}` : kind
 }
 
-// `kind` labels the saved-note title ("Image note — …" by default). PDF callers
-// pass "Document" so listed-back notes aren't mislabelled as images. No other
-// behaviour changes with the label.
 export function compactImageNoteForSaving(text: string, kind = 'Image note') {
   const summary = extractSection(text, 'Summary')
   const patient = extractSection(text, 'Patient / clinic details')
@@ -168,57 +145,28 @@ export function compactImageNoteForSaving(text: string, kind = 'Image note') {
   const medicines = extractSection(text, 'Medicines / instructions visible')
   const extracted = extractSection(text, 'Extracted text')
   const actions = extractSection(text, 'Next actions')
-
   const medicalMode = /Prescription \/ medical note read|Medicines \/ instructions visible|Patient \/ clinic details/i.test(text)
-
   const summaryLines = (medicalMode ? [patient, vitals, medicines].join('\n') : summary)
-    .split('\n')
-    .map(cleanBulletLine)
-    .filter(Boolean)
-    .filter((line) => !/^none$/i.test(line))
-    .slice(0, medicalMode ? 8 : 3)
-
-  const actionLines = actions
-    .split('\n')
-    .map(cleanBulletLine)
-    .filter(Boolean)
-    .filter((line) => !/^none$/i.test(line))
-    .slice(0, 2)
-
+    .split('\n').map(cleanBulletLine).filter(Boolean).filter((line) => !/^none$/i.test(line)).slice(0, medicalMode ? 8 : 3)
+  const actionLines = actions.split('\n').map(cleanBulletLine).filter(Boolean).filter((line) => !/^none$/i.test(line)).slice(0, 2)
   const readableExtract = extracted && !/not readable|not clearly readable|no readable text/i.test(extracted)
   const compactParts: string[] = []
   compactParts.push(medicalMode ? 'Medical note / prescription image' : titleFromSummary(summaryLines, kind))
-
   if (summaryLines.length) compactParts.push(...summaryLines.map((line) => `• ${line}`))
-
   if (readableExtract) {
     const shortExtract = extracted.replace(/\s+/g, ' ').trim().slice(0, medicalMode ? 360 : 220)
     compactParts.push(`Text: ${shortExtract}${extracted.length > (medicalMode ? 360 : 220) ? '...' : ''}`)
   }
-
   if (actionLines.length) compactParts.push(...actionLines.map((line) => `Action: ${line}`))
-
   return compactParts.join('\n').trim().slice(0, medicalMode ? 1400 : 900)
 }
 
-// Structured view of a summariser's sectioned output, for the durable documents
-// row. Reuses the same section extraction as compactImageNoteForSaving, so it
-// works for both readAndSummarizeImageNote and readAndSummarizePdfDocument.
 export function extractNoteFields(text: string): { summary: string; extracted: string; medicalMode: boolean } {
   const medicalMode = /Prescription \/ medical note read|Medicines \/ instructions visible|Patient \/ clinic details/i.test(text)
   const summarySrc = medicalMode
-    ? [
-        extractSection(text, 'Patient / clinic details'),
-        extractSection(text, 'Vitals / test values visible'),
-        extractSection(text, 'Medicines / instructions visible'),
-      ].join('\n')
+    ? [extractSection(text, 'Patient / clinic details'),extractSection(text, 'Vitals / test values visible'),extractSection(text, 'Medicines / instructions visible')].join('\n')
     : extractSection(text, 'Summary')
-  const summary = summarySrc
-    .split('\n')
-    .map(cleanBulletLine)
-    .filter(Boolean)
-    .filter((line) => !/^none$/i.test(line))
-    .join('\n')
+  const summary = summarySrc.split('\n').map(cleanBulletLine).filter(Boolean).filter((line) => !/^none$/i.test(line)).join('\n')
   const extracted = extractSection(text, 'Extracted text').trim()
   return { summary, extracted, medicalMode }
 }
