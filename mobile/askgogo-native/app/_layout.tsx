@@ -1,4 +1,4 @@
-import { View } from 'react-native'
+import { Keyboard, TouchableWithoutFeedback, View } from 'react-native'
 import { Stack } from 'expo-router'
 import { ShareIntentProvider } from 'expo-share-intent'
 import NativeBootstrap from '../src/native/bootstrap'
@@ -6,10 +6,12 @@ import NativeBootstrap from '../src/native/bootstrap'
 export default function RootLayout() {
   return (
     <ShareIntentProvider>
-      <View style={{ flex: 1, backgroundColor: '#F6F0E8' }}>
-        <NativeBootstrap />
-        <Stack screenOptions={{ headerShown: false, animation: 'fade' }} />
-      </View>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+          <NativeBootstrap />
+          <Stack screenOptions={{ headerShown: false, animation: 'fade', contentStyle: { backgroundColor: '#FFFFFF' } }} />
+        </View>
+      </TouchableWithoutFeedback>
     </ShareIntentProvider>
   )
 }
