@@ -11,6 +11,8 @@ import { buildGmailConnectUrl } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isBookingOrEventLinkText } from '@/lib/services/whatsapp-preview-routing'
 import { sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
+import { addToListDetailed, formatAddResult, normalizeListName } from '@/lib/lists'
+import { normalizeNaturalReminderSave, parseNumberedChecklist, saveNaturalReminder } from '@/lib/bot/handlers/natural-command-routing'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 
 function isSimpleWorkspaceRead(text:string) {
@@ -45,6 +47,31 @@ export async function routeFeatureIntent(
   if (extra?.telegramId && isBookingOrEventLinkText(text)) {
     const queued = await queueBookingClosure({ telegramId: extra.telegramId, text, whatsappTo: phone })
     if (queued) return queued.text
+  }
+
+  // Natural user wording like "save this as reminder I travel on 27 September"
+  // must never fall through to generic chat/notes. Convert it to the mature reminder
+  // parser and persist it deterministically for the current user.
+  if (extra?.telegramId && normalizeNaturalReminderSave(text)) {
+    try {
+      return await saveNaturalReminder({ telegramId: extra.telegramId, whatsappTo: phone, text })
+    } catch (err:any) {
+      console.error('NATURAL_REMINDER_SAVE_FAILED:', err?.message || err)
+      return `I understood this as a reminder, but I couldn't save it just now. Please try once more — I won't save it as a note instead.`
+    }
+  }
+
+  // Numbered trip/preparation checklists are first-class lists, not free-form notes.
+  const checklist = extra?.telegramId ? parseNumberedChecklist(text) : null
+  if (extra?.telegramId && checklist) {
+    try {
+      const listName = normalizeListName(checklist.listName)
+      const result = await addToListDetailed(extra.telegramId, listName, checklist.items)
+      return formatAddResult(listName, result)
+    } catch (err:any) {
+      console.error('NUMBERED_CHECKLIST_SAVE_FAILED:', err?.message || err)
+      return `I recognised this as a checklist, but I couldn't save it just now. Please try once more — I won't turn it into an unrelated note.`
+    }
   }
 
   const legacy = await routeLegacyFeatureIntent(phone, text, extra)
