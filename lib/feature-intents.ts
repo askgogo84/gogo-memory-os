@@ -11,9 +11,12 @@ import { buildGmailConnectUrl } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isBookingOrEventLinkText } from '@/lib/services/whatsapp-preview-routing'
 import { sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
-import { addToListDetailed, formatAddResult, getList, normalizeListName } from '@/lib/lists'
+import { addToListDetailed, formatAddResult, formatList, getList, normalizeListName } from '@/lib/lists'
 import { normalizeNaturalReminderSave, parseNumberedChecklist, saveNaturalReminder } from '@/lib/bot/handlers/natural-command-routing'
 import { normalizeUserInputForRouting } from '@/lib/bot/input-normalizer'
+import { getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
+import { isActiveListShow, parseActiveListAdd, parseExplicitListShow } from '@/lib/bot/handlers/list-conversation-context'
+import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 
 function isSimpleWorkspaceRead(text:string) {
@@ -30,6 +33,17 @@ function isWorkspaceConnect(text:string) {
 }
 
 function normListItem(value:unknown){return String(value||'').trim().toLowerCase().replace(/\s+/g,' ')}
+
+async function setActiveList(telegramId:number,listName:string){
+  await saveFollowupState(telegramId,'active_list',{listName,created_at:new Date().toISOString()})
+}
+
+async function getActiveListName(telegramId:number){
+  const state=await getLatestFollowupState(telegramId,'active_list')
+  if(!state||!isStrictlyFreshFollowupState(state,30))return null
+  const name=normalizeListName(String(state.payload?.listName||''))
+  return name||null
+}
 
 export async function routeFeatureIntent(
   phone: string,
@@ -62,9 +76,6 @@ export async function routeFeatureIntent(
     }
   }
 
-  // Numbered trip/preparation checklists are first-class lists, not free-form notes.
-  // Read the saved row back before claiming success so an insert/write failure can never
-  // produce a false "saved" response with only an in-memory copy of the items.
   const checklist = extra?.telegramId ? parseNumberedChecklist(text) : null
   if (extra?.telegramId && checklist) {
     try {
@@ -75,10 +86,43 @@ export async function routeFeatureIntent(
       const pendingText = new Set(storedItems.filter((x:any)=>!x?.done).map((x:any)=>normListItem(x?.text)))
       const missing = checklist.items.filter(item=>!pendingText.has(normListItem(item)))
       if (missing.length) throw new Error(`checklist_persistence_incomplete:${missing.length}`)
+      await setActiveList(extra.telegramId,listName)
       return formatAddResult(listName, { ...result, items: storedItems })
     } catch (err:any) {
       console.error('NUMBERED_CHECKLIST_SAVE_FAILED:', err?.message || err)
       return `I recognised this as a checklist, but I couldn't save every item just now. Please try once more — I won't turn it into an unrelated note.`
+    }
+  }
+
+  // Explicit list display establishes short-lived conversational list context.
+  if(extra?.telegramId){
+    const explicitRaw=parseExplicitListShow(text)
+    if(explicitRaw){
+      const listName=normalizeListName(explicitRaw)
+      if(listName&&!RESERVED_SHOW_NAMES.has(listName)){
+        const list=await getList(extra.telegramId,listName)
+        if(list){await setActiveList(extra.telegramId,list.list_name);return formatList(list.list_name,list.items||[])}
+      }
+    }
+
+    // Follow-ups such as “Add travel adapter also” and “Also add passport photocopy and forex card”
+    // operate ONLY on the recently active list. No LLM/memory inference is allowed here.
+    const followupItems=parseActiveListAdd(text)
+    if(followupItems){
+      const listName=await getActiveListName(extra.telegramId)
+      if(listName){
+        const result=await addToListDetailed(extra.telegramId,listName,followupItems)
+        await setActiveList(extra.telegramId,listName)
+        return formatAddResult(listName,result)
+      }
+    }
+
+    if(isActiveListShow(text)){
+      const listName=await getActiveListName(extra.telegramId)
+      if(listName){
+        const list=await getList(extra.telegramId,listName)
+        if(list){await setActiveList(extra.telegramId,listName);return formatList(list.list_name,list.items||[])}
+      }
     }
   }
 
@@ -127,10 +171,6 @@ export async function routeFeatureIntent(
     const agent = await tryRunWhatsAppAgent({ user, text })
     if(agent?.text)return agent.text
 
-    // If we repaired the user's input but no higher-level feature/agent claimed it,
-    // continue through the mature product brain WITH the repaired text. This is the
-    // shared downstream boundary that prevents e.g. `shwo my reminders` from falling
-    // back to processIncomingMessage with the original typo.
     if(normalized.changed){
       const repaired=await dispatchThroughSameBrain({actor,text})
       return repaired.text||null
