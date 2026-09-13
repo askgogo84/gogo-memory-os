@@ -98,8 +98,10 @@ jobs:
             test -n "$(adb shell pidof in.askgogo.app | tr -d '\r')" || (echo "AskGogo exited while opening redesigned Gogo Home"; cat /tmp/gogo-home-start.txt; exit 1)
             adb shell uiautomator dump /sdcard/askgogo-home.xml >/dev/null
             adb pull /sdcard/askgogo-home.xml /tmp/askgogo-home.xml >/dev/null
-            grep -Eq "Everything is handled|Same brain · WhatsApp \+ app|RIGHT NOW|Ask Gogo anything" /tmp/askgogo-home.xml || (echo "Redesigned Gogo Home did not render"; cat /tmp/askgogo-home.xml; exit 1)
-            echo "AskGogo release APK launched and redesigned Gogo Home rendered successfully"
+            grep -Fq "Same brain · WhatsApp + app" /tmp/askgogo-home.xml || (echo "Redesigned same-brain header missing"; cat /tmp/askgogo-home.xml; exit 1)
+            grep -Fq "Right now" /tmp/askgogo-home.xml || (echo "Claude-style Right now section missing"; cat /tmp/askgogo-home.xml; exit 1)
+            if grep -Fq "Gogo is on it" /tmp/askgogo-home.xml; then echo "Legacy Gogo home rendered unexpectedly"; cat /tmp/askgogo-home.xml; exit 1; fi
+            echo "AskGogo release APK launched and Claude-style Gogo Home rendered successfully"
       - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
