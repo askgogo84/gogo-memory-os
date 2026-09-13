@@ -1,4 +1,7 @@
-﻿export type WebSearchResult = {
+﻿import { currentCostContext, markCostContextBlocked } from '@/lib/services/cost-context'
+import { reserveCostEvent } from '@/lib/services/cost-guard'
+
+export type WebSearchResult = {
   title: string
   snippet: string
   url: string
@@ -8,10 +11,27 @@ function cleanText(input: string) {
   return (input || '').replace(/\s+/g, ' ').trim()
 }
 
+async function reserveSearchCost(){
+  const context=currentCostContext()
+  if(!context?.telegramId)return true // background workers already carry explicit guards
+  const reservation=await reserveCostEvent({
+    telegramId:context.telegramId,
+    category:'web_search_basic',
+    metadata:{surface:context.surface||'unknown',provider:'tavily',search_depth:'basic'},
+  })
+  if(!reservation.allowed)markCostContextBlocked(reservation.reason)
+  return reservation.allowed
+}
+
 async function searchWithTavily(query: string): Promise<WebSearchResult[]> {
   const apiKey = process.env.TAVILY_API_KEY
   if (!apiKey) {
     console.error('TAVILY_API_KEY missing')
+    return []
+  }
+
+  if(!(await reserveSearchCost())){
+    console.info('TAVILY_SEARCH_BLOCKED_BY_COST_GUARD')
     return []
   }
 
