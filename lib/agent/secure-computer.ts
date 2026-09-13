@@ -1,9 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { createHash } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
-import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
 import { BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, ensureBrowserRuntime } from './secure-browser-bootstrap'
+import { redactBrowserSensitiveText } from './secure-browser-redaction'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 const MAX_ACTIONS = 12
@@ -34,7 +34,8 @@ export type SecureBrowserResult = {
 }
 
 function safeText(value:unknown,max=1200){
-  return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))
+  const normalized=String(value??'').replace(/\s+/g,' ').trim()
+  return redactBrowserSensitiveText(normalized).slice(0,max)
 }
 
 function userSandboxName(userId:string){
@@ -173,13 +174,21 @@ async function inspect(userId:string,url:string){
 
 async function planActions(objective:string,page:any,mode:BrowserMode):Promise<BrowserAction[]>{
   if(mode==='read')return []
-  const pageModel={url:page.url,title:page.title,text:String(page.text||'').slice(0,9000),links:(page.links||[]).slice(0,50),forms:(page.forms||[]).slice(0,10)}
+  const pageModel={
+    url:safeText(page.url,1200),
+    title:safeText(page.title,500),
+    text:safeText(page.text,9000),
+    links:(page.links||[]).slice(0,50).map((link:any)=>({text:safeText(link?.text,160),href:safeText(link?.href,1200)})),
+    forms:(page.forms||[]).slice(0,10).map((form:any)=>({
+      action:safeText(form?.action,1200),method:String(form?.method||'get'),inputs:Array.isArray(form?.inputs)?form.inputs.slice(0,50):[],
+    })),
+  }
   const prompt=`You are Gogo's browser action planner. Produce JSON array only. Goal: ${JSON.stringify(objective.slice(0,1600))}\nMode: ${mode}.\nCurrent page model: ${JSON.stringify(pageModel)}\nAllowed action kinds: goto, click, fill, select, check, wait, submit. Use selectors already present for form fields. Never invent passwords, OTPs, card numbers or secret values. Never use submit unless the user's goal explicitly asks to submit/send/apply/book and mode is execute. In draft mode, fill fields and navigate but leave the final submit untouched. Maximum ${MAX_ACTIONS} actions.`
   try{
     const res=await anthropic.messages.create({model:'claude-haiku-4-5',max_tokens:1400,temperature:0,messages:[{role:'user',content:prompt}]})
     const text=res.content[0]?.type==='text'?res.content[0].text:''
     return normalizeActions(parseJsonLoose(text),page.url)
-  }catch(err:any){console.error('SECURE_BROWSER_PLAN_FAILED:',err?.message||err);return []}
+  }catch(err:any){console.error('SECURE_BROWSER_PLAN_FAILED:',safeText(err?.message||err,700));return []}
 }
 
 export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode}):Promise<SecureBrowserResult>{
@@ -192,7 +201,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     if(authGate.required){
       await first.sandbox.stop().catch(()=>{})
       return {
-        status:'blocked',url:String(first.page.url||target),title:safeText(first.page.title,300),
+        status:'blocked',url:safeText(first.page.url||target,1200),title:safeText(first.page.title,300),
         summary:authGate.message||'Human authentication is required before Gogo can continue.',
         pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',
         forms:[],actions:[],sandboxName:first.name,blockReason:'human_auth_required',authReason:authGate.reason,
@@ -214,14 +223,15 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft' && actions.some(a=>a.kind==='submit')
     return {
-      status:prepared?'prepared':'completed',url:String(page.url||target),title:safeText(page.title,300),
+      status:prepared?'prepared':'completed',url:safeText(page.url||target,1200),title:safeText(page.title,300),
       summary:params.mode==='read'?'Gogo read the page in an isolated browser.':prepared?'Gogo prepared the browser flow and stopped before submit.':'Gogo completed the approved browser flow.',
-      pageText:safeText(page.text,6000),forms:Array.isArray(page.forms)?page.forms.slice(0,12):[],
+      pageText:safeText(page.text,6000),forms:Array.isArray(page.forms)?page.forms.slice(0,12).map((form:any)=>({...form,action:safeText(form?.action,1200)})):[],
       actions:actionLog.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed'})),
       sandboxName:first.name,
     }
   } catch (error:any) {
-    console.error('SECURE_BROWSER_FAILED:', error?.stack || error?.message || error)
-    throw error
+    const safeError=safeText(error?.message||error,1000)
+    console.error('SECURE_BROWSER_FAILED:',safeError)
+    throw new Error(safeError||'secure_browser_failed')
   }
 }
