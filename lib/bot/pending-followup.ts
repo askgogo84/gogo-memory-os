@@ -23,8 +23,16 @@ function resolve(taskPhrase: string, answer: string) {
 export function resolvePendingReminder(ctx: PendingReminderCtx, answer: string) {
   // Preserve any day-of-month context captured when the reminder was first stated
   // ("15th of every month") so the completed reminder lands on the right date.
+  const task = (ctx.task || '').trim()
   const dayClause = ctx.day ? `on the ${ctx.day}th of every month ` : ''
-  return resolve(`${(ctx.task || '').trim()} ${dayClause}`.trim(), answer)
+  const parsed = resolve(`${task} ${dayClause}`.trim(), answer)
+  if (!parsed) return null
+
+  // The reminder parser intentionally strips scheduling words from its message, but its
+  // generic cleaner can also remove meaningful prepositions (e.g. "travel to US" →
+  // "travel US"). The pending state already contains the exact user task, so keep that
+  // wording and use the parser only to resolve the schedule/cadence.
+  return task ? { ...parsed, message: task } : parsed
 }
 
 export function resolvePendingCalendar(ctx: PendingCalendarCtx, answer: string) {
