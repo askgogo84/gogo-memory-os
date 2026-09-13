@@ -27,5 +27,7 @@ export default function TabsLayout() {
     <Tabs.Screen name="you" options={{title:'You'}} />
     <Tabs.Screen name="settings" options={{href:null}} />
     <Tabs.Screen name="workspaces" options={{href:null}} />
+    <Tabs.Screen name="capture" options={{href:null}} />
+    <Tabs.Screen name="agent" options={{href:null}} />
   </Tabs>
 }
