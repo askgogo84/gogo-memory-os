@@ -5,6 +5,7 @@ import {
   isExplicitAssetSaveCommand,
   saveRecentMediaAsAsset,
 } from '@/lib/services/asset-memory'
+import { isReservedSaveLastActionDestination } from './save-last-context-routing'
 
 function extractSaveTitle(text: string) {
   return (text || '')
@@ -18,7 +19,9 @@ function extractSaveTitle(text: string) {
 }
 
 function isLegacySaveLastContextCommand(text: string) {
-  const lower = (text || '').toLowerCase().trim()
+  const raw = String(text || '').trim()
+  if (isReservedSaveLastActionDestination(raw)) return false
+  const lower = raw.toLowerCase()
   return (
     lower.startsWith('save it as ') ||
     lower.startsWith('save this as ') ||
