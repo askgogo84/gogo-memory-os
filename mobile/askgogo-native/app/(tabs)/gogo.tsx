@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { useScrollToTop } from '@react-navigation/native'
 import { useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AskInput } from '../../src/design/components'
@@ -11,7 +12,8 @@ import { useTheme } from '../../src/theme'
 const labelFor={approval:'NEEDS YOU',working:'WORKING',watching:'WATCHING',idea:'FOUND',done:'DONE'} as const
 
 export default function GogoHome(){
-  const t=useTheme(); const r=useRouter(); const insets=useSafeAreaInsets()
+  const t=useTheme(); const r=useRouter(); const insets=useSafeAreaInsets(); const scrollRef=useRef<ScrollView>(null)
+  useScrollToTop(scrollRef)
   const [q,setQ]=useState(''); const [home,setHome]=useState<AgentConsumerHome|null>(null)
   const [busy,setBusy]=useState(false); const [refreshing,setRefreshing]=useState(false); const [error,setError]=useState('')
   const refresh=useCallback(async()=>{try{setHome(await agentApi.home());setError('')}catch(e:any){setError(e?.message||'Could not reach Gogo right now.')}finally{setRefreshing(false)}},[])
@@ -21,7 +23,7 @@ export default function GogoHome(){
   const greeting=greetingForNow()
   const hero=home?.headline||'Everything is handled.'
   const characterState=busy?'thinking':stateForHome(home?.state)
-  return <ScrollView keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled" style={{flex:1,backgroundColor:t.paper}} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={()=>{setRefreshing(true);void refresh()}}/>} contentContainerStyle={[s.wrap,{paddingTop:insets.top+14,paddingBottom:96+insets.bottom}]}> 
+  return <ScrollView ref={scrollRef} keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled" style={{flex:1,backgroundColor:t.paper}} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={()=>{setRefreshing(true);void refresh()}}/>} contentContainerStyle={[s.wrap,{paddingTop:insets.top+14,paddingBottom:96+insets.bottom}]}> 
     <View style={s.header}><Text style={[s.brand,{color:t.ink}]}>AskGogo</Text><Text style={[s.same,{color:t.ink3}]}>Same brain · WhatsApp + app</Text></View>
     <Text style={[s.greeting,{color:t.ink2}]}>{greeting}</Text>
     <View style={s.gogo}><Gogo state={characterState} size={72}/></View>
