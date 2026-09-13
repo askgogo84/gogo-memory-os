@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 
 export interface Message {
@@ -9,6 +10,27 @@ export interface Message {
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 })
+
+const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null
+const OPENAI_FALLBACK_MODEL = process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o-mini'
+
+async function askOpenAiFallback(params:{system?:string;messages:Message[];maxTokens:number}){
+  if(!openai) throw new Error('openai_fallback_not_configured')
+  const response=await openai.chat.completions.create({
+    model:OPENAI_FALLBACK_MODEL,
+    max_tokens:params.maxTokens,
+    temperature:0.3,
+    messages:[
+      ...(params.system?[{role:'system' as const,content:params.system}]:[]),
+      ...params.messages.map(m=>({role:m.role,content:m.content})),
+    ],
+  })
+  return response.choices?.[0]?.message?.content?.trim()||''
+}
+
+function providerErrorSummary(error:any){
+  return {name:String(error?.name||'Error'),status:error?.status||null,type:error?.type||error?.error?.type||null,message:String(error?.message||error||'').slice(0,240)}
+}
 
 export async function askClaude(
   userMessage: string,
@@ -87,23 +109,21 @@ RULES:
 
 CRITICAL: When the user gives a time or date, calculate the exact datetime yourself and output the REMINDER line. If the user gives NO time or date (e.g. "remind me about the thing"), do NOT guess a time and do NOT output a REMINDER line - instead reply in one short sentence asking when. The [message] field must be a short clean task label only (e.g. "Call the bank") - never include words like "today", "tomorrow", "at 1pm", or "day after".`
 
-  // Final prompt-boundary redaction. Conversation history is persisted separately from
-  // memories and can contain old assistant replies from before privacy fixes. Redact every
-  // historical turn immediately before it reaches Claude so stale passport/account/etc.
-  // values cannot be echoed or reused by the freeform model.
   const safeHistory = history.map((m) => ({ ...m, content: redactSecretShapedText(m.content) }))
+  const messages:Message[]=[...safeHistory.slice(-10),{ role: 'user', content: userMessage }]
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-5',
-    max_tokens: 1024,
-    system: systemPrompt,
-    messages: [
-      ...safeHistory.slice(-10),
-      { role: 'user', content: userMessage }
-    ],
-  })
-
-  return response.content[0].type === 'text' ? response.content[0].text : ''
+  try{
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages,
+    })
+    return response.content[0].type === 'text' ? response.content[0].text : ''
+  }catch(error:any){
+    console.error('ANTHROPIC_FREEFORM_FAILED_FALLING_BACK:',providerErrorSummary(error))
+    return await askOpenAiFallback({system:systemPrompt,messages,maxTokens:1024})
+  }
 }
 
 export async function askClaudeWithContext(
@@ -111,12 +131,7 @@ export async function askClaudeWithContext(
   context: string,
   userName: string
 ): Promise<string> {
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-5',
-    max_tokens: 1500,
-    messages: [{
-      role: 'user',
-      content: `You are AskGogo, a helpful AI assistant for ${userName}. Answer the user's question using the web search results provided below.
+  const prompt=`You are AskGogo, a helpful AI assistant for ${userName}. Answer the user's question using the web search results provided below.
 
 User's question: ${userMessage}
 
@@ -128,8 +143,16 @@ Provide a clear, concise answer based on these results. Cite sources when releva
 FORMATTING: This reply is delivered over WhatsApp, which does NOT render markdown. NEVER emit markdown link syntax like [text](url) — write any URL as a bare URL. NEVER invent or output a URL for AskGogo's own product features (connecting Calendar/Gmail, the dashboard, upgrading, magic-link login) — only cite links that appear in the web search results above.
 
 FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF-REPORTED and approximate unless explicitly bank-verified via Account Aggregator. When such a figure is used to make or justify a redemption or spending decision, treat it as user-entered and not confirmed, and suggest linking cards via Account Aggregator in the CreditIQ app for exact, bank-confirmed balances before deciding. Never present a self-reported balance as a confirmed, spendable fact when advising on a redemption or purchase. For a casual mention with no spending decision, a light "(self-reported)" note is enough.`
-    }],
-  })
 
-  return response.content[0].type === 'text' ? response.content[0].text : ''
+  try{
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 1500,
+      messages:[{role:'user',content:prompt}],
+    })
+    return response.content[0].type === 'text' ? response.content[0].text : ''
+  }catch(error:any){
+    console.error('ANTHROPIC_CONTEXT_FAILED_FALLING_BACK:',providerErrorSummary(error))
+    return await askOpenAiFallback({messages:[{role:'user',content:prompt}],maxTokens:1500})
+  }
 }
