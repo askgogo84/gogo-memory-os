@@ -51,16 +51,16 @@ export function scoreBoardingPassCandidate(input: BoardingPassMatchInput) {
   const promoSignal = /\b(sale|offer|deal|discount|newsletter|promo|promotion|upgrade offer|miles offer)\b/i.test(hay)
 
   let score = 0
-  let identitySignals = 0
+  let tripIdentitySignals = 0
   if (boardingSignal) score += 5
-  if (confirmation && compactHay.includes(confirmation)) { score += 7; identitySignals++ }
-  if (flightNo && compactHay.includes(flightNo)) { score += 5; identitySignals++ }
-  if (provider && hay.includes(provider)) { score += 2; identitySignals++ }
+  if (confirmation && compactHay.includes(confirmation)) { score += 7; tripIdentitySignals++ }
+  if (flightNo && compactHay.includes(flightNo)) { score += 5; tripIdentitySignals++ }
+  if (provider && hay.includes(provider)) score += 2
   if (/\bboarding pass\b/i.test(hay)) score += 2
   if (/\b(check[- ]?in (?:complete|completed|confirmed|successful)|you(?:'|’)re checked in|you are checked in)\b/i.test(hay)) score += 2
   if (promoSignal && !boardingSignal) score -= 8
 
-  return { score, boardingSignal, identitySignals, accepted: boardingSignal && identitySignals >= 1 && score >= 7 }
+  return { score, boardingSignal, identitySignals: tripIdentitySignals, tripIdentitySignals, accepted: boardingSignal && tripIdentitySignals >= 1 && score >= 7 }
 }
 
 function identityTerms(event: any, action: any) {
