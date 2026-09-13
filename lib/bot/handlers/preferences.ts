@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { buildMemoryTwinContextText } from '@/lib/bot/memory-twin/context-loader'
 
 // Phase 1D — Personalization rules ("standing preferences").
 // Standing instructions like "always keep my lists in capitals", "from now on
@@ -74,15 +75,24 @@ export async function forgetPreference(telegramId: number, match: string): Promi
   return hits.length
 }
 
-/** System-prompt block injected into every Claude freeform call. */
+/**
+ * System-prompt personalization block injected into every freeform call.
+ * Explicit standing preferences are authoritative. Memory Twin output is a
+ * separate, lower-priority soft-inference layer and is consent checked before
+ * it ever reaches the model.
+ */
 export async function getPreferenceBlock(telegramId: number): Promise<string> {
-  const [rules, experienceResult] = await Promise.all([
+  const [rules, experienceResult, learnedContext] = await Promise.all([
     listPreferences(telegramId),
     supabaseAdmin
       .from('user_experience_preferences')
       .select('personality')
       .eq('telegram_id', telegramId)
       .maybeSingle(),
+    buildMemoryTwinContextText(telegramId).catch((err:any)=>{
+      console.error('MEMORY_TWIN_CONTEXT_BUILD_FAILED:',err?.message||err)
+      return ''
+    }),
   ])
 
   const personality = String(experienceResult.data?.personality || 'calm_companion')
@@ -93,9 +103,13 @@ export async function getPreferenceBlock(telegramId: number): Promise<string> {
 
   if (rules.length) {
     parts.push(
-      `\nStanding preferences for this user (ALWAYS follow — they override defaults):\n` +
+      `\nExplicit standing preferences for this user (AUTHORITATIVE — follow them unless the current message explicitly overrides them):\n` +
       rules.map((r) => `- ${r.rule_text}`).join('\n')
     )
+  }
+
+  if(learnedContext){
+    parts.push(`\n${learnedContext}`)
   }
 
   return parts.join('\n')
