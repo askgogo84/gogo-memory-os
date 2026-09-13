@@ -32,3 +32,28 @@ export interface AgentArtifactDetail extends AgentArtifact { schemaVersion:numbe
 export interface AgentThread { id:string; title:string; status:'active'|'archived'; context:Record<string,unknown>; createdAt:string; updatedAt:string }
 export interface AgentHomeSnapshot { surface?:'web'|'ios'|'android'; runs:AgentRun[]; watchers:AgentWatcher[]; goals:AgentGoal[]; ideas:AgentIdea[]; approvals:AgentApproval[]; permissions:AgentPermission[]; artifacts:AgentArtifact[] }
 export interface AgentCommandResult { runId:string; status:'completed'|'waiting_approval'|'paused'|'failed'; capability:AgentCapability; risk:AgentRisk; text?:string; mediaUrl?:string|null; mediaType?:string|null; handledBy?:string; approvalId?:string; approvalRequired?:boolean; blockedReason?:string; steps?:AgentStep[] }
+
+export type AgentHomeState = 'waiting' | 'working' | 'watching' | 'ready' | 'idle'
+export type AgentHomeItemKind = 'approval' | 'working' | 'watching' | 'idea' | 'done'
+export interface AgentHomeItem {
+  id:string
+  kind:AgentHomeItemKind
+  title:string
+  body:string
+  timestamp?:string|null
+  actionLabel?:string
+  runId?:string
+  approvalId?:string
+  watcherId?:string
+  ideaId?:string
+  progress?:number|null
+  capability?:string|null
+}
+export interface AgentConsumerHome {
+  surface?:'web'|'ios'|'android'
+  state:AgentHomeState
+  counts:{working:number;watching:number;waiting:number;ideas:number}
+  headline:string
+  subline:string
+  items:AgentHomeItem[]
+}
