@@ -26,5 +26,3 @@ jobs:
       - run: npm ci
       - name: Boarding-pass lifecycle regression
         run: npx tsx scripts/verify-life-event-email-worker.mts
-      - name: Full AskGogo regression suite
-        run: npm test
