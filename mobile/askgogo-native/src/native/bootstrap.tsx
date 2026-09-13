@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useRouter } from 'expo-router'
 import * as Notifications from 'expo-notifications'
 import { useShareIntentContext } from 'expo-share-intent'
-import { notificationPath, registerForGogoNotifications } from './notifications'
+import { notificationPath } from './notifications'
 
 export default function NativeBootstrap(){
   const router=useRouter()
@@ -10,9 +10,6 @@ export default function NativeBootstrap(){
 
   useEffect(()=>{
     let alive=true
-    const timer=setTimeout(()=>{
-      registerForGogoNotifications().catch((err:any)=>console.log('GOGO_NOTIFICATION_BOOTSTRAP_SKIPPED',String(err?.message||err)))
-    },1200)
     const responseSub=Notifications.addNotificationResponseReceivedListener(response=>{
       const path=notificationPath(response)
       if(path)router.push(path as never)
@@ -22,7 +19,7 @@ export default function NativeBootstrap(){
       const path=notificationPath(response)
       if(path)router.push(path as never)
     }).catch(()=>{})
-    return()=>{alive=false;clearTimeout(timer);responseSub.remove()}
+    return()=>{alive=false;responseSub.remove()}
   },[router])
 
   useEffect(()=>{
