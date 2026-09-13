@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, BackHandler, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { agentApi } from '../src/agent/api'
 import type { AgentConsumerHome, AgentHomeItem, AgentHomeSnapshot } from '../src/agent/types'
@@ -19,6 +20,16 @@ export default function GogoHome(){
   const [notificationState,setNotificationState]=useState<'idle'|'working'|'done'|'error'>('idle')
 
   useEffect(()=>{void refresh();const t=setInterval(()=>void refresh(false),12000);return()=>clearInterval(t)},[])
+  useEffect(()=>{
+    const sub=BackHandler.addEventListener('hardwareBackPress',()=>{
+      if(tab!=='gogo'){
+        setTab('gogo')
+        return true
+      }
+      return false
+    })
+    return()=>sub.remove()
+  },[tab])
 
   async function refresh(showSpinner=true){
     if(showSpinner)setLoading(true)
@@ -62,9 +73,9 @@ export default function GogoHome(){
   const topItems=useMemo(()=>home?.items.slice(0,4)||[],[home])
   const greeting=greetingForNow()
 
-  if(loading&&!home)return <SafeAreaView style={s.safe}><View style={s.center}><View style={s.logo}><Text style={s.logoText}>G</Text></View><ActivityIndicator color={C.orange}/><Text style={s.muted}>Opening the same Gogo you use on WhatsApp…</Text></View></SafeAreaView>
+  if(loading&&!home)return <SafeAreaView style={s.safe} edges={['top','bottom']}><View style={s.center}><View style={s.logo}><Text style={s.logoText}>G</Text></View><ActivityIndicator color={C.orange}/><Text style={s.muted}>Opening the same Gogo you use on WhatsApp…</Text></View></SafeAreaView>
 
-  return <SafeAreaView style={s.safe}>
+  return <SafeAreaView style={s.safe} edges={['top','bottom']}>
     <View style={s.topbar}><View><Text style={s.brand}>AskGogo</Text><Text style={s.same}>Same brain · WhatsApp + app</Text></View><Pressable onPress={()=>void refresh()} style={s.avatar}><Text style={s.avatarText}>G</Text></Pressable></View>
 
     <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
@@ -121,7 +132,7 @@ export default function GogoHome(){
         <View style={s.simpleCard}><Text style={s.cardTitle}>Safety</Text><Text style={s.cardBody}>Consequential actions remain approval-gated. Secure Computer and Sentinel enforce the backend policy, not just the screen.</Text></View>
         <Pressable onPress={()=>router.push('/agent')} style={s.outlineButton}><Text style={s.outlineText}>Open permissions & Safe Mode</Text></Pressable>
       </>}
-      <View style={{height:90}}/>
+      <View style={{height:120}}/>
     </ScrollView>
 
     <View style={s.nav}><Nav label="Gogo" active={tab==='gogo'} onPress={()=>setTab('gogo')}/><Nav label="Today" active={tab==='today'} onPress={()=>setTab('today')}/><Nav label="Memory" active={tab==='memory'} onPress={()=>setTab('memory')}/><Nav label="Activity" active={tab==='activity'} onPress={()=>setTab('activity')}/><Nav label="You" active={tab==='you'} onPress={()=>setTab('you')}/></View>
