@@ -23,7 +23,7 @@ export default function GogoHome(){
   <View style={s.wordmark}><View><Text style={[s.brand,{color:t.ink}]}>AskGogo</Text><Text style={[s.same,{color:t.ink3}]}>Same brain · WhatsApp + app</Text></View><Pressable onPress={()=>r.push('/agent-safe')}><Ionicons name="grid-outline" size={22} color={t.ink2}/></Pressable></View>
   <Text style={[s.hero,{color:t.ink}]}>{home?.headline||'Everything is handled.'}</Text>
   <View style={s.status}><StatusDot kind={stateKind}/><Text style={[s.statusText,{color:t.ink2}]}>{home?.subline||'Gogo is ready'}</Text></View>
-  <View style={{opacity:busy?.72/100:1}}><AskInput value={q} onChangeText={setQ} onSend={send} onAttach={()=>r.push('/capture')} onMic={()=>r.push('/capture')}/></View>
+  <View style={{opacity:busy?0.72:1}}><AskInput value={q} onChangeText={setQ} onSend={send} onAttach={()=>r.push('/capture')} onMic={()=>r.push('/capture')}/></View>
   {busy?<View style={s.running}><ActivityIndicator size="small" color="#F26B1D"/><Text style={[s.runningText,{color:t.ink2}]}>Gogo is starting that now…</Text></View>:null}
   {error?<Text style={s.error}>{error}</Text>:null}
   <View style={s.countRow}><Count n={home?.counts.waiting||0} label="Needs you"/><Count n={home?.counts.working||0} label="Working"/><Count n={home?.counts.watching||0} label="Watching"/></View>
