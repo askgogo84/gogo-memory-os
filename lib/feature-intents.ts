@@ -110,6 +110,7 @@ export async function routeFeatureIntent(
       timezone: String(data.timezone || 'Asia/Kolkata'),
       rawUser: data,
     }
+    const actor={ userId:String(user.id),legacyTelegramId:user.telegramId, whatsappId:String(user.whatsappId||phone),name:String(user.name||'Gogo') }
 
     if (isWorkspaceConnect(text)) {
       const url=buildGmailConnectUrl(user.telegramId)
@@ -119,13 +120,22 @@ export async function routeFeatureIntent(
     }
 
     if (isSimpleWorkspaceRead(text)) {
-      const actor={ userId:String(user.id),legacyTelegramId:user.telegramId, whatsappId:String(user.whatsappId||phone),name:String(user.name||'Gogo') }
       const result=await dispatchThroughSameBrain({actor,text})
       return result.text || null
     }
 
     const agent = await tryRunWhatsAppAgent({ user, text })
-    return agent?.text || null
+    if(agent?.text)return agent.text
+
+    // If we repaired the user's input but no higher-level feature/agent claimed it,
+    // continue through the mature product brain WITH the repaired text. This is the
+    // shared downstream boundary that prevents e.g. `shwo my reminders` from falling
+    // back to processIncomingMessage with the original typo.
+    if(normalized.changed){
+      const repaired=await dispatchThroughSameBrain({actor,text})
+      return repaired.text||null
+    }
+    return null
   } catch (err: any) {
     console.error('WHATSAPP_AGENT_BRIDGE_FAILED:', err?.message || err)
     return null
