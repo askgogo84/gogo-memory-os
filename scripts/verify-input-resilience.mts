@@ -30,8 +30,9 @@ assert.match(safe,/temporarily unavailable/i,'fallback should be conversational 
 const router=fs.readFileSync('lib/feature-intents.ts','utf8')
 const claude=fs.readFileSync('lib/services/claude.ts','utf8')
 assert.match(router,/normalizeUserInputForRouting\(text\)/,'feature router must normalize before deterministic routing')
+assert.match(router,/if\(normalized\.changed\)[\s\S]*dispatchThroughSameBrain\(\{actor,text\}\)/,'repaired commands declined by specialist routing must continue through the mature brain with repaired text')
 assert.match(claude,/ANTHROPIC_FREEFORM_FAILED_FALLING_BACK/,'free-form provider failure must be observed')
 assert.match(claude,/askOpenAiFallback/,'free-form reasoning must have configured second-provider path')
 assert.match(claude,/OPENAI_FALLBACK_MODEL/,'fallback model must be configurable')
 
-console.log('✅ Input typo/noise recovery + WhatsApp failure sanitization + model failover regression passed')
+console.log('✅ Input typo/noise recovery + downstream propagation + WhatsApp failure sanitization + model failover regression passed')
