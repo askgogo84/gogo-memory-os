@@ -29,6 +29,7 @@ const requiredGates = [
   'verify-workspace-meeting-approval.mts',
   'verify-workspace-drive-context.mts',
   'verify-life-event-engine.mts',
+  'verify-life-event-integrations.mts',
   'verify-life-event-worker.mts',
   'verify-dashboard-day-chat.mts',
   'verify-dashboard-tasks-source.mts',
@@ -52,6 +53,15 @@ const requiredSequences = [
   'Sequence I — Autonomous flight check-in',
   'Sequence J — Proactive daily brain',
   'Sequence K — India launch / production readiness',
+  'Sequence L — Documents, identity and expiry',
+  'Sequence M — Purchase, delivery and warranty',
+  'Sequence N — Bills and subscriptions',
+  'Sequence O — People, family and circles',
+  'Sequence P — Voice and multilingual India',
+  'Sequence Q — Expenses, receipts and splits',
+  'Sequence R — Meetings and founder mode',
+  'Sequence S — Health/wellness document reminders',
+  'Sequence T — Monetisation, metering and integrations',
 ]
 
 for (const sequence of requiredSequences) {
@@ -65,7 +75,7 @@ const requiredSafetyPromises = [
   'Duplicate URLs/topics do not spam the user.',
   'Draft/preparation mode must not submit, purchase, or commit an irreversible action.',
   'Any new charge or authentication challenge stops execution.',
-  'Success requires terminal check-in confirmation evidence tied to the final submission',
+  'Success requires terminal check-in confirmation evidence tied to the final submission.',
   'Uncertain execution never auto-retries an irreversible submit.',
   'Cron endpoints are protected by `CRON_SECRET`.',
 ]
@@ -74,17 +84,18 @@ for (const promise of requiredSafetyPromises) {
   assert.ok(matrix.includes(promise), `canonical safety promise missing: ${promise}`)
 }
 
-const nextMilestones = [
-  'Boarding-pass Gmail executor and attachment lifecycle.',
-  'Generic event/reservation calendar executor from Life Events.',
-  'DigiYatra / country capability packs.',
+const visibleGaps = [
   'Secure human takeover UI for browser authentication and uncertain external state.',
-  'Purchase/delivery lifecycle executors.',
-  'Bills/subscriptions lifecycle executor.',
+  'Persist/download the actual Gmail boarding-pass attachment bytes',
+  'Provider-specific authenticated delivery/order adapters',
+  'Provider-specific bill/subscription payment or cancellation executors',
+  'DigiYatra / country capability packs.',
+  'Dedicated Circles, Expenses/Splits and Health-document schemas + regression gates.',
+  'Production Expo push project configuration + physical-device delivery test.',
 ]
 
-for (const milestone of nextMilestones) {
-  assert.ok(matrix.includes(milestone), `pending autonomous milestone disappeared from the test plan: ${milestone}`)
+for (const milestone of visibleGaps) {
+  assert.ok(matrix.includes(milestone), `remaining autonomous gap disappeared from the test plan: ${milestone}`)
 }
 
-console.log(`✅ Autonomous brain matrix covers ${requiredSequences.length} end-to-end sequences and ${requiredGates.length} regression gates`)
+console.log(`✅ Autonomous brain matrix covers ${requiredSequences.length} product sequences and ${requiredGates.length} regression gates`)
