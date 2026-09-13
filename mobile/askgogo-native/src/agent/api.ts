@@ -14,16 +14,17 @@ async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   return response.json() as Promise<T>
 }
 
-export type NativeCaptureInput={uri:string;name:string;type:string;caption?:string}
+export type NativeCaptureInput={uri:string;name:string;type:string;caption?:string;idempotencyKey?:string}
 export type NativeCaptureResult=
   | {kind:'voice';transcript:string}
-  | {kind:'document';documentId:string|null;title:string;summary:string;docType:string;expiresOn:string|null}
+  | {kind:'document';documentId:string|null;title:string;summary:string;docType:string;expiresOn:string|null;deduplicated?:boolean}
 
 async function uploadCapture(input:NativeCaptureInput):Promise<NativeCaptureResult>{
   const token=await getMobileAccessToken();if(!token)throw new AgentApiError('mobile_session_required',401)
   const form=new FormData()
   form.append('file',{uri:input.uri,name:input.name||'capture.bin',type:input.type||'application/octet-stream'} as any)
   if(input.caption)form.append('caption',input.caption)
+  if(input.idempotencyKey)form.append('idempotencyKey',input.idempotencyKey)
   const response=await fetch(`${API_BASE}/api/agent/capture`,{method:'POST',headers:{Accept:'application/json',Authorization:`Bearer ${token}`},body:form})
   if(!response.ok)throw new AgentApiError(await readError(response),response.status)
   const body=await response.json() as {result:NativeCaptureResult}
