@@ -1,5 +1,3 @@
-import { useColorScheme } from 'react-native'
-
 export const color = {
   orange: '#F26B1D',
   blue: '#5B8DD6',
@@ -34,8 +32,9 @@ export const statusColor = {
   reminder: color.ink3,
 } as const
 
+// The Claude redesign is light-first. Keep the app light by default even when
+// the Android system is dark; an explicit app appearance preference can switch
+// this later without making the phone's global theme silently change AskGogo.
 export function useTheme() {
-  const scheme = useColorScheme()
-  const neutral = scheme === 'dark' ? dark : color
-  return { ...color, ...neutral, isDark: scheme === 'dark' }
+  return { ...color, isDark: false }
 }
