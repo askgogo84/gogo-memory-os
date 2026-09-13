@@ -2,7 +2,7 @@ name: AskGogo Mobile APK Preview
 
 on:
   push:
-    branches: ["mobile/native-app-v1"]
+    branches: ["mobile/native-app-v2-current-main"]
     paths:
       - "mobile/askgogo-native/**"
       - ".github/workflows/mobile-apk-preview.yml"
