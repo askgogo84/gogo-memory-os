@@ -1,43 +1,60 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { getAmbiguousReminderTime, parseReminderIntent } from '../lib/bot/handlers/reminders.ts'
+import { buildReminderFromAmPmChoice, isAmPmChoice } from '../lib/bot/handlers/reminder-ampm-followup.ts'
 import { resolvePendingReminder } from '../lib/bot/pending-followup.ts'
-import { hasExplicitReminderTiming, naturalReminderTask, normalizeNaturalReminderSave, parseNumberedChecklist } from '../lib/bot/handlers/natural-command-routing.ts'
+import { hasExplicitReminderTiming, naturalReminderPendingContext, naturalReminderTask, normalizeNaturalReminderSave, parseNumberedChecklist } from '../lib/bot/handlers/natural-command-routing.ts'
 
-// Screenshot regression 1: a dated natural reminder is a reminder command, never a note.
-// Because no clock time was supplied, the natural-save layer must retain the full task/date
-// and ask a conversational follow-up rather than silently inventing a time.
+// Exact screenshot flow: date first, clock time second. It must never become a note.
 const reminderText='Save this as reminder I travel to US on 27th September'
 const normalized=normalizeNaturalReminderSave(reminderText)
-assert.equal(normalized,'remind me I travel to US on 27th September','natural save-as-reminder wording must normalize into reminder intent')
-assert.equal(hasExplicitReminderTiming(normalized!),false,'date-only natural reminder must ask for a clock time')
-assert.equal(naturalReminderTask(normalized!),'I travel to US on 27th September','date/task must survive the follow-up turn')
-const datedFollowup=resolvePendingReminder({task:naturalReminderTask(normalized!)},'8 pm')
+assert.equal(normalized,'remind me I travel to US on 27th September')
+assert.equal(hasExplicitReminderTiming(normalized!),false)
+const datedCtx=naturalReminderPendingContext(normalized!)
+assert.equal(datedCtx.task,'I travel to US','absolute date must not pollute the reminder subject')
+assert.match(datedCtx.dateText||'',/27th September/i,'absolute date must be retained as schedule context')
+const datedFollowup=resolvePendingReminder(datedCtx,'8 pm')
 assert.ok(datedFollowup,'8 pm must complete the pending dated reminder')
-assert.match(datedFollowup!.message,/travel to US/i,'two-turn reminder must retain the original trip subject')
+assert.equal(datedFollowup!.message,'I travel to US','two-turn reminder must retain the exact trip subject')
 const datedParts=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'long',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(datedFollowup!.remindAtIso))
-assert.match(datedParts,/27/,'two-turn reminder must retain 27 September')
-assert.match(datedParts,/September/i,'two-turn reminder must retain September')
-assert.match(datedParts,/8:00\s*pm/i,'two-turn reminder must apply the follow-up 8 PM time')
-assert.equal(normalizeNaturalReminderSave('save this memory about my US trip'),null,'ordinary memory saves must not be hijacked as reminders')
+assert.match(datedParts,/27/)
+assert.match(datedParts,/September/i)
+assert.match(datedParts,/8:00\s*pm/i)
+assert.equal(normalizeNaturalReminderSave('save this memory about my US trip'),null)
 
-// Screenshot regression 2: task first, time next. The task must be kept in pending_reminder.
+// Task first, time next: original task must survive the clarification turn.
 const noTime=normalizeNaturalReminderSave('Save this as reminder call Mom')
 assert.equal(noTime,'remind me call Mom')
-assert.equal(parseReminderIntent(noTime!),null,'no-time reminder should ask for time rather than inventing one')
-assert.equal(naturalReminderTask(noTime!),'call Mom','task must survive the clarification turn')
+assert.equal(parseReminderIntent(noTime!),null)
+assert.equal(naturalReminderTask(noTime!),'call Mom')
 assert.equal(hasExplicitReminderTiming(noTime!),false)
 const callMomFollowup=resolvePendingReminder({task:'call Mom'},'tomorrow 6 pm')
-assert.ok(callMomFollowup,'tomorrow 6 pm must complete the call-Mom reminder')
-assert.match(callMomFollowup!.message,/call Mom/i,'follow-up must retain call Mom')
+assert.ok(callMomFollowup)
+assert.equal(callMomFollowup!.message,'call Mom')
 
-// Screenshot regression 3: bare 8 is an AM/PM clarification, NOT a missing-time flow.
+// Bare 8 must use AM/PM clarification, and a normal human reply "8 pm" must work.
 const ambiguous=normalizeNaturalReminderSave('Save this as reminder call Mom at 8')
 assert.equal(ambiguous,'remind me call Mom at 8')
-assert.ok(getAmbiguousReminderTime(ambiguous!),'bare 7-11 clock hour must use AM/PM clarification')
-assert.equal(hasExplicitReminderTiming(ambiguous!),false,'bare ambiguous hour is not complete timing until AM/PM is chosen')
+assert.ok(getAmbiguousReminderTime(ambiguous!))
+assert.equal(hasExplicitReminderTiming(ambiguous!),false)
+assert.equal(isAmPmChoice('8 pm'),true,'clock-bearing AM/PM reply must be accepted')
+const resolvedEight=buildReminderFromAmPmChoice(ambiguous!,'8 pm')
+assert.ok(resolvedEight,'8 pm must resolve the original ambiguous reminder')
+const eightParts=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(resolvedEight!.remindAtIso))
+assert.match(eightParts,/8:00\s*pm/i)
+assert.equal(buildReminderFromAmPmChoice(ambiguous!,'9 pm'),null,'a different clock time must not silently answer the 8 AM/PM question')
 
-// Screenshot regression 4: the complete trip checklist must route to Lists and ignore 11 -.
+// Day-parts are conversational but not precise enough to schedule without a clock.
+const daypart=normalizeNaturalReminderSave('Save this as reminder call Mom tomorrow evening')
+assert.equal(hasExplicitReminderTiming(daypart!),false,'day-part must ask for a concrete time')
+const daypartCtx=naturalReminderPendingContext(daypart!)
+assert.equal(daypartCtx.task,'call Mom')
+assert.match(daypartCtx.dateText||'',/tomorrow/i)
+const daypartResolved=resolvePendingReminder(daypartCtx,'7 pm')
+assert.ok(daypartResolved)
+assert.equal(daypartResolved!.message,'call Mom')
+
+// Complete trip checklist must route to Lists and ignore the empty 11th row.
 const checklistText=`Things to do before my US trip
 1 - nail polish for feet and Mani
 2 - waxing
@@ -51,9 +68,9 @@ const checklistText=`Things to do before my US trip
 10 - shopping for Keum
 11 -`
 const checklist=parseNumberedChecklist(checklistText)
-assert.ok(checklist,'numbered preparation message must be recognised as a checklist')
+assert.ok(checklist)
 assert.equal(checklist!.listName,'US trip')
-assert.equal(checklist!.items.length,10,'blank numbered rows must be ignored')
+assert.equal(checklist!.items.length,10)
 assert.equal(checklist!.items[0],'nail polish for feet and Mani')
 assert.equal(checklist!.items[9],'shopping for Keum')
 
@@ -62,13 +79,17 @@ const natural=fs.readFileSync('lib/bot/handlers/natural-command-routing.ts','utf
 const reminderPos=router.indexOf('normalizeNaturalReminderSave(text)')
 const checklistPos=router.indexOf('parseNumberedChecklist(text)')
 const legacyPos=router.indexOf('routeLegacyFeatureIntent(phone, text, extra)')
-assert.ok(reminderPos>=0&&reminderPos<legacyPos,'natural reminder capture must run before generic/legacy fallback')
-assert.ok(checklistPos>=0&&checklistPos<legacyPos,'numbered checklist capture must run before generic/agent fallback')
-assert.match(router,/won't save it as a note instead/,'reminder persistence failure must fail closed rather than silently become a note')
-assert.match(natural,/saveFollowupState\(params\.telegramId,'pending_reminder'/,'no-time reminder must persist pending reminder context')
-assert.match(natural,/task:naturalReminderTask\(normalized\)/,'pending reminder must retain the original task')
-assert.match(natural,/saveFollowupState\(params\.telegramId,'reminder_ampm'/,'ambiguous natural reminders must reuse the existing AM\/PM follow-up state')
-assert.match(natural,/originalText:normalized/,'AM\/PM state must store parser-compatible normalized reminder text')
-assert.match(natural,/\.eq\('recurring_pattern', parsed\.pattern\)\.eq\('message', parsed\.message\)/,'recurring dedupe must include reminder identity, not cadence alone')
+assert.ok(reminderPos>=0&&reminderPos<legacyPos)
+assert.ok(checklistPos>=0&&checklistPos<legacyPos)
+assert.match(router,/won't save it as a note instead/)
+assert.match(router,/const stored = await getList\(extra\.telegramId, listName\)/,'checklist success must be read back from storage')
+assert.match(router,/checklist_persistence_incomplete/,'partial checklist persistence must fail closed')
+assert.match(natural,/saveFollowupState\(params\.telegramId,'pending_reminder'/)
+assert.match(natural,/dateText:pending\.dateText/,'pending reminder must preserve the date separately')
+assert.match(natural,/saveFollowupState\(params\.telegramId,'reminder_ampm'/)
+assert.match(natural,/originalText:normalized/)
+assert.match(natural,/pickRecurringDuplicate/,'recurring dedupe must include time-of-day')
+assert.match(natural,/\.eq\('message', parsed\.message\)/,'recurring dedupe must include reminder identity')
+assert.match(natural,/is_recurring\.is\.null,is_recurring\.eq\.false/,'one-time dedupe must never overwrite a recurring series')
 
-console.log('✅ Generic-user screenshot reminder/checklist regressions passed')
+console.log('✅ Generic-user conversational reminder/checklist regressions passed')
