@@ -23,7 +23,7 @@ function hasCheckinSuccessEvidence(result: { actions?: Array<{kind:string;status
   const finalAction = successful[successful.length - 1]
   const finalSubmitSucceeded = finalAction?.kind === 'submit'
   const confirmationText = `${result.title || ''} ${result.pageText || ''}`.toLowerCase()
-  const terminalConfirmation = /\b(check[- ]?in (?:is )?(?:complete|completed|successful|confirmed)|you(?:'|’)re checked in|you are checked in|checked in successfully|check[- ]?in confirmation(?: number)?|boarding pass (?:is )?(?:ready|available|issued|generated)|download (?:your )?boarding pass)\b/i.test(confirmationText)
+  const terminalConfirmation = /\b(check[- ]?in (?:is )?(?:complete|completed|successful|confirmed)|you(?:'|’)re checked in|you are checked in|checked in successfully|check[- ]?in confirmation(?: number)?)\b/i.test(confirmationText)
   return finalSubmitSucceeded && terminalConfirmation
 }
 
