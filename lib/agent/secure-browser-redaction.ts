@@ -23,14 +23,14 @@ function redactUrl(raw: string) {
  *
  * Browser/provider URLs frequently contain one-time signatures, booking tokens,
  * session identifiers, or opaque authorization payloads whose names are not
- * predictable. For browser telemetry we therefore preserve only URL structure
- * and query parameter names, never their values. Long opaque/base64-like values
- * are also withheld in case a subprocess error echoes its encoded CLI payload.
+ * predictable. Redact complete URLs before generic label-based secret handling:
+ * the generic redactor may insert whitespace around a secret marker, which would
+ * otherwise split a URL and allow later query parameters to escape URL redaction.
  */
 export function redactBrowserSensitiveText(content: string): string {
   if (!content) return content
-  let out = redactSecretShapedText(String(content))
-  out = out.replace(HTTP_URL_RE, (raw) => redactUrl(raw))
+  let out = String(content).replace(HTTP_URL_RE, (raw) => redactUrl(raw))
+  out = redactSecretShapedText(out)
   out = out.replace(LONG_OPAQUE_TOKEN_RE, '[sensitive token withheld]')
   return out
 }
