@@ -8,10 +8,6 @@
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#F7F1E9",
     "newArchEnabled": false,
-    "splash": {
-      "backgroundColor": "#F7F1E9",
-      "resizeMode": "contain"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "in.askgogo.app",
@@ -27,6 +23,15 @@
     "plugins": [
       "expo-router",
       "expo-system-ui",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F7F1E9",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 128,
+          "resizeMode": "contain"
+        }
+      ],
       [
         "expo-audio",
         {
