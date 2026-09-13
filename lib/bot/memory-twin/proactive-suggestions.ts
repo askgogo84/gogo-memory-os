@@ -7,11 +7,17 @@ export async function buildProactiveSuggestion(params: {
   const context = await loadMemoryTwinContext(params.telegramId)
   const lower = (params.userText || '').toLowerCase()
 
-  if (!context.profile) return ''
+  if (!context.memoryEnabled || !context.proactiveSuggestionsEnabled || !context.profile) return ''
 
-  const commonTimes = context.profile.common_times || []
-  const frequentContacts = context.profile.frequent_contacts || []
-  const frequentTasks = context.profile.frequent_tasks || []
+  const commonTimes = Array.isArray(context.profile.common_times)
+    ? context.profile.common_times.filter((x:any)=>Number(x?.count||0)>=3)
+    : []
+  const frequentContacts = Array.isArray(context.profile.frequent_contacts)
+    ? context.profile.frequent_contacts.filter((x:any)=>Number(x?.count||0)>=3)
+    : []
+  const frequentTasks = Array.isArray(context.profile.frequent_tasks)
+    ? context.profile.frequent_tasks.filter((x:any)=>Number(x?.count||0)>=3)
+    : []
 
   if (
     /\bremind|reminder|call|follow/i.test(lower) &&
