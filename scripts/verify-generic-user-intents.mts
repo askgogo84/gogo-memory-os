@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { getAmbiguousReminderTime, parseReminderIntent } from '../lib/bot/handlers/reminders.ts'
+import { resolvePendingReminder } from '../lib/bot/pending-followup.ts'
 import { hasExplicitReminderTiming, naturalReminderTask, normalizeNaturalReminderSave, parseNumberedChecklist } from '../lib/bot/handlers/natural-command-routing.ts'
 
 // Screenshot regression 1: a dated natural reminder is a reminder command, never a note.
@@ -11,6 +12,13 @@ const normalized=normalizeNaturalReminderSave(reminderText)
 assert.equal(normalized,'remind me I travel to US on 27th September','natural save-as-reminder wording must normalize into reminder intent')
 assert.equal(hasExplicitReminderTiming(normalized!),false,'date-only natural reminder must ask for a clock time')
 assert.equal(naturalReminderTask(normalized!),'I travel to US on 27th September','date/task must survive the follow-up turn')
+const datedFollowup=resolvePendingReminder({task:naturalReminderTask(normalized!)},'8 pm')
+assert.ok(datedFollowup,'8 pm must complete the pending dated reminder')
+assert.match(datedFollowup!.message,/travel to US/i,'two-turn reminder must retain the original trip subject')
+const datedParts=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'long',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(datedFollowup!.remindAtIso))
+assert.match(datedParts,/27/,'two-turn reminder must retain 27 September')
+assert.match(datedParts,/September/i,'two-turn reminder must retain September')
+assert.match(datedParts,/8:00\s*pm/i,'two-turn reminder must apply the follow-up 8 PM time')
 assert.equal(normalizeNaturalReminderSave('save this memory about my US trip'),null,'ordinary memory saves must not be hijacked as reminders')
 
 // Screenshot regression 2: task first, time next. The task must be kept in pending_reminder.
@@ -19,6 +27,9 @@ assert.equal(noTime,'remind me call Mom')
 assert.equal(parseReminderIntent(noTime!),null,'no-time reminder should ask for time rather than inventing one')
 assert.equal(naturalReminderTask(noTime!),'call Mom','task must survive the clarification turn')
 assert.equal(hasExplicitReminderTiming(noTime!),false)
+const callMomFollowup=resolvePendingReminder({task:'call Mom'},'tomorrow 6 pm')
+assert.ok(callMomFollowup,'tomorrow 6 pm must complete the call-Mom reminder')
+assert.match(callMomFollowup!.message,/call Mom/i,'follow-up must retain call Mom')
 
 // Screenshot regression 3: bare 8 is an AM/PM clarification, NOT a missing-time flow.
 const ambiguous=normalizeNaturalReminderSave('Save this as reminder call Mom at 8')
