@@ -299,6 +299,7 @@ export async function processDueLifeEventActions(limit = 12) {
     supabaseAdmin.from('life_event_actions')
       .select(select)
       .in('status', ['queued','ready'])
+      .neq('action_type', 'email_watch')
       .not('due_at', 'is', null)
       .lte('due_at', now.toISOString())
       .order('due_at', { ascending: true })
@@ -307,6 +308,7 @@ export async function processDueLifeEventActions(limit = 12) {
     supabaseAdmin.from('life_event_actions')
       .select(select)
       .eq('status', 'running')
+      .neq('action_type', 'email_watch')
       .lte('updated_at', staleBefore)
       .order('updated_at', { ascending: true })
       .limit(limit),
