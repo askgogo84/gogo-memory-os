@@ -114,9 +114,17 @@ export default function CaptureAndShare(){
     setBusy(true);setError('');setOutput(null)
     try{
       if(sharedFiles.length){
-        const f=sharedFiles[0]
-        const ok=await runUpload({uri:normalizePath(String(f.path||'')),name:String(f.fileName||'shared-file'),type:String(f.mimeType||guessMime(f.fileName||''))},'os_share_file')
-        if(ok)resetShareIntent()
+        const results:NativeCaptureResult[]=[]
+        for(let index=0;index<sharedFiles.length;index++){
+          const f=sharedFiles[index]
+          const uri=normalizePath(String(f?.path||''))
+          if(!uri)throw new Error(`Shared file ${index+1} is missing a readable path.`)
+          results.push(await agentApi.capture({uri,name:String(f?.fileName||`shared-file-${index+1}`),type:String(f?.mimeType||guessMime(f?.fileName||'')),caption:caption.trim()}))
+        }
+        resetShareIntent()
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+        if(results.length===1)await handleCaptureResult(results[0],'os_share_file')
+        else setOutput({title:`${results.length} shared files saved`,text:'All shared files were saved privately to AskGogo Memory.',good:true})
         return
       }
       if(sharedText){
@@ -126,7 +134,7 @@ export default function CaptureAndShare(){
         return
       }
       setError('The shared item did not contain readable text or a supported file.')
-    }catch(e:any){setError(e?.message||'Could not save the shared item.')}
+    }catch(e:any){setError(e?.message||'Could not save the shared item. The incoming share is still available so you can retry.');await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)}
     finally{setBusy(false)}
   }
 
