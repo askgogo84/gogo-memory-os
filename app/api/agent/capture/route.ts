@@ -18,7 +18,12 @@ const MAX_BYTES=20*1024*1024
 function safe(v:unknown,max=1000){return String(v??'').replace(/\s+/g,' ').trim().slice(0,max)}
 function ext(name:string,mime:string){const fromName=(name.match(/\.([a-z0-9]{1,8})$/i)||[])[1];if(fromName)return fromName.toLowerCase();if(/pdf/i.test(mime))return'pdf';if(/png/i.test(mime))return'png';if(/jpe?g/i.test(mime))return'jpg';if(/webp/i.test(mime))return'webp';if(/m4a|mp4/i.test(mime))return'm4a';if(/mpeg|mp3/i.test(mime))return'mp3';if(/wav/i.test(mime))return'wav';return'bin'}
 function kindFor(mime:string){if(/^audio\//i.test(mime))return'voice';if(/^image\//i.test(mime))return'image';if(/pdf/i.test(mime))return'pdf';return'document'}
-function stableSourceId(raw:string){return raw?`mobile:${createHash('sha256').update(raw).digest('hex').slice(0,40)}`:`mobile:${randomUUID()}`}
+function stableSourceId(raw:string,buffer:Buffer,name:string){
+  const hash=createHash('sha256')
+  if(raw)hash.update(`key:${raw}`)
+  else{hash.update(`name:${name}\n`);hash.update(buffer)}
+  return `mobile:${hash.digest('hex').slice(0,40)}`
+}
 async function cleanup(path:string){await supabaseAdmin.storage.from(BUCKET).remove([path]).catch(()=>{})}
 
 async function extractContent(kind:string,mime:string,name:string,caption:string,buffer:Buffer){
@@ -43,7 +48,7 @@ export async function POST(request:Request){
   if(value.size<=0||value.size>MAX_BYTES)return NextResponse.json({error:'file_size_invalid'},{status:400})
   const mime=safe(value.type||'application/octet-stream',160),name=safe(value.name||'capture.bin',240),caption=safe(form.get('caption'),1200),kind=kindFor(mime),buffer=Buffer.from(await value.arrayBuffer()),telegramId=Number(session.telegramId)
   if(!Number.isFinite(telegramId))return NextResponse.json({error:'invalid_session'},{status:400})
-  const sourceId=stableSourceId(safe(form.get('idempotencyKey'),1200))
+  const sourceId=stableSourceId(safe(form.get('idempotencyKey'),1200),buffer,name)
 
   const {data:existing}=await supabaseAdmin.from('documents').select('id,title,summary,doc_type,expires_on').eq('telegram_id',telegramId).eq('source_message_id',sourceId).maybeSingle()
   if(existing)return NextResponse.json({result:{kind:'document',documentId:String(existing.id),title:String(existing.title||name),summary:String(existing.summary||''),docType:String(existing.doc_type||kind),expiresOn:existing.expires_on||null,deduplicated:true}})
