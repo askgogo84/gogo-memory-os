@@ -5,6 +5,7 @@ import {
   isExplicitAssetSaveCommand,
   saveRecentMediaAsAsset,
 } from '@/lib/services/asset-memory'
+import { isReservedSaveLastActionDestination } from './save-last-context-routing'
 
 function extractSaveTitle(text: string) {
   return (text || '')
@@ -17,15 +18,9 @@ function extractSaveTitle(text: string) {
     .trim()
 }
 
-// These are first-class actions, not labels for saving the previous conversation
-// into Notes. The WhatsApp webhook evaluates save-last-context before feature routing,
-// so claiming any of these here silently steals the turn from reminders/lists/calendar.
-// Keep this guard close to the broad legacy matcher as a permanent precedence boundary.
-const RESERVED_ACTION_DESTINATION = /^(?:save|remember)\s+(?:it|this|that)\s+as\s+(?:a\s+)?(?:reminder|alarm|task|todo|to-do|list|checklist|calendar|event|appointment|meeting)\b/i
-
 function isLegacySaveLastContextCommand(text: string) {
   const raw = String(text || '').trim()
-  if (RESERVED_ACTION_DESTINATION.test(raw)) return false
+  if (isReservedSaveLastActionDestination(raw)) return false
   const lower = raw.toLowerCase()
   return (
     lower.startsWith('save it as ') ||
