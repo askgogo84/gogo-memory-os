@@ -12,12 +12,16 @@ assert.ok(searches.some(x=>/boarding pass/i.test(x)))
 assert.ok(searches.some(x=>/check-in confirmation/i.test(x)))
 assert.ok(searches.every(x=>/ABC123|6E614|IndiGo/i.test(x)),'each search must retain trip identity')
 
-const exact=scoreBoardingPassCandidate({subject:'Your boarding pass for 6E 614',snippet:'PNR ABC123',provider:'IndiGo',confirmationRef:'ABC123',flightNo:'6E614'})
+const exact=scoreBoardingPassCandidate({subject:'Your IndiGo boarding pass for 6E 614',snippet:'PNR ABC123',provider:'IndiGo',confirmationRef:'ABC123',flightNo:'6E614'})
 assert.equal(exact.accepted,true,'strong trip-bound boarding-pass evidence should match')
 const promo=scoreBoardingPassCandidate({subject:'Boarding pass sale offer',snippet:'Save 20%',provider:'IndiGo',confirmationRef:'ABC123',flightNo:'6E614'})
 assert.equal(promo.accepted,false,'promo copy without trip identity in the message must not match')
+const providerOnly=scoreBoardingPassCandidate({subject:'Your IndiGo boarding pass is ready',snippet:'Download your boarding pass',provider:'IndiGo'})
+assert.equal(providerOnly.accepted,false,'airline/provider name alone must never close a flight watch without PNR or flight number')
+assert.equal(providerOnly.tripIdentitySignals,0,'provider must not count as trip-specific identity')
 
 assert.match(worker,/\.eq\('action_type',\s*'email_watch'\)/,'email worker must own only email_watch actions')
+assert.match(worker,/tripIdentitySignals\s*>?=\s*1/,'candidate acceptance must require trip-specific identity')
 assert.match(worker,/duplicateSuppressed/,'duplicate boarding-pass evidence must be suppressed')
 assert.match(worker,/gmailMessageId/,'Gmail provenance must be persisted')
 const exclusions=genericWorker.match(/\.neq\('action_type',\s*'email_watch'\)/g)||[]
