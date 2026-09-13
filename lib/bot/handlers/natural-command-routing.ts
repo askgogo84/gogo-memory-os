@@ -1,4 +1,4 @@
-import { parseReminderIntent, buildReminderConfirmation } from './reminders'
+import { parseReminderIntent, buildReminderConfirmation, getAmbiguousReminderTime, buildAmPmClarificationReply } from './reminders'
 
 export type NumberedChecklist = { listName: string; items: string[] }
 
@@ -13,6 +13,15 @@ export function normalizeNaturalReminderSave(text: string): string | null {
 export function naturalReminderTask(normalized:string):string|null {
   const task=String(normalized||'').replace(/^\s*remind\s+me(?:\s+to)?\s*/i,'').trim()
   return task||null
+}
+
+export function hasExplicitReminderTiming(normalized:string):boolean {
+  const t=String(normalized||'')
+  if(/\bin\s+\d+\s+(?:minute|minutes|min|mins|hour|hours|day|days)\b/i.test(t))return true
+  if(/\b(?:noon|midday|midnight|morning|afternoon|evening|night)\b/i.test(t))return true
+  if(/\b\d{1,2}(?::|\.)\d{2}\s*(?:am|pm)?\b/i.test(t))return true
+  if(/\b\d{1,2}\s*(?:am|pm)\b/i.test(t))return true
+  return false
 }
 
 export function parseNumberedChecklist(text: string): NumberedChecklist | null {
@@ -44,9 +53,35 @@ export async function saveNaturalReminder(params: {
 }): Promise<string | null> {
   const normalized = normalizeNaturalReminderSave(params.text)
   if (!normalized) return null
+  const { saveFollowupState } = await import('./followup-state')
+
+  // Reuse the mature reminder AM/PM clarification path instead of treating an
+  // ambiguous clock hour as a missing-time reminder. Store the normalized form
+  // because buildReminderFromAmPmChoice already understands "remind me ...".
+  if (getAmbiguousReminderTime(normalized)) {
+    await saveFollowupState(params.telegramId,'reminder_ampm',{
+      originalText:normalized,
+      channel:params.whatsappTo?'whatsapp':'unknown',
+      created_at:new Date().toISOString(),
+    })
+    return buildAmPmClarificationReply(normalized)
+  }
+
+  // A date/day without a clock time is still incomplete for natural "save this
+  // as reminder" wording. Keep the entire original task/date phrase so a reply
+  // like "8 pm" completes the same reminder rather than creating a task-less one.
+  if (!hasExplicitReminderTiming(normalized)) {
+    await saveFollowupState(params.telegramId,'pending_reminder',{
+      task:naturalReminderTask(normalized),
+      day:null,
+      recurrence:null,
+      created_at:new Date().toISOString(),
+    })
+    return `Sure — what time should I remind you?\n_e.g. “8 PM”, “tomorrow 6 PM”, or “in 2 hours”_`
+  }
+
   const parsed = parseReminderIntent(normalized)
   if (!parsed) {
-    const { saveFollowupState } = await import('./followup-state')
     await saveFollowupState(params.telegramId,'pending_reminder',{
       task:naturalReminderTask(normalized),
       day:null,
@@ -63,7 +98,9 @@ export async function saveNaturalReminder(params: {
   let duplicateId: string | null = null
 
   if (parsed.kind === 'recurring') {
-    const { data } = await supabaseAdmin.from('reminders').select('id').eq('telegram_id', params.telegramId).eq('sent', false).eq('is_recurring', true).eq('recurring_pattern', parsed.pattern).limit(1)
+    // Same cadence is not the same reminder. Keep "exercise daily at 9" and
+    // "take vitamins daily at 9" as independent rows; only dedupe the same task.
+    const { data } = await supabaseAdmin.from('reminders').select('id,message').eq('telegram_id', params.telegramId).eq('sent', false).eq('is_recurring', true).eq('recurring_pattern', parsed.pattern).eq('message', parsed.message).limit(1)
     duplicateId = data?.[0]?.id ? String(data[0].id) : null
   } else {
     const { data } = await supabaseAdmin.from('reminders').select('id').eq('telegram_id', params.telegramId).eq('sent', false).eq('remind_at', parsed.remindAtIso).eq('message', parsed.message).limit(1)
