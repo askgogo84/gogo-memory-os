@@ -108,13 +108,13 @@ jobs:
             adb pull /sdcard/askgogo-window.xml /tmp/askgogo-window.xml >/dev/null
             grep -Eq "AskGogo|Connect the app" /tmp/askgogo-window.xml || (echo "AskGogo boot route did not render"; cat /tmp/askgogo-window.xml || true; adb logcat -d -v threadtime | grep -E "in\.askgogo\.app|FATAL EXCEPTION|AndroidRuntime|ReactNativeJS|Expo|SoLoader|UnsatisfiedLinkError|Fatal signal|Exception|Error" | tail -n 450; exit 1)
 
-            adb shell am start -W -a android.intent.action.VIEW -d "askgogo://agent-safe" in.askgogo.app >/tmp/agent-safe-start.txt 2>&1 || true
+            adb shell am start -W -a android.intent.action.VIEW -d "askgogo://agent-safe" in.askgogo.app >/tmp/gogo-home-start.txt 2>&1 || true
             sleep 5
-            test -n "$(adb shell pidof in.askgogo.app | tr -d '\r')" || (echo "AskGogo process exited while opening agent-safe"; cat /tmp/agent-safe-start.txt || true; adb logcat -d -v threadtime | grep -E "in\.askgogo\.app|FATAL EXCEPTION|AndroidRuntime|ReactNativeJS|Expo|SoLoader|UnsatisfiedLinkError|Fatal signal|Exception|Error" | tail -n 450; exit 1)
-            adb shell uiautomator dump /sdcard/askgogo-agent-safe.xml >/dev/null
-            adb pull /sdcard/askgogo-agent-safe.xml /tmp/askgogo-agent-safe.xml >/dev/null
-            grep -Eq "Opening your Gogo|You’re connected|No linked mobile session|Reconnect WhatsApp|Agent API" /tmp/askgogo-agent-safe.xml || (echo "Crash-safe Agent bridge did not render"; cat /tmp/askgogo-agent-safe.xml || true; adb logcat -d -v threadtime | grep -E "in\.askgogo\.app|FATAL EXCEPTION|AndroidRuntime|ReactNativeJS|Expo|SoLoader|UnsatisfiedLinkError|Fatal signal|Exception|Error" | tail -n 450; exit 1)
-            echo "AskGogo release APK launched and crash-safe Agent bridge rendered successfully"
+            test -n "$(adb shell pidof in.askgogo.app | tr -d '\r')" || (echo "AskGogo process exited while opening consumer Gogo Home"; cat /tmp/gogo-home-start.txt || true; adb logcat -d -v threadtime | grep -E "in\.askgogo\.app|FATAL EXCEPTION|AndroidRuntime|ReactNativeJS|Expo|SoLoader|UnsatisfiedLinkError|Fatal signal|Exception|Error" | tail -n 450; exit 1)
+            adb shell uiautomator dump /sdcard/askgogo-home.xml >/dev/null
+            adb pull /sdcard/askgogo-home.xml /tmp/askgogo-home.xml >/dev/null
+            grep -Eq "What can Gogo take off your plate|Gogo is on it|Same brain · WhatsApp \+ app|Activity|Today" /tmp/askgogo-home.xml || (echo "Consumer Gogo Home did not render"; cat /tmp/askgogo-home.xml || true; adb logcat -d -v threadtime | grep -E "in\.askgogo\.app|FATAL EXCEPTION|AndroidRuntime|ReactNativeJS|Expo|SoLoader|UnsatisfiedLinkError|Fatal signal|Exception|Error" | tail -n 450; exit 1)
+            echo "AskGogo release APK launched and consumer Gogo Home rendered successfully"
 
       - name: Upload verified APK
         uses: actions/upload-artifact@v4
