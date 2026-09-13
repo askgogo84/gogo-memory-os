@@ -1,4 +1,3 @@
-import { supabaseAdmin } from '@/lib/supabase-admin'
 import { parseReminderIntent, buildReminderConfirmation } from './reminders'
 
 export type NumberedChecklist = { listName: string; items: string[] }
@@ -45,6 +44,8 @@ export async function saveNaturalReminder(params: {
     return `I understood this as a reminder. When should I remind you?\n_e.g. “27 September at 9 AM”, “tomorrow 6 PM”, or “in 2 hours”_`
   }
 
+  // Lazy-load the DB client so pure intent/parser tests never need production credentials.
+  const { supabaseAdmin } = await import('@/lib/supabase-admin')
   const { data: user } = await supabaseAdmin.from('users').select('timezone').eq('telegram_id', params.telegramId).maybeSingle()
   const timezone = String(user?.timezone || 'Asia/Kolkata')
   let duplicateId: string | null = null
