@@ -4,7 +4,6 @@ import { useRouter } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
 import { exchangeWhatsAppLink, startWhatsAppOtp, verifyWhatsAppOtp, type WhatsAppOtpLink } from '../src/auth/link'
-import { registerForGogoNotifications } from '../src/native/notifications'
 
 const C = { bg:'#F6F0E8', paper:'#FFFDF9', ink:'#3A2418', muted:'#8C7769', line:'rgba(58,36,24,.11)', orange:'#F47B20', green:'#2E9B67' }
 
@@ -38,13 +37,12 @@ export default function ConnectAskGogo() {
       await verifyWhatsAppOtp({ pollToken:link.pollToken, code:clean })
       const session = await exchangeWhatsAppLink({ pollToken:link.pollToken, deviceName:`${Platform.OS} AskGogo` })
       if (!session.accessToken) throw new Error('session_failed')
-      // The mobile bearer session is now stored. Register this installation for
-      // Background Gogo notifications immediately; notification failure must not
-      // undo a successful WhatsApp identity link.
-      registerForGogoNotifications().catch((err:any)=>console.log('GOGO_NOTIFICATION_LINK_REGISTRATION_SKIPPED',String(err?.message||err)))
       setState('linked')
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-      setTimeout(()=>router.replace('/agent'),700)
+      // Do not request Android notification permission during the identity-link
+      // transition. Enter a crash-safe linked landing screen first, then request
+      // optional device permissions from a stable foreground route.
+      setTimeout(()=>router.replace('/agent-safe'),350)
     } catch (e:any) {
       setState('code')
       setError(e?.message === 'invalid_or_expired_code' ? 'That code is wrong or expired. Check WhatsApp and try again.' : 'Could not verify this device. Try again.')
@@ -77,7 +75,7 @@ export default function ConnectAskGogo() {
       <Pressable onPress={restart} style={s.textButton}><Text style={s.textButtonText}>Use another WhatsApp number</Text></Pressable>
     </View>}
 
-    {state==='linked' && <View style={s.success}><Ionicons name="checkmark-circle" size={30} color={C.green}/><View style={{flex:1}}><Text style={s.successTitle}>Same Gogo connected.</Text><Text style={s.small}>Opening your live Agent Hub…</Text></View></View>}
+    {state==='linked' && <View style={s.success}><Ionicons name="checkmark-circle" size={30} color={C.green}/><View style={{flex:1}}><Text style={s.successTitle}>Same Gogo connected.</Text><Text style={s.small}>Opening your linked AskGogo app…</Text></View></View>}
     {!!error && <Text style={s.error}>{error}</Text>}
 
     <View style={s.privacy}><Ionicons name="lock-closed-outline" size={17} color={C.muted}/><Text style={s.privacyText}>Your WhatsApp password or credentials never enter the app. AskGogo only verifies possession of your existing WhatsApp identity and stores an opaque device token in secure storage.</Text></View>
