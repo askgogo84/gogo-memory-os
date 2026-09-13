@@ -33,7 +33,7 @@ export default function GogoHome(){
       <SummaryDot color="#5B8DD6" text={`Watching ${home?.counts.watching||0}`}/>
       <SummaryDot color="#3DB283" text={`${Math.max(0,home?.items.filter(i=>i.kind==='done').length||0)} done today`}/>
     </View>
-    <View style={{opacity:busy?0.72:1}}><AskInput value={q} onChangeText={setQ} onSend={send} onAttach={()=>r.push('/capture')} onMic={()=>r.push('/capture')}/></View>
+    <View style={{opacity:busy?0.72:1}}><AskInput value={q} onChangeText={setQ} onSend={send} onAttach={()=>r.push('/(tabs)/capture')} onMic={()=>r.push('/(tabs)/capture')}/></View>
     {busy?<View style={s.inline}><ActivityIndicator size="small" color="#F26B1D"/><Text style={[s.inlineText,{color:t.ink3}]}>Gogo is starting that…</Text></View>:null}
     {error?<Text style={s.error}>{error}</Text>:null}
     <View style={s.sectionRow}><Text style={[s.sectionTitle,{color:t.ink}]}>Right now</Text><Pressable onPress={()=>r.push('/(tabs)/today')}><Text style={s.link}>See today</Text></Pressable></View>
