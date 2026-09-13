@@ -1,0 +1,22 @@
+name: Check-in Terminal Evidence
+
+on:
+  push:
+    branches: ["fix/checkin-terminal-evidence-20260913"]
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "lib/agent/life-event-execution.ts"
+      - "scripts/verify-checkin-terminal-evidence.mts"
+      - ".github/workflows/checkin-terminal-evidence.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm ci
+      - run: npx tsx scripts/verify-checkin-terminal-evidence.mts
