@@ -13,6 +13,7 @@ import { isBookingOrEventLinkText } from '@/lib/services/whatsapp-preview-routin
 import { sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
 import { addToListDetailed, formatAddResult, getList, normalizeListName } from '@/lib/lists'
 import { normalizeNaturalReminderSave, parseNumberedChecklist, saveNaturalReminder } from '@/lib/bot/handlers/natural-command-routing'
+import { normalizeUserInputForRouting } from '@/lib/bot/input-normalizer'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 
 function isSimpleWorkspaceRead(text:string) {
@@ -35,6 +36,10 @@ export async function routeFeatureIntent(
   text: string,
   extra?: { telegramId?: number; caption?: string },
 ): Promise<string | null> {
+  const normalized=normalizeUserInputForRouting(text)
+  if(normalized.changed) console.info('INPUT_NORMALIZED_FOR_FEATURE_ROUTING:',{reasons:normalized.reasons,originalLength:String(text||'').length,normalizedLength:normalized.text.length})
+  text=normalized.text
+
   if (extra?.telegramId && isEventCredentialRetrieval(text)) {
     const ticket = await retrieveEventCredential(extra.telegramId, text)
     if (ticket) {
