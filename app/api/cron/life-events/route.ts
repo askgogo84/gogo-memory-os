@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { processDueLifeEventActions } from '@/lib/agent/life-event-worker'
+import { processDueLifeEventEmailWatches } from '@/lib/agent/life-event-email-worker'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -16,8 +17,9 @@ function authorized(request: Request) {
 export async function GET(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
-    const result = await processDueLifeEventActions()
-    return NextResponse.json({ ok: true, ...result })
+    const email = await processDueLifeEventEmailWatches()
+    const lifeEvents = await processDueLifeEventActions()
+    return NextResponse.json({ ok: true, email, lifeEvents })
   } catch (err: any) {
     console.error('LIFE_EVENT_CRON_FAILED:', err?.message || err)
     return NextResponse.json({ ok: false, error: 'life_event_worker_failed' }, { status: 500 })
