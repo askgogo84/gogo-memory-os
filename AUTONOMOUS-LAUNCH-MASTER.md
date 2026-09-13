@@ -3,6 +3,12 @@
 ## North-star promise
 AskGogo remembers, understands, anticipates and acts — across WhatsApp, web and native mobile — with the same identity and memory, visible work, least privilege, deterministic approvals for consequential actions, and reliable recovery when execution fails.
 
+## Current execution status
+- Native rebuild branch: `mobile/native-app-v2-current-main`
+- Base: current production `main`
+- Native app subtree and Android preview workflow transplanted from legacy `mobile/native-app-v1`
+- Next gate: compile/build verification, API-contract reconciliation, same-brain auth/session, then Agent Hub/Activity/Goals/Approvals/Permissions.
+
 ## P0 — Same brain, one user, one state
 - [ ] One canonical user identity across WhatsApp, web and native app
 - [ ] Shared memory, preferences, reminders, lists, goals, calendar context and life events
@@ -121,7 +127,7 @@ AskGogo remembers, understands, anticipates and acts — across WhatsApp, web an
 - [ ] CreditIQ points-vs-cash intelligence before payment
 
 ## P0 — Native mobile app
-- [ ] Reconcile `mobile/native-app-v1` with current `main` (branch currently diverged)
+- [~] Reconcile legacy mobile app with current main using `mobile/native-app-v2-current-main`
 - [ ] Shared TypeScript agent models
 - [ ] Authenticated agent API client
 - [ ] Agent Hub
@@ -251,7 +257,7 @@ AskGogo remembers, understands, anticipates and acts — across WhatsApp, web an
 - [ ] No duplicate external action under retry
 
 ## P0 — Mobile store launch
-- [ ] Fresh app branch based on current main or clean reconciliation strategy
+- [~] Fresh app branch based on current main
 - [ ] Production API base URL and environment separation
 - [ ] Android release signing
 - [ ] Android AAB
@@ -268,23 +274,23 @@ AskGogo remembers, understands, anticipates and acts — across WhatsApp, web an
 - [ ] TestFlight acceptance
 - [ ] App Store production submission
 
-## Launch blockers found now
-1. `mobile/native-app-v1` is 166 commits ahead and 209 commits behind `main`; it must not be shipped directly.
-2. The native app work needs to be rebased/rebuilt on current production `main` so the hardened autonomous/life-event/backend behavior is included.
-3. Production OAuth scopes must be verified before enabling Gmail/Drive actions beyond currently approved scopes.
-4. The complete autonomous acceptance matrix must be green before enabling broad auto-execution.
+## Launch blockers
+1. Legacy `mobile/native-app-v1` must not be shipped directly because it is heavily diverged.
+2. `mobile/native-app-v2-current-main` must pass native compile/build and API-contract reconciliation before merge.
+3. Production OAuth scopes must be verified before broad Gmail/Drive execution.
+4. Full autonomous acceptance matrix must be green before broad auto-execution.
 
 ## Execution order
-1. Reconcile native app onto current `main`.
-2. Make same-brain/mobile auth/session green.
-3. Make Activity + Goals + Approvals + Permissions live in app.
-4. Make watchers and push live.
-5. Close travel/check-in P1 safety gates.
-6. Run full autonomous matrix including failure injection.
-7. Harden security/RLS/observability.
-8. Generate Android internal-test build and run closed beta.
-9. Fix beta findings.
-10. Submit Android production; then iOS/TestFlight/App Store.
+1. Finish native v2 compile/build and API-contract reconciliation.
+2. Same-brain/mobile auth/session.
+3. Activity + Goals + Approvals + Permissions.
+4. Watchers + push.
+5. Travel/check-in safety gates.
+6. Full autonomous matrix and failure injection.
+7. Security/RLS/observability.
+8. Android internal-test build and closed beta.
+9. Beta fixes.
+10. Android production, then iOS/TestFlight/App Store.
 
 ## Definition of done
 An autonomous feature is complete only when it is authenticated end-to-end, uses the same user/memory across surfaces, enforces permissions and approval server-side, records an audit event, has idempotent failure/retry behavior, handles Android+iOS UI states, and has automated regression coverage.
