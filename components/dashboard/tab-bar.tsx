@@ -4,13 +4,13 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { TAB_ICONS } from './icons'
 
-// Mobile prioritises the product promise: daily context, agentic work and memory.
-// Talk to Gogo remains available as the floating action button.
+// Keep the dashboard and native app on one mental model:
+// Gogo / Today / Memory / Activity / You.
 export const TABS = [
+  { key: 'gogo', label: 'Gogo', href: '/dashboard/home' },
   { key: 'today', label: 'Today', href: '/dashboard/today' },
-  { key: 'agent', label: 'Agent', href: '/dashboard/agent' },
   { key: 'memory', label: 'Memory', href: '/dashboard/memory' },
-  { key: 'calendar', label: 'Calendar', href: '/dashboard/calendar' },
+  { key: 'activity', label: 'Activity', href: '/dashboard/agent' },
   { key: 'you', label: 'You', href: '/dashboard/you' },
 ] as const
 
