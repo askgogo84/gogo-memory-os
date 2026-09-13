@@ -1,4 +1,4 @@
-import type { AgentApproval, AgentArtifactDetail, AgentCommandResult, AgentGoal, AgentHomeSnapshot, AgentPermission, AgentThread, AgentWatcher } from './types'
+import type { AgentApproval, AgentArtifactDetail, AgentCommandResult, AgentConsumerHome, AgentGoal, AgentHomeSnapshot, AgentPermission, AgentThread, AgentWatcher } from './types'
 import { getMobileAccessToken } from '../auth/session'
 
 const API_BASE = process.env.EXPO_PUBLIC_ASKGOGO_API_BASE_URL || 'https://app.askgogo.in'
@@ -31,6 +31,7 @@ async function uploadCapture(input:NativeCaptureInput):Promise<NativeCaptureResu
 }
 
 export const agentApi={
+  home:()=>request<AgentConsumerHome>('/api/agent/home'),
   snapshot:()=>request<AgentHomeSnapshot>('/api/agent/snapshot'),
   artifact:async(id:string)=>(await request<{artifact:AgentArtifactDetail}>(`/api/agent/artifacts/${encodeURIComponent(id)}`)).artifact,
   threads:async()=>(await request<{threads:AgentThread[]}>('/api/agent/threads')).threads,
