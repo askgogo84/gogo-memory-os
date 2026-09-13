@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { enterCostContext } from '@/lib/services/cost-context'
 import type { AgentSession } from './session'
 
 export type AgentActor = {
@@ -26,9 +27,9 @@ export async function resolveAgentActor(session: AgentSession): Promise<AgentAct
   const legacyTelegramId = Number(data.telegram_id)
   if (!Number.isFinite(legacyTelegramId)) throw new Error('legacy_identity_missing')
 
-  // CreditIQ linkage is deliberately best-effort. The AskGogo actor keeps only
-  // the opaque CreditIQ consumer id; card/account data remains inside CreditIQ.
-  // A missing link must never block ordinary Gogo missions.
+  // Agent and dashboard work shares the same per-user COGS wallet as WhatsApp.
+  enterCostContext(legacyTelegramId, session.surface === 'web' ? 'web' : 'agent')
+
   let creditiqUserId: string | null = null
   try {
     const { data: link, error: linkError } = await supabaseAdmin
