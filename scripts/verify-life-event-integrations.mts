@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import {
   calendarInputFromLifeEvent,
   lifecycleFingerprint,
@@ -38,7 +39,7 @@ const delivery = lifecycleMonitorTarget({
 assert.ok(delivery)
 assert.equal(delivery?.cadenceMinutes, 60)
 assert.match(delivery!.objective, /status only/i)
-assert.doesNotMatch(delivery!.objective, /submit forms.*allowed/i)
+assert.match(delivery!.objective, /Do not .*cancel/i)
 
 const application = lifecycleMonitorTarget({
   event_type: 'application',
@@ -55,4 +56,32 @@ assert.deepEqual(lifecycleTerminalState('application', 'Application is still und
 assert.equal(lifecycleFingerprint('Status', 'In transit'), lifecycleFingerprint(' status ', '  in   transit '))
 assert.notEqual(lifecycleFingerprint('Status', 'In transit'), lifecycleFingerprint('Status', 'Delivered'))
 
-console.log('✅ Life-event calendar + lifecycle monitor integration regression passed')
+const worker = fs.readFileSync('lib/agent/life-event-integration-worker.ts', 'utf8')
+const cron = fs.readFileSync('app/api/cron/life-events/route.ts', 'utf8')
+const bookingCalendar = fs.readFileSync('lib/agent/booking-calendar-execution.ts', 'utf8')
+
+assert.match(worker, /processCalendarDraft/)
+assert.match(worker, /prepareBookingCalendarApproval/)
+assert.match(worker, /processLifecycleMonitor/)
+assert.match(worker, /runSecureBrowser/)
+assert.match(worker, /mode:\s*'draft'/)
+assert.match(worker, /evaluateAgentExecutionPolicy/)
+assert.match(worker, /evaluateAgentSentinel/)
+assert.match(worker, /processBillReview/)
+assert.match(worker, /paymentExecuted:false/)
+assert.match(worker, /Gogo has not paid, renewed, cancelled or changed anything/)
+assert.match(worker, /lastFingerprint/)
+assert.match(worker, /lifecycleTerminalState/)
+assert.match(worker, /human_auth_required/)
+
+assert.match(cron, /processDueLifeEventIntegrations/)
+assert.ok(cron.indexOf('processDueLifeEventIntegrations()') < cron.indexOf('processDueLifeEventActions()'), 'concrete integrations must run before the legacy fallback worker')
+assert.match(cron, /CRON_SECRET/)
+
+assert.match(bookingCalendar, /lifeEventActionId\?:string/)
+assert.match(bookingCalendar, /life_event_action_id/)
+assert.match(bookingCalendar, /life_event_actions/)
+assert.match(bookingCalendar, /status:'completed'/)
+assert.match(bookingCalendar, /bookingCalendarEventId/)
+
+console.log('✅ Life-event calendar + lifecycle monitor + renewal integration regression passed')
