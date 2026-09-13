@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   if (!isAgentSession(session)) return session
   const tg = session.telegramId
 
-  const [runs, watchers, ideas, approvals] = await Promise.all([
+  const [runs, watchers, ideas, approvals, reminders] = await Promise.all([
     supabaseAdmin
       .from('agent_runs')
       .select('id,title,summary,status,capability,progress,updated_at,started_at')
@@ -52,9 +52,17 @@ export async function GET(request: Request) {
       .eq('status', 'pending')
       .order('requested_at', { ascending: false })
       .limit(12),
+    supabaseAdmin
+      .from('reminders')
+      .select('id,message,remind_at,due_at_utc,due_at_local,timezone,status,sent,created_at')
+      .eq('telegram_id', tg)
+      .or('status.eq.pending,status.is.null')
+      .eq('sent', false)
+      .order('remind_at', { ascending: true })
+      .limit(12),
   ])
 
-  const queryError = runs.error || watchers.error || ideas.error || approvals.error
+  const queryError = runs.error || watchers.error || ideas.error || approvals.error || reminders.error
   if (queryError) {
     console.error('AGENT_HOME_READ_FAILED:', queryError)
     return NextResponse.json({ error: 'read_failed' }, { status: 500 })
@@ -64,6 +72,7 @@ export async function GET(request: Request) {
   const watcherRows = (watchers.data || []) as any[]
   const ideaRows = (ideas.data || []) as any[]
   const approvalRows = (approvals.data || []) as any[]
+  const reminderRows = (reminders.data || []) as any[]
 
   const activeRuns = runRows.filter((r) => ['queued', 'running', 'watching', 'waiting_approval'].includes(String(r.status)))
   const completedRuns = runRows.filter((r) => String(r.status) === 'completed')
@@ -94,6 +103,20 @@ export async function GET(request: Request) {
       runId: r.id,
       progress: typeof r.progress === 'number' ? r.progress : null,
       capability: r.capability || null,
+    })
+  }
+
+  for (const reminder of reminderRows.slice(0, 6)) {
+    const due = reminder.due_at_local || reminder.due_at_utc || reminder.remind_at
+    const dueLabel = due ? String(due) : 'scheduled time'
+    items.push({
+      id: `reminder:${reminder.id}`,
+      kind: 'watching',
+      title: `Reminder: ${String(reminder.message || 'Scheduled reminder')}`,
+      body: `Scheduled for ${dueLabel}${reminder.timezone ? ` · ${reminder.timezone}` : ''}`,
+      timestamp: reminder.created_at || reminder.remind_at || null,
+      actionLabel: 'Scheduled',
+      capability: 'reminders',
     })
   }
 
@@ -143,7 +166,7 @@ export async function GET(request: Request) {
   })
 
   const working = activeRuns.filter((r) => ['queued', 'running'].includes(String(r.status))).length
-  const watching = watcherRows.length + activeRuns.filter((r) => String(r.status) === 'watching').length
+  const watching = reminderRows.length + watcherRows.length + activeRuns.filter((r) => String(r.status) === 'watching').length
   const waiting = approvalRows.length
 
   const state = waiting > 0 ? 'waiting' : working > 0 ? 'working' : watching > 0 ? 'watching' : items.length > 0 ? 'ready' : 'idle'
@@ -164,6 +187,6 @@ export async function GET(request: Request) {
       waiting > 0
         ? 'Everything else can keep moving in the background.'
         : 'Your memory, tools, approvals and activity stay shared with WhatsApp.',
-    items: items.slice(0, 14),
+    items: items.slice(0, 18),
   })
 }
