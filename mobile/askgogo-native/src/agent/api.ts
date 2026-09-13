@@ -1,4 +1,4 @@
-import type { AgentApproval, AgentArtifactDetail, AgentCommandResult, AgentConsumerHome, AgentGoal, AgentHomeSnapshot, AgentPermission, AgentThread, AgentWatcher } from './types'
+import type { AgentApproval, AgentArtifactDetail, AgentCommandResult, AgentConsumerHome, AgentGoal, AgentHomeItem, AgentHomeSnapshot, AgentPermission, AgentThread, AgentWatcher } from './types'
 import { getMobileAccessToken } from '../auth/session'
 
 const API_BASE = process.env.EXPO_PUBLIC_ASKGOGO_API_BASE_URL || 'https://app.askgogo.in'
@@ -12,6 +12,33 @@ async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   const response=await fetch(`${API_BASE}${path}`,{...init,headers:{Accept:'application/json','Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{}) ,...(init.headers||{})}})
   if(!response.ok)throw new AgentApiError(await readError(response),response.status)
   return response.json() as Promise<T>
+}
+
+function consumerHomeFromSnapshot(snap:AgentHomeSnapshot):AgentConsumerHome{
+  const active=snap.runs.filter(r=>['queued','running','watching','waiting_approval'].includes(r.status))
+  const working=active.filter(r=>['queued','running'].includes(r.status)).length
+  const watching=snap.watchers.length+active.filter(r=>r.status==='watching').length
+  const waiting=snap.approvals.length
+  const done=snap.runs.filter(r=>r.status==='completed')
+  const items:AgentHomeItem[]=[
+    ...snap.approvals.map(a=>({id:`approval:${a.id}`,kind:'approval' as const,title:a.title,body:a.description,approvalId:a.id,runId:a.runId,actionLabel:'Review'})),
+    ...active.filter(r=>r.status!=='watching').slice(0,4).map(r=>({id:`run:${r.id}`,kind:'working' as const,title:r.title,body:r.summary,runId:r.id,progress:r.progress,actionLabel:'View activity'})),
+    ...snap.watchers.slice(0,4).map(w=>({id:`watch:${w.id}`,kind:'watching' as const,title:w.title,body:'Gogo is watching this in the background.',watcherId:w.id,actionLabel:'Open watch'})),
+    ...snap.ideas.slice(0,3).map(i=>({id:`idea:${i.id}`,kind:'idea' as const,title:i.title,body:i.reason,ideaId:i.id,actionLabel:i.actionLabel})),
+    ...done.slice(0,4).map(r=>({id:`done:${r.id}`,kind:'done' as const,title:r.title,body:r.summary,runId:r.id,actionLabel:'See result'})),
+  ]
+  const state=waiting?'waiting':working?'working':watching?'watching':items.length?'ready':'idle'
+  const headline=waiting?`${waiting} ${waiting===1?'thing needs':'things need'} you.`:working?`Gogo is working on ${working} ${working===1?'thing':'things'}.`:watching?`Gogo is watching ${watching} ${watching===1?'thing':'things'} for you.`:'Everything is handled.'
+  return {surface:snap.surface,state,counts:{working,watching,waiting,ideas:snap.ideas.length},headline,subline:'Same brain connected.',items}
+}
+
+async function loadHome():Promise<AgentConsumerHome>{
+  try{return await request<AgentConsumerHome>('/api/agent/home')}
+  catch(error){
+    if(!(error instanceof AgentApiError)||error.status!==404)throw error
+    const snapshot=await request<AgentHomeSnapshot>('/api/agent/snapshot')
+    return consumerHomeFromSnapshot(snapshot)
+  }
 }
 
 export type NativeCaptureInput={uri:string;name:string;type:string;caption?:string;idempotencyKey?:string}
@@ -32,13 +59,12 @@ async function uploadCapture(input:NativeCaptureInput):Promise<NativeCaptureResu
 }
 
 export const agentApi={
-  home:()=>request<AgentConsumerHome>('/api/agent/home'),
+  home:()=>loadHome(),
   snapshot:()=>request<AgentHomeSnapshot>('/api/agent/snapshot'),
   artifact:async(id:string)=>(await request<{artifact:AgentArtifactDetail}>(`/api/agent/artifacts/${encodeURIComponent(id)}`)).artifact,
   threads:async()=>(await request<{threads:AgentThread[]}>('/api/agent/threads')).threads,
   createThread:async(title:string,context:Record<string,unknown>={})=>(await request<{thread:AgentThread}>('/api/agent/threads',{method:'POST',body:JSON.stringify({title,context})})).thread,
   updateThread:async(id:string,patch:Partial<Pick<AgentThread,'title'|'status'|'context'>>)=>(await request<{thread:AgentThread}>(`/api/agent/threads/${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify(patch)})).thread,
-
   run:(text:string,context?:Record<string,unknown>)=>request<AgentCommandResult>('/api/agent/run',{method:'POST',body:JSON.stringify({text,context:context||{}})}),
   executeRun:(runId:string)=>request<AgentCommandResult>(`/api/agent/runs/${encodeURIComponent(runId)}/execute`,{method:'POST',body:JSON.stringify({})}),
   capture:(input:NativeCaptureInput)=>uploadCapture(input),
