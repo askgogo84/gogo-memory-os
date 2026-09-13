@@ -138,15 +138,15 @@ export function selectSpecialistRoute(text:string):SpecialistRoute {
   let primary:SpecialistAgentId='orchestrator', supporting:SpecialistAgentId[]=[]
   let reason='general outcome orchestration'
 
-  if(/\b(train|railway|irctc|flight|airline|hotel|bus|trip|travel|pnr|boarding pass)\b/.test(t)) { primary='travel'; supporting=['research','life_events','calendar']; reason='travel search/booking lifecycle' }
-  else if(/\b(movie|cinema|concert|event ticket|match ticket|bookmyshow|ticketmaster|tickets?)\b/.test(t)) { primary='ticketing'; supporting=['research','life_events','calendar']; reason='event/ticket search or lifecycle' }
-  else if(/\b(swiggy|zomato|restaurant|order food|food delivery|meal delivery)\b/.test(t)) { primary='food'; supporting=['research','payments']; reason='food ordering/comparison' }
+  if(/\b(trains?|railways?|irctc|flights?|airlines?|hotels?|buses?|trip|travel|pnr|boarding pass)\b/.test(t)) { primary='travel'; supporting=['research','life_events','calendar']; reason='travel search/booking lifecycle' }
+  else if(/\b(movies?|cinemas?|concerts?|event tickets?|match tickets?|bookmyshow|ticketmaster|tickets?)\b/.test(t)) { primary='ticketing'; supporting=['research','life_events','calendar']; reason='event/ticket search or lifecycle' }
+  else if(/\b(swiggy|zomato|restaurants?|order food|food delivery|meal delivery)\b/.test(t)) { primary='food'; supporting=['research','payments']; reason='food ordering/comparison' }
   else if(/\b(blinkit|zepto|instamart|bigbasket|grocer(?:y|ies)|quick commerce)\b/.test(t)) { primary='grocery'; supporting=['research','payments']; reason='grocery basket comparison/order' }
   else if(/\b(amazon|flipkart|myntra|ajio|buy|purchase|shopping|best deal|best price|compare price|cart)\b/.test(t)) { primary='shopping'; supporting=['research','payments','life_events']; reason='commerce research/cart/purchase lifecycle' }
-  else if(/\b(appointment|salon|spa|doctor appointment|home service|reservation|table booking)\b/.test(t)) { primary='local_services'; supporting=['research','calendar','life_events']; reason='local service/reservation' }
-  else if(/\b(email|gmail|mail|contact|message|reply|forward)\b/.test(t)) { primary='communications'; supporting=['documents']; reason='communication context/action' }
-  else if(/\b(calendar|meeting|schedule|appointment)\b/.test(t)) { primary='calendar'; supporting=['life_events']; reason='schedule/calendar outcome' }
-  else if(/\b(document|pdf|receipt|passport|visa|license|licence|file|attachment|expiry|expires)\b/.test(t)) { primary='documents'; supporting=['life_events']; reason='document retrieval/lifecycle' }
+  else if(/\b(appointments?|salon|spa|doctor appointment|home services?|reservations?|table booking)\b/.test(t)) { primary='local_services'; supporting=['research','calendar','life_events']; reason='local service/reservation' }
+  else if(/\b(emails?|gmail|mail|contacts?|message|reply|forward)\b/.test(t)) { primary='communications'; supporting=['documents']; reason='communication context/action' }
+  else if(/\b(calendar|meetings?|schedule|appointments?)\b/.test(t)) { primary='calendar'; supporting=['life_events']; reason='schedule/calendar outcome' }
+  else if(/\b(documents?|pdf|receipts?|passports?|visas?|licenses?|licences?|files?|attachments?|expiry|expires)\b/.test(t)) { primary='documents'; supporting=['life_events']; reason='document retrieval/lifecycle' }
   else if(/\b(remind|reminder|renewal|deadline|follow up|watch|monitor)\b/.test(t)) { primary='life_events'; supporting=[]; reason='prospective life-event/reminder outcome' }
 
   const defs=[SPECIALIST_AGENTS[primary],...supporting.map(id=>SPECIALIST_AGENTS[id])]
