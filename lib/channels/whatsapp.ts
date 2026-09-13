@@ -1,10 +1,11 @@
 import { sendWhatsApp, sendWhatsAppTypingIndicator } from '@/lib/whatsapp'
 
-// Product invariant: users should never receive raw/generic infrastructure failure copy.
-// Keep this final channel-level guard independent of whichever webhook/agent produced it.
+// Product invariant: users should never receive the exact raw/generic infrastructure
+// failure copy. Anchor the guard to the entire reply so legitimate explanations,
+// drafts, quotations, or actionable error messages containing the same words survive.
 export function sanitizeWhatsAppReply(text:string){
   const raw=String(text||'')
-  if(/something\s+went\s+wrong(?:\s*[—-]\s*try\s+once\s+more\??)?/i.test(raw)){
+  if(/^\s*something\s+went\s+wrong\s*(?:[—-]\s*try\s+once\s+more\??)?\s*$/i.test(raw)){
     return `I couldn't finish that request just now because one of my services was temporarily unavailable. Your request wasn't saved as the wrong thing — send it once more and I'll continue.`
   }
   return raw
