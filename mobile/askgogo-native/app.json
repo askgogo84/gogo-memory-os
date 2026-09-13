@@ -5,19 +5,19 @@
     "scheme": "askgogo",
     "version": "0.1.1",
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic",
-    "backgroundColor": "#F7F1E9",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#FFFFFF",
     "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "in.askgogo.app",
-      "backgroundColor": "#F7F1E9"
+      "backgroundColor": "#FFFFFF"
     },
     "android": {
       "package": "in.askgogo.app",
       "edgeToEdgeEnabled": true,
       "adaptiveIcon": {
-        "backgroundColor": "#F7F1E9"
+        "backgroundColor": "#FFFFFF"
       }
     },
     "plugins": [
