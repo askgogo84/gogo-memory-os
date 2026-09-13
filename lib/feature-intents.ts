@@ -11,7 +11,7 @@ import { buildGmailConnectUrl } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isBookingOrEventLinkText } from '@/lib/services/whatsapp-preview-routing'
 import { sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
-import { addToListDetailed, formatAddResult, normalizeListName } from '@/lib/lists'
+import { addToListDetailed, formatAddResult, getList, normalizeListName } from '@/lib/lists'
 import { normalizeNaturalReminderSave, parseNumberedChecklist, saveNaturalReminder } from '@/lib/bot/handlers/natural-command-routing'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 
@@ -28,12 +28,13 @@ function isWorkspaceConnect(text:string) {
   return /\b(connect|link|reconnect|refresh)\b/.test(t) && /\b(gmail|google workspace|google account|email)\b/.test(t)
 }
 
+function normListItem(value:unknown){return String(value||'').trim().toLowerCase().replace(/\s+/g,' ')}
+
 export async function routeFeatureIntent(
   phone: string,
   text: string,
   extra?: { telegramId?: number; caption?: string },
 ): Promise<string | null> {
-  // Retrieval stays synchronous because it is a bounded DB + signed-URL lookup.
   if (extra?.telegramId && isEventCredentialRetrieval(text)) {
     const ticket = await retrieveEventCredential(extra.telegramId, text)
     if (ticket) {
@@ -42,16 +43,11 @@ export async function routeFeatureIntent(
     }
   }
 
-  // Full booking closure can open a real browser, inspect provider Share/QR actions
-  // and reconcile Gmail. Never hold the 60-second WhatsApp webhook open for that.
   if (extra?.telegramId && isBookingOrEventLinkText(text)) {
     const queued = await queueBookingClosure({ telegramId: extra.telegramId, text, whatsappTo: phone })
     if (queued) return queued.text
   }
 
-  // Natural user wording like "save this as reminder I travel on 27 September"
-  // must never fall through to generic chat/notes. Convert it to the mature reminder
-  // parser and persist it deterministically for the current user.
   if (extra?.telegramId && normalizeNaturalReminderSave(text)) {
     try {
       return await saveNaturalReminder({ telegramId: extra.telegramId, whatsappTo: phone, text })
@@ -62,15 +58,22 @@ export async function routeFeatureIntent(
   }
 
   // Numbered trip/preparation checklists are first-class lists, not free-form notes.
+  // Read the saved row back before claiming success so an insert/write failure can never
+  // produce a false "saved" response with only an in-memory copy of the items.
   const checklist = extra?.telegramId ? parseNumberedChecklist(text) : null
   if (extra?.telegramId && checklist) {
     try {
       const listName = normalizeListName(checklist.listName)
       const result = await addToListDetailed(extra.telegramId, listName, checklist.items)
-      return formatAddResult(listName, result)
+      const stored = await getList(extra.telegramId, listName)
+      const storedItems = Array.isArray(stored?.items) ? stored.items : []
+      const pendingText = new Set(storedItems.filter((x:any)=>!x?.done).map((x:any)=>normListItem(x?.text)))
+      const missing = checklist.items.filter(item=>!pendingText.has(normListItem(item)))
+      if (missing.length) throw new Error(`checklist_persistence_incomplete:${missing.length}`)
+      return formatAddResult(listName, { ...result, items: storedItems })
     } catch (err:any) {
       console.error('NUMBERED_CHECKLIST_SAVE_FAILED:', err?.message || err)
-      return `I recognised this as a checklist, but I couldn't save it just now. Please try once more — I won't turn it into an unrelated note.`
+      return `I recognised this as a checklist, but I couldn't save every item just now. Please try once more — I won't turn it into an unrelated note.`
     }
   }
 
