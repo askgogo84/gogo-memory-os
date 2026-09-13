@@ -9,6 +9,7 @@ const matrix = fs.readFileSync('docs/autonomous-brain-test-matrix.md', 'utf8')
 assert.equal(prebuild, 'npm test', 'production build must run the full autonomous regression suite first')
 
 const requiredGates = [
+  'verify-full-feature-legacy-bridge.mts',
   'verify-agent-policy.mts',
   'verify-agent-phase2.mts',
   'verify-agent-compound.mts',
