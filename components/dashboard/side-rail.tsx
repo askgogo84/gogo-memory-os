@@ -8,14 +8,15 @@ import { GogoCharacter } from '@/components/gogo/gogo-character'
 type NavItem = { href:string; label:string; icon:string }
 
 const primaryItems: NavItem[] = [
-  { href: '/dashboard/home', label: 'Home', icon: '⌂' },
-  { href: '/dashboard/today', label: 'Daily Gogo', icon: '✦' },
-  { href: '/dashboard/chat', label: 'Talk to Gogo', icon: '◉' },
-  { href: '/dashboard/agent', label: 'Gogo Agent', icon: '◎' },
-  { href: '/dashboard/memory', label: 'Gogo Memory', icon: '◇' },
+  { href: '/dashboard/home', label: 'Gogo', icon: '◉' },
+  { href: '/dashboard/today', label: 'Today', icon: '✦' },
+  { href: '/dashboard/memory', label: 'Memory', icon: '◇' },
+  { href: '/dashboard/agent', label: 'Activity', icon: '◎' },
+  { href: '/dashboard/you', label: 'You', icon: '♙' },
 ]
 
 const organiseItems: NavItem[] = [
+  { href: '/dashboard/chat', label: 'Talk to Gogo', icon: '◉' },
   { href: '/dashboard/tasks', label: 'Tasks', icon: '☷' },
   { href: '/dashboard/calendar', label: 'Calendar', icon: '▣' },
   { href: '/dashboard/lists', label: 'Lists', icon: '≡' },
@@ -27,7 +28,6 @@ const gogoItems: NavItem[] = [
 ]
 
 const accountItems: NavItem[] = [
-  { href: '/dashboard/you', label: 'You & connections', icon: '♙' },
   { href: '/dashboard/usage', label: 'Plan & usage', icon: '◌' },
 ]
 
@@ -92,18 +92,18 @@ export function SideRail() {
         </div>
         <div className="min-w-0">
           <div className="dashboard-brand-wordmark text-[23px] leading-none text-gogo-ink">AskGogo</div>
-          <div className="mt-1.5 text-[7.5px] font-bold uppercase tracking-[0.18em] text-gogo-teal">Your mind, lighter.</div>
+          <div className="mt-1.5 text-[7.5px] font-bold uppercase tracking-[0.18em] text-gogo-teal">Always working for you.</div>
         </div>
       </Link>
 
-      <NavGroup title="Gogo" links={primaryItems} />
+      <NavGroup title="One Gogo" links={primaryItems} />
       <NavGroup title="Your world" links={organiseItems} />
       <NavGroup title="Make it yours" links={gogoItems} />
       <NavGroup title="Account" links={accountItems} />
 
       <div className="dashboard-rail-status mt-auto overflow-hidden rounded-[19px] p-4 shadow-[0_16px_36px_rgba(45,32,22,.09)]">
         <div className="flex items-center gap-2 text-[9.5px] font-bold"><span className="h-2.5 w-2.5 rounded-full bg-[#8fe3cf] shadow-[0_0_0_4px_rgba(143,227,207,.10)]" />One Gogo. Everywhere.</div>
-        <div className="mt-2 text-[9px] leading-[1.55] opacity-75">Same memory, tasks, approvals and background work across WhatsApp and the dashboard.</div>
+        <div className="mt-2 text-[9px] leading-[1.55] opacity-75">Same memory, Today feed, approvals and background work across WhatsApp, app and dashboard.</div>
       </div>
     </aside>
   )
