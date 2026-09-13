@@ -10,6 +10,11 @@ export function normalizeNaturalReminderSave(text: string): string | null {
   return rest ? `remind me ${rest}` : 'remind me'
 }
 
+export function naturalReminderTask(normalized:string):string|null {
+  const task=String(normalized||'').replace(/^\s*remind\s+me(?:\s+to)?\s*/i,'').trim()
+  return task||null
+}
+
 export function parseNumberedChecklist(text: string): NumberedChecklist | null {
   const raw = String(text || '').replace(/\r\n/g, '\n').trim()
   if (!raw.includes('\n')) return null
@@ -41,6 +46,13 @@ export async function saveNaturalReminder(params: {
   if (!normalized) return null
   const parsed = parseReminderIntent(normalized)
   if (!parsed) {
+    const { saveFollowupState } = await import('./followup-state')
+    await saveFollowupState(params.telegramId,'pending_reminder',{
+      task:naturalReminderTask(normalized),
+      day:null,
+      recurrence:null,
+      created_at:new Date().toISOString(),
+    })
     return `I understood this as a reminder. When should I remind you?\n_e.g. “27 September at 9 AM”, “tomorrow 6 PM”, or “in 2 hours”_`
   }
 
