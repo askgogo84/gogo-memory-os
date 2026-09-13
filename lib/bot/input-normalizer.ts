@@ -2,7 +2,7 @@
 //
 // Scope is intentionally narrow: repair command/action vocabulary and obvious
 // accidental prefix noise. Never spell-correct arbitrary names, places, products,
-// note content, URLs, IDs, or free-form prose.
+// note content, URLs, IDs, checklist items, or free-form prose.
 
 const COMMAND_WORDS = [
   'save','remind','remember','show','add','create','schedule','book','set','put',
@@ -33,15 +33,6 @@ const FIRST_WORD_TYPOS: Record<string,string> = {
   updte:'update',
 }
 
-const INTENT_WORD_TYPOS: Record<string,string> = {
-  remider:'reminder', remnder:'reminder', remaider:'reminder', reminer:'reminder',
-  calender:'calendar', calandar:'calendar', calandar:'calendar',
-  cheklist:'checklist', checkist:'checklist', checlist:'checklist',
-  grocerry:'grocery', groccery:'grocery', grocerries:'groceries',
-  appoinment:'appointment', appointement:'appointment',
-  schedual:'schedule',
-}
-
 const commandAlternation = COMMAND_WORDS.join('|')
 const accidentalPrefix = new RegExp(`^[^A-Za-z]{1,4}(?=(${commandAlternation})\\b)`, 'i')
 
@@ -58,11 +49,34 @@ function repairFirstWord(line:string){
   return replacement ? preserveCase(replacement,m[1])+m[2] : line
 }
 
-function repairIntentWords(line:string){
-  return line.replace(/\b[A-Za-z]+\b/g,(word)=>{
-    const replacement=INTENT_WORD_TYPOS[word.toLowerCase()]
-    return replacement ? preserveCase(replacement,word) : word
+// Intent-word repair is deliberately phrase-scoped. These are routing grammar
+// positions, not arbitrary payload positions. For example, "Add Calandar to my
+// baby names" must remain byte-for-byte user content; "connect calender" may be
+// repaired because the second token is part of the command grammar.
+function repairIntentPhrases(line:string){
+  let out=line
+  out=out.replace(/\b(as\s+(?:a\s+)?)rem(?:ider|nder|aider|iner)\b/gi,(whole,prefix)=>{
+    const typo=whole.slice(String(prefix).length)
+    return `${prefix}${preserveCase('reminder',typo)}`
   })
+  out=out.replace(/^(\s*(?:connect|open|view)\s+(?:my\s+)?)cal(?:ender|andar)\b/i,(whole,prefix)=>{
+    const typo=whole.slice(String(prefix).length)
+    return `${prefix}${preserveCase('calendar',typo)}`
+  })
+  out=out.replace(/^(\s*show\s+(?:me\s+)?(?:my\s+)?)cal(?:ender|andar)\b/i,(whole,prefix)=>{
+    const typo=whole.slice(String(prefix).length)
+    return `${prefix}${preserveCase('calendar',typo)}`
+  })
+  out=out.replace(/^(\s*(?:create|show|open|view)\s+(?:(?:a|my)\s+)?)chec?k(?:list|ist)|^(\s*(?:create|show|open|view)\s+(?:(?:a|my)\s+)?)checlist/i,(whole,p1,p2)=>{
+    const prefix=String(p1||p2||'')
+    const typo=whole.slice(prefix.length)
+    return `${prefix}${preserveCase('checklist',typo)}`
+  })
+  out=out.replace(/^(\s*(?:schedule|book|create)\s+(?:(?:an|my)\s+)?)appoint(?:ment|ement)\b/i,(whole,prefix)=>{
+    const typo=whole.slice(String(prefix).length)
+    return `${prefix}${preserveCase('appointment',typo)}`
+  })
+  return out
 }
 
 export type NormalizedUserInput={text:string;changed:boolean;reasons:string[]}
@@ -79,11 +93,13 @@ export function normalizeUserInputForRouting(value:string):NormalizedUserInput{
   if(withoutNoise!==first){first=withoutNoise;reasons.push('leading_noise')}
   const firstFixed=repairFirstWord(first)
   if(firstFixed!==first){first=firstFixed;reasons.push('command_spelling')}
-  lines[0]=first
+  const intentFixed=repairIntentPhrases(firstFixed)
+  if(intentFixed!==firstFixed)reasons.push('intent_spelling')
+  lines[0]=intentFixed
 
-  const repaired=lines.map((line)=>repairIntentWords(line))
-  if(repaired.some((line,i)=>line!==lines[i]))reasons.push('intent_spelling')
-  text=repaired.join('\n').replace(/[ \t]+/g,' ').replace(/ *\n */g,'\n').trim()
+  // Preserve the user's remaining lines and internal spacing exactly. The
+  // normalized text can be passed to mutating handlers without rewriting payloads.
+  text=lines.join('\n').trim()
 
   return{text,changed:text!==original.trim(),reasons:[...new Set(reasons)]}
 }
