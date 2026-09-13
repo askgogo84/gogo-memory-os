@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getUserTimeZone } from './handlers/user-timezone'
+import { enterCostContext } from '@/lib/services/cost-context'
 
 export type Channel = 'telegram' | 'whatsapp'
 
@@ -21,6 +22,11 @@ function generateNegativeTelegramId(phone: string): number {
   const digits = phone.replace(/\D/g, '').slice(-9) || '999999999'
   const numeric = parseInt(digits, 10)
   return -1 * numeric
+}
+
+function withCostIdentity(user:ResolvedUser):ResolvedUser{
+  enterCostContext(user.telegramId,user.channel)
+  return user
 }
 
 export async function resolveUser(params: {
@@ -58,7 +64,7 @@ export async function resolveUser(params: {
       user = created
     }
 
-    return {
+    return withCostIdentity({
       id: user?.id ?? null,
       channel,
       externalUserId,
@@ -70,7 +76,7 @@ export async function resolveUser(params: {
       platform: 'telegram',
       timezone: getUserTimeZone(user, user?.whatsapp_id),
       rawUser: user,
-    }
+    })
   }
 
   let { data: user } = await supabaseAdmin
@@ -103,7 +109,7 @@ export async function resolveUser(params: {
     ;(user as any)._isNew = true
   }
 
-  return {
+  return withCostIdentity({
     id: user?.id ?? null,
     channel,
     externalUserId,
@@ -115,5 +121,5 @@ export async function resolveUser(params: {
     platform: 'whatsapp',
     timezone: getUserTimeZone(user, externalUserId),
     rawUser: user,
-  }
+  })
 }
