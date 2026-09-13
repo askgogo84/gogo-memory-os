@@ -15,17 +15,25 @@ for(const [input,want] of cases){
   assert.equal(got,want,`${input} -> ${want}`)
 }
 
-// Do not "correct" arbitrary content, names, brands or identifiers.
 for(const input of [
   'Add soft bras from Uniqlo to my US trip list',
   'shopping for Keum',
   'seat QR-L1,L2,L3',
   'Find Zepto and Blinkit prices',
+  'Add Calandar to my baby names',
+  'Remember that my project codename is Remider',
+  'create a checklist:\n1. Calandar\n2. Remider\n3. Keum',
 ]) assert.equal(normalizeUserInputForRouting(input).text,input,`content must remain unchanged: ${input}`)
 
 const safe=sanitizeWhatsAppReply('Something went wrong — try once more?')
-assert.doesNotMatch(safe,/something went wrong/i,'generic infrastructure error must never be user-visible')
+assert.doesNotMatch(safe,/something went wrong/i,'exact generic infrastructure error must never be user-visible')
 assert.match(safe,/temporarily unavailable/i,'fallback should be conversational and truthful')
+
+for(const input of [
+  'Your subscription setup hit an error: something went wrong. Reply *upgrade* to try again.',
+  'Draft: "Something went wrong in yesterday’s demo, but we recovered."',
+  'I found the root cause — something went wrong only after the provider redirect.',
+]) assert.equal(sanitizeWhatsAppReply(input),input,`legitimate content must survive sanitizer: ${input}`)
 
 const router=fs.readFileSync('lib/feature-intents.ts','utf8')
 const claude=fs.readFileSync('lib/services/claude.ts','utf8')
@@ -35,4 +43,4 @@ assert.match(claude,/ANTHROPIC_FREEFORM_FAILED_FALLING_BACK/,'free-form provider
 assert.match(claude,/askOpenAiFallback/,'free-form reasoning must have configured second-provider path')
 assert.match(claude,/OPENAI_FALLBACK_MODEL/,'fallback model must be configurable')
 
-console.log('✅ Input typo/noise recovery + downstream propagation + WhatsApp failure sanitization + model failover regression passed')
+console.log('✅ Input typo/noise recovery + payload preservation + downstream propagation + WhatsApp failure sanitization + model failover regression passed')
