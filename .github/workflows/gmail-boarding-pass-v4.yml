@@ -1,0 +1,27 @@
+name: Gmail Boarding Pass Lifecycle
+
+on:
+  push:
+    branches: ["feat/gmail-boarding-pass-lifecycle-v4-20260913"]
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "lib/agent/life-event-email-worker.ts"
+      - "app/api/cron/life-events/route.ts"
+      - "scripts/verify-life-event-email-worker.mts"
+      - ".github/workflows/gmail-boarding-pass-v4.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19"
+          cache: npm
+      - run: npm ci
+      - name: Boarding-pass lifecycle regression
+        run: npx tsx scripts/verify-life-event-email-worker.mts
+      - name: Full AskGogo regression suite
+        run: npm test
