@@ -103,9 +103,11 @@ function anchoredStatusText(text: string, context?: LifecycleTerminalContext) {
   for (const needle of needles) {
     const index = text.indexOf(needle)
     if (index < 0) continue
+    // Prefer status evidence that follows the tracked identity. Keep only a tiny prefix for
+    // labels such as "Order AB123" so history/help text for other items cannot terminate it.
     return {
       anchored: true,
-      text: text.slice(Math.max(0, index - 320), Math.min(text.length, index + needle.length + 520)),
+      text: text.slice(Math.max(0, index - 40), Math.min(text.length, index + needle.length + 420)),
     }
   }
   return { anchored: false, text }
