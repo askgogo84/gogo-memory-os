@@ -17,6 +17,19 @@ function locationHint(text: string) {
   return safe(match?.[1] || '', 80)
 }
 
+function locationProfile(location: string) {
+  const l = String(location || '').trim().toLowerCase()
+  if (!l) return { canonical:'', aliases:[] as string[], querySuffix:'' }
+  if (/\b(bangalore|bengaluru|blr)\b/.test(l)) {
+    return {
+      canonical:'Bengaluru',
+      aliases:['bengaluru','bangalore','blr','karnataka','india'],
+      querySuffix:'Bengaluru Bangalore Karnataka India',
+    }
+  }
+  return { canonical:location, aliases:[l], querySuffix:location }
+}
+
 function serviceHint(text: string) {
   const raw = String(text || '')
   const withProvider = raw.match(/\b(?:appointment|consultation|session)\s+(?:with|at)\s+(?:an?\s+)?([A-Za-z][A-Za-z &.'-]{2,50}?)(?=\s+(?:in|near|around|next|this|tomorrow|today|on|for|at|after|before|and|but)\b|[,.!?]|$)/i)?.[1]
@@ -46,11 +59,22 @@ type AppointmentOption = {
   provider: string
 }
 
-function curate(results: WebSearchResult[]) {
+const WRONG_GEO = /\b(dubai|sharjah|abu dhabi|fujairah|uae|united arab emirates|qatar|doha|singapore|london|new york|california|texas)\b/i
+
+function locationMatch(result: WebSearchResult, location: string) {
+  const profile = locationProfile(location)
+  if (!profile.aliases.length) return true
+  const haystack = `${result.title || ''} ${result.snippet || ''} ${result.url || ''}`.toLowerCase()
+  if (WRONG_GEO.test(haystack) && !profile.aliases.some(alias => haystack.includes(alias))) return false
+  return profile.aliases.some(alias => haystack.includes(alias))
+}
+
+function curate(results: WebSearchResult[], location: string) {
   const seen = new Set<string>()
   const options: AppointmentOption[] = []
   for (const result of results) {
     if (!result?.url || !/^https?:\/\//i.test(result.url)) continue
+    if (!locationMatch(result, location)) continue
     const provider = host(result.url)
     const key = `${provider}|${safe(result.title, 180).toLowerCase()}`
     if (!provider || seen.has(key)) continue
@@ -78,9 +102,12 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
   if (!isAppointmentResearchRequest(params.text)) return null
 
   const service = serviceHint(params.text)
-  const location = locationHint(params.text)
+  const locationRaw = locationHint(params.text)
+  const profile = locationProfile(locationRaw)
+  const location = profile.canonical || locationRaw
   const timing = timingHint(params.text)
-  const query = [service, 'appointment booking availability', location, timing, 'official'].filter(Boolean).join(' ')
+  const query = [service, 'appointment booking availability', profile.querySuffix || location, timing, 'official clinic hospital provider'].filter(Boolean).join(' ')
+  const fallbackQuery = [service, profile.querySuffix || location, 'book appointment online official'].filter(Boolean).join(' ')
   const tg = params.actor.legacyTelegramId
   const now = new Date().toISOString()
 
@@ -93,7 +120,7 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
     source: params.surface,
     metadata_json: {
       plan_type: 'appointment_research', input_text: safe(params.text, 1800),
-      service, location: location || null, timing: timing || null, query,
+      service, location: location || null, timing: timing || null, query, fallbackQuery,
       readOnly: true, mutated: false,
     },
     started_at: now, updated_at: now,
@@ -104,32 +131,40 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
   const { data: step, error: stepError } = await supabaseAdmin.from('agent_steps').insert({
     telegram_id: String(tg), run_id: runId, ordinal: 1, tool_name: 'web_search',
     title: 'Find appointment providers and booking paths', status: 'running',
-    input_json: { query, service, location, timing }, output_json: {}, started_at: now,
+    input_json: { query, fallbackQuery, service, location, timing }, output_json: {}, started_at: now,
   }).select('id').single()
   if (stepError || !step?.id) throw new Error(`appointment_research_step_create_failed:${stepError?.message || 'unknown'}`)
-  await activity(tg, runId, 'run_started', `Gogo started appointment discovery for ${service}.`, { query })
+  await activity(tg, runId, 'run_started', `Gogo started appointment discovery for ${service}.`, { query, location })
 
   try {
-    const options = curate(await searchWebResults(query))
+    const primary = await searchWebResults(query)
+    let options = curate(primary, location)
+    let usedFallback = false
+    if (!options.length && fallbackQuery !== query) {
+      const secondary = await searchWebResults(fallbackQuery)
+      options = curate([...primary, ...secondary], location)
+      usedFallback = true
+    }
+
     const completedAt = new Date().toISOString()
     await supabaseAdmin.from('agent_steps').update({
-      status: 'completed', output_json: { options, query, verifiedStore: 'public-web', mutated: false }, completed_at: completedAt,
+      status: 'completed', output_json: { options, query, fallbackQuery, usedFallback, verifiedStore: 'public-web', locationStrict:true, mutated: false }, completed_at: completedAt,
     }).eq('id', String(step.id))
 
     const text = options.length
-      ? `Appointment options · ${service}${location ? ` · ${location}` : ''}${timing ? ` · ${timing}` : ''}\n\n${options.map((o, i) => `${i + 1}. ${o.title}\n${o.snippet ? `${o.snippet}\n` : ''}Booking/provider page: ${o.url}`).join('\n\n')}\n\nI only discovered provider pages; I have not claimed a slot is live and I changed nothing. Tell me which option to prepare and Gogo can open it in the secure browser, inspect live availability, and stop before confirmation/payment.`
-      : `I couldn't find a provider page I can show confidently for ${service}${location ? ` in ${location}` : ''}. I did not invent availability or change anything.`
+      ? `Appointment options · ${service}${location ? ` · ${location}` : ''}${timing ? ` · ${timing}` : ''}\n\n${options.map((o, i) => `${i + 1}. ${o.title}\n${o.snippet ? `${o.snippet}\n` : ''}Booking/provider page: ${o.url}`).join('\n\n')}\n\nI only discovered provider pages that match the requested location; I have not claimed a slot is live and I changed nothing. Tell me which option to prepare and Gogo can open it in the secure browser, inspect live availability, and stop before confirmation/payment.`
+      : `I couldn't find a provider page I can verify for ${service}${location ? ` in ${location}` : ''}. I rejected results from other cities/countries rather than showing you the wrong location. I did not invent availability or change anything.`
 
     await supabaseAdmin.from('agent_runs').update({
       status: 'completed', summary: safe(text, 1800), progress: 100, completed_at: completedAt, updated_at: completedAt,
       metadata_json: {
         plan_type: 'appointment_research', input_text: safe(params.text, 1800), service,
-        location: location || null, timing: timing || null, query,
+        location: location || null, timing: timing || null, query, fallbackQuery, usedFallback,
         options: options.map((o, index) => ({ index: index + 1, title: o.title, provider: o.provider, url: o.url })),
-        readOnly: true, mutated: false,
+        readOnly: true, mutated: false, locationStrict:true,
       },
     }).eq('id', runId).eq('telegram_id', String(tg))
-    await activity(tg, runId, 'run_completed', options.length ? `Found ${options.length} appointment provider paths.` : 'No reliable appointment provider path found.', { result_count: options.length })
+    await activity(tg, runId, 'run_completed', options.length ? `Found ${options.length} location-matched appointment provider paths.` : 'No location-matched appointment provider path found.', { result_count: options.length, location, location_strict:true })
 
     return {
       runId, status: 'completed' as const, capability: 'browser' as const, risk: 'low' as const,
