@@ -10,6 +10,8 @@ import { isPublicTravelResearchRequest, tryRunTravelResearch } from '@/lib/agent
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
+import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
+import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
 
 export const dynamic = 'force-dynamic'
 
@@ -103,6 +105,24 @@ export async function POST(req: NextRequest) {
       const dayReply = await getDashboardDayReply(session.telegramId, dayIntent)
       await saveConversation(user.telegram_id, text, dayReply)
       return NextResponse.json({ text: dayReply, handledBy: 'dashboard-day' })
+    }
+
+    // Same appointment brain as Gogo Agent: preserve discovery context across
+    // surfaces and keep final provider confirmation behind the Agent approval UI.
+    const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:'web', text })
+    if (appointmentFollowup) {
+      const suffix = appointmentFollowup.status === 'waiting_approval'
+        ? '\n\nI paused before the consequential provider action. Open Gogo Agent to approve or reject it.'
+        : ''
+      const reply = `${appointmentFollowup.text || ''}${suffix}`
+      await saveConversation(user.telegram_id, text, reply)
+      return NextResponse.json({ text: reply, handledBy: appointmentFollowup.handledBy, runId: appointmentFollowup.runId, status: appointmentFollowup.status })
+    }
+
+    const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:'web', text })
+    if (appointmentResearch) {
+      await saveConversation(user.telegram_id, text, appointmentResearch.text)
+      return NextResponse.json({ text: appointmentResearch.text, handledBy: appointmentResearch.handledBy, runId: appointmentResearch.runId, status: appointmentResearch.status })
     }
 
     const mission = await tryRunGeneralPlan({
