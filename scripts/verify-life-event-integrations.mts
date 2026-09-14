@@ -64,6 +64,17 @@ const reservation = lifecycleMonitorTarget({
 assert.ok(reservation)
 assert.equal(reservation?.cadenceMinutes, 120)
 
+const flightWatch = lifecycleMonitorTarget({
+  event_type:'travel', subtype:'flight', title:'Air India AI505',
+  metadata_json:{ flightNo:'AI505' },
+}, { payload_json:{} })
+assert.ok(flightWatch)
+assert.equal(flightWatch?.cadenceMinutes, 60)
+assert.match(flightWatch!.url, /flightaware\.com\/live\/flight\/AI505/i)
+assert.match(flightWatch!.objective, /flight status/i)
+assert.match(flightWatch!.objective, /Do not check in/i)
+assert.equal(lifecycleMonitorTarget({ event_type:'travel', subtype:'train', metadata_json:{flightNo:'AI505'} }), null)
+
 assert.equal(lifecycleMonitorTarget({ event_type:'subscription', metadata_json:{statusUrl:'https://example.com'} }), null)
 assert.equal(lifecycleMonitorTarget({ event_type:'delivery', metadata_json:{trackingUrl:'javascript:alert(1)'} }), null)
 
@@ -88,6 +99,7 @@ assert.deepEqual(lifecycleTerminalState('application', 'Application is still und
 assert.deepEqual(lifecycleTerminalState('appointment', 'Appointment ABC123 cancelled by the clinic', { confirmationRef:'ABC123' }), { terminal:true, label:'cancelled' })
 assert.deepEqual(lifecycleTerminalState('appointment', 'Appointment ABC123 confirmed for tomorrow', { confirmationRef:'ABC123' }), { terminal:false, label:null })
 assert.deepEqual(lifecycleTerminalState('reservation', 'Reservation XYZ completed', { confirmationRef:'XYZ' }), { terminal:true, label:'completed' })
+assert.deepEqual(lifecycleTerminalState('travel', 'Flight AI505 cancelled'), { terminal:false, label:null }, 'flight watch alerts must not close the whole travel lifecycle')
 
 const appointmentPlan = buildLifeEventPlan({
   telegramId: 1,
@@ -154,13 +166,19 @@ assert.match(worker, /booking-change-watch/)
 assert.match(worker, /DEDICATED_MONITOR_ACTION_KEYS/)
 
 assert.match(flightBridge, /travel_tickets/)
+assert.match(flightBridge, /findExistingLifeEvent/)
+assert.match(flightBridge, /travel_ticket_id/)
+assert.match(flightBridge, /ignoreDuplicates:true/)
+assert.match(flightBridge, /Never reset lifecycle_state/)
+assert.match(flightBridge, /while \(checked < ceiling\)/)
+assert.match(flightBridge, /\.range\(offset, offset \+ take - 1\)/)
+assert.match(flightBridge, /flightaware\.com\/live\/flight/)
 assert.match(flightBridge, /registerLifeEvent/)
-assert.match(flightBridge, /eventType:\s*'travel'/)
-assert.match(flightBridge, /subtype:\s*'flight'/)
+assert.match(flightBridge, /Backfill only/)
 assert.match(flightBridge, /checkinOpensAt/)
 assert.match(flightBridge, /checkInUrl/)
-assert.match(flightBridge, /confirmationRef/)
-assert.match(flightBridge, /autonomousSource:\s*'travel_ticket_bridge'/)
+assert.match(flightBridge, /autonomousSource:'travel_ticket_bridge'/)
+assert.doesNotMatch(flightBridge, /lifecycle_state:\s*'planned'/, 'bridge must never reset worker lifecycle state')
 assert.match(travelTickets, /travel_tickets/)
 assert.match(travelTickets, /planLegReminders/)
 assert.match(travelTickets, /checkin_open_now/)
@@ -180,4 +198,4 @@ assert.match(bookingCalendar, /relinkExistingPending/)
 assert.match(bookingCalendar, /approval_relinked/)
 assert.match(bookingCalendar, /booking_calendar_persistence_failed/)
 
-console.log('✅ Life-event calendar + saved-flight autonomy + appointment/reservation lifecycle regression passed')
+console.log('✅ Life-event calendar + safe saved-flight adoption + live disruption watch + appointment/reservation lifecycle regression passed')
