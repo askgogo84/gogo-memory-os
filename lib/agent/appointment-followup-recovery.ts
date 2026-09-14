@@ -1,11 +1,23 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { searchWebResults } from '@/lib/web-search'
 import { tryRunBrowserCommand } from './browser-command'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 
 function safe(value: unknown, max = 1200) {
   return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
+}
+
+function host(url: string) {
+  try { return new URL(url).hostname.replace(/^www\./,'') } catch { return '' }
+}
+
+function looksBookable(url: string, title = '') {
+  const value = `${url} ${title}`.toLowerCase()
+  return /\b(book appointment|schedule appointment|request appointment|appointment booking|available slots?)\b/.test(value)
+    || /\/(book|booking|appointment|appointments|schedule|slots?|availability)(\/|\?|$)/.test(value)
+    || /book[-_]?appointment|appointment[-_]?booking|schedule[-_]?appointment/.test(value)
 }
 
 export function appointmentPrepareOptionNumber(text: string) {
@@ -22,82 +34,94 @@ export function appointmentPrepareOptionNumber(text: string) {
 async function bestPriorResearch(tg: number) {
   const { data, error } = await supabaseAdmin.from('agent_runs')
     .select('id,metadata_json,completed_at,started_at')
-    .eq('telegram_id', String(tg))
-    .eq('type', 'appointment_research')
-    .eq('status', 'completed')
-    .order('completed_at', { ascending: false, nullsFirst: false })
-    .limit(20)
+    .eq('telegram_id', String(tg)).eq('type', 'appointment_research').eq('status', 'completed')
+    .order('completed_at', { ascending: false, nullsFirst: false }).limit(20)
   if (error) throw new Error(`appointment_followup_recovery_context_failed:${error.message}`)
   const rows = data || []
-  return rows.find((row: any) => {
+  return rows.find((row:any) => {
     const meta = row?.metadata_json || {}
-    return safe(meta.location, 120) && Array.isArray(meta.options) && meta.options.length > 0
-  }) || rows.find((row: any) => Array.isArray(row?.metadata_json?.options) && row.metadata_json.options.length > 0) || null
+    return safe(meta.location,120) && Array.isArray(meta.options) && meta.options.length > 0
+  }) || rows.find((row:any) => Array.isArray(row?.metadata_json?.options) && row.metadata_json.options.length > 0) || null
+}
+
+async function resolveBookableTarget(selected: any, meta: any) {
+  const originalUrl = safe(selected?.url || '',1200)
+  if (!originalUrl) return { url:'', resolved:false }
+  if (looksBookable(originalUrl, safe(selected?.title || '',240))) return { url:originalUrl, resolved:false }
+  const originalHost = host(originalUrl)
+  if (!originalHost) return { url:originalUrl, resolved:false }
+
+  const query = [safe(selected?.title || selected?.provider || originalHost,180), safe(meta?.service || 'appointment',100), safe(meta?.location || '',100), 'book appointment schedule online'].filter(Boolean).join(' ')
+  const results = await searchWebResults(query)
+  const sameProvider = (results || []).filter((result:any) => {
+    const resultHost = host(String(result?.url || ''))
+    return resultHost && (resultHost === originalHost || resultHost.endsWith(`.${originalHost}`) || originalHost.endsWith(`.${resultHost}`))
+  })
+  const best = sameProvider.find((result:any) => looksBookable(String(result?.url || ''), `${result?.title || ''} ${result?.snippet || ''}`))
+  return best?.url ? { url:String(best.url), resolved:true, query } : { url:originalUrl, resolved:false, query }
+}
+
+async function retireStaleBookingApprovals(tg: number, targetUrl: string) {
+  const { data: approvals } = await supabaseAdmin.from('agent_approvals')
+    .select('id,run_id,status,created_at').eq('telegram_id',String(tg)).eq('action_type','booking').eq('status','pending')
+    .order('created_at',{ascending:false}).limit(12)
+  for (const approval of approvals || []) {
+    const { data: run } = await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',String(approval.run_id)).eq('telegram_id',String(tg)).maybeSingle()
+    const meta:any = run?.metadata_json || {}
+    const oldUrl = safe(meta?.appointment_selection?.url || meta?.url || '',1200)
+    if (!oldUrl) continue
+    if (host(oldUrl) !== host(targetUrl)) continue
+    await supabaseAdmin.from('agent_approvals').update({ status:'rejected', resolved_at:new Date().toISOString(), resolution_note:'Superseded by a later explicit read-only appointment availability check.' }).eq('id',String(approval.id)).eq('telegram_id',String(tg)).eq('status','pending')
+  }
 }
 
 async function markPrepared(runId: string, tg: number, selection: Record<string, unknown>) {
-  const { data, error } = await supabaseAdmin.from('agent_runs')
-    .select('metadata_json').eq('id', runId).eq('telegram_id', String(tg)).maybeSingle()
+  const { data, error } = await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',runId).eq('telegram_id',String(tg)).maybeSingle()
   if (error) throw new Error(`appointment_followup_recovery_run_read_failed:${error.message}`)
-  const metadata = { ...(data?.metadata_json || {}), appointment_selection: selection, appointment_prepared: true }
-  const { error: updateError } = await supabaseAdmin.from('agent_runs').update({
-    metadata_json: metadata,
-    updated_at: new Date().toISOString(),
-  }).eq('id', runId).eq('telegram_id', String(tg))
+  const metadata = { ...(data?.metadata_json || {}), appointment_selection:selection, appointment_prepared:true }
+  const { error:updateError } = await supabaseAdmin.from('agent_runs').update({ metadata_json:metadata, updated_at:new Date().toISOString() }).eq('id',runId).eq('telegram_id',String(tg))
   if (updateError) throw new Error(`appointment_followup_recovery_run_update_failed:${updateError.message}`)
 }
 
 export async function tryRecoverAppointmentOption(params: { actor: AgentActor; surface: AgentSurface; text: string }) {
   const option = appointmentPrepareOptionNumber(params.text)
   if (!option) return null
-
   const tg = params.actor.legacyTelegramId
   const research = await bestPriorResearch(tg)
   if (!research) {
-    return {
-      runId: '', status: 'paused' as const, capability: 'browser' as const, risk: 'low' as const,
-      text: 'I can tell this is a follow-up to a previous appointment search, but I cannot recover the numbered provider options safely. Please run the provider search again; I will not substitute a new location.',
-      handledBy: 'appointment-followup-recovery' as const,
-    }
+    return { runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+      text:'I can tell this is a follow-up to a previous appointment search, but I cannot recover the numbered provider options safely. Please run the provider search again; I will not substitute a new location.',
+      handledBy:'appointment-followup-recovery' as const }
   }
 
-  const meta: any = research.metadata_json || {}
+  const meta:any = research.metadata_json || {}
   const options = Array.isArray(meta.options) ? meta.options : []
-  const selected = options.find((item: any) => Number(item?.index) === option)
+  const selected = options.find((item:any) => Number(item?.index) === option)
   if (!selected?.url) {
-    return {
-      runId: String(research.id), status: 'paused' as const, capability: 'browser' as const, risk: 'low' as const,
-      text: `I recovered the ${safe(meta.location || 'previous', 100)} appointment search, but it does not contain option ${option}. Choose one of the numbered options from that result.`,
-      handledBy: 'appointment-followup-recovery' as const,
-    }
+    return { runId:String(research.id),status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+      text:`I recovered the ${safe(meta.location || 'previous',100)} appointment search, but it does not contain option ${option}. Choose one of the numbered options from that result.`,
+      handledBy:'appointment-followup-recovery' as const }
   }
 
-  // Keep this deliberately in DRAFT mode. The generic browser parser treats words
-  // such as booking/payment/submit as consequential even when they appear in a
-  // negated sentence, so this internal instruction uses only safe draft vocabulary.
-  const objective = `Open ${selected.url} and inspect live appointment slots for ${safe(meta.service || 'the requested service', 120)}${meta.location ? ` in ${safe(meta.location, 100)}` : ''}${meta.timing ? ` around ${safe(meta.timing, 100)}` : ''}. Fill only safe non-sensitive search fields if needed to reveal availability. Make no provider-side changes. Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step.`
-  const result = await tryRunBrowserCommand({ actor: params.actor, surface: params.surface, text: objective })
+  const target = await resolveBookableTarget(selected,meta)
+  await retireStaleBookingApprovals(tg,target.url)
+
+  const objective = `Open ${target.url} and inspect the provider appointment flow for ${safe(meta.service || 'the requested service',120)}${meta.location ? ` in ${safe(meta.location,100)}` : ''}${meta.timing ? ` around ${safe(meta.timing,100)}` : ''}. Fill only safe non-sensitive search fields if needed to reveal available dates or times. Make no provider-side changes. Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step.`
+  const result = await tryRunBrowserCommand({ actor:params.actor,surface:params.surface,text:objective })
   if (!result) throw new Error('appointment_followup_recovery_browser_not_routed')
 
   if (result.runId) {
-    await markPrepared(result.runId, tg, {
-      option,
-      researchRunId: String(research.id),
-      title: safe(selected.title || '', 220),
-      provider: safe(selected.provider || '', 160),
-      url: selected.url,
-      service: safe(meta.service || '', 120),
-      location: safe(meta.location || '', 120),
-      timing: safe(meta.timing || '', 120),
-      recoveredContext: true,
+    await markPrepared(result.runId,tg,{
+      option,researchRunId:String(research.id),title:safe(selected.title || '',220),provider:safe(selected.provider || '',160),
+      url:target.url,originalUrl:selected.url,bookablePathResolved:target.resolved,service:safe(meta.service || '',120),location:safe(meta.location || '',120),timing:safe(meta.timing || '',120),recoveredContext:true,
     })
   }
 
   return {
     ...result,
     text: result.status === 'completed'
-      ? `${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous', 100)} appointment search. I only inspected availability and made no provider-side changes.`
+      ? `${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous',100)} appointment search${target.resolved ? ' and switched to the same provider\'s direct appointment path' : ''}. I only inspected availability and made no provider-side changes.`
       : result.text,
-    handledBy: 'appointment-followup-recovery' as const,
+    handledBy:'appointment-followup-recovery' as const,
   }
 }
