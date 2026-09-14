@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { redactBrowserSensitiveText } from '../lib/agent/secure-browser-redaction'
 
 const computer=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
 const ticket=readFileSync(new URL('../lib/agent/secure-ticket-reader.ts',import.meta.url),'utf8')
@@ -31,17 +32,13 @@ assert.match(ticket,/ensureBrowserRuntime\(sandbox\)/)
 assert.match(ticket,/networkPolicy: BROWSER_SETUP_NETWORK/)
 
 // --- Vercel Sandbox bootstrap invariants ---
-// 1. Supported image form, NOT the deprecated runtime:'node24'.
 assert.match(bootstrap,/vercel\/sandbox\/node:24/)
 assert.doesNotMatch(computer,/runtime:\s*'node24'/)
 assert.doesNotMatch(ticket,/runtime:\s*'node24'/)
-// 2. Use the managed image's canonical workspace/profile path.
 assert.match(bootstrap,/\/home\/vercel-sandbox/)
 assert.match(bootstrap,/browser-profile/)
 assert.doesNotMatch(computer,/\/vercel\/sandbox/)
 assert.doesNotMatch(ticket,/\/vercel\/sandbox/)
-// 3. Chromium binary installed as the sandbox user WITHOUT --with-deps; OS libs
-//    installed separately as root with whichever package manager the image has.
 assert.match(bootstrap,/npx playwright install chromium/)
 assert.doesNotMatch(bootstrap,/install --with-deps/)
 assert.match(bootstrap,/sudo:\s*true/)
@@ -50,11 +47,8 @@ assert.match(bootstrap,/npx playwright install-deps chromium/)
 assert.match(bootstrap,/command -v dnf/)
 assert.match(bootstrap,/dnf install -y --skip-broken/)
 assert.match(bootstrap,/command -v yum/)
-// 4. apt must go over HTTPS when that path is used.
 assert.match(bootstrap,/https:\/\/archive\.ubuntu\.com/)
 assert.match(bootstrap,/apt-get update/)
-// 5. Setup egress covers npm, Playwright/browser redirects, Ubuntu apt repos,
-//    and Amazon Linux package repositories used by dnf-based sandboxes.
 assert.match(bootstrap,/registry\.npmjs\.org/)
 assert.match(bootstrap,/cdn\.playwright\.dev/)
 assert.match(bootstrap,/storage\.googleapis\.com/)
@@ -62,10 +56,8 @@ assert.match(bootstrap,/archive\.ubuntu\.com/)
 assert.match(bootstrap,/security\.ubuntu\.com/)
 assert.match(bootstrap,/cdn\.amazonlinux\.com/)
 assert.match(bootstrap,/amazonaws\.com/)
-// 6. Pinned Playwright version lives in the shared bootstrap.
 assert.match(bootstrap,/playwright@\$\{PLAYWRIGHT_VERSION\}/)
 assert.match(bootstrap,/PLAYWRIGHT_VERSION = '1\.63\.0'/)
-// 7. Readiness requires a real Chromium launch, not only a binary-on-disk check.
 assert.match(bootstrap,/chromium\.launch\(\{headless:true\}\)/)
 assert.match(bootstrap,/chromium_launch_probe_failed/)
 assert.match(bootstrap,/updateNetworkPolicy\(BROWSER_SETUP_NETWORK/)
@@ -91,12 +83,44 @@ assert.match(browser,/eq\('status','approved'\)/)
 assert.match(browser,/executeApprovedBrowserCommand/)
 
 // Full page text and filled values are deliberately not persisted to Activity.
-// The returned pageText is only sent to the requesting surface, while Activity
-// records contain host/action-count or bounded error metadata.
 assert.match(browser,/text:`\$\{result\.summary\}[\s\S]*safe\(result\.pageText,1800\)/)
 assert.match(browser,/activity\(tg,params\.runId,'run_completed',result\.summary,\{host:new URL\(result\.url\)\.hostname,action_count:result\.actions\.length\}\)/)
 assert.doesNotMatch(browser,/metadata_json:\{[^}]*pageText/s)
 assert.doesNotMatch(browser,/activity\([^\n]*form[sVv]alue/s)
+
+// Signed provider/booking URLs and opaque subprocess payloads must never survive
+// the Secure Computer logging/model boundary. Preserve host/path and parameter
+// names for diagnostics, but remove every query value, URL fragment and long token.
+const signed='Browser failed at https://in.bookmyshow.com/booking/ticket?token=super-secret-abc&signature=deadbeef#receipt'
+const redacted=redactBrowserSensitiveText(signed)
+assert.match(redacted,/https:\/\/in\.bookmyshow\.com\/booking\/ticket/)
+assert.match(redacted,/token=/)
+assert.match(redacted,/signature=/)
+assert.doesNotMatch(redacted,/super-secret-abc/)
+assert.doesNotMatch(redacted,/deadbeef/)
+assert.doesNotMatch(redacted,/receipt/)
+
+// Regression for the P1 ordering case: if a query key itself is a generic secret
+// label, URL redaction must still consume the whole URL before generic redaction
+// can insert whitespace into a marker and strand later signed parameters.
+const labelledFirst='https://example.com/callback?password=first-secret&signature=LEAKME&otp=123456#receipt'
+const labelledFirstRedacted=redactBrowserSensitiveText(labelledFirst)
+assert.match(labelledFirstRedacted,/https:\/\/example\.com\/callback/)
+assert.match(labelledFirstRedacted,/password=/)
+assert.match(labelledFirstRedacted,/signature=/)
+assert.match(labelledFirstRedacted,/otp=/)
+assert.doesNotMatch(labelledFirstRedacted,/first-secret/)
+assert.doesNotMatch(labelledFirstRedacted,/LEAKME/)
+assert.doesNotMatch(labelledFirstRedacted,/123456/)
+assert.doesNotMatch(labelledFirstRedacted,/receipt/)
+
+const opaque='eyJ1cmwiOiJodHRwczovL2V4YW1wbGUuY29tLz90b2tlbj1zZWNyZXQiLCJtb2RlIjoiZXhlY3V0ZSJ9'.repeat(2)
+assert.equal(redactBrowserSensitiveText(opaque),'[sensitive token withheld]')
+assert.match(computer,/redactBrowserSensitiveText/)
+assert.match(computer,/SECURE_BROWSER_FAILED:',safeError/)
+assert.doesNotMatch(computer,/SECURE_BROWSER_FAILED:', error\?\.stack/)
+assert.match(computer,/links:\(page\.links\|\|\[\]\).*href:safeText/s)
+assert.match(computer,/forms:\(page\.forms\|\|\[\]\).*action:safeText/s)
 
 // Both new and approved-run APIs route secure browser plans explicitly.
 assert.match(runRoute,/tryRunBrowserCommand/)
