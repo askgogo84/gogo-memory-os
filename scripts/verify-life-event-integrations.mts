@@ -6,6 +6,7 @@ import {
   lifecycleMonitorTarget,
   lifecycleTerminalState,
 } from '../lib/agent/life-event-integrations'
+import { buildLifeEventPlan } from '../lib/agent/life-event-engine'
 
 const calendar = calendarInputFromLifeEvent({
   id: 'evt-1',
@@ -46,6 +47,23 @@ const application = lifecycleMonitorTarget({
   metadata_json: { statusUrl: 'https://jobs.example/applications/1' },
 })
 assert.equal(application?.cadenceMinutes, 360)
+
+const appointment = lifecycleMonitorTarget({
+  event_type: 'appointment',
+  metadata_json: { bookingUrl: 'https://clinic.example/appointments/abc123' },
+})
+assert.ok(appointment)
+assert.equal(appointment?.cadenceMinutes, 120)
+assert.match(appointment!.objective, /appointment or reservation/i)
+assert.match(appointment!.objective, /Do not book, confirm, cancel, reschedule/i)
+
+const reservation = lifecycleMonitorTarget({
+  event_type: 'reservation',
+  metadata_json: { statusUrl: 'https://restaurant.example/reservations/xyz' },
+})
+assert.ok(reservation)
+assert.equal(reservation?.cadenceMinutes, 120)
+
 assert.equal(lifecycleMonitorTarget({ event_type:'subscription', metadata_json:{statusUrl:'https://example.com'} }), null)
 assert.equal(lifecycleMonitorTarget({ event_type:'delivery', metadata_json:{trackingUrl:'javascript:alert(1)'} }), null)
 
@@ -67,6 +85,23 @@ assert.deepEqual(
 )
 assert.deepEqual(lifecycleTerminalState('application', 'Congratulations — offer extended'), { terminal:true, label:'approved' })
 assert.deepEqual(lifecycleTerminalState('application', 'Application is still under review'), { terminal:false, label:null })
+assert.deepEqual(lifecycleTerminalState('appointment', 'Appointment ABC123 cancelled by the clinic', { confirmationRef:'ABC123' }), { terminal:true, label:'cancelled' })
+assert.deepEqual(lifecycleTerminalState('appointment', 'Appointment ABC123 confirmed for tomorrow', { confirmationRef:'ABC123' }), { terminal:false, label:null })
+assert.deepEqual(lifecycleTerminalState('reservation', 'Reservation XYZ completed', { confirmationRef:'XYZ' }), { terminal:true, label:'completed' })
+
+const appointmentPlan = buildLifeEventPlan({
+  telegramId: 1,
+  eventType: 'appointment',
+  subtype: 'doctor',
+  source: 'test',
+  title: 'Doctor appointment',
+  startAt: '2026-09-20T10:00:00+05:30',
+  timezone: 'Asia/Kolkata',
+  metadata: { bookingUrl: 'https://clinic.example/appointments/abc123' },
+}, Date.parse('2026-09-18T00:00:00Z'))
+assert.ok(appointmentPlan.actions.some(a => a.actionKey === 'appointment-calendar-draft'))
+assert.ok(appointmentPlan.actions.some(a => a.actionKey === 'appointment-readiness' && a.actionType === 'notify'))
+assert.ok(appointmentPlan.actions.some(a => a.actionKey === 'appointment-change-watch' && a.actionType === 'monitor'))
 
 assert.equal(lifecycleFingerprint('Status', 'In transit'), lifecycleFingerprint(' status ', '  in   transit '))
 assert.notEqual(lifecycleFingerprint('Status', 'In transit'), lifecycleFingerprint('Status', 'Delivered'))
@@ -107,4 +142,4 @@ assert.match(bookingCalendar, /relinkExistingPending/)
 assert.match(bookingCalendar, /approval_relinked/)
 assert.match(bookingCalendar, /booking_calendar_persistence_failed/)
 
-console.log('✅ Life-event calendar + lifecycle monitor + renewal integration regression passed')
+console.log('✅ Life-event calendar + lifecycle monitor + appointment + renewal integration regression passed')
