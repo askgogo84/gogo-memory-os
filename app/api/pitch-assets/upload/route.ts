@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 300
 
 const BUCKET = 'pitch-assets'
 const UPLOAD_KEY = 'AGP-2026-09-14-d570c78f1b0846c8915fcaa8e74e79c1'
@@ -17,13 +16,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
 
-  const form = await req.formData()
-  const file = form.get('file')
-  const path = String(form.get('path') || '').replace(/^\/+/, '')
-  const contentType = String(form.get('contentType') || '')
+  let body: any
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'invalid_json' }, { status: 400 })
+  }
 
-  if (!(file instanceof File) || !path) {
-    return NextResponse.json({ error: 'file_and_path_required' }, { status: 400 })
+  const path = String(body?.path || '').replace(/^\/+/, '')
+  const contentType = String(body?.contentType || '')
+  if (!path || !ALLOWED_MIME_TYPES.includes(contentType)) {
+    return NextResponse.json({ error: 'invalid_path_or_content_type' }, { status: 400 })
   }
 
   const { data: buckets, error: bucketListError } = await supabaseAdmin.storage.listBuckets()
@@ -37,25 +40,23 @@ export async function POST(req: NextRequest) {
       allowedMimeTypes: ALLOWED_MIME_TYPES,
     })
     if (createError) return NextResponse.json({ error: createError.message }, { status: 500 })
-  } else {
-    const { error: updateError } = await supabaseAdmin.storage.updateBucket(BUCKET, {
-      public: true,
-      fileSizeLimit: 20 * 1024 * 1024,
-      allowedMimeTypes: ALLOWED_MIME_TYPES,
-    })
-    if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 })
   }
 
-  const bytes = Buffer.from(await file.arrayBuffer())
   const { data, error } = await supabaseAdmin.storage
     .from(BUCKET)
-    .upload(path, bytes, {
-      upsert: true,
-      contentType: contentType || file.type || 'application/octet-stream',
-      cacheControl: '3600',
-    })
+    .createSignedUploadUrl(path, { upsert: true })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error || !data?.signedUrl) {
+    return NextResponse.json({ error: error?.message || 'signed_upload_url_failed' }, { status: 500 })
+  }
+
   const { data: publicUrl } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(path)
-  return NextResponse.json({ ok: true, path: data.path, url: publicUrl.publicUrl })
+  return NextResponse.json({
+    ok: true,
+    path,
+    contentType,
+    signedUrl: data.signedUrl,
+    token: data.token,
+    url: publicUrl.publicUrl,
+  })
 }
