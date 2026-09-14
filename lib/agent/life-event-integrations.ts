@@ -148,16 +148,17 @@ function commerceTerminalState(text: string, anchored: boolean): LifecycleTermin
 
 function scheduledTerminalState(text: string, eventType: string, anchored: boolean): LifecycleTerminal {
   const noun = eventType === 'appointment' ? 'appointment' : eventType === 'reservation' ? 'reservation' : 'event'
+  const referenceToken = '[a-z0-9][a-z0-9_-]{1,39}'
   const cancelled = anchored
     ? /\b(cancelled|canceled)\b/
-    : new RegExp(`\\b(?:${noun}\\s+)?(?:cancelled|canceled)\\b`)
+    : new RegExp(`\\b${noun}(?:\\s+${referenceToken})?\\s+(?:cancelled|canceled)\\b`)
   const completed = anchored
     ? /\b(completed|complete|checked out|ended)\b/
     : eventType === 'appointment'
-      ? /\b(appointment completed|visit completed|consultation completed|checked out)\b/
+      ? new RegExp(`\\b(?:appointment(?:\\s+${referenceToken})?\\s+completed|visit completed|consultation completed|checked out)\\b`)
       : eventType === 'reservation'
-        ? /\b(reservation completed|stay completed|booking completed|checked out)\b/
-        : /\b(event completed|event ended)\b/
+        ? new RegExp(`\\b(?:reservation(?:\\s+${referenceToken})?\\s+completed|stay completed|booking completed|checked out)\\b`)
+        : new RegExp(`\\b(?:event(?:\\s+${referenceToken})?\\s+completed|event ended)\\b`)
   if (cancelled.test(text)) return { terminal: true, label: 'cancelled' }
   if (completed.test(text)) return { terminal: true, label: 'completed' }
   return { terminal: false, label: null }
