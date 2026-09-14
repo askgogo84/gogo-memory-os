@@ -69,7 +69,7 @@ export type LifecycleMonitorTarget = {
 
 export function lifecycleMonitorTarget(event: any, action?: any): LifecycleMonitorTarget | null {
   const eventType = String(event?.event_type || '')
-  if (!['purchase', 'delivery', 'application', 'event'].includes(eventType)) return null
+  if (!['purchase', 'delivery', 'application', 'event', 'appointment', 'reservation'].includes(eventType)) return null
   const payload = action?.payload_json || {}
   const metadata = event?.metadata_json || {}
   const url = validHttpUrl(
@@ -78,12 +78,22 @@ export function lifecycleMonitorTarget(event: any, action?: any): LifecycleMonit
   )
   if (!url) return null
 
-  const cadenceMinutes = eventType === 'delivery' ? 60 : eventType === 'purchase' ? 180 : eventType === 'application' ? 360 : 180
+  const cadenceMinutes = eventType === 'delivery'
+    ? 60
+    : eventType === 'purchase'
+      ? 180
+      : eventType === 'application'
+        ? 360
+        : eventType === 'appointment' || eventType === 'reservation'
+          ? 120
+          : 180
   const objective = eventType === 'delivery' || eventType === 'purchase'
     ? 'Read the current order or delivery status only. Do not sign in, submit forms, cancel, return, reorder, purchase, or change the order.'
     : eventType === 'application'
       ? 'Read the current application status only. Do not submit, withdraw, accept, reject, edit, or sign anything.'
-      : 'Read the current event timing, venue, cancellation or reschedule status only. Do not book, cancel, submit, or change the reservation.'
+      : eventType === 'appointment' || eventType === 'reservation'
+        ? 'Read the current appointment or reservation time, location, confirmation, cancellation or reschedule status only. Do not book, confirm, cancel, reschedule, submit, pay, or change anything.'
+        : 'Read the current event timing, venue, cancellation or reschedule status only. Do not book, cancel, submit, or change the reservation.'
   return { url, cadenceMinutes, objective }
 }
 
@@ -136,6 +146,19 @@ function commerceTerminalState(text: string, anchored: boolean): LifecycleTermin
   return { terminal: false, label: null }
 }
 
+function scheduledTerminalState(text: string, eventType: string): LifecycleTerminal {
+  const noun = eventType === 'appointment' ? 'appointment' : eventType === 'reservation' ? 'reservation' : 'event'
+  const cancelled = new RegExp(`\\b(?:${noun}\\s+)?(?:cancelled|canceled)\\b`)
+  const completed = eventType === 'appointment'
+    ? /\b(appointment completed|visit completed|consultation completed|checked out)\b/
+    : eventType === 'reservation'
+      ? /\b(reservation completed|stay completed|booking completed|checked out)\b/
+      : /\b(event completed|event ended)\b/
+  if (cancelled.test(text)) return { terminal: true, label: 'cancelled' }
+  if (completed.test(text)) return { terminal: true, label: 'completed' }
+  return { terminal: false, label: null }
+}
+
 export function lifecycleTerminalState(eventType: string, pageText: unknown, context?: LifecycleTerminalContext): LifecycleTerminal {
   const text = safe(pageText, 12000).toLowerCase()
   if (!text) return { terminal: false, label: null }
@@ -148,8 +171,9 @@ export function lifecycleTerminalState(eventType: string, pageText: unknown, con
     if (/\b(rejected|declined|not selected|unsuccessful)\b/.test(text)) return { terminal: true, label: 'closed' }
     if (/\bwithdrawn\b/.test(text)) return { terminal: true, label: 'withdrawn' }
   }
-  if (eventType === 'event') {
-    if (/\b(event )?(cancelled|canceled)\b/.test(text)) return { terminal: true, label: 'cancelled' }
+  if (eventType === 'event' || eventType === 'appointment' || eventType === 'reservation') {
+    const focused = anchoredStatusText(text, context)
+    return scheduledTerminalState(focused.text, eventType)
   }
   return { terminal: false, label: null }
 }
