@@ -1,8 +1,7 @@
 'use client'
 
-const ASSET_BASE = 'https://qenhjcooyecmatwducpu.supabase.co/storage/v1/object/public/pitch-assets/askgogo-2026'
-const DECK_URL = `${ASSET_BASE}/AskGogo-Pitch-Deck.html`
-const PPTX_URL = `${ASSET_BASE}/AskGogo_Investor_Deck.pptx`
+const DECK_URL = '/pitch/content'
+const PPTX_URL = 'https://qenhjcooyecmatwducpu.supabase.co/storage/v1/object/public/pitch-assets/askgogo-2026/AskGogo_Investor_Deck.pptx'
 
 export default function PitchPage() {
   async function share() {
