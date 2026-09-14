@@ -22,6 +22,11 @@ function validHttpUrl(value: unknown) {
   }
 }
 
+function flightStatusUrl(value: unknown) {
+  const flight = safe(value, 80).replace(/[^a-z0-9]/gi, '').toUpperCase()
+  return flight ? `https://www.flightaware.com/live/flight/${encodeURIComponent(flight)}` : ''
+}
+
 export type LifeEventCalendarInput = {
   lifeEventId: string
   lifeEventActionId?: string
@@ -69,12 +74,15 @@ export type LifecycleMonitorTarget = {
 
 export function lifecycleMonitorTarget(event: any, action?: any): LifecycleMonitorTarget | null {
   const eventType = String(event?.event_type || '')
-  if (!['purchase', 'delivery', 'application', 'event', 'appointment', 'reservation'].includes(eventType)) return null
+  const subtype = String(event?.subtype || '')
+  if (!['purchase', 'delivery', 'application', 'event', 'appointment', 'reservation', 'travel'].includes(eventType)) return null
+  if (eventType === 'travel' && subtype !== 'flight') return null
   const payload = action?.payload_json || {}
   const metadata = event?.metadata_json || {}
   const url = validHttpUrl(
     payload.statusUrl || payload.trackingUrl || payload.sourceUrl ||
-    metadata.statusUrl || metadata.trackingUrl || metadata.sourceUrl || metadata.bookingUrl || ''
+    metadata.statusUrl || metadata.trackingUrl || metadata.sourceUrl || metadata.bookingUrl ||
+    (eventType === 'travel' ? flightStatusUrl(payload.flight_no || metadata.flightNo || metadata.flight_no) : '')
   )
   if (!url) return null
 
@@ -84,16 +92,20 @@ export function lifecycleMonitorTarget(event: any, action?: any): LifecycleMonit
       ? 180
       : eventType === 'application'
         ? 360
-        : eventType === 'appointment' || eventType === 'reservation'
-          ? 120
-          : 180
+        : eventType === 'travel'
+          ? 60
+          : eventType === 'appointment' || eventType === 'reservation'
+            ? 120
+            : 180
   const objective = eventType === 'delivery' || eventType === 'purchase'
     ? 'Read the current order or delivery status only. Do not sign in, submit forms, cancel, return, reorder, purchase, or change the order.'
     : eventType === 'application'
       ? 'Read the current application status only. Do not submit, withdraw, accept, reject, edit, or sign anything.'
-      : eventType === 'appointment' || eventType === 'reservation'
-        ? 'Read the current appointment or reservation time, location, confirmation, cancellation or reschedule status only. Do not book, confirm, cancel, reschedule, submit, pay, or change anything.'
-        : 'Read the current event timing, venue, cancellation or reschedule status only. Do not book, cancel, submit, or change the reservation.'
+      : eventType === 'travel'
+        ? `Read the current flight status, scheduled/estimated departure and arrival, delay, cancellation, gate or terminal change for ${safe(payload.flight_no || metadata.flightNo || metadata.flight_no || event?.title,120)} only. Do not check in, book, cancel, rebook, change seats, submit forms, sign in or pay.`
+        : eventType === 'appointment' || eventType === 'reservation'
+          ? 'Read the current appointment or reservation time, location, confirmation, cancellation or reschedule status only. Do not book, confirm, cancel, reschedule, submit, pay, or change anything.'
+          : 'Read the current event timing, venue, cancellation or reschedule status only. Do not book, cancel, submit, or change the reservation.'
   return { url, cadenceMinutes, objective }
 }
 
@@ -180,6 +192,9 @@ export function lifecycleTerminalState(eventType: string, pageText: unknown, con
     const focused = anchoredStatusText(text, context)
     return scheduledTerminalState(focused.text, eventType, focused.anchored)
   }
+  // Flight disruption watches are intentionally non-terminal. They monitor until
+  // the lifecycle engine expires/completes them after travel; a page saying
+  // "cancelled" must alert, not silently close the whole travel lifecycle here.
   return { terminal: false, label: null }
 }
 
