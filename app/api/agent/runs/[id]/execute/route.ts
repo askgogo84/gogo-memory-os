@@ -6,6 +6,7 @@ import { executeApprovedAgentRun } from '@/lib/agent/orchestrator'
 import { executeApprovedTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { resumeApprovedGeneralPlan } from '@/lib/agent/general-planner'
 import { executeApprovedBrowserCommand } from '@/lib/agent/browser-command'
+import { finalizeApprovedAppointmentRun } from '@/lib/agent/appointment-followup'
 import { executeApprovedWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-approval'
 import { executeApprovedLifeEventCheckin } from '@/lib/agent/life-event-execution'
 import { executeApprovedBookingCalendar } from '@/lib/agent/booking-calendar-execution'
@@ -34,19 +35,26 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!run) return NextResponse.json({ error: 'agent_run_not_found' }, { status: 404 })
 
     const planType = String((run.metadata_json as any)?.plan_type || '')
-    const result = planType === 'memory_ticket_to_calendar'
-      ? await executeApprovedTravelCalendarPlan({ actor, runId: id })
-      : planType === 'secure_browser'
-        ? await executeApprovedBrowserCommand({ actor, runId: id })
-        : planType === 'general_multi_tool'
-          ? await resumeApprovedGeneralPlan({ actor, runId: id })
-          : planType === 'workspace_meeting_prep'
-            ? await executeApprovedWorkspaceMeetingPlan({ actor, runId: id })
-            : planType === 'life_event_checkin'
-              ? await executeApprovedLifeEventCheckin({ actor, runId: id })
-              : planType === 'booking_event_calendar'
-                ? await executeApprovedBookingCalendar({ actor, runId: id })
-                : await executeApprovedAgentRun({ actor, runId: id })
+    let result: any
+    if (planType === 'memory_ticket_to_calendar') {
+      result = await executeApprovedTravelCalendarPlan({ actor, runId: id })
+    } else if (planType === 'secure_browser') {
+      const browserResult = await executeApprovedBrowserCommand({ actor, runId: id })
+      // Ordinary secure-browser runs pass straight through. Appointment runs carry
+      // appointment_selection metadata; those are fail-closed here and only become
+      // Life Events when provider confirmation plus an exact slot are verified.
+      result = await finalizeApprovedAppointmentRun({ actor, runId: id, result: browserResult })
+    } else if (planType === 'general_multi_tool') {
+      result = await resumeApprovedGeneralPlan({ actor, runId: id })
+    } else if (planType === 'workspace_meeting_prep') {
+      result = await executeApprovedWorkspaceMeetingPlan({ actor, runId: id })
+    } else if (planType === 'life_event_checkin') {
+      result = await executeApprovedLifeEventCheckin({ actor, runId: id })
+    } else if (planType === 'booking_event_calendar') {
+      result = await executeApprovedBookingCalendar({ actor, runId: id })
+    } else {
+      result = await executeApprovedAgentRun({ actor, runId: id })
+    }
     return NextResponse.json(result, { status: result.status === 'waiting_approval' ? 202 : 200 })
   } catch (error: any) {
     const message = String(error?.message || '')
