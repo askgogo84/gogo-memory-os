@@ -21,11 +21,7 @@ function locationProfile(location: string) {
   const l = String(location || '').trim().toLowerCase()
   if (!l) return { canonical:'', aliases:[] as string[], querySuffix:'' }
   if (/\b(bangalore|bengaluru|blr)\b/.test(l)) {
-    return {
-      canonical:'Bengaluru',
-      aliases:['bengaluru','bangalore','blr','karnataka','india'],
-      querySuffix:'Bengaluru Bangalore Karnataka India',
-    }
+    return { canonical:'Bengaluru', aliases:['bengaluru','bangalore','blr','karnataka','india'], querySuffix:'Bengaluru Bangalore Karnataka India' }
   }
   return { canonical:location, aliases:[l], querySuffix:location }
 }
@@ -52,12 +48,7 @@ export function isAppointmentResearchRequest(raw: string) {
   return appointment && discovery && !directCalendarMutation
 }
 
-type AppointmentOption = {
-  title: string
-  snippet: string
-  url: string
-  provider: string
-}
+type AppointmentOption = { title: string; snippet: string; url: string; provider: string; bookableScore: number }
 
 const WRONG_GEO = /\b(dubai|sharjah|abu dhabi|fujairah|uae|united arab emirates|qatar|doha|singapore|london|new york|california|texas)\b/i
 
@@ -69,38 +60,44 @@ function locationMatch(result: WebSearchResult, location: string) {
   return profile.aliases.some(alias => haystack.includes(alias))
 }
 
+export function appointmentBookableScore(result: Pick<WebSearchResult,'title'|'snippet'|'url'>) {
+  const url = String(result.url || '').toLowerCase()
+  const text = `${result.title || ''} ${result.snippet || ''}`.toLowerCase()
+  let score = 0
+  if (/\b(book|booking|appointment|appointments|schedule|slots?|availability|consultation)\b/.test(text)) score += 3
+  if (/\/(book|booking|appointment|appointments|schedule|slots?|availability)(\/|\?|$)/.test(url)) score += 6
+  if (/book[-_]?appointment|appointment[-_]?booking|schedule[-_]?appointment/.test(url)) score += 6
+  if (/\b(book appointment|schedule appointment|request appointment|available slots?)\b/.test(text)) score += 5
+  if (/\b(our clinics|locations|about us|blog|services|dentist near me)\b/.test(text) || /\/(our-clinics|locations|about|blog|services)(\/|\?|$)/.test(url)) score -= 4
+  return score
+}
+
 function curate(results: WebSearchResult[], location: string) {
   const seen = new Set<string>()
+  const ranked = results
+    .filter(result => result?.url && /^https?:\/\//i.test(result.url) && locationMatch(result, location))
+    .map(result => ({ result, score: appointmentBookableScore(result) }))
+    .sort((a,b) => b.score - a.score)
   const options: AppointmentOption[] = []
-  for (const result of results) {
-    if (!result?.url || !/^https?:\/\//i.test(result.url)) continue
-    if (!locationMatch(result, location)) continue
+  for (const item of ranked) {
+    const result = item.result
     const provider = host(result.url)
     const key = `${provider}|${safe(result.title, 180).toLowerCase()}`
     if (!provider || seen.has(key)) continue
     seen.add(key)
-    options.push({
-      title: safe(result.title || provider, 220),
-      snippet: safe(result.snippet || '', 520),
-      url: result.url,
-      provider,
-    })
+    options.push({ title:safe(result.title || provider,220), snippet:safe(result.snippet || '',520), url:result.url, provider, bookableScore:item.score })
     if (options.length >= 6) break
   }
   return options
 }
 
 async function activity(tg: number, runId: string, eventType: string, message: string, metadata: Record<string, unknown> = {}) {
-  const { error } = await supabaseAdmin.from('agent_activity').insert({
-    telegram_id: String(tg), run_id: runId, event_type: eventType,
-    message: safe(message, 900), metadata_json: metadata,
-  })
+  const { error } = await supabaseAdmin.from('agent_activity').insert({ telegram_id:String(tg), run_id:runId, event_type:eventType, message:safe(message,900), metadata_json:metadata })
   if (error) console.error('APPOINTMENT_RESEARCH_ACTIVITY_FAILED:', error.message)
 }
 
 export async function tryRunAppointmentResearch(params: { actor: AgentActor; surface: AgentSurface; text: string }) {
   if (!isAppointmentResearchRequest(params.text)) return null
-
   const service = serviceHint(params.text)
   const locationRaw = locationHint(params.text)
   const profile = locationProfile(locationRaw)
@@ -112,26 +109,18 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
   const now = new Date().toISOString()
 
   const { data: run, error: runError } = await supabaseAdmin.from('agent_runs').insert({
-    telegram_id: String(tg), type: 'appointment_research', capability: 'browser', status: 'running',
-    title: `Appointment search · ${service}${location ? ` · ${location}` : ''}`,
-    summary: 'Gogo is finding appointment providers and booking paths without changing anything.',
-    progress: 20,
-    why: 'Provider discovery is read-only. Booking, confirmation and payment remain behind approval.',
-    source: params.surface,
-    metadata_json: {
-      plan_type: 'appointment_research', input_text: safe(params.text, 1800),
-      service, location: location || null, timing: timing || null, query, fallbackQuery,
-      readOnly: true, mutated: false,
-    },
-    started_at: now, updated_at: now,
+    telegram_id:String(tg), type:'appointment_research', capability:'browser', status:'running',
+    title:`Appointment search · ${service}${location ? ` · ${location}` : ''}`,
+    summary:'Gogo is finding appointment providers and booking paths without changing anything.', progress:20,
+    why:'Provider discovery is read-only. Booking, confirmation and payment remain behind approval.', source:params.surface,
+    metadata_json:{ plan_type:'appointment_research', input_text:safe(params.text,1800), service, location:location || null, timing:timing || null, query, fallbackQuery, readOnly:true, mutated:false },
+    started_at:now, updated_at:now,
   }).select('id').single()
   if (runError || !run?.id) throw new Error(`appointment_research_run_create_failed:${runError?.message || 'unknown'}`)
   const runId = String(run.id)
-
   const { data: step, error: stepError } = await supabaseAdmin.from('agent_steps').insert({
-    telegram_id: String(tg), run_id: runId, ordinal: 1, tool_name: 'web_search',
-    title: 'Find appointment providers and booking paths', status: 'running',
-    input_json: { query, fallbackQuery, service, location, timing }, output_json: {}, started_at: now,
+    telegram_id:String(tg), run_id:runId, ordinal:1, tool_name:'web_search', title:'Find appointment providers and booking paths', status:'running',
+    input_json:{ query, fallbackQuery, service, location, timing }, output_json:{}, started_at:now,
   }).select('id').single()
   if (stepError || !step?.id) throw new Error(`appointment_research_step_create_failed:${stepError?.message || 'unknown'}`)
   await activity(tg, runId, 'run_started', `Gogo started appointment discovery for ${service}.`, { query, location })
@@ -140,42 +129,31 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
     const primary = await searchWebResults(query)
     let options = curate(primary, location)
     let usedFallback = false
-    if (!options.length && fallbackQuery !== query) {
+    if ((!options.length || (options[0]?.bookableScore ?? 0) < 3) && fallbackQuery !== query) {
       const secondary = await searchWebResults(fallbackQuery)
       options = curate([...primary, ...secondary], location)
       usedFallback = true
     }
-
     const completedAt = new Date().toISOString()
-    await supabaseAdmin.from('agent_steps').update({
-      status: 'completed', output_json: { options, query, fallbackQuery, usedFallback, verifiedStore: 'public-web', locationStrict:true, mutated: false }, completed_at: completedAt,
-    }).eq('id', String(step.id))
+    await supabaseAdmin.from('agent_steps').update({ status:'completed', output_json:{ options, query, fallbackQuery, usedFallback, verifiedStore:'public-web', locationStrict:true, bookableRanked:true, mutated:false }, completed_at:completedAt }).eq('id',String(step.id))
 
     const text = options.length
-      ? `Appointment options · ${service}${location ? ` · ${location}` : ''}${timing ? ` · ${timing}` : ''}\n\n${options.map((o, i) => `${i + 1}. ${o.title}\n${o.snippet ? `${o.snippet}\n` : ''}Booking/provider page: ${o.url}`).join('\n\n')}\n\nI only discovered provider pages that match the requested location; I have not claimed a slot is live and I changed nothing. Tell me which option to prepare and Gogo can open it in the secure browser, inspect live availability, and stop before confirmation/payment.`
+      ? `Appointment options · ${service}${location ? ` · ${location}` : ''}${timing ? ` · ${timing}` : ''}\n\n${options.map((o,i) => `${i+1}. ${o.title}\n${o.snippet ? `${o.snippet}\n` : ''}Booking/provider page: ${o.url}`).join('\n\n')}\n\nI ranked direct booking/appointment paths ahead of generic clinic pages where possible. I have not claimed a slot is live and I changed nothing. Tell me which option to prepare and Gogo can inspect the provider flow without confirming anything.`
       : `I couldn't find a provider page I can verify for ${service}${location ? ` in ${location}` : ''}. I rejected results from other cities/countries rather than showing you the wrong location. I did not invent availability or change anything.`
 
     await supabaseAdmin.from('agent_runs').update({
-      status: 'completed', summary: safe(text, 1800), progress: 100, completed_at: completedAt, updated_at: completedAt,
-      metadata_json: {
-        plan_type: 'appointment_research', input_text: safe(params.text, 1800), service,
-        location: location || null, timing: timing || null, query, fallbackQuery, usedFallback,
-        options: options.map((o, index) => ({ index: index + 1, title: o.title, provider: o.provider, url: o.url })),
-        readOnly: true, mutated: false, locationStrict:true,
-      },
-    }).eq('id', runId).eq('telegram_id', String(tg))
-    await activity(tg, runId, 'run_completed', options.length ? `Found ${options.length} location-matched appointment provider paths.` : 'No location-matched appointment provider path found.', { result_count: options.length, location, location_strict:true })
-
-    return {
-      runId, status: 'completed' as const, capability: 'browser' as const, risk: 'low' as const,
-      text, handledBy: 'appointment-research' as const, readOnly: true, mutated: false,
-    }
-  } catch (error: any) {
-    const message = safe(error?.message || 'appointment_research_failed', 500)
+      status:'completed', summary:safe(text,1800), progress:100, completed_at:completedAt, updated_at:completedAt,
+      metadata_json:{ plan_type:'appointment_research', input_text:safe(params.text,1800), service, location:location || null, timing:timing || null, query, fallbackQuery, usedFallback,
+        options:options.map((o,index)=>({ index:index+1,title:o.title,provider:o.provider,url:o.url,bookableScore:o.bookableScore })), readOnly:true, mutated:false, locationStrict:true, bookableRanked:true },
+    }).eq('id',runId).eq('telegram_id',String(tg))
+    await activity(tg,runId,'run_completed',options.length ? `Found ${options.length} location-matched appointment provider paths.` : 'No location-matched appointment provider path found.',{ result_count:options.length,location,location_strict:true,bookable_ranked:true })
+    return { runId,status:'completed' as const,capability:'browser' as const,risk:'low' as const,text,handledBy:'appointment-research' as const,readOnly:true,mutated:false }
+  } catch (error:any) {
+    const message = safe(error?.message || 'appointment_research_failed',500)
     const completedAt = new Date().toISOString()
-    await supabaseAdmin.from('agent_steps').update({ status: 'failed', error: message, completed_at: completedAt }).eq('id', String(step.id)).catch(() => {})
-    await supabaseAdmin.from('agent_runs').update({ status: 'failed', summary: 'Gogo could not complete appointment discovery.', error: message, completed_at: completedAt, updated_at: completedAt }).eq('id', runId).eq('telegram_id', String(tg)).catch(() => {})
-    await activity(tg, runId, 'run_failed', 'Appointment discovery failed.', { error: message })
+    await supabaseAdmin.from('agent_steps').update({status:'failed',error:message,completed_at:completedAt}).eq('id',String(step.id)).catch(()=>{})
+    await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete appointment discovery.',error:message,completed_at:completedAt,updated_at:completedAt}).eq('id',runId).eq('telegram_id',String(tg)).catch(()=>{})
+    await activity(tg,runId,'run_failed','Appointment discovery failed.',{error:message})
     throw error
   }
 }
