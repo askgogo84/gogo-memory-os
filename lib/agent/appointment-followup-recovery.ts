@@ -29,8 +29,6 @@ async function bestPriorResearch(tg: number) {
     .limit(20)
   if (error) throw new Error(`appointment_followup_recovery_context_failed:${error.message}`)
   const rows = data || []
-  // Prefer a search that has an explicit location. This deliberately skips accidental
-  // follow-up searches such as "appointment provider · next week" that lost Bengaluru.
   return rows.find((row: any) => {
     const meta = row?.metadata_json || {}
     return safe(meta.location, 120) && Array.isArray(meta.options) && meta.options.length > 0
@@ -74,7 +72,10 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
     }
   }
 
-  const objective = `Open ${selected.url} and inspect live appointment slots for ${safe(meta.service || 'the requested service', 120)}${meta.location ? ` in ${safe(meta.location, 100)}` : ''}${meta.timing ? ` around ${safe(meta.timing, 100)}` : ''}. Prepare the appointment flow and inspect availability. Do not confirm, submit, book, pay, authenticate, or change anything. Stop at any login, OTP, CAPTCHA or payment boundary.`
+  // Keep this deliberately in DRAFT mode. The generic browser parser treats words
+  // such as booking/payment/submit as consequential even when they appear in a
+  // negated sentence, so this internal instruction uses only safe draft vocabulary.
+  const objective = `Open ${selected.url} and inspect live appointment slots for ${safe(meta.service || 'the requested service', 120)}${meta.location ? ` in ${safe(meta.location, 100)}` : ''}${meta.timing ? ` around ${safe(meta.timing, 100)}` : ''}. Fill only safe non-sensitive search fields if needed to reveal availability. Make no provider-side changes. Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step.`
   const result = await tryRunBrowserCommand({ actor: params.actor, surface: params.surface, text: objective })
   if (!result) throw new Error('appointment_followup_recovery_browser_not_routed')
 
@@ -95,7 +96,7 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
   return {
     ...result,
     text: result.status === 'completed'
-      ? `${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous', 100)} appointment search. I did not confirm or book anything.`
+      ? `${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous', 100)} appointment search. I only inspected availability and made no provider-side changes.`
       : result.text,
     handledBy: 'appointment-followup-recovery' as const,
   }

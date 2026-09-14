@@ -39,11 +39,13 @@ assert.match(research, /mutated:\s*false/)
 assert.match(research, /I have not claimed a slot is live/)
 assert.match(research, /options:\s*options\.map/)
 
-assert.match(recovery, /Prefer a search that has an explicit location/)
 assert.match(recovery, /appointment_selection/)
-assert.match(recovery, /Stop at any login, OTP, CAPTCHA or payment boundary/)
+assert.match(recovery, /const objective = `Open [\s\S]*Fill only safe non-sensitive search fields if needed to reveal availability/)
+assert.match(recovery, /Make no provider-side changes/)
+assert.match(recovery, /Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step/)
 assert.match(recovery, /recoveredContext:\s*true/)
 assert.match(recovery, /I reused option/)
+assert.doesNotMatch(recovery, /Do not confirm, submit, book, pay, authenticate/)
 
 assert.match(followup, /latestAppointmentResearch/)
 assert.match(followup, /appointment_selection/)
@@ -67,4 +69,4 @@ assert.match(followup, /I therefore did not create calendar\/reminder\/watch fol
 assert.match(executeRoute, /finalizeApprovedAppointmentRun/)
 assert.ok(executeRoute.indexOf('executeApprovedBrowserCommand') < executeRoute.indexOf('finalizeApprovedAppointmentRun'), 'provider action must execute before appointment closure verification')
 
-console.log('✅ Appointment autonomy regression passed: discover → persistent numbered option → draft → exact-slot approval → provider verification → Life Event')
+console.log('✅ Appointment autonomy regression passed: discover → persistent numbered option → draft-only availability → exact-slot approval → provider verification → Life Event')
