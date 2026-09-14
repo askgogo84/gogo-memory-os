@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { GogoLesson } from '@/lib/dashboard/lessons'
+import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 const AUTO_VERIFIED = new Set(['first-reminder', 'recurring-reminders'])
 const MASTER_GOGO_PRESENTER = '/api/dashboard/master-gogo-presenter'
@@ -240,7 +241,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
     <div className="grid w-full gap-5 xl:grid-cols-[360px_minmax(0,1fr)] 2xl:grid-cols-[380px_minmax(0,1fr)]">
       <aside className="rounded-[28px] border border-gogo-ink/7 bg-gogo-surface/72 p-5 shadow-[0_18px_55px_rgba(62,35,18,.045)] xl:sticky xl:top-8 xl:h-[calc(100vh-6rem)] xl:overflow-y-auto">
         <div className="flex items-center gap-3">
-          <img src="/gogo-float.gif" alt="Gogo" className="h-14 w-14 object-contain" />
+          <GogoCharacter state={playing ? 'acting' : 'listening'} size={56} showStatus={playing} />
           <div><div className="text-[9px] font-bold uppercase tracking-[0.17em] text-gogo-orange">Master Gogo</div><div className="font-serif text-[23px] font-semibold text-gogo-ink">Learn by doing</div></div>
         </div>
         <div className="mt-5 rounded-[18px] border border-gogo-ink/7 bg-gogo-cream/55 p-4">
@@ -285,7 +286,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
           <div className="overflow-hidden rounded-[26px] border border-gogo-ink/20 bg-[#fbf6ec]">
             <div className="grid min-h-[330px] lg:grid-cols-[42%_58%]">
               <div className="relative min-h-[330px] overflow-hidden bg-[#f7efe2]">
-                <img src="/gogo-float.gif" alt="Master Gogo fallback" className="absolute inset-0 h-full w-full object-contain p-8 opacity-65" />
+                <div className="absolute inset-0 grid place-items-center opacity-55"><GogoCharacter state={playing ? 'acting' : 'listening'} size={220} showStatus={playing} /></div>
                 <video
                   ref={presenterRef}
                   src={MASTER_GOGO_PRESENTER}
@@ -327,7 +328,7 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
               <div className="mt-3 space-y-3">{active?.steps?.map((step, i) => <div key={step} className="flex gap-3 text-[11px] leading-5 text-gogo-ink-2"><div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-[9px] font-bold text-gogo-orange">{i + 1}</div><div>{step}</div></div>)}</div>
             </div>
             <div className="rounded-[22px] border border-gogo-ink/7 bg-gogo-cream/45 p-5 text-center">
-              <img src="/gogo-float.gif" alt="Gogo" className="mx-auto h-14 w-14 object-contain" />
+              <div className="mx-auto flex justify-center"><GogoCharacter state={practiceSending ? 'thinking' : 'listening'} size={58} showStatus={practiceSending} /></div>
               <div className="mt-2 font-serif text-[20px] font-semibold text-gogo-ink">Your turn</div>
               <div className="mt-1 text-[10px] leading-4 text-gogo-ink-4">{active?.tryText}</div>
               <button type="button" disabled={!watched.has(active?.key || '')} onClick={() => active && void openPractice(active)} className="mt-4 w-full rounded-full bg-gogo-ink px-4 py-2.5 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-35 active:scale-[.98]">Practice below ↓</button>
