@@ -77,7 +77,7 @@ assert.match(closure,/queryTokens\(requestText\)/)
 assert.doesNotMatch(closure,/generate.*qr/i)
 
 assert.match(calendar,/existingPending/)
-assert.match(calendar,/eventIdForLifeEvent/)
+assert.match(calendar,/bookingCalendarEventId/)
 assert.match(calendar,/booking-life-event:/)
 assert.match(calendar,/action_type:'calendar_change'/)
 assert.match(calendar,/eq\('status','approved'\)/)

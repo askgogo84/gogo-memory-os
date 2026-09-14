@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { processDueLifeEventActions } from '@/lib/agent/life-event-worker'
 import { processDueLifeEventEmailWatches } from '@/lib/agent/life-event-email-worker'
+import { processDueLifeEventIntegrations } from '@/lib/agent/life-event-integration-worker'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -18,8 +19,11 @@ export async function GET(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const email = await processDueLifeEventEmailWatches()
+    // Run the concrete calendar/status/renewal integrations first so the legacy
+    // worker never consumes these actions as generic "executor pending" work.
+    const integrations = await processDueLifeEventIntegrations()
     const lifeEvents = await processDueLifeEventActions()
-    return NextResponse.json({ ok: true, email, lifeEvents })
+    return NextResponse.json({ ok: true, email, integrations, lifeEvents })
   } catch (err: any) {
     console.error('LIFE_EVENT_CRON_FAILED:', err?.message || err)
     return NextResponse.json({ ok: false, error: 'life_event_worker_failed' }, { status: 500 })

@@ -8,6 +8,7 @@ import { tryPrepareTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
+import { tryRunPersistentGeneralPlan } from '@/lib/agent/persistent-general-plan'
 import { tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { attachWorkspaceMeetingApproval } from '@/lib/agent/workspace-meeting-approval'
 import { tryRunWorkspaceDriveContext } from '@/lib/agent/workspace-drive-context'
@@ -38,10 +39,6 @@ export async function POST(request: Request) {
       return NextResponse.json(result, { status })
     }
 
-    // Browser retries / impatient double-clicks must not create two live missions and
-    // two approval cards. Reuse an identical active run started in the last 90 seconds.
-    // We intentionally dedupe only ACTIVE runs, so intentionally repeating a completed
-    // mission later still works.
     const cutoff = new Date(Date.now() - 90_000).toISOString()
     const { data: recentActive, error: dedupeError } = await supabaseAdmin
       .from('agent_runs')
@@ -67,16 +64,12 @@ export async function POST(request: Request) {
       }, duplicate.status === 'waiting_approval' ? 202 : 200)
     }
 
-    // Explicit background watches and explicit URL/browser commands are deterministic
-    // and should always win before open-ended planning.
     const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:session.surface, text })
     if (webWatch) return respond(webWatch, 200)
 
     const browser = await tryRunBrowserCommand({ actor, surface:session.surface, text })
     if (browser) return respond(browser, browser.status === 'waiting_approval' ? 202 : 200)
 
-    // Specialist cross-feature plans remain ahead of the general planner because
-    // they carry tighter deterministic parsing and approval semantics.
     const travelCalendar = await tryPrepareTravelCalendarPlan({ actor, surface:session.surface, text })
     if (travelCalendar) return respond(travelCalendar, travelCalendar.status === 'waiting_approval' ? 202 : 200)
 
@@ -88,25 +81,27 @@ export async function POST(request: Request) {
     })
     if (compound) return respond(compound, 200)
 
-    // P0.8 Workspace meeting prep reads Gmail/attachments/Contacts/Calendar and
-    // prepares the reply + proposed invite first. If the attendee and slot are
-    // unambiguous, Gogo then creates one exact Calendar approval card. Nothing is
-    // scheduled and the Gmail reply remains unsent until the user acts.
     const workspaceMeeting = await tryPrepareWorkspaceMeetingPlan({ actor, surface:session.surface, text })
     if (workspaceMeeting) {
       const prepared = await attachWorkspaceMeetingApproval({ actor, result: workspaceMeeting })
       return respond(prepared, prepared.status === 'waiting_approval' ? 202 : 200)
     }
 
-    // P0.8 Drive/document context uses the same read-only Workspace consent as
-    // Gmail/Contacts. It deterministically finds one requested file, reads only
-    // supported text formats, creates a sourced private artifact and never mutates Drive.
     const workspaceDrive = await tryRunWorkspaceDriveContext({ actor, surface:session.surface, text })
     if (workspaceDrive) return respond(workspaceDrive, 200)
 
-    // Multi-step missions must be planned before single-feature fallbacks. This is
-    // the Muse-style outcome path: memory/research/actions/approval/artifact can be
-    // one run instead of a travel keyword collapsing the request into one search.
+    // Safe cross-feature missions now enter the persistent autonomous runtime first.
+    // This gives one durable run, durable steps, verification, retries, resume and
+    // crash recovery. Plans containing calendar/email approval boundaries still
+    // fall through to the mature approval-aware planner until their adapter is wired.
+    const persistentPlan = await tryRunPersistentGeneralPlan({
+      actor,
+      surface: session.surface,
+      text,
+      messageId: body?.messageId || null,
+    })
+    if (persistentPlan) return respond(persistentPlan, persistentPlan.status === 'waiting_approval' ? 202 : 200)
+
     const generalPlan = await tryRunGeneralPlan({
       actor,
       surface: session.surface,
@@ -115,16 +110,9 @@ export async function POST(request: Request) {
     })
     if (generalPlan) return respond(generalPlan, generalPlan.status === 'waiting_approval' ? 202 : 200)
 
-    // Live hotels are supplied by CreditIQ through a signed service bridge. If the
-    // service is not configured or returns no live inventory, this returns null and
-    // the hardened public-web travel fallback remains available.
     const liveHotels = await tryRunCreditIQHotelResearch({ actor, surface:session.surface, text })
     if (liveHotels) return respond(liveHotels, 200)
 
-    // Simple current-market travel research is a single-feature fallback. It still
-    // runs before saved-travel retrieval, and its output is hardened for direction,
-    // dates and fare claims. Flight requests prefer CreditIQ live inventory inside
-    // this path before falling back to public search.
     const travelResearch = await tryRunTravelResearch({ actor, surface:session.surface, text })
     if (travelResearch) {
       const hardened = await hardenTravelResearchResult(travelResearch, text)
