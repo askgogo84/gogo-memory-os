@@ -13,6 +13,8 @@ import {
 import type { AgentActor } from './actor'
 
 const LEASE_MINUTES = 8
+const RETRY_BACKOFF_MINUTES = [5, 15, 60, 180, 360]
+const DEDICATED_MONITOR_ACTION_KEYS = new Set(['booking-change-watch'])
 
 function safe(value: unknown, max = 800) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -20,6 +22,11 @@ function safe(value: unknown, max = 800) {
 
 function plusMinutes(minutes: number) {
   return new Date(Date.now() + Math.max(1, minutes) * 60_000).toISOString()
+}
+
+function permanentIntegrationFailure(error: unknown) {
+  const message = safe((error as any)?.message || error, 500)
+  return /\b(life_event_missing|life_event_actor_missing|agent_run_not_found|not_booking_calendar_plan|booking_calendar_event_invalid)\b/.test(message)
 }
 
 async function resolveActor(telegramId: string): Promise<AgentActor> {
@@ -65,6 +72,63 @@ async function defer(action: any, minutes: number, extra: Record<string, unknown
     payload_json: { ...(action.payload_json || {}), ...extra, deferredUntil: dueAt },
   }).eq('id', action.id).eq('status', 'running')
   if (error) throw new Error(`life_event_integration_defer_failed:${error.message}`)
+}
+
+async function retryOrBlock(action: any, telegramId: string, error: unknown) {
+  const at = new Date().toISOString()
+  const message = safe((error as any)?.message || error || 'life_event_integration_failed', 400)
+  const previousRetries = Number(action.payload_json?.integrationRetryCount || 0)
+  const retryCount = previousRetries + 1
+  const exhausted = retryCount > RETRY_BACKOFF_MINUTES.length
+  const permanent = permanentIntegrationFailure(error)
+
+  if (!permanent && !exhausted) {
+    const delay = RETRY_BACKOFF_MINUTES[Math.min(previousRetries, RETRY_BACKOFF_MINUTES.length - 1)]
+    const dueAt = plusMinutes(delay)
+    const { error: updateError } = await supabaseAdmin.from('life_event_actions').update({
+      status: 'ready',
+      due_at: dueAt,
+      updated_at: at,
+      payload_json: {
+        ...(action.payload_json || {}),
+        integrationRetryCount: retryCount,
+        lastIntegrationError: message,
+        deferredUntil: dueAt,
+      },
+    }).eq('id', action.id).eq('status', 'running')
+    if (updateError) throw new Error(`life_event_integration_retry_schedule_failed:${updateError.message}`)
+    await writeActivity(telegramId, null, 'life_event_integration_retry', 'Gogo will retry a temporary lifecycle integration failure.', {
+      life_event_action_id: action.id,
+      retry_count: retryCount,
+      retry_at: dueAt,
+      error: message,
+    })
+    return 'deferred' as const
+  }
+
+  const { error: updateError } = await supabaseAdmin.from('life_event_actions').update({
+    status: 'blocked',
+    updated_at: at,
+    payload_json: {
+      ...(action.payload_json || {}),
+      integrationRetryCount: retryCount,
+      blockedReason: message,
+      blockedAt: at,
+    },
+  }).eq('id', action.id).eq('status', 'running')
+  if (updateError) throw new Error(`life_event_integration_block_failed:${updateError.message}`)
+  await writeActivity(telegramId, null, 'life_event_integration_blocked', 'Gogo paused a lifecycle integration after repeated or permanent failures.', {
+    life_event_action_id: action.id,
+    retry_count: retryCount,
+    error: message,
+  })
+  await sendAgentPush(telegramId, {
+    title: 'Gogo needs attention',
+    body: 'A background task could not complete safely. Open Gogo Agent to review it.',
+    path: '/agent',
+    data: { lifeEventActionId: String(action.id) },
+  }).catch(() => {})
+  return 'blocked' as const
 }
 
 async function complete(action: any, extra: Record<string, unknown> = {}) {
@@ -167,7 +231,11 @@ async function processLifecycleMonitor(action: any, event: any, telegramId: stri
   const pageText = safe(result.pageText || result.summary || '', 6000)
   const fingerprint = lifecycleFingerprint(result.title || event.title, pageText)
   const previous = String(action.payload_json?.lastFingerprint || '')
-  const terminal = lifecycleTerminalState(String(event.event_type || ''), pageText)
+  const terminal = lifecycleTerminalState(String(event.event_type || ''), pageText, {
+    title: event.title,
+    confirmationRef: event.confirmation_ref,
+    provider: event.provider,
+  })
   const changed = Boolean(previous && previous !== fingerprint)
   const firstCheck = !previous
   const at = new Date().toISOString()
@@ -238,13 +306,16 @@ export async function processDueLifeEventIntegrations(limit=12){
   const select='id,life_event_id,telegram_id,action_key,action_type,capability,title,due_at,status,payload_json,created_at,updated_at'
   const [calendar,due,stale]=await Promise.all([
     supabaseAdmin.from('life_event_actions').select(select).in('status',['queued','ready']).eq('action_type','calendar_draft').is('due_at',null).order('created_at',{ascending:true}).limit(limit),
-    supabaseAdmin.from('life_event_actions').select(select).in('status',['queued','ready']).in('action_type',['calendar_draft','monitor','prepare']).not('due_at','is',null).lte('due_at',now.toISOString()).order('due_at',{ascending:true}).limit(limit),
-    supabaseAdmin.from('life_event_actions').select(select).eq('status','running').in('action_type',['calendar_draft','monitor','prepare']).lte('updated_at',staleBefore).order('updated_at',{ascending:true}).limit(limit),
+    supabaseAdmin.from('life_event_actions').select(select).in('status',['queued','ready']).in('action_type',['calendar_draft','monitor','prepare']).not('action_key','in','("booking-change-watch")').not('due_at','is',null).lte('due_at',now.toISOString()).order('due_at',{ascending:true}).limit(limit),
+    supabaseAdmin.from('life_event_actions').select(select).eq('status','running').in('action_type',['calendar_draft','monitor','prepare']).not('action_key','in','("booking-change-watch")').lte('updated_at',staleBefore).order('updated_at',{ascending:true}).limit(limit),
   ])
   if(calendar.error)throw new Error(`life_event_integration_calendar_read_failed:${calendar.error.message}`)
   if(due.error)throw new Error(`life_event_integration_due_read_failed:${due.error.message}`)
   if(stale.error)throw new Error(`life_event_integration_stale_read_failed:${stale.error.message}`)
-  const rows=[...(stale.data||[]),...(calendar.data||[]),...(due.data||[])].filter((row:any,index:number,all:any[])=>all.findIndex((x:any)=>String(x.id)===String(row.id))===index).slice(0,limit)
+  const rows=[...(stale.data||[]),...(calendar.data||[]),...(due.data||[])]
+    .filter((row:any)=>!DEDICATED_MONITOR_ACTION_KEYS.has(String(row.action_key||'')))
+    .filter((row:any,index:number,all:any[])=>all.findIndex((x:any)=>String(x.id)===String(row.id))===index)
+    .slice(0,limit)
   let checked=0,claimed=0,completed=0,waitingApproval=0,deferred=0,blocked=0,failed=0
   for(const action of rows){
     checked++
@@ -263,7 +334,13 @@ export async function processDueLifeEventIntegrations(limit=12){
     }catch(error:any){
       failed++
       console.error('LIFE_EVENT_INTEGRATION_FAILED:',action.id,error?.message||error)
-      await supabaseAdmin.from('life_event_actions').update({status:'blocked',updated_at:new Date().toISOString(),payload_json:{...(action.payload_json||{}),blockedReason:safe(error?.message||'life_event_integration_failed',400)}}).eq('id',action.id).eq('status','running').catch(()=>{})
+      try{
+        const disposition=await retryOrBlock(action,String(action.telegram_id),error)
+        if(disposition==='deferred')deferred++
+        else blocked++
+      }catch(recoveryError:any){
+        console.error('LIFE_EVENT_INTEGRATION_RECOVERY_FAILED:',action.id,recoveryError?.message||recoveryError)
+      }
     }
   }
   return{checked,claimed,completed,waitingApproval,deferred,blocked,failed}
