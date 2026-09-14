@@ -16,6 +16,7 @@ import { tryRunCreditIQHotelResearch } from '@/lib/agent/creditiq-hotel-research
 import { tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
+import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
 import { attachRunToThread, resolveThreadForUser } from '@/lib/agent/thread-context'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 
@@ -82,6 +83,12 @@ export async function POST(request: Request) {
         deduplicated: true,
       }, duplicate.status === 'waiting_approval' ? 202 : 200)
     }
+
+    // Persistent appointment context has priority over generic browser/planner
+    // routing: "prepare option 2" reuses the last discovery result, and an
+    // explicit final confirmation creates one approval boundary on that prepared run.
+    const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:session.surface, text })
+    if (appointmentFollowup) return respond(appointmentFollowup, appointmentFollowup.status === 'waiting_approval' ? 202 : 200)
 
     const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:session.surface, text })
     if (webWatch) return respond(webWatch, 200)
