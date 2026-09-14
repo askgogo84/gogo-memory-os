@@ -50,6 +50,21 @@ assert.equal(lifecycleMonitorTarget({ event_type:'subscription', metadata_json:{
 assert.equal(lifecycleMonitorTarget({ event_type:'delivery', metadata_json:{trackingUrl:'javascript:alert(1)'} }), null)
 
 assert.deepEqual(lifecycleTerminalState('delivery', 'Your package was delivered at 14:10'), { terminal:true, label:'delivered' })
+assert.deepEqual(
+  lifecycleTerminalState('delivery', 'Previous orders: Shoes delivered yesterday. Current order AB123 is in transit.', { confirmationRef:'AB123' }),
+  { terminal:false, label:null },
+  'a delivered word from another order must not terminate the tracked order',
+)
+assert.deepEqual(
+  lifecycleTerminalState('delivery', 'Previous orders: Shoes delivered yesterday. Order AB123 — current status: delivered.', { confirmationRef:'AB123' }),
+  { terminal:true, label:'delivered' },
+  'terminal status is valid when it is associated with the tracked order',
+)
+assert.deepEqual(
+  lifecycleTerminalState('purchase', 'Help: delivered items can be returned within 7 days. Current status: shipped'),
+  { terminal:false, label:null },
+  'generic help/history text must not be interpreted as the current tracked status',
+)
 assert.deepEqual(lifecycleTerminalState('application', 'Congratulations — offer extended'), { terminal:true, label:'approved' })
 assert.deepEqual(lifecycleTerminalState('application', 'Application is still under review'), { terminal:false, label:null })
 
@@ -73,6 +88,11 @@ assert.match(worker, /Gogo has not paid, renewed, cancelled or changed anything/
 assert.match(worker, /lastFingerprint/)
 assert.match(worker, /lifecycleTerminalState/)
 assert.match(worker, /human_auth_required/)
+assert.match(worker, /RETRY_BACKOFF_MINUTES/)
+assert.match(worker, /retryOrBlock/)
+assert.match(worker, /integrationRetryCount/)
+assert.match(worker, /booking-change-watch/)
+assert.match(worker, /DEDICATED_MONITOR_ACTION_KEYS/)
 
 assert.match(cron, /processDueLifeEventIntegrations/)
 assert.ok(cron.indexOf('processDueLifeEventIntegrations()') < cron.indexOf('processDueLifeEventActions()'), 'concrete integrations must run before the legacy fallback worker')
@@ -83,5 +103,8 @@ assert.match(bookingCalendar, /life_event_action_id/)
 assert.match(bookingCalendar, /life_event_actions/)
 assert.match(bookingCalendar, /status:'completed'/)
 assert.match(bookingCalendar, /bookingCalendarEventId/)
+assert.match(bookingCalendar, /relinkExistingPending/)
+assert.match(bookingCalendar, /approval_relinked/)
+assert.match(bookingCalendar, /booking_calendar_persistence_failed/)
 
 console.log('✅ Life-event calendar + lifecycle monitor + renewal integration regression passed')
