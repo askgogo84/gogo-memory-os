@@ -15,6 +15,7 @@ import { tryRunWorkspaceDriveContext } from '@/lib/agent/workspace-drive-context
 import { tryRunCreditIQHotelResearch } from '@/lib/agent/creditiq-hotel-research'
 import { tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
+import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { attachRunToThread, resolveThreadForUser } from '@/lib/agent/thread-context'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 
@@ -107,6 +108,12 @@ export async function POST(request: Request) {
 
     const workspaceDrive = await tryRunWorkspaceDriveContext({ actor, surface:session.surface, text })
     if (workspaceDrive) return respond(workspaceDrive, 200)
+
+    // Appointment/provider discovery is explicitly read-only. Route it before
+    // open-ended planning so "find me a dentist appointment next week" cannot
+    // accidentally become a calendar mutation or a fabricated availability claim.
+    const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:session.surface, text })
+    if (appointmentResearch) return respond(appointmentResearch, 200)
 
     const persistentPlan = await tryRunPersistentGeneralPlan({
       actor,
