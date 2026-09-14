@@ -1,4 +1,5 @@
 import { detectDashboardDayIntent, formatDashboardDayReply } from '../lib/dashboard/day-chat'
+import { detectReadOnlyScheduleRequest } from '../lib/agent/read-only-schedule'
 
 let failed = 0
 
@@ -20,6 +21,31 @@ for (const [text, expected] of intentCases) {
   } else {
     console.log(`✓ ${JSON.stringify(text)} → ${got ?? 'fall through'}`)
   }
+}
+
+const readOnlyCases = [
+  'Check what I have tomorrow and tell me what needs my attention. Do not change anything.',
+  "Tell me what's on tomorrow. Don't change my calendar.",
+  'Review my schedule tomorrow without changing anything.',
+  'Summarize tomorrow for me, read-only.',
+]
+for (const text of readOnlyCases) {
+  const got = detectReadOnlyScheduleRequest(text)
+  if (got?.horizon !== 'tomorrow') {
+    failed++
+    console.error(`✗ read-only schedule guard missed ${JSON.stringify(text)}`)
+  } else console.log(`✓ read-only tomorrow guard → ${JSON.stringify(text)}`)
+}
+
+for (const text of [
+  'Remind me tomorrow at 9 AM to call Praveen',
+  'Create a calendar event tomorrow at 4 PM',
+  'Move my meeting tomorrow to 5 PM',
+]) {
+  if (detectReadOnlyScheduleRequest(text)) {
+    failed++
+    console.error(`✗ read-only guard incorrectly swallowed mutation ${JSON.stringify(text)}`)
+  } else console.log(`✓ mutation remains outside read-only guard → ${JSON.stringify(text)}`)
 }
 
 const reply = formatDashboardDayReply({
@@ -55,4 +81,4 @@ for (const text of mustNotContain) {
 if (!failed) console.log('✓ personal day reply is private, concise and dashboard-shaped')
 
 if (failed) process.exit(1)
-console.log('✅ Dashboard day chat routing checks passed')
+console.log('✅ Dashboard day + read-only schedule routing checks passed')
