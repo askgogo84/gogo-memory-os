@@ -1,5 +1,5 @@
 import { detectDashboardDayIntent, formatDashboardDayReply } from '../lib/dashboard/day-chat'
-import { detectReadOnlyScheduleRequest } from '../lib/agent/read-only-schedule'
+import { detectReadOnlyScheduleRequest, nextLocalDateKey } from '../lib/agent/read-only-schedule'
 
 let failed = 0
 
@@ -47,6 +47,14 @@ for (const text of [
     console.error(`✗ read-only guard incorrectly swallowed mutation ${JSON.stringify(text)}`)
   } else console.log(`✓ mutation remains outside read-only guard → ${JSON.stringify(text)}`)
 }
+
+// At 12:33 PM IST on Sep 14, adding 36h lands on Sep 16. "Tomorrow" must still
+// resolve to the next LOCAL calendar date, Sep 15.
+const tomorrowBoundary = nextLocalDateKey(new Date('2026-09-14T07:03:00.000Z'), 'Asia/Kolkata')
+if (tomorrowBoundary !== '2026-09-15') {
+  failed++
+  console.error(`✗ local tomorrow boundary got=${tomorrowBoundary} expected=2026-09-15`)
+} else console.log('✓ local tomorrow boundary remains Sep 15 after midday IST')
 
 const reply = formatDashboardDayReply({
   intent: 'summary',
