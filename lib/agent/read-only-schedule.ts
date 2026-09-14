@@ -17,7 +17,22 @@ function localDateKey(date: Date, timeZone: string) {
   return `${get('year')}-${get('month')}-${get('day')}`
 }
 
+/** Return the next LOCAL calendar date, not "now + N hours". */
+export function nextLocalDateKey(now: Date, timeZone: string) {
+  const today = localDateKey(now, timeZone)
+  const [year, month, day] = today.split('-').map(Number)
+  const next = new Date(Date.UTC(year, month - 1, day + 1, 12, 0, 0))
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`
+}
+
+function eventDateKey(start: string, timeZone: string) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(start)) return start
+  const date = new Date(start)
+  return Number.isFinite(date.getTime()) ? localDateKey(date, timeZone) : ''
+}
+
 function localClock(value: string, timeZone: string) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'All day'
   const date = new Date(value)
   if (!Number.isFinite(date.getTime())) return 'All day'
   return new Intl.DateTimeFormat('en-US', {
@@ -48,7 +63,10 @@ export async function readTomorrowSchedule(params: { actor: AgentActor }) {
   if (userError) throw new Error(`read_only_schedule_user_failed:${userError.message}`)
   const timeZone = safe(user?.timezone || 'Asia/Kolkata', 100)
   const now = new Date()
-  const tomorrowKey = localDateKey(new Date(now.getTime() + 36 * 60 * 60 * 1000), timeZone)
+  const tomorrowKey = nextLocalDateKey(now, timeZone)
+
+  // Fetch a deliberately broad UTC window, then filter by the user's LOCAL date.
+  // This avoids timezone/DST mistakes while keeping provider reads bounded.
   const broadStart = new Date(now.getTime() - 2 * 60 * 60 * 1000)
   const broadEnd = new Date(now.getTime() + 60 * 60 * 60 * 1000)
 
@@ -81,7 +99,7 @@ export async function readTomorrowSchedule(params: { actor: AgentActor }) {
           title: safe(event?.summary || 'Untitled event', 180),
           start: safe(event?.start?.dateTime || event?.start?.date || '', 120),
         }))
-        .filter((event: any) => event.start && localDateKey(new Date(event.start.length === 10 ? `${event.start}T12:00:00Z` : event.start), timeZone) === tomorrowKey)
+        .filter((event: any) => event.start && eventDateKey(event.start, timeZone) === tomorrowKey)
     } catch (error: any) {
       console.error('READ_ONLY_SCHEDULE_CALENDAR_FAILED:', safe(error?.message || error, 160))
       calendarConnected = false
