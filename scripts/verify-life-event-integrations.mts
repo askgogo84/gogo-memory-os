@@ -103,12 +103,36 @@ assert.ok(appointmentPlan.actions.some(a => a.actionKey === 'appointment-calenda
 assert.ok(appointmentPlan.actions.some(a => a.actionKey === 'appointment-readiness' && a.actionType === 'notify'))
 assert.ok(appointmentPlan.actions.some(a => a.actionKey === 'appointment-change-watch' && a.actionType === 'monitor'))
 
+const flightPlan = buildLifeEventPlan({
+  telegramId: 1,
+  eventType: 'travel',
+  subtype: 'flight',
+  source: 'travel_ticket_pdf',
+  title: 'Air India AI 505 · Bengaluru → Delhi',
+  provider: 'Air India',
+  startAt: '2026-09-20T10:00:00+05:30',
+  timezone: 'Asia/Kolkata',
+  confirmationRef: 'ABC123',
+  metadata: {
+    airlineCode: 'AI',
+    flightNo: 'AI505',
+    checkinOpensAt: '2026-09-18T10:00:00+05:30',
+    checkInUrl: 'https://www.airindia.com/check-in',
+  },
+}, Date.parse('2026-09-17T00:00:00Z'))
+assert.ok(flightPlan.actions.some(a => a.actionKey === 'prepare-web-checkin'))
+assert.ok(flightPlan.actions.some(a => a.actionKey === 'watch-boarding-pass-email'))
+assert.ok(flightPlan.actions.some(a => a.actionKey === 'checkin-submit-approval' && a.requiresApproval && a.irreversible))
+assert.ok(flightPlan.actions.some(a => a.actionKey === 'travel-disruption-watch'))
+
 assert.equal(lifecycleFingerprint('Status', 'In transit'), lifecycleFingerprint(' status ', '  in   transit '))
 assert.notEqual(lifecycleFingerprint('Status', 'In transit'), lifecycleFingerprint('Status', 'Delivered'))
 
 const worker = fs.readFileSync('lib/agent/life-event-integration-worker.ts', 'utf8')
 const cron = fs.readFileSync('app/api/cron/life-events/route.ts', 'utf8')
 const bookingCalendar = fs.readFileSync('lib/agent/booking-calendar-execution.ts', 'utf8')
+const flightBridge = fs.readFileSync('lib/agent/travel-ticket-life-event-bridge.ts', 'utf8')
+const travelTickets = fs.readFileSync('lib/services/travel-tickets.ts', 'utf8')
 
 assert.match(worker, /processCalendarDraft/)
 assert.match(worker, /prepareBookingCalendarApproval/)
@@ -129,6 +153,20 @@ assert.match(worker, /integrationRetryCount/)
 assert.match(worker, /booking-change-watch/)
 assert.match(worker, /DEDICATED_MONITOR_ACTION_KEYS/)
 
+assert.match(flightBridge, /travel_tickets/)
+assert.match(flightBridge, /registerLifeEvent/)
+assert.match(flightBridge, /eventType:\s*'travel'/)
+assert.match(flightBridge, /subtype:\s*'flight'/)
+assert.match(flightBridge, /checkinOpensAt/)
+assert.match(flightBridge, /checkInUrl/)
+assert.match(flightBridge, /confirmationRef/)
+assert.match(flightBridge, /autonomousSource:\s*'travel_ticket_bridge'/)
+assert.match(travelTickets, /travel_tickets/)
+assert.match(travelTickets, /planLegReminders/)
+assert.match(travelTickets, /checkin_open_now/)
+
+assert.match(cron, /syncUpcomingFlightTicketsToLifeEvents/)
+assert.ok(cron.indexOf('syncUpcomingFlightTicketsToLifeEvents()') < cron.indexOf('processDueLifeEventEmailWatches()'), 'saved flights must be adopted before lifecycle workers run')
 assert.match(cron, /processDueLifeEventIntegrations/)
 assert.ok(cron.indexOf('processDueLifeEventIntegrations()') < cron.indexOf('processDueLifeEventActions()'), 'concrete integrations must run before the legacy fallback worker')
 assert.match(cron, /CRON_SECRET/)
@@ -142,4 +180,4 @@ assert.match(bookingCalendar, /relinkExistingPending/)
 assert.match(bookingCalendar, /approval_relinked/)
 assert.match(bookingCalendar, /booking_calendar_persistence_failed/)
 
-console.log('✅ Life-event calendar + lifecycle monitor + appointment + renewal integration regression passed')
+console.log('✅ Life-event calendar + saved-flight autonomy + appointment/reservation lifecycle regression passed')
