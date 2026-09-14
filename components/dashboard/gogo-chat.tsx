@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 type ChatMessage = {
   role: 'user' | 'assistant'
@@ -127,7 +128,7 @@ export function GogoChat({ initialDrink = 'coffee' }: { initialDrink?: string })
         </div>
         <div className="relative mt-8 flex flex-1 flex-col items-center justify-center">
           <div className="absolute h-44 w-44 rounded-full bg-gogo-plum/10 blur-3xl" />
-          <img src="/gogo-float.gif" alt="Gogo" className="relative h-32 w-32 object-contain drop-shadow-[0_20px_28px_rgba(77,42,25,.13)]" />
+          <div className="relative drop-shadow-[0_20px_28px_rgba(77,42,25,.13)]"><GogoCharacter state={sending ? 'thinking' : 'listening'} size={132} showStatus={sending} /></div>
           <div className="mt-3 rounded-full border border-gogo-ink/8 bg-gogo-surface/80 px-4 py-2 text-sm font-semibold text-gogo-ink-2 shadow-sm"><span className="mr-2">{drink.emoji}</span>{drink.label}</div>
         </div>
         <a href="/dashboard/agent" className="relative mb-2 rounded-[16px] border border-gogo-orange/15 bg-gogo-orange/8 px-4 py-3 text-center text-[12px] font-bold text-gogo-orange transition hover:bg-gogo-orange/12">See what Gogo is doing →</a>
@@ -136,7 +137,7 @@ export function GogoChat({ initialDrink = 'coffee' }: { initialDrink?: string })
 
       <section className="relative flex min-h-0 min-w-0 flex-col overflow-hidden">
         <header className="z-20 flex shrink-0 items-center gap-3 border-b border-gogo-ink/7 bg-gogo-surface/86 px-5 py-4 backdrop-blur-xl lg:px-7">
-          <img src="/gogo-figure.png" alt="" className="h-10 w-10 rounded-full object-cover lg:hidden" />
+          <div className="lg:hidden"><GogoCharacter state={sending ? 'thinking' : 'listening'} size={40} showStatus={sending} /></div>
           <div className="min-w-0">
             <div className="font-serif text-[22px] font-semibold text-gogo-ink">Talk to Gogo</div>
             <div className="truncate text-[11px] text-gogo-ink-3">{lastUserMessage ? `Current context · ${lastUserMessage}` : 'Your current context stays here.'}</div>
@@ -169,7 +170,7 @@ export function GogoChat({ initialDrink = 'coffee' }: { initialDrink?: string })
           {loading && <div className="mx-auto mt-16 max-w-md text-center text-sm text-gogo-ink-3">Bringing your current context into this room…</div>}
           {empty && (
             <div className="mx-auto mt-8 max-w-xl text-center">
-              <img src="/gogo-float.gif" alt="Gogo" className="mx-auto h-24 w-24 object-contain" />
+              <div className="mx-auto flex justify-center"><GogoCharacter state="calm" size={104} showStatus={false} hands /></div>
               <h3 className="mt-3 font-serif text-[30px] font-semibold text-gogo-ink">What’s on your mind?</h3>
               <p className="mt-2 text-sm leading-6 text-gogo-ink-3">Start here. Gogo keeps this window focused on what matters now.</p>
             </div>
@@ -181,7 +182,7 @@ export function GogoChat({ initialDrink = 'coffee' }: { initialDrink?: string })
             )}
             {currentMessages.map((message, index) => <MessageBubble key={`current-${index}-${message.createdAt || ''}`} message={message} />)}
             {sending && (
-              <div className="flex justify-start"><div className="rounded-[20px] rounded-bl-[7px] border border-gogo-orange/15 bg-gogo-orange/6 px-4 py-3 text-sm font-medium text-gogo-ink-3">Gogo is working<span className="animate-pulse">…</span></div></div>
+              <div className="flex justify-start"><div className="flex items-center gap-2 rounded-[20px] rounded-bl-[7px] border border-gogo-orange/15 bg-gogo-orange/6 px-4 py-3 text-sm font-medium text-gogo-ink-3"><GogoCharacter state="thinking" size={28} showStatus />Gogo is working<span className="animate-pulse">…</span></div></div>
             )}
             <div ref={endRef} />
           </div>

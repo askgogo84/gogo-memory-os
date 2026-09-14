@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 const PERSONALITIES = [
   { key: 'calm_companion', title: 'Calm companion', emoji: '🌿', line: 'Warm, capable and easy to be around.', sample: 'You’re clear for now. I’ll keep the next thing ready when you need it.' },
@@ -26,6 +27,7 @@ export function PersonalizeGogo({ initialPersonality, initialDrink }: { initialP
 
   const selected = PERSONALITIES.find((p) => p.key === personality) || PERSONALITIES[0]
   const selectedDrink = DRINKS.find((d) => d.key === drink) || DRINKS[0]
+  const previewState = personality === 'sharp_professional' || personality === 'straight_talking_coach' ? 'acting' : personality === 'quiet_minimalist' ? 'calm' : 'listening'
 
   async function save() {
     setSaving(true)
@@ -89,7 +91,7 @@ export function PersonalizeGogo({ initialPersonality, initialDrink }: { initialP
         <div className="pointer-events-none absolute -left-20 bottom-8 h-64 w-64 rounded-full bg-gogo-plum/10 blur-3xl" />
         <div className="relative text-center">
           <div className="text-[9.5px] font-bold uppercase tracking-[0.16em] text-gogo-ink-3">Your Gogo</div>
-          <img src="/gogo-float.gif" alt="Gogo" className="mx-auto mt-5 h-40 w-40 object-contain" />
+          <div className="mx-auto mt-5 flex h-40 w-40 items-center justify-center rounded-full bg-gogo-surface/32"><GogoCharacter state={previewState} size={148} showStatus={false} hands={previewState === 'calm'} /></div>
           <div className="mt-1 text-4xl">{selectedDrink.emoji}</div>
           <h3 className="mt-4 font-serif text-[27px] font-semibold text-gogo-ink">{selected.title}</h3>
           <p className="mt-2 text-[12px] leading-5 text-gogo-ink-3">{selected.line}</p>

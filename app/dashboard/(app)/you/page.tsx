@@ -6,6 +6,7 @@ import { QuotaBar } from '@/components/dashboard/quota-bar'
 import { SignOutButton } from '@/components/dashboard/sign-out-button'
 import { EmailPreferences } from '@/components/dashboard/email-preferences'
 import { DailyBriefEmail } from '@/components/dashboard/daily-brief-email'
+import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 export const dynamic = 'force-dynamic'
 
@@ -70,7 +71,7 @@ export default async function YouPage() {
           <div className="flex items-center gap-5">
             <div className="relative">
               <div className="absolute inset-0 rounded-full bg-gogo-orange/18 blur-2xl" />
-              <img src="/gogo-figure.png" alt="" className="relative h-[86px] w-[86px] animate-[gogo-float_6s_ease-in-out_infinite]" />
+              <div className="relative"><GogoCharacter state="calm" size={88} showStatus={false} hands /></div>
             </div>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gogo-orange">Your space</p>
@@ -88,7 +89,7 @@ export default async function YouPage() {
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <a href="/dashboard/personalize" className="group flex items-center gap-4 rounded-[24px] border border-gogo-ink/8 bg-gogo-surface/76 p-4 shadow-[0_14px_38px_rgba(62,35,18,.035)] transition hover:-translate-y-0.5">
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-[16px] bg-gogo-orange-tint"><img src="/gogo-figure.png" alt="" className="h-10 w-10 rounded-full object-cover" /></div>
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-[16px] bg-gogo-orange-tint"><GogoCharacter state="listening" size={44} showStatus={false} /></div>
           <div><div className="text-[9px] font-bold uppercase tracking-[0.15em] text-gogo-orange">Personalize</div><div className="mt-1 font-serif text-[20px] font-semibold text-gogo-ink">Make Gogo feel like yours</div><div className="mt-1 text-[11px] text-gogo-ink-3">Personality + your comfort drink →</div></div>
         </a>
         <a href="/dashboard/learn" className="group flex items-center gap-4 rounded-[24px] border border-gogo-ink/8 bg-gogo-surface/76 p-4 shadow-[0_14px_38px_rgba(62,35,18,.035)] transition hover:-translate-y-0.5">

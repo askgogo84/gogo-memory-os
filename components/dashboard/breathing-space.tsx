@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 type Phase = { label: string; seconds: number; scale: number; hint: string }
 type Mode = { key: 'balance' | 'box' | 'relax'; name: string; subtitle: string; sound: string; phases: Phase[] }
@@ -84,7 +85,6 @@ function startAmbientSound(modeKey: Mode['key']): AmbientHandle | null {
     persistent.push(osc)
   })
 
-  // Very slow movement keeps the pad alive without turning it into a melody.
   const lfo = ctx.createOscillator()
   const lfoGain = ctx.createGain()
   lfo.type = 'sine'
@@ -127,8 +127,6 @@ function startAmbientSound(modeKey: Mode['key']): AmbientHandle | null {
     const timer = window.setInterval(() => ring(659.25, 2.8, 0.032), 14000)
     timers.push(timer)
   } else if (modeKey === 'box') {
-    // A quiet bowl-like pulse every box cycle. The low fundamental helps this
-    // feel grounded rather than melodic.
     const timer = window.setInterval(() => ring(174.61, 4.2, 0.045), 16000)
     timers.push(timer)
   } else {
@@ -245,7 +243,7 @@ export function BreathingSpace() {
         title="Breathe with Gogo"
       >
         <span className="absolute inset-1 rounded-full bg-gogo-plum/8 transition group-hover:bg-gogo-plum/14" />
-        <img src="/gogo-figure.png" alt="" className="gogo-float relative h-10 w-10 rounded-full object-cover" />
+        <span className="relative"><GogoCharacter state="breathing" size={42} showStatus={false} /></span>
       </button>
 
       {open && (
@@ -279,8 +277,8 @@ export function BreathingSpace() {
                     transitionTimingFunction: 'ease-in-out',
                   }}
                 />
-                <div className="absolute inset-[31%] overflow-hidden rounded-full border border-white/30 bg-white/10 shadow-inner">
-                  <img src="/gogo-figure.png" alt="Gogo meditating" className="h-full w-full object-cover" />
+                <div className="absolute inset-[27%] grid place-items-center rounded-full border border-white/20 bg-black/8 shadow-inner">
+                  <GogoCharacter state="breathing" size={150} dark animate={running} showStatus={false} />
                 </div>
                 <div className="relative z-10 mt-[184px] rounded-full border border-white/15 bg-black/20 px-4 py-2 text-xs font-semibold text-white/90 backdrop-blur sm:mt-[250px] sm:text-sm">
                   {running ? `${phase.label} · ${remaining || phase.seconds}s` : mode.name}

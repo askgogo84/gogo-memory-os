@@ -14,6 +14,7 @@ import { TodayIcon, ListsIcon, MemoryIcon, CalendarIcon, YouIcon, UsageIcon } fr
 import { WhatsAppChip } from './whatsapp-chip'
 import { CommandBar } from './command-bar'
 import { CardError } from './card-error'
+import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 function sentenceCase(name: string): string {
   if (!name) return name
@@ -216,7 +217,7 @@ export function TodayDesktop({
           </div>
           <div className="relative hidden h-[190px] items-center justify-center xl:flex">
             <div className="absolute h-40 w-40 rounded-full bg-gogo-orange/12 blur-3xl" />
-            <img src="/gogo-figure.png" alt="" className="relative h-[146px] w-[146px] object-contain drop-shadow-[0_24px_30px_rgba(62,35,18,0.12)]" />
+            <div className="relative drop-shadow-[0_24px_30px_rgba(62,35,18,0.12)]"><GogoCharacter state={upcoming.length ? 'remembering' : 'calm'} size={156} showStatus={false} hands={!upcoming.length} /></div>
           </div>
         </div>
         <div className="relative mt-7 max-w-[1040px]"><CommandBar /></div>
