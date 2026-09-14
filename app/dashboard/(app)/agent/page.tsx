@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 const LEVELS = ['off','read','draft','ask','auto'] as const
 
@@ -122,6 +123,7 @@ export default function AgentDashboardPage(){
   if(loading&&!snapshot)return <div className="mx-auto max-w-[1440px] py-16 text-sm text-gogo-ink-3">Opening Gogo Agent…</div>
 
   const runtime=snapshot?.runtime||{}
+  const agentState = busy ? 'acting' : counts.approvals ? 'approval' : counts.watchers ? 'watching' : 'acting'
 
   return <div className="mx-auto w-full max-w-[1440px] space-y-5 pb-10">
     <header className="relative overflow-hidden rounded-[34px] bg-[linear-gradient(135deg,#34190d_0%,#542b17_55%,#38233e_100%)] px-7 py-8 text-white shadow-[0_28px_70px_rgba(58,36,24,.20)] lg:px-9">
@@ -130,7 +132,7 @@ export default function AgentDashboardPage(){
       <div className="relative flex flex-col gap-7 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex items-center gap-5">
           <div className="hidden h-24 w-24 shrink-0 place-items-center rounded-[26px] border border-white/10 bg-white/8 shadow-inner lg:grid">
-            <img src="/gogo-float.gif" alt="Gogo Agent" className="h-20 w-20 object-contain" />
+            <GogoCharacter state={agentState} size={86} dark showStatus={agentState === 'watching'} />
           </div>
           <div>
             <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-[.22em] text-[#ff9a3d]"><span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_5px_rgba(52,211,153,.10)]"/>Gogo Agent · live</div>
