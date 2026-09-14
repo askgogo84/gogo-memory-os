@@ -39,11 +39,20 @@ assert.match(research, /mutated:\s*false/)
 assert.match(research, /I have not claimed a slot is live/)
 assert.match(research, /options:\s*options\.map/)
 
-assert.match(recovery, /Prefer a search that has an explicit location/)
 assert.match(recovery, /appointment_selection/)
-assert.match(recovery, /Stop at any login, OTP, CAPTCHA or payment boundary/)
+assert.match(recovery, /Fill only safe non-sensitive search fields if needed to reveal availability/)
+assert.match(recovery, /Make no provider-side changes/)
+assert.match(recovery, /Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step/)
 assert.match(recovery, /recoveredContext:\s*true/)
 assert.match(recovery, /I reused option/)
+// Critical regression: the internally constructed draft instruction must not contain
+// the generic browser parser's consequential trigger words. The user's original
+// sentence can say "do not book", but this safe internal objective must stay draft.
+const objectiveMatch = recovery.match(/const objective = `([^`]+)`/)
+assert.ok(objectiveMatch?.[1], 'appointment recovery objective must exist')
+const recoveryObjective = String(objectiveMatch?.[1] || '').toLowerCase()
+assert.equal(/\b(book|booking|reserve|reservation|submit|buy|purchase|checkout|pay|payment)\b/.test(recoveryObjective), false, 'availability inspection must not accidentally request execute mode')
+assert.equal(/\bfill\b/.test(recoveryObjective), true, 'availability inspection should classify as browser draft mode')
 
 assert.match(followup, /latestAppointmentResearch/)
 assert.match(followup, /appointment_selection/)
@@ -67,4 +76,4 @@ assert.match(followup, /I therefore did not create calendar\/reminder\/watch fol
 assert.match(executeRoute, /finalizeApprovedAppointmentRun/)
 assert.ok(executeRoute.indexOf('executeApprovedBrowserCommand') < executeRoute.indexOf('finalizeApprovedAppointmentRun'), 'provider action must execute before appointment closure verification')
 
-console.log('✅ Appointment autonomy regression passed: discover → persistent numbered option → draft → exact-slot approval → provider verification → Life Event')
+console.log('✅ Appointment autonomy regression passed: discover → persistent numbered option → draft-only availability → exact-slot approval → provider verification → Life Event')
