@@ -16,6 +16,7 @@ import { tryRunCreditIQHotelResearch } from '@/lib/agent/creditiq-hotel-research
 import { tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { attachRunToThread, resolveThreadForUser } from '@/lib/agent/thread-context'
+import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -37,6 +38,23 @@ export async function POST(request: Request) {
     const respond = async (result:any, status:number) => {
       await attachRunToThread(session.telegramId, result?.runId, thread?.id || null)
       return NextResponse.json(result, { status })
+    }
+
+    // Read-only intent is a hard mutation boundary. Evaluate this before every
+    // reminder/planner/browser path so "check tomorrow; do not change anything"
+    // can never be reinterpreted as a reminder or another write action.
+    const readOnlySchedule = detectReadOnlyScheduleRequest(text)
+    if (readOnlySchedule?.horizon === 'tomorrow') {
+      const summary = await readTomorrowSchedule({ actor })
+      return NextResponse.json({
+        status: 'completed',
+        capability: 'calendar',
+        risk: 'low',
+        text: summary.text,
+        handledBy: 'read-only-schedule',
+        readOnly: true,
+        mutated: false,
+      })
     }
 
     const cutoff = new Date(Date.now() - 90_000).toISOString()
@@ -90,10 +108,6 @@ export async function POST(request: Request) {
     const workspaceDrive = await tryRunWorkspaceDriveContext({ actor, surface:session.surface, text })
     if (workspaceDrive) return respond(workspaceDrive, 200)
 
-    // Safe cross-feature missions now enter the persistent autonomous runtime first.
-    // This gives one durable run, durable steps, verification, retries, resume and
-    // crash recovery. Plans containing calendar/email approval boundaries still
-    // fall through to the mature approval-aware planner until their adapter is wired.
     const persistentPlan = await tryRunPersistentGeneralPlan({
       actor,
       surface: session.surface,
