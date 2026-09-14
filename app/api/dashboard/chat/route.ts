@@ -9,6 +9,7 @@ import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/
 import { isPublicTravelResearchRequest, tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { resolveAgentActor } from '@/lib/agent/actor'
+import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 
 export const dynamic = 'force-dynamic'
 
@@ -88,8 +89,15 @@ export async function POST(req: NextRequest) {
   if (!text) return NextResponse.json({ error: 'empty_message' }, { status: 400 })
 
   try {
-    // Dashboard-private context comes first. Vague personal-day questions must
-    // never fall through to public web search or generic LLM guessing.
+    const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+
+    const readOnlySchedule = detectReadOnlyScheduleRequest(text)
+    if (readOnlySchedule?.horizon === 'tomorrow') {
+      const summary = await readTomorrowSchedule({ actor })
+      await saveConversation(user.telegram_id, text, summary.text)
+      return NextResponse.json({ text: summary.text, handledBy: 'read-only-schedule', status:'completed', readOnly:true, mutated:false })
+    }
+
     const dayIntent = detectDashboardDayIntent(text)
     if (dayIntent) {
       const dayReply = await getDashboardDayReply(session.telegramId, dayIntent)
@@ -97,10 +105,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ text: dayReply, handledBy: 'dashboard-day' })
     }
 
-    const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
-
-    // One Gogo everywhere: a genuinely multi-step outcome entered in Talk to Gogo
-    // becomes the same resumable Agent run users see in Gogo Agent and WhatsApp.
     const mission = await tryRunGeneralPlan({
       actor,
       surface:'web',
@@ -116,9 +120,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ text: reply, handledBy: mission.handledBy, runId: mission.runId, status: mission.status })
     }
 
-    // Keep Talk to Gogo and Gogo Agent consistent for simple current-market travel
-    // research. A request for cheap/current fares must not fall back to a saved
-    // ticket merely because it was asked in chat rather than on the Agent page.
     if (isPublicTravelResearchRequest(text)) {
       const travel = await tryRunTravelResearch({ actor, surface:'web', text })
       if (travel) {
@@ -127,8 +128,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Match WhatsApp's feature layer next so web chat operates the same reminders,
-    // lists, expenses, nutrition and Asset Memory instead of creating a second brain.
     const featureReply = await routeFeatureIntent(String(user.whatsapp_id), text, {
       telegramId: Number(user.telegram_id),
       caption: text,
