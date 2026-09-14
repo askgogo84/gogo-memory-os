@@ -12,12 +12,14 @@ import { dispatchThroughSameBrain } from './same-brain'
 import {
   createAutonomousRun,
   executeAutonomousRun,
+  recoverStaleAutonomousSteps,
   type AutonomousPlan,
   type AutonomousToolContext,
   type AutonomousToolRegistry,
 } from './autonomous-runtime'
 
 const PERSISTENT_SAFE_TOOLS = new Set(['memory','files','reminders','lists','tasks','web_search','travel'])
+const TERMINAL_RUN_STATES = new Set(['completed','failed','cancelled'])
 
 function safe(value: unknown, max = 1800) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -31,15 +33,21 @@ function supportsPersistentSafePlan(steps: GeneralPlanStep[]) {
   return steps.length >= 2 && steps.every((step) => PERSISTENT_SAFE_TOOLS.has(step.tool))
 }
 
-async function loadDefinition(context: AutonomousToolContext): Promise<GeneralPlanStep> {
+async function runMetadata(runId: string, actor: AgentActor) {
   const { data, error } = await supabaseAdmin.from('agent_runs')
-    .select('metadata_json')
-    .eq('id', context.runId)
-    .eq('telegram_id', String(context.actor.legacyTelegramId))
+    .select('status,summary,progress,metadata_json')
+    .eq('id', runId)
+    .eq('telegram_id', String(actor.legacyTelegramId))
     .maybeSingle()
   if (error) throw new Error(`persistent_plan_read_failed:${error.message}`)
-  const definitions = Array.isArray((data?.metadata_json as any)?.persistent_plan_steps)
-    ? (data?.metadata_json as any).persistent_plan_steps
+  if (!data) throw new Error('persistent_plan_run_missing')
+  return data as any
+}
+
+async function loadDefinition(context: AutonomousToolContext): Promise<GeneralPlanStep> {
+  const data = await runMetadata(context.runId, context.actor)
+  const definitions = Array.isArray(data?.metadata_json?.persistent_plan_steps)
+    ? data.metadata_json.persistent_plan_steps
     : []
   const index = Number(String(context.runtime.stepKey).match(/^step-(\d+)-/)?.[1] || 0) - 1
   const raw = definitions[index]
@@ -90,9 +98,6 @@ function registryFor(missionText: string): AutonomousToolRegistry {
       const result = await executeVerifiedMissionWebSearch(step)
       return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
     }
-    // files/tasks/travel currently reuse the mature Same Brain executor. They are
-    // admitted here only for safe plans; consequential calendar/email/payment work
-    // remains on the older approval-aware path until its persistent adapter lands.
     return verifiedSameBrainRead(context, step)
   }
   return {
@@ -114,6 +119,29 @@ function toolName(step: GeneralPlanStep) {
   if (step.tool === 'files') return 'files.read'
   if (step.tool === 'tasks') return 'tasks.safe'
   return 'travel.read'
+}
+
+async function drivePersistentRun(actor: AgentActor, runId: string, missionText: string, maxWaves = 10) {
+  await recoverStaleAutonomousSteps({ actor, runId }).catch(() => ({ recovered:0 }))
+  let lastStatus = 'running'
+  let executedTotal = 0
+  for (let wave = 0; wave < maxWaves; wave++) {
+    const result = await executeAutonomousRun({ actor, runId, registry: registryFor(missionText), maxParallel: 3 })
+    executedTotal += Number(result.executed || 0)
+    lastStatus = String(result.status || lastStatus)
+    if (TERMINAL_RUN_STATES.has(lastStatus) || lastStatus === 'waiting_approval') break
+    if (!result.executed) break
+  }
+  return { status:lastStatus, executed:executedTotal }
+}
+
+export async function resumePersistentGeneralPlan(params:{actor:AgentActor;runId:string;maxWaves?:number}) {
+  const run = await runMetadata(params.runId, params.actor)
+  const meta:any = run.metadata_json || {}
+  if (!meta.persistent_general_plan) throw new Error('not_persistent_general_plan')
+  if (TERMINAL_RUN_STATES.has(String(run.status))) return { runId:params.runId,status:String(run.status),executed:0 }
+  const missionText = safe(meta.input_text || meta.objective || '', 2000)
+  return { runId:params.runId, ...(await drivePersistentRun(params.actor, params.runId, missionText, params.maxWaves || 10)) }
 }
 
 export async function tryRunPersistentGeneralPlan(params: {
@@ -150,28 +178,18 @@ export async function tryRunPersistentGeneralPlan(params: {
     },
   }
   const created = await createAutonomousRun({ actor: params.actor, source: params.surface, plan: runtimePlan })
-  const executed = await executeAutonomousRun({
-    actor: params.actor,
-    runId: created.runId,
-    registry: registryFor(params.text),
-    maxParallel: 3,
-  })
-
-  const { data: run } = await supabaseAdmin.from('agent_runs')
-    .select('status,summary,progress')
-    .eq('id', created.runId)
-    .eq('telegram_id', String(params.actor.legacyTelegramId))
-    .maybeSingle()
+  const executed = await drivePersistentRun(params.actor, created.runId, params.text, 10)
+  const run = await runMetadata(created.runId, params.actor)
 
   return {
     runId: created.runId,
-    status: run?.status || executed.status,
+    status: run.status || executed.status,
     capability: created.route.primary,
     risk: 'low' as const,
-    text: run?.summary || 'Gogo created a persistent plan and started executing it.',
+    text: run.summary || 'Gogo created a persistent plan and started executing it.',
     handledBy: 'persistent-general-plan' as const,
     persistent: true,
     runtimeVersion: 'gogo-autonomous-v1',
-    progress: Number(run?.progress || 1),
+    progress: Number(run.progress || 1),
   }
 }
