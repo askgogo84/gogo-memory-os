@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { detectDashboardDayIntent, formatDashboardDayReply } from '../lib/dashboard/day-chat'
 import { detectReadOnlyScheduleRequest, nextLocalDateKey } from '../lib/agent/read-only-schedule'
 
@@ -55,6 +56,19 @@ if (tomorrowBoundary !== '2026-09-15') {
   failed++
   console.error(`✗ local tomorrow boundary got=${tomorrowBoundary} expected=2026-09-15`)
 } else console.log('✓ local tomorrow boundary remains Sep 15 after midday IST')
+
+// Read-only schedule summaries must use the same calendar reader as autonomous
+// mission steps. This prevents a second Google query implementation from drifting
+// and reporting "Calendar: clear" after AskGogo has just created an event.
+const readOnlyScheduleSource = readFileSync('lib/agent/read-only-schedule.ts', 'utf8')
+if (!readOnlyScheduleSource.includes("executeReadOnlyCalendarStep")) {
+  failed++
+  console.error('✗ read-only schedule is not wired to canonical calendar reader')
+} else console.log('✓ read-only schedule uses canonical autonomous calendar reader')
+if (readOnlyScheduleSource.includes('www.googleapis.com/calendar/v3/calendars/primary/events')) {
+  failed++
+  console.error('✗ read-only schedule still contains a duplicate direct Google Calendar query')
+} else console.log('✓ no duplicate Google Calendar query remains in read-only schedule')
 
 const reply = formatDashboardDayReply({
   intent: 'summary',

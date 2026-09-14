@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { refreshAccessToken } from '@/lib/services/google-calendar'
 import type { AgentActor } from './actor'
+import { executeReadOnlyCalendarStep } from './calendar-read'
 
 function safe(value: unknown, max = 500) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -23,12 +23,6 @@ export function nextLocalDateKey(now: Date, timeZone: string) {
   const [year, month, day] = today.split('-').map(Number)
   const next = new Date(Date.UTC(year, month - 1, day + 1, 12, 0, 0))
   return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`
-}
-
-function eventDateKey(start: string, timeZone: string) {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(start)) return start
-  const date = new Date(start)
-  return Number.isFinite(date.getTime()) ? localDateKey(date, timeZone) : ''
 }
 
 function localClock(value: string, timeZone: string) {
@@ -57,54 +51,54 @@ export function detectReadOnlyScheduleRequest(raw: string) {
 export async function readTomorrowSchedule(params: { actor: AgentActor }) {
   const telegramId = Number(params.actor.legacyTelegramId)
   const { data: user, error: userError } = await supabaseAdmin.from('users')
-    .select('timezone,google_calendar_connected,google_refresh_token')
+    .select('timezone')
     .eq('telegram_id', telegramId)
     .maybeSingle()
   if (userError) throw new Error(`read_only_schedule_user_failed:${userError.message}`)
-  const timeZone = safe(user?.timezone || 'Asia/Kolkata', 100)
+
+  const requestedTimeZone = safe(user?.timezone || 'Asia/Kolkata', 100)
   const now = new Date()
-  const tomorrowKey = nextLocalDateKey(now, timeZone)
+  const tomorrowKey = nextLocalDateKey(now, requestedTimeZone)
 
-  // Fetch a deliberately broad UTC window, then filter by the user's LOCAL date.
-  // This avoids timezone/DST mistakes while keeping provider reads bounded.
-  const broadStart = new Date(now.getTime() - 2 * 60 * 60 * 1000)
-  const broadEnd = new Date(now.getTime() + 60 * 60 * 60 * 1000)
+  // Use the exact same canonical Google Calendar reader as autonomous mission steps.
+  // This prevents Agent/Talk-to-Gogo read-only summaries from drifting from the
+  // calendar reality used by the planner, verifier and availability engine.
+  let calendarConnected = true
+  let timeZone = requestedTimeZone
+  let calendarEvents: Array<{ id?: string; title: string; start: string; end?: string }> = []
+  try {
+    const calendar = await executeReadOnlyCalendarStep({
+      actor: params.actor,
+      instruction: 'Show my calendar tomorrow',
+      missionText: 'Read tomorrow schedule without changing anything.',
+    })
+    const output: any = calendar.output || {}
+    timeZone = safe(output.timezone || requestedTimeZone, 100)
+    calendarEvents = (Array.isArray(output.events) ? output.events : []).map((event: any) => ({
+      id: safe(event?.id || '', 160) || undefined,
+      title: safe(event?.summary || event?.title || 'Untitled event', 180),
+      start: safe(event?.start || '', 120),
+      end: safe(event?.end || '', 120) || undefined,
+    })).filter((event: any) => event.start)
+  } catch (error: any) {
+    console.error('READ_ONLY_SCHEDULE_CALENDAR_FAILED:', safe(error?.message || error, 160))
+    calendarConnected = false
+  }
 
+  const localTomorrowKey = nextLocalDateKey(now, timeZone)
+  const tomorrowStart = new Date(now.getTime() - 2 * 60 * 60 * 1000)
+  const tomorrowEnd = new Date(now.getTime() + 60 * 60 * 60 * 1000)
   const { data: reminderRows, error: reminderError } = await supabaseAdmin.from('reminders')
     .select('id,message,remind_at,sent')
     .eq('telegram_id', telegramId)
-    .gte('remind_at', broadStart.toISOString())
-    .lt('remind_at', broadEnd.toISOString())
+    .gte('remind_at', tomorrowStart.toISOString())
+    .lt('remind_at', tomorrowEnd.toISOString())
     .order('remind_at', { ascending: true })
   if (reminderError) throw new Error(`read_only_schedule_reminders_failed:${reminderError.message}`)
-  const reminders = (reminderRows || []).filter((row: any) => !row.sent && localDateKey(new Date(row.remind_at), timeZone) === tomorrowKey)
-
-  let calendarConnected = Boolean(user?.google_calendar_connected && user?.google_refresh_token)
-  let calendarEvents: Array<{ title: string; start: string }> = []
-  if (calendarConnected) {
-    try {
-      const token = await refreshAccessToken(String(user.google_refresh_token))
-      if (!token) throw new Error('calendar_reconnect_required')
-      const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events')
-      url.searchParams.set('singleEvents', 'true')
-      url.searchParams.set('orderBy', 'startTime')
-      url.searchParams.set('timeMin', broadStart.toISOString())
-      url.searchParams.set('timeMax', broadEnd.toISOString())
-      url.searchParams.set('maxResults', '50')
-      const response = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
-      if (!response.ok) throw new Error(`calendar_read_failed:${response.status}`)
-      const body: any = await response.json().catch(() => ({}))
-      calendarEvents = (Array.isArray(body?.items) ? body.items : [])
-        .map((event: any) => ({
-          title: safe(event?.summary || 'Untitled event', 180),
-          start: safe(event?.start?.dateTime || event?.start?.date || '', 120),
-        }))
-        .filter((event: any) => event.start && eventDateKey(event.start, timeZone) === tomorrowKey)
-    } catch (error: any) {
-      console.error('READ_ONLY_SCHEDULE_CALENDAR_FAILED:', safe(error?.message || error, 160))
-      calendarConnected = false
-    }
-  }
+  const reminders = (reminderRows || []).filter((row: any) => {
+    const due = new Date(row.remind_at)
+    return !row.sent && Number.isFinite(due.getTime()) && localDateKey(due, timeZone) === localTomorrowKey
+  })
 
   const lines: string[] = ['Tomorrow:']
   if (calendarConnected) {
@@ -126,5 +120,5 @@ export async function readTomorrowSchedule(params: { actor: AgentActor }) {
   else lines.push('Nothing currently needs your attention tomorrow.')
   lines.push('I did not change, create, move or delete anything.')
 
-  return { text: lines.join('\n'), calendarEvents, reminders, timeZone, tomorrowKey }
+  return { text: lines.join('\n'), calendarEvents, reminders, timeZone, tomorrowKey: localTomorrowKey || tomorrowKey }
 }
