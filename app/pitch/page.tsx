@@ -1,7 +1,7 @@
 'use client'
 
 const DECK_URL = '/pitch/content'
-const PPTX_URL = 'https://qenhjcooyecmatwducpu.supabase.co/storage/v1/object/public/pitch-assets/askgogo-2026/AskGogo_Investor_Deck.pptx'
+const PPTX_URL = '/pitch/download'
 
 export default function PitchPage() {
   async function share() {
@@ -40,7 +40,7 @@ export default function PitchPage() {
 
       <iframe
         src={DECK_URL}
-        title="AskGogo Investor Deck"
+        title="AskGogo Investor Deck v3"
         allow="fullscreen"
         className="pitch-frame"
       />
@@ -48,7 +48,7 @@ export default function PitchPage() {
       <div className="pitch-toolbar">
         <button onClick={share} className="pitch-btn">Share</button>
         <button onClick={fullscreen} className="pitch-btn pitch-fullscreen">Full screen</button>
-        <a href={PPTX_URL} download="AskGogo_Investor_Deck.pptx" className="pitch-btn pitch-download">Download PPT</a>
+        <a href={PPTX_URL} download="AskGogo-Pitch-Deck-v3.pptx" className="pitch-btn pitch-download">Download PPT</a>
       </div>
     </main>
   )
