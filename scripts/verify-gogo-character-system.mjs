@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import assert from 'node:assert/strict'
 
 const read = p => fs.readFileSync(p, 'utf8')
@@ -23,4 +24,34 @@ for (const asset of [icon, mark, logo]) {
   assert.match(asset, /#EF7A27/)
   assert.doesNotMatch(asset, /#2AE372|#12B85C/)
 }
+
+function sourceFiles(root) {
+  if (!fs.existsSync(root)) return []
+  const out = []
+  for (const name of fs.readdirSync(root)) {
+    const full = path.join(root, name)
+    const stat = fs.statSync(full)
+    if (stat.isDirectory()) out.push(...sourceFiles(full))
+    else if (/\.(?:tsx?|jsx?)$/.test(name)) out.push(full)
+  }
+  return out
+}
+
+const dashboardSources = [...sourceFiles('app/dashboard'), ...sourceFiles('components/dashboard')]
+const legacyRefs = dashboardSources
+  .filter(file => /gogo-(?:float\.gif|figure\.png)/.test(read(file)))
+  .map(file => file.replaceAll('\\','/'))
+assert.deepEqual(legacyRefs, [], `Legacy Gogo image references remain in dashboard: ${legacyRefs.join(', ')}`)
+
+for (const required of [
+  'components/dashboard/gogo-chat.tsx',
+  'components/dashboard/breathing-space.tsx',
+  'components/dashboard/personalize-gogo.tsx',
+  'components/dashboard/learn-with-gogo.tsx',
+  'app/dashboard/(app)/agent/page.tsx',
+  'components/dashboard/mobile-gogo-chat-button.tsx',
+]) {
+  assert.match(read(required), /GogoCharacter/, `Canonical Gogo missing from ${required}`)
+}
+
 console.log('Gogo character-system regression: OK')
