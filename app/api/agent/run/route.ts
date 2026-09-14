@@ -17,6 +17,7 @@ import { tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
+import { appointmentPrepareOptionNumber, tryRecoverAppointmentOption } from '@/lib/agent/appointment-followup-recovery'
 import { attachRunToThread, resolveThreadForUser } from '@/lib/agent/thread-context'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 
@@ -42,20 +43,12 @@ export async function POST(request: Request) {
       return NextResponse.json(result, { status })
     }
 
-    // Read-only intent is a hard mutation boundary. Evaluate this before every
-    // reminder/planner/browser path so "check tomorrow; do not change anything"
-    // can never be reinterpreted as a reminder or another write action.
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
     if (readOnlySchedule?.horizon === 'tomorrow') {
       const summary = await readTomorrowSchedule({ actor })
       return NextResponse.json({
-        status: 'completed',
-        capability: 'calendar',
-        risk: 'low',
-        text: summary.text,
-        handledBy: 'read-only-schedule',
-        readOnly: true,
-        mutated: false,
+        status: 'completed', capability: 'calendar', risk: 'low', text: summary.text,
+        handledBy: 'read-only-schedule', readOnly: true, mutated: false,
       })
     }
 
@@ -69,24 +62,29 @@ export async function POST(request: Request) {
       .order('started_at', { ascending: false })
       .limit(8)
     if (dedupeError) console.error('AGENT_RUN_DEDUPE_READ_FAILED:', dedupeError.message)
-    const duplicate = (recentActive || []).find((row:any) =>
-      String(row?.metadata_json?.input_text || '').trim() === text
-    )
+    const duplicate = (recentActive || []).find((row:any) => String(row?.metadata_json?.input_text || '').trim() === text)
     if (duplicate?.id) {
       return respond({
-        runId: String(duplicate.id),
-        status: duplicate.status,
-        capability: duplicate.capability || 'memory',
-        risk: 'low',
+        runId: String(duplicate.id), status: duplicate.status,
+        capability: duplicate.capability || 'memory', risk: 'low',
         text: duplicate.summary || 'Gogo is already working on this outcome.',
-        handledBy: 'active-run-dedupe',
-        deduplicated: true,
+        handledBy: 'active-run-dedupe', deduplicated: true,
       }, duplicate.status === 'waiting_approval' ? 202 : 200)
     }
 
-    // Persistent appointment context has priority over generic browser/planner
-    // routing: "prepare option 2" reuses the last discovery result, and an
-    // explicit final confirmation creates one approval boundary on that prepared run.
+    // A numbered appointment follow-up is a hard contextual boundary. Recover the
+    // last location-anchored research result before generic appointment research can run.
+    // This prevents "prepare option 2" from silently becoming a brand-new global search.
+    if (appointmentPrepareOptionNumber(text)) {
+      const recovered = await tryRecoverAppointmentOption({ actor, surface:session.surface, text })
+      if (recovered) return respond(recovered, recovered.status === 'waiting_approval' ? 202 : 200)
+      return respond({
+        runId:'', status:'paused', capability:'browser', risk:'low',
+        text:'I can tell this refers to a numbered appointment option, but I cannot recover that option safely. I will not start a new search in another location. Please rerun the provider search.',
+        handledBy:'appointment-followup-hard-boundary',
+      }, 200)
+    }
+
     const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:session.surface, text })
     if (appointmentFollowup) return respond(appointmentFollowup, appointmentFollowup.status === 'waiting_approval' ? 202 : 200)
 
@@ -99,12 +97,7 @@ export async function POST(request: Request) {
     const travelCalendar = await tryPrepareTravelCalendarPlan({ actor, surface:session.surface, text })
     if (travelCalendar) return respond(travelCalendar, travelCalendar.status === 'waiting_approval' ? 202 : 200)
 
-    const compound = await tryRunExpiryReminderPlan({
-      actor,
-      surface: session.surface,
-      text,
-      messageId: body?.messageId || null,
-    })
+    const compound = await tryRunExpiryReminderPlan({ actor, surface: session.surface, text, messageId: body?.messageId || null })
     if (compound) return respond(compound, 200)
 
     const workspaceMeeting = await tryPrepareWorkspaceMeetingPlan({ actor, surface:session.surface, text })
@@ -116,26 +109,13 @@ export async function POST(request: Request) {
     const workspaceDrive = await tryRunWorkspaceDriveContext({ actor, surface:session.surface, text })
     if (workspaceDrive) return respond(workspaceDrive, 200)
 
-    // Appointment/provider discovery is explicitly read-only. Route it before
-    // open-ended planning so "find me a dentist appointment next week" cannot
-    // accidentally become a calendar mutation or a fabricated availability claim.
     const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:session.surface, text })
     if (appointmentResearch) return respond(appointmentResearch, 200)
 
-    const persistentPlan = await tryRunPersistentGeneralPlan({
-      actor,
-      surface: session.surface,
-      text,
-      messageId: body?.messageId || null,
-    })
+    const persistentPlan = await tryRunPersistentGeneralPlan({ actor, surface: session.surface, text, messageId: body?.messageId || null })
     if (persistentPlan) return respond(persistentPlan, persistentPlan.status === 'waiting_approval' ? 202 : 200)
 
-    const generalPlan = await tryRunGeneralPlan({
-      actor,
-      surface: session.surface,
-      text,
-      messageId: body?.messageId || null,
-    })
+    const generalPlan = await tryRunGeneralPlan({ actor, surface: session.surface, text, messageId: body?.messageId || null })
     if (generalPlan) return respond(generalPlan, generalPlan.status === 'waiting_approval' ? 202 : 200)
 
     const liveHotels = await tryRunCreditIQHotelResearch({ actor, surface:session.surface, text })
@@ -148,9 +128,7 @@ export async function POST(request: Request) {
     }
 
     const result = await runAgentCommand({
-      actor,
-      surface: session.surface,
-      text,
+      actor, surface: session.surface, text,
       context: { ...(body?.context || {}), ...(thread ? { threadTitle:thread.title, threadContext:thread.context } : {}) },
       messageId: body?.messageId || null,
     })
