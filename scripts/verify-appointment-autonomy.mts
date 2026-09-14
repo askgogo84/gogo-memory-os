@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { isAppointmentResearchRequest } from '../lib/agent/appointment-research'
+import { isAppointmentResearchRequest, appointmentBookableScore } from '../lib/agent/appointment-research'
 import { appointmentPrepareOptionNumber } from '../lib/agent/appointment-followup-recovery'
 
 assert.equal(isAppointmentResearchRequest('Find me a dentist appointment in Bengaluru next week'), true)
@@ -8,6 +8,8 @@ assert.equal(isAppointmentResearchRequest('Look for available dermatologist appo
 assert.equal(isAppointmentResearchRequest('Book a dental appointment in Bengaluru next week'), true)
 assert.equal(isAppointmentResearchRequest('Create a calendar appointment tomorrow at 4 PM'), false)
 assert.equal(isAppointmentResearchRequest('Find cheap flights to Mumbai'), false)
+
+assert.ok(appointmentBookableScore({title:'Book Appointment',snippet:'Choose a slot',url:'https://clinic.example/book-appointment'}) > appointmentBookableScore({title:'Our Clinics',snippet:'Dentist near me',url:'https://clinic.example/our-clinics'}))
 
 const exactFailedProductionFollowup = 'Prepare option 2 and check the available appointment slots for next week. Do not confirm or book anything yet.'
 assert.equal(appointmentPrepareOptionNumber(exactFailedProductionFollowup), 2)
@@ -37,14 +39,20 @@ assert.ok(chatRoute.indexOf('tryRunAppointmentFollowup({ actor') < chatRoute.ind
 assert.match(research, /readOnly:\s*true/)
 assert.match(research, /mutated:\s*false/)
 assert.match(research, /I have not claimed a slot is live/)
-assert.match(research, /options:\s*options\.map/)
+assert.match(research, /bookableScore/)
+assert.match(research, /bookableRanked/)
+assert.match(research, /ranked direct booking\/appointment paths ahead of generic clinic pages/i)
 
 assert.match(recovery, /appointment_selection/)
-assert.match(recovery, /const objective = `Open [\s\S]*Fill only safe non-sensitive search fields if needed to reveal availability/)
+assert.match(recovery, /resolveBookableTarget/)
+assert.match(recovery, /sameProvider/)
+assert.match(recovery, /retireStaleBookingApprovals/)
+assert.match(recovery, /Superseded by a later explicit read-only appointment availability check/)
+assert.match(recovery, /const objective = `Open [\s\S]*Fill only safe non-sensitive search fields if needed to reveal available dates or times/)
 assert.match(recovery, /Make no provider-side changes/)
 assert.match(recovery, /Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step/)
 assert.match(recovery, /recoveredContext:\s*true/)
-assert.match(recovery, /I reused option/)
+assert.match(recovery, /bookablePathResolved/)
 assert.doesNotMatch(recovery, /Do not confirm, submit, book, pay, authenticate/)
 
 assert.match(followup, /latestAppointmentResearch/)
@@ -69,4 +77,4 @@ assert.match(followup, /I therefore did not create calendar\/reminder\/watch fol
 assert.match(executeRoute, /finalizeApprovedAppointmentRun/)
 assert.ok(executeRoute.indexOf('executeApprovedBrowserCommand') < executeRoute.indexOf('finalizeApprovedAppointmentRun'), 'provider action must execute before appointment closure verification')
 
-console.log('✅ Appointment autonomy regression passed: discover → persistent numbered option → draft-only availability → exact-slot approval → provider verification → Life Event')
+console.log('✅ Appointment autonomy regression passed: bookable discovery → persistent numbered option → direct provider path → draft-only availability → exact-slot approval → verified Life Event')
