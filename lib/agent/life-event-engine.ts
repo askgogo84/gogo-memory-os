@@ -246,13 +246,23 @@ export function buildLifeEventPlan(input: LifeEventInput, now = Date.now()): Lif
     }))
     actions.push(action({
       actionKey: 'appointment-readiness',
-      actionType: 'prepare',
+      actionType: 'notify',
       capability: 'memory',
       title: 'Prepare documents, timing and location context',
       dueAt: minusHours(startAt, 2),
       requiresApproval: false,
       irreversible: false,
-      payload: { location: input.location || null },
+      payload: { location: input.location || null, notifyUser: true },
+    }))
+    actions.push(action({
+      actionKey: 'appointment-change-watch',
+      actionType: 'monitor',
+      capability: 'browser',
+      title: 'Watch for appointment or reservation changes',
+      dueAt: minusHours(startAt, 24),
+      requiresApproval: false,
+      irreversible: false,
+      payload: { notifyOnlyOnMaterialChange: true },
     }))
   } else if (input.eventType === 'purchase' || input.eventType === 'delivery') {
     actions.push(action({
