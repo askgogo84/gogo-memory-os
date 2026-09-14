@@ -1,8 +1,8 @@
 import { getSession } from '@/lib/dashboard/session'
 import { getTodayCalendar } from '@/lib/dashboard/queries'
-import { EmptyState } from '@/components/dashboard/empty-state'
 import { WhatsAppChip } from '@/components/dashboard/whatsapp-chip'
 import { CardError } from '@/components/dashboard/card-error'
+import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,7 +48,7 @@ export default async function CalendarPage() {
             </div>
             <div className="grid min-h-[190px] place-items-center rounded-[26px] border border-dashed border-gogo-ink/10 bg-gogo-cream/45">
               <div className="text-center">
-                <img src="/gogo-figure.png" alt="" className="mx-auto h-20 w-20 animate-[gogo-float_6s_ease-in-out_infinite]" />
+                <div className="mx-auto flex justify-center"><GogoCharacter state="listening" size={92} showStatus={false} /></div>
                 <div className="mt-2 font-serif text-[18px] font-semibold text-gogo-ink">I can hold your meetings too.</div>
                 <div className="mt-1 text-[12px] text-gogo-ink-3">One connection, calmer days.</div>
               </div>
@@ -96,7 +96,7 @@ export default async function CalendarPage() {
           {events.length === 0 ? (
             <div className="mt-6 grid min-h-[380px] place-items-center rounded-[22px] border border-dashed border-gogo-ink/10 bg-gogo-cream/30 text-center">
               <div>
-                <img src="/gogo-figure.png" alt="" className="mx-auto h-16 w-16 opacity-90" />
+                <div className="mx-auto flex justify-center"><GogoCharacter state="calm" size={76} showStatus={false} hands /></div>
                 <div className="mt-3 font-serif text-[20px] font-semibold text-gogo-ink">Your calendar’s clear today.</div>
                 <div className="mt-1 text-[13px] text-gogo-ink-3">Nothing scheduled — enjoy the quiet.</div>
               </div>
@@ -128,7 +128,7 @@ export default async function CalendarPage() {
 
           <section className="relative overflow-hidden rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/80 p-5 shadow-[0_18px_50px_rgba(62,35,18,0.04)]">
             <div className="pointer-events-none absolute -bottom-12 -right-10 h-32 w-32 rounded-full bg-gogo-orange/10 blur-2xl" />
-            <img src="/gogo-figure.png" alt="" className="relative h-14 w-14" />
+            <div className="relative"><GogoCharacter state="listening" size={58} showStatus={false} /></div>
             <div className="relative mt-3 font-serif text-[20px] font-semibold text-gogo-ink">Need space?</div>
             <p className="relative mt-2 text-[12.5px] leading-5 text-gogo-ink-3">Ask Gogo to move, add or remind you about anything on your schedule.</p>
             <div className="relative mt-4"><WhatsAppChip message="Gogo, help me plan today" label="Plan with Gogo" /></div>
