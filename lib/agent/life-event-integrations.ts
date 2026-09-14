@@ -95,27 +95,31 @@ export type LifecycleTerminalContext = {
 }
 
 function anchoredStatusText(text: string, context?: LifecycleTerminalContext) {
-  const needles = [context?.confirmationRef, context?.title]
-    .map((value) => safe(value, 240).toLowerCase())
-    .filter((value) => value.length >= 4)
-    .sort((a, b) => b.length - a.length)
+  const reference = safe(context?.confirmationRef, 240).toLowerCase()
+  if (reference.length >= 4) {
+    const index = text.indexOf(reference)
+    if (index >= 0) {
+      return {
+        anchored: true,
+        text: text.slice(index, Math.min(text.length, index + reference.length + 420)),
+      }
+    }
+  }
 
-  for (const needle of needles) {
-    const index = text.indexOf(needle)
-    if (index < 0) continue
-    // Prefer status evidence that follows the tracked identity. Keep only a tiny prefix for
-    // labels such as "Order AB123" so history/help text for other items cannot terminate it.
-    return {
-      anchored: true,
-      text: text.slice(Math.max(0, index - 40), Math.min(text.length, index + needle.length + 420)),
+  const title = safe(context?.title, 240).toLowerCase()
+  if (title.length >= 6) {
+    const index = text.indexOf(title)
+    if (index >= 0) {
+      return {
+        anchored: true,
+        text: text.slice(index, Math.min(text.length, index + title.length + 420)),
+      }
     }
   }
   return { anchored: false, text }
 }
 
 function commerceTerminalState(text: string, anchored: boolean): LifecycleTerminal {
-  // Without an identity anchor, only accept phrases that explicitly describe the current
-  // tracked item's status. A bare "delivered" in order history/help text is not enough.
   const delivered = anchored
     ? /\b(delivered|delivery complete|package delivered)\b/
     : /\b(your (?:order|package|shipment) (?:has been|was|is) delivered|current status\s*[:\-]?\s*delivered|order status\s*[:\-]?\s*delivered|package (?:has been|was) delivered)\b/
