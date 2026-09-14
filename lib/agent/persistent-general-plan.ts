@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
@@ -8,6 +9,7 @@ import {
   executeVerifiedMissionReminder,
   executeVerifiedMissionWebSearch,
 } from './mission-tools'
+import { executeExactNamedPersistentList, hasExplicitNamedListIntent } from './persistent-list-verifier'
 import { dispatchThroughSameBrain } from './same-brain'
 import {
   createAutonomousRun,
@@ -20,10 +22,13 @@ import {
 
 const PERSISTENT_SAFE_TOOLS = new Set(['memory','files','reminders','lists','tasks','web_search','travel'])
 const TERMINAL_RUN_STATES = new Set(['completed','failed','cancelled'])
+const DUPLICATE_WINDOW_MINUTES = 10
 
 function safe(value: unknown, max = 1800) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
 }
+function normalizedMission(value:unknown){return safe(value,4000).toLowerCase()}
+function missionFingerprint(value:unknown){return createHash('sha256').update(normalizedMission(value)).digest('hex')}
 
 function stepKey(index: number, step: GeneralPlanStep) {
   return `step-${index + 1}-${step.tool}`
@@ -42,6 +47,20 @@ async function runMetadata(runId: string, actor: AgentActor) {
   if (error) throw new Error(`persistent_plan_read_failed:${error.message}`)
   if (!data) throw new Error('persistent_plan_run_missing')
   return data as any
+}
+
+async function findRecentDuplicate(actor:AgentActor,text:string){
+  const fingerprint=missionFingerprint(text)
+  const cutoff=new Date(Date.now()-DUPLICATE_WINDOW_MINUTES*60_000).toISOString()
+  const {data,error}=await supabaseAdmin.from('agent_runs')
+    .select('id,status,summary,progress,metadata_json,started_at')
+    .eq('telegram_id',String(actor.legacyTelegramId))
+    .gte('started_at',cutoff)
+    .in('status',['queued','running','waiting_approval','completed'])
+    .order('started_at',{ascending:false})
+    .limit(20)
+  if(error)throw new Error(`persistent_duplicate_read_failed:${error.message}`)
+  return (data||[]).find((row:any)=>String(row?.metadata_json?.mission_fingerprint||'')===fingerprint)||null
 }
 
 async function loadDefinition(context: AutonomousToolContext): Promise<GeneralPlanStep> {
@@ -87,8 +106,11 @@ function registryFor(missionText: string): AutonomousToolRegistry {
       return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
     }
     if (step.tool === 'lists') {
-      const result = await executeVerifiedMissionList({ actor: context.actor, step, missionText })
-      return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
+      const result = hasExplicitNamedListIntent(step,missionText)
+        ? await executeExactNamedPersistentList({ actor:context.actor,step,missionText })
+        : await executeVerifiedMissionList({ actor: context.actor, step, missionText })
+      const verified=Boolean((result.output as any)?.verifiedStore==='lists') && (!hasExplicitNamedListIntent(step,missionText) || Boolean((result.output as any)?.verifiedExactName&&(result.output as any)?.verifiedRequestedItems))
+      return { status:'completed' as const, verified, output:{ ...result.output, text:safe(result.text,3500) } }
     }
     if (step.tool === 'reminders') {
       const result = await executeVerifiedMissionReminder({ actor: context.actor, step, missionText, messageId: `persistent-${context.idempotencyKey.slice(0,24)}` })
@@ -153,6 +175,15 @@ export async function tryRunPersistentGeneralPlan(params: {
   const plan = await planGeneralAgentRequest(params.text)
   if (!plan || !supportsPersistentSafePlan(plan.steps)) return null
 
+  const duplicate=await findRecentDuplicate(params.actor,params.text)
+  if(duplicate?.id){
+    return {
+      runId:String(duplicate.id),status:String(duplicate.status||'running'),capability:'orchestrator',risk:'low' as const,
+      text:safe(duplicate.summary||'Gogo is already working on this same request.'),handledBy:'persistent-general-plan' as const,
+      persistent:true,runtimeVersion:'gogo-autonomous-v1',progress:Number(duplicate.progress||1),deduplicated:true,
+    }
+  }
+
   const steps = plan.steps.map((step, index) => ({
     key: stepKey(index, step),
     title: step.title,
@@ -170,6 +201,7 @@ export async function tryRunPersistentGeneralPlan(params: {
     steps,
     metadata: {
       input_text: safe(params.text, 2000),
+      mission_fingerprint: missionFingerprint(params.text),
       planner: 'general-planner',
       persistent_general_plan: true,
       persistent_plan_reason: safe(plan.reason, 600),
