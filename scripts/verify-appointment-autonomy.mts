@@ -45,14 +45,21 @@ assert.match(research, /ranked direct booking\/appointment paths ahead of generi
 
 assert.match(recovery, /appointment_selection/)
 assert.match(recovery, /resolveBookableTarget/)
-assert.match(recovery, /sameProvider/)
+assert.match(recovery, /site:\$\{originalHost\}/)
+assert.match(recovery, /sameProviderHost/)
 assert.match(recovery, /retireStaleBookingApprovals/)
+assert.match(recovery, /execution_payload/)
 assert.match(recovery, /Superseded by a later explicit read-only appointment availability check/)
+assert.match(recovery, /hasLiveSlotEvidence/)
+assert.match(recovery, /availabilityVerified/)
+assert.match(recovery, /could not verify actual live appointment dates\/times/i)
 assert.match(recovery, /const objective = `Open [\s\S]*Fill only safe non-sensitive search fields if needed to reveal available dates or times/)
+assert.match(recovery, /Navigate within this provider website/)
 assert.match(recovery, /Make no provider-side changes/)
 assert.match(recovery, /Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step/)
 assert.match(recovery, /recoveredContext:\s*true/)
 assert.match(recovery, /bookablePathResolved/)
+assert.doesNotMatch(recovery, /I only inspected availability and made no provider-side changes/)
 assert.doesNotMatch(recovery, /Do not confirm, submit, book, pay, authenticate/)
 
 assert.match(followup, /latestAppointmentResearch/)
@@ -77,4 +84,4 @@ assert.match(followup, /I therefore did not create calendar\/reminder\/watch fol
 assert.match(executeRoute, /finalizeApprovedAppointmentRun/)
 assert.ok(executeRoute.indexOf('executeApprovedBrowserCommand') < executeRoute.indexOf('finalizeApprovedAppointmentRun'), 'provider action must execute before appointment closure verification')
 
-console.log('✅ Appointment autonomy regression passed: bookable discovery → persistent numbered option → direct provider path → draft-only availability → exact-slot approval → verified Life Event')
+console.log('✅ Appointment autonomy regression passed: bookable discovery → persistent numbered option → verified live-slot evidence → exact-slot approval → verified Life Event')
