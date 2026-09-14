@@ -81,6 +81,17 @@ function plusHours(value: string | null, hours: number) {
   return new Date(d.getTime() + hours * 3600_000).toISOString()
 }
 
+function metaIso(metadata: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = metadata[key]
+    if (typeof value === 'string' || value instanceof Date) {
+      const parsed = iso(value as string | Date)
+      if (parsed) return parsed
+    }
+  }
+  return null
+}
+
 function normalized(value: unknown) {
   return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
 }
@@ -99,9 +110,7 @@ export function lifeEventDedupeKey(input: LifeEventInput) {
   return crypto.createHash('sha256').update(stable).digest('hex').slice(0, 40)
 }
 
-function action(params: LifeEventAction): LifeEventAction {
-  return params
-}
+function action(params: LifeEventAction): LifeEventAction { return params }
 
 function earliestFuture(actions: LifeEventAction[], now: number) {
   const times = actions
@@ -112,181 +121,185 @@ function earliestFuture(actions: LifeEventAction[], now: number) {
 }
 
 /**
- * Pure lifecycle planner. It deliberately prepares/monitors but never performs
- * consequential actions by itself. Browser submit, booking, purchase, calendar
- * mutation, email send and payment remain behind the existing approval/Sentinel layer.
+ * Pure lifecycle planner. It prepares, watches and notifies, but never performs
+ * a consequential external mutation by itself. Browser submit, booking,
+ * purchase, payment, calendar mutation and outbound email remain behind the
+ * existing permission + approval + Sentinel layer.
  */
 export function buildLifeEventPlan(input: LifeEventInput, now = Date.now()): LifeEventPlan {
   const startAt = iso(input.startAt)
+  const endAt = iso(input.endAt)
   const metadata = input.metadata || {}
   const actions: LifeEventAction[] = []
 
   actions.push(action({
-    actionKey: 'remember',
-    actionType: 'remember',
-    capability: 'memory',
-    title: 'Keep this life event and its source context together',
-    dueAt: null,
-    requiresApproval: false,
-    irreversible: false,
+    actionKey: 'remember', actionType: 'remember', capability: 'memory',
+    title: 'Keep this life event and its source context together', dueAt: null,
+    requiresApproval: false, irreversible: false,
     payload: { source: input.source, subtype: input.subtype },
   }))
 
   if (input.eventType === 'travel') {
-    const departurePrep = minusHours(startAt, 3)
     actions.push(action({
-      actionKey: 'departure-readiness',
-      actionType: 'notify',
-      capability: 'travel',
-      title: 'Prepare for departure',
-      dueAt: departurePrep,
-      requiresApproval: false,
-      irreversible: false,
+      actionKey: 'departure-readiness', actionType: 'notify', capability: 'travel',
+      title: 'Prepare for departure', dueAt: minusHours(startAt, 3),
+      requiresApproval: false, irreversible: false,
       payload: { startAt, location: input.location || null },
     }))
 
     if (input.subtype === 'flight') {
-      const checkinOpensAt = iso((metadata as any).checkinOpensAt as string | null)
+      const checkinOpensAt = metaIso(metadata, 'checkinOpensAt')
       actions.push(action({
-        actionKey: 'prepare-web-checkin',
-        actionType: 'browser_prepare',
-        capability: 'browser',
-        title: 'Prepare airline web check-in',
-        dueAt: checkinOpensAt,
-        requiresApproval: false,
-        irreversible: false,
+        actionKey: 'prepare-web-checkin', actionType: 'browser_prepare', capability: 'browser',
+        title: 'Prepare airline web check-in', dueAt: checkinOpensAt,
+        requiresApproval: false, irreversible: false,
         payload: {
-          airlineCode: (metadata as any).airlineCode || null,
-          flightNo: (metadata as any).flightNo || null,
-          checkInUrl: (metadata as any).checkInUrl || null,
+          airlineCode: metadata.airlineCode || null,
+          flightNo: metadata.flightNo || null,
+          checkInUrl: metadata.checkInUrl || null,
           confirmationRef: input.confirmationRef || null,
           boundary: 'prepare_only_until_user_approval',
         },
       }))
       actions.push(action({
-        actionKey: 'watch-boarding-pass-email',
-        actionType: 'email_watch',
-        capability: 'email',
-        title: 'Watch connected email for boarding pass or check-in confirmation',
-        dueAt: checkinOpensAt,
-        requiresApproval: false,
-        irreversible: false,
-        payload: {
-          provider: input.provider || null,
-          confirmationRef: input.confirmationRef || null,
-          readOnly: true,
-        },
+        actionKey: 'watch-boarding-pass-email', actionType: 'email_watch', capability: 'email',
+        title: 'Watch connected email for boarding pass or check-in confirmation', dueAt: checkinOpensAt,
+        requiresApproval: false, irreversible: false,
+        payload: { provider: input.provider || null, confirmationRef: input.confirmationRef || null, readOnly: true },
       }))
       actions.push(action({
-        actionKey: 'checkin-submit-approval',
-        actionType: 'approval',
-        capability: 'travel',
-        title: 'Ask before airline check-in is submitted',
-        dueAt: checkinOpensAt,
-        requiresApproval: true,
-        irreversible: true,
-        payload: {
-          approvalType: 'booking',
-          exactAction: 'submit_web_checkin',
-          neverAutoSubmit: true,
-        },
+        actionKey: 'checkin-submit-approval', actionType: 'approval', capability: 'travel',
+        title: 'Ask before airline check-in is submitted', dueAt: checkinOpensAt,
+        requiresApproval: true, irreversible: true,
+        payload: { approvalType: 'booking', exactAction: 'submit_web_checkin', neverAutoSubmit: true },
       }))
       actions.push(action({
-        actionKey: 'travel-disruption-watch',
-        actionType: 'monitor',
-        capability: 'travel',
-        title: 'Watch for meaningful flight changes',
-        dueAt: minusHours(startAt, 24),
-        requiresApproval: false,
-        irreversible: false,
+        actionKey: 'travel-disruption-watch', actionType: 'monitor', capability: 'travel',
+        title: 'Watch for meaningful flight changes', dueAt: minusHours(startAt, 24),
+        requiresApproval: false, irreversible: false,
         payload: { notifyOnlyOnMaterialChange: true },
       }))
     }
   } else if (input.eventType === 'event') {
     actions.push(action({
-      actionKey: 'event-calendar-draft',
-      actionType: 'calendar_draft',
-      capability: 'calendar',
-      title: 'Prepare calendar entry for this event',
-      dueAt: null,
-      requiresApproval: true,
-      irreversible: false,
+      actionKey: 'event-calendar-draft', actionType: 'calendar_draft', capability: 'calendar',
+      title: 'Prepare calendar entry for this event', dueAt: null,
+      requiresApproval: true, irreversible: false,
       payload: { mutation: 'create_event', approvalRequired: true },
     }))
     actions.push(action({
-      actionKey: 'event-readiness',
-      actionType: 'prepare',
-      capability: 'travel',
-      title: 'Prepare venue, travel and ticket readiness',
-      dueAt: minusHours(startAt, 3),
-      requiresApproval: false,
-      irreversible: false,
+      actionKey: 'event-readiness', actionType: 'prepare', capability: 'travel',
+      title: 'Prepare venue, travel and ticket readiness', dueAt: minusHours(startAt, 3),
+      requiresApproval: false, irreversible: false,
       payload: { location: input.location || null, ticketReady: true },
     }))
     actions.push(action({
-      actionKey: 'event-change-watch',
-      actionType: 'monitor',
-      capability: 'browser',
-      title: 'Watch for meaningful event timing or venue changes',
-      dueAt: minusHours(startAt, 24),
-      requiresApproval: false,
-      irreversible: false,
+      actionKey: 'event-change-watch', actionType: 'monitor', capability: 'browser',
+      title: 'Watch for meaningful event timing or venue changes', dueAt: minusHours(startAt, 24),
+      requiresApproval: false, irreversible: false,
       payload: { notifyOnlyOnMaterialChange: true },
     }))
   } else if (input.eventType === 'appointment' || input.eventType === 'reservation') {
     actions.push(action({
-      actionKey: 'appointment-calendar-draft',
-      actionType: 'calendar_draft',
-      capability: 'calendar',
-      title: 'Prepare calendar entry',
-      dueAt: null,
-      requiresApproval: true,
-      irreversible: false,
+      actionKey: 'appointment-calendar-draft', actionType: 'calendar_draft', capability: 'calendar',
+      title: 'Prepare calendar entry', dueAt: null,
+      requiresApproval: true, irreversible: false,
       payload: { mutation: 'create_event', approvalRequired: true },
     }))
     actions.push(action({
-      actionKey: 'appointment-readiness',
-      actionType: 'prepare',
-      capability: 'memory',
-      title: 'Prepare documents, timing and location context',
-      dueAt: minusHours(startAt, 2),
-      requiresApproval: false,
-      irreversible: false,
+      actionKey: 'appointment-readiness', actionType: 'prepare', capability: 'memory',
+      title: 'Prepare documents, timing and location context', dueAt: minusHours(startAt, 2),
+      requiresApproval: false, irreversible: false,
       payload: { location: input.location || null },
     }))
-  } else if (input.eventType === 'purchase' || input.eventType === 'delivery') {
     actions.push(action({
-      actionKey: 'delivery-monitor',
-      actionType: 'monitor',
-      capability: 'browser',
-      title: 'Track meaningful order or delivery changes',
-      dueAt: plusHours(iso(new Date(now)), 1),
-      requiresApproval: false,
-      irreversible: false,
-      payload: { notifyOnlyOnMaterialChange: true },
+      actionKey: 'appointment-day-before', actionType: 'notify', capability: 'calendar',
+      title: 'Remind before the appointment or reservation', dueAt: minusHours(startAt, 24),
+      requiresApproval: false, irreversible: false,
+      payload: { startAt, location: input.location || null },
+    }))
+  } else if (input.eventType === 'purchase' || input.eventType === 'delivery') {
+    const deliveryAt = metaIso(metadata, 'deliveryAt', 'estimatedDeliveryAt', 'eta') || startAt
+    const warrantyEndsAt = metaIso(metadata, 'warrantyEndsAt', 'warrantyEndAt')
+    const returnDeadlineAt = metaIso(metadata, 'returnDeadlineAt', 'refundDeadlineAt')
+
+    actions.push(action({
+      actionKey: 'delivery-monitor', actionType: 'monitor', capability: 'browser',
+      title: 'Track meaningful order or delivery changes', dueAt: plusHours(iso(new Date(now)), 1),
+      requiresApproval: false, irreversible: false,
+      payload: { notifyOnlyOnMaterialChange: true, expectedAt: deliveryAt, readReceiptAware: true },
+    }))
+    if (deliveryAt) actions.push(action({
+      actionKey: 'delivery-due', actionType: 'notify', capability: 'memory',
+      title: 'Delivery expected', dueAt: minusHours(deliveryAt, 2),
+      requiresApproval: false, irreversible: false,
+      payload: { expectedAt: deliveryAt },
+    }))
+    if (returnDeadlineAt) actions.push(action({
+      actionKey: 'return-deadline', actionType: 'notify', capability: 'memory',
+      title: 'Return or refund window is closing', dueAt: minusHours(returnDeadlineAt, 48),
+      requiresApproval: false, irreversible: false,
+      payload: { deadlineAt: returnDeadlineAt, evidenceRequired: true },
+    }))
+    if (warrantyEndsAt) actions.push(action({
+      actionKey: 'warranty-expiry', actionType: 'notify', capability: 'memory',
+      title: 'Warranty expiry is approaching', dueAt: minusHours(warrantyEndsAt, 24 * 30),
+      requiresApproval: false, irreversible: false,
+      payload: { warrantyEndsAt, evidenceRequired: true },
     }))
   } else if (input.eventType === 'bill' || input.eventType === 'subscription') {
+    const dueAt = startAt || metaIso(metadata, 'dueAt', 'renewalAt', 'renewsAt')
+    const cancellationDeadlineAt = metaIso(metadata, 'cancellationDeadlineAt', 'cancelBy')
+
     actions.push(action({
-      actionKey: 'bill-review',
-      actionType: 'prepare',
-      capability: 'payments',
-      title: 'Prepare bill or renewal review',
-      dueAt: minusHours(startAt, 24),
-      requiresApproval: false,
-      irreversible: false,
-      payload: { paymentRequiresApproval: true },
+      actionKey: 'bill-review', actionType: 'prepare', capability: 'payments',
+      title: 'Prepare bill or renewal review', dueAt: minusHours(dueAt, 24),
+      requiresApproval: false, irreversible: false,
+      payload: { paymentRequiresApproval: true, neverAutoPay: true },
+    }))
+    actions.push(action({
+      actionKey: input.eventType === 'subscription' ? 'renewal-notice' : 'bill-due-notice',
+      actionType: 'notify', capability: 'payments',
+      title: input.eventType === 'subscription' ? 'Subscription renewal is approaching' : 'Bill due date is approaching',
+      dueAt: minusHours(dueAt, input.eventType === 'subscription' ? 72 : 24),
+      requiresApproval: false, irreversible: false,
+      payload: { dueAt, evidenceRequired: true, neverAutoPay: true },
+    }))
+    if (cancellationDeadlineAt) actions.push(action({
+      actionKey: 'cancellation-deadline', actionType: 'notify', capability: 'memory',
+      title: 'Cancellation deadline is approaching', dueAt: minusHours(cancellationDeadlineAt, 48),
+      requiresApproval: false, irreversible: false,
+      payload: { cancellationDeadlineAt, evidenceRequired: true },
     }))
   } else if (input.eventType === 'application') {
     actions.push(action({
-      actionKey: 'application-status-watch',
-      actionType: 'monitor',
-      capability: 'browser',
-      title: 'Watch for meaningful application status changes',
-      dueAt: plusHours(iso(new Date(now)), 24),
-      requiresApproval: false,
-      irreversible: false,
+      actionKey: 'application-status-watch', actionType: 'monitor', capability: 'browser',
+      title: 'Watch for meaningful application status changes', dueAt: plusHours(iso(new Date(now)), 24),
+      requiresApproval: false, irreversible: false,
       payload: { notifyOnlyOnMaterialChange: true },
     }))
+  } else if (input.eventType === 'document') {
+    const expiresAt = endAt || startAt || metaIso(metadata, 'expiresAt', 'expiryAt', 'expiryDate', 'renewalAt')
+    if (expiresAt) {
+      actions.push(action({
+        actionKey: 'document-expiry-30d', actionType: 'notify', capability: 'files',
+        title: 'Document expiry or renewal is approaching', dueAt: minusHours(expiresAt, 24 * 30),
+        requiresApproval: false, irreversible: false,
+        payload: { expiresAt, evidenceRequired: true, subtype: input.subtype },
+      }))
+      actions.push(action({
+        actionKey: 'document-expiry-7d', actionType: 'notify', capability: 'files',
+        title: 'Document expires soon', dueAt: minusHours(expiresAt, 24 * 7),
+        requiresApproval: false, irreversible: false,
+        payload: { expiresAt, evidenceRequired: true, subtype: input.subtype },
+      }))
+      actions.push(action({
+        actionKey: 'document-renewal-prep', actionType: 'prepare', capability: 'files',
+        title: 'Prepare renewal context from the saved document', dueAt: minusHours(expiresAt, 24 * 14),
+        requiresApproval: false, irreversible: false,
+        payload: { expiresAt, noExternalSubmission: true },
+      }))
+    }
   }
 
   const nextActionAt = earliestFuture(actions, now)
