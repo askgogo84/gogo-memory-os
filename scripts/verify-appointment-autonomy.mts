@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { isAppointmentResearchRequest } from '../lib/agent/appointment-research'
+import { appointmentPrepareOptionNumber } from '../lib/agent/appointment-followup-recovery'
 
 assert.equal(isAppointmentResearchRequest('Find me a dentist appointment in Bengaluru next week'), true)
 assert.equal(isAppointmentResearchRequest('Look for available dermatologist appointment options near Indiranagar tomorrow'), true)
@@ -8,16 +9,26 @@ assert.equal(isAppointmentResearchRequest('Book a dental appointment in Bengalur
 assert.equal(isAppointmentResearchRequest('Create a calendar appointment tomorrow at 4 PM'), false)
 assert.equal(isAppointmentResearchRequest('Find cheap flights to Mumbai'), false)
 
+const exactFailedProductionFollowup = 'Prepare option 2 and check the available appointment slots for next week. Do not confirm or book anything yet.'
+assert.equal(appointmentPrepareOptionNumber(exactFailedProductionFollowup), 2)
+assert.equal(appointmentPrepareOptionNumber('Open option #5 and inspect availability'), 5)
+assert.equal(appointmentPrepareOptionNumber('Find me a dentist appointment in Bengaluru next week'), null)
+
 const agentRoute = fs.readFileSync('app/api/agent/run/route.ts', 'utf8')
 const executeRoute = fs.readFileSync('app/api/agent/runs/[id]/execute/route.ts', 'utf8')
 const chatRoute = fs.readFileSync('app/api/dashboard/chat/route.ts', 'utf8')
 const research = fs.readFileSync('lib/agent/appointment-research.ts', 'utf8')
 const followup = fs.readFileSync('lib/agent/appointment-followup.ts', 'utf8')
+const recovery = fs.readFileSync('lib/agent/appointment-followup-recovery.ts', 'utf8')
 
 assert.match(agentRoute, /tryRunAppointmentResearch/)
 assert.match(agentRoute, /tryRunAppointmentFollowup/)
+assert.match(agentRoute, /tryRecoverAppointmentOption/)
+assert.match(agentRoute, /appointmentPrepareOptionNumber/)
+assert.ok(agentRoute.indexOf('appointmentPrepareOptionNumber(text)') < agentRoute.indexOf('tryRunAppointmentResearch({ actor'), 'numbered appointment follow-up must be consumed before any new provider search')
 assert.ok(agentRoute.indexOf('tryRunAppointmentFollowup') < agentRoute.indexOf('tryRunBrowserCommand({ actor'), 'appointment follow-up must resume before generic browser routing')
 assert.ok(agentRoute.indexOf('tryRunAppointmentResearch({ actor') < agentRoute.indexOf('tryRunPersistentGeneralPlan({'), 'appointment discovery must run before open-ended persistent planning')
+assert.match(agentRoute, /I will not start a new search in another location/)
 
 assert.match(chatRoute, /tryRunAppointmentResearch/)
 assert.match(chatRoute, /tryRunAppointmentFollowup/)
@@ -27,6 +38,12 @@ assert.match(research, /readOnly:\s*true/)
 assert.match(research, /mutated:\s*false/)
 assert.match(research, /I have not claimed a slot is live/)
 assert.match(research, /options:\s*options\.map/)
+
+assert.match(recovery, /Prefer a search that has an explicit location/)
+assert.match(recovery, /appointment_selection/)
+assert.match(recovery, /Stop at any login, OTP, CAPTCHA or payment boundary/)
+assert.match(recovery, /recoveredContext:\s*true/)
+assert.match(recovery, /I reused option/)
 
 assert.match(followup, /latestAppointmentResearch/)
 assert.match(followup, /appointment_selection/)
@@ -50,4 +67,4 @@ assert.match(followup, /I therefore did not create calendar\/reminder\/watch fol
 assert.match(executeRoute, /finalizeApprovedAppointmentRun/)
 assert.ok(executeRoute.indexOf('executeApprovedBrowserCommand') < executeRoute.indexOf('finalizeApprovedAppointmentRun'), 'provider action must execute before appointment closure verification')
 
-console.log('✅ Appointment autonomy regression passed: discover → persist option → draft → exact-slot approval → provider verification → Life Event')
+console.log('✅ Appointment autonomy regression passed: discover → persistent numbered option → draft → exact-slot approval → provider verification → Life Event')
