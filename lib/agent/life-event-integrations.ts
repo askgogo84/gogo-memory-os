@@ -88,14 +88,54 @@ export function lifecycleMonitorTarget(event: any, action?: any): LifecycleMonit
 }
 
 export type LifecycleTerminal = { terminal: boolean; label: string | null }
+export type LifecycleTerminalContext = {
+  title?: string | null
+  confirmationRef?: string | null
+  provider?: string | null
+}
 
-export function lifecycleTerminalState(eventType: string, pageText: unknown): LifecycleTerminal {
+function anchoredStatusText(text: string, context?: LifecycleTerminalContext) {
+  const needles = [context?.confirmationRef, context?.title]
+    .map((value) => safe(value, 240).toLowerCase())
+    .filter((value) => value.length >= 4)
+    .sort((a, b) => b.length - a.length)
+
+  for (const needle of needles) {
+    const index = text.indexOf(needle)
+    if (index < 0) continue
+    return {
+      anchored: true,
+      text: text.slice(Math.max(0, index - 320), Math.min(text.length, index + needle.length + 520)),
+    }
+  }
+  return { anchored: false, text }
+}
+
+function commerceTerminalState(text: string, anchored: boolean): LifecycleTerminal {
+  // Without an identity anchor, only accept phrases that explicitly describe the current
+  // tracked item's status. A bare "delivered" in order history/help text is not enough.
+  const delivered = anchored
+    ? /\b(delivered|delivery complete|package delivered)\b/
+    : /\b(your (?:order|package|shipment) (?:has been|was|is) delivered|current status\s*[:\-]?\s*delivered|order status\s*[:\-]?\s*delivered|package (?:has been|was) delivered)\b/
+  const refunded = anchored
+    ? /\b(refund(?:ed)?|refunded successfully)\b/
+    : /\b(your (?:order )?refund (?:has been|was|is) (?:completed|processed)|refund status\s*[:\-]?\s*(?:completed|refunded)|refunded successfully)\b/
+  const cancelled = anchored
+    ? /\b(order )?(cancelled|canceled)\b/
+    : /\b(your order (?:has been|was|is) (?:cancelled|canceled)|order status\s*[:\-]?\s*(?:cancelled|canceled))\b/
+
+  if (delivered.test(text)) return { terminal: true, label: 'delivered' }
+  if (refunded.test(text)) return { terminal: true, label: 'refunded' }
+  if (cancelled.test(text)) return { terminal: true, label: 'cancelled' }
+  return { terminal: false, label: null }
+}
+
+export function lifecycleTerminalState(eventType: string, pageText: unknown, context?: LifecycleTerminalContext): LifecycleTerminal {
   const text = safe(pageText, 12000).toLowerCase()
   if (!text) return { terminal: false, label: null }
   if (eventType === 'delivery' || eventType === 'purchase') {
-    if (/\bdelivered\b/.test(text)) return { terminal: true, label: 'delivered' }
-    if (/\b(refund(?:ed)?|refunded successfully)\b/.test(text)) return { terminal: true, label: 'refunded' }
-    if (/\b(order )?(cancelled|canceled)\b/.test(text)) return { terminal: true, label: 'cancelled' }
+    const focused = anchoredStatusText(text, context)
+    return commerceTerminalState(focused.text, focused.anchored)
   }
   if (eventType === 'application') {
     if (/\b(approved|accepted|offer extended|selected)\b/.test(text)) return { terminal: true, label: 'approved' }
