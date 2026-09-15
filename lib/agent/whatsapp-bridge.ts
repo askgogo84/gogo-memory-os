@@ -23,6 +23,8 @@ export type WhatsAppAgentResult = {
   handledBy: string
 }
 
+const WHATSAPP_BROWSER_BUDGET_MS = 42_000
+
 function actorFromResolvedUser(user: ResolvedUser): AgentActor | null {
   if (!user.id || !Number.isFinite(user.telegramId) || !user.whatsappId) return null
   return {
@@ -38,6 +40,51 @@ function approvalIntent(text: string): 'approve' | 'reject' | null {
   if (/^(approve|approved|yes[ ,]+approve|approve it|go ahead with it|proceed with it)$/i.test(t)) return 'approve'
   if (/^(reject|rejected|deny|decline|reject it|do not proceed|don't proceed|cancel that action)$/i.test(t)) return 'reject'
   return null
+}
+
+async function pauseRecentTimedOutBrowserRun(actor: AgentActor) {
+  const cutoff = new Date(Date.now() - 2 * 60_000).toISOString()
+  const { data } = await supabaseAdmin.from('agent_runs')
+    .select('id,status,started_at')
+    .eq('telegram_id', String(actor.legacyTelegramId))
+    .eq('type', 'secure_browser')
+    .eq('status', 'running')
+    .gte('started_at', cutoff)
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!data?.id) return
+  const now = new Date().toISOString()
+  await supabaseAdmin.from('agent_runs').update({
+    status: 'paused',
+    summary: 'Provider inspection exceeded the WhatsApp response window; no consequential action was allowed.',
+    error: 'whatsapp_browser_response_timeout',
+    updated_at: now,
+  }).eq('id', String(data.id)).eq('telegram_id', String(actor.legacyTelegramId)).eq('status', 'running')
+  await supabaseAdmin.from('agent_steps').update({
+    status: 'failed',
+    error: 'whatsapp_browser_response_timeout',
+    completed_at: now,
+  }).eq('run_id', String(data.id)).eq('telegram_id', String(actor.legacyTelegramId)).eq('status', 'running')
+}
+
+async function withWhatsAppBrowserBudget<T>(actor: AgentActor, task: Promise<T>): Promise<T | WhatsAppAgentResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<WhatsAppAgentResult>((resolve) => {
+    timer = setTimeout(() => {
+      void pauseRecentTimedOutBrowserRun(actor).catch((err:any) => console.error('WHATSAPP_BROWSER_TIMEOUT_CLEANUP_FAILED:', err?.message || err))
+      resolve({
+        text: `I kept your booking/provider context, but the provider site took longer than WhatsApp's safe response window to inspect. I stopped waiting here rather than leave you with silence. No booking, confirmation, purchase, payment or approval was created.`,
+        status: 'paused',
+        handledBy: 'whatsapp-browser-timeout',
+      })
+    }, WHATSAPP_BROWSER_BUDGET_MS)
+  })
+  try {
+    return await Promise.race([task, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 async function latestPendingApproval(telegramId: number) {
@@ -157,9 +204,10 @@ export async function tryRunWhatsAppAgent(params: {
   // Appointment context is deterministic and must beat generic browser/planner
   // routing. Numbered options are recovered from the latest location-anchored
   // appointment research run; exact-slot follow-ups then use the prepared provider
-  // flow. This prevents provider/location drift and makes WhatsApp match Agent/chat.
-  const appointmentRecovery = await tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text })
-  if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String(appointmentRecovery.handledBy || 'appointment-followup-recovery') }
+  // flow. The WhatsApp budget prevents a slow provider/browser from holding the
+  // inbound webhook until Vercel kills it and leaving the user with no reply.
+  const appointmentRecovery = await withWhatsAppBrowserBudget(actor, tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text }))
+  if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String((appointmentRecovery as any).handledBy || 'appointment-followup-recovery') }
 
   const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:'whatsapp', text:params.text })
   if (appointmentFollowup) return { ...appointmentFollowup, text:`${appointmentFollowup.text || ''}${appointmentFollowup.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(appointmentFollowup.handledBy || 'appointment-followup') }
@@ -170,8 +218,8 @@ export async function tryRunWhatsAppAgent(params: {
   const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (webWatch) return { ...webWatch, handledBy:String(webWatch.handledBy || 'background-web-watch') }
 
-  const browser = await tryRunBrowserCommand({ actor, surface:'whatsapp', text:params.text })
-  if (browser) return { ...browser, text:`${browser.text || ''}${browser.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(browser.handledBy || 'secure-browser') }
+  const browser = await withWhatsAppBrowserBudget(actor, tryRunBrowserCommand({ actor, surface:'whatsapp', text:params.text }))
+  if (browser) return { ...(browser as any), text:`${(browser as any).text || ''}${(browser as any).status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String((browser as any).handledBy || 'secure-browser') }
 
   const travelCalendar = await tryPrepareTravelCalendarPlan({ actor, surface:'whatsapp', text:params.text })
   if (travelCalendar) return { ...travelCalendar, text:`${travelCalendar.text || ''}${travelCalendar.status === 'waiting_approval' ? '\n\nReply *APPROVE* to add it, or *REJECT* to stop.' : ''}`, handledBy:String(travelCalendar.handledBy || 'travel-calendar-plan') }
