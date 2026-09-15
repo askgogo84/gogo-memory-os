@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { tryResumeAppointmentAfterHumanAuth } from './appointment-auth-resume'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 
@@ -97,6 +98,12 @@ async function activity(tg: number, runId: string, eventType: string, message: s
 }
 
 export async function tryRunAppointmentResearch(params: { actor: AgentActor; surface: AgentSurface; text: string }) {
+  // Human-auth/provider-block resumes share the same appointment brain on WhatsApp,
+  // Dashboard and Agent. The strict matcher inside the resume handler declines all
+  // ordinary research requests, so public-inventory discovery remains unchanged.
+  const resumed = await tryResumeAppointmentAfterHumanAuth(params)
+  if (resumed) return resumed
+
   if (!isAppointmentResearchRequest(params.text)) return null
   const service = serviceHint(params.text)
   const locationRaw = locationHint(params.text)
