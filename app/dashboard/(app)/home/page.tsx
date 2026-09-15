@@ -1,12 +1,12 @@
 import Link from 'next/link'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getTodayReminders, getLists } from '@/lib/dashboard/queries'
-import { getDashboardMemory } from '@/lib/dashboard/memory'
 import { CommandBar } from '@/components/dashboard/command-bar'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 export const dynamic = 'force-dynamic'
+
+type FeedItem = { id:string; kind:'approval'|'working'|'watching'|'idea'|'done'; title:string; body:string; href:string }
 
 function period(now: Date, tz: string) {
   const hour = parseInt(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: tz }).format(now), 10)
@@ -15,17 +15,19 @@ function period(now: Date, tz: string) {
   return 'evening'
 }
 
-function Portal({ href, eyebrow, title, detail }: { href: string; eyebrow: string; title: string; detail: string }) {
+function FeedCard({ item }: { item: FeedItem }) {
+  const badge = item.kind === 'approval' ? 'Needs you' : item.kind === 'working' ? 'Working' : item.kind === 'watching' ? 'Watching' : item.kind === 'idea' ? 'Idea' : 'Done'
+  const tone = item.kind === 'approval' ? 'bg-amber-50 text-amber-800' : item.kind === 'done' ? 'bg-emerald-50 text-emerald-700' : 'bg-gogo-teal-soft text-gogo-teal'
   return (
-    <Link href={href} className="group relative overflow-hidden rounded-[24px] border border-gogo-ink/8 bg-gogo-surface/82 p-5 shadow-[0_14px_38px_rgba(45,32,22,.045)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 hover:border-gogo-teal/24 hover:shadow-[0_20px_48px_rgba(45,32,22,.075)] sm:p-6">
-      <div className="absolute inset-x-0 top-0 h-[2px] bg-gogo-teal/70" />
-      <div className="relative text-[9px] font-extrabold uppercase tracking-[0.18em] text-gogo-teal">{eyebrow}</div>
-      <div className="relative mt-2 font-serif text-[27px] leading-[1.02] tracking-[-0.6px] text-gogo-ink">{title}</div>
-      <div className="relative mt-3 max-w-[34ch] text-[12px] leading-5 text-gogo-ink-3">{detail}</div>
-      <div className="relative mt-5 flex items-center justify-between">
-        <span className="text-[9px] font-bold uppercase tracking-[0.13em] text-gogo-ink-3">Open</span>
-        <span className="grid h-9 w-9 place-items-center rounded-full bg-gogo-teal-soft text-[16px] font-bold text-gogo-teal transition duration-200 group-hover:bg-gogo-teal group-hover:text-white">→</span>
+    <Link href={item.href} className="group rounded-[22px] border border-gogo-ink/8 bg-gogo-surface/90 p-4 transition hover:-translate-y-0.5 hover:shadow-[0_16px_36px_rgba(45,32,22,.07)] sm:p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-semibold text-gogo-ink">{item.title}</div>
+          <div className="mt-1 text-[12px] leading-5 text-gogo-ink-3">{item.body}</div>
+        </div>
+        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[8px] font-extrabold uppercase tracking-[.12em] ${tone}`}>{badge}</span>
       </div>
+      <div className="mt-4 text-[10px] font-bold text-gogo-teal">Open →</div>
     </Link>
   )
 }
@@ -34,82 +36,71 @@ export default async function HomePage() {
   const session = await getSession()
   const tg = session?.telegramId || ''
   const tgNum = parseInt(tg, 10)
-  const [{ data: user }, today, lists, memory, watcherCount, approvalCount, goalCount] = await Promise.all([
+  const [{ data: user }, runs, watchers, approvals, ideas] = await Promise.all([
     Number.isFinite(tgNum)
       ? supabaseAdmin.from('users').select('name, timezone').eq('telegram_id', tgNum).maybeSingle()
       : Promise.resolve({ data: null as any }),
-    session ? getTodayReminders(session.telegramId) : Promise.resolve({ ok: true as const, reminders: [] }),
-    session ? getLists(session.telegramId) : Promise.resolve({ ok: true as const, lists: [] }),
-    session ? getDashboardMemory(session.telegramId) : Promise.resolve({ ok: true as const, items: [] }),
-    session ? supabaseAdmin.from('agent_watchers').select('id',{count:'exact',head:true}).eq('telegram_id',session.telegramId).eq('active',true) : Promise.resolve({count:0}),
-    session ? supabaseAdmin.from('agent_approvals').select('id',{count:'exact',head:true}).eq('telegram_id',session.telegramId).eq('status','pending') : Promise.resolve({count:0}),
-    session ? supabaseAdmin.from('agent_goals').select('id',{count:'exact',head:true}).eq('telegram_id',session.telegramId).in('status',['active','blocked']) : Promise.resolve({count:0}),
+    session ? supabaseAdmin.from('agent_runs').select('id,title,summary,status,updated_at').eq('telegram_id',tg).order('updated_at',{ascending:false}).limit(12) : Promise.resolve({data:[] as any[]}),
+    session ? supabaseAdmin.from('agent_watchers').select('id,condition_json,next_check_at,created_at').eq('telegram_id',tg).eq('active',true).order('created_at',{ascending:false}).limit(8) : Promise.resolve({data:[] as any[]}),
+    session ? supabaseAdmin.from('agent_approvals').select('id,title,description,run_id,requested_at').eq('telegram_id',tg).eq('status','pending').order('requested_at',{ascending:false}).limit(8) : Promise.resolve({data:[] as any[]}),
+    session ? supabaseAdmin.from('agent_ideas').select('id,title,reason,created_at').eq('telegram_id',tg).eq('status','new').order('created_at',{ascending:false}).limit(6) : Promise.resolve({data:[] as any[]}),
   ])
 
-  const tz = user?.timezone || 'Asia/Kolkata'
   const now = new Date()
+  const tz = user?.timezone || 'Asia/Kolkata'
   const name = user?.name?.trim().split(/\s+/)[0] || 'there'
-  const pending = today.ok ? today.reminders.filter((r) => !r.sent && new Date(r.remind_at).getTime() > now.getTime()).length : 0
-  const listCount = lists.ok ? lists.lists.length : 0
-  const memoryCount = memory.ok ? memory.items.length : 0
-  const watchers = watcherCount.count || 0
-  const approvals = approvalCount.count || 0
-  const goals = goalCount.count || 0
-  const gogoState = approvals > 0 ? 'approval' : watchers > 0 ? 'watching' : 'calm'
-  const statusCopy = approvals > 0
-    ? `${approvals} action${approvals === 1 ? '' : 's'} waiting for you`
-    : watchers > 0
-      ? 'Background Gogo is working'
-      : 'Gogo is ready'
+  const runRows = (runs.data || []) as any[]
+  const watcherRows = (watchers.data || []) as any[]
+  const approvalRows = (approvals.data || []) as any[]
+  const ideaRows = (ideas.data || []) as any[]
+  const working = runRows.filter(r=>['queued','running'].includes(String(r.status))).length
+  const watching = watcherRows.length + runRows.filter(r=>String(r.status)==='watching').length
+  const waiting = approvalRows.length
+  const headline = waiting ? `${waiting} ${waiting===1?'thing needs':'things need'} you.` : working ? `Gogo is working on ${working} ${working===1?'thing':'things'}.` : watching ? `Gogo is watching ${watching} ${watching===1?'thing':'things'} for you.` : 'What can Gogo take off your plate?'
+  const gogoState = waiting > 0 ? 'approval' : watching > 0 || working > 0 ? 'watching' : 'calm'
+
+  const feed: FeedItem[] = [
+    ...approvalRows.slice(0,3).map(a=>({id:`approval:${a.id}`,kind:'approval' as const,title:String(a.title||'Gogo needs your approval'),body:String(a.description||'Review this action before Gogo continues.'),href:'/dashboard/agent'})),
+    ...runRows.filter(r=>['queued','running'].includes(String(r.status))).slice(0,3).map(r=>({id:`run:${r.id}`,kind:'working' as const,title:String(r.title||'Gogo is working'),body:String(r.summary||'Working on this in the background.'),href:'/dashboard/agent'})),
+    ...watcherRows.slice(0,2).map(w=>({id:`watch:${w.id}`,kind:'watching' as const,title:String(w.condition_json?.title||'Gogo is watching this'),body:'Gogo will surface a meaningful change when it happens.',href:'/dashboard/today'})),
+    ...ideaRows.slice(0,2).map(i=>({id:`idea:${i.id}`,kind:'idea' as const,title:String(i.title||'An idea from Gogo'),body:String(i.reason||'Gogo found something that may help.'),href:'/dashboard/today'})),
+    ...runRows.filter(r=>String(r.status)==='completed').slice(0,2).map(r=>({id:`done:${r.id}`,kind:'done' as const,title:String(r.title||'Done'),body:String(r.summary||'Gogo completed this.'),href:'/dashboard/agent'})),
+  ].slice(0,8)
 
   return (
-    <div className="zen-home relative min-h-[calc(100vh-3.5rem)] overflow-hidden rounded-[30px] border border-gogo-ink/8">
-      <div className="pointer-events-none absolute left-1/2 top-[-13rem] h-[31rem] w-[31rem] -translate-x-1/2 rounded-full bg-gogo-teal/9 blur-[105px]" />
-      <div className="pointer-events-none absolute -right-28 bottom-[-10rem] h-[28rem] w-[28rem] rounded-full bg-gogo-orange/8 blur-[105px]" />
-
-      <div className="relative mx-auto flex min-h-[calc(100vh-3.5rem)] max-w-[1180px] flex-col px-5 py-5 sm:px-7 sm:py-7 xl:px-11 xl:py-9">
-        <header className="flex items-center justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-2.5 text-[9px] font-extrabold uppercase tracking-[0.18em] text-gogo-ink-3">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-gogo-teal shadow-[0_0_0_5px_rgba(21,122,110,.09)]" />
-            <span className="truncate">One Gogo · everywhere</span>
+    <div className="relative mx-auto max-w-[1120px] pb-4">
+      <div className="rounded-[30px] border border-gogo-ink/8 bg-gogo-surface/78 px-5 py-7 shadow-[0_18px_52px_rgba(45,32,22,.055)] backdrop-blur-xl sm:px-8 sm:py-9 xl:px-10">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[9px] font-extrabold uppercase tracking-[.18em] text-gogo-teal">One Gogo · WhatsApp + app + dashboard</div>
+            <div className="mt-3 text-[13px] font-semibold text-gogo-ink-3">Good {period(now,tz)}, {name}</div>
           </div>
-          <Link href={approvals > 0 ? '/dashboard/agent' : '/dashboard/today'} className="zen-home-pill flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-[9.5px] font-bold text-gogo-ink-2 backdrop-blur-xl sm:px-4">
-            <span className={`h-2 w-2 rounded-full ${approvals > 0 ? 'bg-amber-500' : watchers > 0 ? 'bg-gogo-teal' : 'bg-emerald-500'}`} />
-            <span className="hidden sm:inline">{statusCopy}</span>
-            <span className="sm:hidden">{approvals > 0 ? `${approvals} need you` : watchers > 0 ? 'Working' : 'Ready'}</span>
-          </Link>
-        </header>
+          <GogoCharacter state={gogoState} size={66} showStatus={working>0||watching>0||waiting>0}/>
+        </div>
 
-        <section className="mx-auto flex w-full max-w-[900px] flex-1 items-center justify-center py-8 text-center sm:py-10">
-          <div className="w-full">
-            <Link href={approvals > 0 ? '/dashboard/agent' : '/dashboard/chat'} aria-label="Talk to Gogo" className="relative mx-auto mb-5 block w-fit transition duration-300 hover:scale-[1.03]">
-              <span className="absolute inset-[-28%] rounded-full bg-gogo-orange/12 blur-2xl" />
-              <GogoCharacter state={gogoState} size={112} showStatus={watchers > 0 || approvals > 0} />
-            </Link>
+        <h1 className="mt-5 max-w-[760px] font-serif text-[43px] leading-[.98] tracking-[-1.2px] text-gogo-ink sm:text-[58px]">{headline}</h1>
+        <p className="mt-4 max-w-[680px] text-[13px] leading-6 text-gogo-ink-3">Tell Gogo the outcome. It can work, watch and come back when you are needed. Sending, booking, sharing and spending still stop for approval.</p>
 
-            <p className="text-[10px] font-bold uppercase tracking-[0.20em] text-gogo-teal">Good {period(now, tz)}, {name}</p>
-            <h1 className="mt-3 font-serif text-[51px] font-normal leading-[.92] tracking-[-1.8px] text-gogo-ink sm:text-[64px] xl:text-[76px]">
-              Your mind, <em className="font-normal text-gogo-teal">lighter.</em>
-            </h1>
-            <p className="mx-auto mt-4 max-w-[37rem] text-[13px] leading-6 text-gogo-ink-3 sm:text-[14px]">Tell Gogo what matters. Gogo remembers the context, handles the next steps and asks only when your approval is needed.</p>
+        <div className="mt-6 grid gap-2 sm:max-w-[560px] sm:grid-cols-3">
+          <Link href="/dashboard/agent" className="rounded-[18px] bg-gogo-orange/10 px-4 py-3"><div className="text-[22px] font-extrabold text-gogo-orange">{working}</div><div className="text-[10px] font-bold text-gogo-ink-3">working</div></Link>
+          <Link href="/dashboard/today" className="rounded-[18px] bg-gogo-teal-soft px-4 py-3"><div className="text-[22px] font-extrabold text-gogo-teal">{watching}</div><div className="text-[10px] font-bold text-gogo-ink-3">watching</div></Link>
+          <Link href="/dashboard/agent" className="rounded-[18px] bg-emerald-50 px-4 py-3"><div className="text-[22px] font-extrabold text-emerald-700">{waiting}</div><div className="text-[10px] font-bold text-gogo-ink-3">need you</div></Link>
+        </div>
 
-            <div className="relative mx-auto mt-7 w-full max-w-[760px]"><CommandBar /></div>
+        <div className="mt-6 max-w-[780px]"><CommandBar /></div>
+      </div>
 
-            <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-[10px] font-bold text-gogo-ink-2">
-              <Link href="/dashboard/today" className="zen-home-pill flex items-center gap-2 rounded-full border px-3 py-2 backdrop-blur"><i className="h-1.5 w-1.5 rounded-full bg-gogo-teal" />{pending} reminders</Link>
-              <Link href="/dashboard/memory" className="zen-home-pill flex items-center gap-2 rounded-full border px-3 py-2 backdrop-blur"><i className="h-1.5 w-1.5 rounded-full bg-gogo-teal" />{memoryCount} memories</Link>
-              <Link href="/dashboard/agent" className="zen-home-pill flex items-center gap-2 rounded-full border px-3 py-2 backdrop-blur"><i className="h-1.5 w-1.5 rounded-full bg-gogo-orange" />{watchers} watches</Link>
-              {goals > 0 && <Link href="/dashboard/agent" className="zen-home-pill flex items-center gap-2 rounded-full border px-3 py-2 backdrop-blur"><i className="h-1.5 w-1.5 rounded-full bg-gogo-ink/45" />{goals} goals</Link>}
-              {approvals > 0 && <Link href="/dashboard/agent" className="flex items-center gap-2 rounded-full border border-amber-300/60 bg-amber-50/80 px-3 py-2 text-amber-800"><i className="h-1.5 w-1.5 rounded-full bg-amber-500" />{approvals} approvals</Link>}
-            </div>
-          </div>
-        </section>
+      <div className="mt-6 flex items-center justify-between">
+        <h2 className="font-serif text-[27px] text-gogo-ink">Gogo is on it</h2>
+        <Link href="/dashboard/today" className="text-[10px] font-extrabold uppercase tracking-[.12em] text-gogo-teal">See today →</Link>
+      </div>
 
-        <section className="grid gap-3 pb-1 md:grid-cols-3 sm:gap-4">
-          <Portal href="/dashboard/today" eyebrow="Daily Gogo" title="What matters now" detail="Calendar, reminders and proactive context — one calm view instead of more noise." />
-          <Portal href="/dashboard/agent" eyebrow="Gogo Agent" title="Give Gogo an outcome" detail="Plan, act and keep working. Consequential actions still stop at your approval." />
-          <Portal href="/dashboard/memory" eyebrow="Gogo Memory" title="Find what Gogo knows" detail={`Private context, documents and memories Gogo can reuse later.${listCount ? ` ${listCount} lists are ready too.` : ''}`} />
-        </section>
+      {feed.length ? <div className="mt-3 grid gap-3 md:grid-cols-2">{feed.map(item=><FeedCard key={item.id} item={item}/>)}</div> : <div className="mt-3 rounded-[22px] border border-gogo-ink/8 bg-gogo-surface/80 p-6"><div className="font-semibold text-gogo-ink">Nothing urgent right now.</div><div className="mt-1 text-[12px] text-gogo-ink-3">Ask Gogo to handle something, watch a change, or remember something for later.</div></div>}
+
+      <div className="mt-6 grid gap-3 md:grid-cols-3">
+        <Link href="/dashboard/today" className="rounded-[22px] border border-gogo-ink/8 bg-gogo-surface/80 p-5"><div className="text-[9px] font-extrabold uppercase tracking-[.14em] text-gogo-teal">Today</div><div className="mt-2 font-serif text-[24px] text-gogo-ink">What matters now</div><div className="mt-2 text-[12px] leading-5 text-gogo-ink-3">Proactive changes, reminders, watches and things Gogo found.</div></Link>
+        <Link href="/dashboard/memory" className="rounded-[22px] border border-gogo-ink/8 bg-gogo-surface/80 p-5"><div className="text-[9px] font-extrabold uppercase tracking-[.14em] text-gogo-teal">Memory</div><div className="mt-2 font-serif text-[24px] text-gogo-ink">Same context everywhere</div><div className="mt-2 text-[12px] leading-5 text-gogo-ink-3">Private documents and context shared across surfaces.</div></Link>
+        <Link href="/dashboard/agent" className="rounded-[22px] border border-gogo-ink/8 bg-gogo-surface/80 p-5"><div className="text-[9px] font-extrabold uppercase tracking-[.14em] text-gogo-teal">Activity</div><div className="mt-2 font-serif text-[24px] text-gogo-ink">See how Gogo worked</div><div className="mt-2 text-[12px] leading-5 text-gogo-ink-3">Runs, approvals, goals, watchers and advanced controls.</div></Link>
       </div>
     </div>
   )
