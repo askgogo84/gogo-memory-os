@@ -22,14 +22,30 @@ function extractUrl(text:string){
   try{const u=new URL(m[0]);if(!['http:','https:'].includes(u.protocol))return null;return u.toString()}catch{return null}
 }
 
+function actionTextWithoutUrls(text:string){
+  return String(text||'').replace(/https?:\/\/[^\s<>)\]}]+/gi,' ').replace(/\s+/g,' ').trim().toLowerCase()
+}
+
+function explicitlyNegates(text:string, actionPattern:string){
+  const prefix=`(?:do\\s+not|don't|dont|never|without)`
+  return new RegExp(`${prefix}\\s+(?:\\w+[\\s,]+){0,4}(?:${actionPattern})\\b`,'i').test(text)
+}
+
 export function parseBrowserCommand(text:string):BrowserCommand|null{
   const raw=String(text||'').trim();const url=extractUrl(raw);if(!url)return null
-  const t=raw.toLowerCase()
-  const signal=/\b(open|browse|browser|website|site|page|form|fill|apply|submit|book|checkout|buy|purchase|reserve|navigate|go to|visit)\b/.test(t)
+  // Action classification must ignore the URL itself. A safe read-only provider URL
+  // commonly contains /booking or /checkout; those path words are navigation data,
+  // not user authorization to book or purchase.
+  const t=actionTextWithoutUrls(raw)
+  const signal=/\b(open|browse|browser|website|site|page|form|fill|apply|submit|book|checkout|buy|purchase|reserve|navigate|go to|visit|inspect|check)\b/.test(t)
   if(!signal)return null
-  const purchase=/\b(buy|purchase|checkout|pay|payment)\b/.test(t)
-  const booking=/\b(book|booking|reserve|reservation)\b/.test(t)
-  const submit=/\b(submit|send application|apply for|complete and send|confirm form)\b/.test(t)
+
+  const noPurchase=explicitlyNegates(t,'buy|purchase|checkout|pay|payment')
+  const noBooking=explicitlyNegates(t,'book|booking|reserve|reservation|confirm')
+  const noSubmit=explicitlyNegates(t,'submit|send|apply|confirm|create')
+  const purchase=!noPurchase && /\b(buy|purchase|checkout|pay|payment)\b/.test(t)
+  const booking=!noBooking && /\b(book|booking|reserve|reservation)\b/.test(t)
+  const submit=!noSubmit && /\b(submit|send application|apply for|complete and send|confirm form)\b/.test(t)
   const fill=/\b(fill|complete form|prepare form|type into|enter my|draft application)\b/.test(t)
   const mode:BrowserMode=(purchase||booking||submit)?'execute':fill?'draft':'read'
   return {
