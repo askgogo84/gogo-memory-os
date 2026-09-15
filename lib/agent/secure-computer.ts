@@ -29,7 +29,7 @@ export type SecureBrowserResult = {
   forms:Array<{action:string;method:string;inputs:Array<{selector:string;name:string;type:string;label:string}>}>
   actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed'}>
   sandboxName:string
-  blockReason?: 'human_auth_required'
+  blockReason?: 'human_auth_required'|'provider_access_limited'
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
 }
 
@@ -56,6 +56,7 @@ const encoded = process.argv[2];
 if (!encoded) throw new Error('missing_secure_browser_payload');
 const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
 const profile = '${BROWSER_PROFILE_DIR}';
+const navTimeout = payload.mode === 'execute' ? 45000 : 18000;
 const clean = s => String(s||'').replace(/\s+/g,' ').trim();
 async function model(page){
   return await page.evaluate(() => {
@@ -97,24 +98,24 @@ async function isPotentialSubmit(page,selector){
   const page=context.pages()[0]||await context.newPage();
   const log=[];
   try{
-    await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:45000});
-    await page.waitForTimeout(900);
+    await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
+    await page.waitForTimeout(700);
     for(const a of (payload.actions||[])){
       try{
-        if(a.kind==='goto') await page.goto(a.url,{waitUntil:'domcontentloaded',timeout:45000});
-        else if(a.kind==='fill') await page.locator(a.selector).first().fill(a.value,{timeout:12000});
-        else if(a.kind==='select') await page.locator(a.selector).first().selectOption(a.value,{timeout:12000});
-        else if(a.kind==='check') await page.locator(a.selector).first().check({timeout:12000});
-        else if(a.kind==='wait') await page.waitForTimeout(Math.min(5000,Math.max(100,Number(a.ms)||500)));
+        if(a.kind==='goto') await page.goto(a.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
+        else if(a.kind==='fill') await page.locator(a.selector).first().fill(a.value,{timeout:10000});
+        else if(a.kind==='select') await page.locator(a.selector).first().selectOption(a.value,{timeout:10000});
+        else if(a.kind==='check') await page.locator(a.selector).first().check({timeout:10000});
+        else if(a.kind==='wait') await page.waitForTimeout(Math.min(4000,Math.max(100,Number(a.ms)||500)));
         else if(a.kind==='click'){
           if(payload.mode!=='execute' && await isPotentialSubmit(page,a.selector)){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
-          await page.locator(a.selector).first().click({timeout:12000});
+          await page.locator(a.selector).first().click({timeout:10000});
         } else if(a.kind==='submit'){
           if(payload.mode!=='execute'){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
-          await page.locator(a.selector).first().click({timeout:12000});
+          await page.locator(a.selector).first().click({timeout:10000});
         }
         log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done'});
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(400);
       }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed'});}
     }
     const out=await model(page); out.actions=log; console.log(JSON.stringify(out));
@@ -171,6 +172,12 @@ async function inspect(userId:string,url:string){
   return {sandbox,name,page:parsed}
 }
 
+function detectProviderAccessBlock(page:any){
+  const text=`${page?.title || ''} ${page?.text || ''}`.replace(/\s+/g,' ').toLowerCase()
+  const blocked=/\b(your access to this site has been limited|access denied|access has been denied|request blocked|security policy prevents access|temporarily blocked|unusual traffic|automated requests|bot protection)\b/i.test(text)
+  return blocked ? 'The provider site is limiting automated access, so Gogo cannot verify live availability from this page.' : null
+}
+
 async function planActions(objective:string,page:any,mode:BrowserMode):Promise<BrowserAction[]>{
   if(mode==='read')return []
   const pageModel={url:page.url,title:page.title,text:String(page.text||'').slice(0,9000),links:(page.links||[]).slice(0,50),forms:(page.forms||[]).slice(0,10)}
@@ -187,6 +194,15 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
     const first=await inspect(params.userId,target.toString())
+
+    const providerBlock=detectProviderAccessBlock(first.page)
+    if(providerBlock){
+      await first.sandbox.stop().catch(()=>{})
+      return {
+        status:'blocked',url:String(first.page.url||target),title:safeText(first.page.title,300),summary:providerBlock,
+        pageText:safeText(first.page.text,1200),forms:[],actions:[],sandboxName:first.name,blockReason:'provider_access_limited',
+      }
+    }
 
     const authGate=detectHumanAuthGate(first.page)
     if(authGate.required){
@@ -210,6 +226,15 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       page=JSON.parse(lines[lines.length-1]);actionLog=page.actions||[]
+      const actionBlock=detectProviderAccessBlock(page)
+      if(actionBlock){
+        await first.sandbox.stop().catch(()=>{})
+        return {
+          status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:actionBlock,
+          pageText:safeText(page.text,1200),forms:[],actions:actionLog.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed'})),
+          sandboxName:first.name,blockReason:'provider_access_limited',
+        }
+      }
     }
     await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft' && actions.some(a=>a.kind==='submit')
