@@ -38,11 +38,12 @@ async function relinkExistingPending(params:{actor:AgentActor;input:BookingCalen
   ])
   if(runError)throw new Error(`booking_calendar_relink_run_failed:${runError.message}`)
   if(approvalError)throw new Error(`booking_calendar_relink_approval_failed:${approvalError.message}`)
-  await supabaseAdmin.from('agent_activity').insert({
+  const { error: activityError } = await supabaseAdmin.from('agent_activity').insert({
     telegram_id:tg,run_id:params.existing.runId,event_type:'approval_relinked',
     message:'Existing calendar approval linked to the current life-event action.',
     metadata_json:{approval_id:params.existing.approvalId,life_event_id:params.input.lifeEventId,life_event_action_id:params.input.lifeEventActionId,source:PLAN_TYPE},
-  }).catch(()=>{})
+  })
+  if(activityError)console.error('BOOKING_CALENDAR_ACTIVITY_FAILED:',activityError.message)
 }
 
 export async function prepareBookingCalendarApproval(params:{actor:AgentActor;input:BookingCalendarInput}){
@@ -52,7 +53,8 @@ export async function prepareBookingCalendarApproval(params:{actor:AgentActor;in
   const tg=String(params.actor.legacyTelegramId),now=new Date().toISOString()
   const{data:run,error}=await supabaseAdmin.from('agent_runs').insert({telegram_id:tg,type:'life_event',capability:'calendar',status:'waiting_approval',title:`Add ${safe(params.input.title,140)} to calendar`,summary:'Booking details are resolved. Waiting for approval to block the calendar.',progress:90,why:'A confirmed booking should become a calendar commitment after user approval.',source:'booking_closure',metadata_json:{plan_type:PLAN_TYPE,life_event_id:params.input.lifeEventId,life_event_action_id:params.input.lifeEventActionId||null,proposedEvent:params.input},started_at:now,updated_at:now}).select('id').single();if(error||!run?.id)throw new Error(`booking_calendar_run_create_failed:${error?.message||'unknown'}`)
   const{data:approval,error:ae}=await supabaseAdmin.from('agent_approvals').insert({telegram_id:tg,run_id:String(run.id),action_type:'calendar_change',title:'Block calendar for this booking',description:'Create the confirmed event on Google Calendar. No purchase, cancellation or provider change will be made.',payload_preview:[{label:'Event',value:safe(params.input.title,180)},{label:'Starts',value:start},{label:'Ends',value:`${end}${params.input.endEstimated?' (estimated)':''}`},{label:'Venue',value:safe(params.input.location||'Not provided',180)}],execution_payload:{plan_type:PLAN_TYPE,action:'create_booking_calendar_event',lifeEventId:params.input.lifeEventId,lifeEventActionId:params.input.lifeEventActionId||null},risk_level:'medium',status:'pending'}).select('id').single();if(ae||!approval?.id)throw new Error(`booking_calendar_approval_create_failed:${ae?.message||'unknown'}`)
-  await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:String(run.id),event_type:'approval_requested',message:'Approval required before blocking Google Calendar for the confirmed booking.',metadata_json:{approval_id:approval.id,life_event_id:params.input.lifeEventId,life_event_action_id:params.input.lifeEventActionId||null,source:PLAN_TYPE}}).catch(()=>{})
+  const { error: activityError } = await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:String(run.id),event_type:'approval_requested',message:'Approval required before blocking Google Calendar for the confirmed booking.',metadata_json:{approval_id:approval.id,life_event_id:params.input.lifeEventId,life_event_action_id:params.input.lifeEventActionId||null,source:PLAN_TYPE}})
+  if(activityError)console.error('BOOKING_CALENDAR_ACTIVITY_FAILED:',activityError.message)
   return{runId:String(run.id),approvalId:String(approval.id)}
 }
 
@@ -81,6 +83,7 @@ export async function executeApprovedBookingCalendar(params:{actor:AgentActor;ru
   const results=await Promise.all(writes)
   const failed=results.find((result:any)=>result?.error)
   if(failed?.error)throw new Error(`booking_calendar_persistence_failed:${failed.error.message}`)
-  await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'booking_calendar_created',message:'Confirmed booking added to Google Calendar.',metadata_json:{life_event_id:linkedEvent.lifeEventId,life_event_action_id:lifeEventActionId||null,event_id:data.id||eventId,reused}}).catch(()=>{})
+  const { error: activityError } = await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'booking_calendar_created',message:'Confirmed booking added to Google Calendar.',metadata_json:{life_event_id:linkedEvent.lifeEventId,life_event_action_id:lifeEventActionId||null,event_id:data.id||eventId,reused}})
+  if(activityError)console.error('BOOKING_CALENDAR_ACTIVITY_FAILED:',activityError.message)
   return{runId:params.runId,status:'completed' as const,capability:'calendar' as const,risk:'medium' as const,handledBy:'booking-event-calendar' as const,text:`Done. I blocked your calendar for *${safe(linkedEvent.title,180)}*. Your saved ticket/QR stays attached to the same event.`,eventId:String(data.id||eventId),eventUrl:data.htmlLink||undefined}
 }
