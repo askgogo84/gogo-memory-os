@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { isAppointmentResearchRequest, appointmentBookableScore } from '../lib/agent/appointment-research'
-import { appointmentPrepareOptionNumber } from '../lib/agent/appointment-followup-recovery'
+import { appointmentPrepareOptionNumber, locationLockedResult } from '../lib/agent/appointment-followup-recovery'
 
 assert.equal(isAppointmentResearchRequest('Find me a dentist appointment in Bengaluru next week'), true)
 assert.equal(isAppointmentResearchRequest('Look for available dermatologist appointment options near Indiranagar tomorrow'), true)
@@ -16,12 +16,21 @@ assert.equal(appointmentPrepareOptionNumber(exactFailedProductionFollowup), 2)
 assert.equal(appointmentPrepareOptionNumber('Open option #5 and inspect availability'), 5)
 assert.equal(appointmentPrepareOptionNumber('Find me a dentist appointment in Bengaluru next week'), null)
 
+// Production regression: once Bengaluru + Clove is selected, a same-provider New Delhi
+// URL must never replace it. A city-neutral booking endpoint remains acceptable because
+// the browser can still select the locked city without drifting to another branch.
+assert.equal(locationLockedResult({url:'https://clovedental.in/dentist-near-me/new-delhi/safdarjung-enclave',title:'Clove Dental Safdarjung Enclave'}, 'Bengaluru'), false)
+assert.equal(locationLockedResult({url:'https://clovedental.in/dentist-near-me/bengaluru',title:'Clove Dental Bengaluru'}, 'Bengaluru'), true)
+assert.equal(locationLockedResult({url:'https://clovedental.in/appointments',title:'Book Appointment'}, 'Bengaluru'), true)
+
 const agentRoute = fs.readFileSync('app/api/agent/run/route.ts', 'utf8')
 const executeRoute = fs.readFileSync('app/api/agent/runs/[id]/execute/route.ts', 'utf8')
 const chatRoute = fs.readFileSync('app/api/dashboard/chat/route.ts', 'utf8')
 const research = fs.readFileSync('lib/agent/appointment-research.ts', 'utf8')
 const followup = fs.readFileSync('lib/agent/appointment-followup.ts', 'utf8')
 const recovery = fs.readFileSync('lib/agent/appointment-followup-recovery.ts', 'utf8')
+const browser = fs.readFileSync('lib/agent/browser-command.ts', 'utf8')
+const secureComputer = fs.readFileSync('lib/agent/secure-computer.ts', 'utf8')
 
 assert.match(agentRoute, /tryRunAppointmentResearch/)
 assert.match(agentRoute, /tryRunAppointmentFollowup/)
@@ -47,6 +56,9 @@ assert.match(recovery, /appointment_selection/)
 assert.match(recovery, /resolveBookableTarget/)
 assert.match(recovery, /site:\$\{originalHost\}/)
 assert.match(recovery, /sameProviderHost/)
+assert.match(recovery, /locationLockedResult/)
+assert.match(recovery, /providerLocked:true,locationLocked:true/)
+assert.match(recovery, /Keep the provider AND city locked/)
 assert.match(recovery, /retireStaleBookingApprovals/)
 assert.match(recovery, /execution_payload/)
 assert.match(recovery, /Superseded by a later explicit read-only appointment availability check/)
@@ -61,6 +73,13 @@ assert.match(recovery, /recoveredContext:\s*true/)
 assert.match(recovery, /bookablePathResolved/)
 assert.doesNotMatch(recovery, /I only inspected availability and made no provider-side changes/)
 assert.doesNotMatch(recovery, /Do not confirm, submit, book, pay, authenticate/)
+
+assert.match(secureComputer, /provider_access_limited/)
+assert.match(secureComputer, /your access to this site has been limited/)
+assert.match(secureComputer, /const navTimeout = payload.mode === 'execute' \? 45000 : 18000/)
+assert.match(browser, /result.status==='blocked'/)
+assert.match(browser, /provider_access_limited/)
+assert.match(browser, /status:'paused'/)
 
 assert.match(followup, /latestAppointmentResearch/)
 assert.match(followup, /appointment_selection/)
@@ -84,4 +103,4 @@ assert.match(followup, /I therefore did not create calendar\/reminder\/watch fol
 assert.match(executeRoute, /finalizeApprovedAppointmentRun/)
 assert.ok(executeRoute.indexOf('executeApprovedBrowserCommand') < executeRoute.indexOf('finalizeApprovedAppointmentRun'), 'provider action must execute before appointment closure verification')
 
-console.log('✅ Appointment autonomy regression passed: bookable discovery → persistent numbered option → verified live-slot evidence → exact-slot approval → verified Life Event')
+console.log('✅ Appointment autonomy regression passed: city-locked provider selection → blocked-site fail-safe → live-slot evidence → exact-slot approval → verified Life Event')

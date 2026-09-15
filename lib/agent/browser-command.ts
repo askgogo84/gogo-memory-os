@@ -33,9 +33,6 @@ function explicitlyNegates(text:string, actionPattern:string){
 
 export function parseBrowserCommand(text:string):BrowserCommand|null{
   const raw=String(text||'').trim();const url=extractUrl(raw);if(!url)return null
-  // Action classification must ignore the URL itself. A safe read-only provider URL
-  // commonly contains /booking or /checkout; those path words are navigation data,
-  // not user authorization to book or purchase.
   const t=actionTextWithoutUrls(raw)
   const signal=/\b(open|browse|browser|website|site|page|form|fill|apply|submit|book|checkout|buy|purchase|reserve|navigate|go to|visit|inspect|check)\b/.test(t)
   if(!signal)return null
@@ -121,21 +118,29 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     const result=await runSecureBrowser({userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode})
     const at=new Date().toISOString()
 
-    if(result.status==='blocked' && result.blockReason==='human_auth_required'){
-      const compact={url:result.url,title:result.title,summary:result.summary,blockReason:result.blockReason,authReason:result.authReason||null}
-      await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:compact,error:'human_auth_required',completed_at:at}).eq('id',params.stepId)
-      await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:'human_auth_required',updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
-      await activity(tg,params.runId,'human_auth_required','Gogo paused at a human authentication boundary.',{host:new URL(result.url).hostname,auth_reason:result.authReason||'unknown'})
+    if(result.status==='blocked'){
+      const blockReason=result.blockReason||'provider_access_limited'
+      const compact={url:result.url,title:result.title,summary:result.summary,blockReason,authReason:result.authReason||null}
+      await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:compact,error:blockReason,completed_at:at}).eq('id',params.stepId)
+      await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:blockReason,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
+      await activity(tg,params.runId,blockReason,blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
+      if(blockReason==='human_auth_required'){
+        return {
+          runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
+          text:`${result.summary}\n\nGogo paused before authentication. Passwords, OTPs, passkeys and payment-auth values are not requested, inferred or stored by the agent.`,
+          blockedReason:'human_auth_required' as const,handledBy:'secure-browser' as const,
+        }
+      }
       return {
         runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
-        text:`${result.summary}\n\nGogo paused before authentication. Passwords, OTPs, passkeys and payment-auth values are not requested, inferred or stored by the agent.`,
-        blockedReason:'human_auth_required' as const,handledBy:'secure-browser' as const,
+        text:`${result.summary}\n\nThe provider page did not expose verifiable live availability to the secure browser. No provider-side action was made.`,
+        blockedReason:'provider_access_limited' as const,handledBy:'secure-browser' as const,
       }
     }
 
     const compact={url:result.url,title:result.title,summary:result.summary,formCount:result.forms.length,actions:result.actions}
     await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:compact,completed_at:at}).eq('id',params.stepId)
-    await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(`${result.summary} ${result.title}`,1600),progress:100,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
+    await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(`${result.summary} ${result.title}`,1600),progress:100,completed_at:at,error:null,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
     await activity(tg,params.runId,'run_completed',result.summary,{host:new URL(result.url).hostname,action_count:result.actions.length})
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
   }catch(err:any){
