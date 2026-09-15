@@ -27,6 +27,34 @@ function looksBookable(url: string, title = '') {
     || /book[-_]?appointment|appointment[-_]?booking|schedule[-_]?appointment/.test(value)
 }
 
+const CITY_ALIASES: Record<string,string[]> = {
+  bengaluru:['bengaluru','bangalore','blr'],
+  bangalore:['bengaluru','bangalore','blr'],
+  mumbai:['mumbai','bombay'],
+  delhi:['delhi','new delhi','ncr'],
+  'new delhi':['delhi','new delhi','ncr'],
+  hyderabad:['hyderabad'],
+  chennai:['chennai','madras'],
+  pune:['pune'],
+  kolkata:['kolkata','calcutta'],
+  mysuru:['mysuru','mysore'],
+  mysore:['mysuru','mysore'],
+}
+
+const KNOWN_CITY_RE = /\b(bengaluru|bangalore|blr|mumbai|bombay|delhi|new delhi|ncr|hyderabad|chennai|madras|pune|kolkata|calcutta|mysuru|mysore|gurugram|gurgaon|noida|ahmedabad|jaipur|kochi|cochin|lucknow|indore|bhopal|chandigarh)\b/i
+
+export function locationLockedResult(result: { url?:string; title?:string; snippet?:string }, location: string) {
+  const wanted = safe(location,100).toLowerCase()
+  if (!wanted) return true
+  const aliases = CITY_ALIASES[wanted] || [wanted]
+  const haystack = `${result.url || ''} ${result.title || ''} ${result.snippet || ''}`.toLowerCase()
+  if (aliases.some(alias => haystack.includes(alias))) return true
+  // A city-neutral provider booking endpoint is acceptable because the next browser
+  // step may select the locked city. An endpoint that explicitly names another city
+  // is never acceptable and must not replace the user's selected provider/location.
+  return !KNOWN_CITY_RE.test(haystack)
+}
+
 function hasLiveSlotEvidence(text: string) {
   const value = safe(text, 9000).toLowerCase()
   const slotSignal = /\b(available\s+(?:appointment\s+)?slots?|appointment\s+times?|select\s+(?:a\s+)?(?:slot|time|date)|choose\s+(?:a\s+)?(?:slot|time|date)|time\s+slots?)\b/.test(value)
@@ -60,26 +88,29 @@ async function bestPriorResearch(tg: number) {
 
 async function resolveBookableTarget(selected: any, meta: any) {
   const originalUrl = safe(selected?.url || '',1200)
-  if (!originalUrl) return { url:'', resolved:false, queries:[] as string[] }
-  if (looksBookable(originalUrl, safe(selected?.title || '',240))) return { url:originalUrl, resolved:false, queries:[] as string[] }
+  if (!originalUrl) return { url:'', resolved:false, queries:[] as string[], locationLocked:true }
+  if (looksBookable(originalUrl, safe(selected?.title || '',240))) return { url:originalUrl, resolved:false, queries:[] as string[], locationLocked:true }
   const originalHost = host(originalUrl)
-  if (!originalHost) return { url:originalUrl, resolved:false, queries:[] as string[] }
+  if (!originalHost) return { url:originalUrl, resolved:false, queries:[] as string[], locationLocked:true }
 
+  const location = safe(meta?.location || '',100)
   const queries = [
-    `site:${originalHost} "book appointment"`,
-    `site:${originalHost} appointment booking schedule`,
-    [safe(selected?.title || selected?.provider || originalHost,180), safe(meta?.service || 'appointment',100), safe(meta?.location || '',100), 'book appointment schedule online'].filter(Boolean).join(' '),
+    `site:${originalHost} ${location ? `"${location}" ` : ''}"book appointment"`,
+    `site:${originalHost} ${location || ''} appointment booking schedule`,
+    [safe(selected?.title || selected?.provider || originalHost,180), safe(meta?.service || 'appointment',100), location, 'book appointment schedule online'].filter(Boolean).join(' '),
   ]
   const resultSets = await Promise.all(queries.map(query => searchWebResults(query).catch(() => [])))
   const seen = new Set<string>()
-  const sameProvider = resultSets.flat().filter((result:any) => {
+  const sameProviderAndCity = resultSets.flat().filter((result:any) => {
     const url = String(result?.url || '')
     if (!url || seen.has(url) || !sameProviderHost(url, originalUrl)) return false
     seen.add(url)
-    return true
+    return locationLockedResult(result, location)
   })
-  const best = sameProvider.find((result:any) => looksBookable(String(result?.url || ''), `${result?.title || ''} ${result?.snippet || ''}`))
-  return best?.url ? { url:String(best.url), resolved:true, queries } : { url:originalUrl, resolved:false, queries }
+  const best = sameProviderAndCity.find((result:any) => looksBookable(String(result?.url || ''), `${result?.title || ''} ${result?.snippet || ''}`))
+  return best?.url
+    ? { url:String(best.url), resolved:true, queries, locationLocked:true }
+    : { url:originalUrl, resolved:false, queries, locationLocked:true }
 }
 
 async function retireStaleBookingApprovals(tg: number, targetUrl: string) {
@@ -139,7 +170,7 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
   const target = await resolveBookableTarget(selected,meta)
   const staleApprovalsRetired = await retireStaleBookingApprovals(tg,target.url)
 
-  const objective = `Open ${target.url} and inspect the provider appointment flow for ${safe(meta.service || 'the requested service',120)}${meta.location ? ` in ${safe(meta.location,100)}` : ''}${meta.timing ? ` around ${safe(meta.timing,100)}` : ''}. Navigate within this provider website to its appointment or scheduling page if needed. Fill only safe non-sensitive search fields if needed to reveal available dates or times. Make no provider-side changes. Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step.`
+  const objective = `Open ${target.url} and inspect the provider appointment flow for ${safe(meta.service || 'the requested service',120)}${meta.location ? ` in ${safe(meta.location,100)}` : ''}${meta.timing ? ` around ${safe(meta.timing,100)}` : ''}. Keep the provider AND city locked to option ${option}; do not navigate to a branch or page for another city. Navigate within this provider website to its appointment or scheduling page if needed. Fill only safe non-sensitive search fields if needed to reveal available dates or times. Make no provider-side changes. Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step.`
   const result = await tryRunBrowserCommand({ actor:params.actor,surface:params.surface,text:objective })
   if (!result) throw new Error('appointment_followup_recovery_browser_not_routed')
 
@@ -149,14 +180,24 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
       option,researchRunId:String(research.id),title:safe(selected.title || '',220),provider:safe(selected.provider || '',160),
       url:target.url,originalUrl:selected.url,bookablePathResolved:target.resolved,availabilityVerified,staleApprovalsRetired,
       service:safe(meta.service || '',120),location:safe(meta.location || '',120),timing:safe(meta.timing || '',120),recoveredContext:true,
+      providerLocked:true,locationLocked:true,
     })
+  }
+
+  if (result.status === 'paused') {
+    return {
+      ...result,
+      text:`${result.text}\n\nI kept option ${option}, ${safe(selected.title || selected.provider || 'the selected provider',180)}, locked to ${safe(meta.location || 'the original city',100)}. I did not switch provider or city, and I did not book anything or create an approval.`,
+      handledBy:'appointment-followup-recovery' as const,
+      availabilityVerified:false,
+    }
   }
 
   if (result.status === 'completed' && !availabilityVerified) {
     return {
       ...result,
       status:'paused' as const,
-      text:`${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous',100)} appointment search${target.resolved ? ' and switched to the same provider\'s direct appointment path' : ''}, but I could not verify actual live appointment dates/times from the provider page. I did not book anything or create a new approval.`,
+      text:`${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous',100)} appointment search${target.resolved ? ' and switched only to the same provider\'s city-safe appointment path' : ''}, but I could not verify actual live appointment dates/times from the provider page. I did not book anything or create a new approval.`,
       handledBy:'appointment-followup-recovery' as const,
       availabilityVerified:false,
     }
@@ -165,7 +206,7 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
   return {
     ...result,
     text: result.status === 'completed'
-      ? `${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous',100)} appointment search${target.resolved ? ' and switched to the same provider\'s direct appointment path' : ''}. I verified live slot evidence and made no provider-side changes.`
+      ? `${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous',100)} appointment search${target.resolved ? ' and switched only to the same provider\'s city-safe appointment path' : ''}. I verified live slot evidence and made no provider-side changes.`
       : result.text,
     handledBy:'appointment-followup-recovery' as const,
     availabilityVerified,
