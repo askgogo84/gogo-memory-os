@@ -5,10 +5,22 @@ const RETRIEVAL_VERB_RE = /\b(show me|find|send me|get me|pull up|do you have|wh
 const RESERVED_RETRIEVAL_RE = /^(?:show|open|find|get|send)(?:\s+me)?\s+(?:my\s+)?(?:reminders?|tasks?|to-?dos?|lists?|calendar|events?|cards?|credit\s*cards?|emails?|mail|weather|briefing|today|memory|memories|preferences?|rules?|contacts?|expenses?|spending|saved\s+(?:reels?|videos?|posts?))\s*[?.!]*$/i
 const SENSITIVE_REVEAL_CONFIRM_RE = /^\s*show\s+(?:the\s+)?(?:passport|id|reference)\s*(?:number|no)?\s*[?.!]*$/i
 
+// Operational requests must never be stolen by a loose match against an old saved
+// document. This is especially important for booking flows where words such as
+// "open", "create", "booking" and "confirm" are action vocabulary, not document
+// identity. Explicit document/file retrieval still remains eligible below.
+const OPERATIONAL_FLOW_RE = /\b(appointment|provider|live\s+slots?|availability|book(?:ing)?|reserve|reservation|flight|airline|concert|movie|event\s+tickets?|bus\s+tickets?|train\s+tickets?|cab|hotel|check[- ]?in|checkout|payment|purchase)\b/i
+
 const STOP = new Set([
   'show', 'me', 'find', 'send', 'get', 'pull', 'up', 'do', 'you', 'have', 'where', 'is',
   'open', 'retrieve', 'my', 'the', 'a', 'an', 'please', 'for', 'of', 'to', 'from', 'this',
   'that', 'saved', 'save', 'memory', 'item', 'thing', 'original', 'copy',
+  // Generic operational verbs/modifiers are not stable asset identifiers. A previous
+  // production failure matched only "create" from "do not create anything" to an old
+  // transaction screenshot and returned the wrong artifact.
+  'create', 'confirm', 'call', 'check', 'inspect', 'prepare', 'provider', 'page', 'option',
+  'available', 'availability', 'slots', 'slot', 'book', 'booking', 'reserve', 'reservation',
+  'next', 'week', 'anything', 'live',
 ])
 
 function normalize(value: string): string {
@@ -38,6 +50,16 @@ function assetNoun(doc: any): string {
   return 'document'
 }
 
+export function shouldAttemptNaturalAssetRetrieval(text: string): boolean {
+  const raw = String(text || '').trim()
+  if (!raw || !RETRIEVAL_VERB_RE.test(raw) || RESERVED_RETRIEVAL_RE.test(raw) || SENSITIVE_REVEAL_CONFIRM_RE.test(raw)) return false
+  // If this is an operational booking/travel/event flow, only permit Asset Memory to
+  // claim it when the user explicitly asked for an asset-shaped object (document,
+  // passport, receipt, file, etc.). Otherwise the real booking agent owns the turn.
+  if (OPERATIONAL_FLOW_RE.test(raw) && !isAssetRetrievalCommand(raw)) return false
+  return true
+}
+
 /**
  * Natural Asset Memory retrieval for phrases such as:
  *   "show me Jopasu Dashboard & Tyre Polish"
@@ -59,7 +81,7 @@ export async function buildNaturalAssetRetrievalReply(
   // "show passport number" is the explicit confirmation phrase created by the
   // sensitive-field gate. Decline it here so buildAssetFieldReply can consume the
   // one-shot pending binding later in the WhatsApp route.
-  if (!raw || !RETRIEVAL_VERB_RE.test(raw) || RESERVED_RETRIEVAL_RE.test(raw) || SENSITIVE_REVEAL_CONFIRM_RE.test(raw)) return null
+  if (!shouldAttemptNaturalAssetRetrieval(raw)) return null
 
   const qTokens = tokens(raw)
   if (!qTokens.length) return null
@@ -86,6 +108,7 @@ export async function buildNaturalAssetRetrievalReply(
 
   let best: any | null = null
   let bestScore = 0
+  let bestTitleHits = 0
   let secondScore = 0
 
   for (const doc of docs) {
@@ -120,13 +143,18 @@ export async function buildNaturalAssetRetrievalReply(
     if (score > bestScore) {
       secondScore = bestScore
       bestScore = score
+      bestTitleHits = titleHits
       best = doc
     } else if (score > secondScore) {
       secondScore = score
     }
   }
 
-  const strongLexicalMatch = best && bestScore >= 7 && (bestScore - secondScore >= 2 || bestScore >= 12)
+  // Natural title retrieval requires more than one discriminative title token.
+  // A single unique generic verb used to score 7 (4 title + 3 uniqueness), which was
+  // enough to leak an unrelated old artifact into a booking flow. Explicit asset
+  // retrieval is handled by the semantic path below and does not need this shortcut.
+  const strongLexicalMatch = best && bestTitleHits >= 2 && bestScore >= 7 && (bestScore - secondScore >= 2 || bestScore >= 12)
   if (strongLexicalMatch) {
     const enriched = `${raw} ${best.title || ''} ${assetNoun(best)}`.trim()
     return buildAssetRetrievalReply(telegramId, enriched, messageId ?? null)
