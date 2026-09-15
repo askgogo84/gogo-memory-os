@@ -19,6 +19,9 @@ assert.match(router,/buildGmailConnectUrl/)
 assert.ok(router.indexOf('if (isSimpleWorkspaceRead(text))') < router.indexOf('tryRunWhatsAppAgent({ user, text })'))
 assert.match(router,/read-only Gmail, Contacts and Drive/)
 
+assert.match(bridge,/tryRecoverAppointmentOption/)
+assert.match(bridge,/tryRunAppointmentFollowup/)
+assert.match(bridge,/tryRunAppointmentResearch/)
 assert.match(bridge,/tryCreateWebWatchFromCommand/)
 assert.match(bridge,/tryRunBrowserCommand/)
 assert.match(bridge,/tryPrepareTravelCalendarPlan/)
@@ -33,8 +36,15 @@ assert.match(bridge,/executeApprovedTravelCalendarPlan/)
 assert.match(bridge,/executeApprovedBrowserCommand/)
 assert.match(bridge,/resumeApprovedGeneralPlan/)
 
+// Appointment selection and research must beat generic browser/planner routing on
+// WhatsApp so numbered provider context cannot drift or disappear between turns.
+assert.ok(bridge.indexOf('tryRecoverAppointmentOption({ actor') < bridge.indexOf('tryRunBrowserCommand({ actor'),'appointment option recovery must precede generic browser routing')
+assert.ok(bridge.indexOf('tryRunAppointmentFollowup({ actor') < bridge.indexOf('tryRunBrowserCommand({ actor'),'appointment exact-slot follow-up must precede generic browser routing')
+assert.ok(bridge.indexOf('tryRunAppointmentResearch({ actor') < bridge.indexOf('tryRunBrowserCommand({ actor'),'appointment discovery must precede generic browser routing')
+assert.ok(bridge.indexOf('tryRecoverAppointmentOption({ actor') < bridge.indexOf('tryRunAppointmentResearch({ actor'),'numbered option recovery must precede a new provider search')
+
 // A complex trip mission must remain a multi-step mission on WhatsApp; the
 // single-feature current-fare fallback comes only afterwards.
 assert.ok(bridge.lastIndexOf('tryRunGeneralPlan') < bridge.lastIndexOf('tryRunTravelResearch'),'WhatsApp general planner must precede simple travel research')
 
-console.log('WhatsApp Muse bridge + one-Gogo Workspace verification passed')
+console.log('WhatsApp Muse bridge + appointment lifecycle + one-Gogo Workspace verification passed')

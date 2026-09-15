@@ -12,6 +12,9 @@ import { executeApprovedAgentRun } from './orchestrator'
 import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
+import { tryRecoverAppointmentOption } from './appointment-followup-recovery'
+import { tryRunAppointmentFollowup } from './appointment-followup'
+import { tryRunAppointmentResearch } from './appointment-research'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -150,6 +153,19 @@ export async function tryRunWhatsAppAgent(params: {
 
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
+
+  // Appointment context is deterministic and must beat generic browser/planner
+  // routing. Numbered options are recovered from the latest location-anchored
+  // appointment research run; exact-slot follow-ups then use the prepared provider
+  // flow. This prevents provider/location drift and makes WhatsApp match Agent/chat.
+  const appointmentRecovery = await tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text })
+  if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String(appointmentRecovery.handledBy || 'appointment-followup-recovery') }
+
+  const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:'whatsapp', text:params.text })
+  if (appointmentFollowup) return { ...appointmentFollowup, text:`${appointmentFollowup.text || ''}${appointmentFollowup.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(appointmentFollowup.handledBy || 'appointment-followup') }
+
+  const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:'whatsapp', text:params.text })
+  if (appointmentResearch) return { ...appointmentResearch, handledBy:String(appointmentResearch.handledBy || 'appointment-research') }
 
   const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (webWatch) return { ...webWatch, handledBy:String(webWatch.handledBy || 'background-web-watch') }
