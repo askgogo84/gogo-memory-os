@@ -163,10 +163,11 @@ async function createCompletedRun(telegramId: string, event: any, action: any, s
 }
 
 async function writeActivity(telegramId: string, runId: string | null, eventType: string, message: string, metadata: Record<string, unknown> = {}) {
-  await supabaseAdmin.from('agent_activity').insert({
+  const { error } = await supabaseAdmin.from('agent_activity').insert({
     telegram_id: telegramId, run_id: runId, event_type: eventType,
     message: safe(message, 900), metadata_json: metadata,
-  }).catch(() => {})
+  })
+  if (error) console.error('LIFE_EVENT_ACTIVITY_INSERT_FAILED:', error.message)
 }
 
 async function processCalendarDraft(action: any, event: any, telegramId: string) {
@@ -277,7 +278,7 @@ async function processBillReview(action: any, event: any, telegramId: string) {
   const kind = event.event_type === 'subscription' ? 'renewal' : 'bill'
   const summary = `${event.title}: ${kind} review is due ${due}. Gogo has not paid, renewed, cancelled or changed anything.`
   const runId = await createCompletedRun(telegramId, event, action, summary, { payment_executed:false, review_type:kind })
-  await supabaseAdmin.from('agent_ideas').insert({
+  const { error: ideaError } = await supabaseAdmin.from('agent_ideas').insert({
     telegram_id:telegramId,
     title:event.title,
     reason:`${kind === 'renewal' ? 'Subscription renewal' : 'Bill'} is approaching.`,
@@ -286,7 +287,8 @@ async function processBillReview(action: any, event: any, telegramId: string) {
     action_label:'Review',
     source_refs:[{type:'life_event',id:String(event.id)}],
     status:'new',
-  }).catch(()=>{})
+  })
+  if (ideaError) console.error('LIFE_EVENT_IDEA_INSERT_FAILED:', ideaError.message)
   await complete(action,{reviewedAt:new Date().toISOString(),paymentExecuted:false})
   await writeActivity(telegramId,runId,'life_event_review_ready',summary,{life_event_id:event.id,action_id:action.id})
   await sendAgentPush(telegramId,{title:kind==='renewal'?'Subscription renewal coming up':'Bill review ready',body:safe(`${event.title} · ${due}`,240),path:'/agent',data:{runId,lifeEventId:String(event.id)}}).catch(()=>{})
