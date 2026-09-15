@@ -10,6 +10,7 @@ const SENSITIVE_REVEAL_CONFIRM_RE = /^\s*show\s+(?:the\s+)?(?:passport|id|refere
 // "open", "create", "booking" and "confirm" are action vocabulary, not document
 // identity. Explicit document/file retrieval still remains eligible below.
 const OPERATIONAL_FLOW_RE = /\b(appointment|provider|live\s+slots?|availability|book(?:ing)?|reserve|reservation|flight|airline|concert|movie|event\s+tickets?|bus\s+tickets?|train\s+tickets?|cab|hotel|check[- ]?in|checkout|payment|purchase)\b/i
+const EXPLICIT_ASSET_NOUN_RE = /\b(passport|payment|proof|screenshot|receipt|invoice|estimate|estimation|quotation|slip|document|pdf|file|\bid\b|licen[cs]e|statement|policy|aadhaar|pan|lease|agreement|contract|bill|certificate|report|letter|warranty|prescription)\b/i
 
 const STOP = new Set([
   'show', 'me', 'find', 'send', 'get', 'pull', 'up', 'do', 'you', 'have', 'where', 'is',
@@ -54,9 +55,9 @@ export function shouldAttemptNaturalAssetRetrieval(text: string): boolean {
   const raw = String(text || '').trim()
   if (!raw || !RETRIEVAL_VERB_RE.test(raw) || RESERVED_RETRIEVAL_RE.test(raw) || SENSITIVE_REVEAL_CONFIRM_RE.test(raw)) return false
   // If this is an operational booking/travel/event flow, only permit Asset Memory to
-  // claim it when the user explicitly asked for an asset-shaped object (document,
+  // claim it when the user explicitly asks for an asset-shaped object (document,
   // passport, receipt, file, etc.). Otherwise the real booking agent owns the turn.
-  if (OPERATIONAL_FLOW_RE.test(raw) && !isAssetRetrievalCommand(raw)) return false
+  if (OPERATIONAL_FLOW_RE.test(raw) && !EXPLICIT_ASSET_NOUN_RE.test(raw)) return false
   return true
 }
 
