@@ -84,8 +84,8 @@ async function resolveBookableTarget(selected: any, meta: any) {
 
 async function retireStaleBookingApprovals(tg: number, targetUrl: string) {
   const { data: approvals, error } = await supabaseAdmin.from('agent_approvals')
-    .select('id,run_id,status,created_at,title,execution_payload').eq('telegram_id',String(tg)).eq('action_type','booking').eq('status','pending')
-    .order('created_at',{ascending:false}).limit(20)
+    .select('id,run_id,status,requested_at,title,execution_payload').eq('telegram_id',String(tg)).eq('action_type','booking').eq('status','pending')
+    .order('requested_at',{ascending:false}).limit(20)
   if (error) throw new Error(`appointment_stale_approval_read_failed:${error.message}`)
   let retired = 0
   const targetHost = host(targetUrl)
