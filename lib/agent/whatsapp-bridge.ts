@@ -6,6 +6,7 @@ import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-c
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
 import { tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
+import { tryRunPersistentGeneralPlan } from './persistent-general-plan'
 import { tryRunTravelResearch } from './travel-research'
 import { hardenTravelResearchResult } from './travel-research-sanitize'
 import { executeApprovedAgentRun } from './orchestrator'
@@ -47,9 +48,6 @@ function shouldPreferSpecialistTravel(text: string) {
   if (!/\b(flight|flights|airfare|fare|fares|hotel|hotels|travel)\b/i.test(raw)) return false
   if (!/\b(find|search|compare|options|available|availability|current fare|current fares|live sources?|best available|cheapest|price|prices)\b/i.test(raw)) return false
 
-  // A pure research request belongs to the specialist travel engine so its real
-  // provider/public-web result becomes the user-facing answer. Compound missions
-  // (research + reminder/calendar/list/etc.) still go through the general planner.
   const crossFeature = /\b(remind\s+me|set\s+(?:a\s+)?reminder|add\s+.*\bcalendar\b|create\s+.*\blist\b|add\s+.*\blist\b|save\s+(?:this|it|the\s+results?)|create\s+.*\btask\b|add\s+.*\btask\b|then\s+(?:remind|save|add|create|email|send)|email\s+me|send\s+me)\b/i.test(raw)
   return !crossFeature
 }
@@ -225,9 +223,6 @@ export async function tryRunWhatsAppAgent(params: {
   const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:'whatsapp', text:params.text })
   if (appointmentResearch) return { ...appointmentResearch, handledBy:String(appointmentResearch.handledBy || 'appointment-research') }
 
-  // Pure current travel research must reach the specialist engine before generic
-  // browser/general planning. This makes the actual provider/public-web result the
-  // user-facing answer instead of allowing a trailing artifact step to mask it.
   if (shouldPreferSpecialistTravel(params.text)) {
     const specialistTravel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
     if (specialistTravel) {
@@ -247,6 +242,12 @@ export async function tryRunWhatsAppAgent(params: {
 
   const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (compound) return { ...compound, handledBy:compound.handledBy }
+
+  // Safe multi-step WhatsApp missions use the same persistent autonomous runtime as
+  // the dashboard/app. If the webhook returns or a worker is interrupted, the cron
+  // can resume the durable run instead of losing the mission inside one request.
+  const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
+  if (persistent) return { ...persistent, handledBy:String(persistent.handledBy || 'persistent-general-plan') }
 
   const general = await tryRunGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (general) return { ...general, text:`${general.text || ''}${general.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(general.handledBy || 'general-plan') }
