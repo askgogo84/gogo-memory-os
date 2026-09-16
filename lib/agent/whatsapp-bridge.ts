@@ -118,7 +118,7 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
 
   if (data.run_id) {
     await supabaseAdmin.from('agent_runs')
-      .update({ status: decision === 'approve' ? 'approved' : 'rejected', updated_at: now })
+      .update({ status: decision === 'approve' ? 'queued' : 'paused', updated_at: now })
       .eq('id', data.run_id)
       .eq('telegram_id', String(actor.legacyTelegramId))
       .eq('status', 'waiting_approval')
