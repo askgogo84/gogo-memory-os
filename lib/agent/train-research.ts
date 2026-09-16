@@ -80,6 +80,8 @@ export async function tryResumeTrainHandoff(params:{actor:AgentActor;text:string
 }
 
 export async function tryRunTrainResearch(params:{actor:AgentActor;surface:AgentSurface;text:string}){
+  const resumed=await tryResumeTrainHandoff({actor:params.actor,text:params.text})
+  if(resumed)return resumed
   if(!isTrainResearchRequest(params.text))return null
   const c=context(params.text);if(!c.from||!c.to||!c.date)return{runId:'',status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:'I can run the train task, but I need origin, destination and travel date.',handledBy:'train-research' as const}
   const tg=params.actor.legacyTelegramId;const now=new Date().toISOString()
