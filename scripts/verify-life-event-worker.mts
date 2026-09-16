@@ -61,13 +61,17 @@ assert.match(execution, /human_auth_required/)
 assert.match(execution, /status:\s*'executed'/)
 assert.match(execution, /lifecycle_state:\s*'watching'/)
 
-assert.match(secureComputer, /isPotentialSubmit/)
-assert.match(secureComputer, /payload\.mode!=='execute' && await isPotentialSubmit/)
+// Non-execute browser work may now click safe search/filter controls, but the
+// browser still detects and blocks consequential submit/book/buy/check-in controls.
+assert.match(secureComputer, /isConsequentialControl/)
+assert.match(secureComputer, /payload\.mode!=='execute' && await isConsequentialControl/)
 assert.match(secureComputer, /check\\s\*-\?\\s\*in/)
 assert.match(secureComputer, /confirm\(\?:ation\)\?/)
+assert.match(secureComputer, /safeResearch/)
+assert.match(secureComputer, /consequential/)
 
 assert.match(checkinMigration, /when '6E' then 'https:\/\/www\.goindigo\.in\/web-check-in\.html'/)
-assert.match(checkinMigration, /when 'AI' then 'https:\/\/www\.airindia\.com\/in\/en\/manage\/web-checkin\.html'/)
+assert.match(checkinMigration, /when 'AI' then 'https:\/\/www\.airindia\.com\/in\/en\/manage\/webcheckin\.html|when 'AI' then 'https:\/\/www\.airindia\.com\/in\/en\/manage\/web-checkin\.html'/)
 assert.match(checkinMigration, /when 'IX' then 'https:\/\/www\.airindiaexpress\.com\/checkin-home'/)
 assert.match(checkinMigration, /when 'EY' then 'https:\/\/www\.etihad\.com\/en\/manage\/check-in'/)
 assert.match(checkinMigration, /checkInUrlVerified/)

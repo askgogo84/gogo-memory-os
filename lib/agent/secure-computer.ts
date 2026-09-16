@@ -7,6 +7,7 @@ import { BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, ensureBrowse
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 const MAX_ACTIONS = 12
+const MAX_RESEARCH_WAVES = 4
 const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
 
 export type BrowserMode = 'read' | 'draft' | 'execute'
@@ -75,22 +76,24 @@ async function model(page){
     return {
       url:location.href,title:document.title,
       text:clean(document.body?.innerText||'').slice(0,18000),
-      links:Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0,80).map(a=>({text:clean(a.textContent).slice(0,160),href:a.href})),
-      forms:Array.from(document.forms).filter(visible).slice(0,12).map(f=>({
+      links:Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0,100).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})),
+      forms:Array.from(document.forms).filter(visible).slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
-        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,50).map(inputs)
+        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(inputs)
       }))
     };
   });
 }
-async function isPotentialSubmit(page,selector){
+async function isConsequentialControl(page,selector){
   try{return await page.locator(selector).first().evaluate(el=>{
     const t=(el.getAttribute('type')||'').toLowerCase();
-    if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;
     const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
-    const terminal=/\b(check\s*-?\s*in|confirm(?:ation)?|complete|finish|finali[sz]e|submit)\b/i.test(text);
-    const buttonLike=el.tagName==='BUTTON'||el.tagName==='A'||el.getAttribute('role')==='button'||typeof el.onclick==='function'||el.getAttribute('onclick')!==null;
-    return Boolean(terminal&&buttonLike);
+    const safeResearch=/\b(search|find|show|filter|apply filters|see results|view results|check availability|update results|go)\b/i.test(text);
+    const consequential=/\b(book|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i.test(text);
+    if(safeResearch && !consequential)return false;
+    if(consequential)return true;
+    if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;
+    return false;
   });}catch{return true;}
 }
 (async()=>{
@@ -99,23 +102,23 @@ async function isPotentialSubmit(page,selector){
   const log=[];
   try{
     await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
-    await page.waitForTimeout(700);
+    await page.waitForTimeout(900);
     for(const a of (payload.actions||[])){
       try{
         if(a.kind==='goto') await page.goto(a.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
         else if(a.kind==='fill') await page.locator(a.selector).first().fill(a.value,{timeout:10000});
         else if(a.kind==='select') await page.locator(a.selector).first().selectOption(a.value,{timeout:10000});
         else if(a.kind==='check') await page.locator(a.selector).first().check({timeout:10000});
-        else if(a.kind==='wait') await page.waitForTimeout(Math.min(4000,Math.max(100,Number(a.ms)||500)));
+        else if(a.kind==='wait') await page.waitForTimeout(Math.min(5000,Math.max(100,Number(a.ms)||500)));
         else if(a.kind==='click'){
-          if(payload.mode!=='execute' && await isPotentialSubmit(page,a.selector)){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
+          if(payload.mode!=='execute' && await isConsequentialControl(page,a.selector)){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
           await page.locator(a.selector).first().click({timeout:10000});
         } else if(a.kind==='submit'){
           if(payload.mode!=='execute'){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
           await page.locator(a.selector).first().click({timeout:10000});
         }
         log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done'});
-        await page.waitForTimeout(400);
+        await page.waitForTimeout(650);
       }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed'});}
     }
     const out=await model(page); out.actions=log; console.log(JSON.stringify(out));
@@ -179,14 +182,22 @@ function detectProviderAccessBlock(page:any){
 }
 
 async function planActions(objective:string,page:any,mode:BrowserMode):Promise<BrowserAction[]>{
-  if(mode==='read')return []
-  const pageModel={url:page.url,title:page.title,text:String(page.text||'').slice(0,9000),links:(page.links||[]).slice(0,50),forms:(page.forms||[]).slice(0,10)}
-  const prompt=`You are Gogo's browser action planner. Produce JSON array only. Goal: ${JSON.stringify(objective.slice(0,1600))}\nMode: ${mode}.\nCurrent page model: ${JSON.stringify(pageModel)}\nAllowed action kinds: goto, click, fill, select, check, wait, submit. Use selectors already present for form fields. Never invent passwords, OTPs, card numbers or secret values. Never use submit unless the user's goal explicitly asks to submit/send/apply/book and mode is execute. In draft mode, fill fields and navigate but leave the final submit untouched. Maximum ${MAX_ACTIONS} actions.`
+  const pageModel={url:page.url,title:page.title,text:String(page.text||'').slice(0,10000),links:(page.links||[]).slice(0,70),forms:(page.forms||[]).slice(0,12)}
+  const modeRule = mode==='read'
+    ? 'Research mode: actively navigate, fill search/filter fields, click safe search/filter/result controls, and wait for results until the objective is satisfied. Never book, buy, reserve, apply, submit personal data, authenticate, or trigger a consequential action. Return [] only when the current page already contains enough evidence to answer the objective.'
+    : mode==='draft'
+      ? 'Draft mode: navigate and fill reversible fields, but do not trigger the final submit/book/buy/confirm control.'
+      : 'Execute mode: perform only the explicitly approved objective. Do not invent credentials, OTPs, card data, or other secrets.'
+  const prompt=`You are Gogo's browser action planner. Produce JSON array only. Goal: ${JSON.stringify(objective.slice(0,1600))}\nMode: ${mode}. ${modeRule}\nCurrent page model: ${JSON.stringify(pageModel)}\nAllowed action kinds: goto, click, fill, select, check, wait, submit. Use selectors already present for form fields. Prefer safe navigation/click/fill/select/wait. Never invent passwords, OTPs, card numbers or secret values. Never use submit unless mode is execute and the approved goal explicitly requires the final consequential action. Maximum ${MAX_ACTIONS} actions.`
   try{
-    const res=await anthropic.messages.create({model:'claude-haiku-4-5',max_tokens:1400,temperature:0,messages:[{role:'user',content:prompt}]})
+    const res=await anthropic.messages.create({model:'claude-haiku-4-5',max_tokens:1600,temperature:0,messages:[{role:'user',content:prompt}]})
     const text=res.content[0]?.type==='text'?res.content[0].text:''
     return normalizeActions(parseJsonLoose(text),page.url)
   }catch(err:any){console.error('SECURE_BROWSER_PLAN_FAILED:',err?.message||err);return []}
+}
+
+function normalizeActionLog(values:any[]){
+  return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const}))
 }
 
 export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode}):Promise<SecureBrowserResult>{
@@ -194,56 +205,44 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
     const first=await inspect(params.userId,target.toString())
-
-    const providerBlock=detectProviderAccessBlock(first.page)
-    if(providerBlock){
-      await first.sandbox.stop().catch(()=>{})
-      return {
-        status:'blocked',url:String(first.page.url||target),title:safeText(first.page.title,300),summary:providerBlock,
-        pageText:safeText(first.page.text,1200),forms:[],actions:[],sandboxName:first.name,blockReason:'provider_access_limited',
-      }
-    }
-
-    const authGate=detectHumanAuthGate(first.page)
-    if(authGate.required){
-      await first.sandbox.stop().catch(()=>{})
-      return {
-        status:'blocked',url:String(first.page.url||target),title:safeText(first.page.title,300),
-        summary:authGate.message||'Human authentication is required before Gogo can continue.',
-        pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',
-        forms:[],actions:[],sandboxName:first.name,blockReason:'human_auth_required',authReason:authGate.reason,
-      }
-    }
-
-    const actions=await planActions(params.objective,first.page,params.mode)
     let page=first.page
     let actionLog:any[]=[]
-    if(actions.length){
-      const {allow}=allowedHosts(target.toString());await first.sandbox.updateNetworkPolicy({allow} as any)
-      const payload=Buffer.from(JSON.stringify({url:target.toString(),mode:params.mode,actions})).toString('base64')
+    let anyPlannedSubmit=false
+
+    for(let wave=0;wave<(params.mode==='read'?MAX_RESEARCH_WAVES:1);wave++){
+      const providerBlock=detectProviderAccessBlock(page)
+      if(providerBlock){
+        await first.sandbox.stop().catch(()=>{})
+        return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:providerBlock,pageText:safeText(page.text,1200),forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
+      }
+
+      const authGate=detectHumanAuthGate(page)
+      if(authGate.required){
+        await first.sandbox.stop().catch(()=>{})
+        return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:authGate.message||'Human authentication is required before Gogo can continue.',pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:authGate.reason}
+      }
+
+      const actions=await planActions(params.objective,page,params.mode)
+      if(!actions.length)break
+      if(actions.some(a=>a.kind==='submit'))anyPlannedSubmit=true
+      const currentUrl=String(page.url||target.toString())
+      const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
+      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions})).toString('base64')
       const result=await first.sandbox.runCommand({cmd:'node',args:['gogo-browser.js',payload]})
       if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
       const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
-      page=JSON.parse(lines[lines.length-1]);actionLog=page.actions||[]
-      const actionBlock=detectProviderAccessBlock(page)
-      if(actionBlock){
-        await first.sandbox.stop().catch(()=>{})
-        return {
-          status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:actionBlock,
-          pageText:safeText(page.text,1200),forms:[],actions:actionLog.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed'})),
-          sandboxName:first.name,blockReason:'provider_access_limited',
-        }
-      }
+      page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]))
+      const doneCount=(page.actions||[]).filter((a:any)=>a.status==='done').length
+      if(doneCount===0)break
     }
+
     await first.sandbox.stop().catch(()=>{})
-    const prepared=params.mode==='draft' && actions.some(a=>a.kind==='submit')
+    const prepared=params.mode==='draft' && anyPlannedSubmit
     return {
       status:prepared?'prepared':'completed',url:String(page.url||target),title:safeText(page.title,300),
-      summary:params.mode==='read'?'Gogo read the page in an isolated browser.':prepared?'Gogo prepared the browser flow and stopped before submit.':'Gogo completed the approved browser flow.',
-      pageText:safeText(page.text,6000),forms:Array.isArray(page.forms)?page.forms.slice(0,12):[],
-      actions:actionLog.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed'})),
-      sandboxName:first.name,
+      summary:params.mode==='read'?'Gogo completed the browser research task.':prepared?'Gogo prepared the browser flow and stopped before submit.':'Gogo completed the approved browser flow.',
+      pageText:safeText(page.text,9000),forms:Array.isArray(page.forms)?page.forms.slice(0,12):[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
     }
   } catch (error:any) {
     console.error('SECURE_BROWSER_FAILED:', error?.stack || error?.message || error)
