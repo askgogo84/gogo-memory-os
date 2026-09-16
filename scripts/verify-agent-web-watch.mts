@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { parseWebWatchCommand } from '../lib/agent/watch-command'
+import { parseFlightIdentifier, parseWebWatchCommand } from '../lib/agent/watch-command'
 import { normalizeWebSearchWatcher } from '../lib/agent/watchers'
 import {
   assessWebWatchResult,
@@ -37,6 +37,13 @@ assert.equal(parseWebWatchCommand('What is on my calendar?'), null)
 assert.equal(parseWebWatchCommand('Watch a movie tonight'), null)
 assert.equal(parseWebWatchCommand('monitor'), null)
 
+// Production regression: a stale pending flight follow-up must never reinterpret
+// an unrelated time phrase such as "at 9:00 AM" as flight number "AT 9".
+assert.equal(parseFlightIdentifier('Create a packing list and remind me tomorrow at 9:00 AM'), null)
+assert.equal(parseFlightIdentifier('remind me at 8:30 PM to call Mathew'), null)
+assert.equal(parseFlightIdentifier('Air India AI 101')?.flightNumber, 'AI 101')
+assert.equal(parseFlightIdentifier('IndiGo 6E 203')?.flightNumber, '6E 203')
+
 const normalized = normalizeWebSearchWatcher({
   title:'  Watch watch availability  ',
   query:'  Christopher Ward   New York ',
@@ -54,8 +61,6 @@ const maxCadence = normalizeWebSearchWatcher({ title:'x', query:'y', cadenceMinu
 assert.equal(maxCadence?.cadenceMinutes, 1440)
 assert.equal(normalizeWebSearchWatcher({ title:'x', query:'' }), null)
 
-// Regression for the WhatsApp flood seen on broad AskGogo/Muse monitoring.
-// Generic personal-agent listicles must not become "meaningful" merely because a search provider rotated them into the top five.
 const genericMuse = assessWebWatchResult({
   query:'AskGogo personal AI agent India',
   title:'Introducing Muse — the world’s first Personal AI Agent',
