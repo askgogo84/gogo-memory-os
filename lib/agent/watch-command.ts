@@ -41,8 +41,6 @@ export function parseWebWatchCommand(text: string) {
     query,
     triggerKeywords,
     delivery: 'both',
-    // Parsing stays capability-neutral. The effective cadence is replaced at
-    // creation time by the user's plan + COGS policy.
     cadenceMinutes: 15,
   })
 }
@@ -164,13 +162,6 @@ export async function tryCreateWebWatchFromCommand(params: {
   }
 }
 
-// ── Flight watcher two-turn handoff ──────────────────────────────────────────
-// A natural request such as “Watch my flight to New York on 27th September…”
-// often does not contain the airline/flight number yet. Persist the destination
-// and date as a short-lived follow-up instead of letting the next message fall
-// into an unrelated router. Once the flight identifier arrives, create a real
-// Background Gogo web watcher using the existing watcher engine above.
-
 type PendingFlightWatch = {
   destination: string
   dateText: string
@@ -178,14 +169,28 @@ type PendingFlightWatch = {
   created_at: string
 }
 
-function parseFlightIdentifier(text: string) {
+const FLIGHT_CODE_STOPWORDS = new Set([
+  'AT', 'AM', 'PM', 'ON', 'TO', 'IN', 'BY', 'OF', 'OR', 'AN', 'AS', 'IF', 'IS', 'IT', 'ME', 'MY', 'WE', 'US', 'GO', 'DO', 'NO', 'SO', 'UP',
+])
+
+function looksLikeIndependentCommand(text: string) {
+  const raw = clean(text, 2000)
+  if (!raw) return false
+  return /^(?:please\s+)?(?:create|make|add|save|remind|schedule|show|list|find|search|look\s+for|check|book|reserve|order|buy|purchase|watch|monitor|track|send|email|message|plan|compare|open|go\s+to|cancel|delete|remove|update|change|move|call|tell|give|get)\b/i.test(raw)
+    || /\b(?:then|and then)\s+(?:create|make|add|save|remind|schedule|show|find|search|check|book|reserve|order|buy|watch|monitor|send|plan|compare)\b/i.test(raw)
+}
+
+export function parseFlightIdentifier(text: string) {
   const raw = clean(text, 500)
-  // IATA/ICAO-like designator + numeric flight number. Requiring a digit keeps
-  // ordinary prose from being misread as a flight identifier.
   const match = raw.match(/\b([A-Z0-9]{2,3})\s*-?\s*(\d{1,4}[A-Z]?)\b/i)
   if (!match) return null
   const code = match[1].toUpperCase()
   const number = match[2].toUpperCase()
+
+  if (FLIGHT_CODE_STOPWORDS.has(code)) return null
+  const matchedEnd = (match.index || 0) + match[0].length
+  if (raw.slice(matchedEnd).trimStart().startsWith(':')) return null
+
   const before = raw.slice(0, match.index || 0).trim().replace(/[-–—,:]+$/g, '').trim()
   const airline = before && before.length <= 80 ? before : ''
   return {
@@ -237,8 +242,6 @@ async function createFlightWatcherFromPending(params: {
   const result = await tryCreateWebWatchFromCommand({ actor, surface, text: synthesized })
   if (!result) return null
 
-  // Only consume the handoff when a watcher was actually created. Plan/permission
-  // blocks remain actionable and should not falsely read as “watch started”.
   if (result.status === 'completed' && result.runId && !String(result.runId).includes('blocked') && !String(result.runId).includes('limit')) {
     await clearFollowupState(actor.legacyTelegramId, 'pending_flight_watch')
     return {
@@ -265,7 +268,7 @@ export async function tryCreateFlightWatchFromCommand(params: {
   if (!raw) return null
 
   const freshPending = await getLatestFollowupState(params.actor.legacyTelegramId, 'pending_flight_watch')
-  if (freshPending && isStrictlyFreshFollowupState(freshPending, 30)) {
+  if (freshPending && isStrictlyFreshFollowupState(freshPending, 30) && !looksLikeIndependentCommand(raw)) {
     const identifier = parseFlightIdentifier(raw)
     if (identifier) {
       const pending = freshPending.payload as PendingFlightWatch
