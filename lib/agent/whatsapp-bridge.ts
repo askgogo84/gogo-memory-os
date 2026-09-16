@@ -10,6 +10,7 @@ import { tryRunPersistentGeneralPlan } from './persistent-general-plan'
 import { tryRunTravelResearch } from './travel-research'
 import { hardenTravelResearchResult } from './travel-research-sanitize'
 import { shouldPreferSpecialistTravel } from './specialist-routing'
+import { tryRunTrainResearch } from './train-research'
 import { executeApprovedAgentRun } from './orchestrator'
 import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
@@ -214,6 +215,9 @@ export async function tryRunWhatsAppAgent(params: {
 
   const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:'whatsapp', text:params.text })
   if (appointmentResearch) return { ...appointmentResearch, handledBy:String(appointmentResearch.handledBy || 'appointment-research') }
+
+  const trainResearch = await withWhatsAppBrowserBudget(actor, tryRunTrainResearch({ actor, surface:'whatsapp', text:params.text }))
+  if (trainResearch) return { ...(trainResearch as any), handledBy:String((trainResearch as any).handledBy || 'train-research') }
 
   if (shouldPreferSpecialistTravel(params.text)) {
     const specialistTravel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
