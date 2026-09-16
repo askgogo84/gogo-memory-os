@@ -44,6 +44,9 @@ const PLACES: Record<string, Place> = {
   goa: { label: 'Goa', aliases: ['goa','goi','gox'] },
   dubai: { label: 'Dubai', code: 'DXB', aliases: ['dubai','dxb'] },
   dxb: { label: 'Dubai', code: 'DXB', aliases: ['dubai','dxb'] },
+  'new york': { label: 'New York', code: 'NYC', aliases: ['new york','nyc','jfk','ewr','lga'] },
+  nyc: { label: 'New York', code: 'NYC', aliases: ['new york','nyc','jfk','ewr','lga'] },
+  jfk: { label: 'New York', code: 'JFK', aliases: ['new york','nyc','jfk'] },
 }
 
 const INDIA_CODES = new Set(['BLR','BOM','DEL','HYD','MAA','CCU','PNQ','GOI','GOX'])
@@ -101,6 +104,34 @@ function thisWeekRange(now: Date) {
   return { label:`${fmtDate(base)} – ${fmtDate(sunday)}`, search:`${fmtDate(base)} ${fmtDate(sunday)}`, startDate:isoDay(base), endDate:isoDay(sunday) }
 }
 
+function explicitDateFromText(text: string, now: Date) {
+  let m = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/)
+  if (m) {
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+    if (!Number.isNaN(d.getTime())) return isoDay(d)
+  }
+  m = text.match(/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(20\d{2}))?/i)
+  if (m) {
+    const month = MONTHS[m[2].toLowerCase()]
+    const year = Number(m[3] || now.getUTCFullYear())
+    const d = new Date(Date.UTC(year, month, Number(m[1])))
+    if (d.getUTCFullYear() === year && d.getUTCMonth() === month && d.getUTCDate() === Number(m[1])) return isoDay(d)
+  }
+  m = text.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:[,\s]+(20\d{2}))?/i)
+  if (m) {
+    const month = MONTHS[m[1].toLowerCase()]
+    const year = Number(m[3] || now.getUTCFullYear())
+    const d = new Date(Date.UTC(year, month, Number(m[2])))
+    if (d.getUTCFullYear() === year && d.getUTCMonth() === month && d.getUTCDate() === Number(m[2])) return isoDay(d)
+  }
+  m = text.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/)
+  if (m) {
+    const d = new Date(Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])))
+    if (!Number.isNaN(d.getTime())) return isoDay(d)
+  }
+  return null
+}
+
 function normalizeWhen(text: string, now = new Date()) {
   const t = text.toLowerCase()
   if (/\bnext week\b/.test(t)) return nextWeekRange(now)
@@ -113,6 +144,11 @@ function normalizeWhen(text: string, now = new Date()) {
   if (/\btomorrow\b/.test(t)) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1))
     return { label:fmtDate(d), search:fmtDate(d), startDate:isoDay(d), endDate:isoDay(d) }
+  }
+  const explicit = explicitDateFromText(text, now)
+  if (explicit) {
+    const d = new Date(`${explicit}T00:00:00Z`)
+    return { label:fmtDate(d), search:fmtDate(d), startDate:explicit, endDate:explicit }
   }
   const dateish = text.match(/\b(?:\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2})(?:\s*(?:-|–|to)\s*(?:\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}))?/i)?.[0]
   if (dateish) return { label:dateish, search:`${dateish} ${now.getUTCFullYear()}` }
@@ -368,10 +404,6 @@ export async function tryRunTravelResearch(params: { actor: AgentActor; surface:
   await addActivity(tg, runId, 'run_started', `Gogo started current travel research for ${context.routeLabel}.`, { queries })
 
   try {
-    // CreditIQ is Gogo's specialist live travel/rewards intelligence layer. Prefer
-    // structured provider inventory to public search snippets whenever route/date
-    // are concrete enough. If CreditIQ has no usable live response, fall back
-    // honestly to the existing curated public-web research path.
     const live = await tryCreditIQLive(context, params.actor)
     if (live?.live && live.flights.length) {
       const completedAt = new Date().toISOString()
