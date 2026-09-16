@@ -15,6 +15,7 @@ import { tryRunWorkspaceDriveContext } from '@/lib/agent/workspace-drive-context
 import { tryRunCreditIQHotelResearch } from '@/lib/agent/creditiq-hotel-research'
 import { tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
+import { shouldPreferSpecialistTravel } from '@/lib/agent/specialist-routing'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
 import { appointmentPrepareOptionNumber, tryRecoverAppointmentOption } from '@/lib/agent/appointment-followup-recovery'
@@ -72,9 +73,6 @@ export async function POST(request: Request) {
       }, duplicate.status === 'waiting_approval' ? 202 : 200)
     }
 
-    // A numbered appointment follow-up is a hard contextual boundary. Recover the
-    // last location-anchored research result before generic appointment research can run.
-    // This prevents "prepare option 2" from silently becoming a brand-new global search.
     if (appointmentPrepareOptionNumber(text)) {
       const recovered = await tryRecoverAppointmentOption({ actor, surface:session.surface, text })
       if (recovered) return respond(recovered, recovered.status === 'waiting_approval' ? 202 : 200)
@@ -87,6 +85,20 @@ export async function POST(request: Request) {
 
     const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:session.surface, text })
     if (appointmentFollowup) return respond(appointmentFollowup, appointmentFollowup.status === 'waiting_approval' ? 202 : 200)
+
+    // Pure travel research uses the specialist engine on every surface. This keeps
+    // WhatsApp, dashboard and mobile app behavior identical and prevents a generic
+    // planner artifact from replacing the real flight/hotel result.
+    if (shouldPreferSpecialistTravel(text)) {
+      const liveHotels = await tryRunCreditIQHotelResearch({ actor, surface:session.surface, text })
+      if (liveHotels) return respond(liveHotels, 200)
+
+      const travelResearch = await tryRunTravelResearch({ actor, surface:session.surface, text })
+      if (travelResearch) {
+        const hardened = await hardenTravelResearchResult(travelResearch, text)
+        return respond(hardened, 200)
+      }
+    }
 
     const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:session.surface, text })
     if (webWatch) return respond(webWatch, 200)
