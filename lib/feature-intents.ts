@@ -45,6 +45,73 @@ async function getActiveListName(telegramId:number){
   return name||null
 }
 
+function parseSnoozeDuration(text:string): { ms:number; label:string } | null {
+  const raw=String(text||'').trim().toLowerCase()
+  const match=raw.match(/^snooze\s+(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)$/i)
+  if(match){
+    const amount=Math.max(1,Number(match[1]))
+    const unit=match[2].toLowerCase()
+    if(['m','min','mins','minute','minutes'].includes(unit)) return {ms:amount*60*1000,label:`in ${amount} minute${amount===1?'':'s'}`}
+    if(['h','hr','hrs','hour','hours'].includes(unit)) return {ms:amount*60*60*1000,label:`in ${amount} hour${amount===1?'':'s'}`}
+    if(['d','day','days'].includes(unit)) return {ms:amount*24*60*60*1000,label:amount===1?'tomorrow':`in ${amount} days`}
+  }
+  return null
+}
+
+async function tryHandleSnoozeCommand(telegramId:number,phone:string,text:string):Promise<string|null>{
+  const parsed=parseSnoozeDuration(text)
+  if(!parsed)return null
+
+  // Snooze is contextual: only operate on a reminder that actually fired recently.
+  // This prevents a naked "snooze 1h" from moving some unrelated future reminder.
+  const thirtyMinsAgo=new Date(Date.now()-30*60*1000).toISOString()
+  const {data:recentFired,error}=await supabaseAdmin
+    .from('reminders')
+    .select('id,message,is_recurring,recurring_pattern,whatsapp_to,timezone,chat_id,telegram_id')
+    .eq('telegram_id',telegramId)
+    .eq('sent',true)
+    .gte('sent_at',thirtyMinsAgo)
+    .order('sent_at',{ascending:false})
+    .limit(1)
+  if(error){console.error('SNOOZE_RECENT_REMINDER_LOOKUP_FAILED:',error.message);return null}
+  const reminder=recentFired?.[0]
+  if(!reminder)return null
+
+  const newRemindAt=new Date(Date.now()+parsed.ms).toISOString()
+
+  if(reminder.is_recurring){
+    // Important: do NOT re-arm the recurring occurrence itself. The reminder cron
+    // has already queued the next normal recurrence. Re-arming this row would cause
+    // the snoozed replay to schedule another recurrence and duplicate the series.
+    const {error:insertError}=await supabaseAdmin.from('reminders').insert({
+      telegram_id:reminder.telegram_id,
+      chat_id:reminder.chat_id ?? reminder.telegram_id,
+      message:reminder.message,
+      remind_at:newRemindAt,
+      sent:false,
+      is_recurring:false,
+      recurring_pattern:null,
+      whatsapp_to:reminder.whatsapp_to || phone,
+      timezone:reminder.timezone || 'Asia/Kolkata',
+    })
+    if(insertError){
+      console.error('RECURRING_SNOOZE_INSERT_FAILED:',reminder.id,insertError.message)
+      return `I couldn't snooze that reminder just now. Please try once more.`
+    }
+  }else{
+    const {error:updateError}=await supabaseAdmin
+      .from('reminders')
+      .update({remind_at:newRemindAt,sent:false})
+      .eq('id',reminder.id)
+    if(updateError){
+      console.error('REMINDER_SNOOZE_UPDATE_FAILED:',reminder.id,updateError.message)
+      return `I couldn't snooze that reminder just now. Please try once more.`
+    }
+  }
+
+  return `⏰ Snoozed! I'll remind you about *${reminder.message}* again *${parsed.label}*.`
+}
+
 export async function routeFeatureIntent(
   phone: string,
   text: string,
@@ -53,6 +120,11 @@ export async function routeFeatureIntent(
   const normalized=normalizeUserInputForRouting(text)
   if(normalized.changed) console.info('INPUT_NORMALIZED_FOR_FEATURE_ROUTING:',{reasons:normalized.reasons,originalLength:String(text||'').length,normalizedLength:normalized.text.length})
   text=normalized.text
+
+  if(extra?.telegramId){
+    const snoozeReply=await tryHandleSnoozeCommand(extra.telegramId,phone,text)
+    if(snoozeReply)return snoozeReply
+  }
 
   if (extra?.telegramId && isEventCredentialRetrieval(text)) {
     const ticket = await retrieveEventCredential(extra.telegramId, text)
@@ -121,7 +193,7 @@ export async function routeFeatureIntent(
       const listName=await getActiveListName(extra.telegramId)
       if(listName){
         const list=await getList(extra.telegramId,listName)
-        if(list){await setActiveList(extra.telegramId,listName);return formatList(list.list_name,list.items||[])}
+        if(list){await setActiveList(extra.telegramId,list.list_name);return formatList(list.list_name,list.items||[])}
       }
     }
   }
