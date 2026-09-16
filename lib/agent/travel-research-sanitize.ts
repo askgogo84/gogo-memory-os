@@ -49,7 +49,6 @@ export function sanitizeTravelResearchText(raw: string, requestText: string, now
         const iso = isoDay(d)
         return iso >= context.startDate! && iso <= context.endDate!
       })
-      // Any explicit off-window date makes the whole search snippet unreliable for this request.
       if (hasDates && inWindow.length !== dates.length) return null
 
       let cleaned = block
@@ -69,8 +68,15 @@ export function sanitizeTravelResearchText(raw: string, requestText: string, now
   return [intro, ...renumbered, disclaimer].filter(Boolean).join('\n\n')
 }
 
-export async function hardenTravelResearchResult<T extends { runId?: string; text?: string }>(result: T, requestText: string) {
+export async function hardenTravelResearchResult<T extends { runId?: string; text?: string; handledBy?: string }>(result: T, requestText: string) {
   if (!result?.text) return result
+
+  // Structured provider inventory and browser-verified result rows already carry
+  // their own evidence. The public-web sanitizer is intentionally conservative
+  // and would otherwise erase valid fares simply because each result block does
+  // not repeat the requested date.
+  if (result.handledBy === 'browser-flight-task' || result.handledBy === 'creditiq-travel') return result
+
   const text = sanitizeTravelResearchText(result.text, requestText)
   if (result.runId && text !== result.text) {
     await supabaseAdmin.from('agent_runs').update({ summary: text.slice(0,1800), updated_at:new Date().toISOString() }).eq('id', result.runId)
