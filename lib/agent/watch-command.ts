@@ -199,7 +199,7 @@ function parseFlightIdentifier(text: string) {
 
 function parseFlightWatchRequest(text: string): PendingFlightWatch | null {
   const raw = clean(text, 2000)
-  if (!/^(?:please\s+)?(?:watch|monitor|track)\s+(?:my\s+|the\s+)?flight\b/i.test(raw)) return null
+  if (!/^(?:please\s+)?(?:watch|monitor|track)\s+(?:my\s+|the\s+)?flights?\b/i.test(raw)) return null
 
   const destinationMatch = raw.match(/\bto\s+(.+?)\s+on\s+(.+?)(?=\s+(?:and\s+)?(?:alert|notify|tell|let)\s+me\b|$)/i)
   const destination = clean(destinationMatch?.[1] || '', 120)
