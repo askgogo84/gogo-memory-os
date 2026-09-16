@@ -57,7 +57,7 @@ const encoded = process.argv[2];
 if (!encoded) throw new Error('missing_secure_browser_payload');
 const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
 const profile = '${BROWSER_PROFILE_DIR}';
-const navTimeout = payload.mode === 'execute' ? 45000 : 22000;
+const navTimeout = payload.mode === 'execute' ? 45000 : 18000;
 const clean = s => String(s||'').replace(/\s+/g,' ').trim();
 async function model(page){
   return await page.evaluate(() => {
