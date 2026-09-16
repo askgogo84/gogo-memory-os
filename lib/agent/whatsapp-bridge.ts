@@ -9,6 +9,7 @@ import { tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
 import { tryRunPersistentGeneralPlan } from './persistent-general-plan'
 import { tryRunTravelResearch } from './travel-research'
 import { hardenTravelResearchResult } from './travel-research-sanitize'
+import { shouldPreferSpecialistTravel } from './specialist-routing'
 import { executeApprovedAgentRun } from './orchestrator'
 import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
@@ -41,15 +42,6 @@ function approvalIntent(text: string): 'approve' | 'reject' | null {
   if (/^(approve|approved|yes[ ,]+approve|approve it|go ahead with it|proceed with it)$/i.test(t)) return 'approve'
   if (/^(reject|rejected|deny|decline|reject it|do not proceed|don't proceed|cancel that action)$/i.test(t)) return 'reject'
   return null
-}
-
-function shouldPreferSpecialistTravel(text: string) {
-  const raw = String(text || '').trim()
-  if (!/\b(flight|flights|airfare|fare|fares|hotel|hotels|travel)\b/i.test(raw)) return false
-  if (!/\b(find|search|compare|options|available|availability|current fare|current fares|live sources?|best available|cheapest|price|prices)\b/i.test(raw)) return false
-
-  const crossFeature = /\b(remind\s+me|set\s+(?:a\s+)?reminder|add\s+.*\bcalendar\b|create\s+.*\blist\b|add\s+.*\blist\b|save\s+(?:this|it|the\s+results?)|create\s+.*\btask\b|add\s+.*\btask\b|then\s+(?:remind|save|add|create|email|send)|email\s+me|send\s+me)\b/i.test(raw)
-  return !crossFeature
 }
 
 async function pauseRecentTimedOutBrowserRun(actor: AgentActor) {
@@ -126,7 +118,7 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
 
   if (data.run_id) {
     await supabaseAdmin.from('agent_runs')
-      .update({ status: decision === 'approve' ? 'queued' : 'paused', updated_at: now })
+      .update({ status: decision === 'approve' ? 'approved' : 'rejected', updated_at: now })
       .eq('id', data.run_id)
       .eq('telegram_id', String(actor.legacyTelegramId))
       .eq('status', 'waiting_approval')
@@ -243,9 +235,6 @@ export async function tryRunWhatsAppAgent(params: {
   const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (compound) return { ...compound, handledBy:compound.handledBy }
 
-  // Safe multi-step WhatsApp missions use the same persistent autonomous runtime as
-  // the dashboard/app. If the webhook returns or a worker is interrupted, the cron
-  // can resume the durable run instead of losing the mission inside one request.
   const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (persistent) return { ...persistent, handledBy:String(persistent.handledBy || 'persistent-general-plan') }
 
