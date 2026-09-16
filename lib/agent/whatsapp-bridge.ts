@@ -6,8 +6,10 @@ import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-c
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
 import { tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
+import { tryRunPersistentGeneralPlan } from './persistent-general-plan'
 import { tryRunTravelResearch } from './travel-research'
 import { hardenTravelResearchResult } from './travel-research-sanitize'
+import { shouldPreferSpecialistTravel } from './specialist-routing'
 import { executeApprovedAgentRun } from './orchestrator'
 import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
@@ -201,17 +203,9 @@ export async function tryRunWhatsAppAgent(params: {
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
 
-  // Flight watcher context is deterministic and must beat appointment/browser/general
-  // recovery. The first turn stores destination/date; the next airline+flight-number
-  // turn creates the real persistent Background Gogo watcher for the same user.
   const flightWatch = await tryCreateFlightWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (flightWatch) return { ...flightWatch, handledBy:String(flightWatch.handledBy || 'flight-watch') }
 
-  // Appointment context is deterministic and must beat generic browser/planner
-  // routing. Numbered options are recovered from the latest location-anchored
-  // appointment research run; exact-slot follow-ups then use the prepared provider
-  // flow. The WhatsApp budget prevents a slow provider/browser from holding the
-  // inbound webhook until Vercel kills it and leaving the user with no reply.
   const appointmentRecovery = await withWhatsAppBrowserBudget(actor, tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text }))
   if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String((appointmentRecovery as any).handledBy || 'appointment-followup-recovery') }
 
@@ -220,6 +214,14 @@ export async function tryRunWhatsAppAgent(params: {
 
   const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:'whatsapp', text:params.text })
   if (appointmentResearch) return { ...appointmentResearch, handledBy:String(appointmentResearch.handledBy || 'appointment-research') }
+
+  if (shouldPreferSpecialistTravel(params.text)) {
+    const specialistTravel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
+    if (specialistTravel) {
+      const hardened = await hardenTravelResearchResult(specialistTravel, params.text)
+      return { ...hardened, handledBy:String(hardened.handledBy || 'travel-research') }
+    }
+  }
 
   const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (webWatch) return { ...webWatch, handledBy:String(webWatch.handledBy || 'background-web-watch') }
@@ -232,6 +234,9 @@ export async function tryRunWhatsAppAgent(params: {
 
   const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (compound) return { ...compound, handledBy:compound.handledBy }
+
+  const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
+  if (persistent) return { ...persistent, handledBy:String(persistent.handledBy || 'persistent-general-plan') }
 
   const general = await tryRunGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (general) return { ...general, text:`${general.text || ''}${general.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(general.handledBy || 'general-plan') }
