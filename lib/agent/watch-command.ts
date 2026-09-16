@@ -170,7 +170,7 @@ type PendingFlightWatch = {
 }
 
 const FLIGHT_CODE_STOPWORDS = new Set([
-  'AT', 'AM', 'PM', 'ON', 'TO', 'IN', 'BY', 'OF', 'OR', 'AN', 'AS', 'IF', 'IS', 'IT', 'ME', 'MY', 'WE', 'US', 'GO', 'DO', 'NO', 'SO', 'UP', 'AI',
+  'AT', 'AM', 'PM', 'ON', 'TO', 'IN', 'BY', 'OF', 'OR', 'AN', 'AS', 'IF', 'IS', 'IT', 'ME', 'MY', 'WE', 'US', 'GO', 'DO', 'NO', 'SO', 'UP',
 ])
 
 function looksLikeIndependentCommand(text: string) {
@@ -187,8 +187,6 @@ export function parseFlightIdentifier(text: string) {
   const code = match[1].toUpperCase()
   const number = match[2].toUpperCase()
 
-  // Never reinterpret ordinary prose/time fragments as a flight number.
-  // The production failure was "...tomorrow at 9:00 AM..." => bogus flight "AT 9".
   if (FLIGHT_CODE_STOPWORDS.has(code)) return null
   const matchedEnd = (match.index || 0) + match[0].length
   if (raw.slice(matchedEnd).trimStart().startsWith(':')) return null
