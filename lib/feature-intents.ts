@@ -16,6 +16,9 @@ import { normalizeNaturalReminderSave, parseNumberedChecklist, saveNaturalRemind
 import { normalizeUserInputForRouting } from '@/lib/bot/input-normalizer'
 import { getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import { isActiveListShow, parseActiveListAdd, parseExplicitListShow } from '@/lib/bot/handlers/list-conversation-context'
+import { parseCalendarCreate, getCalendarTokens, createCalendarConflictEvent } from '@/lib/bot/handlers/calendar-actions'
+import { resolvePendingCalendar, looksLikeNewCommand } from '@/lib/bot/pending-followup'
+import { fetchPrimaryCalendarEvents } from '@/lib/google-calendar'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 
@@ -109,6 +112,103 @@ async function tryHandleSnoozeCommand(telegramId:number,phone:string,text:string
   return `⏰ Snoozed! I'll remind you about *${reminder.message}* again *${parsed.label}*.`
 }
 
+type CalendarApprovalPayload={
+  title:string
+  startIso:string
+  endIso:string
+  displayTime:string
+  created_at:string
+}
+
+function istOffsetIso(parts:{year:number;month:number;day:number;hour:number;minute:number}){
+  const yyyy=String(parts.year)
+  const mm=String(parts.month).padStart(2,'0')
+  const dd=String(parts.day).padStart(2,'0')
+  const hh=String(parts.hour).padStart(2,'0')
+  const min=String(parts.minute).padStart(2,'0')
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:00+05:30`
+}
+
+function calendarDisplay(iso:string){
+  return new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(iso))
+}
+
+function approvalReply(payload:CalendarApprovalPayload,conflict?:string){
+  return (
+    `📅 *Ready to add — approval required*\n\n`+
+    `${payload.title}\n${payload.displayTime}\nDuration: 30 mins\n`+
+    (conflict?`\n⚠️ Conflict: ${conflict}\n`:'')+
+    `\nNothing has been added yet.\nReply *yes* to add it, or *cancel* to leave your calendar unchanged.`
+  )
+}
+
+async function stageCalendarApproval(telegramId:number,payload:CalendarApprovalPayload,accessToken:string){
+  let conflict:string|undefined
+  try{
+    const start=new Date(payload.startIso)
+    const dayStart=new Date(start);dayStart.setUTCHours(0,0,0,0)
+    const dayEnd=new Date(dayStart);dayEnd.setUTCDate(dayEnd.getUTCDate()+1)
+    const events=await fetchPrimaryCalendarEvents(accessToken,dayStart.toISOString(),dayEnd.toISOString(),'GCAL_APPROVAL_CONFLICT_CHECK_FAILED')
+    const s=new Date(payload.startIso).getTime(),e=new Date(payload.endIso).getTime()
+    const hit=(events||[]).find((x:any)=>{
+      const xs=x?.start?.dateTime?new Date(x.start.dateTime).getTime():NaN
+      const xe=x?.end?.dateTime?new Date(x.end.dateTime).getTime():NaN
+      return Number.isFinite(xs)&&Number.isFinite(xe)&&xs<e&&xe>s
+    })
+    if(hit)conflict=`${hit.summary||'Calendar event'} at ${calendarDisplay(hit.start.dateTime)}`
+  }catch(err){console.error('CALENDAR_APPROVAL_CONFLICT_CHECK_FAILED:',err)}
+  await saveFollowupState(telegramId,'calendar_create_approval',payload)
+  return approvalReply(payload,conflict)
+}
+
+async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<string|null>{
+  const confirm=/^(yes|yeah|yep|approve|approved|confirm|confirmed|add it|go ahead)$/i.test(String(text||'').trim())
+  if(confirm){
+    const pending=await getLatestFollowupState(telegramId,'calendar_create_approval')
+    if(pending&&isStrictlyFreshFollowupState(pending,15)&&pending.payload?.startIso&&!pending.payload?.consumed){
+      const reply=await createCalendarConflictEvent(telegramId,pending.payload)
+      if(reply){
+        await saveFollowupState(telegramId,'calendar_create_approval',{consumed:true,created_at:new Date().toISOString()})
+        return reply
+      }
+      return `I couldn't add that calendar event just now. Please try again.`
+    }
+  }
+
+  const tokens=await getCalendarTokens(telegramId)
+  if(!tokens.connected||!tokens.accessToken)return null
+
+  if(!looksLikeNewCommand(text)){
+    const pendingCalendar=await getLatestFollowupState(telegramId,'pending_calendar')
+    if(pendingCalendar&&isStrictlyFreshFollowupState(pendingCalendar,15)){
+      const resolved=resolvePendingCalendar(pendingCalendar.payload||{},text)
+      if(resolved?.remindAtIso){
+        const start=new Date(resolved.remindAtIso)
+        const end=new Date(start.getTime()+30*60*1000)
+        const payload:CalendarApprovalPayload={
+          title:String(pendingCalendar.payload?.title||'Meeting'),
+          startIso:start.toISOString(),
+          endIso:end.toISOString(),
+          displayTime:calendarDisplay(start.toISOString()),
+          created_at:new Date().toISOString(),
+        }
+        return await stageCalendarApproval(telegramId,payload,tokens.accessToken)
+      }
+    }
+  }
+
+  const createIntent:any=parseCalendarCreate(text)
+  if(!createIntent||createIntent.needsTime||!createIntent.start||!createIntent.end)return null
+  const payload:CalendarApprovalPayload={
+    title:String(createIntent.title||'Meeting'),
+    startIso:istOffsetIso(createIntent.start),
+    endIso:istOffsetIso(createIntent.end),
+    displayTime:calendarDisplay(istOffsetIso(createIntent.start)),
+    created_at:new Date().toISOString(),
+  }
+  return await stageCalendarApproval(telegramId,payload,tokens.accessToken)
+}
+
 export async function routeFeatureIntent(
   phone: string,
   text: string,
@@ -121,6 +221,9 @@ export async function routeFeatureIntent(
   if(extra?.telegramId){
     const snoozeReply=await tryHandleSnoozeCommand(extra.telegramId,phone,text)
     if(snoozeReply)return snoozeReply
+
+    const calendarApprovalReply=await tryHandleCalendarApproval(extra.telegramId,text)
+    if(calendarApprovalReply)return calendarApprovalReply
   }
 
   if (extra?.telegramId && isEventCredentialRetrieval(text)) {
