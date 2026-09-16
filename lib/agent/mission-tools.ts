@@ -124,16 +124,38 @@ function reminderMessage(step:MissionStep,missionText:string,hours?:number){
   return hours ? `${destination} trip departure in ${hours} hours — confirm packing and check-in status.` : safe(step.title,500)
 }
 
+function normalizeReminderIdentity(value:unknown){
+  return String(value??'')
+    .toLowerCase()
+    .replace(/^\s*(?:create\s+(?:a\s+)?reminder(?:\s+with\s+the\s+message)?|remind\s+(?:me\s+)?(?:to|about)?)\s*[:\-]?\s*/i,'')
+    .replace(/[^a-z0-9]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim()
+}
+
 async function persistMissionReminder(params:{actor:AgentActor;date:string;time:string;timezone:string;message:string}){
   const parsed=parseLocalDateTime({date:params.date,time:params.time,timezone:params.timezone})
   if(parsed.dueAtUtc.getTime()<=Date.now())throw new Error('mission_reminder_time_in_past')
   const dueIso=parsed.dueAtUtc.toISOString()
   const {data:candidates,error:readError}=await supabaseAdmin.from('reminders')
-    .select('id,message,remind_at,timezone').eq('telegram_id',params.actor.legacyTelegramId).eq('remind_at',dueIso).eq('sent',false).limit(10)
+    .select('id,message,remind_at,timezone').eq('telegram_id',params.actor.legacyTelegramId).eq('remind_at',dueIso).eq('sent',false).limit(25)
   if(readError)throw new Error(`mission_reminder_verify_failed:${readError.message}`)
-  const destination=destinationLabel(params.message).toLowerCase()
-  const existing=(candidates||[]).find((r:any)=>destination==='trip'||String(r.message||'').toLowerCase().includes(destination)) || (candidates||[])[0]
-  if(existing?.id)return {text:`Reminder already set for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(existing.id),message:String(existing.message||params.message),remindAt:String(existing.remind_at||dueIso),timezone:String(existing.timezone||params.timezone),reused:true,verifiedStore:'reminders'}}
+  const wantedIdentity=normalizeReminderIdentity(params.message)
+  const existing=(candidates||[]).find((r:any)=>normalizeReminderIdentity(r.message)===wantedIdentity)
+  if(existing?.id){
+    let row:any=existing
+    if(String(existing.message||'')!==params.message||String(existing.timezone||'')!==params.timezone){
+      const {data:updated,error:updateError}=await supabaseAdmin.from('reminders')
+        .update({message:params.message,timezone:params.timezone})
+        .eq('id',existing.id)
+        .eq('telegram_id',params.actor.legacyTelegramId)
+        .select('id,message,remind_at,timezone')
+        .maybeSingle()
+      if(updateError)throw new Error(`mission_reminder_canonicalize_failed:${updateError.message}`)
+      if(updated)row=updated
+    }
+    return {text:`Reminder already set for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(row.id),message:String(row.message||params.message),remindAt:String(row.remind_at||dueIso),timezone:String(row.timezone||params.timezone),reused:true,verifiedStore:'reminders'}}
+  }
   const {data,error}=await supabaseAdmin.from('reminders').insert({
     telegram_id:params.actor.legacyTelegramId,chat_id:params.actor.legacyTelegramId,whatsapp_to:params.actor.whatsappId,
     message:params.message,remind_at:dueIso,sent:false,timezone:params.timezone,
