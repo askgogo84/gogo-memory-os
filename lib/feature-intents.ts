@@ -62,14 +62,13 @@ async function tryHandleSnoozeCommand(telegramId:number,phone:string,text:string
   const parsed=parseSnoozeDuration(text)
   if(!parsed)return null
 
-  // Snooze is contextual: only operate on a reminder that actually fired recently.
-  // This prevents a naked "snooze 1h" from moving some unrelated future reminder.
+  // A fired reminder may already have been re-armed with sent=false while retaining sent_at.
+  // Bind snooze to the most recently fired reminder by sent_at, regardless of current sent state.
   const thirtyMinsAgo=new Date(Date.now()-30*60*1000).toISOString()
   const {data:recentFired,error}=await supabaseAdmin
     .from('reminders')
-    .select('id,message,is_recurring,recurring_pattern,whatsapp_to,timezone,chat_id,telegram_id')
+    .select('id,message,is_recurring,recurring_pattern,whatsapp_to,timezone,chat_id,telegram_id,sent_at')
     .eq('telegram_id',telegramId)
-    .eq('sent',true)
     .gte('sent_at',thirtyMinsAgo)
     .order('sent_at',{ascending:false})
     .limit(1)
@@ -80,9 +79,7 @@ async function tryHandleSnoozeCommand(telegramId:number,phone:string,text:string
   const newRemindAt=new Date(Date.now()+parsed.ms).toISOString()
 
   if(reminder.is_recurring){
-    // Important: do NOT re-arm the recurring occurrence itself. The reminder cron
-    // has already queued the next normal recurrence. Re-arming this row would cause
-    // the snoozed replay to schedule another recurrence and duplicate the series.
+    // Keep the normal recurrence intact. Snooze creates a one-off replay only.
     const {error:insertError}=await supabaseAdmin.from('reminders').insert({
       telegram_id:reminder.telegram_id,
       chat_id:reminder.chat_id ?? reminder.telegram_id,
@@ -166,7 +163,6 @@ export async function routeFeatureIntent(
     }
   }
 
-  // Explicit list display establishes short-lived conversational list context.
   if(extra?.telegramId){
     const explicitRaw=parseExplicitListShow(text)
     if(explicitRaw){
@@ -177,8 +173,6 @@ export async function routeFeatureIntent(
       }
     }
 
-    // Follow-ups such as “Add travel adapter also” and “Also add passport photocopy and forex card”
-    // operate ONLY on the recently active list. No LLM/memory inference is allowed here.
     const followupItems=parseActiveListAdd(text)
     if(followupItems){
       const listName=await getActiveListName(extra.telegramId)
