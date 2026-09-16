@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { refreshAccessToken } from '@/lib/google-calendar'
-import { addToListDetailed, getAllLists, getList } from '@/lib/data/lists'
+import { addToListDetailed, getAllLists, getList, normalizeListName } from '@/lib/data/lists'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { dispatchThroughSameBrain } from './same-brain'
@@ -105,10 +105,20 @@ async function actorTimezone(actor:AgentActor){
   return normalizeTimezone(String(data?.timezone||'Asia/Kolkata'))
 }
 
+async function relativeMissionDate(text:string,actor:AgentActor){
+  if(!/\btomorrow\b/i.test(text))return null
+  const timezone=await actorTimezone(actor)
+  const tomorrow=new Date(Date.now()+24*3600_000)
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(tomorrow)
+  const values:Record<string,string>={}
+  for(const p of parts)if(p.type!=='literal')values[p.type]=p.value
+  return `${values.year}-${values.month}-${values.day}`
+}
+
 function destinationLabel(missionText:string){return travelContext(missionText).context.destination?.label||'trip'}
 
 function reminderMessage(step:MissionStep,missionText:string,hours?:number){
-  const quoted=step.instruction.match(/(?:message|saying|text)\s*:?[\s]*['“\"]([^'”\"]+)['”\"]/i)?.[1]
+  const quoted=step.instruction.match(/(?:with\s+the\s+)?(?:message|saying|text)\s*:?[\s]*['“\"]([^'”\"]+)['”\"]/i)?.[1]
   if(quoted)return safe(quoted,500)
   const destination=destinationLabel(missionText)
   return hours ? `${destination} trip departure in ${hours} hours — confirm packing and check-in status.` : safe(step.title,500)
@@ -134,7 +144,7 @@ async function persistMissionReminder(params:{actor:AgentActor;date:string;time:
 
 export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
   const {actor,step,missionText}=params
-  const exactDate=explicitDate(step.instruction)
+  const exactDate=explicitDate(step.instruction)||await relativeMissionDate(step.instruction,actor)
   const exactTime=explicitMissionClock(step.instruction)
   if(exactDate&&exactTime){
     const timezone=normalizeTimezone(/\bIST\b/i.test(step.instruction)?'Asia/Kolkata':await actorTimezone(actor))
@@ -169,9 +179,16 @@ function listWords(value:string){
   return value.toLowerCase().replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter(w=>w.length>2&&!stop.has(w))
 }
 
-function requestedListName(step:MissionStep,missionText:string){
-  const quoted=step.instruction.match(/(?:list\s+)?(?:titled|called)\s+['“\"]([^'”\"]+)['”\"]/i)?.[1]
+function explicitRequestedListName(instruction:string){
+  const quoted=instruction.match(/(?:list\s+)?(?:titled|called)\s+['“\"]([^'”\"]+)['”\"]/i)?.[1]
   if(quoted)return safe(quoted,180)
+  const bare=instruction.match(/(?:list\s+)?(?:titled|called)\s+([^,.;]+?)(?=\s+with\b|\s+containing\b|\s+including\b|[.;,]|$)/i)?.[1]
+  return bare?safe(bare,180):null
+}
+
+function requestedListName(step:MissionStep,missionText:string){
+  const explicit=explicitRequestedListName(step.instruction)
+  if(explicit)return explicit
   const destination=destinationLabel(missionText)
   if(/\bpacking\b/i.test(`${step.title} ${step.instruction}`))return `${destination} work trip packing`
   return safe(step.title.replace(/^(?:create|review|update|use|retrieve|find)\s+/i,'').replace(/\blist\b/i,'').trim()||'mission list',180)
@@ -187,13 +204,16 @@ function itemsToEnsure(step:MissionStep,creating:boolean){
   if(/\bpower bank\b/i.test(text))add('Power bank')
   const itemClause=step.instruction.match(/\bitems?\s*:\s*([^.;]+)/i)?.[1]
   if(itemClause)itemClause.split(/,|\band\b/i).map(x=>x.trim()).filter(Boolean).forEach(add)
-  if(creating&&/\bpacking\b/i.test(text)&&items.length<4)DEFAULT_BUSINESS_PACKING.forEach(add)
+  if(creating&&/\bpacking\b/i.test(text)&&!itemClause&&items.length<4)DEFAULT_BUSINESS_PACKING.forEach(add)
   return items
 }
 
 export async function executeVerifiedMissionList(params:{actor:AgentActor;step:MissionStep;missionText:string}){
   const all=await getAllLists(params.actor.legacyTelegramId)
   const text=`${params.step.title} ${params.step.instruction}`
+  const explicitName=explicitRequestedListName(params.step.instruction)
+  const explicitCanonical=explicitName?normalizeListName(explicitName):null
+  const exactExplicit=explicitCanonical?(all||[]).find((row:any)=>normalizeListName(String(row.list_name||''))===explicitCanonical):null
   const words=listWords(text)
   const destination=destinationLabel(params.missionText).toLowerCase()
   const ranked=(all||[]).map((row:any)=>{
@@ -203,7 +223,7 @@ export async function executeVerifiedMissionList(params:{actor:AgentActor;step:M
     if(destination!=='trip'&&name.includes(destination))score+=5
     return {row,score}
   }).filter((x:any)=>x.score>0).sort((a:any,b:any)=>b.score-a.score)
-  const chosen=ranked[0]?.row||null
+  const chosen=explicitName?(exactExplicit||null):(ranked[0]?.row||null)
   const listName=chosen?.list_name||requestedListName(params.step,params.missionText)
   const ensure=itemsToEnsure(params.step,!chosen)
   if(ensure.length)await addToListDetailed(params.actor.legacyTelegramId,listName,ensure)
@@ -285,9 +305,6 @@ function isCalendarWriteStep(step:MissionStep){
 }
 
 export async function executeVerifiedMissionCalendar(params:{actor:AgentActor;step:MissionStep;missionText:string;runId:string}){
-  // A Calendar read is a fundamentally different capability from a mutation. The
-  // general planner already classifies it as low-risk/read-only; keep the tool
-  // implementation aligned so “find a free slot” can NEVER create an event.
   if(!isCalendarWriteStep(params.step)){
     return executeReadOnlyCalendarStep({actor:params.actor,instruction:params.step.instruction,missionText:params.missionText})
   }
