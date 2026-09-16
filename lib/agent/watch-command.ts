@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCostBudget } from '@/lib/services/cost-guard'
+import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { createWebSearchWatcher, normalizeWebSearchWatcher } from './watchers'
@@ -160,5 +161,135 @@ export async function tryCreateWebWatchFromCommand(params: {
     risk: 'low' as const,
     text: `Background Gogo is now watching “${condition.query}”. I’ll establish a baseline first, then adapt the check frequency based on changes and your plan so quiet watches don’t waste your Gogo capacity. Meaningful updates appear in Ideas${condition.delivery !== 'app' ? ' and WhatsApp' : ''}.`,
     handledBy: 'background-web-watch',
+  }
+}
+
+// ── Flight watcher two-turn handoff ──────────────────────────────────────────
+// A natural request such as “Watch my flight to New York on 27th September…”
+// often does not contain the airline/flight number yet. Persist the destination
+// and date as a short-lived follow-up instead of letting the next message fall
+// into an unrelated router. Once the flight identifier arrives, create a real
+// Background Gogo web watcher using the existing watcher engine above.
+
+type PendingFlightWatch = {
+  destination: string
+  dateText: string
+  originalText: string
+  created_at: string
+}
+
+function parseFlightIdentifier(text: string) {
+  const raw = clean(text, 500)
+  // IATA/ICAO-like designator + numeric flight number. Requiring a digit keeps
+  // ordinary prose from being misread as a flight identifier.
+  const match = raw.match(/\b([A-Z0-9]{2,3})\s*-?\s*(\d{1,4}[A-Z]?)\b/i)
+  if (!match) return null
+  const code = match[1].toUpperCase()
+  const number = match[2].toUpperCase()
+  const before = raw.slice(0, match.index || 0).trim().replace(/[-–—,:]+$/g, '').trim()
+  const airline = before && before.length <= 80 ? before : ''
+  return {
+    code,
+    number,
+    flightNumber: `${code} ${number}`,
+    airline,
+    label: clean(`${airline ? `${airline} ` : ''}${code} ${number}`, 120),
+  }
+}
+
+function parseFlightWatchRequest(text: string): PendingFlightWatch | null {
+  const raw = clean(text, 2000)
+  if (!/^(?:please\s+)?(?:watch|monitor|track)\s+(?:my\s+|the\s+)?flight\b/i.test(raw)) return null
+
+  const destinationMatch = raw.match(/\bto\s+(.+?)\s+on\s+(.+?)(?=\s+(?:and\s+)?(?:alert|notify|tell|let)\s+me\b|$)/i)
+  const destination = clean(destinationMatch?.[1] || '', 120)
+  const dateText = clean(destinationMatch?.[2] || '', 120)
+  if (!destination || !dateText) return null
+
+  return {
+    destination,
+    dateText,
+    originalText: raw,
+    created_at: new Date().toISOString(),
+  }
+}
+
+function flightWatchPrompt() {
+  return (
+    `I need your flight details to track it, boss.\n\n` +
+    `Reply with your airline and flight number (e.g. “AI 101” or “United 456”), ` +
+    `or forward me the booking confirmation — I’ll pull the details and start monitoring ` +
+    `for delays, gate changes and cancellations.`
+  )
+}
+
+async function createFlightWatcherFromPending(params: {
+  actor: AgentActor
+  surface: AgentSurface
+  pending: PendingFlightWatch
+  identifier: ReturnType<typeof parseFlightIdentifier> extends infer T ? Exclude<T, null> : never
+}) {
+  const { actor, surface, pending, identifier } = params
+  const synthesized =
+    `watch the web for ${identifier.label} flight status to ${pending.destination} on ${pending.dateText} ` +
+    `and alert me if you see delay, cancellation, gate change, schedule change, departure change or arrival change`
+
+  const result = await tryCreateWebWatchFromCommand({ actor, surface, text: synthesized })
+  if (!result) return null
+
+  // Only consume the handoff when a watcher was actually created. Plan/permission
+  // blocks remain actionable and should not falsely read as “watch started”.
+  if (result.status === 'completed' && result.runId && !String(result.runId).includes('blocked') && !String(result.runId).includes('limit')) {
+    await clearFollowupState(actor.legacyTelegramId, 'pending_flight_watch')
+    return {
+      ...result,
+      text:
+        `✅ *Flight watch started*\n\n` +
+        `${identifier.label}\n` +
+        `${pending.dateText} — ${pending.destination}\n\n` +
+        `I’ll watch for important changes such as delays, cancellations, gate changes and schedule updates, ` +
+        `and alert you when something materially changes.`,
+      handledBy: 'flight-watch',
+    }
+  }
+
+  return { ...result, handledBy: 'flight-watch' }
+}
+
+export async function tryCreateFlightWatchFromCommand(params: {
+  actor: AgentActor
+  surface: AgentSurface
+  text: string
+}) {
+  const raw = clean(params.text, 2000)
+  if (!raw) return null
+
+  const freshPending = await getLatestFollowupState(params.actor.legacyTelegramId, 'pending_flight_watch')
+  if (freshPending && isStrictlyFreshFollowupState(freshPending, 30)) {
+    const identifier = parseFlightIdentifier(raw)
+    if (identifier) {
+      const pending = freshPending.payload as PendingFlightWatch
+      if (pending?.destination && pending?.dateText) {
+        return await createFlightWatcherFromPending({ actor:params.actor, surface:params.surface, pending, identifier })
+      }
+    }
+  }
+
+  const request = parseFlightWatchRequest(raw)
+  if (!request) return null
+
+  const identifier = parseFlightIdentifier(raw)
+  if (identifier) {
+    return await createFlightWatcherFromPending({ actor:params.actor, surface:params.surface, pending:request, identifier })
+  }
+
+  await saveFollowupState(params.actor.legacyTelegramId, 'pending_flight_watch', request)
+  return {
+    runId: 'flight-watch-awaiting-details',
+    status: 'paused' as const,
+    capability: 'browser' as const,
+    risk: 'low' as const,
+    text: flightWatchPrompt(),
+    handledBy: 'flight-watch-followup',
   }
 }
