@@ -14,7 +14,7 @@ import { sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
 import { addToListDetailed, formatAddResult, formatList, getList, normalizeListName } from '@/lib/lists'
 import { normalizeNaturalReminderSave, parseNumberedChecklist, saveNaturalReminder } from '@/lib/bot/handlers/natural-command-routing'
 import { normalizeUserInputForRouting } from '@/lib/bot/input-normalizer'
-import { getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
+import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import { isActiveListShow, parseActiveListAdd, parseExplicitListShow } from '@/lib/bot/handlers/list-conversation-context'
 import { parseCalendarCreate, getCalendarTokens, createCalendarConflictEvent } from '@/lib/bot/handlers/calendar-actions'
 import { resolvePendingCalendar, looksLikeNewCommand } from '@/lib/bot/pending-followup'
@@ -162,7 +162,17 @@ async function stageCalendarApproval(telegramId:number,payload:CalendarApprovalP
 }
 
 async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<string|null>{
-  const confirm=/^(yes|yeah|yep|approve|approved|confirm|confirmed|add it|go ahead)$/i.test(String(text||'').trim())
+  const raw=String(text||'').trim()
+  const cancel=/^(cancel|no|don't add|do not add|leave it)$/i.test(raw)
+  if(cancel){
+    const pending=await getLatestFollowupState(telegramId,'calendar_create_approval')
+    if(pending&&isStrictlyFreshFollowupState(pending,15)&&pending.payload?.startIso&&!pending.payload?.consumed){
+      await clearFollowupState(telegramId,'calendar_create_approval')
+      return `❌ Cancelled — nothing was added to your calendar.`
+    }
+  }
+
+  const confirm=/^(yes|yeah|yep|approve|approved|confirm|confirmed|add it|go ahead)$/i.test(raw)
   if(confirm){
     const pending=await getLatestFollowupState(telegramId,'calendar_create_approval')
     if(pending&&isStrictlyFreshFollowupState(pending,15)&&pending.payload?.startIso&&!pending.payload?.consumed){
