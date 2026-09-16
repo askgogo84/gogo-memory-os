@@ -163,6 +163,8 @@ export async function routeFeatureIntent(
     }
   }
 
+  // Explicit list display establishes short-lived conversational list context.
+  // No LLM/memory inference is allowed here.
   if(extra?.telegramId){
     const explicitRaw=parseExplicitListShow(text)
     if(explicitRaw){
