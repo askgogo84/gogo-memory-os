@@ -3,6 +3,7 @@ import twilio from 'twilio'
 const accountSid = process.env.TWILIO_ACCOUNT_SID
 const authToken = process.env.TWILIO_AUTH_TOKEN
 const rawWhatsappFrom = process.env.TWILIO_WHATSAPP_NUMBER
+const CALENDAR_APPROVAL_CONTENT_SID = 'HX8bb5cb6116ee401e81b1a59a864393d2'
 
 const client = twilio(accountSid!, authToken!)
 
@@ -142,6 +143,30 @@ export async function sendWhatsAppReminderButtons(toNumber: string, label: strin
   if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
   const message = await client.messages.create(payload)
   console.log('WHATSAPP_BUTTONS_TEMPLATE_SENT:', { sid: message.sid, to, status: message.status })
+  return message
+}
+
+export async function sendWhatsAppCalendarApprovalButtons(
+  toNumber: string,
+  title: string,
+  when: string,
+  duration: string = '30 mins'
+) {
+  const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
+  const to = normalizeWhatsAppAddress(toNumber)
+  const payload: any = {
+    from,
+    to,
+    contentSid: CALENDAR_APPROVAL_CONTENT_SID,
+    contentVariables: JSON.stringify({
+      '1': String(title || 'Meeting').slice(0, 400),
+      '2': String(when || '').slice(0, 200),
+      '3': String(duration || '30 mins').slice(0, 100),
+    }),
+  }
+  if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
+  const message = await client.messages.create(payload)
+  console.log('WHATSAPP_CALENDAR_APPROVAL_SENT:', { sid: message.sid, to, status: message.status })
   return message
 }
 
