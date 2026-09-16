@@ -42,6 +42,18 @@ function approvalIntent(text: string): 'approve' | 'reject' | null {
   return null
 }
 
+function shouldPreferSpecialistTravel(text: string) {
+  const raw = String(text || '').trim()
+  if (!/\b(flight|flights|airfare|fare|fares|hotel|hotels|travel)\b/i.test(raw)) return false
+  if (!/\b(find|search|compare|options|available|availability|current fare|current fares|live sources?|best available|cheapest|price|prices)\b/i.test(raw)) return false
+
+  // A pure research request belongs to the specialist travel engine so its real
+  // provider/public-web result becomes the user-facing answer. Compound missions
+  // (research + reminder/calendar/list/etc.) still go through the general planner.
+  const crossFeature = /\b(remind\s+me|set\s+(?:a\s+)?reminder|add\s+.*\bcalendar\b|create\s+.*\blist\b|add\s+.*\blist\b|save\s+(?:this|it|the\s+results?)|create\s+.*\btask\b|add\s+.*\btask\b|then\s+(?:remind|save|add|create|email|send)|email\s+me|send\s+me)\b/i.test(raw)
+  return !crossFeature
+}
+
 async function pauseRecentTimedOutBrowserRun(actor: AgentActor) {
   const cutoff = new Date(Date.now() - 2 * 60_000).toISOString()
   const { data } = await supabaseAdmin.from('agent_runs')
@@ -201,17 +213,9 @@ export async function tryRunWhatsAppAgent(params: {
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
 
-  // Flight watcher context is deterministic and must beat appointment/browser/general
-  // recovery. The first turn stores destination/date; the next airline+flight-number
-  // turn creates the real persistent Background Gogo watcher for the same user.
   const flightWatch = await tryCreateFlightWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (flightWatch) return { ...flightWatch, handledBy:String(flightWatch.handledBy || 'flight-watch') }
 
-  // Appointment context is deterministic and must beat generic browser/planner
-  // routing. Numbered options are recovered from the latest location-anchored
-  // appointment research run; exact-slot follow-ups then use the prepared provider
-  // flow. The WhatsApp budget prevents a slow provider/browser from holding the
-  // inbound webhook until Vercel kills it and leaving the user with no reply.
   const appointmentRecovery = await withWhatsAppBrowserBudget(actor, tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text }))
   if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String((appointmentRecovery as any).handledBy || 'appointment-followup-recovery') }
 
@@ -220,6 +224,17 @@ export async function tryRunWhatsAppAgent(params: {
 
   const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:'whatsapp', text:params.text })
   if (appointmentResearch) return { ...appointmentResearch, handledBy:String(appointmentResearch.handledBy || 'appointment-research') }
+
+  // Pure current travel research must reach the specialist engine before generic
+  // browser/general planning. This makes the actual provider/public-web result the
+  // user-facing answer instead of allowing a trailing artifact step to mask it.
+  if (shouldPreferSpecialistTravel(params.text)) {
+    const specialistTravel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
+    if (specialistTravel) {
+      const hardened = await hardenTravelResearchResult(specialistTravel, params.text)
+      return { ...hardened, handledBy:String(hardened.handledBy || 'travel-research') }
+    }
+  }
 
   const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (webWatch) return { ...webWatch, handledBy:String(webWatch.handledBy || 'background-web-watch') }
