@@ -34,6 +34,15 @@ if (route.origin?.code !== 'BLR' || route.destination?.code !== 'BOM' || route.r
   console.log(`✓ route parsing → ${route.routeLabel} · ${route.whenLabel}`)
 }
 
+const nyRequest = 'Find actual flight options from Bengaluru to New York on 27 September 2026. Search live sources and give me the best available options with airline, departure time, arrival time, stops and current fare.'
+const nyRoute = buildTravelResearchContext(nyRequest, fixedNow)
+if (nyRoute.origin?.code !== 'BLR' || nyRoute.destination?.code !== 'NYC' || nyRoute.routeLabel !== 'BLR → NYC' || nyRoute.startDate !== '2026-09-27' || nyRoute.endDate !== '2026-09-27') {
+  failed++
+  console.error('✗ New York explicit-date live context failed', nyRoute)
+} else {
+  console.log(`✓ explicit international context → ${nyRoute.routeLabel} · ${nyRoute.startDate}`)
+}
+
 const results = curateTravelResults([
   { title:'Mumbai (BOM) to Bangalore (BLR) Flights', snippet:'Mumbai to Bengaluru cheap flights', url:'https://example.com/reverse' },
   { title:'Bengaluru to Mumbai Flights, Fares from ₹4190', snippet:'Bangalore to Mumbai direct flights and fares', url:'https://example.com/forward' },
