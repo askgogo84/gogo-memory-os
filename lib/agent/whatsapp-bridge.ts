@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
-import { tryCreateWebWatchFromCommand } from './watch-command'
+import { tryCreateFlightWatchFromCommand, tryCreateWebWatchFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
@@ -200,6 +200,12 @@ export async function tryRunWhatsAppAgent(params: {
 
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
+
+  // Flight watcher context is deterministic and must beat appointment/browser/general
+  // recovery. The first turn stores destination/date; the next airline+flight-number
+  // turn creates the real persistent Background Gogo watcher for the same user.
+  const flightWatch = await tryCreateFlightWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
+  if (flightWatch) return { ...flightWatch, handledBy:String(flightWatch.handledBy || 'flight-watch') }
 
   // Appointment context is deterministic and must beat generic browser/planner
   // routing. Numbered options are recovered from the latest location-anchored
