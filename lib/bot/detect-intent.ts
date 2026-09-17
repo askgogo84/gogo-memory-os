@@ -1,7 +1,7 @@
 import { classifyCheckVerb } from '@/lib/data/lists-core'
 import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
 
-// "google calendar" (+ misspellings) → connect intent, derived from the shared spelling
+// "google calendar" (+ misspellings) â†’ connect intent, derived from the shared spelling
 // set rather than re-encoding the vowel-swaps by hand. Hoisted out of the per-message
 // detectIntent hot path.
 const GOOGLE_CALENDAR_RE = new RegExp(`\\bgoogle\\s+${CALENDAR_WORD_RE.source}`)
@@ -83,7 +83,7 @@ export function detectIntent(text: string): DetectedIntent {
   if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) return { type: 'welcome_menu', confidence: 'high' }
   if (lower === 'help' || lower === '/help' || lower === 'menu' || lower === 'commands' || lower === 'what can you do') return { type: 'help_menu', confidence: 'high' }
 
-  // CreditIQ account linking — high-priority, PREFIXED 6-digit code only (never a bare number).
+  // CreditIQ account linking â€” high-priority, PREFIXED 6-digit code only (never a bare number).
   {
     const cq = lower.match(/^link\s+creditiq\s+(\d{6})$/) || lower.match(/^creditiq\s+(?:link\s+)?(\d{6})$/)
     if (cq) return { type: 'creditiq_link', confidence: 'high', meta: { code: cq[1] } }
@@ -92,12 +92,12 @@ export function detectIntent(text: string): DetectedIntent {
   // CreditIQ portfolio. Two ways to match:
   //   (a) the original anchored commands (kept verbatim), OR
   //   (b) natural phrasings ("how many points do I have", "what cards do I
-  //       have", "my card balance") — each anchored to a query/possessive
+  //       have", "my card balance") â€” each anchored to a query/possessive
   //       SHAPE so a mid-sentence "my card" in an unrelated message ("pay my
   //       credit card bill", "remind me to renew my card") can NOT steal this
   //       intent. Every pattern requires a rewards/card noun (cards/points/
   //       miles/card balance) together with a first-person marker (my / do I /
-  //       I have). \b boundaries only — never substring matching, so "what's
+  //       I have). \b boundaries only â€” never substring matching, so "what's
   //       the point" (no plural noun), "bank balance" / "work-life balance"
   //       (no card/points/miles noun) and a bare "points" never fire.
   if (
@@ -116,7 +116,7 @@ export function detectIntent(text: string): DetectedIntent {
     /^what\s+(?:credit\s+|reward\s+)?(?:cards?|points|miles)\s+(?:do\s+i\s+have|have\s+i)\b/.test(lower)
   ) return { type: 'creditiq_cards', confidence: 'high' }
 
-  // Dashboard magic-link request. Deterministic command — an exact-match set so
+  // Dashboard magic-link request. Deterministic command â€” an exact-match set so
   // it can't shadow ordinary chat, and so it stops the LLM freeform path (which
   // has surfaced stored credentials) from firing on the word "dashboard".
   if (lower === 'dashboard' || lower === '/dashboard' || lower === 'my dashboard' || lower === 'open dashboard' || lower === 'web dashboard' || lower === 'dashboard link' || lower === 'my dashboard link') return { type: 'dashboard', confidence: 'high' }
@@ -139,8 +139,8 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (lower.includes('check my latest mail') || lower.includes('check my latest mails') || lower.includes('latest mail') || lower.includes('latest mails') || lower.includes('latest email') || lower.includes('latest emails') || lower.includes('show my unread emails') || lower.includes('show unread emails') || lower.includes('check unread emails') || lower.includes('any new mails') || lower.includes('any new mail') || lower.includes('check my inbox') || lower.includes('mail summary') || lower.includes('mails summary') || lower.includes('email summary') || lower.includes('emails summary') || lower.includes('top 3 mails') || lower.includes('top 3 mail') || lower.includes('top 3 emails') || lower.includes('top 3 email') || lower.includes('check my top 3 mail') || lower.includes('check my top 3 email') || lower.includes('show me my top 3 mails') || lower.includes('show me my top 3 email') || lower.includes('summarize my mails') || lower.includes('summarize my emails') || lower.includes('summarize top 3 mails') || lower.includes('summarize top 3 emails') || lower.includes('top 3 mails summary') || lower.includes('top 3 emails summary')) return { type: 'read_gmail', confidence: 'high' }
 
-  // Tolerant of common "calendar" misspellings (calender/calandar/calenders/…) via
-  // CALENDAR_WORD_RE — "connect calender" used to miss and fall to the freeform LLM.
+  // Tolerant of common "calendar" misspellings (calender/calandar/calenders/â€¦) via
+  // CALENDAR_WORD_RE â€” "connect calender" used to miss and fall to the freeform LLM.
   if (((lower.includes('connect') || lower.includes('link')) && CALENDAR_WORD_RE.test(lower)) || GOOGLE_CALENDAR_RE.test(lower)) return { type: 'connect_calendar', confidence: 'high' }
   // Check "remind me" BEFORE weather - marathon/training reminders must not go to weather
   if (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ')) return { type: 'set_reminder', confidence: 'high' }
@@ -151,7 +151,9 @@ export function detectIntent(text: string): DetectedIntent {
   if (/^(on\s+)?\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(lower)) return { type: 'set_reminder', confidence: 'high' }
   if (/^(tomorrow|tmrw|tmr)\s*(morning|evening|noon|afternoon|night)?$/i.test(lower)) return { type: 'set_reminder', confidence: 'high' }
 
-  if (lower.includes('weather') || lower.includes('temperature') || lower.includes('rain')) return { type: 'weather_live', confidence: 'high' }
+  // Word-boundary matching, never raw substring. includes('rain') matched "trains",
+  // routing "direct trains from Bangalore to Mysuru" to weather at high confidence.
+  if (/\b(weather|temperature|temp|rain|raining|rainfall|forecast)\b/.test(lower)) return { type: 'weather_live', confidence: 'high' }
   if (lower.includes('gold price') || lower.includes('gold rate') || lower.includes('silver price') || lower.includes('silver rate')) return { type: 'gold_live', confidence: 'high' }
   if (lower.includes('ipl table') || lower.includes('points table') || lower.includes('table toppers') || lower.includes('ipl standings') || lower.includes('ipl topper')) return { type: 'sports_standings', confidence: 'high' }
   if ((lower.includes('rcb') && lower.includes('match')) || (lower.includes('ipl') && lower.includes('match')) || lower.includes('next rcb match') || lower.includes('when is the next rcb match')) return { type: 'sports_schedule', confidence: 'high' }
@@ -161,7 +163,7 @@ export function detectIntent(text: string): DetectedIntent {
   if (lower === 'show all lists' || lower === 'list all' || lower === 'show my lists') return { type: 'list_show_all', confidence: 'high' }
   if ((lower.startsWith('show ') || lower.startsWith('open ') || lower.startsWith('view ')) && lower.includes(' list')) return { type: 'list_show', confidence: 'medium' }
   if (lower.startsWith('add ') && (lower.includes(' to ') || lower.includes(' into '))) return { type: 'list_add', confidence: 'medium' }
-  // uncheck/untick/undone/unmark → list_uncheck; check/tick/mark → list_check. Ordered
+  // uncheck/untick/undone/unmark â†’ list_uncheck; check/tick/mark â†’ list_check. Ordered
   // uncheck-first and check kept PREFIX-anchored inside classifyCheckVerb so "uncheck X"
   // can never be claimed by the check branch (it CONTAINS "check").
   const checkVerb = classifyCheckVerb(lower)
