@@ -54,7 +54,11 @@ export const PLAYWRIGHT_VERSION = '1.63.0'
 // Officially-supported managed image (replaces deprecated runtime:'node24').
 export const SANDBOX_IMAGE = 'vercel/sandbox/node:24'
 
-// Canonical managed-image workspace used by the Vercel Sandbox APIs/docs.
+// Workspace for Playwright + the Chromium profile. The image does NOT ship this
+// directory - assuming it existed made every cd fail with
+//   bash: line 1: cd: /home/vercel-sandbox: No such file or directory
+// on fresh AND resumed sandboxes, so no browser task has ever run. Every command
+// now creates it before entering it.
 export const SANDBOX_WORKDIR = '/home/vercel-sandbox'
 
 // Chromium persistent profile kept with the Playwright install in one workspace.
@@ -93,7 +97,7 @@ const DNF_CHROMIUM_DEPS = [
 
 // The only trustworthy readiness signal is a real launch. A browser executable
 // can exist while required shared libraries are still missing.
-const READY_CHECK = `cd ${SANDBOX_WORKDIR} && if [ -f node_modules/playwright/package.json ]; then node -e "const {chromium}=require('playwright');(async()=>{try{const b=await chromium.launch({headless:true});await b.close();process.stdout.write('ready')}catch{process.stdout.write('missing')}})()"; else echo missing; fi`
+const READY_CHECK = `mkdir -p ${SANDBOX_WORKDIR} && cd ${SANDBOX_WORKDIR} && if [ -f node_modules/playwright/package.json ]; then node -e "const {chromium}=require('playwright');(async()=>{try{const b=await chromium.launch({headless:true});await b.close();process.stdout.write('ready')}catch{process.stdout.write('missing')}})()"; else echo missing; fi`
 
 /**
  * Idempotently ensure a launchable Chromium exists in the sandbox. Safe to call
@@ -114,7 +118,7 @@ export async function ensureBrowserRuntime(sandbox: any): Promise<void> {
   //    OS dependencies are installed separately with root below.
   const install = await sandbox.runCommand({
     cmd: 'bash',
-    args: ['-lc', `cd ${SANDBOX_WORKDIR} && npm init -y >/dev/null 2>&1 || true; npm install --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION} && npx playwright install chromium`],
+    args: ['-lc', `mkdir -p ${SANDBOX_WORKDIR} && cd ${SANDBOX_WORKDIR} && npm init -y >/dev/null 2>&1 || true; npm install --no-audit --no-fund playwright@${PLAYWRIGHT_VERSION} && npx playwright install chromium`],
   })
   if (install.exitCode !== 0) {
     throw new Error(`secure_browser_bootstrap_failed:${String((await install.stderr()) || '').slice(0, 500)}`)
@@ -123,7 +127,7 @@ export async function ensureBrowserRuntime(sandbox: any): Promise<void> {
   // 2) Install Chromium OS libraries as root. Do not assume a distro/package
   //    manager: current universal images use apt, while RPM-based node/runtime
   //    images and resumed persistent sandboxes can expose dnf/yum instead.
-  const depsScript = `cd ${SANDBOX_WORKDIR} && if command -v apt-get >/dev/null 2>&1; then ${APT_TO_HTTPS} && apt-get update && npx playwright install-deps chromium; elif command -v dnf >/dev/null 2>&1; then dnf clean all >/dev/null 2>&1 || true; dnf install -y --skip-broken ${DNF_CHROMIUM_DEPS} && ldconfig; elif command -v yum >/dev/null 2>&1; then yum install -y ${DNF_CHROMIUM_DEPS} && ldconfig; else echo unsupported_package_manager >&2; cat /etc/os-release >&2 2>/dev/null || true; exit 127; fi`
+  const depsScript = `mkdir -p ${SANDBOX_WORKDIR} && cd ${SANDBOX_WORKDIR} && if command -v apt-get >/dev/null 2>&1; then ${APT_TO_HTTPS} && apt-get update && npx playwright install-deps chromium; elif command -v dnf >/dev/null 2>&1; then dnf clean all >/dev/null 2>&1 || true; dnf install -y --skip-broken ${DNF_CHROMIUM_DEPS} && ldconfig; elif command -v yum >/dev/null 2>&1; then yum install -y ${DNF_CHROMIUM_DEPS} && ldconfig; else echo unsupported_package_manager >&2; cat /etc/os-release >&2 2>/dev/null || true; exit 127; fi`
   const deps = await sandbox.runCommand({
     cmd: 'bash',
     args: ['-lc', depsScript],
