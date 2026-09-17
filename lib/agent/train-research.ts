@@ -126,7 +126,11 @@ async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurface;run
     if(stepCleanup.error)console.error('TRAIN_STEP_CLEANUP_FAILED:',stepCleanup.error.message)
     const runCleanup=await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the train task.',error:msg,completed_at:at,updated_at:at}).eq('id',runId)
     if(runCleanup.error)console.error('TRAIN_RUN_CLEANUP_FAILED:',runCleanup.error.message)
-    throw err
+    // Fail CLOSED. Throwing here let the caller fall through to the general planner,
+    // which answered from the model — the user received invented train numbers and
+    // timings after the browser never opened. A failed provider read must report the
+    // failure, never hand the question to a path that can fabricate inventory.
+    return{runId,status:'failed' as const,capability:'travel' as const,risk:'low' as const,text:`I could not reach the rail provider for ${params.c.routeLabel} on ${params.c.date}, so I have no verified train options for you. I did not invent timings or availability. Try again shortly, or check IRCTC directly.`,handledBy:'train-research' as const}
   }
 }
 
