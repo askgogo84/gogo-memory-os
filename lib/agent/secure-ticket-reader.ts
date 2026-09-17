@@ -1,9 +1,8 @@
-import { createHash } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
 import { detectHumanAuthGate } from './browser-auth-gate'
 import { detectProviderChallenge, PROVIDER_CLOUDFLARE_CHALLENGE, DEVICE_HANDOFF_REQUIRED } from './provider-challenge'
 import { runSecureBrowser } from './secure-computer'
-import { BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, ensureBrowserRuntime } from './secure-browser-bootstrap'
+import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
 
@@ -27,10 +26,7 @@ export type SecureTicketReadResult = {
   handoff?: 'device_handoff_required'
 }
 
-function sandboxName(userId: string) {
-  const digest = createHash('sha256').update(String(userId)).digest('hex').slice(0, 24)
-  return `gogo-browser-${digest}`
-}
+const sandboxName = browserSandboxNameFor
 
 function allowedHosts(url: string) {
   const u = new URL(url)
@@ -174,7 +170,7 @@ async function captureCredential(page){
 async function computer(userId: string, url: string) {
   const sandbox = await Sandbox.getOrCreate({
     name: sandboxName(userId), image: SANDBOX_IMAGE, region: SANDBOX_REGION,
-    timeout: 20 * 60 * 1000, persistent: true, resources: { vcpus: 1 },
+    timeout: 20 * 60 * 1000, persistent: true, ports: BROWSER_PORTS, resources: { vcpus: 1 },
     networkPolicy: BROWSER_SETUP_NETWORK,
   } as any)
   try {

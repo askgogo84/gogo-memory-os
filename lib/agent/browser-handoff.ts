@@ -1,16 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { randomBytes, createHash } from 'crypto'
+import { randomBytes } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
-import { BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, ensureBrowserRuntime } from './secure-browser-bootstrap'
+import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 export const BROWSER_HANDOFF_PORT = 3001
 const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
-export function browserSandboxName(userId:string){
-  const digest=createHash('sha256').update(String(userId)).digest('hex').slice(0,24)
-  return `gogo-browser-v2-${digest}`
-}
+export const browserSandboxName=browserSandboxNameFor
 
 export type HandoffState={url:string;title:string;text:string;links:Array<{text:string;href:string}>;forms:Array<{action:string;method:string;inputs:Array<{selector:string;name:string;type:string;label:string}>}>}
 type AgentAction={kind:'goto'|'click'|'fill'|'select'|'check'|'wait';url?:string;selector?:string;value?:string;ms?:number}

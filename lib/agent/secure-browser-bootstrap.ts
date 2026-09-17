@@ -25,6 +25,30 @@
 //  8. A Chromium binary on disk is not enough: readiness is proven by actually
 //     launching and closing Chromium in the current microVM.
 
+import { createHash } from 'crypto'
+
+// ONE sandbox per user, shared by every browser surface: secure-computer.ts,
+// secure-ticket-reader.ts and browser-handoff.ts. They previously built their
+// own names - the first two used `gogo-browser-<digest>` while the handoff used
+// `gogo-browser-v2-<digest>` - so human takeover ran in a DIFFERENT microVM from
+// the agent's browser and "resume the same session" could never work.
+//
+// The -v3- generation also forces a fresh create. A persistent named sandbox is
+// resumed by getOrCreate and creation options do NOT re-image it, so sandboxes
+// made before the move to image:'vercel/sandbox/node:24' still have the old
+// /vercel home and fail every `cd /home/vercel-sandbox`. Bump this generation
+// whenever the image or workdir changes.
+export const SANDBOX_GENERATION = 'v3'
+
+export function browserSandboxNameFor(userId: string) {
+  const digest = createHash('sha256').update(String(userId)).digest('hex').slice(0, 24)
+  return `gogo-browser-${SANDBOX_GENERATION}-${digest}`
+}
+
+// Declared by EVERY creator. getOrCreate will not add a port to a sandbox that
+// was created without one, so a surface that omits it can lock the takeover
+// server out of its own microVM.
+export const BROWSER_PORTS = [3001]
 export const PLAYWRIGHT_VERSION = '1.63.0'
 
 // Officially-supported managed image (replaces deprecated runtime:'node24').

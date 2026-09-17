@@ -5,13 +5,14 @@ const computer=readFileSync(new URL('../lib/agent/secure-computer.ts',import.met
 const ticket=readFileSync(new URL('../lib/agent/secure-ticket-reader.ts',import.meta.url),'utf8')
 const bootstrap=readFileSync(new URL('../lib/agent/secure-browser-bootstrap.ts',import.meta.url),'utf8')
 const browser=readFileSync(new URL('../lib/agent/browser-command.ts',import.meta.url),'utf8')
+const handoff=readFileSync(new URL('../lib/agent/browser-handoff.ts',import.meta.url),'utf8')
 const runRoute=readFileSync(new URL('../app/api/agent/run/route.ts',import.meta.url),'utf8')
 const execRoute=readFileSync(new URL('../app/api/agent/runs/[id]/execute/route.ts',import.meta.url),'utf8')
 
 // Secure Computer is an isolated Vercel Sandbox, keyed by a one-way user hash.
 assert.match(computer,/Sandbox\.getOrCreate/)
-assert.match(computer,/createHash\('sha256'\)/)
-assert.match(computer,/gogo-browser-/)
+assert.match(bootstrap,/createHash\('sha256'\)/)
+assert.match(bootstrap,/gogo-browser-\$\{SANDBOX_GENERATION\}-\$\{digest\}/)
 assert.match(computer,/persistent:true/)
 
 // India launch defaults each per-user secure browser microVM to Mumbai while
@@ -103,4 +104,26 @@ assert.match(runRoute,/tryRunBrowserCommand/)
 assert.match(execRoute,/planType === 'secure_browser'/)
 assert.match(execRoute,/executeApprovedBrowserCommand/)
 
+// --- ONE sandbox identity for every browser surface ---
+// secure-computer.ts, secure-ticket-reader.ts and browser-handoff.ts each built
+// their own name from the same digest but with different prefixes: the first two
+// used gogo-browser-<digest>, the handoff used gogo-browser-v2-<digest>. Both
+// microVMs were live for one user. Human takeover therefore ran in a DIFFERENT
+// sandbox from the agent's browser, so "return control and resume the same
+// session" could not work by construction; and a sandbox created under an older
+// image was resumed forever with the wrong home directory, failing every
+// `cd /home/vercel-sandbox`. The name is built in the shared bootstrap ONLY.
+assert.match(bootstrap,/export function browserSandboxNameFor/)
+assert.match(bootstrap,/SANDBOX_GENERATION/)
+for(const [label,src] of [['secure-computer',computer],['secure-ticket-reader',ticket],['browser-handoff',handoff]] as Array<[string,string]>){
+  assert.match(src,/browserSandboxNameFor/,label+' must use the shared sandbox name helper')
+  assert.doesNotMatch(src,/gogo-browser-/,label+' must not build its own sandbox name')
+}
+
+// Every creator declares the takeover port. getOrCreate will not add a port to a
+// sandbox created without one, so a surface that omits it locks the handoff
+// server out of the shared microVM.
+assert.match(computer,/ports:BROWSER_PORTS/)
+assert.match(ticket,/ports: BROWSER_PORTS/)
+assert.match(handoff,/ports:\[BROWSER_HANDOFF_PORT\]|ports:BROWSER_PORTS/)
 console.log('agent secure browser verification passed')

@@ -1,9 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { createHash } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
-import { BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, ensureBrowserRuntime } from './secure-browser-bootstrap'
+import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 const MAX_ACTIONS = 12
@@ -38,10 +37,7 @@ function safeText(value:unknown,max=1200){
   return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))
 }
 
-function userSandboxName(userId:string){
-  const digest=createHash('sha256').update(String(userId)).digest('hex').slice(0,24)
-  return `gogo-browser-${digest}`
-}
+const userSandboxName=browserSandboxNameFor
 
 function allowedHosts(url:string){
   const u=new URL(url)
@@ -130,7 +126,7 @@ async function getComputer(userId:string,targetUrl:string){
   const name=userSandboxName(userId)
   const sandbox=await Sandbox.getOrCreate({
     name, image:SANDBOX_IMAGE, region:SANDBOX_REGION, timeout:20*60*1000, persistent:true,
-    resources:{vcpus:1}, networkPolicy:BROWSER_SETUP_NETWORK,
+    ports:BROWSER_PORTS, resources:{vcpus:1}, networkPolicy:BROWSER_SETUP_NETWORK,
   } as any)
   await ensureBrowserRuntime(sandbox)
   await sandbox.writeFiles([{path:'gogo-browser.js',content:Buffer.from(BROWSER_SCRIPT)}])
