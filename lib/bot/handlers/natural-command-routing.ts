@@ -1,14 +1,53 @@
 import { parseReminderIntent, buildReminderConfirmation, getAmbiguousReminderTime, buildAmPmClarificationReply } from './reminders'
 import { pickRecurringDuplicate } from '@/lib/bot/reminder-dedup'
+import { formatReminderWhen } from '@/lib/services/reminder-series'
 
 export type NumberedChecklist = { listName: string; items: string[] }
 export type NaturalReminderPendingContext = { task: string | null; dateText: string | null }
+export type ListReminderCompound = { listName: string; items: string[]; reminderText: string }
 
 const MONTH = '(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)'
 const WEEKDAY = '(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)'
+const REMINDER_READ_SENTINEL = '__askgogo_read_reminders__'
+
+export function isReminderReadQuery(text: string): boolean {
+  const t = String(text || '').trim().toLowerCase().replace(/[?.!]+$/g, '').trim()
+  if (!/\breminders?\b/.test(t)) return false
+  if (/\b(set|create|make|add|schedule)\b/.test(t) || /\bremind\s+me\b/.test(t)) return false
+  return (
+    /^(?:show|list|display)(?:\s+me)?(?:\s+my)?\s+reminders?\b/.test(t) ||
+    /^(?:my|pending|active)\s+reminders?\b/.test(t) ||
+    /^(?:what|which)\s+reminders?\b/.test(t) ||
+    /^what\s+are\s+my\s+reminders?\b/.test(t) ||
+    /^do\s+i\s+have\s+(?:any\s+)?reminders?\b/.test(t) ||
+    /^are\s+there\s+(?:any\s+)?reminders?\b/.test(t)
+  )
+}
+
+function cleanCompoundItem(value: string) {
+  return String(value || '').replace(/^[,;\s]+|[,;\s.]+$/g, '').replace(/\s+/g, ' ').trim()
+}
+
+export function parseListReminderCompound(text: string): ListReminderCompound | null {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim()
+  const match = raw.match(/^\s*(?:please\s+)?(?:create|make)\s+(?:a\s+)?list\s+(?:called|named)\s+(.+?)\s+with\s+(.+?)(?:[.!?]\s*|\s+then\s+)(remind\s+me\b.+)$/i)
+  if (!match) return null
+  const listName = String(match[1] || '').trim().replace(/[.!?]+$/g, '').trim()
+  const items = String(match[2] || '')
+    .split(/\s*(?:,|\band\b)\s*/i)
+    .map(cleanCompoundItem)
+    .filter(Boolean)
+    .slice(0, 20)
+  const reminderText = String(match[3] || '').trim()
+  if (!listName || items.length < 1 || !reminderText) return null
+  return { listName, items, reminderText }
+}
 
 export function normalizeNaturalReminderSave(text: string): string | null {
   const raw = String(text || '').trim()
+  if (isReminderReadQuery(raw)) return REMINDER_READ_SENTINEL
+  const compound = parseListReminderCompound(raw)
+  if (compound) return compound.reminderText
   const match = raw.match(/^\s*(?:please\s+)?(?:save|make|create)(?:\s+this)?\s+(?:as\s+)?(?:a\s+)?reminder\b[\s:,-]*(.*)$/i)
   if (!match) return null
   const rest = String(match[1] || '').trim()
@@ -24,8 +63,6 @@ export function naturalReminderPendingContext(normalized:string):NaturalReminder
   if (!task) return { task:null, dateText:null }
   let dateText:string|null=null
 
-  // Keep scheduling context separate from the task so a two-turn reminder can use
-  // the mature date parser without polluting the final reminder subject.
   const absolute = task.match(new RegExp(`\\b(?:on\\s+)?(?:the\\s+)?\\d{1,2}(?:st|nd|rd|th)?(?:\\s+of)?\\s+${MONTH}(?:\\s+\\d{4})?\\b`,'i'))
   const relative = task.match(/\b(?:today|tomorrow|tmrw|tmr|day after tomorrow)\b/i)
   const weekday = task.match(new RegExp(`\\b(?:on\\s+)?(?:(?:this|next)\\s+)?${WEEKDAY}\\b`,'i'))
@@ -36,8 +73,6 @@ export function naturalReminderPendingContext(normalized:string):NaturalReminder
     task=`${task.slice(0,idx)} ${task.slice(idx+picked[0].length)}`.replace(/\s+/g,' ').trim()
   }
 
-  // A day-part is useful conversational context but not precise enough to schedule.
-  // Remove it from the subject and ask for a concrete clock time.
   task=task.replace(/\b(?:morning|afternoon|evening|night)\b/ig,' ').replace(/\s+/g,' ').trim()
   task=task.replace(/\b(?:at|on|for)\s*$/i,'').replace(/\s+/g,' ').trim()
   return { task:task||null, dateText }
@@ -78,6 +113,49 @@ export function parseNumberedChecklist(text: string): NumberedChecklist | null {
   return { listName: subject, items }
 }
 
+function istDateKey(d: Date) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d)
+}
+
+async function showReminderReadQuery(telegramId: number, text: string): Promise<string> {
+  const { supabaseAdmin } = await import('@/lib/supabase-admin')
+  const { data, error } = await supabaseAdmin.from('reminders')
+    .select('id,message,remind_at,sent,is_recurring,recurring_pattern')
+    .eq('telegram_id', telegramId)
+    .eq('sent', false)
+    .order('remind_at', { ascending: true })
+    .limit(100)
+  if (error) throw new Error(`reminder_read_failed:${error.message}`)
+
+  const now = new Date()
+  const targetKey = /\btomorrow\b/i.test(text)
+    ? istDateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000))
+    : /\btoday\b/i.test(text)
+      ? istDateKey(now)
+      : null
+
+  let rows = (data || []).filter((r:any) => r?.remind_at && Number.isFinite(new Date(r.remind_at).getTime()))
+  if (targetKey) rows = rows.filter((r:any) => istDateKey(new Date(r.remind_at)) === targetKey)
+
+  const seen = new Set<string>()
+  rows = rows.filter((r:any) => {
+    const key = `${String(r.message || '').trim().toLowerCase()}|${String(r.remind_at)}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(0, 10)
+
+  const scope = targetKey ? (/\btomorrow\b/i.test(text) ? 'tomorrow' : 'today') : 'active'
+  if (!rows.length) return scope === 'active' ? `⏰ You have no active reminders right now.` : `⏰ You have no reminders for ${scope}.`
+
+  return (
+    `⏰ *Your ${scope} reminders*\n\n` +
+    rows.map((r:any, i:number) => `${i + 1}. ${String(r.message || 'Reminder').replace(/^to\s+/i,'').trim()} — ${formatReminderWhen(r.remind_at)}`).join('\n')
+  )
+}
+
 export async function saveNaturalReminder(params: {
   telegramId: number
   whatsappTo?: string | null
@@ -85,6 +163,25 @@ export async function saveNaturalReminder(params: {
 }): Promise<string | null> {
   const normalized = normalizeNaturalReminderSave(params.text)
   if (!normalized) return null
+  if (normalized === REMINDER_READ_SENTINEL) return await showReminderReadQuery(params.telegramId, params.text)
+
+  const compound = parseListReminderCompound(params.text)
+  let compoundListReply = ''
+  if (compound) {
+    const { addToListDetailed, getList, normalizeListName } = await import('@/lib/lists')
+    const listName = normalizeListName(compound.listName)
+    const result = await addToListDetailed(params.telegramId, listName, compound.items)
+    const stored = await getList(params.telegramId, listName)
+    const storedItems = Array.isArray(stored?.items) ? stored.items : []
+    const pending = new Set(storedItems.filter((x:any)=>!x?.done).map((x:any)=>String(x?.text||'').trim().toLowerCase().replace(/\s+/g,' ')))
+    const missing = compound.items.filter(item=>!pending.has(String(item).trim().toLowerCase().replace(/\s+/g,' ')))
+    if (missing.length) throw new Error(`compound_list_persistence_incomplete:${missing.length}`)
+    const changed = result.added.length + result.reactivated.length
+    compoundListReply = changed
+      ? `✅ List *${listName}* saved with ${compound.items.length} item${compound.items.length===1?'':'s'}.`
+      : `✅ List *${listName}* already has those ${compound.items.length} item${compound.items.length===1?'':'s'}.`
+  }
+
   const { saveFollowupState } = await import('./followup-state')
   const pending=naturalReminderPendingContext(normalized)
 
@@ -94,11 +191,10 @@ export async function saveNaturalReminder(params: {
       channel:params.whatsappTo?'whatsapp':'unknown',
       created_at:new Date().toISOString(),
     })
-    return buildAmPmClarificationReply(normalized)
+    const reply = buildAmPmClarificationReply(normalized)
+    return compoundListReply ? `${compoundListReply}\n\n${reply}` : reply
   }
 
-  // Date/day/day-part without a clock time is incomplete. Persist subject + date
-  // separately so a later "8 pm" keeps the original date without polluting the title.
   if (!hasExplicitReminderTiming(normalized)) {
     await saveFollowupState(params.telegramId,'pending_reminder',{
       task:pending.task,
@@ -107,7 +203,8 @@ export async function saveNaturalReminder(params: {
       recurrence:null,
       created_at:new Date().toISOString(),
     })
-    return `Sure — what time should I remind you?\n_e.g. “8 PM”, “tomorrow 6 PM”, or “in 2 hours”_`
+    const reply = `Sure — what time should I remind you?\n_e.g. “8 PM”, “tomorrow 6 PM”, or “in 2 hours”_`
+    return compoundListReply ? `${compoundListReply}\n\n${reply}` : reply
   }
 
   const parsed = parseReminderIntent(normalized)
@@ -119,7 +216,8 @@ export async function saveNaturalReminder(params: {
       recurrence:null,
       created_at:new Date().toISOString(),
     })
-    return `I understood this as a reminder. When should I remind you?\n_e.g. “27 September at 9 AM”, “tomorrow 6 PM”, or “in 2 hours”_`
+    const reply = `I understood this as a reminder. When should I remind you?\n_e.g. “27 September at 9 AM”, “tomorrow 6 PM”, or “in 2 hours”_`
+    return compoundListReply ? `${compoundListReply}\n\n${reply}` : reply
   }
 
   const { supabaseAdmin } = await import('@/lib/supabase-admin')
@@ -171,5 +269,6 @@ export async function saveNaturalReminder(params: {
     if (error) throw new Error(`natural_reminder_insert_failed:${error.message}`)
   }
 
-  return buildReminderConfirmation(parsed)
+  const reminderReply = buildReminderConfirmation(parsed)
+  return compoundListReply ? `${compoundListReply}\n\n${reminderReply}` : reminderReply
 }
