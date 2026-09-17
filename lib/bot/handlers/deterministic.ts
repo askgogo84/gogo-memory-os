@@ -1,4 +1,4 @@
-﻿import { searchWeb } from '@/lib/web-search'
+import { searchWeb } from '@/lib/web-search'
 import { formatGoldAnswer, formatIplStandingsAnswer } from './formatters'
 import { fetchWeatherForecast, formatCurrentWeather, formatTomorrowWeather } from '@/lib/services/weather'
 
@@ -8,7 +8,9 @@ function normalize(text: string) {
 
 export function isWeatherQuery(text: string) {
   const t = normalize(text)
-  return t.includes('weather') || t.includes('temperature') || t.includes('rain')
+  // Word-boundary matching, never raw substring. includes('rain') matched "trains",
+  // which routed "direct trains from Bangalore to Mysuru" to the weather handler.
+  return /\b(weather|temperature|temp|rain|raining|rainfall|forecast)\b/.test(t)
 }
 
 export function isGoldQuery(text: string) {
