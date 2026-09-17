@@ -5,8 +5,15 @@ export function isActiveListShow(text:string){
 export function parseExplicitListShow(text:string):string|null{
   const t=String(text||'').trim()
   if(isActiveListShow(t))return null
-  const m=t.match(/^\s*(?:show|open|view)(?:\s+me)?\s+(?:my\s+|the\s+)?(.+?)(?:\s+list)?(?:\s+now)?\s*$/i)
-  return m?.[1]?.trim()||null
+
+  // Prefer explicit "list called/named X" shapes before the generic matcher.
+  // Without this, "show me the list called Persistent Runtime Test" captured
+  // "list called Persistent Runtime Test" as the name and looked up the wrong row.
+  let m=t.match(/^\s*(?:show|open|view)(?:\s+me)?\s+(?:my\s+|the\s+)?list\s+(?:called|named)\s+(.+?)(?:\s+now)?\s*[.!?]*\s*$/i)
+  if(m)return m[1]?.trim().replace(/[.!?]+$/g,'').trim()||null
+
+  m=t.match(/^\s*(?:show|open|view)(?:\s+me)?\s+(?:my\s+|the\s+)?(.+?)(?:\s+list)?(?:\s+now)?\s*[.!?]*\s*$/i)
+  return m?.[1]?.trim().replace(/[.!?]+$/g,'').trim()||null
 }
 
 function cleanItem(value:string){return value.replace(/^[,;\s]+|[,;\s]+$/g,'').replace(/\s+/g,' ').trim()}
