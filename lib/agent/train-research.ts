@@ -120,7 +120,14 @@ async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurface;run
     if(!trains.length){await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:{browser,context:params.c,trains:[]},error:'no_verified_train_rows',completed_at:at}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:'paused',summary:'The rail provider opened, but Gogo could not verify actual train rows yet.',progress:65,error:'no_verified_train_rows',updated_at:at}).eq('id',runId);return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:`The train task reached the provider for ${params.c.routeLabel} on ${params.c.date}, but I could not verify actual train rows yet. I did not invent availability or fares.`,handledBy:'train-research' as const}}
     const text=formatTrainResult(params.c,trains)
     await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{browser,context:params.c,trains,inventoryType:'browser-verified'},completed_at:at}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(text,1800),progress:100,completed_at:at,updated_at:at,metadata_json:{...baseMeta,state:'completed'}}).eq('id',runId);await activity(tg,runId,'run_completed',`Task completed with ${trains.length} browser-verified train options.`,{result_count:trains.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'train-research' as const}
-  }catch(err:any){const at=new Date().toISOString();const msg=safe(err?.message||'train_research_failed',500);await supabaseAdmin.from('agent_steps').update({status:'failed',error:msg,completed_at:at}).eq('id',String(step.id)).catch(()=>{});await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the train task.',error:msg,completed_at:at,updated_at:at}).eq('id',runId).catch(()=>{});throw err}
+  }catch(err:any){
+    const at=new Date().toISOString();const msg=safe(err?.message||'train_research_failed',500)
+    const stepCleanup=await supabaseAdmin.from('agent_steps').update({status:'failed',error:msg,completed_at:at}).eq('id',String(step.id))
+    if(stepCleanup.error)console.error('TRAIN_STEP_CLEANUP_FAILED:',stepCleanup.error.message)
+    const runCleanup=await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the train task.',error:msg,completed_at:at,updated_at:at}).eq('id',runId)
+    if(runCleanup.error)console.error('TRAIN_RUN_CLEANUP_FAILED:',runCleanup.error.message)
+    throw err
+  }
 }
 
 export async function tryRunTrainResearch(params:{actor:AgentActor;surface:AgentSurface;text:string}){
