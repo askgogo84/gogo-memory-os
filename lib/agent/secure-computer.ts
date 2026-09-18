@@ -208,13 +208,18 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     for(let wave=0;wave<(params.mode==='read'?MAX_RESEARCH_WAVES:1);wave++){
       const providerBlock=detectProviderAccessBlock(page)
       if(providerBlock){
-        await first.sandbox.stop().catch(()=>{})
+        // Do NOT stop the sandbox on a block. A blocked result is precisely the
+        // outcome that hands off to the user: startProviderBrowserHandoff resumes
+        // this same sandbox and starts the takeover server on BROWSER_PORTS.
+        // Stopping here killed the port binding, so the takeover URL returned
+        // 502 SANDBOX_NOT_LISTENING. The sandbox expires on its own timeout.
         return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:providerBlock,pageText:safeText(page.text,1200),forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
       }
 
       const authGate=detectHumanAuthGate(page)
       if(authGate.required){
-        await first.sandbox.stop().catch(()=>{})
+        // Same rule as the provider block above: human auth is a handoff outcome,
+        // so the sandbox must stay alive for the takeover server.
         return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:authGate.message||'Human authentication is required before Gogo can continue.',pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:authGate.reason}
       }
 
