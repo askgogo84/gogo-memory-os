@@ -82,7 +82,18 @@ export async function tryResumeTrainHandoff(params:{actor:AgentActor;text:string
   const runId=String(run.id)
   const objective=String(meta.input_text||`Find trains for ${c.routeLabel} on ${c.date}`)
   await activity(tg,runId,'handoff_returned','User returned control of the persistent browser to Gogo.',{})
-  let state=await readBrowserHandoffState(String(handoff.stateUrl))
+  // Fail CLOSED, same rule as executeTrainRun. readBrowserHandoffState is an HTTP
+  // call to the takeover server inside the sandbox; if the user never opened the
+  // link, or the sandbox timed out, it throws. That throw used to be swallowed by
+  // withWhatsAppBrowserBudget, leaving the result falsy, and CONTINUE fell through
+  // to the general planner - which answered from the model with unverified trains.
+  let state
+  try{
+    state=await readBrowserHandoffState(String(handoff.stateUrl))
+  }catch(err:any){
+    await activity(tg,runId,'handoff_state_unreachable',safe(err?.message||'handoff_state_unreachable',300),{})
+    return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:`I could not read that browser session - it looks like it was never opened, or it has since expired.\n\nOpen the secure browser, complete the human-only step, tap *Return control to Gogo*, then reply *CONTINUE*.\n${handoff.takeoverUrl}\n\nI have no verified train rows and did not invent any.`,handledBy:'train-handoff-resume' as const}
+  }
   let trains=await extract(state.text,c.routeLabel,c.date)
   if(!trains.length){const continued=await continueBrowserHandoffResearch({stateUrl:String(handoff.stateUrl),agentActionUrl:String(handoff.agentActionUrl),objective,waves:3});state=continued.state;trains=await extract(state.text,c.routeLabel,c.date)}
   const at=new Date().toISOString()
