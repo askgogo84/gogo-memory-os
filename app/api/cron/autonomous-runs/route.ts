@@ -99,6 +99,8 @@ export async function GET(request:Request){
       }catch(err:any){
         trainFailed++
         console.error('TRAIN_WORKER_RUN_FAILED:',run.id,err?.message||err)
+        const failedAt=new Date().toISOString()
+        await supabaseAdmin.from('agent_runs').update({status:'failed',error:String(err?.message||'train_worker_failed').slice(0,500),summary:'Gogo could not complete the train task.',completed_at:failedAt,updated_at:failedAt}).eq('id',run.id).eq('status','running')
         try{if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not complete the train search. I did not invent timings or availability. Try again shortly, or check IRCTC directly.')}catch{}
       }
     }

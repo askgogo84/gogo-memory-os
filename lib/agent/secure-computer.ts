@@ -93,7 +93,7 @@ async function isConsequentialControl(page,selector){
   });}catch{return true;}
 }
 (async()=>{
-  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900}});
+  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2']});
   const page=context.pages()[0]||await context.newPage();
   const log=[];
   try{
