@@ -100,8 +100,18 @@ async function latestPreferenceRun(tg:number){
   return (data||[]).find((r:any)=>r?.metadata_json?.state==='awaiting_train_preference')||null
 }
 
-async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurface;runId:string;c:any;inputText:string;directOnly:boolean}){
+export async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurface;runId:string;c:any;inputText:string;directOnly:boolean;fromWorker?:boolean}){
   const tg=params.actor.legacyTelegramId,runId=params.runId,now=new Date().toISOString()
+  // The WhatsApp webhook has a 42s budget and Vercel kills the function after it replies,
+  // so a browser session started here dies mid-flight. For WhatsApp we only ENQUEUE:
+  // the run row is marked 'queued' and /api/cron/autonomous-runs executes it in the
+  // background with a 300s budget, then pushes the result back over WhatsApp.
+  if(params.surface==='whatsapp'&&!params.fromWorker){
+    const queuedMeta:any={plan_type:'train_research',input_text:safe(params.inputText,1800),context:params.c,task_based:true,state:'queued',directOnly:params.directOnly,queued_at:now}
+    await supabaseAdmin.from('agent_runs').update({status:'queued',summary:'Queued: Gogo will open the rail provider in the background.',progress:5,metadata_json:queuedMeta,updated_at:now}).eq('id',runId)
+    await activity(tg,runId,'run_queued',`Train search for ${params.c.routeLabel} queued for background execution.`,{date:params.c.date,directOnly:params.directOnly})
+    return{runId,status:'queued' as const,capability:'travel' as const,risk:'low' as const,text:`On it. Checking the rail provider for ${params.c.routeLabel} on ${params.c.date} in the background. I'll message you here as soon as I have verified rows, usually within a couple of minutes.`,handledBy:'train-research' as const}
+  }
   const baseMeta:any={plan_type:'train_research',input_text:safe(params.inputText,1800),context:params.c,task_based:true,state:'executing',directOnly:params.directOnly}
   await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Gogo is working through the rail provider in the secure browser.',progress:20,metadata_json:baseMeta,updated_at:now}).eq('id',runId)
   const {data:step,error:stepError}=await supabaseAdmin.from('agent_steps').insert({telegram_id:String(tg),run_id:runId,ordinal:1,tool_name:'secure_browser',title:'Work through live train search',status:'running',input_json:{context:params.c,directOnly:params.directOnly},output_json:{},started_at:now}).select('id').single();if(stepError||!step?.id)throw new Error(`train_step_create_failed:${stepError?.message||'unknown'}`)
@@ -161,4 +171,14 @@ export async function tryRunTrainResearch(params:{actor:AgentActor;surface:Agent
     return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:'Direct train only, or are connections okay?',handledBy:'train-preference' as const}
   }
   return await executeTrainRun({actor:params.actor,surface:params.surface,runId,c,inputText:params.text,directOnly:explicitPreference})
+}
+
+// Called by /api/cron/autonomous-runs for runs the WhatsApp webhook enqueued.
+// Rebuilds the params from the run's metadata and runs the real browser flow.
+export async function runQueuedTrainResearch(params:{actor:AgentActor;runId:string}){
+  const {data:run,error}=await supabaseAdmin.from('agent_runs').select('id,metadata_json').eq('id',params.runId).maybeSingle()
+  if(error||!run?.id)throw new Error(`train_queued_run_missing:${error?.message||params.runId}`)
+  const meta:any=run.metadata_json||{}
+  if(!meta?.context?.date)throw new Error('train_queued_run_no_context')
+  return executeTrainRun({actor:params.actor,surface:'whatsapp',runId:params.runId,c:meta.context,inputText:String(meta.input_text||''),directOnly:Boolean(meta.directOnly),fromWorker:true})
 }
