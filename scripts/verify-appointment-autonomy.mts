@@ -76,7 +76,7 @@ assert.doesNotMatch(recovery, /Do not confirm, submit, book, pay, authenticate/)
 
 assert.match(secureComputer, /provider_access_limited/)
 assert.match(secureComputer, /your access to this site has been limited/)
-assert.match(secureComputer, /const navTimeout = payload.mode === 'execute' \? 45000 : 18000/)
+assert.match(secureComputer, /const navTimeout = 45000/)
 assert.match(browser, /result.status==='blocked'/)
 assert.match(browser, /provider_access_limited/)
 assert.match(browser, /status:'paused'/)
