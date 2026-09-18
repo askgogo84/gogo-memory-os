@@ -131,7 +131,26 @@ export async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurf
   try{
     const browser=await runSecureBrowser({userId:params.actor.userId,url:'https://www.irctc.co.in/nget/train-search',objective:`Find ${params.directOnly?'direct ':''}trains from ${params.c.from.label} (${params.c.from.code}) to ${params.c.to.label} (${params.c.to.code}) on ${params.c.date}. Use safe search controls and obtain actual train rows, visible fare, classes and seat availability. Rank the useful options by availability, fare and duration. Do not sign in, book, submit passenger details or pay.`,mode:'read'})
     if(browser.status==='blocked'){
-      const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:browser.url||'https://www.irctc.co.in/nget/train-search'})
+      const providerUrl=browser.url||'https://www.irctc.co.in/nget/train-search'
+      // TWO KINDS OF WALL, TWO KINDS OF HANDOFF.
+      //
+      // provider_access_limited = the provider blocks our IP (IRCTC serves an Akamai
+      // "Access Denied" page to datacenter addresses). The cloud takeover browser runs
+      // in that same sandbox, so a human driving it is still the blocked IP - verified
+      // live: the takeover page loaded and showed Access Denied. Only the user's OWN
+      // browser on their OWN connection can reach it, so we send a DEVICE handoff and
+      // never start a sandbox takeover server.
+      //
+      // human_auth_required = CAPTCHA / login / OTP. The IP is fine; the obstacle is
+      // proving a person is present. That is what the cloud takeover is for.
+      if(browser.blockReason==='provider_access_limited'){
+        const at=new Date().toISOString();const metadata={...baseMeta,state:'waiting_for_user',handoff:{mode:'device',providerUrl,blockedAt:at}}
+        await supabaseAdmin.from('agent_steps').update({status:'queued',output_json:{browser,context:params.c,deviceHandoff:true},error:null,completed_at:null}).eq('id',String(step.id))
+        await supabaseAdmin.from('agent_runs').update({status:'paused',summary:'The rail provider blocks automated access; the user must open it on their own device.',progress:50,error:null,updated_at:at,metadata_json:metadata}).eq('id',runId)
+        await activity(tg,runId,'device_handoff_required','The provider blocks server traffic by IP; sent the user a direct link for their own browser.',{reason:browser.blockReason,url:providerUrl})
+        return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:`${params.c.routeLabel} · ${params.c.date}\n\nIRCTC blocks automated access from servers, so I cannot read the times myself - this is their policy, not a fault at my end.\n\nOpen it on your phone, where it works normally:\n${providerUrl}\n\nSearch ${params.c.from.label} to ${params.c.to.label} for ${params.c.date}, then tell me which train you want and I will take it from there.\n\nNo booking or payment action has been made.`,blockedReason:browser.blockReason,handledBy:'train-research' as const}
+      }
+      const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:providerUrl})
       const at=new Date().toISOString();const metadata={...baseMeta,state:'waiting_for_user',handoff}
       await supabaseAdmin.from('agent_steps').update({status:'queued',output_json:{browser,context:params.c,handoff},error:null,completed_at:null}).eq('id',String(step.id))
       await supabaseAdmin.from('agent_runs').update({status:'paused',summary:'The rail provider needs human control before Gogo can continue.',progress:50,error:null,updated_at:at,metadata_json:metadata}).eq('id',runId)
