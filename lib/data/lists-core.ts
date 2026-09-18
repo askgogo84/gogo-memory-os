@@ -102,7 +102,22 @@ export function normItemText(s: string): string {
 // class as the rice⊂price outage). Both guards independently reject the wrong verb.
 export function classifyCheckVerb(lower: string): 'list_check' | 'list_uncheck' | null {
   if (/^un(check|tick|mark|done)\b/.test(lower)) return 'list_uncheck'
-  if (lower.startsWith('check ') || lower.startsWith('tick ') || lower.startsWith('mark ')) return 'list_check'
+  // "check X" is a LIST command only when X looks like a list item. The bare prefix
+  // claimed anything starting with "check ", so "Check what's playing at PVR Forum
+  // Mall this weekend and get me the showtimes" became list_check and was answered
+  // with "I could not find ... on any of your lists". Same shallow-prefix class as
+  // the weather/trains hijack. A list item is short, is not a question, and is not
+  // a URL or an instruction to go and find something.
+  if (lower.startsWith('check ') || lower.startsWith('tick ') || lower.startsWith('mark ')) {
+    const rest = lower.replace(/^(check|tick|mark)\s+/, '').trim()
+    const looksLikeQuery =
+      /\b(what|when|where|which|who|how|why)\b/.test(rest) ||
+      /https?:\/\//.test(rest) ||
+      /\b(playing|showtime|showtimes|available|availability|status|price|prices|weather|news|score|scores|timings?)\b/.test(rest) ||
+      rest.split(/\s+/).length > 6
+    if (!looksLikeQuery) return 'list_check'
+    return null
+  }
   return null
 }
 
