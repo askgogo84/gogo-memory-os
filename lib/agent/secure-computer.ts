@@ -53,7 +53,7 @@ const encoded = process.argv[2];
 if (!encoded) throw new Error('missing_secure_browser_payload');
 const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
 const profile = '${BROWSER_PROFILE_DIR}';
-const navTimeout = payload.mode === 'execute' ? 45000 : 18000;
+const navTimeout = 45000; // read mode ran with 18s and timed out on IRCTC; the worker has a 300s budget, no reason to be stingier than execute
 const clean = s => String(s||'').replace(/\s+/g,' ').trim();
 async function model(page){
   return await page.evaluate(() => {
