@@ -141,7 +141,8 @@ export async function GET(req: NextRequest) {
       }
 
       const briefing = await buildMorningBriefing(Number(user.telegram_id), user.name || 'there')
-      let reply = `☀️ *Good morning*\n\n${briefing}\n\nReply *plan my day* to turn this into reminders.`
+      // Header lives inside the briefing now (single "☀️ Good morning, <name>" line).
+      let reply = `${briefing}\n\nReply *plan my day* to turn this into reminders.`
 
       // Sunday extras (1B Throwback + 1E week-ahead)
       const istWeekday = new Date(`${now.date}T12:00:00+05:30`).getUTCDay() // 0 = Sunday

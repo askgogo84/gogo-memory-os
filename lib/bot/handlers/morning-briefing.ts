@@ -44,6 +44,21 @@ function firstName(name?: string) {
   return clean.split(' ')[0]
 }
 
+// The brief can fire at any hour (briefing_time is user-configurable, and the
+// "morning" command is on-demand), so key the greeting off the current IST hour.
+function greetingForNow() {
+  const hour = Number(
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      hour12: false,
+    }).format(new Date())
+  )
+  if (hour < 12) return 'Good morning'
+  if (hour < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
 function semanticReminderKey(reminder: any) {
   const text = cleanReminderText(reminder.message).toLowerCase()
   const time = formatReminderTime(reminder.remind_at)
@@ -137,6 +152,16 @@ async function getCalendarState(telegramId: number) {
   const accessToken = await refreshAccessToken(user.google_refresh_token)
 
   if (!accessToken) {
+    // Refresh failed: google_calendar_connected is a stale positive. Clear it so
+    // the flag stops lying (nothing else does this on a failed refresh). Fail-safe —
+    // if the write errors, still return not-connected so the brief goes out.
+    try {
+      await supabaseAdmin
+        .from('users')
+        .update({ google_calendar_connected: false })
+        .eq('telegram_id', telegramId)
+    } catch {}
+
     return {
       connected: false,
       events: [],
@@ -201,7 +226,7 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
   const flags = String((bc as any)?.briefing_content || 'default').toLowerCase()
   const show = (k: string) => flags === 'default' || flags.includes(k)
 
-  const blocks: string[] = [`☀️ *Today for ${name}*`]
+  const blocks: string[] = [`☀️ *${greetingForNow()}, ${name}*`]
 
   if (show('weather')) blocks.push(`🌤️ *Weather*\n${weatherText}`)
 
@@ -222,14 +247,14 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
   if (show('calendar') || show('meeting')) {
     let cal = `📅 *Calendar*\n`
     if (!calendarState.connected) {
-      cal += `Calendar is not connected yet.\nType *connect calendar* to enable your daily schedule.`
+      cal += `Your calendar isn't connected — reply *connect calendar* to fix it.`
     } else if (calendarState.events.length) {
       cal += calendarState.events
         .slice(0, 5)
         .map((event: any) => `• ${formatEventTime(event)} — ${event.summary || 'Untitled event'}`)
         .join('\n')
     } else {
-      cal += `No calendar events lined up today.`
+      cal += `No calendar events today.`
     }
     blocks.push(cal)
   }
