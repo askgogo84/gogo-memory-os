@@ -24,7 +24,6 @@ const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 export const GOOGLE_WORKSPACE_READ_SCOPES = [
   'openid',
   'email',
-  'profile',
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/contacts.readonly',
   'https://www.googleapis.com/auth/drive.readonly',
