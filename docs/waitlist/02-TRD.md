@@ -1,135 +1,166 @@
-# 02 — TRD: askgogo.in waitlist
+# 02 — TRD: askgogo.in waitlist (two-repo)
 
-Technical requirements. Reads with 01-PRD. Grounded in `askgogo84/gogo-memory-os` at the surveyed
-commit. All `file:line` references are from the Step-0 survey.
-
----
-
-## 0. Repo shape (survey 0a)
-
-| Question | Finding | Evidence |
-|---|---|---|
-| Static HTML or framework? | **Framework — Next.js 16.2.4, App Router, React 19, TypeScript.** Not static HTML. | `package.json:20` (`next: 16.2.4`), `next.config.ts`, `app/` App Router tree |
-| Is there an `/api` folder / serverless functions? | **Yes — extensive.** ~39 route groups under `app/api/**` (webhooks, cron, dashboard, gmail, payments, …). Next.js **route handlers** are Vercel serverless functions. | `app/api/*` (listing in report 0a) |
-| `vercel.json`? | `regions: ["bom1"]` + 10 `crons`. **No `redirects`, `rewrites`, `headers`, or `functions` block yet.** | `vercel.json:1-45` |
-| Build/test scripts? | `build: next build`; **`prebuild: npm test`** (build is gated on tests); `test:` ~66 node/tsx verify scripts; `lint: eslint .`; `typecheck: tsc --noEmit`. | `package.json:5-12` |
-| Type-error posture | `typescript.ignoreBuildErrors: true` — **type errors do not fail the build; tests do** (via `prebuild`). | `next.config.ts:10-12` |
-
-**Conclusion for 0a:** this repo **can host `POST /api/waitlist` as-is** — no structural change is
-needed to add a route handler. The one config change required later (Phase 4) is adding a `redirects`
-block to `vercel.json` for pricing 301s; that is a normal config edit, not a capability gap.
-
-**The green gate:** because `prebuild` runs `npm test`, any Vercel build already runs the full suite.
-Every commit in 06 is gated on `npm test` passing (06 §Gate). The waitlist adds its own lightweight
-validator test to that suite (05 §6, 06 P2).
+Technical requirements. Reads with 01-PRD. All `file:line` are from the Step-1 survey. Two repos:
+**app repo** = `gogo-memory-os` (this, → app.askgogo.in); **site repo** = `askgogo-main`
+(`C:\Users\gover\askgogo-main`, → askgogo.in, **read-only for these docs**).
 
 ---
 
-## 1. Where the endpoint lives
+## 1. Site repo shape (survey 1a)
 
-- **File:** `app/api/waitlist/route.ts` (new — created in Phase 2, not this run).
-- **Runtime:** **Node.js** route handler (not Edge) — it uses `@supabase/supabase-js`
-  (`package.json:16`, already a dependency) with the **service-role key**, which must never run in a
-  client/Edge-exposed context. Declare `export const runtime = 'nodejs'` and
-  `export const dynamic = 'force-dynamic'`.
-- **Method:** `POST` only. Any other method → `405`.
-- **Pattern to mirror:** existing route handlers such as `app/api/todos/route.ts` and the webhook
-  routes — same `NextResponse.json(...)` shape, same `supabaseAdmin` usage via `@/lib/supabase-admin`
-  (see 05 §5 for whether to reuse that client or construct a scoped one).
+- **Not a framework build.** `askgogo-main` is a **static site** whose live page is an **immersive
+  single page assembled at runtime**: `index.html` is a loader that `fetch`es
+  `site-final/part-00.htmlfrag` + `stage-01…08.htmlfrag`, concatenates them, runs string
+  replacements, `document.write`s the result, then boots the **Claude Design runtime**
+  `support-v2.js` with **vendored React** (`/vendor/react.production.min.js`,
+  `/vendor/react-dom.production.min.js`; mapped via `window.__resources` at `part-00.htmlfrag:28-33`).
+  - Loader: `index.html:37-62`. Fragment list: `index.html:42`. CSS injected:
+    `index.html:54` (`/site-final/mobile-v2.css`). Body-close script injected: `index.html:55`.
+  - Runtime identity: `support-v2.js:1` — *"GENERATED from dc-runtime/src/*.ts — do not edit."*
+- **`vercel.json`** (full): one redirect `/dashboard → /` (302), rewrites
+  `/askgogo-whatsapp-premium-20260911c.png → /og-image-v2.png` and **catch-all `/(.*) → /index.html`**.
+  Vercel serves **existing static files first**, so real files (`*.dc.html`, `/privacy/`, `/terms/`,
+  `/refund/`, `/start/`, `/site-final/*`) are reachable by direct URL; only non-existent paths fall
+  through to `index.html`.
+- **`sitemap.xml`**: a single `<url>` — `https://askgogo.in/` only. **No pricing URL in it.**
+- **`robots.txt`**: `Allow: /`, points at the sitemap.
+- **`package.json`**: `test: node scripts/verify-share-preview.mjs` (one preview-image check).
+- **Pages:** the live experience is the fragments. **Legacy Claude Design exports** (reachable only
+  by direct URL, **not linked from `index.html`**): `Home.dc.html`, `Home-v2.dc.html`,
+  `Pricing.dc.html`, `Try for Free.dc.html`, `SiteNav.dc.html`, `Gogo.dc.html`, `AI Magic.dc.html` +
+  12 `AI Magic - *.dc.html`, `Channel - WhatsApp/Telegram/Email.dc.html`, and `start/index.html`.
+  `Pricing.dc.html` is already a stub that redirects to `/#pricing`.
 
-## 2. WhatsApp-link rewiring (survey 0b)
+## 2. WhatsApp-link rewiring (survey 1b) — site repo
 
-**Every direct-WhatsApp link on the site must open the sheet instead.** In *this* repo the only such
-link is:
+**Live site (must open the sheet):**
 
-| # | What | `file:line` | Current | Target |
+| # | Where | `file:line` | Current | Target |
 |---|---|---|---|---|
-| L1 | Hero CTA `ctaHref` builder | `app/page.tsx:5-8` | `https://wa.me/${waNumber}?text=Hi%20Gogo` (fallback `https://askgogo.in`) | Remove the wa.me builder; CTA becomes a **"Join Gogo"** button that opens the sheet (no `href` to WhatsApp) |
-| L2 | Hero CTA anchor + label | `app/page.tsx:29,32` | `<a href={ctaHref}>` … "Message Gogo on WhatsApp" | `<button>` "Join Gogo" → opens sheet |
+| L1 | Header pill "Talk to Gogo" | `part-00.htmlfrag:64` | `<a href="{{ links.whatsapp }}">` | "Join Gogo" → opens sheet (`source=askgogo.in:header`) |
+| L2 | Hero CTA "Meet Gogo" (`id="meet"`) | `part-00.htmlfrag:94` | `<a href="{{ links.whatsapp }}">` | "Join Gogo" → opens sheet (`source=askgogo.in:hero`) |
+| L3 | Menu drawer "Talk to Gogo" | `part-00.htmlfrag:80` | `<a href="{{ links.whatsapp }}">` | opens sheet (`source=askgogo.in:menu`) |
+| L4 | Data-model value `links.whatsapp` | `stage-07.htmlfrag:2` | `https://api.whatsapp.com/send?phone=17605483659&text=Hi%20Gogo` | the single source the three `{{ links.whatsapp }}` above resolve to |
+| L5 | noscript fallback | `index.html:36` | `api.whatsapp.com/send?phone=17605483659` | **can't open a JS sheet** — repoint to `https://askgogo.in/` or a static "join" note (OPEN, Report Q5) |
+| L6 | load-error fallback | `index.html:59` | same | same as L5 |
 
-**Non-link mention (not a bypass, noted for completeness):** `app/upgrade/page.tsx:43` contains the
-copy "Message Gogo on WhatsApp …" as **plain text behind the product/auth** (app.askgogo.in), not a
-link. It is **out of scope** (not on the public marketing site) but recorded so no one mistakes it
-for a bypass.
+**Legacy pages (direct-URL only; per-page decision in §3):** WhatsApp links in `Home.dc.html` (6),
+`Home-v2.dc.html` (2), `Try for Free.dc.html` (5), `SiteNav.dc.html` (2),
+`Channel - WhatsApp.dc.html` (6), `Channel - Email.dc.html` (4), `Channel - Telegram.dc.html` (2),
+`AI Magic.dc.html` (2), each `AI Magic - *.dc.html` (6 × 12 files), `start/index.html`
+(`:26,:130,:134`).
 
-**Search performed:** `wa.me | api.whatsapp.com | whatsapp:// | Chat on WhatsApp | Message Gogo`
-across `app/**/*.{tsx,ts}` — only the hits above. **When the real marketing-site source is located
-(Q1), this exact search must be re-run there**, because that is where the CTAs the mockup shows
-actually live.
+**Safe rewiring approach (see §6 risk):** do **not** edit `{{ }}` templates or `support-v2.js`.
+Rewire with a small isolated script (`waitlist.js`) that attaches a **capturing** `document` click
+listener intercepting any `a[href*="whatsapp"]`, `a[href*="wa.me"]`, or href containing
+`17605483659`, plus any element tagged as a Join CTA — `preventDefault()` and open the sheet. This
+covers L1–L3 without touching the runtime. L4 may optionally be left as-is (the interceptor catches
+the rendered link) or changed later; changing L4 alone would rewire all three but requires a fragment
+edit.
 
-## 3. Server-side validation (never trust the client)
+## 3. Legacy pages — rewire vs 301 (proposal; do not decide)
 
-The client validates for UX; the **server re-validates everything** and is the source of truth.
+These are superseded by the immersive page and are not linked from it. Two options per group:
 
-1. Parse JSON body. Reject non-JSON → `400`.
-2. **Honeypot:** if the hidden field (e.g. `company`) is non-empty → **return the success shape,
-   write nothing** (silent bot drop).
-3. **Country:** must be `'IN'` or `'AE'` (maps from `+91`/`+971`). Else `400`.
-4. **Phone:** strip non-digits.
-   - IN: exactly 10 digits, first digit 6–9 → E.164 `+91XXXXXXXXXX`.
-   - AE: exactly 9 digits, first digit 5 → E.164 `+971XXXXXXXXX`.
-   - Else field error `400`.
-5. **Email:** trim, lowercase, standard-format check → else field error `400`.
-6. **opt-in:** coerce to boolean; default `false`.
-7. **consent:** stamp `consent_version` server-side (05 §3). Do **not** trust a client-sent version.
-8. Write via **upsert on `phone_e164`** (05 §4). On success → `200/201` success shape.
-9. **Never** store IP address or any request header as PII (PRD/BACKEND).
+| Page group | Contains | Proposal A (recommended) | Proposal B |
+|---|---|---|---|
+| `Home.dc.html`, `Home-v2.dc.html`, `Try for Free.dc.html`, `SiteNav.dc.html`, `Gogo.dc.html`, `AI Magic*.dc.html`, `Channel - *.dc.html`, `start/index.html` | WhatsApp links + some pricing | **301 → `/`** in `vercel.json` (they are dead exports; cheapest, removes every bypass at once) | **Rewire each** to load the sheet (≈20 Claude Design files edited — high effort/risk, low value since unlinked) |
+| `Pricing.dc.html` | already redirects to `/#pricing` | **301 → `/`** (after pricing removed, `/#pricing` won't exist) | leave (would land on a page with no pricing anchor) |
+| `/privacy/`, `/terms/`, `/refund/` | legal | **KEEP** (linked by consent line + menu footer) | — |
 
-Validation logic lives in a **pure, unit-testable module** (e.g. `lib/waitlist/validate.ts`) so it
-can be tested offline with no network (mirrors the repo's `meter-core.ts` / `lists-core.ts` pattern),
-and imported by the route. The route stays thin.
+Recommendation is 301 for all legacy; **decision is the owner's** (Report Q2).
 
-## 4. Origin model (depends on Q1/Q2 — do not decide here)
+## 4. Endpoint & CORS (app repo)
 
-The endpoint is mandated to live in **this repo** (app.askgogo.in). Two cases:
+- **File:** `app/api/waitlist/route.ts` (new, Phase 2). Next.js **route handler**,
+  `runtime='nodejs'`, `dynamic='force-dynamic'`. This repo already hosts ~39 `app/api/**` route
+  groups, so it hosts this with no structural change. **Reuse `@/lib/supabase-admin`** (the existing
+  service-role client) per decision, following the patterns in e.g. `app/api/todos/route.ts`.
+- **Cross-origin:** the site (`https://askgogo.in`) POSTs to `https://app.askgogo.in/api/waitlist`.
+  - **Methods:** `POST` and `OPTIONS` only. Any other → `405`.
+  - **CORS allowlist — exactly** `https://askgogo.in` and `https://www.askgogo.in`. Echo the request
+    `Origin` back in `Access-Control-Allow-Origin` **only if it is in the allowlist** (never `*` on a
+    state-changing endpoint); else omit the header. `Access-Control-Allow-Methods: POST, OPTIONS`;
+    `Access-Control-Allow-Headers: content-type`. `OPTIONS` returns `204` with those headers.
+- **Body:** JSON. Validate everything server-side (§5). Honeypot check. Upsert on `phone_e164`.
+  Identical success shape for new and duplicate.
 
-- **Same-origin** — if askgogo.in is served from this repo/Vercel project: the site POSTs to
-  `/api/waitlist`. No CORS needed.
-- **Cross-origin** — if askgogo.in is a separate deployment: the site POSTs to
-  `https://app.askgogo.in/api/waitlist`, which then needs an explicit **CORS allowlist** for
-  `Origin: https://askgogo.in` (and `https://www.askgogo.in`) — `Access-Control-Allow-Origin` echoed
-  from an allowlist (never `*` on a state-changing endpoint), plus an `OPTIONS` preflight handler.
+## 5. Server-side validation (never trust the client)
 
-Both are documented; the choice follows the answer to Q1/Q2. Until then the route is written
-same-origin-first, with the CORS branch noted as a one-block addition.
+Pure module `lib/waitlist/validate.ts` (offline unit-testable, mirrors `meter-core.ts`/`lists-core.ts`
+style), imported by the thin route:
 
-## 5. Secrets and env
+1. Parse JSON; non-JSON → `400`.
+2. **Honeypot** (e.g. `company`): non-empty → return **success shape, write nothing**.
+3. **country** ∈ {`IN`,`AE`} → else `400`.
+4. **phone:** strip non-digits → IN: 10 digits, first 6–9 → `+91…`; AE: 9 digits, first 5 → `+971…`;
+   else field error.
+5. **email:** trim → lowercase → standard-format → else field error.
+6. **opt-in:** coerce boolean, default `false`.
+7. **consent_version:** server constant `'2026-09-19'` (ignore any client value).
+8. **source:** accept a short client-supplied tag but **prefix/normalise server-side** to
+   `askgogo.in:<cta-id>` from an allowlist of cta-ids (`header`,`hero`,`menu`,…); unknown → 
+   `askgogo.in:unknown`.
+9. Upsert (05 §4) → success shape.
+10. **Never** store IP/headers.
 
-- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are read **only** in the Node route/server module,
-  **only** from Vercel env vars. They must **never** be `NEXT_PUBLIC_*` and never reach the browser
-  bundle. (The repo already uses a service-role admin client server-side — 05 §5.)
-- No new public env var is needed for the form itself unless cross-origin (then the site needs the
-  absolute endpoint URL, which is a public constant, not a secret).
+## 6. Risk check (survey 1g) — what is safe to edit in the site repo
 
-## 6. Pricing removal & redirects (survey 0c → applied in Phase 4)
+**Broke-production precedent:** shipping/regenerating a raw Claude Design package. So:
 
-- **Survey result:** there is **no public marketing pricing** in this repo. Pricing renders only in
-  **product/auth/admin** surfaces: `app/pay/page.tsx:7-9` (₹249/₹499/₹999 = Essential/Plus/Pro),
-  `app/upgrade/page.tsx:4` (imports `GOGO_INDIA_PLANS`), `app/dashboard/(app)/you/page.tsx:84`,
-  `app/dashboard/(app)/usage/page.tsx:31,52`, plus `app/pitch/*`. **None of these is the public
-  site**, so none is touched by "remove pricing from the public site."
-- **On the marketing site (Q1):** remove pricing sections/plan cards/prices with **no replacement
-  line**; remove pricing links from nav/footer; remove pricing entries from the sitemap.
-- **`vercel.json` redirects (Phase 4):** add a `redirects` array giving each known pricing path a
-  **301** to `/` (e.g. `/pricing`, `/plans`, `/pricing/*`). Exact paths come from the marketing
-  site's routes (Q1). Example shape:
-  ```json
-  { "redirects": [ { "source": "/pricing", "destination": "/", "permanent": true } ] }
-  ```
-  This is additive to the existing `vercel.json` (`regions`, `crons`) — nothing existing is removed.
+- **DO NOT** edit `support-v2.js` (generated runtime, `support-v2.js:1`), `/vendor/*`, or regenerate
+  the fragments wholesale.
+- **DO NOT** rely on editing `{{ }}` template expressions or `x-dc`/`dc-import`/`sc-if`/`sc-for`
+  nodes for the rewire — that couples the change to the runtime.
+- **SAFE, additive edits only:**
+  - **`index.html` loader** — add one `html.replace('</body>', …)` to inject the sheet markup +
+    `<script src="/site-final/waitlist.js">`, mirroring the existing `mobile-v2.css` injection
+    (`index.html:54`) and body-close script (`index.html:55`). The sheet lives **outside** `<x-dc>`.
+  - **New files** `site-final/waitlist.js` and `site-final/waitlist.css` — self-contained vanilla JS
+    (no React, no runtime coupling): builds the sheet, intercepts CTAs by URL match (§2), posts to
+    the app endpoint, handles focus/Escape.
+- **Pricing removal (§ below) is the one place a fragment edit may be needed** — see §7 for the
+  lower-risk alternative.
+- **Verify on the site repo's Vercel preview before merge** (Phase 3/4).
 
-## 7. Accessibility & runtime constraints (detail in 04)
+## 7. Pricing removal & redirects (survey 1c) — site repo
 
-- Sheet: focus trapped; Escape closes (desktop); focus returns to the invoking CTA on close; close
-  target ≥44px. Inputs ≥16px (prevent iOS zoom).
-- No client-side secret, no analytics that store IP, no third-party script required for the form.
+**Where pricing lives (live site):**
+- Chapter **13 Pricing** section markup: `stage-06.htmlfrag:14-24` (`<section id="pricing">`,
+  `<sc-for list="{{ plans }}">`).
+- Plan data: `stage-08.htmlfrag:44-52` — `planData` = Gogo Free ₹0 / Essential ₹249 / Plus ₹499 /
+  Pro ₹999 (annual variants too).
+- Menu/nav chapters array: `stage-07.htmlfrag:3` `this.chapters = [...]` (includes the pricing
+  entry) — plus the `#pricing` chapter appears in the menu list.
+- `Pricing.dc.html` — redirect stub → `/#pricing`.
+- `sitemap.xml` — **no pricing URL present** (only `/`).
 
-## 8. What Phase-by-phase changes touch (from Step 0)
+**Two removal methods (do not decide — Report Q3):**
+- **Method A — fragment edits (surgical):** delete the chapter-13 `<section id="pricing">` block
+  (`stage-06.htmlfrag:14-24`), remove the pricing entry from `stage-07.htmlfrag:3` chapters array,
+  and drop `planData`/`plans` usage in `stage-08.htmlfrag:44-52`. Lowest footprint but edits built
+  fragments (moderate risk; verify on preview).
+- **Method B — injected hide (no fragment edit):** in `waitlist.js`/`waitlist.css` (already being
+  added), `#pricing{display:none}` and remove the pricing menu link at runtime. Zero fragment edits
+  (lowest risk) but the chapter still ships in the DOM (hidden) and is a weaker "removal".
 
-| Phase | Files (this repo unless noted) |
-|---|---|
-| P1 migration | `supabase/` new SQL file (owner runs it in the Supabase SQL editor) |
-| P2 endpoint | `app/api/waitlist/route.ts` (new), `lib/waitlist/validate.ts` (new), `lib/waitlist/validate.test.mjs` (new), one line in `package.json` `test` |
-| P3 sheet/CTA/hero | **marketing-site source (Q1)**; in this repo the analogue is `app/page.tsx` (hero + CTA rewire) and a new sheet component |
-| P4 pricing/redirects/sitemap | `vercel.json` (redirects), marketing-site nav/footer/sitemap (Q1) |
-| P5 manual QA | no files — test matrix in 06 |
+**Redirects (`askgogo-main/vercel.json`, additive):** add 301s for `/pricing`, `/Pricing.dc.html`,
+and any `/plans*` → `/`. Keep the existing `/dashboard` redirect and the catch-all rewrite. Because
+of the catch-all, a bare `/pricing` currently renders the SPA; a 301 makes it land on `/` cleanly.
+**Sitemap:** already clean; confirm no pricing entry is added.
+
+**App pricing is untouched** (THIS repo): `app/pay/page.tsx:7-9`, `app/upgrade/page.tsx:4`,
+`app/dashboard/(app)/you|usage` stay — existing users need them.
+
+## 8. Fonts & colours (survey 1e) — govern the sheet
+
+From the **live** `part-00.htmlfrag`:
+- **Fonts:** **Newsreader** (serif/display) + **Onest** (sans/body), Google Fonts
+  (`part-00.htmlfrag:40`); body `font-family:Onest` (`:42`).
+- **Colours:** cream **`#F6F1E8`** (bg), ink **`#16130F`**, teal **`#157A6E`** (primary CTA + link
+  hover), orange **`#EF7A27`** (accent), muted **`#5C554C`**, dark pill **`#16130F`**/cream text,
+  section-alt **`#EFE8DC`**, white cards **`#FFFFFF`**.
+
+**The sheet uses these, not the mockup's Fraunces/orange `#F18219`.** Note: the live site *does* use
+italic `<em>` (e.g. `part-00.htmlfrag:91`), but the **sheet must contain no italic/slanted type**
+(hard rule). Detail in 04.
