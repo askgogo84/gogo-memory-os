@@ -1,5 +1,6 @@
 import { buildGmailConnectUrl, fetchLatestEmails, fetchUnreadEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { decryptGoogleToken, encryptGoogleToken } from '@/lib/security/google-token-crypto'
 
 function pickEmailByIntent(input: string, emails: any[]) {
   const lower = input.toLowerCase()
@@ -39,7 +40,7 @@ export async function buildEmailActionReply(telegramId: number, input: string) {
   const wantsUnread = lower.includes('unread')
 
   let emails: any[] = []
-  let accessToken = user.gmail_access_token || null
+  let accessToken = user.gmail_access_token ? decryptGoogleToken(user.gmail_access_token) : null
   let scopeRequired = false
 
   const fetchMode = async (token: string) =>
@@ -55,12 +56,12 @@ export async function buildEmailActionReply(telegramId: number, input: string) {
   }
 
   if (!emails.length && user.gmail_refresh_token) {
-    const refreshedToken = await refreshGmailAccessToken(user.gmail_refresh_token)
+    const refreshedToken = await refreshGmailAccessToken(decryptGoogleToken(user.gmail_refresh_token))
 
     if (refreshedToken) {
       await supabaseAdmin
         .from('users')
-        .update({ gmail_access_token: refreshedToken })
+        .update({ gmail_access_token: encryptGoogleToken(refreshedToken) })
         .eq('telegram_id', telegramId)
 
       accessToken = refreshedToken
