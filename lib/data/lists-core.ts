@@ -113,7 +113,7 @@ export function classifyCheckVerb(lower: string): 'list_check' | 'list_uncheck' 
     const looksLikeQuery =
       /\b(what|when|where|which|who|how|why)\b/.test(rest) ||
       /https?:\/\//.test(rest) ||
-      /\b(playing|showtime|showtimes|available|availability|status|price|prices|weather|news|score|scores|timings?)\b/.test(rest) ||
+      /\b(playing|showtime|showtimes|available|availability|status|price|prices|weather|news|score|scores|timings?|mail|mails|email|emails|inbox)\b/.test(rest) ||
       rest.split(/\s+/).length > 6
     if (!looksLikeQuery) return 'list_check'
     return null
