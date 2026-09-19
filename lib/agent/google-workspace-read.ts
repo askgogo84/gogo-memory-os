@@ -14,8 +14,32 @@ const STOP = new Set([
   'about','after','attached','attachment','attachments','before','brief','drive','email','emails','file','files','find','from','gmail','google','inbox','latest','message','messages','read','recent','search','show','the','this','with','workspace','unread','please','look','looking','need','meeting','document','documents','use','using',
 ])
 
+function decodeHtmlEntities(value:string) {
+  return String(value || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(?:39|x27);/gi, "'")
+    .replace(/&#(\d+);/g, (_m, n) => {
+      const cp = Number(n)
+      return Number.isFinite(cp) && cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : ''
+    })
+}
+
 function clean(value: unknown, max = 1200) {
-  return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
+  return redactSecretShapedText(decodeHtmlEntities(String(value ?? '')).replace(/\s+/g, ' ').trim().slice(0, max))
+}
+
+export function formatEmailSnippet(value:unknown,max=260) {
+  const text=clean(value, Math.max(max * 2, max))
+  if(text.length<=max)return text
+  const slice=text.slice(0,max+1)
+  const sentence=[...slice.matchAll(/[.!?](?=\s|$)/g)].pop()
+  if(sentence && sentence.index >= Math.floor(max*0.55))return slice.slice(0,sentence.index+1).trim()
+  const cut=slice.lastIndexOf(' ')
+  return (cut>Math.floor(max*0.7)?slice.slice(0,cut):slice.slice(0,max)).trim()+'…'
 }
 
 export function workspaceSearchTerms(input: string, maxTerms = 6) {
@@ -89,7 +113,7 @@ async function gmailMetadata(actor:AgentActor, id:string) {
     from:clean(header(headers,'From')||'Unknown sender',240),
     to:clean(header(headers,'To'),240),
     date:clean(header(headers,'Date'),120),
-    snippet:clean(data?.snippet||'',700),
+    snippet:formatEmailSnippet(data?.snippet||''),
   }
 }
 
