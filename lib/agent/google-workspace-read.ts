@@ -18,6 +18,42 @@ function clean(value: unknown, max = 1200) {
   return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
 }
 
+// Gmail can be an account-recovery channel for nearly every other service.
+// Filter authentication material deterministically at the connector boundary,
+// before a snippet can reach WhatsApp, an LLM prompt, Activity, or memory.
+export function redactEmailAuthSecrets(value:string) {
+  let out=String(value||'')
+
+  // Explicit OTP / verification / login / security codes. Keep the surrounding
+  // sentence so Gogo can still explain that an authentication message arrived.
+  out=out.replace(
+    /\b((?:one[ -]?time\s+(?:password|code)|otp|verification\s+code|security\s+code|login\s+code|sign[ -]?in\s+code|passcode)(?:\s+(?:is|:|=))?\s*)([A-Z0-9-]{4,12})\b/gi,
+    (_m,label)=>`${label}[authentication detail withheld]`
+  )
+
+  // "Use/enter code 123456" is common and may not include the word OTP.
+  out=out.replace(
+    /\b((?:use|enter|type)\s+(?:this\s+)?code(?:\s+(?:to|for)\s+[^\s,.!?]+)?(?:\s+(?:is|:|=))?\s*)([A-Z0-9-]{4,12})\b/gi,
+    (_m,label)=>`${label}[authentication detail withheld]`
+  )
+
+  // Recovery/magic-login URLs often carry the credential entirely in the URL.
+  // Only redact URLs that are explicitly auth/recovery-shaped or contain token-
+  // shaped query parameters; ordinary links in newsletters remain visible.
+  out=out.replace(/https?:\/\/[^\s<>"']+/gi,(url)=>{
+    const lower=url.toLowerCase()
+    const sensitivePath=/\/(?:reset(?:-password)?|password-reset|forgot(?:-password)?|magic(?:-link)?|verify(?:-email)?|verification|account-recovery|recover-account)(?:[/?#]|$)/i.test(lower)
+    const sensitiveParam=/[?&](?:token|reset_token|reset-token|code|otp|magic|key|secret|auth|verification_token|verification-token)=/i.test(lower)
+    return sensitivePath||sensitiveParam?'[authentication link withheld]':url
+  })
+
+  return out
+}
+
+function cleanEmailText(value:unknown,max=1200) {
+  return clean(redactEmailAuthSecrets(String(value??'')),max)
+}
+
 export function workspaceSearchTerms(input: string, maxTerms = 6) {
   const quoted = Array.from(String(input || '').matchAll(/["“]([^"”]{2,80})["”]/g)).map((m) => m[1])
   const words = String(input || '')
@@ -89,7 +125,7 @@ async function gmailMetadata(actor:AgentActor, id:string) {
     from:clean(header(headers,'From')||'Unknown sender',240),
     to:clean(header(headers,'To'),240),
     date:clean(header(headers,'Date'),120),
-    snippet:clean(data?.snippet||'',700),
+    snippet:cleanEmailText(data?.snippet||'',700),
   }
 }
 
