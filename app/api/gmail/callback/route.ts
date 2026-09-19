@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { consumeGmailOauthState, exchangeGmailCode, getGoogleEmail } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { encryptGoogleToken, hasGoogleTokenEncryptionKey } from '@/lib/security/google-token-crypto'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,14 +36,22 @@ export async function GET(req: NextRequest) {
       )
     }
 
+    if (!hasGoogleTokenEncryptionKey()) {
+      console.error('GOOGLE_TOKEN_ENCRYPTION_KEY_MISSING')
+      return NextResponse.json(
+        { ok: false, error: 'Google connection is temporarily unavailable' },
+        { status: 503 }
+      )
+    }
+
     const payload: any = {
-      gmail_access_token: tokens.access_token,
+      gmail_access_token: encryptGoogleToken(tokens.access_token),
       gmail_connected: true,
       gmail_connected_at: new Date().toISOString(),
       gmail_email: email,
     }
 
-    if (tokens.refresh_token) payload.gmail_refresh_token = tokens.refresh_token
+    if (tokens.refresh_token) payload.gmail_refresh_token = encryptGoogleToken(tokens.refresh_token)
 
     const { error } = await supabaseAdmin
       .from('users')
