@@ -35,39 +35,43 @@ Important actions such as sending, booking, paying or changing your calendar sti
 }
 
 export function buildHelpReply() {
-  return `✨ *Gogo Menu*
+  return `✨ *What Gogo can help with*
 
-🧠 *Gogo Memory*
-• Remember this
-• Find my saved document
-• What do you know about my Mumbai trip?
+🧠 *Memory & documents*
+• “Remember that I prefer aisle seats.”
+• “Save this receipt.”
+• “Show me my Samsonite bill.”
+
+📬 *Google Workspace*
+• “Check my inbox.”
+• “Find the hotel confirmation in my email.”
+• “Find the agenda in my Drive.”
+• “What’s on my calendar today?”
+
+☀️ *Daily Gogo*
+• “Brief me every morning.”
+• “What needs my attention today?”
+• “Remind me tomorrow at 8am.”
 
 ⚡ *Gogo Agent*
-• Plan my trip
-• Prepare me for tomorrow
-• Research this and create a brief
+• “Plan my Mumbai work trip.”
+• “Research this and create a brief.”
+• “Prepare me for tomorrow.”
 
 👀 *Background Gogo*
-• Watch this price
-• Tell me when applications open
+• “Watch this price and tell me when it drops.”
+• “Tell me when applications open.”
+• “Remind me if they don’t reply.”
 
-⏰ *Reminders & tasks*
-• Remind me tomorrow at 8am
-• Show my reminders
-• Add a task
-
-📅 *Calendar*
-• Connect calendar
-• What’s on today?
-• Prepare a meeting for tomorrow
+💰 *Expenses & lists*
+• “Spent ₹850 on dinner.”
+• “Show my expenses.”
+• “Add charger to my travel list.”
 
 🎙️ *Voice*
-Send a voice note in supported languages and talk naturally.
+Send a voice note and talk naturally.
 
-💳 *Plans*
-• Pricing
-• Usage
-• Upgrade
+Important actions such as sending, booking, paying or changing your calendar stop for your approval.
 
 Just tell Gogo the outcome — you don’t need to learn commands.`
 }
