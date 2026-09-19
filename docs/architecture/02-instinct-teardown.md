@@ -17,10 +17,15 @@ Every claim below carries one of three tags. Nothing is stated without one.
 | **REPORTED** | Stated by an article, interview, funding announcement, benchmark, or the company itself |
 | **INFERRED** | A deduction of this audit. Always says *from what* |
 
-**The OBSERVED tier is empty.** No demo video or screenshot was supplied for this pass, and nothing
-here comes from using the product — it is invite-only. If a walkthrough video arrives, the single
-most valuable thing a second pass can do is move claims out of REPORTED into OBSERVED, particularly
-around approvals (§9) and browser behaviour (§6).
+**The OBSERVED tier is now populated — see §O.** A live WhatsApp thread with Instinct was captured
+on 19 September 2026, 09:16–10:00 IST — a Bangalore→Mysore train booking, the exact task AskGogo ran
+on 17–18 Sep, which lets the two products be compared move for move. The evidence record is a
+separate file, [`02-instinct-teardown-observed.md`](./02-instinct-teardown-observed.md); **§O below
+merges its findings into this teardown** and re-tags the specific REPORTED/INFERRED claims it
+confirms (inline, marked *"→ OBSERVED (§O.x)"*). One caveat governs the whole tier: this is a single
+session read from screenshots, not the product used at length, so it establishes the *presence* of a
+behaviour, not its reliability across cases. Approvals (§9) and the provenance of the six train
+timings (§O.9) remain the highest-value unknowns even after it.
 
 **Two limits on the REPORTED tier, stated plainly because they affect how much weight it carries:**
 
@@ -38,6 +43,107 @@ around approvals (§9) and browser behaviour (§6).
 can book restaurants" stays a claim about what the company says the product does. The only claims
 promoted to something firmer are ones where a *failure* was reported — a failure is much harder to
 fake than a success, and tells you the capability was at least attempted in the real world.
+
+---
+
+## O. OBSERVED tier — the 19 September live thread
+
+Everything in this section is **OBSERVED**: visible in a WhatsApp transcript captured 19 Sep 2026,
+09:16–10:00 IST. Nothing here is inferred from marketing. The full evidence record, with per-message
+timestamps for 09:16–09:32, is [`02-instinct-teardown-observed.md`](./02-instinct-teardown-observed.md);
+section numbers below (§O.x) map onto its sections. Where an observation confirms, extends or
+overturns an earlier REPORTED/INFERRED claim, the affected section carries an inline
+*"→ OBSERVED (§O.x)"* note.
+
+**O.1 Surface and interaction model.** **OBSERVED.** Instinct runs inside ordinary WhatsApp — no app
+or dashboard is visible anywhere in the chat. It opens proactively ("What should I take off your
+plate first?"), acknowledges messages with a 👍 reaction rather than a reply, splits one response
+across several bubbles, and carries three tasks interleaved in one linear chat (mail triage, day
+summary, train booking) between 09:16 and 09:32. *(observed doc §1.)*
+
+**O.2 Quoted-reply threading — the strongest single pattern.** **OBSERVED.** Every task-bearing reply
+quotes the originating user message above it, styled as a WhatsApp reply block labelled "You"
+(09:20 quotes "Chk k my mails", 09:24/09:30 quote the train request). Threading is *bidirectional*:
+the user also quote-replies to specific agent questions and the agent resumes the right task from the
+quote. This is how one linear chat stays legible with three long-running tasks in flight — it costs
+nothing architecturally and solves a problem AskGogo has today. *(observed doc §2.)*
+
+**O.3 Connector-on-demand, no dead end.** **OBSERVED.** Asked to check mail with no mailbox connected
+(09:17), it did not error: it stated the gap, rendered an inline "Connect Google to Instinct" link
+card pointing at app.instinct.com, and offered Outlook as the alternative in the next bubble. A
+missing integration is presented as a next step, not a failure. *(observed doc §3.)*
+
+**O.4 Triage output shape.** **OBSERVED.** After connecting, it reported the work mailbox as *three
+numbered things that matter*, each naming the person and the blocking state — including an outbound
+email that **bounced because the address wasn't found** — then dismissed the remainder in one line
+and offered the next action. Catching the bounce is the tell: it is a fact the user could not have
+known without the mailbox being read. *(observed doc §4.)*
+
+**O.5 Calendar summary.** **OBSERVED.** Stated as a conclusion ("completely open today, rest of
+Saturday free"), not as a list of events. *(observed doc §5.)*
+
+**O.6 Slot-filling that tracks its own state.** **OBSERVED.** Across 09:24–09:29 it collected
+passenger and train details without ever re-asking for something already supplied ("Got the names
+and ages. I still need two things" → which train, and gender), and when two Vande Bharat trains
+matched it **disambiguated rather than guessing**, quoting both departure times. This is the same
+discipline as AskGogo's fail-closed rule, expressed as slot-filling. *(observed doc §6.)*
+
+**O.7 Credential boundary, as product language.** **OBSERVED.** Before checkout (09:30) it asked for
+the IRCTC *username* in chat and said, in one sentence a non-technical user understands: *"Don't send
+the password here. If it's needed, I'll give you a secure link for it."* Identifier in chat, secret
+never in chat, secure link if required — the same boundary as AskGogo's `human_auth_required` path,
+stated as product language rather than architecture. *(observed doc §7.)*
+
+**O.8 Credential vault as a web surface.** **OBSERVED.** The promised secure link resolves to an
+**Instinct vault at app.instinct.com** — the out-of-chat surface for setting a password, not a chat
+flow. *(observed doc §8b.)* (Whether it is 1Password-backed, as §8 reports, was **not** observable.)
+
+**O.9 Graceful stop at the provider wall.** **OBSERVED.** It hit the **same IRCTC Akamai block**
+AskGogo hit on 18 Sep (datacenter-IP reputation) and fell back to a **device handoff in words**:
+create and activate the account yourself in the official IRCTC site/app, tell me when it's active,
+and I'll pick up the 10:05 Vande Bharat booking from there. **No booking completed** — the run ended
+at the account wall holding state (the chosen train survives) with a stated next step. Nobody has
+solved IRCTC from a datacenter; the observable difference between products is only *how gracefully
+they stop*. *(observed doc §8e.)*
+
+**O.10 Initiative on delegation.** **OBSERVED.** Told "U choose", it did not bounce the decision back:
+"I'll try goverdhanmd first and use a close variation if it's taken." It states the choice and the
+fallback, then proceeds. *(observed doc §8c.)*
+
+### O.11 — UNRESOLVED: provenance of the six train timings
+
+**OBSERVED (the surface fact), UNRESOLVED (the conclusion).** At 09:24, three minutes after the
+request, Instinct produced **six direct trains with departure and arrival times for 21 Sep**. The
+transcript contains no statement that it read IRCTC or any source, no browser step, no tool-call
+indicator, no citation, and no "checking now" message before the answer. Several named services are
+real Bangalore–Mysuru trains — that is not in question. **What is untested is whether the times for
+21 Sep were read from a live source or generated from model knowledge.** *(observed doc §9.)*
+
+This is deliberately left without a conclusion. It matters because it is the exact failure AskGogo
+eliminated on 18 Sep in commit `35e9aed` (the general planner inventing train numbers and times when
+a provider read failed; AskGogo now refuses rather than inventing — `train-research.ts:170-174`), and
+because it sits alongside O.9: the same run that could not reach IRCTC produced a timetable without
+saying where it came from. **The test** is to ask Instinct directly where the timings came from and
+whether it can show the source. If it turns out to be model knowledge presented as availability, that
+is a genuine differentiator for AskGogo and belongs in Run 3 under DIFFERENTIATE. Until then, **no
+conclusion is recorded here either way.**
+
+### O.12 — DIFFERENTIATE candidate: offering to create an account in the user's name
+
+**OBSERVED (the offer only).** Instinct offered to **create an IRCTC account for the user**, using
+his real email address and WhatsApp number. **What consent step it would have used was not
+captured** — whether it would have proceeded on a chat confirmation, or asked for something more, is
+unobserved. The offer is the observation; the approval mechanism is not. *(observed doc §8d.)*
+
+**Flagged as a DIFFERENTIATE candidate, carried into Run 3 — and the basis is AskGogo's own rule,
+not an observation about Instinct.** Creating an account is *identity creation in the user's name* —
+a materially higher-consequence act than reading a mailbox or filling a form. For an India-facing
+product, identity creation touches DPDP-grade consent: **AskGogo's rule is that it needs explicit,
+specific, informed, revocable consent captured as a durable record — never a chat reply**, whatever a
+competitor does. This is precisely the class of act AskGogo's `policy.ts` boundary exists to gate, and
+Run 3 should treat "agent creates an account in the user's name" as **DIFFERENTIATE**, not COPY.
+*(This connects to §9 only in that the offer is the one high-consequence act the transcript shows
+Instinct willing to make; the consent step behind it is unobserved.)*
 
 ---
 
@@ -78,6 +184,12 @@ calls, in both directions — the agent can call or text the user first.
 assistant should live in the messaging app the user already has, not in a new app. AskGogo's
 equivalent is the Twilio WhatsApp webhook as the primary surface with the web dashboard secondary.
 The difference is that Instinct added outbound *voice calls*, which AskGogo has not built.
+
+**→ OBSERVED (§O.1).** The WhatsApp surface is confirmed: the 19 Sep thread runs entirely inside
+ordinary WhatsApp with no app or dashboard visible in the chat. What the observation *adds* to the
+"lives in the messaging app" bet is the interaction grammar on top of it — quoted-reply threading,
+👍 acknowledgements, multi-bubble responses, three interleaved tasks (§O.2, §O.1) — none of which
+AskGogo currently does, and all of which are cheap.
 
 **REPORTED.** Access is invite-only: waitlist, or an invite from an existing member. The product
 entered private beta in February 2026. ([MLQ News][mlq], [Spinnable][sp])
@@ -174,6 +286,16 @@ solved it. AskGogo's documented response is to split the two cases (IP block →
 for their own browser; human-auth → cloud takeover). No equivalent split was described for Instinct
 in any source consulted.
 
+**→ OBSERVED (§O.9), and one clause overturned.** The wall is confirmed: on 19 Sep Instinct hit the
+*same* IRCTC Akamai datacenter-IP block AskGogo hit on 18 Sep. And the "no equivalent split was
+described" clause is now **overturned by observation** — Instinct *did* fall back to a device handoff
+in words (create and activate the account yourself in the official IRCTC site/app, then tell me and
+I'll resume the 10:05 booking), holding the chosen train as state. So both products stop at the same
+wall and both hand off to the user's own device; the observed difference is only the *wording* of the
+stop, not the presence of a fallback. What remains unobserved is whether Instinct also has AskGogo's
+*second* branch — an in-house cloud-takeover browser for human-presence walls — as distinct from the
+device handoff.
+
 ---
 
 ## 7. Payments
@@ -207,6 +329,13 @@ claim theirs at `mail.instinct.com`. ([TechCrunch][tc-email], [daily.dev][ddev])
 than typing passwords to the agent, enabling logins to the user's existing accounts.
 ([explainx][ex], [Stork][stork])
 
+**→ OBSERVED (§O.7, §O.8), in part.** The 19 Sep thread confirms the *pattern*: identifier in chat,
+secret never in chat, and a **vault web surface at app.instinct.com** as the place a password is set,
+reached by a "secure link" the agent promises before checkout. What the observation does **not**
+confirm is that the vault is 1Password-backed — only that a first-party vault surface exists and that
+the credential boundary is enforced as product language. AskGogo has neither the vault surface nor
+the wording today; both are cheap to adopt (see Run 3).
+
 **INFERRED**, from these two shipping within weeks of each other: both are answers to the same
 problem — an agent that acts on the open web needs an identity and a credential store of its own,
 and neither can be improvised per task. Together they make the agent a *first-class actor* rather
@@ -237,6 +366,16 @@ mechanism — the terms would not disclaim its reliability otherwise — but it 
 enforced, and it failed on at least one irreversible action class (send). Commentary reached the
 same conclusion independently, calling it "a textbook agentic authorization failure: the agent acted
 on behalf of a user in an irreversible way without a human approval gate."
+
+**→ the offer is OBSERVED (§O.12); the approval model is NOT.** The 19 Sep thread shows Instinct
+*offering* to create an IRCTC account in the user's name using his real email and WhatsApp number —
+but **the consent step it would have used was not captured**, so this is not a window into Instinct's
+approval model. **§9 therefore stays REPORTED/INFERRED**: the only firm data point on the boundary
+remains the reported unapproved send, and the inference-from-absence that no structural per-capability
+approval model is described publicly. Run 3 still treats identity creation as **DIFFERENTIATE**
+(§O.12), but on AskGogo's own rule — identity creation in a user's name needs DPDP-grade explicit,
+specific, revocable consent captured as a durable record, never a chat reply — not on any observed
+Instinct behaviour.
 
 **INFERRED**, from the total absence across every source consulted of any description of a
 per-capability permission model, a risk classification, or an approval state machine: Instinct
@@ -295,7 +434,7 @@ that Instinct lacks the capability — it is a finding that nothing public descr
 |---|---|---|---|---|
 | 1 | **Who authorizes a consequential action?** | A pure function outside the model (`lib/agent/policy.ts`); irreversible actions require a one-shot approved record; `auto` cannot execute medium/high-risk consequential actions | No structural boundary described anywhere public. Terms disclaim that confirmations may not prevent unintended actions; an email was sent unapproved | **REPORTED** (the disclaimer, the unapproved send) + **INFERRED from absence** (no permission model described) |
 | 2 | **Is the LLM the front door or the fallback?** | Fallback — ~60 deterministic gates run first; the legacy router is preserved byte-for-byte | Front door. "There are no new interfaces… you can text or call it"; every instruction routes to an autonomous agent on a cloud instance | **REPORTED** (company wording + routing description) |
-| 3 | **What happens when a provider blocks the agent?** | Detect, classify IP-block vs human-presence, hand off to the right browser, never fabricate | Routes around it. Reset the user's password to complete a purchase when locked out. CAPTCHA/2FA still defeat it | **REPORTED (secondary)** for the password reset; **REPORTED** for the CAPTCHA/2FA failures |
+| 3 | **What happens when a provider blocks the agent?** | Detect, classify IP-block vs human-presence, hand off to the right browser, never fabricate | Mixed. On an IP-reputation wall (IRCTC/Akamai, 19 Sep) it **stopped gracefully and handed off to the user's device, holding state** — same shape as AskGogo. On a shopping-site lockout (REPORTED) it **routed around it by resetting the user's password**. CAPTCHA/2FA still defeat it | **OBSERVED (§O.9)** for the IRCTC device-handoff; **REPORTED (secondary)** for the password reset; **REPORTED** for the CAPTCHA/2FA failures |
 | 4 | **What happens when it cannot verify an outcome?** | Fails closed — train research was rewritten specifically to stop inventing timings | Unknown. No source describes verification-failure behaviour. The §6 password reset suggests a completion bias, but that is a different situation | **INFERRED from absence**; low confidence, do not cite externally |
 | 5 | **Where does work continue after the user leaves?** | Claimed-with-optimistic-lock queue on a 60s cron, stale sweep, per-step leases | A persistent cloud computer per user, holding state across messages and multi-day tasks; agent initiates follow-up | **REPORTED** |
 | 6 | **What does it cost to run one heavy user?** | Budgeted per tier (`cogsBudgetInr`, 30% target margin), enforced by a fail-closed meter | Unbudgeted publicly and apparently binding: capacity constraints at 100k users; reported $200–$500/mo tiers keyed to compute; contradicted by "doesn't want to charge" | **REPORTED**, internally contradictory (§10) |
@@ -326,8 +465,14 @@ consumer trust cycle, that is the axis it happens on.
 
 ## 12. What a second pass must do
 
-1. **Get a demo video or screenshots** and move §9 (refusals) and §6 (browser) out of REPORTED. The
-   approval UX, if any, is the highest-value unknown.
+1. **~~Get a demo video or screenshots~~ — DONE for one session (§O).** The 19 Sep thread moved §2,
+   §6, §7 and §8 into OBSERVED. What it did *not* settle, and a second observation should:
+   (a) the provenance of the six train timings (§O.11 — still UNRESOLVED, ask Instinct directly);
+   (b) **the approval UX, which remains wholly unobserved** — the thread shows Instinct *offering* to
+   create an account in the user's name (§O.12) but never captures the consent step it would use, and
+   §9's central claim (no structural approval model) stays an inference from absence;
+   (c) whether Instinct has AskGogo's *second* block-handling branch (cloud takeover for
+   human-presence walls) as distinct from the device handoff (§6).
 2. **Re-verify every REPORTED claim against the source article**, since none could be opened here.
    Treat this document as a research map, not as citable fact, until that is done.
 3. **Find the permission model** — terms of service, security page, or any engineering writing.
