@@ -55,11 +55,11 @@ export function decryptGoogleToken(value: string | null | undefined) {
   if (!isEncryptedGoogleToken(stored)) return stored
 
   const parts = stored.split(':')
-  if (parts.length !== 6 || parts[0] !== 'enc' || parts[1] !== 'v1') {
+  if (parts.length !== 5 || parts[0] !== 'enc' || parts[1] !== 'v1') {
     throw new Error('google_token_ciphertext_invalid')
   }
 
-  const [, , , ivPart, tagPart, cipherPart] = parts
+  const [, , ivPart, tagPart, cipherPart] = parts
   const key = keyBytes()
   const iv = Buffer.from(ivPart, 'base64url')
   const tag = Buffer.from(tagPart, 'base64url')
