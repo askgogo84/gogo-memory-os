@@ -164,6 +164,25 @@ export async function getGoogleEmail(accessToken: string): Promise<string | null
   }
 }
 
+export async function revokeGoogleToken(token:string):Promise<boolean> {
+  const value=String(token||'').trim()
+  if(!value)return true
+  try {
+    const response=await fetch('https://oauth2.googleapis.com/revoke',{
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams({token:value}),
+      cache:'no-store',
+    })
+    // 400 commonly means the token is already invalid/revoked; from AskGogo's
+    // perspective there is no remaining usable credential at Google.
+    return response.ok || response.status===400
+  } catch(err) {
+    console.error('Google token revoke failed:',err)
+    return false
+  }
+}
+
 export async function refreshGmailAccessToken(refreshToken: string): Promise<string | null> {
   try {
     const response = await fetch('https://oauth2.googleapis.com/token', {
