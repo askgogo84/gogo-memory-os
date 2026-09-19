@@ -81,7 +81,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (!lower) return { type: 'general_chat', confidence: 'low' }
   if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) return { type: 'welcome_menu', confidence: 'high' }
-  if (lower === 'help' || lower === '/help' || lower === 'menu' || lower === 'commands' || lower === 'what can you do') return { type: 'help_menu', confidence: 'high' }
+  if (/^(?:help|\/help|menu|commands|what can you do)[?!.]*$/i.test(lower)) return { type: 'help_menu', confidence: 'high' }
 
   // CreditIQ account linking â€” high-priority, PREFIXED 6-digit code only (never a bare number).
   {
