@@ -63,4 +63,23 @@ assert.doesNotMatch(calendarConnectRoute, /searchParams\.get\('id'\)/)
 assert.match(calendarCallbackRoute, /consumeCalendarOauthState/)
 assert.doesNotMatch(calendarCallbackRoute, /parseInt\(telegramId\)|Number\(state\)/)
 
+// WhatsApp users carry a NEGATIVE telegram_id (resolve-user.ts generateNegativeTelegramId).
+// Regression, 19 Sep 2026: a positive-only guard refused every WhatsApp user a Gmail/Calendar
+// connect link, so the bot answered "connection is temporarily unavailable" instead.
+const whatsappId = -876543210
+const waGmail = gmail.buildGmailConnectUrl(whatsappId)
+assert.ok(waGmail, 'WhatsApp (negative) id must get a Gmail connect link')
+assert.equal(gmail.verifyGmailConnectToken(new URL(waGmail!).searchParams.get('token') || ''), whatsappId)
+const waGmailState = new URL(gmail.getGmailAuthUrl(whatsappId)!).searchParams.get('state') || ''
+assert.equal(gmail.consumeGmailOauthState(waGmailState), whatsappId)
+const waCal = calendar.buildCalendarConnectUrl(whatsappId)
+assert.ok(waCal, 'WhatsApp (negative) id must get a Calendar connect link')
+assert.equal(calendar.verifyCalendarConnectToken(new URL(waCal!).searchParams.get('token') || ''), whatsappId)
+const waCalState = new URL(calendar.getAuthUrl(whatsappId)).searchParams.get('state') || ''
+assert.equal(calendar.consumeCalendarOauthState(waCalState), whatsappId)
+// 0 and non-numbers stay refused.
+assert.equal(gmail.buildGmailConnectUrl(0), null)
+assert.equal(gmail.buildGmailConnectUrl(Number.NaN), null)
+assert.equal(calendar.buildCalendarConnectUrl(0), null)
+
 console.log('Google Workspace + Calendar signed OAuth verification passed')

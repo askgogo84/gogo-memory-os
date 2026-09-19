@@ -28,14 +28,15 @@ function decodeCalendarState(token:string,purpose:CalendarState['purpose']) {
   if(a.length!==b.length||!timingSafeEqual(a,b))return null
   try{
     const payload=JSON.parse(Buffer.from(encoded,'base64url').toString('utf8')) as CalendarState
-    if(payload?.purpose!==purpose||!Number.isFinite(payload?.tg)||payload.tg<=0)return null
+    if(payload?.purpose!==purpose||!Number.isFinite(payload?.tg)||payload.tg===0)return null
     if(!Number.isFinite(payload?.exp)||payload.exp<=Date.now()||!payload?.nonce)return null
     return payload
   }catch{return null}
 }
 
 export function buildCalendarConnectUrl(telegramId:number):string|null {
-  if(!Number.isFinite(telegramId)||telegramId<=0)return null
+  // WhatsApp users have NEGATIVE telegram_ids (resolve-user.ts); only 0 is invalid.
+  if(!Number.isFinite(telegramId)||telegramId===0)return null
   const token=encodeCalendarState({tg:telegramId,purpose:'calendar_connect',exp:Date.now()+CALENDAR_CONNECT_TTL_MS,nonce:randomBytes(16).toString('base64url')})
   return token?`https://app.askgogo.in/api/calendar/connect?token=${encodeURIComponent(token)}`:null
 }
