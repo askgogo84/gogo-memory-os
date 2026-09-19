@@ -13,6 +13,11 @@ for (const text of [
   'check seat availability on the vande bharat',
   'check how much the flight to delhi costs',
   'check the score of the rcb match',
+  'check my mails',
+  'check my mail',
+  'check my emails',
+  'check my email',
+  'check my inbox',
 ]) {
   assert.equal(classifyCheckVerb(text), null, `must not be a list command: ${text}`)
 }
