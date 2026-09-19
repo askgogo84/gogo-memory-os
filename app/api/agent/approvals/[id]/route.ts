@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { recordAgentEvent } from '@/lib/agent/events'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
 
 export const dynamic = 'force-dynamic'
@@ -54,6 +55,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     metadata_json: { approval_id: data.id, action_type: data.action_type, risk_level: data.risk_level, surface: session.surface },
   })
   if (activityError) console.error('AGENT_APPROVAL_ACTIVITY_FAILED:', activityError)
+
+  await recordAgentEvent({
+    telegramId: session.telegramId,
+    eventType: 'approval_resolved',
+    sourceType: 'approval',
+    sourceId: String(data.id),
+    title: `${decision === 'approve' ? 'Approved' : 'Rejected'}: ${data.title}`,
+    body: data.description || null,
+    payload: { runId: data.run_id, actionType: data.action_type, risk: data.risk_level, decision },
+    importance: 2,
+    surface: session.surface,
+    occurredAt: resolvedAt,
+  })
 
   return NextResponse.json({ approval: {
     id: data.id,
