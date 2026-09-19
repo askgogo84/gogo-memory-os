@@ -46,15 +46,6 @@ export function parseWebWatchCommand(text: string) {
 }
 
 
-export type ProductStockWatchCommand = {
-  title: string
-  productUrl: string
-  variant: string
-  addToCart: boolean
-  delivery: 'both'
-  cadenceMinutes: number
-}
-
 function canonicalProductUrl(value: string) {
   try {
     const url = new URL(value)
@@ -79,7 +70,7 @@ function productLabelFromUrl(value: string) {
   }
 }
 
-export function parseProductStockWatchCommand(text: string): ProductStockWatchCommand | null {
+export function parseProductStockWatchCommand(text: string): ReturnType<typeof normalizeProductStockWatcher> {
   const raw = clean(text, 2500)
   if (!raw) return null
   const urlMatch = raw.match(/https?:\/\/[^\s<>]+/i)
