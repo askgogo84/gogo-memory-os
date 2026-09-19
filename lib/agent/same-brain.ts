@@ -3,9 +3,10 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
-import { buildGmailConnectUrl } from '@/lib/google-gmail'
+import { buildGmailConnectUrl, revokeGoogleToken } from '@/lib/google-gmail'
 import { readWorkspaceDriveText, readWorkspaceEmailBrief, searchWorkspaceContacts, searchWorkspaceDrive, searchWorkspaceEmails } from './google-workspace-read'
 import type { AgentActor } from './actor'
+import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 
 export type SameBrainResult = {
   text: string
@@ -29,6 +30,38 @@ function workspaceConnectionReply(actor:AgentActor) {
     : 'Google Workspace connection is temporarily unavailable. I did not guess or use another account.'
 }
 
+function isWorkspaceDisconnect(text:string) {
+  const lower=String(text||'').trim().toLowerCase()
+  return /^(?:disconnect|unlink|remove)\s+(?:my\s+)?(?:google(?:\s+workspace)?|gmail)(?:\s+(?:account|connection))?[?!.]*$/.test(lower)
+}
+
+async function disconnectWorkspace(actor:AgentActor) {
+  const {data,error}=await supabaseAdmin.from('users')
+    .select('gmail_access_token,gmail_refresh_token,gmail_connected')
+    .eq('telegram_id',actor.legacyTelegramId)
+    .maybeSingle()
+  if(error)throw new Error(`workspace_disconnect_read_failed:${error.message}`)
+  if(!data?.gmail_connected && !data?.gmail_access_token && !data?.gmail_refresh_token) {
+    return 'Google Workspace is already disconnected from AskGogo.'
+  }
+
+  const stored=String(data?.gmail_refresh_token||data?.gmail_access_token||'')
+  const token=stored ? decryptGoogleToken(stored) : ''
+  const revoked=await revokeGoogleToken(token)
+  const {error:clearError}=await supabaseAdmin.from('users').update({
+    gmail_access_token:null,
+    gmail_refresh_token:null,
+    gmail_connected:false,
+    gmail_connected_at:null,
+    gmail_email:null,
+  }).eq('telegram_id',actor.legacyTelegramId)
+  if(clearError)throw new Error(`workspace_disconnect_clear_failed:${clearError.message}`)
+
+  return revoked
+    ? 'Google Workspace is disconnected. I removed the stored Google tokens and account link from AskGogo.'
+    : 'Google Workspace is disconnected from AskGogo and I removed the stored tokens here. Google did not confirm remote revocation, so you can also remove AskGogo from your Google Account permissions for certainty.'
+}
+
 function isEmailRead(text:string) {
   return /\b(email|emails|gmail|inbox|mail)\b/i.test(text) && /\b(find|show|read|latest|recent|unread|search|look for|check|attached|attachment|brief)\b/i.test(text) && !/\b(send|forward|compose)\b/i.test(text)
 }
@@ -44,6 +77,7 @@ function isDriveRead(text:string) {
 
 async function tryWorkspaceRead(actor:AgentActor,text:string):Promise<string|null> {
   try {
+    if(isWorkspaceDisconnect(text)) return await disconnectWorkspace(actor)
     if(isEmailRead(text)) {
       const result=await searchWorkspaceEmails(actor,text)
       if(!result.messages.length)return 'I searched your connected Gmail and did not find a matching recent message. I did not invent one.'
