@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
+import { auditInboundTwilioSignature } from '@/lib/security/webhook-signature'
 import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { isStopMessage, suppressAllForRecipient } from '@/lib/bot/handlers/reminder-optout'
@@ -256,6 +257,26 @@ export async function POST(req: NextRequest) {
   let from = ''
   try {
     const formData = await req.formData()
+
+    // ── Inbound signature audit ───────────────────────────────────────────────
+    // LOG-ONLY unless WEBHOOK_SIGNATURE_ENFORCE is set. Every request is evaluated
+    // and the verdict emitted as WEBHOOK_SIGNATURE_AUDIT; nothing is rejected while
+    // the flag is unset, so this cannot change behaviour on its own. The evidence
+    // that this path is Twilio's (not Meta's) is recorded in the module header.
+    // Params are built from the ALREADY-PARSED formData: the request body can only
+    // be read once, so re-reading it here would break every downstream handler.
+    const signatureParams: Record<string, string> = {}
+    for (const [key, value] of formData.entries()) {
+      signatureParams[key] = typeof value === 'string' ? value : ''
+    }
+    const signatureAudit = auditInboundTwilioSignature({
+      requestUrl: req.url,
+      headers: req.headers,
+      params: signatureParams,
+      route: 'webhooks/whatsapp',
+    })
+    if (signatureAudit.reject) return new NextResponse('Forbidden', { status: 403 })
+
     const fromRaw = String(formData.get('From') || '')
     const profileName = String(formData.get('ProfileName') || 'Friend')
     const numMedia = Number(formData.get('NumMedia') || '0')

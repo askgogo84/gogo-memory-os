@@ -12,24 +12,24 @@ AskGogo remembers, understands, anticipates and acts — across WhatsApp, web an
 - [ ] Deep links from notification/activity/approval to the exact object
 
 ## P0 — Autonomous brain
-- [ ] Goal capture from natural language
-- [ ] Goal decomposition into plans, checkpoints and dependencies
+- [x] Goal capture from natural language — `lib/agent/whatsapp-bridge.ts` (`parseGoal`), `lib/agent/goal-engine.ts`; verified by `scripts/verify-agent-goals.mts`
+- [x] Goal decomposition into plans, checkpoints and dependencies — `lib/agent/goal-engine.ts` (`buildGoalPlan`, `saveGoal`); verified by `scripts/verify-agent-goals.mts`
 - [ ] Compound multi-step execution
-- [ ] Background continuation after the user leaves
-- [ ] Retry with idempotency and leases
+- [x] Background continuation after the user leaves — `lib/agent/goal-worker.ts`, `lib/agent/persistent-general-plan.ts`, cron `/api/cron/agent-goals`; verified by `scripts/verify-agent-goals.mts`, `scripts/verify-persistent-general-plan.mts`
+- [x] Retry with idempotency and leases — `lib/agent/autonomous-runtime.ts` (`readyAutonomousSteps`, per-step `idempotencyKey`/`leaseUntil`); verified by `scripts/verify-autonomous-runtime.mts`
 - [ ] Pause/resume/cancel
 - [ ] Failure recovery and alternate-route planning
-- [ ] Sentinel to detect stalled, looping or contradictory runs
-- [ ] Same-brain context carryover between runs
-- [ ] Learning from accepted/rejected suggestions and user corrections
+- [x] Sentinel to detect stalled, looping or contradictory runs — `lib/agent/sentinel.ts`; verified by `scripts/verify-agent-sentinel.mts`
+- [x] Same-brain context carryover between runs — `lib/agent/same-brain.ts`, `lib/agent/thread-context.ts`; verified by `scripts/verify-agent-same-brain.mts`
+- [x] Learning from accepted/rejected suggestions and user corrections — `lib/agent/learning-worker.ts`, cron `/api/cron/agent-learning`; verified by `scripts/verify-agent-learning.mts`
 - [ ] Proactive Ideas for You ranked by usefulness
 - [ ] Autonomous next-step suggestion after task completion
 
 ## P0 — Permission and safety model
-- [ ] Per-capability Read / Draft / Execute-with-approval / Safe auto-execute permissions
+- [x] Per-capability Read / Draft / Execute-with-approval / Safe auto-execute permissions — `lib/agent/policy.ts` (`evaluateAgentExecutionPolicy`); verified by `scripts/verify-agent-policy.mts`, and every consequential executor is proven to sit behind it by `scripts/verify-policy-gate-coverage.mts`
 - [ ] Server-side approval enforcement for sends, submits, deletes, bookings, payments and publishing
 - [ ] Narrow scoped auto-permissions only when explicitly enabled
-- [ ] Cost guard / rate guard / runaway loop guard
+- [x] Cost guard / rate guard / runaway loop guard — `lib/services/cost-guard.ts`, `lib/agent/watch-cost-policy.ts`, `lib/agent/sentinel.ts`; verified by `scripts/verify-cost-guard.mts`
 - [ ] Full activity and audit trail
 - [ ] Credential isolation; never expose secrets to model output/logs
 - [ ] Device handoff for provider blocks, OTP, biometric or human-only steps
@@ -57,10 +57,10 @@ AskGogo remembers, understands, anticipates and acts — across WhatsApp, web an
 
 ## P0 — Watchers / proactive background Gogo
 - [ ] Price/fare thresholds
-- [ ] Deadline approaching
+- [x] Deadline approaching — `lib/agent/watchers.ts` (`deadline` watcher); verified by `scripts/verify-agent-watchers.mts`
 - [ ] Calendar conflict/change
 - [ ] Email/reply awaited
-- [ ] Web-page availability/change
+- [x] Web-page availability/change — `lib/agent/watchers.ts` (`web_search` watcher), `lib/agent/watch-command.ts`; verified by `scripts/verify-agent-web-watch.mts`
 - [ ] Application status/deadline
 - [ ] Travel disruption/check-in window
 - [ ] Booking/life-event change watcher
@@ -103,7 +103,7 @@ AskGogo remembers, understands, anticipates and acts — across WhatsApp, web an
 - [ ] Calendar create with confirmation
 - [ ] Calendar update/delete approval
 - [ ] Meeting preparation and follow-up
-- [ ] Drive contextual retrieval where approved
+- [x] Drive contextual retrieval where approved — `lib/agent/workspace-drive-context.ts`; verified by `scripts/verify-workspace-drive-context.mts`
 - [ ] OAuth scope verification for every production scope
 
 ## P0 — Travel autonomy
