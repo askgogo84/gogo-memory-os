@@ -3,7 +3,7 @@ import { getCostBudget } from '@/lib/services/cost-guard'
 import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { createWebSearchWatcher, normalizeWebSearchWatcher } from './watchers'
+import { createProductStockWatcher, createWebSearchWatcher, normalizeProductStockWatcher, normalizeWebSearchWatcher } from './watchers'
 import { initialWatcherCadence, isUrgentWatchRequest, watcherUpgradeMessage } from './watch-cost-policy'
 
 function clean(value: unknown, max = 1000) {
@@ -45,6 +45,70 @@ export function parseWebWatchCommand(text: string) {
   })
 }
 
+
+export type ProductStockWatchCommand = {
+  title: string
+  productUrl: string
+  variant: string
+  addToCart: boolean
+  delivery: 'both'
+  cadenceMinutes: number
+}
+
+function canonicalProductUrl(value: string) {
+  try {
+    const url = new URL(value)
+    if (!['http:','https:'].includes(url.protocol)) return ''
+    url.hash = ''
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (/^(utm_|fbclid|gclid|mc_)/i.test(key)) url.searchParams.delete(key)
+    }
+    return url.toString()
+  } catch {
+    return ''
+  }
+}
+
+function productLabelFromUrl(value: string) {
+  try {
+    const url = new URL(value)
+    const slug = url.pathname.split('/').filter(Boolean).pop() || url.hostname
+    return slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase()).slice(0, 100)
+  } catch {
+    return 'Product'
+  }
+}
+
+export function parseProductStockWatchCommand(text: string): ProductStockWatchCommand | null {
+  const raw = clean(text, 2500)
+  if (!raw) return null
+  const urlMatch = raw.match(/https?:\/\/[^\s<>]+/i)
+  const productUrl = canonicalProductUrl(String(urlMatch?.[0] || '').replace(/[),.;!?]+$/g, ''))
+  if (!productUrl) return null
+
+  const watcherIntent = /\b(alert|notify|tell\s+me|let\s+me\s+know|watch|monitor|track)\b/i.test(raw)
+  const availabilityIntent = /\b(in\s+stock|back\s+in\s+stock|available|availability|comes?\s+(?:back\s+)?up|becomes?\s+available)\b/i.test(raw)
+  if (!watcherIntent || !availabilityIntent) return null
+
+  const variantMatch =
+    raw.match(/\b(?:in\s+)?(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|5XL)\s+size\b/i)
+    || raw.match(/\bsize\s*[:=-]?\s*(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|5XL)\b/i)
+  const variant = clean(variantMatch?.[1] || '', 40).toUpperCase()
+  if (!variant) return null
+
+  const addToCart = /\b(?:add|put)\s+(?:it|this|the\s+(?:item|product))\s+(?:to|in)\s+(?:my\s+)?(?:cart|bag|basket)\b/i.test(raw)
+    || /\badd\s+to\s+(?:my\s+)?(?:cart|bag|basket)\b/i.test(raw)
+
+  return normalizeProductStockWatcher({
+    title: `${productLabelFromUrl(productUrl)} — ${variant}`,
+    productUrl,
+    variant,
+    addToCart,
+    delivery:'both',
+    cadenceMinutes:15,
+  })
+}
+
 async function browserWatchAllowed(telegramId: number) {
   const { data, error } = await supabaseAdmin.from('agent_permissions')
     .select('level')
@@ -53,6 +117,139 @@ async function browserWatchAllowed(telegramId: number) {
     .maybeSingle()
   if (error) throw new Error(`agent_permission_unavailable:${error.message}`)
   return String(data?.level || 'draft') !== 'off'
+}
+
+
+export async function tryCreateProductStockWatchFromCommand(params: {
+  actor: AgentActor
+  surface: AgentSurface
+  text: string
+}) {
+  const parsed = parseProductStockWatchCommand(params.text)
+  if (!parsed) return null
+
+  const tg = String(params.actor.legacyTelegramId)
+  if (!(await browserWatchAllowed(params.actor.legacyTelegramId))) {
+    return {
+      runId:'product-watch-blocked',
+      status:'paused' as const,
+      capability:'browser' as const,
+      risk:'low' as const,
+      text:'Browser monitoring is off in Gogo Safe Mode. Turn Browser access back on to watch this product.',
+      blockedReason:'browser_permission_off',
+      handledBy:'product-stock-watch',
+    }
+  }
+
+  const budget = await getCostBudget(tg)
+  if (budget.activeWebWatchersMax <= 0) {
+    return {
+      runId:'product-watch-plan-blocked',
+      status:'paused' as const,
+      capability:'browser' as const,
+      risk:'low' as const,
+      text:watcherUpgradeMessage(budget.planCode),
+      blockedReason:'plan_background_watch_unavailable',
+      handledBy:'product-stock-watch',
+    }
+  }
+
+  const { data: existing, error: existingError } = await supabaseAdmin.from('agent_watchers')
+    .select('id, condition_json')
+    .eq('telegram_id', tg)
+    .eq('type', 'product_stock')
+    .eq('active', true)
+  if (existingError) throw new Error(`agent_watcher_read_failed:${existingError.message}`)
+  const duplicate = (existing || []).find((row:any) => {
+    const condition = normalizeProductStockWatcher(row.condition_json)
+    return condition
+      && condition.productUrl === parsed.productUrl
+      && condition.variant.toLowerCase() === parsed.variant.toLowerCase()
+  })
+  if (duplicate) {
+    return {
+      runId:`product-watch-existing-${duplicate.id}`,
+      status:'completed' as const,
+      capability:'browser' as const,
+      risk:'low' as const,
+      text:`I’m already watching ${parsed.title}. I’ll alert you when ${parsed.variant} is available${parsed.addToCart ? ' and try to add it to your cart' : ''}. I will not checkout or pay without your approval.`,
+      handledBy:'product-stock-watch',
+    }
+  }
+
+  const { count, error: countError } = await supabaseAdmin.from('agent_watchers')
+    .select('id', { count:'exact', head:true })
+    .eq('telegram_id', tg)
+    .in('type', ['web_search','product_stock'])
+    .eq('active', true)
+  if (countError) throw new Error(`agent_watcher_count_failed:${countError.message}`)
+  const activeWatcherCount = count || 0
+  if (activeWatcherCount >= budget.activeWebWatchersMax) {
+    return {
+      runId:'product-watch-plan-limit',
+      status:'paused' as const,
+      capability:'browser' as const,
+      risk:'low' as const,
+      text:watcherUpgradeMessage(budget.planCode),
+      blockedReason:'plan_background_watch_limit',
+      handledBy:'product-stock-watch',
+    }
+  }
+
+  const cadenceMinutes = initialWatcherCadence({
+    budget,
+    urgent:isUrgentWatchRequest(params.text),
+    activeWatcherCount:activeWatcherCount + 1,
+  })
+  const condition = { ...parsed, cadenceMinutes }
+  const now = new Date().toISOString()
+  const { data: run, error: runError } = await supabaseAdmin.from('agent_runs').insert({
+    telegram_id:tg,
+    type:'watcher',
+    capability:'browser',
+    status:'completed',
+    title:`Watch ${condition.title}`,
+    summary:`Gogo will monitor ${condition.variant} availability and alert you when the condition is met.`,
+    progress:100,
+    why:'You asked Gogo to keep watching a product instead of checking the shop manually.',
+    source:params.surface,
+    metadata_json:{
+      input_text:clean(params.text, 2000),
+      watcher_type:'product_stock',
+      product_url:condition.productUrl,
+      variant:condition.variant,
+      add_to_cart:condition.addToCart,
+      plan_code:budget.planCode,
+    },
+    started_at:now,
+    updated_at:now,
+  }).select('id').single()
+  if (runError || !run?.id) throw new Error(`agent_run_create_failed:${runError?.message || 'unknown'}`)
+
+  const watcher = await createProductStockWatcher({ telegramId:tg, condition })
+  await supabaseAdmin.from('agent_activity').insert({
+    telegram_id:tg,
+    run_id:String(run.id),
+    event_type:'watcher_created',
+    message:`Gogo is watching ${condition.title} for availability.`.slice(0, 900),
+    metadata_json:{
+      watcher_id:watcher.id,
+      type:'product_stock',
+      product_url:condition.productUrl,
+      variant:condition.variant,
+      add_to_cart:condition.addToCart,
+      cadence_minutes:condition.cadenceMinutes,
+    },
+  })
+
+  return {
+    runId:String(run.id),
+    status:'completed' as const,
+    capability:'browser' as const,
+    risk:'low' as const,
+    text:`Got it — I’ll watch ${condition.title} for ${condition.variant} availability.${condition.addToCart ? ` When it becomes available, I’ll try to add ${condition.variant} to your cart and alert you.` : ' I’ll alert you when it becomes available.'} I won’t checkout or make a payment without your approval.`,
+    handledBy:'product-stock-watch',
+  }
 }
 
 export async function tryCreateWebWatchFromCommand(params: {
