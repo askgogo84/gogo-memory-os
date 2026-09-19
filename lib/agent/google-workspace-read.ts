@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { refreshGmailAccessToken } from '@/lib/google-gmail'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { decryptGoogleToken, encryptGoogleToken, hasGoogleTokenEncryptionKey, isEncryptedGoogleToken } from '@/lib/security/google-token-crypto'
 import type { AgentActor } from './actor'
 
 const MAX_EMAILS = 6
@@ -91,13 +92,32 @@ async function credentials(actor: AgentActor) {
   if (error) throw new Error(`workspace_credentials_failed:${error.message}`)
   if (!data?.gmail_connected) throw new Error('workspace_not_connected')
   if (!data.gmail_access_token && !data.gmail_refresh_token) throw new Error('workspace_reconnect_required')
-  return data as any
+
+  const accessStored=String(data.gmail_access_token||'')
+  const refreshStored=String(data.gmail_refresh_token||'')
+  const access=decryptGoogleToken(accessStored)
+  const refresh=decryptGoogleToken(refreshStored)
+
+  // Backward-compatible one-time migration for the two pre-encryption connections:
+  // once the Vercel encryption key exists, the first Workspace read rewrites any
+  // legacy plaintext token into authenticated ciphertext.
+  if (hasGoogleTokenEncryptionKey() &&
+      ((accessStored && !isEncryptedGoogleToken(accessStored)) ||
+       (refreshStored && !isEncryptedGoogleToken(refreshStored)))) {
+    const patch:any={}
+    if(accessStored&&!isEncryptedGoogleToken(accessStored))patch.gmail_access_token=encryptGoogleToken(accessStored)
+    if(refreshStored&&!isEncryptedGoogleToken(refreshStored))patch.gmail_refresh_token=encryptGoogleToken(refreshStored)
+    const {error:migrateError}=await supabaseAdmin.from('users').update(patch).eq('telegram_id',actor.legacyTelegramId)
+    if(migrateError)throw new Error(`workspace_token_migration_failed:${migrateError.message}`)
+  }
+
+  return {...data,gmail_access_token:access,gmail_refresh_token:refresh} as any
 }
 
 async function refresh(actor: AgentActor, refreshToken: string) {
   const token = await refreshGmailAccessToken(refreshToken)
   if (!token) throw new Error('workspace_reconnect_required')
-  const { error } = await supabaseAdmin.from('users').update({ gmail_access_token: token }).eq('telegram_id', actor.legacyTelegramId)
+  const { error } = await supabaseAdmin.from('users').update({ gmail_access_token: encryptGoogleToken(token) }).eq('telegram_id', actor.legacyTelegramId)
   if (error) console.error('WORKSPACE_ACCESS_TOKEN_PERSIST_FAILED:', error.message)
   return token
 }
