@@ -63,7 +63,7 @@ function decodeState(token: string, purpose: SignedGoogleState['purpose']): Sign
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null
   try {
     const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as SignedGoogleState
-    if (payload?.purpose !== purpose || !Number.isFinite(payload?.tg) || payload.tg <= 0) return null
+    if (payload?.purpose !== purpose || !Number.isFinite(payload?.tg) || payload.tg === 0) return null
     if (!Number.isFinite(payload?.exp) || payload.exp <= Date.now()) return null
     if (!payload?.nonce || String(payload.nonce).length < 12) return null
     return payload
@@ -73,7 +73,9 @@ function decodeState(token: string, purpose: SignedGoogleState['purpose']): Sign
 }
 
 export function buildGmailConnectUrl(telegramId: number): string | null {
-  if (!Number.isFinite(telegramId) || telegramId <= 0) return null
+  // WhatsApp users carry a NEGATIVE telegram_id by design (resolve-user.ts generateNegativeTelegramId),
+  // so only 0 is invalid. A positive-only check here refused every WhatsApp user a connect link.
+  if (!Number.isFinite(telegramId) || telegramId === 0) return null
   const token = encodeState({
     tg: telegramId,
     purpose: 'connect',
