@@ -359,6 +359,10 @@ export async function routeFeatureIntent(
     return null
   } catch (err: any) {
     console.error('WHATSAPP_AGENT_BRIDGE_FAILED:', err?.message || err)
-    return null
+    // An exception is an infrastructure/execution failure, NOT a routing non-match.
+    // Returning null here used to fall through to processIncomingMessage/plain LLM,
+    // which could falsely claim it had no browser or answer with unverified live data.
+    // Null is reserved for a clean non-match above; faults fail closed.
+    return 'I hit a problem while running that AskGogo action, so I stopped instead of guessing or falling back to an unverified answer. Please try again shortly.'
   }
 }
