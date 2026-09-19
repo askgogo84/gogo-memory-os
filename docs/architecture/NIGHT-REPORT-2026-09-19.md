@@ -217,3 +217,295 @@ untouched.
    read: the market is paying for reach, not restraint, and AskGogo's advantage is narrower than it
    looks — but all four of Instinct's first-week failures are authorization and data-boundary
    failures, which is the one class AskGogo is architected to prevent.
+
+---
+
+# LIVE BUG — 19 Sep 10:05–10:08, browser routing divergence
+
+Read-only investigation. **No code was changed.** Every claim below is cited to `file:line` at
+commit `6ed02fc` (branch `claude/overnight-hardening-2026-09-19`).
+
+Where a claim is proven from source it is marked **[CODE]**. Where it is the most probable cause
+but needs a production log line to confirm, it is marked **[PROBABLE]** and names the exact log key
+that settles it. Nothing here was verified against production logs — this session cannot reach them.
+
+## Summary
+
+The two messages did **not** route differently. They are byte-for-byte equivalent to every matcher
+in the dispatch chain, and both were claimed by the same handler. **[CODE]**
+
+What differs is what happened *inside* that handler, and the two failures are unrelated:
+
+- **Message A** — the browser leg succeeded. The reply it produced was **too long for one WhatsApp
+  message**, `sendWhatsApp` splits and sends chunks in a loop, a later chunk's send threw, and the
+  webhook's outer catch emitted the "temporarily unavailable" copy *after the first chunk had
+  already been delivered*. **[CODE]** for the mechanism, **[PROBABLE]** for which chunk failed.
+- **Message B** — the browser leg **threw**. `routeFeatureIntent`'s catch-all converts any exception
+  from the agent bridge into `return null`, which is indistinguishable from "no specialist wanted
+  this". The message then fell through to the plain-LLM path, and the model — which has no browser
+  tool — truthfully described *itself* as unable to browse. **[CODE]** for the swallow-and-fall-
+  through, **[PROBABLE]** for the throw's origin.
+
+**The most important finding is not either bug. It is that a browser failure and a browser
+non-match are the same event to this codebase**, so an infrastructure fault silently degrades into
+a confident false denial of a shipped capability.
+
+## 1. Which handler claims A, which claims B
+
+**Both are claimed by `tryRunBrowserCommand` (`lib/agent/whatsapp-bridge.ts:239`), hop G11 of the
+specialist chain.** Proof that the two messages are equivalent to every gate above it:
+
+`parseBrowserCommand` (`lib/agent/browser-command.ts:34-55`) needs two things:
+
+1. a URL — `extractUrl` (`:19-23`), regex `/https?:\/\/[^\s<>)\]}]+/i`. Both match.
+2. an action signal — `:37`, `/\b(open|browse|browser|website|site|page|form|fill|apply|submit|book|checkout|buy|purchase|reserve|navigate|go to|visit|inspect|check)\b/`
+   tested against the message **with URLs stripped** (`actionTextWithoutUrls`, `:25-27`).
+
+For both messages the stripped text is `"open and tell me the first three results with their
+prices"`. Both hit `open`. Neither hits a purchase/booking/submit/fill word, so both resolve to
+`mode:'read'`, `risk:'low'` (`:47`, `:52`). **The parse result is identical.** **[CODE]**
+
+### Every candidate you listed, eliminated
+
+| Candidate | Verdict | Evidence |
+|---|---|---|
+| **Host allowlist** | **Eliminated.** There is no static allowlist. `allowedHosts` (`lib/agent/secure-computer.ts:42-48`) *derives* the policy from the requested URL: `{[hostname]:[], ['*.'+hostname]:[]}`. `amazon.in` and `flipkart.com` are treated identically | `secure-computer.ts:47` |
+| **URL pattern matching** | **Eliminated.** One regex, no host logic | `browser-command.ts:20` |
+| **Booking/link-preview handler claiming amazon.in first** | **Eliminated.** `BOOKING_HOSTS` is `bmsurl.co, bookmyshow.com, in.bookmyshow.com, district.in, paytm.com, insider.in`. Neither host is in it, and the keyword fallback needs cinema/ticket words | `lib/services/whatsapp-preview-routing.ts:16-30` |
+| **WhatsApp link-preview card changing the body** | **Not the cause.** A preview card sets `numMedia>0` with an image thumbnail and diverts to the media branch at `app/api/webhooks/whatsapp/route.ts:424` — that branch never reaches `routeFeatureIntent`, so B could not have produced a planner-style reply through it | `route.ts:420-424`, `whatsapp-preview-routing.ts:32-37` |
+| **Web-watch handler (runs at G10, *before* the browser)** | **Eliminated.** `parseWebWatchCommand` requires `^watch\|monitor\|track …` | `lib/agent/watch-command.ts:17-20` |
+| **Flight-watch handler (G3)** | **Eliminated for these messages**, but see the latent risk below | `watch-command.ts:282` requires `parseFlightWatchRequest` |
+
+### Latent risk found while eliminating the flight path
+
+`parseFlightIdentifier` (`lib/agent/watch-command.ts:183-192`) matches
+`/\b([A-Z0-9]{2,3})\s*-?\s*(\d{1,4}[A-Z]?)\b/i`. Against `sony wh-1000xm5` this matches the
+substring `xm5` as **code `XM`, number `5`** — flight "XM 5". `XM` is not in `FLIGHT_CODE_STOPWORDS`
+(`:172-174`, which holds only English two-letter words). It did not fire here because `:282` gates
+it behind `parseFlightWatchRequest`, **but `:271-278` reaches it by a second route**: if a
+`pending_flight_watch` follow-up state is less than 30 minutes old and the new message does not
+`looksLikeIndependentCommand`, the identifier is parsed directly. A user mid-flight-watch who sends
+a product model number can have it captured as a flight number. Not today's bug; same family as the
+six. **[CODE]**
+
+### So why did B fail and A not
+
+Because `routeFeatureIntent` cannot tell a crash from a decline:
+
+```
+lib/feature-intents.ts:352   const agent = await tryRunWhatsAppAgent({ user, text })
+lib/feature-intents.ts:353   if (agent?.text) return agent.text
+…
+lib/feature-intents.ts:359 } catch (err: any) {
+lib/feature-intents.ts:360   console.error('WHATSAPP_AGENT_BRIDGE_FAILED:', err?.message || err)
+lib/feature-intents.ts:361   return null
+lib/feature-intents.ts:362 }
+```
+
+`return null` is the same value the bridge returns when no specialist matched
+(`whatsapp-bridge.ts:260`). The webhook treats null as "nobody handled it" and continues to
+`processIncomingMessage` (`app/api/webhooks/whatsapp/route.ts:1272`). **[CODE]**
+
+`executeBrowser` re-throws every failure after recording it (`browser-command.ts:146-151`,
+`throw err` at `:151`), and `withWhatsAppBrowserBudget` uses `Promise.race`
+(`whatsapp-bridge.ts:87`), which propagates a rejection rather than swallowing it. So **any**
+browser exception reaches that catch. **[CODE]**
+
+**[PROBABLE] — what threw for amazon.in.** Candidates, all of which produce exactly this outcome:
+
+- `secure_browser_action_failed` — the in-sandbox node command exits non-zero
+  (`secure-computer.ts:233`), which is what a hard block or a `page.goto` rejection produces
+- `secure_browser_action_empty_output` (`:234`)
+- `browser_run_create_failed` / step insert failure (`browser-command.ts:77`, `:85`) — note
+  `agent_steps` is one of the two tables with **no migration in this repo** (drift D5), so its
+  constraints are unknown
+- `browser_permission_failed` on any Supabase read error (`browser-command.ts:59`)
+
+Two things narrow it. First, it threw **fast**: the WhatsApp browser budget is 42s
+(`whatsapp-bridge.ts:28`) and the in-sandbox navigation timeout is 45s
+(`secure-computer.ts:56`) — a hang would have hit the budget first and returned the "took longer
+than WhatsApp's safe response window" message (`whatsapp-bridge.ts:80`), which the user did not
+see. Second, a *provider block* would not have thrown at all: `runSecureBrowser` returns
+`status:'blocked'` and `executeBrowser` converts that into a polite paused reply
+(`browser-command.ts:121-138`). So this was neither a timeout nor a detected block.
+
+**The single log line that settles it:** grep production for `WHATSAPP_AGENT_BRIDGE_FAILED:`
+(`feature-intents.ts:360`) at 10:07, and `SECURE_BROWSER_FAILED:` (`secure-computer.ts:248`), which
+logs the full stack.
+
+## 2. Source of "I cannot open… I'm a text-based AI assistant"
+
+**It is not in the codebase.** `grep -rniE "cannot open|text-based|ability to browse|unable to
+browse|don't have the ability" lib app --include=*.ts` returns **zero matches**. It is not a
+hardcoded fallback and not a system prompt. **[CODE]**
+
+It is **model output**, and it did not come from `tryRunGeneralPlan` — that never ran, because the
+bridge had already thrown at G11, eight hops before the general planner at
+`whatsapp-bridge.ts:251`. **[CODE]**
+
+The path is `processIncomingMessage` → `detectIntent` → **`web_search`**:
+
+```
+lib/bot/detect-intent.ts:49    const SEARCH_HINTS = ['latest','news','today','current','score','stock','price']
+lib/bot/detect-intent.ts:173   if (SEARCH_HINTS.some((k) => lower.includes(k))) return { type: 'web_search', confidence: 'medium' }
+```
+
+Message B contains **"prices"**, which contains the substring `price`. → `web_search`. **[CODE]**
+
+```
+lib/bot/process-message.ts:1036  const searchContext = await searchWeb(incomingText)
+lib/bot/process-message.ts:1038  try { reply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } …
+```
+
+This explains **both halves** of what the user saw: the model refuses (it has no browser tool in
+that call), then answers from `searchContext` — which is why USD prices from ZDNET review articles
+were offered for an `amazon.in` query. **[CODE]**
+
+### There is already a refusal filter, and it misses this exact wording
+
+```
+lib/bot/process-message.ts:1039
+  if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(reply))
+    reply = buildDirectWebAnswer(incomingText, searchContext)
+```
+
+None of `"I cannot open"`, `"without the ability to browse websites"`, `"I'm a text-based AI
+assistant"` or `"I don't have the ability to browse"` matches that alternation, so the refusal
+passed straight through to the user. The identical filter with the identical gap exists a second
+time at `lib/bot/process-message.ts:1234`. **[CODE]**
+
+**This text is false about the product and must never be emitted** — agreed, and note it is
+reachable from any message containing `price`, `today`, `latest`, `news`, `current`, `score` or
+`stock` whenever the agent bridge declines or throws. It is not specific to browser failures.
+
+## 3. Is the fail-closed rule trains-only? Yes.
+
+Commit `35e9aed`'s rule lives in one function and is scoped to the train path. The comment states
+the exact failure being prevented — the one that just recurred in a different guise:
+
+```
+lib/agent/train-research.ts:170-173
+  // Fail CLOSED. Throwing here let the caller fall through to the general planner,
+  // which answered from the model — the user received invented train numbers and
+  // timings after the browser never opened. A failed provider read must report the
+  // failure, never hand the question to a path that can fabricate inventory.
+```
+
+It returns a `status:'failed'` **result** instead of throwing (`:174`), so the bridge keeps the
+turn. **No other specialist does this.** **[CODE]**
+
+The only other anti-fabrication control is `hardenTravelResearchResult`
+(`lib/agent/travel-research-sanitize.ts:71`), applied at exactly four call sites, all travel
+research: `whatsapp-bridge.ts:231`, `whatsapp-bridge.ts:256`, `app/api/agent/run/route.ts:98`,
+`app/api/agent/run/route.ts:138`. It is **not** applied to browser results, general-plan results,
+or anything in `process-message.ts`. **[CODE]**
+
+### Every path that can still present unverified prices, availability or inventory
+
+| # | Path | `file:line` | Why it can fabricate |
+|---|---|---|---|
+| 1 | `web_search` intent | `process-message.ts:1030-1043` | `askClaudeWithContext` over search snippets; no sanitizer; the refusal filter at `:1039` is the only guard and it is incomplete. **This is what answered message B** |
+| 2 | `general_chat` → `parsed.type === 'search'` | `process-message.ts:1228-1237` | Same call, same incomplete filter at `:1234` |
+| 3 | `general_chat` → `askClaude` | `process-message.ts:1202` | Free-form model answer from memories and history |
+| 4 | **General planner's generic step** | `general-planner.ts:312` | Any step whose tool is not `web_search`/`artifact`/`tasks`/`lists`/`reminders`/`memory`/`calendar` falls to `dispatchThroughSameBrain`, which at `same-brain.ts:141` calls `processIncomingMessage` — i.e. it re-enters paths 1–3. The planner inherits every fabrication route above it |
+| 5 | Agent-bridge repair path | `feature-intents.ts:356` | On normalised input, `dispatchThroughSameBrain` → same as #4 |
+| 6 | Simple workspace read | `feature-intents.ts:347-349` | Same dispatch |
+| 7 | Travel research public-web fallback | `travel-research.ts:107` | **Partially mitigated** — it labels itself "fallback sources only, not completed live inventory" and is the one path that is honest about its tier |
+
+Paths 1–6 have no equivalent of the train rule and no sanitizer. Any of them can state a price.
+
+## 4. Message A — what fails between a good page read and the reply
+
+The browser leg **succeeded**, and the observed text proves it. `"Gogo completed the browser
+research task."` is generated at `lib/agent/secure-computer.ts:245` on the success branch, and the
+page title comes from `:244`. **[CODE]**
+
+The reply is then assembled at:
+
+```
+lib/agent/browser-command.ts:145
+  text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`
+```
+
+`result.pageText` is carried out of the sandbox at up to **9,000** characters
+(`secure-computer.ts:246`, `safeText(page.text,9000)`) and trimmed to **1,800** here. With summary
+and title, the reply routinely exceeds **1,550** — `WA_MAX_CHARS` (`lib/whatsapp.ts:46`). **[CODE]**
+
+The send path then does this:
+
+```
+lib/whatsapp.ts:90    const chunks = splitIntoChunks(sanitizeMarkdownForWhatsApp(text || ''))
+lib/whatsapp.ts:93    for (let i = 0; i < chunks.length; i++) {
+lib/whatsapp.ts:97      const message = await client.messages.create(payload)   // ← no try/catch
+lib/whatsapp.ts:109     if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 300))
+```
+
+**There is no error handling inside the loop.** If chunk 1 is delivered and chunk 2's
+`messages.create` rejects, the user has already received the first part, and the rejection escapes
+`sendWhatsApp` → `sendWhatsAppMessage` (`lib/channels/whatsapp.ts:46`) → the webhook. **[CODE]**
+
+The failure point is therefore **after the successful page read and after the first chunk is
+delivered — inside the multi-chunk send loop**, not in the browser leg. The rest follows
+mechanically:
+
+```
+app/api/webhooks/whatsapp/route.ts:991-993   saveConversation(user) ; saveConversation(assistant) ; sendWhatsAppMessage(…)  ← throws here
+app/api/webhooks/whatsapp/route.ts:1283      } catch (error: any) {
+app/api/webhooks/whatsapp/route.ts:1292        await sendWhatsAppMessage(from, 'Something went wrong — try once more?')
+lib/channels/whatsapp.ts:6-10                 sanitizeWhatsAppReply() rewrites that exact string to
+                                              "I couldn't finish that request just now because one of my
+                                               services was temporarily unavailable…"
+```
+
+That rewrite at `lib/channels/whatsapp.ts:8` matches the observed copy **verbatim**, which confirms
+the whole chain. Note the conversation rows at `:991-992` were already written, so the transcript
+records a reply the user only partially received. **[CODE]**
+
+**[PROBABLE] — why the chunk send failed.** Most likely Twilio rejecting the second chunk: raw
+Flipkart search text is dense, and `splitIntoChunks` (`lib/whatsapp.ts:48-75`) splits on `\n\n` then
+`\n`; a block with neither yields a hard slice that can produce an oversized or empty body (Twilio
+21602/21617), and back-to-back sends 300ms apart can also hit rate limiting. The log line that
+settles it is `WHATSAPP_SENT:` (`lib/whatsapp.ts:100`) — count how many chunks logged for the 10:05
+message before the error, and read the Twilio error code in the webhook catch at `route.ts:1284`.
+
+## 5. Class: distinct from the six, and in the opposite direction
+
+**The six prior hijacks and this bug are different classes.** Evidence:
+
+| | The six (weather/`trains`×2, nutrition, list, split, `classifyCheckVerb`) | This bug |
+|---|---|---|
+| Where | **Upstream** of the specialist chain — webhook text gates, `routeFeatureIntent`, the legacy router | **At and below** the specialist, at `whatsapp-bridge.ts:239` and after |
+| What went wrong | A matcher claimed a turn it should have declined | The right handler claimed the turn and then **failed** |
+| Symptom | Wrong handler, confidently wrong answer | Right handler, then either a truncated reply (A) or a **false denial of capability** (B) |
+| Fix shape | Narrow the matcher (word boundaries, shape tests, existence gates) | Stop conflating failure with non-match; stop emitting refusals from a path that has no browser |
+
+The routing layer behaved **correctly** here. `parseBrowserCommand` claimed both messages, which is
+exactly right. **[CODE]**
+
+So this is a **new, third class**, and it is worth naming because the mitigation is different:
+
+> **Failure-to-decline conflation.** A specialist that throws is indistinguishable from a
+> specialist that declined, so an infrastructure fault is silently downgraded to the least-capable
+> path — which then denies, in the product's own voice, that the capability exists.
+
+It is closer to the train incident that produced `35e9aed` than to the six hijacks: same root shape
+(a failed provider read handed to a path that answers from the model), different provider, and this
+time the fall-through happened one layer higher — at `feature-intents.ts:361` rather than inside a
+specialist. The train fix was applied inside `train-research.ts` only, which is precisely why it
+did not protect the browser path.
+
+**Both halves of §1's summary share one line of code.** `feature-intents.ts:361`'s bare `return
+null` is the reason a browser crash becomes an LLM refusal. The train precedent shows the shape of
+the fix (return a `status:'failed'` result that keeps the turn instead of letting it fall through),
+but per instruction nothing was changed.
+
+## Diagnostics to pull, in priority order
+
+1. `WHATSAPP_AGENT_BRIDGE_FAILED:` at 10:07 — names B's exception in one line
+   (`feature-intents.ts:360`)
+2. `SECURE_BROWSER_FAILED:` at 10:07 — the full stack (`secure-computer.ts:248`)
+3. `WHATSAPP_SENT:` around 10:05 — how many chunks went out before the failure
+   (`lib/whatsapp.ts:100`)
+4. The Twilio error code logged by the webhook catch at 10:05 (`route.ts:1284`)
+5. `agent_runs` rows for that user between 10:00 and 10:10 — A should be `completed`
+   (`browser-command.ts:143`); B's row tells you how far it got before throwing
