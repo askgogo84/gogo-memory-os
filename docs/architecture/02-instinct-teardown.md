@@ -130,17 +130,20 @@ conclusion is recorded here either way.**
 
 ### O.12 — DIFFERENTIATE candidate: offering to create an account in the user's name
 
-**OBSERVED.** Instinct offered to **create an IRCTC account for the user**, using his real email
-address and WhatsApp number, with a **chat "Yes" as the consent step**. *(observed doc §8d.)*
+**OBSERVED (the offer only).** Instinct offered to **create an IRCTC account for the user**, using
+his real email address and WhatsApp number. **What consent step it would have used was not
+captured** — whether it would have proceeded on a chat confirmation, or asked for something more, is
+unobserved. The offer is the observation; the approval mechanism is not. *(observed doc §8d.)*
 
-**Flagged as a DIFFERENTIATE candidate, carried into Run 3.** Creating an account is *identity
-creation in the user's name* — a materially higher-consequence act than reading a mailbox or filling
-a form. A chat "Yes" is not adequate consent for it. For an India-facing product, identity creation
-touches DPDP-grade consent: it needs explicit, specific, informed, revocable consent captured as a
-durable record, not a one-word reply in a message thread. This is precisely the class of act
-AskGogo's `policy.ts` boundary exists to gate, and Run 3 should treat "agent creates an account in
-the user's name" as **DIFFERENTIATE**, not COPY. *(This also connects to §9: the observed consent
-step for identity creation is the weakest link the transcript shows.)*
+**Flagged as a DIFFERENTIATE candidate, carried into Run 3 — and the basis is AskGogo's own rule,
+not an observation about Instinct.** Creating an account is *identity creation in the user's name* —
+a materially higher-consequence act than reading a mailbox or filling a form. For an India-facing
+product, identity creation touches DPDP-grade consent: **AskGogo's rule is that it needs explicit,
+specific, informed, revocable consent captured as a durable record — never a chat reply**, whatever a
+competitor does. This is precisely the class of act AskGogo's `policy.ts` boundary exists to gate, and
+Run 3 should treat "agent creates an account in the user's name" as **DIFFERENTIATE**, not COPY.
+*(This connects to §9 only in that the offer is the one high-consequence act the transcript shows
+Instinct willing to make; the consent step behind it is unobserved.)*
 
 ---
 
@@ -364,14 +367,15 @@ enforced, and it failed on at least one irreversible action class (send). Commen
 same conclusion independently, calling it "a textbook agentic authorization failure: the agent acted
 on behalf of a user in an irreversible way without a human approval gate."
 
-**→ OBSERVED (§O.12), one data point on the consent model.** The 19 Sep thread shows what Instinct's
-consent step looks like for a high-consequence act: asked to create an IRCTC account *in the user's
-name* using his real email and WhatsApp number, it treated a **chat "Yes" as sufficient consent**.
-This is consistent with the REPORTED picture of an advisory-not-enforced boundary — a one-word reply
-gating identity creation is a lightweight gate, not a structural one. It is the single observed
-window into the approval model, and it points the same way as the unapproved send: confirmation
-exists but is thin. Run 3 treats this act as **DIFFERENTIATE** (§O.12): for an India-facing product,
-identity creation needs DPDP-grade explicit consent captured as a durable record, not a chat "Yes".
+**→ the offer is OBSERVED (§O.12); the approval model is NOT.** The 19 Sep thread shows Instinct
+*offering* to create an IRCTC account in the user's name using his real email and WhatsApp number —
+but **the consent step it would have used was not captured**, so this is not a window into Instinct's
+approval model. **§9 therefore stays REPORTED/INFERRED**: the only firm data point on the boundary
+remains the reported unapproved send, and the inference-from-absence that no structural per-capability
+approval model is described publicly. Run 3 still treats identity creation as **DIFFERENTIATE**
+(§O.12), but on AskGogo's own rule — identity creation in a user's name needs DPDP-grade explicit,
+specific, revocable consent captured as a durable record, never a chat reply — not on any observed
+Instinct behaviour.
 
 **INFERRED**, from the total absence across every source consulted of any description of a
 per-capability permission model, a risk classification, or an approval state machine: Instinct
@@ -462,9 +466,11 @@ consumer trust cycle, that is the axis it happens on.
 ## 12. What a second pass must do
 
 1. **~~Get a demo video or screenshots~~ — DONE for one session (§O).** The 19 Sep thread moved §2,
-   §6, §7, §8 and part of §9 into OBSERVED. What it did *not* settle, and a second observation should:
+   §6, §7 and §8 into OBSERVED. What it did *not* settle, and a second observation should:
    (a) the provenance of the six train timings (§O.11 — still UNRESOLVED, ask Instinct directly);
-   (b) the full approval UX beyond the single "chat Yes for account creation" data point (§O.12);
+   (b) **the approval UX, which remains wholly unobserved** — the thread shows Instinct *offering* to
+   create an account in the user's name (§O.12) but never captures the consent step it would use, and
+   §9's central claim (no structural approval model) stays an inference from absence;
    (c) whether Instinct has AskGogo's *second* block-handling branch (cloud takeover for
    human-presence walls) as distinct from the device handoff (§6).
 2. **Re-verify every REPORTED claim against the source article**, since none could be opened here.

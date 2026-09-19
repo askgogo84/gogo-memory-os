@@ -158,7 +158,7 @@ here explicitly; these become the frozen decision.
 | 7 | Credential boundary wording | COPY | **COPY — confirmed** | §1.4 |
 | 8 | Credential vault as a web surface | ADAPT | **ADAPT — confirmed** | §1.4; dashboard only, never WhatsApp |
 | 9 | Initiative on "U choose" with stated fallback | ADAPT | **ADAPT — confirmed** | low-stakes picks only; must **not** extend to money or identity |
-| 10 | Creating an account in the user's name | DIFFERENTIATE | **DIFFERENTIATE — confirmed** | §O.12; DPDP-grade explicit consent, not a chat "Yes" |
+| 10 | Creating an account in the user's name | DIFFERENTIATE | **DIFFERENTIATE — confirmed** | §O.12; the *offer* is observed, the consent step is not — verdict rests on AskGogo's own rule: identity creation needs DPDP-grade explicit, revocable, durably-recorded consent |
 | 11 | Graceful stop at the account/IP wall, holding state | ADAPT | **ADAPT — confirmed** | AskGogo's device handoff already does this; borrow the wording |
 | 12 | Answering without showing provenance | DIFFERENTIATE (pending §9) | **DIFFERENTIATE — confirmed, still pending the §O.11 test** | AskGogo's verified-or-refuse is the opposite bet; the provenance question stays UNRESOLVED until Instinct is asked directly |
 
@@ -219,7 +219,7 @@ lists the B/D IDs from §0 that must clear first.
 | **Gmail / Workspace** | OAuth **W** — `gmail/connect\|callback`; `verify-google-workspace-oauth.mts`. Read/draft/send **B** — `google-gmail.ts` (285), `email-actions.ts`. Drive **W** — `workspace-drive-context.ts` | Mailbox triage as **three things that matter**, catches a bounce, connector-on-demand when unconnected (OBSERVED §O.3/§O.4); agent email address + autonomous signup (REPORTED, teardown §8) | **COPY** (triage shape + connector-on-demand) / **DIFFERENTIATE** (agent email + autonomous signup = identity creation, §O.12) | send path untested (audit §2D); B1 for connector throws |
 | **Trusted-person actions** | **B** — `friend-reminders.ts`, `friend-contacts.sql`; shared-memory grant `handlers/shared-memory.ts` | **Trusted Person Network** — agent-to-agent allow lists, framed as a moat; consent/revocation model undescribed (REPORTED/INFERRED, teardown §5) | **DIFFERENTIATE** — agent-to-agent messaging is a new injection surface (teardown §5); AskGogo's human-in-the-loop friend actions are the safer, defensible position | credential/injection boundary |
 | **Browser handoff / takeover** | **W** — `provider-browser-handoff.ts`, `browser-handoff.ts`; `verify-browser-auth-gate.mts`. Cloud takeover **B** — port 3001 | Routes around blocks (password reset, REPORTED); device-handoff at IP walls (OBSERVED §O.9) | **ADAPT** — keep the two-branch split (§1.5); borrow only the graceful-stop wording, never the route-around | **B1** — the load-bearing bug: a browser throw becomes a false capability denial |
-| **Approvals** | **W** — `policy.ts` (the safety keystone); `verify-agent-policy.mts`; one-shot `approvals/[id]/route.ts`; WhatsApp approve/reject **B**. **Every consequential executor is gated** (night report task 2) | Confirmations disclaimed as possibly-not-preventing unintended actions; an email was **sent unapproved** (REPORTED, teardown §9); chat "Yes" gates account creation (OBSERVED §O.12) | **DIFFERENTIATE** — a pure-function authorization boundary outside the model is AskGogo's single strongest asset; the benchmark has no structural equivalent described | keep the gate universal; strengthen consent for identity acts |
+| **Approvals** | **W** — `policy.ts` (the safety keystone); `verify-agent-policy.mts`; one-shot `approvals/[id]/route.ts`; WhatsApp approve/reject **B**. **Every consequential executor is gated** (night report task 2) | Confirmations disclaimed as possibly-not-preventing unintended actions; an email was **sent unapproved** (REPORTED, teardown §9); Instinct *offered* to create an account in the user's name (OBSERVED §O.12), but the consent step it would use is **unobserved** — the approval model stays REPORTED/INFERRED | **DIFFERENTIATE** — a pure-function authorization boundary outside the model is AskGogo's single strongest asset; the benchmark has no structural equivalent described | keep the gate universal; strengthen consent for identity acts |
 | **Activity feed** | **B** — `agent_activity` (append-only, `orchestrator.ts:52`); dashboard `agent/page.tsx` polls `/api/agent/snapshot` every 8s | **Meta Muse** — a control-plane surface where autonomous actions are reviewable/auditable in one feed (INFERRED, no source) | **ADAPT** — AskGogo has the audit trail; adopt Muse-style single reviewable feed as the dashboard's spine | **D5** (`agent_steps`/`agent_threads` undocumented → the feed's provenance is unreproducible) |
 
 ---
@@ -237,7 +237,9 @@ lists the B/D IDs from §0 that must clear first.
   auditable memory (vs persistent-VM memory), stop-at-the-boundary browsing (vs password-reset
   route-around), typed life-event state machine, human-in-the-loop trusted-person actions (vs
   agent-to-agent network), the pure-function approval boundary, and — the sharpest line —
-  **identity/account creation requires DPDP-grade explicit consent, never a chat "Yes."**
+  **identity/account creation requires DPDP-grade explicit, specific, revocable consent captured as a
+  durable record, never a chat reply** (an AskGogo rule; the benchmark's own consent step is
+  unobserved, §O.12).
 - **IGNORE (benchmark):** lists/tasks, documents, receipts, meeting-notes surfaces (AskGogo ahead or
   no comparable observation); bus, refunds, food-ordering (not built and/or provider-blocked for v1).
 

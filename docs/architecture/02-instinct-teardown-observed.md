@@ -94,7 +94,7 @@ When asked to pick something on the user's behalf and the user replied "U choose
 
 ## 8d. Offer to create an account in the user's name (09:32–10:00)
 
-It offered to **create an IRCTC account for the user**, using his real email address and WhatsApp number, with a chat confirmation as the consent step.
+It offered to **create an IRCTC account for the user**, using his real email address and WhatsApp number. Whether it would have proceeded on a chat confirmation, or asked for something more, was **not captured** — the consent step it would have used is unobserved. What is observed is the offer itself.
 
 ## 8e. The Akamai wall and the fallback (09:32–10:00)
 
@@ -137,7 +137,7 @@ Run 3 decides these. Recorded here so the evidence and the decision stay togethe
 | Credential boundary wording | **COPY** | Better phrasing of a boundary AskGogo already enforces |
 | Credential vault as a web surface | **ADAPT** | Fits the dashboard; must never route a secret through WhatsApp |
 | Initiative on "U choose" with a stated fallback | **ADAPT** | Good for low-stakes picks; must not extend to money or identity decisions |
-| Creating an account in the user's name | **DIFFERENTIATE** | Identity creation; for AskGogo needs DPDP-grade explicit consent, not a chat "Yes" |
+| Creating an account in the user's name | **DIFFERENTIATE** | Identity creation. The offer is observed; the consent step Instinct would use is not. Regardless: for AskGogo, identity creation in a user's name needs DPDP-grade explicit, specific, revocable consent captured as a durable record |
 | Graceful stop at the account/IP wall, holding state | **ADAPT** | AskGogo's device handoff already does this; the wording is what to borrow |
 | Answering without showing provenance | **DIFFERENTIATE** — pending §9 | AskGogo's verified-or-refuse behaviour is the opposite bet |
 
