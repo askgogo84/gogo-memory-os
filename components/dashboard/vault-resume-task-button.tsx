@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-export function VaultResumeTaskButton({runId}:{runId:string}){
+export function VaultResumeTaskButton({runId,credentialId,label}:{runId:string;credentialId?:string;label?:string}){
   const router=useRouter()
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
@@ -12,7 +12,7 @@ export function VaultResumeTaskButton({runId}:{runId:string}){
     setBusy(true);setError('')
     try{
       const res=await fetch('/api/dashboard/agent/runs/'+encodeURIComponent(runId)+'/resume',{
-        method:'POST',headers:{'content-type':'application/json'},body:'{}',
+        method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({credentialId:credentialId||null}),
       })
       const data=await res.json().catch(()=>({}))
       if(!res.ok||!data?.ok)throw new Error(String(data?.error||'resume_failed'))
@@ -24,7 +24,7 @@ export function VaultResumeTaskButton({runId}:{runId:string}){
   return <div>
     <button type="button" onClick={resume} disabled={busy}
       className="inline-flex h-11 w-full items-center justify-center rounded-[11px] bg-[#2FB8A6] px-4 text-[13px] font-bold text-[#0B0B0B] disabled:opacity-50">
-      {busy?'Resuming…':'Retry with saved login'}
+      {busy?'Resuming…':label||'Retry with saved login'}
     </button>
     {error&&<p role="alert" className="mt-2 text-[11px] leading-4 text-[#9a8778]">{error}</p>}
   </div>
