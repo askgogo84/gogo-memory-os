@@ -5,6 +5,8 @@ assert.equal(findVaultProviderInText('Find the AI reels I saved recently on Inst
 assert.equal(findVaultProviderInText('Check my Amazon orders')?.key,'amazon')
 assert.equal(findVaultProviderInText('Search LinkedIn for my saved post')?.key,'linkedin')
 assert.equal(findVaultProviderInText('Open Flipkart wishlist')?.key,'flipkart')
+assert.equal(findVaultProviderInText('Show my bookings'),null,'generic booking noun must not route to Booking.com')
+assert.equal(findVaultProviderInText('Show my Booking.com reservations')?.key,'booking')
 assert.equal(findVaultProviderInText('Find something on a random website'),null)
 
 const browser=await import('node:fs').then(fs=>fs.readFileSync('lib/agent/browser-command.ts','utf8'))
