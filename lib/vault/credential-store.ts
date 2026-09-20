@@ -184,8 +184,10 @@ export async function findVaultCredentialForDomain(ownerId:string,domain:string)
     .eq('status','active')
     .order('updated_at',{ascending:false})
   if(error)throw new Error(`vault_match_failed:${error.message}`)
-  const row=(data||[]).find((item:any)=>vaultDomainAllowed(requested,Array.isArray(item.allowed_domains)?item.allowed_domains:[]))
-  if(!row)return null
+  const matches=(data||[]).filter((item:any)=>vaultDomainAllowed(requested,Array.isArray(item.allowed_domains)?item.allowed_domains:[]))
+  if(!matches.length)return null
+  if(matches.length>1)throw new Error('vault_credential_ambiguous')
+  const row:any=matches[0]
   return {
     telegramId,
     credentialId:String(row.id),
