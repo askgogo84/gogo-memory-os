@@ -51,6 +51,18 @@ function parseDate(text:string,now=new Date()){
 
 export function isTrainResearchRequest(text:string){const t=String(text||'').toLowerCase();return /\b(irctc|train|trains|railway|railways)\b/.test(t)&&/\b(find|search|show|available|availability|check|options|seat|seats|ticket|tickets|book|booking)\b/.test(t)}
 export function isTrainResumeRequest(text:string){return /^(continue|resume|done|finished|i'?m done|return control|continue gogo)$/i.test(String(text||'').trim())}
+export function isTrainDeviceHandoffFollowup(text:string){
+  const raw=safe(text,500)
+  if(!raw)return false
+  if(isTrainResumeRequest(raw))return true
+  if(/tell me which train you want and i will take it from there/i.test(raw))return true
+  if(/\b(?:train|irctc|vande\s*bharat|express|shatabdi|rajdhani|intercity)\b/i.test(raw))return true
+  if(/\b\d{5}\b/.test(raw))return true
+  if(/^(?:option\s*)?\d{1,2}$/i.test(raw))return true
+  if(/^(?:the\s+)?(?:first|second|third|fourth|fifth|last)\s+(?:one|train)?$/i.test(raw))return true
+  if(/^(?:which|what)\b.{0,80}\b(?:best|better|one|train)\b/i.test(raw))return true
+  return false
+}
 function trainPreference(text:string):boolean|null{const t=String(text||'').trim().toLowerCase();if(/\b(direct|direct only|non[- ]?stop|no change|without change)\b/.test(t))return true;if(/\b(connections? (?:are )?okay|connections? ok|change(?:s)? (?:are )?okay|any train|doesn'?t matter|either is fine|both are fine)\b/.test(t))return false;return null}
 
 function context(text:string){const from=station(seg(text,'from'));const to=station(seg(text,'to'));const date=parseDate(text);return{from,to,date,routeLabel:from&&to?`${from.code||from.label} → ${to.code||to.label}`:'Train search'}}
@@ -78,8 +90,12 @@ export async function tryResumeTrainHandoff(params:{actor:AgentActor;text:string
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('id,metadata_json,status').eq('telegram_id',String(tg)).eq('type','train_research').eq('status','paused').order('updated_at',{ascending:false}).limit(1).maybeSingle()
   if(error)throw new Error(`train_resume_lookup_failed:${error.message}`)
   const meta:any=run?.metadata_json||{};const handoff=meta?.handoff;const c=meta?.context
-  if(!run?.id||!handoff?.stateUrl||!handoff?.agentActionUrl||!c?.date)return null
+  if(!run?.id||!c?.date)return null
   const runId=String(run.id)
+  if(handoff?.mode==='device'){
+    return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:`I’m still waiting on the IRCTC device handoff for ${c.routeLabel} on ${c.date}. Because IRCTC blocks Gogo’s server browser, I cannot see or verify what is shown on your phone.\n\nSend me a screenshot of the IRCTC results, or the exact train number + timing you see there. I can help compare the options and keep the task context, but I will not invent live timings, availability or fares.`,handledBy:'train-device-handoff' as const}
+  }
+  if(!handoff?.stateUrl||!handoff?.agentActionUrl)return null
   const objective=String(meta.input_text||`Find trains for ${c.routeLabel} on ${c.date}`)
   await activity(tg,runId,'handoff_returned','User returned control of the persistent browser to Gogo.',{})
   // Fail CLOSED, same rule as executeTrainRun. readBrowserHandoffState is an HTTP
@@ -103,6 +119,34 @@ export async function tryResumeTrainHandoff(params:{actor:AgentActor;text:string
   await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(text,1800),progress:100,error:null,completed_at:at,updated_at:at,metadata_json:{...meta,state:'completed',handoff:{...handoff,lastUrl:state.url}}}).eq('id',runId)
   await activity(tg,runId,'run_completed',`Task completed after human handoff with ${trains.length} browser-verified train options.`,{result_count:trains.length,handoff:true})
   return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'train-handoff-resume' as const}
+}
+
+async function tryHandleTrainDeviceHandoffFollowup(params:{actor:AgentActor;text:string}){
+  if(!isTrainDeviceHandoffFollowup(params.text))return null
+  const tg=params.actor.legacyTelegramId
+  const {data:run,error}=await supabaseAdmin.from('agent_runs')
+    .select('id,metadata_json,status')
+    .eq('telegram_id',String(tg))
+    .eq('type','train_research')
+    .eq('status','paused')
+    .order('updated_at',{ascending:false})
+    .limit(1)
+    .maybeSingle()
+  if(error)throw new Error(`train_device_handoff_lookup_failed:${error.message}`)
+  const meta:any=run?.metadata_json||{}
+  const handoff=meta?.handoff
+  const c=meta?.context
+  if(!run?.id||meta?.state!=='waiting_for_user'||handoff?.mode!=='device'||!c?.date)return null
+  const runId=String(run.id)
+  await activity(tg,runId,'device_handoff_followup','User replied while the train task was waiting on a device handoff.',{text:safe(params.text,180)})
+  return{
+    runId,
+    status:'paused' as const,
+    capability:'travel' as const,
+    risk:'low' as const,
+    text:`I still can’t see the IRCTC results on your phone because this provider blocks Gogo’s server browser.\n\nSend me a screenshot of the results, or the exact train number + timing you see on IRCTC. I can help compare or continue from the information you provide, but I won’t make up train times, fares or availability.`,
+    handledBy:'train-device-handoff' as const,
+  }
 }
 
 async function latestPreferenceRun(tg:number){
@@ -148,7 +192,7 @@ export async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurf
         await supabaseAdmin.from('agent_steps').update({status:'queued',output_json:{browser,context:params.c,deviceHandoff:true},error:null,completed_at:null}).eq('id',String(step.id))
         await supabaseAdmin.from('agent_runs').update({status:'paused',summary:'The rail provider blocks automated access; the user must open it on their own device.',progress:50,error:null,updated_at:at,metadata_json:metadata}).eq('id',runId)
         await activity(tg,runId,'device_handoff_required','The provider blocks server traffic by IP; sent the user a direct link for their own browser.',{reason:browser.blockReason,url:providerUrl})
-        return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:`${params.c.routeLabel} · ${params.c.date}\n\nIRCTC blocks automated access from servers, so I cannot read the times myself - this is their policy, not a fault at my end.\n\nOpen it on your phone, where it works normally:\n${providerUrl}\n\nSearch ${params.c.from.label} to ${params.c.to.label} for ${params.c.date}, then tell me which train you want and I will take it from there.\n\nNo booking or payment action has been made.`,blockedReason:browser.blockReason,handledBy:'train-research' as const}
+        return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:`${params.c.routeLabel} · ${params.c.date}\n\nIRCTC blocks automated access from servers, so I cannot read the times myself - this is their policy, not a fault at my end.\n\nOpen it on your phone, where it works normally:\n${providerUrl}\n\nSearch ${params.c.from.label} to ${params.c.to.label} for ${params.c.date}, then send me a screenshot of the results or the exact train number + timing you see there. I can help compare the options from what you provide, but I cannot verify live IRCTC availability from the cloud.\n\nNo booking or payment action has been made.`,blockedReason:browser.blockReason,handledBy:'train-research' as const}
       }
       const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:providerUrl})
       const at=new Date().toISOString();const metadata={...baseMeta,state:'waiting_for_user',handoff}
@@ -178,6 +222,9 @@ export async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurf
 export async function tryRunTrainResearch(params:{actor:AgentActor;surface:AgentSurface;text:string}){
   const resumed=await tryResumeTrainHandoff({actor:params.actor,text:params.text})
   if(resumed)return resumed
+
+  const deviceFollowup=await tryHandleTrainDeviceHandoffFollowup({actor:params.actor,text:params.text})
+  if(deviceFollowup)return deviceFollowup
 
   const pref=trainPreference(params.text)
   if(pref!==null){
