@@ -1,0 +1,67 @@
+name: Temporary planner fallback wiring
+on:
+  push:
+    branches: [fix/agent-planner-provider-fallback-20260920]
+permissions:
+  contents: write
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/agent-planner-provider-fallback-20260920
+      - name: Wire provider fallback and regression
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          p=Path('lib/agent/general-planner.ts')
+          s=p.read_text()
+          old_import="import Anthropic from '@anthropic-ai/sdk'\n"
+          assert old_import in s
+          s=s.replace(old_import,"import { completeAgentPlanPrompt } from './planner-provider'\n",1)
+          old_client="const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })\n\n"
+          assert old_client in s
+          s=s.replace(old_client,'',1)
+          old="""  try {
+    const result = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 2200,
+      temperature: 0,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    const out = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    return normalizePlan(parseJsonLoose(out))
+  } catch (err: any) {
+    console.error('GENERAL_AGENT_PLAN_FAILED:', err?.message || err)
+    return null
+  }
+"""
+          new="""  try {
+    const out = await completeAgentPlanPrompt(prompt)
+    return normalizePlan(parseJsonLoose(out))
+  } catch (err: any) {
+    console.error('GENERAL_AGENT_PLAN_FAILED:', err?.message || err)
+    return null
+  }
+"""
+          assert old in s
+          p.write_text(s.replace(old,new,1))
+
+          pkg=Path('package.json')
+          data=json.loads(pkg.read_text())
+          test=data['scripts']['test']
+          extra='npx --yes tsx scripts/verify-agent-planner-provider-fallback.mts'
+          if extra not in test:
+            data['scripts']['test']=test+' && '+extra
+          pkg.write_text(json.dumps(data,indent=2)+'\n')
+      - name: Remove one-shot workflow and commit
+        run: |
+          git rm .github/workflows/tmp-wire-planner-fallback.yml
+          git config user.name "AskGogo Night Build"
+          git config user.email "actions@users.noreply.github.com"
+          git add lib/agent/general-planner.ts package.json
+          git commit -m "fix(agent): fail over planner when Anthropic is unavailable"
+          git push origin HEAD:fix/agent-planner-provider-fallback-20260920
