@@ -40,6 +40,8 @@ import {
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
+import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
+import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
 import {
   isAudioContentType,
   transcribeTwilioVoiceNote,
@@ -981,6 +983,24 @@ _"${originalText}"_
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', bucketReply)
         await sendWhatsAppMessage(from, bucketReply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
+    // Vault/provider read tasks must beat legacy feature routing. A phrase like
+    // "Find the AI reels I saved recently on Instagram" contains words such as
+    // "saved" that legacy media-memory handlers can mistake for a save command.
+    // Give the provider browser specialist first refusal before routeFeatureIntent.
+    if (parseConnectedProviderReadCommand(text)) {
+      const providerAgent = await tryRunWhatsAppAgent({
+        user: resolvedUser,
+        text,
+        messageId: inboundMessageSid || null,
+      })
+      if (providerAgent) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', providerAgent.text)
+        await sendWhatsAppMessage(from, providerAgent.text)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
