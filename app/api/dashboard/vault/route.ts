@@ -32,6 +32,7 @@ export async function POST(request:Request){
   try{
     const item=await saveVaultCredential({
       telegramId:session.telegramId,
+      credentialId:String(body?.credentialId||'').trim()||null,
       provider:provider.key,
       accountLabel:accountLabel||provider.label,
       username,
@@ -41,7 +42,10 @@ export async function POST(request:Request){
     })
     return NextResponse.json({ok:true,item})
   }catch(err:any){
-    console.error('VAULT_SAVE_ROUTE_FAILED:',err?.message||err)
+    const reason=String(err?.message||'')
+    if(reason==='vault_label_conflict')return NextResponse.json({ok:false,error:'label_conflict'},{status:409})
+    if(reason==='vault_credential_not_found')return NextResponse.json({ok:false,error:'not_found'},{status:404})
+    console.error('VAULT_SAVE_ROUTE_FAILED:',reason||err)
     return NextResponse.json({ok:false,error:'save_failed'},{status:500})
   }
 }
