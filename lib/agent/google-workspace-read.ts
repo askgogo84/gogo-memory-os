@@ -162,6 +162,23 @@ async function gmailMetadata(actor:AgentActor, id:string) {
   }
 }
 
+export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12) {
+  const params=new URLSearchParams({
+    maxResults:String(Math.max(1,Math.min(20,Math.floor(maxResults||12)))),
+    q:'in:inbox newer_than:2d',
+  })
+  const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`)
+  if(!response.ok)throw new Error(`workspace_email_recent_failed:${response.status}`)
+  const data:any=await response.json()
+  const ids=(Array.isArray(data?.messages)?data.messages:[]).slice(0,20).map((x:any)=>String(x?.id||'')).filter(Boolean)
+  const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id)))
+  const messages=settled
+    .filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled')
+    .map(x=>x.value)
+    .filter(Boolean)
+  return {messages}
+}
+
 export async function searchWorkspaceEmails(actor:AgentActor, input:string) {
   const terms=workspaceSearchTerms(input)
   const q=[...terms,'newer_than:2y'].join(' ').trim()
