@@ -6,7 +6,7 @@ import { VaultCredentialForm } from '@/components/dashboard/vault-credential-for
 
 export const dynamic='force-dynamic'
 
-export default async function AddVaultCredentialPage({params,searchParams}:{params:Promise<{provider:string}>;searchParams:Promise<{label?:string}>}){
+export default async function AddVaultCredentialPage({params,searchParams}:{params:Promise<{provider:string}>;searchParams:Promise<{id?:string;label?:string}>}){
   const session=await getSession()
   if(!session)redirect('/dashboard')
   const {provider:providerKey}=await params
@@ -25,6 +25,7 @@ export default async function AddVaultCredentialPage({params,searchParams}:{para
         <VaultCredentialForm
           provider={provider.key}
           providerLabel={provider.label}
+          credentialId={String(query?.id||'').trim()||undefined}
           usernameLabel={provider.usernameLabel}
           secretLabel={provider.secretLabel}
           note={provider.note}
