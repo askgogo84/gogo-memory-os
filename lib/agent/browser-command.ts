@@ -150,9 +150,13 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
           domain:host,
           runId:params.runId,
         }).catch(()=>null)
-        const loginHelp=vault
-          ? `\n\nDon't send your password here. Save or update the ${vault.provider.label} login securely:\n${vault.url}\n\nAfter you save it, Gogo will automatically retry this same task.`
-          : '\n\nUse Take Control to complete the provider sign-in securely. Do not paste passwords or one-time codes into chat.'
+        const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
+        const accountChoiceUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+        const loginHelp=result.credentialSelectionRequired
+          ? `\n\nI found more than one saved login for this provider. Choose the account Gogo should use here:\n${accountChoiceUrl}`
+          : vault
+            ? `\n\nDon't send your password here. Save or update the ${vault.provider.label} login securely:\n${vault.url}\n\nAfter you save it, Gogo will automatically retry this same task.`
+            : '\n\nUse Take Control to complete the provider sign-in securely. Do not paste passwords or one-time codes into chat.'
         return {
           runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
           text:`${result.summary}\n\nGogo paused before authentication. Passwords, OTPs, passkeys and payment-auth values are not requested, inferred or stored by the agent.${loginHelp}`,
