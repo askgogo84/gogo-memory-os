@@ -13,8 +13,12 @@ assert.doesNotMatch(browser,/objective:[^\n]*credential\.secret/,'vault secret m
 assert.match(browser,/pageLooksLikeLogin/)
 assert.match(browser,/authGate\.reason==='password'/)
 assert.match(browser,/recordVaultBrowserOutcome/)
+assert.match(browser,/canonicalBrowserOwnerId/)
+assert.match(browser,/telegram_id/)
 assert.match(store,/vaultDomainAllowed/)
 assert.match(store,/credential_domain_denied/)
 assert.match(store,/status:'needs_reauth'/)
+assert.match(store,/vault_credential_ambiguous/)
+assert.match(store,/\.delete\(\)/)
 
 console.log('Vault secure-browser broker contract passed')
