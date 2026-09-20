@@ -46,18 +46,18 @@ export function VaultCredentialForm(props:{
     <div>
       <label className="mb-2 block text-[12px] font-semibold text-gogo-ink-2">Account label</label>
       <input value={accountLabel} onChange={e=>setAccountLabel(e.target.value)} autoComplete="off" maxLength={120}
-        className="h-12 w-full rounded-[14px] border border-gogo-ink/12 bg-white px-4 text-[16px] text-gogo-ink outline-none focus:border-gogo-teal"/>
+        className="h-12 w-full rounded-[14px] border border-gogo-ink/12 bg-white px-4 text-[16px] text-gogo-ink outline-none focus:border-[#2FB8A6]"/>
     </div>
     <div>
       <label className="mb-2 block text-[12px] font-semibold text-gogo-ink-2">{props.usernameLabel}</label>
       <input value={username} onChange={e=>setUsername(e.target.value)} required autoComplete="username"
-        className="h-12 w-full rounded-[14px] border border-gogo-ink/12 bg-white px-4 text-[16px] text-gogo-ink outline-none focus:border-gogo-teal"/>
+        className="h-12 w-full rounded-[14px] border border-gogo-ink/12 bg-white px-4 text-[16px] text-gogo-ink outline-none focus:border-[#2FB8A6]"/>
     </div>
     <div>
       <label className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-gogo-ink-2">{props.secretLabel}<span aria-hidden="true">🔒</span></label>
       <div className="relative">
         <input value={secret} onChange={e=>setSecret(e.target.value)} required type={show?'text':'password'} autoComplete="current-password"
-          className="h-12 w-full rounded-[14px] border border-gogo-ink/12 bg-white px-4 pr-14 text-[16px] text-gogo-ink outline-none focus:border-gogo-teal"/>
+          className="h-12 w-full rounded-[14px] border border-gogo-ink/12 bg-white px-4 pr-14 text-[16px] text-gogo-ink outline-none focus:border-[#2FB8A6]"/>
         <button type="button" onClick={()=>setShow(v=>!v)} className="absolute right-2 top-1/2 min-h-10 -translate-y-1/2 rounded-[10px] px-3 text-[12px] font-semibold text-gogo-ink-3">{show?'Hide':'Show'}</button>
       </div>
     </div>
