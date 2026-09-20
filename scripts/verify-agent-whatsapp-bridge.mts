@@ -19,6 +19,13 @@ assert.match(router,/buildGmailConnectUrl/)
 assert.ok(router.indexOf('if (isSimpleWorkspaceRead(text))') < router.indexOf('tryRunWhatsAppAgent({ user, text })'))
 assert.match(router,/read-only Gmail, Contacts and Drive/)
 
+// Infrastructure/execution exceptions are not clean routing non-matches.
+const bridgeFailureCatch=router.indexOf("console.error('WHATSAPP_AGENT_BRIDGE_FAILED:'")
+assert.ok(bridgeFailureCatch>=0,'bridge failure catch must exist')
+const bridgeFailureTail=router.slice(bridgeFailureCatch,bridgeFailureCatch+900)
+assert.ok(!/return\s+null/.test(bridgeFailureTail),'bridge exceptions must never fall through as routing non-matches')
+assert.match(bridgeFailureTail,/stopped instead of guessing/)
+
 assert.match(bridge,/tryRecoverAppointmentOption/)
 assert.match(bridge,/tryRunAppointmentFollowup/)
 assert.match(bridge,/tryRunAppointmentResearch/)
