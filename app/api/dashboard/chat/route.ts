@@ -12,6 +12,7 @@ import { resolveAgentActor } from '@/lib/agent/actor'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
+import { tryRunTrainResearch } from '@/lib/agent/train-research'
 
 export const dynamic = 'force-dynamic'
 
@@ -123,6 +124,22 @@ export async function POST(req: NextRequest) {
     if (appointmentResearch) {
       await saveConversation(user.telegram_id, text, appointmentResearch.text)
       return NextResponse.json({ text: appointmentResearch.text, handledBy: appointmentResearch.handledBy, runId: appointmentResearch.runId, status: appointmentResearch.status })
+    }
+
+    // Dashboard train research must stay on the web surface. Previously this
+    // request fell through to routeFeatureIntent(), which enters the WhatsApp
+    // agent bridge, stores source='whatsapp', enqueues the browser worker and
+    // pushes the eventual provider block/result to WhatsApp even though the user
+    // started the task here. Give the train specialist first refusal on web.
+    const trainResearch = await tryRunTrainResearch({ actor, surface:'web', text })
+    if (trainResearch) {
+      await saveConversation(user.telegram_id, text, trainResearch.text)
+      return NextResponse.json({
+        text: trainResearch.text,
+        handledBy: trainResearch.handledBy,
+        runId: trainResearch.runId,
+        status: trainResearch.status,
+      })
     }
 
     const mission = await tryRunGeneralPlan({
