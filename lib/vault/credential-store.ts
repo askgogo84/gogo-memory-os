@@ -118,13 +118,27 @@ export async function saveVaultCredential(params:{
 }
 
 export async function removeVaultCredential(telegramId:string,credentialId:string){
+  const tg=String(telegramId)
+  const id=String(credentialId)
   const {data,error}=await supabaseAdmin.from('vault_credentials')
-    .update({status:'revoked',username_ciphertext:'',secret_ciphertext:'',updated_at:new Date().toISOString()})
-    .eq('telegram_id',String(telegramId)).eq('id',String(credentialId))
-    .select('id,provider').maybeSingle()
-  if(error)throw new Error(`vault_remove_failed:${error.message}`)
+    .select('id,provider,allowed_domains')
+    .eq('telegram_id',tg).eq('id',id)
+    .maybeSingle()
+  if(error)throw new Error(`vault_remove_read_failed:${error.message}`)
   if(!data)return false
-  await audit({telegramId:String(telegramId),credentialId:String(data.id),provider:String(data.provider||''),eventType:'credential_removed'})
+
+  await audit({
+    telegramId:tg,
+    credentialId:id,
+    provider:String(data.provider||''),
+    domain:Array.isArray(data.allowed_domains)?String(data.allowed_domains[0]||''):'',
+    eventType:'credential_removed',
+  })
+
+  const {error:deleteError}=await supabaseAdmin.from('vault_credentials')
+    .delete()
+    .eq('telegram_id',tg).eq('id',id)
+  if(deleteError)throw new Error(`vault_remove_failed:${deleteError.message}`)
   return true
 }
 
