@@ -297,25 +297,37 @@ export function assessProductAvailabilityText(pageText: string, variant: string)
   const wanted = String(variant || '').trim().toLowerCase()
   if (!text || !wanted) return 'unknown'
 
-  const unavailable = /\b(sold\s*out|out\s*of\s*stock|currently\s*unavailable|not\s*available|notify\s*me\s*when\s*available|coming\s*soon)\b/i
-  const available = /\b(add\s*to\s*(?:cart|bag|basket)|available|in\s*stock|buy\s*now)\b/i
-  const indexes:number[] = []
-  let from = 0
-  while (indexes.length < 12) {
-    const index = text.indexOf(wanted, from)
-    if (index < 0) break
-    indexes.push(index)
-    from = index + wanted.length
+  const escapeRegExp = (value:string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const wantedRe = escapeRegExp(wanted)
+  const unavailable = /\b(sold\s*out|out\s*of\s*stock|currently\s*unavailable|unavailable|not\s*available|notify\s*me\s*when\s*available|notify\s+when\s+available|email\s+me\s+when\s+available|coming\s*soon)\b/i
+  const available = /\b(in\s*stock|available\s*now|available\s*today|ready\s*to\s*ship|add\s*to\s*(?:cart|bag|basket)|buy\s*now)\b/i
+
+  // Prefer an explicit selected-size marker such as `Size: XL`.
+  const selectedRe = new RegExp('\\b(?:selected\\s+size|size)\\s*[:=-]?\\s*' + wantedRe + '\\b', 'i')
+  const selected = selectedRe.exec(text)
+  if (selected) {
+    const selectedEnd = selected.index + selected[0].length
+    const sizeTokenRe = /\b(?:xxxs|xxs|xs|xxxl|xxl|xl|3xl|4xl|5xl|s|m|l)\b/ig
+    sizeTokenRe.lastIndex = selectedEnd
+    const next = sizeTokenRe.exec(text)
+    const segmentEnd = next ? Math.min(next.index, selectedEnd + 220) : Math.min(text.length, selectedEnd + 220)
+    const segment = text.slice(selected.index, segmentEnd)
+    if (unavailable.test(segment)) return 'unavailable'
+    if (available.test(segment)) return 'available'
+    return 'unknown'
   }
 
-  for (const index of indexes) {
-    const local = text.slice(Math.max(0, index - 220), Math.min(text.length, index + wanted.length + 260))
-    if (unavailable.test(local) && !/\badd\s*to\s*(?:cart|bag|basket)\b/i.test(local)) return 'unavailable'
-    if (available.test(local) && !unavailable.test(local)) return 'available'
-  }
-
-  if (/\badd\s*to\s*(?:cart|bag|basket)\b/i.test(text) && !unavailable.test(text)) return 'available'
-  if (unavailable.test(text) && !/\badd\s*to\s*(?:cart|bag|basket)\b/i.test(text)) return 'unavailable'
+  // Without a selected-size marker, accept only direct variant/state wording.
+  const directUnavailable = new RegExp(
+    '(?:\\b' + wantedRe + '\\b\\s*(?:is\\s+)?(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available)|(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available)\\s*(?:for\\s+)?\\b' + wantedRe + '\\b)',
+    'i',
+  )
+  const directAvailable = new RegExp(
+    '(?:\\b' + wantedRe + '\\b\\s*(?:is\\s+)?(?:in\\s*stock|available\\s*now|available\\s*today)|(?:in\\s*stock|available\\s*now|available\\s*today)\\s*(?:for\\s+)?\\b' + wantedRe + '\\b)',
+    'i',
+  )
+  if (directUnavailable.test(text)) return 'unavailable'
+  if (directAvailable.test(text)) return 'available'
   return 'unknown'
 }
 
