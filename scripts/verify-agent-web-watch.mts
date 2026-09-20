@@ -46,6 +46,7 @@ assert.equal(productWatch.productUrl, 'https://sensesindia.in/products/legacy-po
 assert.equal(productWatch.variant, 'XL')
 assert.equal(productWatch.addToCart, true)
 assert.equal(productWatch.delivery, 'both')
+assert.equal(productWatch.cadenceMinutes, 60, 'product stock watches default to hourly polling')
 
 const notifyOnlyProductWatch = parseProductStockWatchCommand(
   'Notify me when https://shop.example.com/products/jacket is back in stock in L size',
