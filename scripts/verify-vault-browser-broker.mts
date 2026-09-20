@@ -22,3 +22,6 @@ assert.match(store,/vault_credential_ambiguous/)
 assert.match(store,/\.delete\(\)/)
 
 console.log('Vault secure-browser broker contract passed')
+
+assert.doesNotMatch(browser,/explicitFailure=\/[^\n]*try\\s\+again/,'generic retry copy must not invalidate a saved credential')
+assert.match(browser,/credentials\?\\s\+\(\?:do\\s\+not\\s\+match\|not\\s\+recognized\)/)
