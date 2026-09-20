@@ -4,9 +4,15 @@ import fs from 'node:fs'
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')) as { scripts?: Record<string, string> }
 const testCommand = pkg.scripts?.test || ''
 const prebuild = pkg.scripts?.prebuild || ''
+const ci = fs.readFileSync('.github/workflows/ci.yml', 'utf8')
 const matrix = fs.readFileSync('docs/autonomous-brain-test-matrix.md', 'utf8')
 
-assert.equal(prebuild, 'npm test', 'production build must run the full autonomous regression suite first')
+// Full regressions are a CI/PR safety gate, not a Vercel prebuild hook.
+// Keeping npm test out of prebuild restores fast preview deployments while
+// still blocking merges through AskGogo CI.
+assert.notEqual(prebuild, 'npm test', 'Vercel prebuild must not run the entire regression suite')
+assert.match(ci, /run:\s*npm test/, 'AskGogo CI must run the full autonomous regression suite')
+assert.match(ci, /run:\s*npm run typecheck/, 'AskGogo CI must run typecheck after regressions')
 
 const requiredGates = [
   'verify-full-feature-legacy-bridge.mts',
