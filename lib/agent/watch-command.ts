@@ -187,11 +187,11 @@ export async function tryCreateProductStockWatchFromCommand(params: {
     }
   }
 
-  const cadenceMinutes = initialWatcherCadence({
-    budget,
-    urgent:isUrgentWatchRequest(params.text),
-    activeWatcherCount:activeWatcherCount + 1,
-  })
+  // Product-stock watches deliberately use an hourly baseline. This is frequent
+  // enough to be useful without hammering merchant sites or making account/bot
+  // protection more likely to trigger. The cost guard may defer checks when the
+  // user's plan is exhausted, but ordinary stock watches stay hourly.
+  const cadenceMinutes = 60
   const condition = { ...parsed, cadenceMinutes }
   const now = new Date().toISOString()
   const { data: run, error: runError } = await supabaseAdmin.from('agent_runs').insert({
@@ -238,8 +238,88 @@ export async function tryCreateProductStockWatchFromCommand(params: {
     status:'completed' as const,
     capability:'browser' as const,
     risk:'low' as const,
-    text:`Got it — I’ll watch ${condition.title} for ${condition.variant} availability.${condition.addToCart ? ` When it becomes available, I’ll try to add ${condition.variant} to your cart and alert you.` : ' I’ll alert you when it becomes available.'} I won’t checkout or make a payment without your approval.`,
+    text:`Got it — I’ll check hourly for ${condition.variant} availability on ${condition.title}.${condition.addToCart ? ` If it comes back, I’ll add ${condition.variant} to your cart and alert you.` : ' I’ll alert you when it comes back.'} I won’t place the order, checkout, or make a payment without your approval.`,
     handledBy:'product-stock-watch',
+  }
+}
+
+function isProductWatchStatusQuery(text:string) {
+  const raw = clean(text, 300).toLowerCase()
+  return /^(?:is\s+(?:this|it)\s+done|did\s+(?:this|it)\s+work|what(?:'s|\s+is)\s+the\s+status|status\s+(?:on|of)\s+(?:this|it)|any\s+update(?:s)?(?:\s+on\s+(?:this|it))?)\??$/.test(raw)
+}
+
+export async function tryGetProductStockWatchStatusFromCommand(params: {
+  actor: AgentActor
+  text: string
+}) {
+  if (!isProductWatchStatusQuery(params.text)) return null
+
+  const tg = String(params.actor.legacyTelegramId)
+  const { data, error } = await supabaseAdmin.from('agent_watchers')
+    .select('id, active, condition_json, last_state_json, cadence_minutes, last_checked_at, next_check_at, updated_at')
+    .eq('telegram_id', tg)
+    .eq('type', 'product_stock')
+    .order('updated_at', { ascending:false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(`product_watch_status_read_failed:${error.message}`)
+  if (!data) return null
+
+  const condition = normalizeProductStockWatcher(data.condition_json)
+  if (!condition) return null
+  const state:any = data.last_state_json || {}
+  const variant = condition.variant
+  const cadence = Math.max(60, Number(data.cadence_minutes || condition.cadenceMinutes || 60))
+  const cadenceText = cadence === 60 ? 'hourly' : `about every ${cadence} minutes`
+
+  if (data.active) {
+    if (state.blockReason) {
+      return {
+        runId:`product-watch-status-${data.id}`,
+        status:'watching' as const,
+        capability:'browser' as const,
+        risk:'low' as const,
+        text:`The watch is active. This store blocked Gogo’s cloud browser on the last check, so I haven’t been able to verify ${variant} stock yet. I’ll keep retrying in the background and alert you as soon as I can verify availability.`,
+        handledBy:'product-stock-watch-status',
+      }
+    }
+    const availability = String(state.availability || 'unknown')
+    const availabilityText = availability === 'unavailable'
+      ? `${variant} hasn’t come back yet, so nothing has been added to the cart.`
+      : `I haven’t verified ${variant} as available yet, so nothing has been added to the cart.`
+    return {
+      runId:`product-watch-status-${data.id}`,
+      status:'watching' as const,
+      capability:'browser' as const,
+      risk:'low' as const,
+      text:`The watch is active and checking ${cadenceText}. ${availabilityText} I’ll alert you as soon as it does.`,
+      handledBy:'product-stock-watch-status',
+    }
+  }
+
+  if (state.triggered === true && String(state.availability || '') === 'available') {
+    const cartText = condition.addToCart
+      ? state.cartVerified === true
+        ? `I also added ${variant} to your cart and verified it. I did not checkout or place the order.`
+        : `I found ${variant} available, but I could not verify that the cart step completed.`
+      : 'I alerted you when it became available.'
+    return {
+      runId:`product-watch-status-${data.id}`,
+      status:'completed' as const,
+      capability:'browser' as const,
+      risk:'low' as const,
+      text:`Yes — ${variant} became available. ${cartText}`,
+      handledBy:'product-stock-watch-status',
+    }
+  }
+
+  return {
+    runId:`product-watch-status-${data.id}`,
+    status:'paused' as const,
+    capability:'browser' as const,
+    risk:'low' as const,
+    text:`The product watch is no longer active, and I don’t have a verified ${variant} availability event to report. I won’t claim it was available without verification.`,
+    handledBy:'product-stock-watch-status',
   }
 }
 
