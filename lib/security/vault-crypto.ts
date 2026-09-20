@@ -31,8 +31,8 @@ export function decryptVaultValue(value:string|null|undefined){
   const stored=String(value||'')
   if(!stored)return ''
   const parts=stored.split(':')
-  if(parts.length!==6||parts[0]!=='vault'||parts[1]!=='v1')throw new Error('vault_ciphertext_invalid')
-  const [, , , ivPart,tagPart,cipherPart]=parts
+  if(parts.length!==5||parts[0]!=='vault'||parts[1]!=='v1')throw new Error('vault_ciphertext_invalid')
+  const [, , ivPart,tagPart,cipherPart]=parts
   const iv=Buffer.from(ivPart,'base64url')
   const tag=Buffer.from(tagPart,'base64url')
   const ciphertext=Buffer.from(cipherPart,'base64url')
