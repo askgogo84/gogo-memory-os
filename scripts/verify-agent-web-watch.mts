@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { parseFlightIdentifier, parseProductStockWatchCommand, parseWebWatchCommand } from '../lib/agent/watch-command'
-import { assessProductAvailabilityText, normalizeProductStockWatcher, normalizeWebSearchWatcher } from '../lib/agent/watchers'
+import { parseFlightIdentifier, parseInboxTriageWatchCommand, parseProductStockWatchCommand, parseWebWatchCommand } from '../lib/agent/watch-command'
+import { assessProductAvailabilityText, inboxActionStep, normalizeProductStockWatcher, normalizeWebSearchWatcher } from '../lib/agent/watchers'
 import {
   assessWebWatchResult,
   canonicalWatcherUrl,
@@ -36,6 +36,26 @@ for (const c of cases) {
 assert.equal(parseWebWatchCommand('What is on my calendar?'), null)
 assert.equal(parseWebWatchCommand('Watch a movie tonight'), null)
 assert.equal(parseWebWatchCommand('monitor'), null)
+
+assert.ok(parseInboxTriageWatchCommand('Quietly read my mail and give me steps to take'))
+assert.ok(parseInboxTriageWatchCommand('Watch my inbox and tell me what needs my attention'))
+assert.equal(parseInboxTriageWatchCommand('Show me my latest email'), null)
+assert.equal(parseInboxTriageWatchCommand('Watch the web for AI news'), null)
+
+const approvalMail=inboxActionStep({
+  subject:'Approval required for vendor contract',
+  from:'Legal Team <legal@example.com>',
+  snippet:'Please review and approve this by Friday.',
+})
+assert.ok(approvalMail)
+assert.match(approvalMail.step,/approve|sign/i)
+
+const promoMail=inboxActionStep({
+  subject:'Weekend sale',
+  from:'Store <offers@example.com>',
+  snippet:'20% discount. Unsubscribe anytime.',
+})
+assert.equal(promoMail,null)
 
 
 const productWatch = parseProductStockWatchCommand(
