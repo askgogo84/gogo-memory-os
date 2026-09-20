@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -31,6 +33,7 @@ export type SecureBrowserResult = {
   sandboxName:string
   blockReason?: 'human_auth_required'|'provider_access_limited'
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
+  credentialSelectionRequired?: boolean
 }
 
 function safeText(value:unknown,max=1200){
@@ -38,6 +41,15 @@ function safeText(value:unknown,max=1200){
 }
 
 const userSandboxName=browserSandboxNameFor
+
+async function canonicalBrowserOwnerId(value:string){
+  const raw=String(value||'').trim()
+  if(!raw)throw new Error('browser_owner_missing')
+  if(!/^-?\d+$/.test(raw))return raw
+  const {data,error}=await supabaseAdmin.from('users').select('id').eq('telegram_id',Number(raw)).maybeSingle()
+  if(error)throw new Error(`browser_owner_lookup_failed:${error.message}`)
+  return data?.id?String(data.id):raw
+}
 
 function allowedHosts(url:string){
   const u=new URL(url)
@@ -47,6 +59,79 @@ function allowedHosts(url:string){
   return {hostname,allow:{[hostname]:[],[`*.${hostname}`]:[]}}
 }
 
+const VAULT_LOGIN_SCRIPT=String.raw`
+const { chromium } = require('playwright');
+const profile = '${BROWSER_PROFILE_DIR}';
+const url = process.env.GOGO_LOGIN_URL || '';
+const username = process.env.GOGO_VAULT_USERNAME || '';
+const secret = process.env.GOGO_VAULT_SECRET || '';
+if (!url || !username || !secret) throw new Error('missing_vault_login_inputs');
+
+const clean = s => String(s||'').replace(/\s+/g,' ').trim();
+const visible = async loc => { try { return await loc.isVisible(); } catch { return false; } };
+async function firstVisible(page, selectors){
+  for (const selector of selectors){
+    const loc=page.locator(selector).first();
+    if(await visible(loc)) return loc;
+  }
+  return null;
+}
+async function model(page){
+  return await page.evaluate(() => {
+    const clean = s => String(s||'').replace(/\s+/g,' ').trim();
+    const visible = el => { try { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'; } catch { return true; } };
+    const inputs = el => {
+      const id=el.id||''; const name=el.getAttribute('name')||''; const type=(el.getAttribute('type')||el.tagName||'').toLowerCase();
+      const label=id ? clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||'') : '';
+      let selector='';
+      if(id) selector='#'+CSS.escape(id); else if(name) selector=el.tagName.toLowerCase()+'[name="'+CSS.escape(name)+'"]'; else selector=el.tagName.toLowerCase();
+      return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')};
+    };
+    return {
+      url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,18000),
+      forms:Array.from(document.forms).filter(visible).slice(0,16).map(f=>({
+        action:f.action||location.href,method:(f.method||'get').toLowerCase(),
+        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(inputs)
+      }))
+    };
+  });
+}
+
+(async()=>{
+  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2']});
+  const page=context.pages()[0]||await context.newPage();
+  let usernameFilled=false,passwordFilled=false,submitted=false;
+  try{
+    await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+    await page.waitForTimeout(800);
+    const user=await firstVisible(page,[
+      'input[autocomplete="username"]','input[type="email"]','input[name*="user" i]',
+      'input[name*="email" i]','input[name*="login" i]','input[type="tel"]'
+    ]);
+    if(user){ await user.fill(username,{timeout:10000}); usernameFilled=true; }
+    let pass=await firstVisible(page,['input[autocomplete="current-password"]','input[type="password"]']);
+    if(!pass && usernameFilled){
+      const next=await firstVisible(page,[
+        'button:has-text("Continue")','button:has-text("Next")','button:has-text("Sign in")',
+        'button:has-text("Log in")','button[type="submit"]','input[type="submit"]'
+      ]);
+      if(next){ await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200); }
+      pass=await firstVisible(page,['input[autocomplete="current-password"]','input[type="password"]']);
+    }
+    if(pass){
+      await pass.fill(secret,{timeout:10000}); passwordFilled=true;
+      const submit=await firstVisible(page,[
+        'button:has-text("Log in")','button:has-text("Sign in")','button:has-text("Login")',
+        'button[type="submit"]','input[type="submit"]'
+      ]);
+      if(submit){ await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800); }
+    }
+    const out=await model(page);
+    out.vaultLogin={usernameFilled,passwordFilled,submitted};
+    console.log(JSON.stringify(out));
+  } finally { await context.close(); }
+})().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
+`
 const BROWSER_SCRIPT=String.raw`
 const { chromium } = require('playwright');
 const encoded = process.argv[2];
@@ -123,13 +208,17 @@ async function isConsequentialControl(page,selector){
 `
 
 async function getComputer(userId:string,targetUrl:string){
-  const name=userSandboxName(userId)
+  const canonicalUserId=await canonicalBrowserOwnerId(userId)
+  const name=userSandboxName(canonicalUserId)
   const sandbox=await Sandbox.getOrCreate({
     name, image:SANDBOX_IMAGE, region:SANDBOX_REGION, timeout:20*60*1000, persistent:true,
     ports:BROWSER_PORTS, resources:{vcpus:1}, networkPolicy:BROWSER_SETUP_NETWORK,
   } as any)
   await ensureBrowserRuntime(sandbox)
-  await sandbox.writeFiles([{path:`${SANDBOX_WORKDIR}/gogo-browser.js`,content:Buffer.from(BROWSER_SCRIPT)}])
+  await sandbox.writeFiles([
+    {path:`${SANDBOX_WORKDIR}/gogo-browser.js`,content:Buffer.from(BROWSER_SCRIPT)},
+    {path:`${SANDBOX_WORKDIR}/gogo-vault-login.js`,content:Buffer.from(VAULT_LOGIN_SCRIPT)},
+  ])
   const {allow}=allowedHosts(targetUrl)
   await sandbox.updateNetworkPolicy({allow} as any)
   return {sandbox,name}
@@ -160,6 +249,31 @@ function normalizeActions(raw:any,initialUrl:string):BrowserAction[]{
   return out
 }
 
+function pageLooksLikeLogin(page:any){
+  const text=`${page?.title||''} ${page?.text||''}`.toLowerCase()
+  const inputs=(page?.forms||[]).flatMap((form:any)=>Array.isArray(form?.inputs)?form.inputs:[])
+  const descriptors=inputs.map((input:any)=>`${input?.name||''} ${input?.type||''} ${input?.label||''}`.toLowerCase())
+  const loginInput=descriptors.some((value:string)=>/\b(password|username|email|phone|mobile|login)\b/.test(value))
+  const loginCopy=/\b(sign in|log in|login|account login)\b/.test(text)
+  return loginInput&&loginCopy
+}
+
+async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;secret:string}){
+  const result=await params.sandbox.runCommand({
+    cmd:'bash',
+    args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-vault-login.js`],
+    env:{
+      GOGO_LOGIN_URL:params.url,
+      GOGO_VAULT_USERNAME:params.username,
+      GOGO_VAULT_SECRET:params.secret,
+    },
+  } as any)
+  if(result.exitCode!==0)throw new Error('vault_browser_login_failed')
+  const stdout=await result.stdout()
+  const lines=String(stdout||'').trim().split('\n').filter(Boolean)
+  if(!lines.length)throw new Error('vault_browser_login_empty')
+  return JSON.parse(lines[lines.length-1])
+}
 async function inspect(userId:string,url:string){
   const {sandbox,name}=await getComputer(userId,url)
   const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[]})).toString('base64')
@@ -196,7 +310,7 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const}))
 }
 
-export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null}):Promise<SecureBrowserResult>{
   try {
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
@@ -204,6 +318,8 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     let page=first.page
     let actionLog:any[]=[]
     let anyPlannedSubmit=false
+    let vaultAttempted=false
+    let credentialSelectionRequired=false
 
     for(let wave=0;wave<(params.mode==='read'?MAX_RESEARCH_WAVES:1);wave++){
       const providerBlock=detectProviderAccessBlock(page)
@@ -216,11 +332,78 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:providerBlock,pageText:safeText(page.text,1200),forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
       }
 
-      const authGate=detectHumanAuthGate(page)
-      if(authGate.required){
-        // Same rule as the provider block above: human auth is a handoff outcome,
-        // so the sandbox must stay alive for the takeover server.
-        return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:authGate.message||'Human authentication is required before Gogo can continue.',pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:authGate.reason}
+      let authGate=detectHumanAuthGate(page)
+      const loginish=pageLooksLikeLogin(page)
+
+      // Vault is tried only for ordinary username/password login. Secrets are
+      // resolved in the trusted backend, passed to the sandbox as command-scoped
+      // environment variables, and injected directly by Playwright. They are
+      // never exposed to the model planner, task objective, Activity, or logs.
+      if(!vaultAttempted && (authGate.reason==='password'||loginish)){
+        const currentUrl=String(page.url||target.toString())
+        let host=''
+        try{host=new URL(currentUrl).hostname}catch{}
+        const credential=host
+          ? await resolveVaultCredentialForBrowser(params.userId,host,params.vaultCredentialId||null).catch((err:any)=>{
+              const reason=String(err?.message||'')
+              if(reason==='vault_credential_ambiguous'){
+                credentialSelectionRequired=true
+                return null
+              }
+              console.error('VAULT_BROWSER_MATCH_FAILED:',reason||err)
+              return null
+            })
+          : null
+
+        if(credential){
+          vaultAttempted=true
+          try{
+            page=await attemptVaultLogin({
+              sandbox:first.sandbox,
+              url:currentUrl,
+              username:credential.username,
+              secret:credential.secret,
+            })
+            actionLog.push({kind:'vault_login',detail:`Saved ${credential.provider} login`,status:'done'})
+            authGate=detectHumanAuthGate(page)
+            const stillLogin=pageLooksLikeLogin(page)
+            const loginText=`${page?.title||''} ${page?.text||''}`.toLowerCase()
+            const explicitFailure=/\b(?:incorrect|wrong|invalid)\s+(?:username|email|phone|password|credentials?)\b|\b(?:username|email|phone|password|credentials?)\s+(?:is\s+|are\s+)?(?:incorrect|wrong|invalid)\b|\bcredentials?\s+(?:do\s+not\s+match|not\s+recognized)\b/.test(loginText)
+
+            if(!authGate.required&&!stillLogin){
+              await recordVaultBrowserOutcome({
+                telegramId:credential.telegramId,credentialId:credential.credentialId,
+                provider:credential.provider,domain:credential.domain,outcome:'login_success',
+              }).catch(()=>{})
+            }else if(explicitFailure){
+              await recordVaultBrowserOutcome({
+                telegramId:credential.telegramId,credentialId:credential.credentialId,
+                provider:credential.provider,domain:credential.domain,outcome:'login_failed',
+                reason:'provider_rejected_credentials',
+              }).catch(()=>{})
+            }else{
+              await recordVaultBrowserOutcome({
+                telegramId:credential.telegramId,credentialId:credential.credentialId,
+                provider:credential.provider,domain:credential.domain,outcome:'human_challenge',
+                reason:authGate.reason||'login_not_completed',
+              }).catch(()=>{})
+            }
+          }catch(err:any){
+            console.error('VAULT_BROWSER_LOGIN_FAILED:',err?.message||err)
+          }
+        }
+      }
+
+      authGate=detectHumanAuthGate(page)
+      if(authGate.required||pageLooksLikeLogin(page)){
+        // Human-only challenges stay in the provider browser. If multiple Vault
+        // accounts match, pause safely and let the user choose which opaque
+        // credential reference to use before retrying.
+        const reason=authGate.reason||'password'
+        const summary=credentialSelectionRequired
+          ? 'Multiple saved logins match this site. Choose which account Gogo should use.'
+          : authGate.message||'This site needs a secure sign-in before Gogo can continue.'
+        return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
       }
 
       const actions=await planActions(params.objective,page,params.mode)

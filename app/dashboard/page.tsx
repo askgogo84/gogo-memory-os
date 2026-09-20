@@ -8,6 +8,15 @@ const WA_DASHBOARD_LINK = waLink('dashboard')
 const DASHBOARD_HOME = '/dashboard/home'
 const SESSION_CHECK_TIMEOUT_MS = 8000
 
+function postAuthTarget() {
+  if (typeof window === 'undefined') return DASHBOARD_HOME
+  const raw = new URLSearchParams(window.location.search).get('next') || ''
+  // Deliberately narrow allow-list: magic links created for Vault may only land
+  // inside the authenticated Vault surface. Never turn this into an open redirect.
+  if (/^\/dashboard\/you\/vault(?:\/|$|\?)/.test(raw)) return raw
+  return DASHBOARD_HOME
+}
+
 type Phase = 'checking' | 'redeeming' | 'ready' | 'error'
 type OtpStep = 'phone' | 'code'
 
@@ -53,7 +62,7 @@ export default function Dashboard() {
         body: JSON.stringify({ token }),
       })
         .then((res) => {
-          if (res.ok) window.location.replace(DASHBOARD_HOME)
+          if (res.ok) window.location.replace(postAuthTarget())
           else setPhase('error')
         })
         .catch(() => setPhase('error'))
@@ -63,7 +72,7 @@ export default function Dashboard() {
     fetchWithTimeout('/api/dashboard/session/status', { cache: 'no-store' })
       .then((res) => res.json())
       .then((data) => {
-        if (data?.ok) window.location.replace(DASHBOARD_HOME)
+        if (data?.ok) window.location.replace(postAuthTarget())
         else setPhase('ready')
       })
       .catch(() => setPhase('ready'))
@@ -86,7 +95,7 @@ export default function Dashboard() {
       body: JSON.stringify({ code: code.trim() }),
     })
       .then((res) => {
-        if (res.ok) window.location.replace(DASHBOARD_HOME)
+        if (res.ok) window.location.replace(postAuthTarget())
         else {
           setCodeError(true)
           setSubmitting(false)
@@ -138,7 +147,7 @@ export default function Dashboard() {
         body: JSON.stringify({ challengeId, otp }),
       })
       if (res.ok) {
-        window.location.replace(DASHBOARD_HOME)
+        window.location.replace(postAuthTarget())
         return
       }
       setOtpError('That code is incorrect or has expired. Please try again or request a new code.')

@@ -5,6 +5,8 @@ import { evaluateAgentSentinel } from './sentinel'
 import { runSecureBrowser, type BrowserMode } from './secure-computer'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
+import { buildVaultAddLink } from '@/lib/vault/connect-link'
+import { findVaultProviderInText } from '@/lib/vault/providers'
 
 export type BrowserCommand = {
   url:string
@@ -12,6 +14,7 @@ export type BrowserCommand = {
   mode:BrowserMode
   risk:'low'|'medium'|'high'
   approvalAction?:'submit_form'|'booking'|'purchase'
+  vaultCredentialId?:string
 }
 
 function safe(value:unknown,max=1800){return redactSecretShapedText(String(value??'').trim().slice(0,max))}
@@ -54,6 +57,22 @@ export function parseBrowserCommand(text:string):BrowserCommand|null{
   }
 }
 
+export function parseConnectedProviderReadCommand(text:string):BrowserCommand|null{
+  const raw=String(text||'').trim()
+  if(!raw)return null
+  const provider=findVaultProviderInText(raw)
+  if(!provider)return null
+  const lower=raw.toLowerCase()
+  const readSignal=/\b(find|search|show|look|check|open|read|see|saved|reels?|posts?|orders?|wishlist|messages?|inbox|bookings?|history|receipts?|invoices?)\b/.test(lower)
+  const writeSignal=/\b(send|reply|post|publish|comment|like|follow|unfollow|delete|edit|change|buy|purchase|checkout|pay|book|reserve|submit)\b/.test(lower)
+  if(!readSignal||writeSignal)return null
+  return {
+    url:provider.loginUrl,
+    objective:safe(raw,1800),
+    mode:'read',
+    risk:'low',
+  }
+}
 async function permission(tg:number):Promise<AgentPermissionLevel>{
   const {data,error}=await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',String(tg)).eq('capability','browser').maybeSingle()
   if(error)throw new Error(`browser_permission_failed:${error.message}`)
@@ -71,7 +90,7 @@ async function makeRun(params:{actor:AgentActor;surface:AgentSurface;command:Bro
     telegram_id:String(params.actor.legacyTelegramId),type:'secure_browser',capability:'browser',status:'queued',
     title:`Browser · ${host}`,summary:'Gogo is preparing an isolated browser session.',progress:0,
     why:'This work is isolated from the AskGogo server in a per-user secure computer.',source:params.surface,
-    metadata_json:{plan_type:'secure_browser',url:params.command.url,objective:params.command.objective,mode:params.command.mode,risk:params.command.risk,approval_action:params.command.approvalAction||null},
+    metadata_json:{plan_type:'secure_browser',url:params.command.url,objective:params.command.objective,mode:params.command.mode,risk:params.command.risk,approval_action:params.command.approvalAction||null,vault_credential_id:params.command.vaultCredentialId||null},
     started_at:now,updated_at:now,
   }).select('id').single()
   if(error||!data?.id)throw new Error(`browser_run_create_failed:${error?.message||'unknown'}`)
@@ -112,22 +131,35 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
 
   await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Gogo is working in an isolated secure browser.',progress:45,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
-  await supabaseAdmin.from('agent_steps').update({status:'running',started_at:new Date().toISOString()}).eq('id',params.stepId)
+  await supabaseAdmin.from('agent_steps').update({status:'running',error:null,completed_at:null,started_at:new Date().toISOString()}).eq('id',params.stepId)
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   try{
-    const result=await runSecureBrowser({userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode})
+    const result=await runSecureBrowser({userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null})
     const at=new Date().toISOString()
 
     if(result.status==='blocked'){
       const blockReason=result.blockReason||'provider_access_limited'
-      const compact={url:result.url,title:result.title,summary:result.summary,blockReason,authReason:result.authReason||null}
+      const compact={url:result.url,title:result.title,summary:result.summary,blockReason,authReason:result.authReason||null,credentialSelectionRequired:result.credentialSelectionRequired===true}
       await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:compact,error:blockReason,completed_at:at}).eq('id',params.stepId)
       await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:blockReason,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
       await activity(tg,params.runId,blockReason,blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
       if(blockReason==='human_auth_required'){
+        const host=new URL(result.url).hostname
+        const vault=await buildVaultAddLink({
+          telegramId:tg,
+          domain:host,
+          runId:params.runId,
+        }).catch(()=>null)
+        const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
+        const accountChoiceUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+        const loginHelp=result.credentialSelectionRequired
+          ? `\n\nI found more than one saved login for this provider. Choose the account Gogo should use here:\n${accountChoiceUrl}`
+          : vault
+            ? `\n\nDon't send your password here. Save or update the ${vault.provider.label} login securely:\n${vault.url}\n\nAfter you save it, Gogo will automatically retry this same task.`
+            : '\n\nUse Take Control to complete the provider sign-in securely. Do not paste passwords or one-time codes into chat.'
         return {
           runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
-          text:`${result.summary}\n\nGogo paused before authentication. Passwords, OTPs, passkeys and payment-auth values are not requested, inferred or stored by the agent.`,
+          text:`${result.summary}\n\nGogo paused before authentication. Passwords, OTPs, passkeys and payment-auth values are not requested, inferred or stored by the agent.${loginHelp}`,
           blockedReason:'human_auth_required' as const,handledBy:'secure-browser' as const,
         }
       }
@@ -139,7 +171,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     }
 
     const compact={url:result.url,title:result.title,summary:result.summary,formCount:result.forms.length,actions:result.actions}
-    await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:compact,completed_at:at}).eq('id',params.stepId)
+    await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:compact,error:null,completed_at:at}).eq('id',params.stepId)
     await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(`${result.summary} ${result.title}`,1600),progress:100,completed_at:at,error:null,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
     await activity(tg,params.runId,'run_completed',result.summary,{host:new URL(result.url).hostname,action_count:result.actions.length})
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
@@ -153,7 +185,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
 }
 
 export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:AgentSurface;text:string}){
-  const command=parseBrowserCommand(params.text);if(!command)return null
+  const command=parseBrowserCommand(params.text)||parseConnectedProviderReadCommand(params.text);if(!command)return null
   const sentinel=evaluateAgentSentinel({capability:'browser',mode:command.mode,risk:command.risk,irreversible:command.mode==='execute',approved:false,instruction:command.objective,url:command.url,actionCount:12})
   if(!sentinel.allowed && sentinel.reason!=='approval_missing'){
     return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Sentinel blocked this browser request: ${sentinel.reason}`,handledBy:'secure-browser' as const}
@@ -178,7 +210,7 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',String(tg)).maybeSingle()
   if(error)throw new Error(`agent_run_read_failed:${error.message}`);if(!run)throw new Error('agent_run_not_found')
   const meta:any=run.metadata_json||{};if(meta.plan_type!=='secure_browser')throw new Error('not_secure_browser_run')
-  const command:BrowserCommand={url:String(meta.url||''),objective:safe(meta.objective,1800),mode:'execute',risk:'high',approvalAction:meta.approval_action||'submit_form'}
+  const command:BrowserCommand={url:String(meta.url||''),objective:safe(meta.objective,1800),mode:'execute',risk:'high',approvalAction:meta.approval_action||'submit_form',vaultCredentialId:String(meta.vault_credential_id||'').trim()||undefined}
   const {data:approved}=await supabaseAdmin.from('agent_approvals').select('id,status').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!approved)throw new Error('approval_required')
   const level=await permission(tg)
@@ -191,4 +223,93 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
   const result=await executeBrowser({actor:params.actor,runId:params.runId,stepId:String(step.id),command,mode:'execute',approved:true})
   if(result.status!=='paused')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approved.id).eq('telegram_id',String(tg))
   return result
+}
+
+
+export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:string}){
+  const tg=params.actor.legacyTelegramId
+  const {data:run,error}=await supabaseAdmin.from('agent_runs')
+    .select('id,status,type,metadata_json')
+    .eq('id',String(params.runId))
+    .eq('telegram_id',String(tg))
+    .maybeSingle()
+  if(error)throw new Error(`browser_resume_read_failed:${error.message}`)
+  if(!run||run.type!=='secure_browser')throw new Error('browser_resume_run_not_found')
+  if(!['paused','failed','waiting_approval'].includes(String(run.status)))throw new Error('browser_resume_not_paused')
+
+  const meta:any=run.metadata_json||{}
+  const mode=String(meta.mode||'read') as BrowserMode
+
+  // Consequential runs must resume through the exact approval path. The
+  // approval survives a password/MFA pause, so we revalidate it rather than
+  // silently downgrading the run or bypassing approval.
+  if(mode==='execute'){
+    const {data:approved,error:approvalError}=await supabaseAdmin.from('agent_approvals')
+      .select('id,status')
+      .eq('run_id',String(params.runId))
+      .eq('telegram_id',String(tg))
+      .eq('status','approved')
+      .order('resolved_at',{ascending:false})
+      .limit(1)
+      .maybeSingle()
+    if(approvalError)throw new Error(`browser_resume_approval_failed:${approvalError.message}`)
+    if(!approved)throw new Error('approval_required')
+    return executeApprovedBrowserCommand({actor:params.actor,runId:String(params.runId)})
+  }
+
+  const command:BrowserCommand={
+    url:String(meta.url||''),
+    objective:safe(meta.objective,1800),
+    mode,
+    risk:mode==='draft'?'medium':'low',
+    approvalAction:meta.approval_action||undefined,
+    vaultCredentialId:String(meta.vault_credential_id||'').trim()||undefined,
+  }
+  if(!command.url)throw new Error('browser_resume_missing_url')
+
+  // Re-evaluate the CURRENT permission and policy on every resume. A user may
+  // have changed Safe Mode/browser permissions while the run was paused.
+  const level=await permission(tg)
+  const policy=evaluateAgentExecutionPolicy({
+    capability:'browser',
+    permissionLevel:level,
+    mode,
+    risk:command.risk,
+    irreversible:false,
+    approvalStatus:null,
+  })
+  if(!policy.allowed)throw new Error(`browser_resume_permission_blocked:${policy.reason}`)
+
+  const sentinel=evaluateAgentSentinel({
+    capability:'browser',
+    mode,
+    risk:command.risk,
+    irreversible:false,
+    approved:false,
+    instruction:command.objective,
+    url:command.url,
+    actionCount:12,
+  })
+  if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
+
+  const {data:step,error:stepError}=await supabaseAdmin.from('agent_steps')
+    .select('id')
+    .eq('run_id',String(params.runId))
+    .eq('telegram_id',String(tg))
+    .eq('tool_name','secure_browser')
+    .order('ordinal',{ascending:false})
+    .limit(1)
+    .maybeSingle()
+  if(stepError)throw new Error(`browser_resume_step_failed:${stepError.message}`)
+  if(!step?.id)throw new Error('browser_resume_step_missing')
+
+  await activity(tg,String(params.runId),'run_resumed','Gogo resumed the browser task after secure login setup.',{source:'vault'})
+  return executeBrowser({
+    actor:params.actor,
+    runId:String(params.runId),
+    stepId:String(step.id),
+    command,
+    mode,
+    approved:false,
+  })
 }

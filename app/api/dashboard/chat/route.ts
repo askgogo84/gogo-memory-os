@@ -12,6 +12,7 @@ import { resolveAgentActor } from '@/lib/agent/actor'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
+import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 
 export const dynamic = 'force-dynamic'
 
@@ -123,6 +124,25 @@ export async function POST(req: NextRequest) {
     if (appointmentResearch) {
       await saveConversation(user.telegram_id, text, appointmentResearch.text)
       return NextResponse.json({ text: appointmentResearch.text, handledBy: appointmentResearch.handledBy, runId: appointmentResearch.runId, status: appointmentResearch.status })
+    }
+
+    // First-class provider/browser tasks stay on the dashboard surface. This is
+    // especially important for Vault-backed tasks such as "find my saved reels
+    // on Instagram": the secure browser must own the request before the generic
+    // planner or WhatsApp compatibility bridge can claim it.
+    const browserTask = await tryRunBrowserCommand({ actor, surface:'web', text })
+    if (browserTask) {
+      const suffix = browserTask.status === 'waiting_approval'
+        ? '\n\nI paused before the consequential provider action. Open Gogo Agent to approve or reject it.'
+        : ''
+      const reply = `${browserTask.text || ''}${suffix}`
+      await saveConversation(user.telegram_id, text, reply)
+      return NextResponse.json({
+        text: reply,
+        handledBy: browserTask.handledBy,
+        runId: browserTask.runId,
+        status: browserTask.status,
+      })
     }
 
     const mission = await tryRunGeneralPlan({

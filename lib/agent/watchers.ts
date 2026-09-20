@@ -6,6 +6,7 @@ import { checkCostAllowance, COST_ESTIMATES_PAISE, getCostBudget, recordCostEven
 import { adaptiveWatcherCadence } from './watch-cost-policy'
 import { runSecureBrowser } from './secure-computer'
 import { listRecentWorkspaceInbox } from './google-workspace-read'
+import { buildVaultAddLink } from '@/lib/vault/connect-link'
 import type { AgentActor } from './actor'
 import {
   appendBoundedHistory,
@@ -549,12 +550,22 @@ async function processProductStockWatcher(watcher:any, now:Date) {
 
   if (browser.status === 'blocked') {
     const alreadyNotified = watcher.last_state_json?.blockedNotified === true
-    const retryMinutes = Math.max(240, budget.maxWatcherCadenceMinutes || 240)
+    const humanAuth = browser.blockReason === 'human_auth_required'
+    const retryMinutes = humanAuth ? Math.max(60, condition.cadenceMinutes) : Math.max(240, budget.maxWatcherCadenceMinutes || 240)
     if (!alreadyNotified) {
+      let message = `I’m watching ${condition.title}, but this store is currently blocking Gogo’s cloud browser, so I can’t honestly verify ${condition.variant} stock yet. I’ll keep retrying in the background. If you want to check immediately, open: ${condition.productUrl}`
+      if (humanAuth) {
+        let host=''
+        try{host=new URL(browser.url||condition.productUrl).hostname}catch{}
+        const vault=host ? await buildVaultAddLink({telegramId,domain:host}).catch(()=>null) : null
+        message = vault
+          ? `I’m still watching ${condition.title}, but the store needs a sign-in before I can verify ${condition.variant}. Don’t send your password here. Save the ${vault.provider.label} login securely:\n${vault.url}\n\nAfter that, the background watch will keep checking with the authenticated browser.`
+          : `I’m still watching ${condition.title}, but the store needs you to sign in. Use AskGogo’s browser Take Control flow; don’t send passwords or one-time codes in chat.`
+      }
       await sendWhatsAppIfWanted(
         telegramId,
         condition.delivery,
-        `I’m watching ${condition.title}, but this store is currently blocking Gogo’s cloud browser, so I can’t honestly verify ${condition.variant} stock yet. I’ll keep retrying in the background. If you want to check immediately, open: ${condition.productUrl}`,
+        message,
       ).catch(err => console.error('AGENT_PRODUCT_WATCH_WHATSAPP_FAILED:', err?.message || err))
     }
     await supabaseAdmin.from('agent_watchers').update({
@@ -565,6 +576,7 @@ async function processProductStockWatcher(watcher:any, now:Date) {
         ...(watcher.last_state_json || {}),
         blockedNotified:true,
         blockReason:browser.blockReason || 'browser_blocked',
+        authReason:browser.authReason || null,
         blockedAt:now.toISOString(),
       },
       updated_at:now.toISOString(),
