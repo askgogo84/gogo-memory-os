@@ -5,6 +5,7 @@ import { evaluateAgentSentinel } from './sentinel'
 import { runSecureBrowser, type BrowserMode } from './secure-computer'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
+import { buildVaultAddLink } from '@/lib/vault/connect-link'
 
 export type BrowserCommand = {
   url:string
@@ -125,9 +126,18 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:blockReason,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
       await activity(tg,params.runId,blockReason,blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
       if(blockReason==='human_auth_required'){
+        const host=new URL(result.url).hostname
+        const vault=await buildVaultAddLink({
+          telegramId:tg,
+          domain:host,
+          runId:params.runId,
+        }).catch(()=>null)
+        const loginHelp=vault
+          ? `\n\nDon't send your password here. Save or update the ${vault.provider.label} login securely:\n${vault.url}\n\nAfter you save it, Gogo will automatically retry this same task.`
+          : '\n\nUse Take Control to complete the provider sign-in securely. Do not paste passwords or one-time codes into chat.'
         return {
           runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
-          text:`${result.summary}\n\nGogo paused before authentication. Passwords, OTPs, passkeys and payment-auth values are not requested, inferred or stored by the agent.`,
+          text:`${result.summary}\n\nGogo paused before authentication. Passwords, OTPs, passkeys and payment-auth values are not requested, inferred or stored by the agent.${loginHelp}`,
           blockedReason:'human_auth_required' as const,handledBy:'secure-browser' as const,
         }
       }
