@@ -118,6 +118,15 @@ export default async function YouPage() {
             ))}
           </div>
 
+          <Link href="/dashboard/you/vault" className="mt-5 flex items-center justify-between gap-4 rounded-[22px] border border-gogo-ink/10 bg-gogo-cream/45 p-5 transition hover:bg-gogo-cream/70">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-gogo-ink-3">Secure Vault</div>
+              <div className="mt-1 text-[15px] font-semibold text-gogo-ink">Website logins Gogo can use safely</div>
+              <p className="mt-1 text-[12px] leading-5 text-gogo-ink-3">Passwords never appear in chat, memory, Activity, or model prompts. Credentials are domain-bound and used only by the secure browser.</p>
+            </div>
+            <span className="shrink-0 text-[13px] font-bold text-gogo-ink">Open Vault →</span>
+          </Link>
+
           <div className="mt-5 rounded-[22px] border border-gogo-orange/18 bg-gogo-orange-tint/70 p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
