@@ -297,40 +297,40 @@ export function assessProductAvailabilityText(pageText: string, variant: string)
   const wanted = String(variant || '').trim().toLowerCase()
   if (!text || !wanted) return 'unknown'
 
-  // Fail closed and require stock evidence for the requested variant. Ecommerce
-  // pages often contain generic marketing copy such as "available in many colours"
-  // while a selected size is actually sold out.
-  const unavailable = /\b(sold\s*out|out\s*of\s*stock|currently\s*unavailable|not\s*available|notify\s*me\s*when\s*available|notify\s+when\s+available|email\s+me\s+when\s+available|coming\s*soon)\b/i
-  const positiveCta = /\b(add\s*to\s*(?:cart|bag|basket)|buy\s*now|in\s*stock|ready\s*to\s*ship)\b/i
-  const safeVariant = wanted.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const explicitVariantAvailable = new RegExp(
-    '(?:\\b' + safeVariant + '\\b.{0,80}\\b(?:is\\s+)?(?:available|in\\s+stock)\\b|\\b(?:available|in\\s+stock)\\b.{0,80}\\b' + safeVariant + '\\b)',
+  const escapeRegExp = (value:string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const wantedRe = escapeRegExp(wanted)
+  const unavailable = /\b(sold\s*out|out\s*of\s*stock|currently\s*unavailable|unavailable|not\s*available|notify\s*me\s*when\s*available|notify\s+when\s+available|email\s+me\s+when\s+available|coming\s*soon)\b/i
+  const available = /\b(in\s*stock|available\s*now|available\s*today|ready\s*to\s*ship|add\s*to\s*(?:cart|bag|basket)|buy\s*now)\b/i
+
+  // First prefer an explicit selected-size marker such as `Size: XL`. That is
+  // the strongest text signal we get from flattened ecommerce page content.
+  const selectedRe = new RegExp('\\b(?:selected\\s+size|size)\\s*[:=-]?\\s*' + wantedRe + '\\b', 'i')
+  const selected = selectedRe.exec(text)
+  if (selected) {
+    const selectedEnd = selected.index + selected[0].length
+    const sizeTokenRe = /\b(?:xxxs|xxs|xs|xxxl|xxl|xl|3xl|4xl|5xl|xxxl|xxl|xxs|s|m|l)\b/ig
+    sizeTokenRe.lastIndex = selectedEnd
+    const next = sizeTokenRe.exec(text)
+    const segmentEnd = next ? Math.min(next.index, selectedEnd + 220) : Math.min(text.length, selectedEnd + 220)
+    const segment = text.slice(selected.index, segmentEnd)
+    if (unavailable.test(segment)) return 'unavailable'
+    if (available.test(segment)) return 'available'
+    return 'unknown'
+  }
+
+  // Without an explicit selected-size marker, accept only wording that directly
+  // binds the requested variant to a stock state. Never infer from generic
+  // marketing copy or from another variant's Add-to-Cart button.
+  const directUnavailable = new RegExp(
+    '(?:\\b' + wantedRe + '\\b\\s*(?:is\\s+)?(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available)|(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available)\\s*(?:for\\s+)?\\b' + wantedRe + '\\b)',
     'i',
   )
-
-  const indexes:number[] = []
-  let from = 0
-  while (indexes.length < 12) {
-    const index = text.indexOf(wanted, from)
-    if (index < 0) break
-    indexes.push(index)
-    from = index + wanted.length
-  }
-
-  for (const index of indexes) {
-    const local = text.slice(Math.max(0, index - 320), Math.min(text.length, index + wanted.length + 420))
-
-    // Negative stock evidence wins, including the SensesIndia state:
-    // "Size: XL ... Notify Me when available".
-    if (unavailable.test(local)) return 'unavailable'
-
-    // Positive evidence must be tied to the requested variant. A global Add to
-    // Cart may belong to another size, so there is no page-wide positive fallback.
-    if (explicitVariantAvailable.test(local)) return 'available'
-    if (positiveCta.test(local) && /\bsize\s*[:=-]?\s*/i.test(local)) return 'available'
-  }
-
-  if (indexes.length && unavailable.test(text)) return 'unavailable'
+  const directAvailable = new RegExp(
+    '(?:\\b' + wantedRe + '\\b\\s*(?:is\\s+)?(?:in\\s*stock|available\\s*now|available\\s*today)|(?:in\\s*stock|available\\s*now|available\\s*today)\\s*(?:for\\s+)?\\b' + wantedRe + '\\b)',
+    'i',
+  )
+  if (directUnavailable.test(text)) return 'unavailable'
+  if (directAvailable.test(text)) return 'available'
   return 'unknown'
 }
 
