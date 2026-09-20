@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/dashboard/session'
 import { browserContextForRun, getDashboardActivityRun } from '@/lib/dashboard/agent-activity'
 import { BrowserLiveShot } from '@/components/dashboard/browser-live-shot'
-import { findVaultCredentialForDomain, listVaultCredentialsForDomain } from '@/lib/vault/credential-store'
+import { listVaultCredentialsForDomain } from '@/lib/vault/credential-store'
 import { findVaultProviderForDomain } from '@/lib/vault/providers'
 import { VaultResumeTaskButton } from '@/components/dashboard/vault-resume-task-button'
 
