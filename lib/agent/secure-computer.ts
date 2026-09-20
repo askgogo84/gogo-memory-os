@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
-import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -37,7 +37,8 @@ export type SecureBrowserResult = {
 }
 
 function safeText(value:unknown,max=1200){
-  return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))
+  const normalized=String(value??'').replace(/\s+/g,' ').trim()
+  return redactBrowserSensitiveText(normalized).slice(0,max)
 }
 
 const userSandboxName=browserSandboxNameFor
@@ -292,7 +293,20 @@ function detectProviderAccessBlock(page:any){
 }
 
 async function planActions(objective:string,page:any,mode:BrowserMode):Promise<BrowserAction[]>{
-  const pageModel={url:page.url,title:page.title,text:String(page.text||'').slice(0,10000),links:(page.links||[]).slice(0,70),forms:(page.forms||[]).slice(0,12)}
+  const pageModel={
+    url:safeText(page.url,1200),
+    title:safeText(page.title,500),
+    text:safeText(page.text,10000),
+    links:(page.links||[]).slice(0,70).map((link:any)=>({
+      text:safeText(link?.text,180),
+      href:safeText(link?.href,1200),
+    })),
+    forms:(page.forms||[]).slice(0,12).map((form:any)=>({
+      action:safeText(form?.action,1200),
+      method:String(form?.method||'get'),
+      inputs:Array.isArray(form?.inputs)?form.inputs.slice(0,60):[],
+    })),
+  }
   const modeRule = mode==='read'
     ? 'Research mode: actively navigate, fill search/filter fields, click safe search/filter/result controls, and wait for results until the objective is satisfied. Never book, buy, reserve, apply, submit personal data, authenticate, or trigger a consequential action. Return [] only when the current page already contains enough evidence to answer the objective.'
     : mode==='draft'
@@ -303,7 +317,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode):Promise<B
     const res=await anthropic.messages.create({model:'claude-haiku-4-5',max_tokens:1600,temperature:0,messages:[{role:'user',content:prompt}]})
     const text=res.content[0]?.type==='text'?res.content[0].text:''
     return normalizeActions(parseJsonLoose(text),page.url)
-  }catch(err:any){console.error('SECURE_BROWSER_PLAN_FAILED:',err?.message||err);return []}
+  }catch(err:any){console.error('SECURE_BROWSER_PLAN_FAILED:',safeText(err?.message||err,700));return []}
 }
 
 function normalizeActionLog(values:any[]){
@@ -329,7 +343,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         // this same sandbox and starts the takeover server on BROWSER_PORTS.
         // Stopping here killed the port binding, so the takeover URL returned
         // 502 SANDBOX_NOT_LISTENING. The sandbox expires on its own timeout.
-        return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:providerBlock,pageText:safeText(page.text,1200),forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
+        return {status:'blocked',url:safeText(page.url||target,1200),title:safeText(page.title,300),summary:providerBlock,pageText:safeText(page.text,1200),forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
       }
 
       let authGate=detectHumanAuthGate(page)
@@ -403,7 +417,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         const summary=credentialSelectionRequired
           ? 'Multiple saved logins match this site. Choose which account Gogo should use.'
           : authGate.message||'This site needs a secure sign-in before Gogo can continue.'
-        return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
+        return {status:'blocked',url:safeText(page.url||target,1200),title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
       }
 
       const actions=await planActions(params.objective,page,params.mode)
@@ -424,12 +438,13 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft' && anyPlannedSubmit
     return {
-      status:prepared?'prepared':'completed',url:String(page.url||target),title:safeText(page.title,300),
+      status:prepared?'prepared':'completed',url:safeText(page.url||target,1200),title:safeText(page.title,300),
       summary:params.mode==='read'?'Gogo completed the browser research task.':prepared?'Gogo prepared the browser flow and stopped before submit.':'Gogo completed the approved browser flow.',
-      pageText:safeText(page.text,9000),forms:Array.isArray(page.forms)?page.forms.slice(0,12):[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
+      pageText:safeText(page.text,9000),forms:Array.isArray(page.forms)?page.forms.slice(0,12).map((form:any)=>({...form,action:safeText(form?.action,1200)})):[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
     }
   } catch (error:any) {
-    console.error('SECURE_BROWSER_FAILED:', error?.stack || error?.message || error)
-    throw error
+    const safeError=safeText(error?.message||error,1000)
+    console.error('SECURE_BROWSER_FAILED:',safeError)
+    throw new Error(safeError||'secure_browser_failed')
   }
 }

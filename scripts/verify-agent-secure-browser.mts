@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { redactBrowserSensitiveText } from '../lib/agent/secure-browser-redaction'
 
 const computer=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
 const ticket=readFileSync(new URL('../lib/agent/secure-ticket-reader.ts',import.meta.url),'utf8')
@@ -101,6 +102,45 @@ assert.match(browser,/text:`\$\{result\.summary\}[\s\S]*safe\(result\.pageText,1
 assert.match(browser,/activity\(tg,params\.runId,'run_completed',result\.summary,\{host:new URL\(result\.url\)\.hostname,action_count:result\.actions\.length\}\)/)
 assert.doesNotMatch(browser,/metadata_json:\{[^}]*pageText/s)
 assert.doesNotMatch(browser,/activity\([^\n]*form[sVv]alue/s)
+
+// Signed provider/booking URLs and opaque payloads must never survive the
+// Secure Computer logging/model boundary. Host/path and query parameter names
+// may remain useful for diagnostics, but every value and fragment is removed.
+const signed='Browser failed at https://in.bookmyshow.com/booking/ticket?token=super-secret-abc&signature=deadbeef#receipt'
+const redacted=redactBrowserSensitiveText(signed)
+assert.match(redacted,/https:\/\/in\.bookmyshow\.com\/booking\/ticket/)
+assert.match(redacted,/token=/)
+assert.match(redacted,/signature=/)
+assert.doesNotMatch(redacted,/super-secret-abc/)
+assert.doesNotMatch(redacted,/deadbeef/)
+assert.doesNotMatch(redacted,/receipt/)
+
+const labelledFirst='https://example.com/callback?password=first-secret&signature=LEAKME&otp=123456#receipt'
+const labelledFirstRedacted=redactBrowserSensitiveText(labelledFirst)
+assert.match(labelledFirstRedacted,/https:\/\/example\.com\/callback/)
+assert.match(labelledFirstRedacted,/password=/)
+assert.match(labelledFirstRedacted,/signature=/)
+assert.match(labelledFirstRedacted,/otp=/)
+assert.doesNotMatch(labelledFirstRedacted,/first-secret/)
+assert.doesNotMatch(labelledFirstRedacted,/LEAKME/)
+assert.doesNotMatch(labelledFirstRedacted,/123456/)
+assert.doesNotMatch(labelledFirstRedacted,/receipt/)
+
+const opaque='eyJ1cmwiOiJodHRwczovL2V4YW1wbGUuY29tLz90b2tlbj1zZWNyZXQiLCJtb2RlIjoiZXhlY3V0ZSJ9'.repeat(2)
+assert.equal(redactBrowserSensitiveText(opaque),'[sensitive token withheld]')
+
+// Current-main wiring: redact before truncation, sanitize model-facing links/forms,
+// sanitize returned URLs/form actions, and never log raw stacks at the boundary.
+assert.match(computer,/redactBrowserSensitiveText/)
+assert.match(computer,/const normalized=String\(value\?\?''\)[\s\S]*redactBrowserSensitiveText\(normalized\)\.slice\(0,max\)/)
+assert.match(computer,/links:\(page\.links\|\|\[\]\)[\s\S]*href:safeText/s)
+assert.match(computer,/forms:\(page\.forms\|\|\[\]\)[\s\S]*action:safeText/s)
+assert.match(computer,/SECURE_BROWSER_PLAN_FAILED:',safeText/)
+assert.match(computer,/const safeError=safeText\(error\?\.message\|\|error,1000\)/)
+assert.match(computer,/SECURE_BROWSER_FAILED:',safeError/)
+assert.doesNotMatch(computer,/SECURE_BROWSER_FAILED:', error\?\.stack/)
+assert.match(computer,/url:safeText\(page\.url\|\|target,1200\)/)
+assert.match(computer,/forms:Array\.isArray\(page\.forms\)\?page\.forms\.slice\(0,12\)\.map/)
 
 // Both new and approved-run APIs route secure browser plans explicitly.
 assert.match(runRoute,/tryRunBrowserCommand/)
