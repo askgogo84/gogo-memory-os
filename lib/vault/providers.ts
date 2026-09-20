@@ -56,3 +56,12 @@ export const VAULT_PROVIDERS:Record<string,VaultProvider>={
 export function getVaultProvider(key:string){
   return VAULT_PROVIDERS[String(key||'').toLowerCase()]||null
 }
+
+
+export function findVaultProviderForDomain(domain:string){
+  const host=String(domain||'').toLowerCase().replace(/^www\./,'')
+  if(!host)return null
+  return Object.values(VAULT_PROVIDERS).find(provider=>
+    provider.domains.some(value=>host===value||host.endsWith('.'+value))
+  )||null
+}
