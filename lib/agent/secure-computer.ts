@@ -33,6 +33,7 @@ export type SecureBrowserResult = {
   sandboxName:string
   blockReason?: 'human_auth_required'|'provider_access_limited'
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
+  credentialSelectionRequired?: boolean
 }
 
 function safeText(value:unknown,max=1200){
@@ -309,7 +310,7 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const}))
 }
 
-export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null}):Promise<SecureBrowserResult>{
   try {
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
@@ -318,6 +319,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     let actionLog:any[]=[]
     let anyPlannedSubmit=false
     let vaultAttempted=false
+    let credentialSelectionRequired=false
 
     for(let wave=0;wave<(params.mode==='read'?MAX_RESEARCH_WAVES:1);wave++){
       const providerBlock=detectProviderAccessBlock(page)
@@ -342,8 +344,13 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
         const credential=host
-          ? await resolveVaultCredentialForBrowser(params.userId,host).catch((err:any)=>{
-              console.error('VAULT_BROWSER_MATCH_FAILED:',err?.message||err)
+          ? await resolveVaultCredentialForBrowser(params.userId,host,params.vaultCredentialId||null).catch((err:any)=>{
+              const reason=String(err?.message||'')
+              if(reason==='vault_credential_ambiguous'){
+                credentialSelectionRequired=true
+                return null
+              }
+              console.error('VAULT_BROWSER_MATCH_FAILED:',reason||err)
               return null
             })
           : null
@@ -389,11 +396,14 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
 
       authGate=detectHumanAuthGate(page)
       if(authGate.required||pageLooksLikeLogin(page)){
-        // Human-only challenges stay in the provider browser. If no saved
-        // credential exists (or the provider still requires MFA/CAPTCHA), Gogo
-        // pauses and hands off rather than asking for secrets in chat.
+        // Human-only challenges stay in the provider browser. If multiple Vault
+        // accounts match, pause safely and let the user choose which opaque
+        // credential reference to use before retrying.
         const reason=authGate.reason||'password'
-        return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:authGate.message||'This site needs a secure sign-in before Gogo can continue.',pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason}
+        const summary=credentialSelectionRequired
+          ? 'Multiple saved logins match this site. Choose which account Gogo should use.'
+          : authGate.message||'This site needs a secure sign-in before Gogo can continue.'
+        return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
       }
 
       const actions=await planActions(params.objective,page,params.mode)
