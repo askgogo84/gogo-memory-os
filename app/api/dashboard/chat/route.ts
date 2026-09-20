@@ -13,6 +13,7 @@ import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
+import { tryRunTrainResearch } from '@/lib/agent/train-research'
 
 export const dynamic = 'force-dynamic'
 
@@ -124,6 +125,20 @@ export async function POST(req: NextRequest) {
     if (appointmentResearch) {
       await saveConversation(user.telegram_id, text, appointmentResearch.text)
       return NextResponse.json({ text: appointmentResearch.text, handledBy: appointmentResearch.handledBy, runId: appointmentResearch.runId, status: appointmentResearch.status })
+    }
+
+    // Train research started on Dashboard must remain on the web surface. Giving
+    // the specialist first refusal here prevents the WhatsApp compatibility bridge
+    // from storing source='whatsapp' and later pushing IRCTC handoff/results there.
+    const trainResearch = await tryRunTrainResearch({ actor, surface:'web', text })
+    if (trainResearch) {
+      await saveConversation(user.telegram_id, text, trainResearch.text)
+      return NextResponse.json({
+        text: trainResearch.text,
+        handledBy: trainResearch.handledBy,
+        runId: trainResearch.runId,
+        status: trainResearch.status,
+      })
     }
 
     // First-class provider/browser tasks stay on the dashboard surface. This is
