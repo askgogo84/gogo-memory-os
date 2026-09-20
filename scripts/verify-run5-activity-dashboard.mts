@@ -14,7 +14,7 @@ assert.match(activity,/Reminders.*Browser.*Research.*Documents/s)
 assert.match(detail,/Open browser view/)
 assert.match(browser,/Blocked by the provider/)
 assert.match(browser,/Take control/)
-assert.doesNotMatch(browser,/Enter code|one-time code input|otp/i,'Activity browser must not collect authentication secrets')
+assert.doesNotMatch(browser,/<input[^>]*(?:otp|one-time|code|password|payment)/i,'Activity browser must not collect authentication secrets')
 
 for(const source of [handoff,shot]){
   assert.match(source,/getSession\(\)/)
