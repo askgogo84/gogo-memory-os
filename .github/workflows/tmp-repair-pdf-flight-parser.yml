@@ -1,0 +1,68 @@
+name: Temporary PDF parser repair
+
+on:
+  push:
+    branches:
+      - fix/pdf-ticket-local-fallback-20260920
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pdf-ticket-local-fallback-20260920
+      - name: Patch verified aircraft-model false positive
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('lib/services/pdf-reader.ts')
+          s = p.read_text()
+          start = s.index("  const flightNos:Array<{prefix:string;number:string}>=[]")
+          end = s.index("\n\n  const legs:FlightInfo['flights']=[]", start)
+          replacement = r'''  const flightNos:Array<{prefix:string;number:string}>=[]
+  const seen=new Set<string>()
+  const addFlight=(prefix:string,number:string)=>{
+    const normalizedPrefix=prefix.toUpperCase()
+    const key=normalizedPrefix+number
+    if(seen.has(key))return
+    seen.add(key)
+    flightNos.push({prefix:normalizedPrefix,number})
+  }
+
+  // Prefer explicit itinerary lines such as "EY 239 • Etihad". Aircraft
+  // models (for example Airbus A350-1000) can otherwise look like IATA flight
+  // numbers, and positional assignment would corrupt every later leg.
+  for(const m of raw.matchAll(/\b([A-Z0-9]{2})\s*([0-9]{1,4})\s*[•·]\s*[A-Z][A-Za-z]+/g)){
+    if(!/[A-Z]/.test(m[1]))continue
+    addFlight(m[1],m[2])
+    if(flightNos.length>=12)break
+  }
+
+  // Some tickets do not include an airline-name separator. Fall back to broad
+  // flight-number matching, but explicitly reject candidates immediately
+  // preceded by common aircraft-model labels.
+  if(!flightNos.length){
+    for(const m of raw.matchAll(/\b([A-Z0-9]{2})\s*([0-9]{1,4})\b/g)){
+      const prefix=m[1].toUpperCase()
+      const number=m[2]
+      if(!/[A-Z]/.test(prefix))continue
+      const before=raw.slice(Math.max(0,(m.index||0)-24),m.index||0).toLowerCase()
+      if(/(?:airbus|boeing|aircraft|dreamliner)\s*$/.test(before))continue
+      addFlight(prefix,number)
+      if(flightNos.length>=12)break
+    }
+  }'''
+          p.write_text(s[:start] + replacement + s[end:])
+      - name: Commit repair
+        run: |
+          git config user.name "AskGogo Night Build"
+          git config user.email "actions@users.noreply.github.com"
+          git add lib/services/pdf-reader.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(pdf): exclude aircraft models from flight numbers"
+          git push origin HEAD:fix/pdf-ticket-local-fallback-20260920
