@@ -297,8 +297,17 @@ export function assessProductAvailabilityText(pageText: string, variant: string)
   const wanted = String(variant || '').trim().toLowerCase()
   if (!text || !wanted) return 'unknown'
 
-  const unavailable = /\b(sold\s*out|out\s*of\s*stock|currently\s*unavailable|not\s*available|notify\s*me\s*when\s*available|coming\s*soon)\b/i
-  const available = /\b(add\s*to\s*(?:cart|bag|basket)|available|in\s*stock|buy\s*now)\b/i
+  // Fail closed and require stock evidence for the requested variant. Ecommerce
+  // pages often contain generic marketing copy such as "available in many colours"
+  // while a selected size is actually sold out.
+  const unavailable = /\b(sold\s*out|out\s*of\s*stock|currently\s*unavailable|not\s*available|notify\s*me\s*when\s*available|notify\s+when\s+available|email\s+me\s+when\s+available|coming\s*soon)\b/i
+  const positiveCta = /\b(add\s*to\s*(?:cart|bag|basket)|buy\s*now|in\s*stock|ready\s*to\s*ship)\b/i
+  const safeVariant = wanted.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const explicitVariantAvailable = new RegExp(
+    '(?:\\b' + safeVariant + '\\b.{0,80}\\b(?:is\\s+)?(?:available|in\\s+stock)\\b|\\b(?:available|in\\s+stock)\\b.{0,80}\\b' + safeVariant + '\\b)',
+    'i',
+  )
+
   const indexes:number[] = []
   let from = 0
   while (indexes.length < 12) {
@@ -309,13 +318,19 @@ export function assessProductAvailabilityText(pageText: string, variant: string)
   }
 
   for (const index of indexes) {
-    const local = text.slice(Math.max(0, index - 220), Math.min(text.length, index + wanted.length + 260))
-    if (unavailable.test(local) && !/\badd\s*to\s*(?:cart|bag|basket)\b/i.test(local)) return 'unavailable'
-    if (available.test(local) && !unavailable.test(local)) return 'available'
+    const local = text.slice(Math.max(0, index - 320), Math.min(text.length, index + wanted.length + 420))
+
+    // Negative stock evidence wins, including the SensesIndia state:
+    // "Size: XL ... Notify Me when available".
+    if (unavailable.test(local)) return 'unavailable'
+
+    // Positive evidence must be tied to the requested variant. A global Add to
+    // Cart may belong to another size, so there is no page-wide positive fallback.
+    if (explicitVariantAvailable.test(local)) return 'available'
+    if (positiveCta.test(local) && /\bsize\s*[:=-]?\s*/i.test(local)) return 'available'
   }
 
-  if (/\badd\s*to\s*(?:cart|bag|basket)\b/i.test(text) && !unavailable.test(text)) return 'available'
-  if (unavailable.test(text) && !/\badd\s*to\s*(?:cart|bag|basket)\b/i.test(text)) return 'unavailable'
+  if (indexes.length && unavailable.test(text)) return 'unavailable'
   return 'unknown'
 }
 
