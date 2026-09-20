@@ -16,10 +16,11 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   if(!browser.hasBrowser)notFound()
 
   const handoff:any=run.metadata?.handoff||{}
-  const cloudTakeover=Boolean(handoff?.takeoverUrl)
-  const deviceHandoff=handoff?.mode==='device'&&Boolean(handoff?.providerUrl)
+  const handoffActive=['paused','waiting_approval'].includes(run.status)
+  const cloudTakeover=handoffActive&&Boolean(handoff?.takeoverUrl)
+  const deviceHandoff=handoffActive&&handoff?.mode==='device'&&Boolean(handoff?.providerUrl)
   const latest=[...run.steps].reverse().find(s=>s.toolName==='secure_browser'||/browser/i.test(s.toolName)||s.output?.browser)
-  const raw:any=latest?.output?.browser||latest?.output?.browserState||{}
+  const raw:any=latest?.output?.browser||latest?.output?.browserState||latest?.output||{}
   const pageTitle=String(raw?.title||'')
   const pageUrl=String(raw?.url||handoff?.providerUrl||'')
   let displayUrl=browser.hostname||'Secure browser'
