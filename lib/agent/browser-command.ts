@@ -62,29 +62,38 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(!raw)return null
   const provider=findVaultProviderInText(raw)
   if(!provider)return null
+
   const lower=raw.toLowerCase()
+  const tokens=new Set((lower.match(/[a-z0-9.]+/g)||[]).map(value=>value.replace(/\.$/,'')))
+  const has=(...values:string[])=>values.some(value=>tokens.has(value))
 
-  // Deterministic mutations always keep their native handlers, even when the
-  // content mentions a connected provider such as Amazon or Instagram.
-  const isReminderMutation=
-    /\bremind(?:er| me)?\b/.test(lower) ||
-    /\bsave\s+(?:this\s+)?as\s+a\s+reminder\b/.test(lower) ||
-    /\bcreate\s+(?:a\s+)?reminder\b/.test(lower)
-  const isCalendarOrListMutation=
-    /\bcreate\s+(?:a\s+)?(?:calendar event|event|list)\b/.test(lower) ||
-    /\bschedule\s+(?:this|it|a\s+reminder|an?\s+event)\b/.test(lower) ||
-    /\badd\b.{0,180}\bto\s+(?:my\s+)?(?:calendar|list)\b/.test(lower)
-  if(isReminderMutation||isCalendarOrListMutation)return null
+  // Deterministic mutations always keep their native handlers.
+  const reminderMutation=
+    lower.includes('save this as a reminder') ||
+    lower.includes('save as a reminder') ||
+    lower.includes('create reminder') ||
+    lower.includes('create a reminder') ||
+    has('reminder') ||
+    /^remind\b/.test(lower) ||
+    /\bremind me\b/.test(lower)
 
-  // Provider writes are never treated as low-risk reads.
-  const providerWrite=
-    /\b(?:send|reply|publish|comment|like|follow|unfollow|delete|edit|change|buy|purchase|checkout|pay|book|reserve|submit)\b/.test(lower) ||
-    /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(lower)
-  if(providerWrite)return null
+  const calendarOrListMutation=
+    lower.includes('create calendar event') ||
+    lower.includes('create an event') ||
+    lower.includes('create a list') ||
+    lower.includes('schedule this') ||
+    lower.includes('schedule it') ||
+    (/\badd\b/.test(lower) && /\bto\s+(?:my\s+)?(?:calendar|list)\b/.test(lower))
 
-  const providerRead=
-    /\b(?:find|search|show|look|check|open|read|see|saved|reels?|posts?|orders?|wishlist|messages?|inbox|bookings?|history|receipts?|invoices?)\b/.test(lower)
-  if(!providerRead)return null
+  if(reminderMutation||calendarOrListMutation)return null
+
+  // Consequential provider actions must never be downgraded to read mode.
+  const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit']
+  if(writeTokens.some(value=>tokens.has(value)))return null
+  if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(lower))return null
+
+  const readTokens=['find','search','show','look','check','open','read','see','saved','reel','reels','post','posts','order','orders','wishlist','message','messages','inbox','booking','bookings','history','receipt','receipts','invoice','invoices']
+  if(!readTokens.some(value=>tokens.has(value)))return null
 
   return {
     url:provider.loginUrl,
