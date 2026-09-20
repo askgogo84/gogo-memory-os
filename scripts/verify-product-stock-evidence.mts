@@ -28,5 +28,15 @@ assert.equal(
   'unavailable',
   'another variant add-to-cart must never mark XL available',
 )
+assert.equal(
+  assessProductAvailabilityText('XL is in stock. XXL sold out.', 'XL'),
+  'available',
+  'neighboring variant sold-out evidence must not override XL in-stock evidence',
+)
+assert.equal(
+  assessProductAvailabilityText('XXL is in stock. XL sold out.', 'XL'),
+  'unavailable',
+  'neighboring variant in-stock evidence must not override XL sold-out evidence',
+)
 
 console.log('product stock false-positive regression passed')
