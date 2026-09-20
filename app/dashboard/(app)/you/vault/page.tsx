@@ -28,7 +28,7 @@ export default async function VaultPage(){
           <h1 className="mt-1 font-serif text-[34px] font-semibold tracking-[-.02em] text-gogo-ink">Vault</h1>
           <p className="mt-2 max-w-2xl text-[13px] leading-5 text-gogo-ink-3">Saved website logins Gogo can use only through the secure browser on explicitly allowed domains. Passwords are never shown again after saving.</p>
         </div>
-        <Link href="/dashboard/you/vault/add/instagram" className="inline-flex h-11 items-center justify-center rounded-[12px] bg-gogo-ink px-4 text-[13px] font-semibold text-white">Add login</Link>
+        <a href="#vault-providers" className="inline-flex h-11 items-center justify-center rounded-[12px] bg-gogo-ink px-4 text-[13px] font-semibold text-white">Add login</a>
       </div>
     </header>
 
@@ -61,7 +61,7 @@ export default async function VaultPage(){
                 Last used: {fmt(item.lastUsedAt)}
               </div>
               <div className="mt-4 flex items-center justify-between gap-2">
-                <Link href={`/dashboard/you/vault/add/${encodeURIComponent(item.provider)}?label=${encodeURIComponent(item.accountLabel)}`} className="rounded-full border border-gogo-ink/12 px-3 py-1.5 text-[11px] font-semibold text-gogo-ink-2">Update</Link>
+                <Link href={`/dashboard/you/vault/add/${encodeURIComponent(item.provider)}?id=${encodeURIComponent(item.id)}&label=${encodeURIComponent(item.accountLabel)}`} className="rounded-full border border-gogo-ink/12 px-3 py-1.5 text-[11px] font-semibold text-gogo-ink-2">Update</Link>
                 <VaultRemoveButton id={item.id}/>
               </div>
             </article>
@@ -69,8 +69,8 @@ export default async function VaultPage(){
         </div>}
     </section>
 
-    <section className="mt-7">
-      <p className="text-[10px] font-bold uppercase tracking-[.14em] text-gogo-ink-3">Supported now</p>
+    <section id="vault-providers" className="mt-7 scroll-mt-8">
+      <p className="text-[10px] font-bold uppercase tracking-[.14em] text-gogo-ink-3">Choose a provider</p>
       <div className="mt-3 flex flex-wrap gap-2">
         {Object.values(VAULT_PROVIDERS).map(provider=><Link key={provider.key} href={`/dashboard/you/vault/add/${provider.key}`} className="rounded-full border border-gogo-ink/12 bg-gogo-surface/70 px-3 py-2 text-[11px] font-semibold text-gogo-ink-2">{provider.label}</Link>)}
       </div>
