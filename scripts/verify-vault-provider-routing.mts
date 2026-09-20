@@ -40,7 +40,7 @@ assert.equal(
 const browser=await import('node:fs').then(fs=>fs.readFileSync('lib/agent/browser-command.ts','utf8'))
 assert.match(browser,/parseConnectedProviderReadCommand/)
 assert.match(browser,/parseBrowserCommand\(params\.text\)\|\|parseConnectedProviderReadCommand\(params\.text\)/)
-assert.match(browser,/writeSignal/)
+assert.match(browser,/providerWrite/)\nassert.match(browser,/readTokens/)
 assert.match(browser,/mode:'read'/)
 
 const watchers=await import('node:fs').then(fs=>fs.readFileSync('lib/agent/watchers.ts','utf8'))
