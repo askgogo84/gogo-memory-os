@@ -1,0 +1,59 @@
+name: Temporary bridge fail-closed port
+on: [push]
+permissions:
+  contents: write
+jobs:
+  port:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/agent-bridge-fail-closed-current-20260920
+      - name: Apply narrow fail-closed fix and regression
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('lib/feature-intents.ts')
+          s=p.read_text()
+          old="""  } catch (err: any) {
+    console.error('WHATSAPP_AGENT_BRIDGE_FAILED:', err?.message || err)
+    return null
+  }
+}
+"""
+          new="""  } catch (err: any) {
+    console.error('WHATSAPP_AGENT_BRIDGE_FAILED:', err?.message || err)
+    // Infrastructure/execution failure is not a routing non-match. Fail closed
+    // instead of falling through to processIncomingMessage/plain LLM.
+    return 'I hit a problem while running that AskGogo action, so I stopped instead of guessing or falling back to an unverified answer. Please try again shortly.'
+  }
+}
+"""
+          assert old in s, 'feature-intents catch block changed; refusing blind patch'
+          p.write_text(s.replace(old,new,1))
+
+          t=Path('scripts/verify-agent-whatsapp-bridge.mts')
+          q=t.read_text()
+          anchor="assert.match(router,/read-only Gmail, Contacts and Drive/)\n"
+          addition="""
+
+// An infrastructure/execution exception is materially different from a clean
+// routing non-match. It must fail closed instead of falling through to a plain
+// LLM response that could invent completion or provider data.
+const bridgeFailureCatch=router.indexOf("console.error('WHATSAPP_AGENT_BRIDGE_FAILED:'")
+assert.ok(bridgeFailureCatch>=0,'bridge failure catch must exist')
+const bridgeFailureTail=router.slice(bridgeFailureCatch,bridgeFailureCatch+900)
+assert.ok(!/return\\s+null/.test(bridgeFailureTail),'bridge exceptions must never fall through as routing non-matches')
+assert.match(bridgeFailureTail,/stopped instead of guessing/)
+"""
+          assert anchor in q, 'WhatsApp bridge regression anchor changed; refusing blind patch'
+          t.write_text(q.replace(anchor,anchor+addition,1))
+          PY
+      - name: Remove one-shot workflow and commit
+        run: |
+          git rm .github/workflows/tmp-port-agent-bridge-fail-closed.yml
+          git config user.name "AskGogo Night Build"
+          git config user.email "actions@users.noreply.github.com"
+          git add lib/feature-intents.ts scripts/verify-agent-whatsapp-bridge.mts
+          git commit -m "fix(agent): fail closed when WhatsApp bridge throws"
+          git push origin HEAD:fix/agent-bridge-fail-closed-current-20260920
