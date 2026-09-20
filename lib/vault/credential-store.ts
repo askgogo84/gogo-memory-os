@@ -46,6 +46,7 @@ export async function listVaultCredentials(telegramId:string):Promise<VaultCrede
 
 export async function saveVaultCredential(params:{
   telegramId:string
+  credentialId?:string|null
   provider:string
   accountLabel:string
   username:string
@@ -54,6 +55,7 @@ export async function saveVaultCredential(params:{
   metadata?:Record<string,unknown>
 }){
   const telegramId=String(params.telegramId)
+  const credentialId=String(params.credentialId||'').trim()
   const provider=clean(params.provider,80).toLowerCase()
   const accountLabel=clean(params.accountLabel,120)
   const username=String(params.username||'').trim()
@@ -61,8 +63,8 @@ export async function saveVaultCredential(params:{
   const allowedDomains=Array.from(new Set((params.allowedDomains||[]).map(normalizeVaultDomain).filter(Boolean))).slice(0,12)
   if(!provider||!accountLabel||!username||!secret||!allowedDomains.length)throw new Error('vault_credential_invalid')
 
-  const row={
-    telegram_id:telegramId,
+  const now=new Date().toISOString()
+  const values={
     provider,
     account_label:accountLabel,
     username_hint:vaultHint(username),
@@ -72,14 +74,42 @@ export async function saveVaultCredential(params:{
     status:'active',
     key_version:1,
     metadata_json:params.metadata||{},
-    updated_at:new Date().toISOString(),
+    updated_at:now,
   }
-  const {data,error}=await supabaseAdmin.from('vault_credentials')
-    .upsert(row,{onConflict:'telegram_id,provider,account_label'})
-    .select('id,provider,account_label,username_hint,allowed_domains,status,last_used_at,updated_at')
-    .single()
+
+  let data:any=null,error:any=null
+  if(credentialId){
+    const response=await supabaseAdmin.from('vault_credentials')
+      .update(values)
+      .eq('telegram_id',telegramId)
+      .eq('id',credentialId)
+      .select('id,provider,account_label,username_hint,allowed_domains,status,last_used_at,updated_at')
+      .maybeSingle()
+    data=response.data;error=response.error
+    if(!error&&!data)throw new Error('vault_credential_not_found')
+  }else{
+    const {data:conflict,error:conflictError}=await supabaseAdmin.from('vault_credentials')
+      .select('id')
+      .eq('telegram_id',telegramId)
+      .eq('provider',provider)
+      .eq('account_label',accountLabel)
+      .neq('status','revoked')
+      .maybeSingle()
+    if(conflictError)throw new Error(`vault_conflict_check_failed:${conflictError.message}`)
+    if(conflict?.id)throw new Error('vault_label_conflict')
+
+    const response=await supabaseAdmin.from('vault_credentials')
+      .insert({telegram_id:telegramId,...values})
+      .select('id,provider,account_label,username_hint,allowed_domains,status,last_used_at,updated_at')
+      .single()
+    data=response.data;error=response.error
+  }
+
   if(error||!data?.id)throw new Error(`vault_save_failed:${error?.message||'unknown'}`)
-  await audit({telegramId,credentialId:String(data.id),provider,domain:allowedDomains[0],eventType:'credential_saved'})
+  await audit({
+    telegramId,credentialId:String(data.id),provider,domain:allowedDomains[0],
+    eventType:credentialId?'credential_updated':'credential_saved',
+  })
   return {
     id:String(data.id),provider:String(data.provider),accountLabel:String(data.account_label),
     usernameHint:String(data.username_hint),allowedDomains:data.allowed_domains||[],status:data.status,
