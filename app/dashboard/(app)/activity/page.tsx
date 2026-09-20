@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { getSession } from '@/lib/dashboard/session'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { browserContextForRun, getDashboardActivityRuns, type DashboardActivityRun } from '@/lib/dashboard/agent-activity'
 
 export const dynamic='force-dynamic'
@@ -65,6 +66,23 @@ function iconFor(run:DashboardActivityRun){
 export default async function ActivityPage({searchParams}:{searchParams:Promise<{filter?:string}>}){
   const session=await getSession()
   const runs=session?await getDashboardActivityRuns(session.telegramId):[]
+  const [watchersResult,approvalsResult]=session?await Promise.all([
+    supabaseAdmin.from('agent_watchers')
+      .select('id,type,condition_json,cadence_minutes,last_checked_at,next_check_at')
+      .eq('telegram_id',String(session.telegramId))
+      .eq('active',true)
+      .order('next_check_at',{ascending:true})
+      .limit(6),
+    supabaseAdmin.from('agent_approvals')
+      .select('id,run_id,title,description,risk_level,requested_at')
+      .eq('telegram_id',String(session.telegramId))
+      .eq('status','pending')
+      .order('requested_at',{ascending:false})
+      .limit(5),
+  ]):[{data:[]},{data:[]}]
+  const watchers=(watchersResult as any).data||[]
+  const approvals=(approvalsResult as any).data||[]
+  const activeRun=runs.find(r=>['running','queued','paused','waiting_approval'].includes(r.status))||null
   const params=await searchParams
   const requested=String(params?.filter||'All')
   const filter=(FILTERS.includes(requested as Filter)?requested:'All') as Filter
@@ -76,7 +94,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
     list.push(run);grouped.set(key,list)
   }
 
-  return <div className="mx-auto w-full max-w-[1180px] pb-8">
+  return <div className="w-full pb-8">
     <header className="flex flex-col gap-4 border-b border-[#b8a797]/70 pb-5 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <p className="text-[11px] font-bold uppercase tracking-[.12em] text-[#9a8778]">AskGogo</p>
@@ -88,7 +106,9 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
       </div>
     </header>
 
-    {visible.length===0?<section className="mt-6 rounded-[24px] border border-[#b8a797] bg-[#fbf6ef] p-7">
+    <div className="mt-5 grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]">
+      <main className="min-w-0">
+    {visible.length===0?<section className="rounded-[24px] border border-[#b8a797] bg-[#fbf6ef] p-7">
       <div className="flex items-center gap-3"><span className="h-3 w-3 rounded-full border border-[#b8a797]"/><span className="text-[11px] font-bold uppercase tracking-[.12em] text-[#9a8778]">Today</span></div>
       <h2 className="mt-7 font-serif text-[28px] font-semibold text-[#3E2312]">Nothing here yet.</h2>
       <p className="mt-3 max-w-xl text-[14px] leading-6 text-[#6b4a34]">When Gogo does something for you — runs research, opens a site, works through a task, or creates an output — it shows up here.</p>
@@ -127,5 +147,82 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
         </div>
       </section>)}
     </div>}
+      </main>
+
+      <aside className="hidden xl:block">
+        <div className="sticky top-8 space-y-4">
+          <section className="overflow-hidden rounded-[22px] border border-[#b8a797]/80 bg-[#fbf6ef] shadow-[0_14px_38px_rgba(62,35,18,.05)]">
+            <div className="border-b border-[#b8a797]/60 px-5 py-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#9a8778]">Now</p>
+                  <h2 className="mt-1 font-serif text-[23px] font-semibold text-[#3E2312]">Gogo at work</h2>
+                </div>
+                <span className="h-2.5 w-2.5 rounded-full bg-[#F18219] shadow-[0_0_0_5px_rgba(241,130,25,.10)]"/>
+              </div>
+            </div>
+            {activeRun?
+              <Link href={`/dashboard/activity/${encodeURIComponent(activeRun.id)}`} className="block px-5 py-4 transition hover:bg-[#f7efe6]">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="rounded-full bg-[#fdf0e2] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[.1em] text-[#D67528]">{statusLabel(activeRun.status)}</span>
+                  <span className="text-[11px] font-semibold text-[#9a8778]">{activeRun.progress||0}%</span>
+                </div>
+                <h3 className="mt-3 text-[15px] font-semibold leading-5 text-[#3E2312]">{activeRun.title}</h3>
+                <p className="mt-1.5 line-clamp-3 text-[12.5px] leading-5 text-[#6b4a34]">{runSubline(activeRun)}</p>
+                <div className="mt-4 flex gap-1">{[1,2,3,4,5].map(n=><span key={n} className={`h-[3px] flex-1 rounded-full ${n<=Math.max(1,Math.ceil((activeRun.progress||0)/20))?'bg-[#F18219]':'bg-[#d7c9bd]'}`}/>)}</div>
+                <div className="mt-3 text-[11px] font-bold text-[#4D2A50]">Open task →</div>
+              </Link>
+            :<div className="px-5 py-5 text-[13px] leading-5 text-[#6b4a34]">Nothing is running right now. Gogo is standing by.</div>}
+          </section>
+
+          <section className="rounded-[22px] border border-[#b8a797]/80 bg-[#fbf6ef] p-5 shadow-[0_14px_38px_rgba(62,35,18,.04)]">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#9a8778]">Needs you</p>
+                <h2 className="mt-1 font-serif text-[21px] font-semibold text-[#3E2312]">Approvals</h2>
+              </div>
+              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#f0eaf1] px-2 text-[11px] font-bold text-[#4D2A50]">{approvals.length}</span>
+            </div>
+            {approvals.length===0?<p className="mt-3 text-[12.5px] leading-5 text-[#6b4a34]">Nothing is waiting for your approval.</p>:
+              <div className="mt-3 space-y-2">
+                {approvals.slice(0,3).map((a:any)=><Link key={a.id} href="/dashboard/agent" className="block rounded-[14px] bg-[#fdf0e2] px-3.5 py-3 transition hover:bg-[#f9e6d1]">
+                  <div className="text-[12.5px] font-semibold text-[#3E2312]">{a.title}</div>
+                  <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-[#6b4a34]">{a.description||'Gogo is waiting for your decision.'}</div>
+                </Link>)}
+              </div>}
+          </section>
+
+          <section className="rounded-[22px] border border-[#b8a797]/80 bg-[#fbf6ef] p-5 shadow-[0_14px_38px_rgba(62,35,18,.04)]">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#9a8778]">Background Gogo</p>
+                <h2 className="mt-1 font-serif text-[21px] font-semibold text-[#3E2312]">Watching for you</h2>
+              </div>
+              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#f0eaf1] px-2 text-[11px] font-bold text-[#4D2A50]">{watchers.length}</span>
+            </div>
+            {watchers.length===0?<p className="mt-3 text-[12.5px] leading-5 text-[#6b4a34]">No active background watches.</p>:
+              <div className="mt-3 space-y-2.5">
+                {watchers.slice(0,4).map((w:any)=>{
+                  const condition=w.condition_json||{}
+                  const title=String(condition.title||condition.productName||condition.query||w.type||'Background watch')
+                  return <div key={w.id} className="rounded-[14px] border border-[#b8a797]/60 px-3.5 py-3">
+                    <div className="flex items-start gap-2.5">
+                      <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#714C77]"/>
+                      <div className="min-w-0">
+                        <div className="truncate text-[12.5px] font-semibold text-[#3E2312]">{title}</div>
+                        <div className="mt-1 text-[10.5px] text-[#9a8778]">Every {w.cadence_minutes||60} min · next {w.next_check_at?fmtTime(w.next_check_at):'—'}</div>
+                      </div>
+                    </div>
+                  </div>
+                })}
+              </div>}
+          </section>
+
+          <Link href="/dashboard/chat" className="flex h-12 items-center justify-between rounded-[16px] bg-[#4D2A50] px-4 text-[13px] font-bold text-[#fbf6ef] shadow-[0_14px_30px_rgba(77,42,80,.16)]">
+            <span>Talk to Gogo</span><span>→</span>
+          </Link>
+        </div>
+      </aside>
+    </div>
   </div>
 }
