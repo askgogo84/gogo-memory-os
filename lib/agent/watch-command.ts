@@ -96,7 +96,7 @@ export function parseProductStockWatchCommand(text: string): ReturnType<typeof n
     variant,
     addToCart,
     delivery:'both',
-    cadenceMinutes:15,
+    cadenceMinutes:60,
   })
 }
 
