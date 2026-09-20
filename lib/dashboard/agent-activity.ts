@@ -143,11 +143,14 @@ export function browserContextForRun(run:DashboardActivityRun){
   const meta=run.metadata||{}
   const handoff=meta?.handoff||null
   const browserStep=[...run.steps].reverse().find(s=>s.toolName==='secure_browser'||/browser/i.test(s.toolName)||s.output?.browser)
-  const browser=browserStep?.output?.browser||browserStep?.output?.browserState||null
+  // Some browser executors store the browser result directly in output_json,
+  // while others nest it under browser/browserState. Accept all live formats.
+  const browser=browserStep?.output?.browser||browserStep?.output?.browserState||browserStep?.output||null
   const rawUrl=String(browser?.url||handoff?.providerUrl||'')
   let hostname=''
   try{hostname=rawUrl?new URL(rawUrl).hostname:''}catch{}
   const mode=String(handoff?.mode||'')
+  const handoffActive=['paused','waiting_approval'].includes(run.status)
   return {
     hasBrowser:Boolean(browserStep||handoff),
     hostname,
@@ -155,8 +158,8 @@ export function browserContextForRun(run:DashboardActivityRun){
     status:String(browser?.status||''),
     summary:String(browser?.summary||run.summary||''),
     handoffMode:mode,
-    providerBlocked:mode==='device'||String(browser?.blockReason||'')==='provider_access_limited',
-    takeoverAvailable:Boolean(handoff?.takeoverUrl),
-    deviceHandoff:Boolean(mode==='device'&&handoff?.providerUrl),
+    providerBlocked:handoffActive&&(mode==='device'||String(browser?.blockReason||'')==='provider_access_limited'),
+    takeoverAvailable:handoffActive&&Boolean(handoff?.takeoverUrl),
+    deviceHandoff:handoffActive&&Boolean(mode==='device'&&handoff?.providerUrl),
   }
 }
