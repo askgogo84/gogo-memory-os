@@ -8,7 +8,7 @@ import { TAB_ICONS } from './icons'
 // Talk to Gogo remains available as the floating action button.
 export const TABS = [
   { key: 'today', label: 'Today', href: '/dashboard/today' },
-  { key: 'agent', label: 'Agent', href: '/dashboard/agent' },
+  { key: 'activity', label: 'Activity', href: '/dashboard/activity' },
   { key: 'memory', label: 'Memory', href: '/dashboard/memory' },
   { key: 'calendar', label: 'Calendar', href: '/dashboard/calendar' },
   { key: 'you', label: 'You', href: '/dashboard/you' },

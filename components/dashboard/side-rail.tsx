@@ -11,6 +11,7 @@ const primaryItems: NavItem[] = [
   { href: '/dashboard/home', label: 'Home', icon: '⌂' },
   { href: '/dashboard/today', label: 'Daily Gogo', icon: '✦' },
   { href: '/dashboard/chat', label: 'Talk to Gogo', icon: '◉' },
+  { href: '/dashboard/activity', label: 'Activity', icon: '↳' },
   { href: '/dashboard/agent', label: 'Gogo Agent', icon: '◎' },
   { href: '/dashboard/memory', label: 'Gogo Memory', icon: '◇' },
 ]
