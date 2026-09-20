@@ -1,9 +1,10 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCostBudget } from '@/lib/services/cost-guard'
+import { buildGmailConnectUrl } from '@/lib/services/google-gmail'
 import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { createProductStockWatcher, createWebSearchWatcher, normalizeProductStockWatcher, normalizeWebSearchWatcher } from './watchers'
+import { createInboxTriageWatcher, createProductStockWatcher, createWebSearchWatcher, normalizeProductStockWatcher, normalizeWebSearchWatcher } from './watchers'
 import { initialWatcherCadence, isUrgentWatchRequest, watcherUpgradeMessage } from './watch-cost-policy'
 
 function clean(value: unknown, max = 1000) {
@@ -45,6 +46,95 @@ export function parseWebWatchCommand(text: string) {
   })
 }
 
+
+export function parseInboxTriageWatchCommand(text:string) {
+  const raw=clean(text,1200)
+  if(!raw)return null
+  const mailbox=/\b(mail|email|emails|gmail|inbox)\b/i.test(raw)
+  const persistent=/\b(quietly|keep\s+an\s+eye|watch|monitor|scan|check|read)\b/i.test(raw)
+  const actionFocus=/\b(action|actions|actionable|needs?\s+(?:my\s+)?attention|need\s+to\s+do|steps?\s+to\s+take|tell\s+me\s+what\s+to\s+do|important)\b/i.test(raw)
+  if(!mailbox||!persistent||!actionFocus)return null
+  return {title:'Inbox action watch',delivery:'whatsapp' as const,cadenceMinutes:60}
+}
+
+export async function tryCreateInboxTriageWatchFromCommand(params:{
+  actor:AgentActor
+  surface:AgentSurface
+  text:string
+}) {
+  const parsed=parseInboxTriageWatchCommand(params.text)
+  if(!parsed)return null
+  const tg=String(params.actor.legacyTelegramId)
+
+  const {data:user,error:userError}=await supabaseAdmin.from('users')
+    .select('gmail_connected')
+    .eq('telegram_id',params.actor.legacyTelegramId)
+    .maybeSingle()
+  if(userError)throw new Error(`inbox_watch_user_read_failed:${userError.message}`)
+  if(!user?.gmail_connected) {
+    const connect=buildGmailConnectUrl(params.actor.legacyTelegramId)
+    return {
+      runId:'inbox-watch-needs-google',
+      status:'paused' as const,
+      capability:'email' as const,
+      risk:'low' as const,
+      text:connect
+        ? `I can do that, but Google Workspace needs to be connected first. Connect it here: ${connect}\n\nI’ll only request read-only Gmail access for this inbox watch.`
+        : 'I can do that, but Google Workspace needs to be connected first.',
+      blockedReason:'workspace_not_connected',
+      handledBy:'inbox-triage-watch',
+    }
+  }
+
+  const {data:existing,error:existingError}=await supabaseAdmin.from('agent_watchers')
+    .select('id,active')
+    .eq('telegram_id',tg)
+    .eq('type','email_triage')
+    .eq('active',true)
+    .limit(1)
+    .maybeSingle()
+  if(existingError)throw new Error(`inbox_watch_read_failed:${existingError.message}`)
+  if(existing?.id) {
+    return {
+      runId:`inbox-watch-existing-${existing.id}`,
+      status:'completed' as const,
+      capability:'email' as const,
+      risk:'low' as const,
+      text:'Your inbox watch is already active. I’m quietly checking hourly and I’ll only message when a new email looks like it needs action.',
+      handledBy:'inbox-triage-watch',
+    }
+  }
+
+  const condition={...parsed}
+  const now=new Date().toISOString()
+  const {data:run,error:runError}=await supabaseAdmin.from('agent_runs').insert({
+    telegram_id:tg,type:'watcher',capability:'email',status:'completed',
+    title:'Watch inbox for action items',
+    summary:'Gogo will quietly scan recent inbox mail and surface only new action items.',
+    progress:100,
+    why:'You asked Gogo to keep an eye on your inbox and tell you what needs action.',
+    source:params.surface,
+    metadata_json:{input_text:clean(params.text,1200),watcher_type:'email_triage',cadence_minutes:60,read_only:true},
+    started_at:now,updated_at:now,
+  }).select('id').single()
+  if(runError||!run?.id)throw new Error(`agent_run_create_failed:${runError?.message||'unknown'}`)
+
+  const watcher=await createInboxTriageWatcher({telegramId:tg,condition})
+  await supabaseAdmin.from('agent_activity').insert({
+    telegram_id:tg,run_id:String(run.id),event_type:'watcher_created',
+    message:'Gogo started a quiet read-only inbox action watch.',
+    metadata_json:{watcher_id:watcher.id,type:'email_triage',cadence_minutes:60,read_only:true},
+  })
+
+  return {
+    runId:String(run.id),
+    status:'completed' as const,
+    capability:'email' as const,
+    risk:'low' as const,
+    text:'Done — I’ll quietly check your inbox hourly and only message when a new email looks like it needs your attention. I’ll give you the next steps. I will not reply, send, delete, archive, approve, pay, or change anything without you.',
+    handledBy:'inbox-triage-watch',
+  }
+}
 
 function canonicalProductUrl(value: string) {
   try {
