@@ -3,6 +3,9 @@ import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/dashboard/session'
 import { browserContextForRun, getDashboardActivityRun } from '@/lib/dashboard/agent-activity'
 import { BrowserLiveShot } from '@/components/dashboard/browser-live-shot'
+import { findVaultCredentialForDomain } from '@/lib/vault/credential-store'
+import { findVaultProviderForDomain } from '@/lib/vault/providers'
+import { VaultResumeTaskButton } from '@/components/dashboard/vault-resume-task-button'
 
 export const dynamic='force-dynamic'
 
@@ -28,6 +31,14 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
     const u=new URL(pageUrl)
     displayUrl=u.hostname+u.pathname
   }catch{}
+
+  const latestOutput:any=latest?.output||{}
+  const humanAuth=latestOutput?.blockReason==='human_auth_required'||String(run.error||'')==='human_auth_required'
+  const host=browser.hostname||(()=>{try{return new URL(pageUrl).hostname}catch{return ''}})()
+  const vaultProvider=humanAuth&&host?findVaultProviderForDomain(host):null
+  const vaultCredential=vaultProvider
+    ? await findVaultCredentialForDomain(session.telegramId,host).catch(()=>null)
+    : null
 
   const headline=browser.providerBlocked?'Blocked by the provider':cloudTakeover?'Gogo is standing by':run.status==='running'?'Gogo is working in the browser':'Browser task'
 
@@ -80,6 +91,19 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
           <h2 className="mt-2 text-[15px] font-semibold text-[#3E2312]">{pageTitle||headline}</h2>
           <p className="mt-2 text-[12.5px] leading-5 text-[#6b4a34]">{browser.summary||run.summary}</p>
         </section>
+
+        {humanAuth&&vaultProvider&&<section className="rounded-[16px] border border-[#2a2a2a] bg-[#151515] p-5 text-[#F2EFEA]">
+          <p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#8f8f8f]">Secure Vault</p>
+          <h2 className="mt-2 text-[15px] font-semibold">{vaultCredential?'Login saved':'Login needed'} · {vaultProvider.label}</h2>
+          <p className="mt-2 text-[12.5px] leading-5 text-[#a9a9a9]">{vaultCredential
+            ? 'A domain-bound login is available. Gogo can retry this same browser task without putting the password into chat or model context.'
+            : 'Save the login securely. Gogo will use it only on the allowed provider domain, then resume this task.'}</p>
+          <div className="mt-4">
+            {vaultCredential
+              ? <VaultResumeTaskButton runId={run.id}/>
+              : <Link href={`/dashboard/you/vault/add/${vaultProvider.key}?returnRun=${encodeURIComponent(run.id)}`} className="inline-flex h-11 w-full items-center justify-center rounded-[11px] bg-[#F2EFEA] px-4 text-[13px] font-bold text-[#0B0B0B]">Add {vaultProvider.label} login</Link>}
+          </div>
+        </section>}
 
         {(cloudTakeover||deviceHandoff)&&<section className="rounded-[16px] bg-[#fdf0e2] p-5">
           <p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#D67528]">{deviceHandoff?'Your device':'Human handoff'}</p>
