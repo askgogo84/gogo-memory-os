@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { classifyPdfTextLocally } from '../lib/services/pdf-reader'
+import { classifyPdfTextLocally, extractPdfTextLocally, ensurePdfJsServerlessGlobals } from '../lib/services/pdf-reader'
 import { parseFlightTicketTextSafe } from '../lib/services/pdf-reader-whatsapp'
 
 const etihadText=`
@@ -66,6 +66,22 @@ assert.deepEqual(parsed?.passengers,['Divyashree Urs'])
 
 assert.equal(classifyPdfTextLocally('Invoice number 123. Total USD 55.00. Thank you for your purchase.'),null)
 assert.equal(parseFlightTicketTextSafe('This is a normal document with no booking reference.'),null)
+
+
+// Actual PDF.js runtime regression: Vercel Node does not provide browser canvas
+// globals. The helper must install enough server-side globals for text extraction
+// before pdf-parse/pdfjs is imported.
+;(globalThis as any).DOMMatrix=undefined
+;(globalThis as any).ImageData=undefined
+;(globalThis as any).Path2D=undefined
+ensurePdfJsServerlessGlobals()
+assert.equal(typeof (globalThis as any).DOMMatrix,'function')
+assert.equal(typeof (globalThis as any).ImageData,'function')
+assert.equal(typeof (globalThis as any).Path2D,'function')
+const tinyPdf=Buffer.from('JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3VyY2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSCj4+CmVuZG9iagoyIDAgb2JqCjw8Ci9CYXNlRm9udCAvSGVsdmV0aWNhIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMSAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL0NvbnRlbnRzIDcgMCBSIC9NZWRpYUJveCBbIDAgMCAzMDAgMjAwIF0gL1BhcmVudCA2IDAgUiAvUmVzb3VyY2VzIDw8Ci9Gb250IDEgMCBSIC9Qcm9jU2V0IFsgL1BERiAvVGV4dCAvSW1hZ2VCIC9JbWFnZUMgL0ltYWdlSSBdCj4+IC9Sb3RhdGUgMCAvVHJhbnMgPDwKCj4+IAogIC9UeXBlIC9QYWdlCj4+CmVuZG9iago0IDAgb2JqCjw8Ci9QYWdlTW9kZSAvVXNlTm9uZSAvUGFnZXMgNiAwIFIgL1R5cGUgL0NhdGFsb2cKPj4KZW5kb2JqCjUgMCBvYmoKPDwKL0F1dGhvciAoYW5vbnltb3VzKSAvQ3JlYXRpb25EYXRlIChEOjIwMjYwOTIwMTgxNjEyKzAwJzAwJykgL0NyZWF0b3IgKGFub255bW91cykgL0tleXdvcmRzICgpIC9Nb2REYXRlIChEOjIwMjYwOTIwMTgxNjEyKzAwJzAwJykgL1Byb2R1Y2VyIChSZXBvcnRMYWIgUERGIExpYnJhcnkgLSBcKG9wZW5zb3VyY2VcKSkgCiAgL1N1YmplY3QgKHVuc3BlY2lmaWVkKSAvVGl0bGUgKHVudGl0bGVkKSAvVHJhcHBlZCAvRmFsc2UKPj4KZW5kb2JqCjYgMCBvYmoKPDwKL0NvdW50IDEgL0tpZHMgWyAzIDAgUiBdIC9UeXBlIC9QYWdlcwo+PgplbmRvYmoKNyAwIG9iago8PAovRmlsdGVyIFsgL0FTQ0lJODVEZWNvZGUgL0ZsYXRlRGVjb2RlIF0gL0xlbmd0aCAxNzEKPj4Kc3RyZWFtCkdhcm84XSswRWgmNENsWmlmbjJPRzhLYTctT0llRTklTGtKPl9qPDZuR2UyJDhyU0k5MS9qXmVOOFQ8S1EkIT5CWXJXL2I9RyVtQiI9a29QJD0nSEMpQyFmcEIpKy45WUM0VVgpYUYyNXAvazFba1QlM0NNXV1pXSlPO2FNMUosdCdRJSxIJWZCZ2dSU0JLbldbaWJKSDlBWCRwImNbXzUyNTJIXEYiX2J+PmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDgKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDYxIDAwMDAwIG4gCjAwMDAwMDAwOTIgMDAwMDAgbiAKMDAwMDAwMDE5OSAwMDAwMCBuIAowMDAwMDAwMzkyIDAwMDAwIG4gCjAwMDAwMDA0NjAgMDAwMDAgbiAKMDAwMDAwMDcyMSAwMDAwMCBuIAowMDAwMDAwNzgwIDAwMDAwIG4gCnRyYWlsZXIKPDwKL0lEIApbPGMzYjZhOGE3ZDAyZDg5OGE2NjI1NTcyMTAyZGRmODhjPjxjM2I2YThhN2QwMmQ4OThhNjYyNTU3MjEwMmRkZjg4Yz5dCiUgUmVwb3J0TGFiIGdlbmVyYXRlZCBQREYgZG9jdW1lbnQgLS0gZGlnZXN0IChvcGVuc291cmNlKQoKL0luZm8gNSAwIFIKL1Jvb3QgNCAwIFIKL1NpemUgOAo+PgpzdGFydHhyZWYKMTA0MQolJUVPRgo=','base64')
+const tinyText=await extractPdfTextLocally(tinyPdf)
+assert.match(tinyText,/Booking reference TEST12/)
+assert.match(tinyText,/BLR 22:15 27 Sep 2026/)
 
 // Regression guard: aircraft models must never become flight numbers.
 assert.equal(parseFlightTicketTextSafe(`
