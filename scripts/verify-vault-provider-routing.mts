@@ -19,3 +19,11 @@ assert.match(watchers,/buildVaultAddLink/)
 assert.match(watchers,/Don.t send your password here/)
 
 console.log('Vault provider routing/background integration passed')
+
+const dashboardChat=await import('node:fs').then(fs=>fs.readFileSync('app/api/dashboard/chat/route.ts','utf8'))
+assert.match(dashboardChat,/tryRunBrowserCommand/)
+assert.ok(
+  dashboardChat.indexOf("tryRunBrowserCommand({ actor, surface:'web', text })") <
+  dashboardChat.indexOf('tryRunGeneralPlan({'),
+  'Vault-backed provider browser tasks must beat the dashboard generic planner',
+)
