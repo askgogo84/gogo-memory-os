@@ -397,18 +397,12 @@ async function processProductStockWatcher(watcher:any, now:Date) {
 
   const availability = assessProductAvailabilityText(browser.pageText, condition.variant)
   const priorAvailability = String(watcher.last_state_json?.availability || 'unknown')
-  const activeCount = await activeWebWatchCount(telegramId)
 
   if (availability !== 'available') {
     const quietChecks = Math.max(0, Number(watcher.last_state_json?.quietChecks || 0)) + 1
-    const cadenceMinutes = adaptiveWatcherCadence({
-      budget,
-      activeWatcherCount:activeCount,
-      quietChecks,
-      material:false,
-      usageRatio:allowance.state?.usageRatio || 0,
-      now,
-    })
+    // Product availability is a direct page check, not a broad web-search watch.
+    // Keep the user's promised hourly cadence while the cost guard allows it.
+    const cadenceMinutes = Math.max(60, condition.cadenceMinutes)
     await supabaseAdmin.from('agent_watchers').update({
       cadence_minutes:cadenceMinutes,
       condition_json:{ ...condition, cadenceMinutes },
