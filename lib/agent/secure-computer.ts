@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -47,6 +48,79 @@ function allowedHosts(url:string){
   return {hostname,allow:{[hostname]:[],[`*.${hostname}`]:[]}}
 }
 
+const VAULT_LOGIN_SCRIPT=String.raw`
+const { chromium } = require('playwright');
+const profile = '${BROWSER_PROFILE_DIR}';
+const url = process.env.GOGO_LOGIN_URL || '';
+const username = process.env.GOGO_VAULT_USERNAME || '';
+const secret = process.env.GOGO_VAULT_SECRET || '';
+if (!url || !username || !secret) throw new Error('missing_vault_login_inputs');
+
+const clean = s => String(s||'').replace(/\s+/g,' ').trim();
+const visible = async loc => { try { return await loc.isVisible(); } catch { return false; } };
+async function firstVisible(page, selectors){
+  for (const selector of selectors){
+    const loc=page.locator(selector).first();
+    if(await visible(loc)) return loc;
+  }
+  return null;
+}
+async function model(page){
+  return await page.evaluate(() => {
+    const clean = s => String(s||'').replace(/\s+/g,' ').trim();
+    const visible = el => { try { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'; } catch { return true; } };
+    const inputs = el => {
+      const id=el.id||''; const name=el.getAttribute('name')||''; const type=(el.getAttribute('type')||el.tagName||'').toLowerCase();
+      const label=id ? clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||'') : '';
+      let selector='';
+      if(id) selector='#'+CSS.escape(id); else if(name) selector=el.tagName.toLowerCase()+'[name="'+CSS.escape(name)+'"]'; else selector=el.tagName.toLowerCase();
+      return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')};
+    };
+    return {
+      url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,18000),
+      forms:Array.from(document.forms).filter(visible).slice(0,16).map(f=>({
+        action:f.action||location.href,method:(f.method||'get').toLowerCase(),
+        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(inputs)
+      }))
+    };
+  });
+}
+
+(async()=>{
+  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2']});
+  const page=context.pages()[0]||await context.newPage();
+  let usernameFilled=false,passwordFilled=false,submitted=false;
+  try{
+    await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+    await page.waitForTimeout(800);
+    const user=await firstVisible(page,[
+      'input[autocomplete="username"]','input[type="email"]','input[name*="user" i]',
+      'input[name*="email" i]','input[name*="login" i]','input[type="tel"]'
+    ]);
+    if(user){ await user.fill(username,{timeout:10000}); usernameFilled=true; }
+    let pass=await firstVisible(page,['input[autocomplete="current-password"]','input[type="password"]']);
+    if(!pass && usernameFilled){
+      const next=await firstVisible(page,[
+        'button:has-text("Continue")','button:has-text("Next")','button:has-text("Sign in")',
+        'button:has-text("Log in")','button[type="submit"]','input[type="submit"]'
+      ]);
+      if(next){ await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200); }
+      pass=await firstVisible(page,['input[autocomplete="current-password"]','input[type="password"]']);
+    }
+    if(pass){
+      await pass.fill(secret,{timeout:10000}); passwordFilled=true;
+      const submit=await firstVisible(page,[
+        'button:has-text("Log in")','button:has-text("Sign in")','button:has-text("Login")',
+        'button[type="submit"]','input[type="submit"]'
+      ]);
+      if(submit){ await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800); }
+    }
+    const out=await model(page);
+    out.vaultLogin={usernameFilled,passwordFilled,submitted};
+    console.log(JSON.stringify(out));
+  } finally { await context.close(); }
+})().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
+`
 const BROWSER_SCRIPT=String.raw`
 const { chromium } = require('playwright');
 const encoded = process.argv[2];
@@ -129,7 +203,10 @@ async function getComputer(userId:string,targetUrl:string){
     ports:BROWSER_PORTS, resources:{vcpus:1}, networkPolicy:BROWSER_SETUP_NETWORK,
   } as any)
   await ensureBrowserRuntime(sandbox)
-  await sandbox.writeFiles([{path:`${SANDBOX_WORKDIR}/gogo-browser.js`,content:Buffer.from(BROWSER_SCRIPT)}])
+  await sandbox.writeFiles([
+    {path:`${SANDBOX_WORKDIR}/gogo-browser.js`,content:Buffer.from(BROWSER_SCRIPT)},
+    {path:`${SANDBOX_WORKDIR}/gogo-vault-login.js`,content:Buffer.from(VAULT_LOGIN_SCRIPT)},
+  ])
   const {allow}=allowedHosts(targetUrl)
   await sandbox.updateNetworkPolicy({allow} as any)
   return {sandbox,name}
@@ -160,6 +237,31 @@ function normalizeActions(raw:any,initialUrl:string):BrowserAction[]{
   return out
 }
 
+function pageLooksLikeLogin(page:any){
+  const text=`${page?.title||''} ${page?.text||''}`.toLowerCase()
+  const inputs=(page?.forms||[]).flatMap((form:any)=>Array.isArray(form?.inputs)?form.inputs:[])
+  const descriptors=inputs.map((input:any)=>`${input?.name||''} ${input?.type||''} ${input?.label||''}`.toLowerCase())
+  const loginInput=descriptors.some((value:string)=>/\b(password|username|email|phone|mobile|login)\b/.test(value))
+  const loginCopy=/\b(sign in|log in|login|account login)\b/.test(text)
+  return loginInput&&loginCopy
+}
+
+async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;secret:string}){
+  const result=await params.sandbox.runCommand({
+    cmd:'bash',
+    args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-vault-login.js`],
+    env:{
+      GOGO_LOGIN_URL:params.url,
+      GOGO_VAULT_USERNAME:params.username,
+      GOGO_VAULT_SECRET:params.secret,
+    },
+  } as any)
+  if(result.exitCode!==0)throw new Error(`vault_browser_login_failed:${safeText(await result.stderr(),500)}`)
+  const stdout=await result.stdout()
+  const lines=String(stdout||'').trim().split('\n').filter(Boolean)
+  if(!lines.length)throw new Error('vault_browser_login_empty')
+  return JSON.parse(lines[lines.length-1])
+}
 async function inspect(userId:string,url:string){
   const {sandbox,name}=await getComputer(userId,url)
   const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[]})).toString('base64')
