@@ -23,3 +23,8 @@ assert.doesNotMatch(connect,/password|secret/i,'signed link builder must never r
 assert.doesNotMatch(resume,/secret_ciphertext|username_ciphertext/,'resume endpoint must never read Vault ciphertext')
 
 console.log('Vault handoff + resume contract passed')
+
+const browserPage=fs.readFileSync('app/dashboard/(app)/activity/[runId]/browser/page.tsx','utf8')
+assert.match(browserPage,/Secure Vault/)
+assert.match(browserPage,/VaultResumeTaskButton/)
+assert.match(browserPage,/Add \{vaultProvider\.label\} login/)
