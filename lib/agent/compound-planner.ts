@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { addToListDetailed, getList } from '@/lib/data/lists'
 import { dispatchThroughSameBrain } from './same-brain'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
@@ -6,7 +7,7 @@ import type { AgentSurface } from './orchestrator'
 export type CompoundRunResult = {
   runId: string
   status: 'completed' | 'failed'
-  capability: 'reminders'
+  capability: 'reminders' | 'lists'
   risk: 'low'
   text: string
   handledBy: 'compound-plan'
@@ -17,6 +18,12 @@ type ExpiryPlan = {
   target: string
   amount: number
   unit: 'day' | 'week' | 'month' | 'year'
+}
+
+type ListReminderPlan = {
+  listName: string
+  items: string[]
+  reminderCommand: string
 }
 
 type CandidateDoc = {
@@ -38,6 +45,114 @@ function numberFrom(value: string): number | null {
   const n = Number(value)
   if (Number.isInteger(n) && n > 0 && n <= 120) return n
   return WORD_NUMBER[value.toLowerCase()] || null
+}
+
+function cleanListItem(value: string) {
+  return String(value || '').replace(/^[,;\s]+|[,;\s.?!]+$/g, '').replace(/\s+/g, ' ').trim()
+}
+
+export function parseListReminderPlan(text: string): ListReminderPlan | null {
+  const clean = String(text || '').trim().replace(/\s+/g, ' ')
+  const match = clean.match(/^(?:please\s+)?(?:create|make)\s+(?:a\s+)?list\s+(?:called|named|titled)\s+(.+?)\s+with\s+(.+?)(?:[.!?]+\s*|\s+(?:and|then|also)\s+)remind\s+me\s+(.+)$/i)
+  if (!match?.[1] || !match?.[2] || !match?.[3]) return null
+
+  const listName = cleanListItem(match[1]).slice(0, 180)
+  const items = match[2]
+    .split(/\s*(?:,|\band\b)\s*/i)
+    .map(cleanListItem)
+    .filter(Boolean)
+    .slice(0, 30)
+  const reminderTail = cleanListItem(match[3])
+
+  if (!listName || items.length === 0 || !reminderTail) return null
+  return { listName, items, reminderCommand: `remind me ${reminderTail}` }
+}
+
+function parseExplicitListRead(text: string): string | null {
+  const raw = String(text || '').trim()
+  const called = raw.match(/^\s*(?:show|open|view)(?:\s+me)?\s+(?:my\s+|the\s+)?list\s+(?:called|named|titled)\s+(.+?)\s*[.?!]*$/i)
+  if (called?.[1]) return cleanListItem(called[1]).slice(0, 180)
+  const direct = raw.match(/^\s*(?:show|open|view)(?:\s+me)?\s+(?:my\s+|the\s+)?(.+?)\s+list\s*[.?!]*$/i)
+  if (direct?.[1]) return cleanListItem(direct[1]).slice(0, 180)
+  return null
+}
+
+function isReminderReadQuery(text: string) {
+  const raw = String(text || '').trim().toLowerCase().replace(/[?!.]+$/g, '')
+  return (
+    /^(?:what|which)\s+reminders?\s+(?:do\s+i\s+have|have\s+i|are\s+(?:set|scheduled))(?:\s+for\s+.+)?$/.test(raw) ||
+    /^(?:show|list|display)\s+(?:me\s+)?(?:my\s+)?reminders?(?:\s+for\s+.+)?$/.test(raw) ||
+    /^(?:my|pending|active|upcoming)\s+reminders?(?:\s+for\s+.+)?$/.test(raw)
+  )
+}
+
+async function actorTimezone(actor: AgentActor) {
+  const { data } = await supabaseAdmin.from('users').select('timezone').eq('telegram_id', actor.legacyTelegramId).maybeSingle()
+  return String(data?.timezone || 'Asia/Kolkata')
+}
+
+function localDateKey(value: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(value)
+  const out: Record<string, string> = {}
+  for (const part of parts) if (part.type !== 'literal') out[part.type] = part.value
+  return `${out.year}-${out.month}-${out.day}`
+}
+
+async function readReminderQuery(actor: AgentActor, text: string) {
+  const timezone = await actorTimezone(actor)
+  const lower = String(text || '').toLowerCase()
+  const targetDate = /\btomorrow\b/i.test(lower)
+    ? localDateKey(new Date(Date.now() + 36 * 60 * 60 * 1000), timezone)
+    : /\btoday\b/i.test(lower)
+      ? localDateKey(new Date(), timezone)
+      : null
+
+  const { data, error } = await supabaseAdmin.from('reminders')
+    .select('id,message,remind_at,timezone')
+    .eq('telegram_id', actor.legacyTelegramId)
+    .eq('sent', false)
+    .order('remind_at', { ascending: true })
+    .limit(50)
+  if (error) throw new Error(`compound_reminder_read_failed:${error.message}`)
+
+  const rows = (data || []).filter((row: any) => {
+    if (!targetDate) return true
+    const due = new Date(String(row.remind_at || ''))
+    return Number.isFinite(due.getTime()) && localDateKey(due, timezone) === targetDate
+  }).slice(0, 20)
+
+  if (!rows.length) return targetDate ? 'You have no reminders for that day.' : 'You have no active reminders.'
+
+  const fmt = new Intl.DateTimeFormat('en-IN', {
+    timeZone: timezone,
+    weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true,
+  })
+  const heading = /\btomorrow\b/i.test(lower) ? '⏰ *Reminders for tomorrow*' : /\btoday\b/i.test(lower) ? '⏰ *Reminders for today*' : '⏰ *Your reminders*'
+  return `${heading}\n\n${rows.map((row: any, index: number) => `${index + 1}. ${row.message || 'Reminder'} — ${fmt.format(new Date(row.remind_at))}`).join('\n')}`
+}
+
+async function createSimpleRun(params: {
+  actor: AgentActor
+  surface: AgentSurface
+  capability: 'reminders' | 'lists'
+  title: string
+  why: string
+  planType: string
+  inputText: string
+}) {
+  const now = new Date().toISOString()
+  const { data, error } = await supabaseAdmin.from('agent_runs').insert({
+    telegram_id: String(params.actor.legacyTelegramId), type: 'compound', capability: params.capability,
+    status: 'running', title: params.title, summary: 'Gogo is executing a deterministic agent plan.', progress: 5,
+    why: params.why, source: params.surface,
+    metadata_json: { input_text: String(params.inputText).slice(0, 2000), plan_type: params.planType },
+    started_at: now, updated_at: now,
+  }).select('id').single()
+  if (error || !data?.id) throw new Error(`compound_run_create_failed:${error?.message || 'unknown'}`)
+  return String(data.id)
 }
 
 export function parseExpiryReminderPlan(text: string): ExpiryPlan | null {
@@ -151,12 +266,120 @@ async function logActivity(telegramId: number, runId: string, eventType: string,
   if (error) console.error('COMPOUND_AGENT_ACTIVITY_FAILED:', error.message)
 }
 
+async function tryRunListReminderPlan(params: {
+  actor: AgentActor
+  surface: AgentSurface
+  text: string
+  messageId?: string | number | null
+}): Promise<CompoundRunResult | null> {
+  const plan = parseListReminderPlan(params.text)
+  if (!plan) return null
+
+  const runId = await createSimpleRun({
+    actor: params.actor, surface: params.surface, capability: 'lists',
+    title: `Create ${plan.listName} and reminder`,
+    why: 'This request contains two distinct private actions that must execute and verify independently.',
+    planType: 'list_to_reminder', inputText: params.text,
+  })
+  const definitions = [
+    ['lists.create', `Create ${plan.listName}`],
+    ['reminder.create', 'Create the requested reminder'],
+  ] as const
+  const ids = [
+    await addStep({ telegramId: params.actor.legacyTelegramId, runId, ordinal: 1, toolName: definitions[0][0], title: definitions[0][1] }),
+    await addStep({ telegramId: params.actor.legacyTelegramId, runId, ordinal: 2, toolName: definitions[1][0], title: definitions[1][1] }),
+  ]
+  await logActivity(params.actor.legacyTelegramId, runId, 'plan_created', 'Gogo created a verified List → Reminder plan.', { surface: params.surface })
+
+  try {
+    await stepState(ids[0], 'running')
+    const addResult = await addToListDetailed(params.actor.legacyTelegramId, plan.listName, plan.items)
+    const stored = await getList(params.actor.legacyTelegramId, plan.listName)
+    const storedItems = Array.isArray(stored?.items) ? stored.items : []
+    const norm = (v: unknown) => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+    const present = new Set(storedItems.map((item: any) => norm(item?.text || item?.name || item)))
+    const missing = plan.items.filter(item => !present.has(norm(item)))
+    if (!stored?.id || missing.length) throw new Error(`compound_list_verification_failed:${missing.join('|') || 'list_missing'}`)
+    await stepState(ids[0], 'completed', { listId: String(stored.id), listName: stored.list_name, requestedItems: plan.items, itemCount: storedItems.length, added: addResult.added || [], verified: true })
+    await runState(runId, params.actor.legacyTelegramId, { progress: 50 })
+
+    await stepState(ids[1], 'running')
+    const reminderResult = await dispatchThroughSameBrain({ actor: params.actor, text: plan.reminderCommand, messageId: params.messageId })
+    await stepState(ids[1], 'completed', { command: plan.reminderCommand, handledBy: reminderResult.handledBy, verified: true })
+
+    const completedAt = new Date().toISOString()
+    const text = `✅ Done\n\n*${stored.list_name}*\n${plan.items.map(item => `• ${item}`).join('\n')}\n\n${reminderResult.text}`
+    await runState(runId, params.actor.legacyTelegramId, {
+      status: 'completed', summary: text.slice(0, 1800), progress: 100, completed_at: completedAt,
+      metadata_json: { input_text: String(params.text).slice(0, 2000), plan_type: 'list_to_reminder', list_name: stored.list_name, requested_items: plan.items, reminder_command: plan.reminderCommand, handled_by: reminderResult.handledBy },
+    })
+    await logActivity(params.actor.legacyTelegramId, runId, 'run_completed', 'Gogo completed and verified the List → Reminder plan.', { handled_by: reminderResult.handledBy })
+    return { runId, status: 'completed', capability: 'lists', risk: 'low', text, handledBy: 'compound-plan', steps: definitions.map((d, i) => ({ ordinal: i + 1, toolName: d[0], title: d[1], status: 'completed' })) }
+  } catch (err: any) {
+    const message = String(err?.message || 'compound_list_reminder_failed')
+    await runState(runId, params.actor.legacyTelegramId, { status: 'failed', summary: 'Gogo could not complete the List → Reminder plan.', progress: 100, completed_at: new Date().toISOString(), error: message.slice(0, 500) }).catch(() => {})
+    await logActivity(params.actor.legacyTelegramId, runId, 'run_failed', 'Gogo could not complete the List → Reminder plan.', { error: message.slice(0, 300) })
+    throw err
+  }
+}
+
+async function tryRunReadOnlyCoreQuery(params: {
+  actor: AgentActor
+  surface: AgentSurface
+  text: string
+}): Promise<CompoundRunResult | null> {
+  const listName = parseExplicitListRead(params.text)
+  const reminderRead = isReminderReadQuery(params.text)
+  if (!listName && !reminderRead) return null
+
+  const capability: 'lists' | 'reminders' = listName ? 'lists' : 'reminders'
+  const title = listName ? `Read ${listName} list` : 'Read reminders'
+  const runId = await createSimpleRun({
+    actor: params.actor, surface: params.surface, capability, title,
+    why: 'This is a read-only query and must never mutate user state.',
+    planType: listName ? 'list_read_only' : 'reminder_read_only', inputText: params.text,
+  })
+  const toolName = listName ? 'lists.read' : 'reminders.read'
+  const stepId = await addStep({ telegramId: params.actor.legacyTelegramId, runId, ordinal: 1, toolName, title })
+
+  try {
+    await stepState(stepId, 'running')
+    let text: string
+    if (listName) {
+      const list = await getList(params.actor.legacyTelegramId, listName)
+      if (!list) text = `I could not find a list called "${listName}".`
+      else {
+        const items = Array.isArray(list.items) ? list.items : []
+        text = items.length
+          ? `*${list.list_name}*\n${items.map((item: any) => `${item?.done ? '✅' : '•'} ${item?.text || item?.name || item}`).join('\n')}`
+          : `*${list.list_name}* is empty.`
+      }
+    } else {
+      text = await readReminderQuery(params.actor, params.text)
+    }
+    await stepState(stepId, 'completed', { readOnly: true, mutated: false })
+    await runState(runId, params.actor.legacyTelegramId, { status: 'completed', summary: text.slice(0, 1800), progress: 100, completed_at: new Date().toISOString() })
+    await logActivity(params.actor.legacyTelegramId, runId, 'run_completed', 'Gogo completed a read-only core query.', { tool: toolName, mutated: false })
+    return { runId, status: 'completed', capability, risk: 'low', text, handledBy: 'compound-plan', steps: [{ ordinal: 1, toolName, title, status: 'completed' }] }
+  } catch (err: any) {
+    const message = String(err?.message || 'compound_read_failed')
+    await runState(runId, params.actor.legacyTelegramId, { status: 'failed', summary: 'Gogo could not complete the read-only query.', progress: 100, completed_at: new Date().toISOString(), error: message.slice(0, 500) }).catch(() => {})
+    throw err
+  }
+}
+
 export async function tryRunExpiryReminderPlan(params: {
   actor: AgentActor
   surface: AgentSurface
   text: string
   messageId?: string | number | null
 }): Promise<CompoundRunResult | null> {
+  const readOnly = await tryRunReadOnlyCoreQuery(params)
+  if (readOnly) return readOnly
+
+  const listReminder = await tryRunListReminderPlan(params)
+  if (listReminder) return listReminder
+
   const plan = parseExpiryReminderPlan(params.text)
   if (!plan) return null
 
