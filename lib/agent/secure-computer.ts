@@ -3,6 +3,7 @@ import { Sandbox } from '@vercel/sandbox'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -39,6 +40,15 @@ function safeText(value:unknown,max=1200){
 }
 
 const userSandboxName=browserSandboxNameFor
+
+async function canonicalBrowserOwnerId(value:string){
+  const raw=String(value||'').trim()
+  if(!raw)throw new Error('browser_owner_missing')
+  if(!/^-?\d+$/.test(raw))return raw
+  const {data,error}=await supabaseAdmin.from('users').select('id').eq('telegram_id',Number(raw)).maybeSingle()
+  if(error)throw new Error(`browser_owner_lookup_failed:${error.message}`)
+  return data?.id?String(data.id):raw
+}
 
 function allowedHosts(url:string){
   const u=new URL(url)
@@ -197,7 +207,8 @@ async function isConsequentialControl(page,selector){
 `
 
 async function getComputer(userId:string,targetUrl:string){
-  const name=userSandboxName(userId)
+  const canonicalUserId=await canonicalBrowserOwnerId(userId)
+  const name=userSandboxName(canonicalUserId)
   const sandbox=await Sandbox.getOrCreate({
     name, image:SANDBOX_IMAGE, region:SANDBOX_REGION, timeout:20*60*1000, persistent:true,
     ports:BROWSER_PORTS, resources:{vcpus:1}, networkPolicy:BROWSER_SETUP_NETWORK,
