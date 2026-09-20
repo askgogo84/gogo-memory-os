@@ -28,3 +28,9 @@ const browserPage=fs.readFileSync('app/dashboard/(app)/activity/[runId]/browser/
 assert.match(browserPage,/Secure Vault/)
 assert.match(browserPage,/VaultResumeTaskButton/)
 assert.match(browserPage,/Add \{vaultProvider\.label\} login/)
+
+assert.match(browser,/browser_resume_permission_blocked/)
+assert.match(browser,/permission\(tg\)/)
+assert.match(browser,/evaluateAgentExecutionPolicy/)
+assert.match(browser,/executeApprovedBrowserCommand\(\{actor:params\.actor,runId:String\(params\.runId\)\}\)/)
+assert.match(browser,/eq\('status','approved'\)/)
