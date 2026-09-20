@@ -21,9 +21,11 @@ for(const source of [handoff,shot]){
   assert.match(source,/telegram_id/)
   assert.match(source,/runId/)
 }
-assert.match(handoff,/handoff\.providerUrl/)
-assert.match(handoff,/handoff\.takeoverUrl/)
+assert.match(handoff,/providerUrl/)
+assert.match(handoff,/takeoverUrl/)
 assert.match(shot,/\/shot/)
+assert.match(browser,/handoffActive/)
+assert.match(browser,/latest\?\.output\?\.browserState\|\|latest\?\.output/)
 assert.match(side,/\/dashboard\/activity/)
 assert.match(tabs,/key: 'activity'/)
 
