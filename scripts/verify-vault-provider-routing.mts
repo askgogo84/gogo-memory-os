@@ -16,6 +16,6 @@ assert.match(browser,/mode:'read'/)
 const watchers=await import('node:fs').then(fs=>fs.readFileSync('lib/agent/watchers.ts','utf8'))
 assert.match(watchers,/human_auth_required/)
 assert.match(watchers,/buildVaultAddLink/)
-assert.match(watchers,/Don't send your password here/)
+assert.match(watchers,/Don.t send your password here/)
 
 console.log('Vault provider routing/background integration passed')
