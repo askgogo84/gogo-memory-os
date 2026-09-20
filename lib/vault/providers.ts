@@ -47,7 +47,7 @@ export const VAULT_PROVIDERS:Record<string,VaultProvider>={
     note:'IRCTC may still require CAPTCHA/OTP or may block cloud browsers. Gogo will hand control to you when needed.',
   },
   booking:{
-    key:'booking',label:'Booking.com',aliases:['booking.com','booking'],domains:['booking.com'],
+    key:'booking',label:'Booking.com',aliases:['booking.com'],domains:['booking.com'],
     loginUrl:'https://account.booking.com/sign-in',
     usernameLabel:'Email',secretLabel:'Password',
     note:'Used only on booking.com through Gogo’s secure browser.',
