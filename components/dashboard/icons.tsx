@@ -83,7 +83,9 @@ export function WhatsAppIcon({ className }: IconProps) {
 }
 
 export const TAB_ICONS = {
+  gogo: AgentIcon,
   today: TodayIcon,
+  activity: TodayIcon,
   agent: AgentIcon,
   memory: MemoryIcon,
   calendar: CalendarIcon,
