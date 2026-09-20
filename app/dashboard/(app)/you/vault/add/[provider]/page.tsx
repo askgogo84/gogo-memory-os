@@ -8,7 +8,16 @@ export const dynamic='force-dynamic'
 
 export default async function AddVaultCredentialPage({params,searchParams}:{params:Promise<{provider:string}>;searchParams:Promise<{id?:string;label?:string;returnRun?:string}>}){
   const session=await getSession()
-  if(!session)redirect('/dashboard')
+  if(!session){
+    const {provider:pendingProvider}=await params
+    const pending=await searchParams
+    const destination=new URLSearchParams()
+    if(pending?.id)destination.set('id',String(pending.id))
+    if(pending?.label)destination.set('label',String(pending.label))
+    if(pending?.returnRun)destination.set('returnRun',String(pending.returnRun))
+    const next='/dashboard/you/vault/add/'+encodeURIComponent(pendingProvider)+(destination.toString()?'?'+destination.toString():'')
+    redirect('/dashboard?next='+encodeURIComponent(next))
+  }
   const {provider:providerKey}=await params
   const query=await searchParams
   const provider=getVaultProvider(providerKey)
