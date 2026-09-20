@@ -361,7 +361,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
             authGate=detectHumanAuthGate(page)
             const stillLogin=pageLooksLikeLogin(page)
             const loginText=`${page?.title||''} ${page?.text||''}`.toLowerCase()
-            const explicitFailure=/\b(incorrect|wrong|invalid)\s+(?:username|email|phone|password|credentials?)\b|\bpassword\s+(?:is\s+)?incorrect\b|\btry\s+again\b/.test(loginText)
+            const explicitFailure=/\b(?:incorrect|wrong|invalid)\s+(?:username|email|phone|password|credentials?)\b|\b(?:username|email|phone|password|credentials?)\s+(?:is\s+|are\s+)?(?:incorrect|wrong|invalid)\b|\bcredentials?\s+(?:do\s+not\s+match|not\s+recognized)\b/.test(loginText)
 
             if(!authGate.required&&!stillLogin){
               await recordVaultBrowserOutcome({
