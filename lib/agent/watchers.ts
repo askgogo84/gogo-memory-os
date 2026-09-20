@@ -5,6 +5,8 @@ import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { checkCostAllowance, COST_ESTIMATES_PAISE, getCostBudget, recordCostEvent } from '@/lib/services/cost-guard'
 import { adaptiveWatcherCadence } from './watch-cost-policy'
 import { runSecureBrowser } from './secure-computer'
+import { listRecentWorkspaceInbox } from './google-workspace-read'
+import type { AgentActor } from './actor'
 import {
   appendBoundedHistory,
   assessWebWatchResult,
@@ -20,6 +22,12 @@ export type DeadlineWatcherCondition = {
   deadline: string
   notifyBeforeHours: number
   delivery: WatcherDelivery
+}
+
+export type InboxTriageWatcherCondition = {
+  title: string
+  delivery: WatcherDelivery
+  cadenceMinutes: number
 }
 
 export type ProductStockWatcherCondition = {
@@ -56,6 +64,14 @@ export function normalizeDeadlineWatcher(input: any): DeadlineWatcherCondition |
   const delivery = normalizeDelivery(input?.delivery)
   if (!title || !deadline) return null
   return { title, deadline, notifyBeforeHours, delivery }
+}
+
+export function normalizeInboxTriageWatcher(input:any): InboxTriageWatcherCondition | null {
+  const title=String(input?.title||'Inbox action watch').trim().slice(0,180)
+  const delivery=normalizeDelivery(input?.delivery)
+  const cadenceMinutes=Math.max(60,Math.min(24*60,Math.floor(Number(input?.cadenceMinutes||60))))
+  if(!title)return null
+  return {title,delivery,cadenceMinutes}
 }
 
 export function normalizeProductStockWatcher(input: any): ProductStockWatcherCondition | null {
@@ -110,6 +126,25 @@ export async function createDeadlineWatcher(params: {
     next_check_at: nextCheck.toISOString(),
   }).select('id, type, condition_json, cadence_minutes, active, next_check_at, created_at').single()
   if (error || !data) throw new Error(`agent_watcher_create_failed:${error?.message || 'unknown'}`)
+  return data
+}
+
+export async function createInboxTriageWatcher(params:{
+  telegramId:string
+  condition:InboxTriageWatcherCondition
+  goalId?:string|null
+}) {
+  const {data,error}=await supabaseAdmin.from('agent_watchers').insert({
+    telegram_id:params.telegramId,
+    goal_id:params.goalId||null,
+    type:'email_triage',
+    condition_json:params.condition,
+    cadence_minutes:params.condition.cadenceMinutes,
+    active:true,
+    last_state_json:{seenMessageIds:[],lastActionCount:0},
+    next_check_at:new Date().toISOString(),
+  }).select('id,type,condition_json,cadence_minutes,active,next_check_at,created_at').single()
+  if(error||!data)throw new Error(`agent_watcher_create_failed:${error?.message||'unknown'}`)
   return data
 }
 
@@ -303,6 +338,136 @@ async function createProductIdea(telegramId:string, condition:ProductStockWatche
     status:'new',
   })
   if (error) console.error('AGENT_PRODUCT_WATCH_IDEA_FAILED:', error.message)
+}
+
+
+function senderLabel(value:string) {
+  return String(value||'').replace(/<[^>]+>/g,'').replace(/"/g,'').trim().slice(0,80) || 'sender'
+}
+
+export function inboxActionStep(message:any): {subject:string;from:string;step:string}|null {
+  const subject=String(message?.subject||'(No subject)').replace(/\s+/g,' ').trim().slice(0,180)
+  const from=senderLabel(String(message?.from||''))
+  const snippet=String(message?.snippet||'').replace(/\s+/g,' ').trim()
+  const text=`${subject} ${snippet}`.toLowerCase()
+
+  if(/\b(unsubscribe|newsletter|weekly digest|daily digest|sale|discount|offer|coupon|promotion|promotional)\b/i.test(text)
+    && !/\b(action required|deadline|due|invoice|payment|renew|expire|response required)\b/i.test(text)) return null
+
+  let step=''
+  if(/\b(action required|response required|please respond|please reply|reply required)\b/i.test(text)) step='Review the request and reply if it is valid.'
+  else if(/\b(sign|signature|approve|approval)\b/i.test(text)) step='Review the request and approve or sign only if appropriate.'
+  else if(/\b(invoice|payment|amount due|due payment|past due|overdue)\b/i.test(text)) step='Check the amount and due date, then decide whether payment or follow-up is needed.'
+  else if(/\b(rsvp|meeting invite|calendar invite|schedule|reschedule|appointment)\b/i.test(text)) step='Check the date/time and confirm, decline, or reschedule.'
+  else if(/\b(submit|submission|complete the form|complete your|upload|provide the requested)\b/i.test(text)) step='Complete or submit the requested information before the stated deadline.'
+  else if(/\b(renew|renewal|expire|expiry|expires|expiration)\b/i.test(text)) step='Review the renewal or expiry and decide whether to renew, cancel, or update it.'
+  else if(/\b(deadline|due by|due date|before [a-z]{3,9}\s+\d{1,2})\b/i.test(text)) step='Check the deadline and schedule the required action.'
+  else if(/\b(please review|review requested|needs your attention|requires your attention|follow up|follow-up)\b/i.test(text)) step='Review this email and complete the requested follow-up.'
+  else return null
+
+  return {subject,from,step}
+}
+
+async function watcherActor(telegramId:string):Promise<AgentActor|null> {
+  const {data,error}=await supabaseAdmin.from('users')
+    .select('id,telegram_id,whatsapp_id,name')
+    .eq('telegram_id',Number(telegramId))
+    .maybeSingle()
+  if(error)throw new Error(`email_triage_user_read_failed:${error.message}`)
+  if(!data?.id||!data?.whatsapp_id||!Number.isFinite(Number(data.telegram_id)))return null
+  return {
+    userId:String(data.id),
+    legacyTelegramId:Number(data.telegram_id),
+    whatsappId:String(data.whatsapp_id),
+    name:String(data.name||'Gogo'),
+  }
+}
+
+async function processInboxTriageWatcher(watcher:any,now:Date) {
+  const condition=normalizeInboxTriageWatcher(watcher.condition_json)
+  if(!condition) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,last_checked_at:now.toISOString(),next_check_at:null,
+      last_state_json:{error:'invalid_condition'},updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:true}
+  }
+
+  const telegramId=String(watcher.telegram_id)
+  const actor=await watcherActor(telegramId)
+  if(!actor) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,last_checked_at:now.toISOString(),next_check_at:null,
+      last_state_json:{...(watcher.last_state_json||{}),error:'workspace_user_unavailable'},updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:true}
+  }
+
+  let messages:any[]=[]
+  try {
+    messages=(await listRecentWorkspaceInbox(actor,12)).messages||[]
+  } catch(err:any) {
+    const reason=String(err?.message||'workspace_read_failed')
+    const alreadyNotified=watcher.last_state_json?.workspaceErrorNotified===true
+    if(!alreadyNotified) {
+      await sendWhatsAppIfWanted(
+        telegramId,condition.delivery,
+        reason.includes('workspace_reconnect_required')||reason.includes('workspace_not_connected')
+          ? 'Your inbox watch is paused because Google Workspace needs to be reconnected. I did not read or change any mail.'
+          : 'I could not read your inbox safely on this check. I will retry later; I did not change any mail.',
+      ).catch(()=>{})
+    }
+    await supabaseAdmin.from('agent_watchers').update({
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime()+6*3600_000).toISOString(),
+      last_state_json:{...(watcher.last_state_json||{}),lastError:reason,workspaceErrorNotified:true,lastErrorAt:now.toISOString()},
+      updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:false}
+  }
+
+  const seen=Array.isArray(watcher.last_state_json?.seenMessageIds)?watcher.last_state_json.seenMessageIds.map(String):[]
+  const seenSet=new Set(seen)
+  const fresh=messages.filter((m:any)=>m?.id&&!seenSet.has(String(m.id)))
+  const actions=fresh.map(inboxActionStep).filter(Boolean).slice(0,5) as Array<{subject:string;from:string;step:string}>
+  const currentIds=messages.map((m:any)=>String(m?.id||'')).filter(Boolean)
+  const nextSeen=Array.from(new Set([...currentIds,...seen])).slice(0,120)
+
+  if(actions.length) {
+    const lines=actions.map((a,i)=>`${i+1}. *${a.subject}* — ${a.from}\n   Next: ${a.step}`).join('\n\n')
+    const message=`📬 *Your inbox needs attention*\n\n${lines}\n\nI only read this mail. I did not reply, send, delete, archive, approve, pay, or change anything.`
+    await sendWhatsAppIfWanted(telegramId,condition.delivery,message)
+      .catch(err=>console.error('AGENT_EMAIL_TRIAGE_WHATSAPP_FAILED:',err?.message||err))
+    await supabaseAdmin.from('agent_ideas').insert({
+      telegram_id:telegramId,
+      title:`Inbox: ${actions.length} action item${actions.length===1?'':'s'}`,
+      reason:'New inbox messages appear to require your attention.',
+      expected_value:actions.map(a=>`${a.subject}: ${a.step}`).join(' | ').slice(0,1200),
+      value_score:0.88,
+      action_label:'Review inbox',
+      source_refs:[{type:'watcher',id:String(watcher.id)}],
+      status:'new',
+    }).then(({error})=>{if(error)console.error('AGENT_EMAIL_TRIAGE_IDEA_FAILED:',error.message)})
+    await writeActivity(telegramId,`Inbox triage surfaced ${actions.length} action item(s).`,{
+      watcher_id:watcher.id,type:'email_triage',action_count:actions.length,
+    })
+  }
+
+  await supabaseAdmin.from('agent_watchers').update({
+    cadence_minutes:condition.cadenceMinutes,
+    last_checked_at:now.toISOString(),
+    next_check_at:new Date(now.getTime()+condition.cadenceMinutes*60_000).toISOString(),
+    last_state_json:{
+      ...(watcher.last_state_json||{}),
+      seenMessageIds:nextSeen,
+      lastActionCount:actions.length,
+      lastActionAt:actions.length?now.toISOString():watcher.last_state_json?.lastActionAt||null,
+      workspaceErrorNotified:false,
+      lastError:null,
+    },
+    updated_at:now.toISOString(),
+  }).eq('id',watcher.id)
+  return {triggered:actions.length>0,failed:false}
 }
 
 async function processProductStockWatcher(watcher:any, now:Date) {
@@ -681,7 +846,9 @@ export async function processDueAgentWatchers(limit = 40) {
           ? await processWebSearchWatcher(watcher, now)
           : watcher.type === 'product_stock'
             ? await processProductStockWatcher(watcher, now)
-            : null
+            : watcher.type === 'email_triage'
+              ? await processInboxTriageWatcher(watcher, now)
+              : null
       if (!outcome) {
         await supabaseAdmin.from('agent_watchers').update({ next_check_at: new Date(now.getTime() + 3600_000).toISOString(), last_checked_at: now.toISOString() }).eq('id', watcher.id)
         continue
