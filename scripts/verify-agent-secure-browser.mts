@@ -28,6 +28,9 @@ assert.match(computer,/updateNetworkPolicy\(\{allow\}/)
 
 // Both browser surfaces share the ONE proven bootstrap and never drift.
 assert.match(computer,/ensureBrowserRuntime\(sandbox\)/)
+assert.match(computer,/SANDBOX_WORKDIR/)
+assert.match(computer,/path:\`\$\{SANDBOX_WORKDIR\}\/gogo-browser\.js\`/)
+assert.match(computer,/cd \$\{SANDBOX_WORKDIR\} && node gogo-browser\.js/)
 assert.match(ticket,/ensureBrowserRuntime\(sandbox\)/)
 assert.match(ticket,/networkPolicy: BROWSER_SETUP_NETWORK/)
 
