@@ -70,7 +70,9 @@ export function findVaultProviderForDomain(domain:string){
 export function findVaultProviderInText(text:string){
   const raw=String(text||'').toLowerCase()
   if(!raw)return null
-  const normalized=' '+raw.replace(/[^a-z0-9.]+/g,' ').replace(/\s+/g,' ').trim()+' '
+  // Word aliases should survive surrounding punctuation ("Instagram.", "Amazon?").
+  // Dotted aliases such as booking.com are matched against the raw text below.
+  const normalized=' '+raw.replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()+' '
   return Object.values(VAULT_PROVIDERS).find(provider=>
     (provider.aliases||[provider.key]).some(alias=>{
       const a=String(alias||'').toLowerCase().trim()
