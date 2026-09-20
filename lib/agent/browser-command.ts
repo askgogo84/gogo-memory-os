@@ -112,7 +112,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
 
   await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Gogo is working in an isolated secure browser.',progress:45,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
-  await supabaseAdmin.from('agent_steps').update({status:'running',started_at:new Date().toISOString()}).eq('id',params.stepId)
+  await supabaseAdmin.from('agent_steps').update({status:'running',error:null,completed_at:null,started_at:new Date().toISOString()}).eq('id',params.stepId)
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   try{
     const result=await runSecureBrowser({userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode})
@@ -139,7 +139,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     }
 
     const compact={url:result.url,title:result.title,summary:result.summary,formCount:result.forms.length,actions:result.actions}
-    await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:compact,completed_at:at}).eq('id',params.stepId)
+    await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:compact,error:null,completed_at:at}).eq('id',params.stepId)
     await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(`${result.summary} ${result.title}`,1600),progress:100,completed_at:at,error:null,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
     await activity(tg,params.runId,'run_completed',result.summary,{host:new URL(result.url).hostname,action_count:result.actions.length})
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
@@ -191,4 +191,50 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
   const result=await executeBrowser({actor:params.actor,runId:params.runId,stepId:String(step.id),command,mode:'execute',approved:true})
   if(result.status!=='paused')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approved.id).eq('telegram_id',String(tg))
   return result
+}
+
+
+export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:string}){
+  const tg=params.actor.legacyTelegramId
+  const {data:run,error}=await supabaseAdmin.from('agent_runs')
+    .select('id,status,type,metadata_json')
+    .eq('id',String(params.runId))
+    .eq('telegram_id',String(tg))
+    .maybeSingle()
+  if(error)throw new Error(`browser_resume_read_failed:${error.message}`)
+  if(!run||run.type!=='secure_browser')throw new Error('browser_resume_run_not_found')
+  if(!['paused','failed'].includes(String(run.status)))throw new Error('browser_resume_not_paused')
+
+  const meta:any=run.metadata_json||{}
+  const mode=String(meta.mode||'read') as BrowserMode
+  if(mode==='execute')throw new Error('browser_resume_execute_requires_approval')
+  const command:BrowserCommand={
+    url:String(meta.url||''),
+    objective:safe(meta.objective,1800),
+    mode,
+    risk:mode==='draft'?'medium':'low',
+    approvalAction:meta.approval_action||undefined,
+  }
+  if(!command.url)throw new Error('browser_resume_missing_url')
+
+  const {data:step,error:stepError}=await supabaseAdmin.from('agent_steps')
+    .select('id')
+    .eq('run_id',String(params.runId))
+    .eq('telegram_id',String(tg))
+    .eq('tool_name','secure_browser')
+    .order('ordinal',{ascending:false})
+    .limit(1)
+    .maybeSingle()
+  if(stepError)throw new Error(`browser_resume_step_failed:${stepError.message}`)
+  if(!step?.id)throw new Error('browser_resume_step_missing')
+
+  await activity(tg,String(params.runId),'run_resumed','Gogo resumed the browser task after secure login setup.',{source:'vault'})
+  return executeBrowser({
+    actor:params.actor,
+    runId:String(params.runId),
+    stepId:String(step.id),
+    command,
+    mode,
+    approved:false,
+  })
 }
