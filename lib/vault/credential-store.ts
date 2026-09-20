@@ -174,31 +174,54 @@ async function ownerTelegramId(ownerId:string){
   return String(data.telegram_id)
 }
 
-export async function findVaultCredentialForDomain(ownerId:string,domain:string){
+export async function listVaultCredentialsForDomain(ownerId:string,domain:string){
   const telegramId=await ownerTelegramId(ownerId)
   const requested=normalizeVaultDomain(domain)
-  if(!requested)return null
+  if(!requested)return []
   const {data,error}=await supabaseAdmin.from('vault_credentials')
-    .select('id,provider,account_label,allowed_domains,status')
+    .select('id,provider,account_label,username_hint,allowed_domains,status,last_used_at,updated_at')
     .eq('telegram_id',telegramId)
     .eq('status','active')
     .order('updated_at',{ascending:false})
   if(error)throw new Error(`vault_match_failed:${error.message}`)
-  const matches=(data||[]).filter((item:any)=>vaultDomainAllowed(requested,Array.isArray(item.allowed_domains)?item.allowed_domains:[]))
-  if(!matches.length)return null
-  if(matches.length>1)throw new Error('vault_credential_ambiguous')
-  const row:any=matches[0]
-  return {
-    telegramId,
-    credentialId:String(row.id),
-    provider:String(row.provider||''),
-    accountLabel:String(row.account_label||''),
-    domain:requested,
-  }
+  return (data||[])
+    .filter((item:any)=>vaultDomainAllowed(requested,Array.isArray(item.allowed_domains)?item.allowed_domains:[]))
+    .map((row:any)=>({
+      telegramId,
+      credentialId:String(row.id),
+      provider:String(row.provider||''),
+      accountLabel:String(row.account_label||''),
+      usernameHint:String(row.username_hint||''),
+      allowedDomains:Array.isArray(row.allowed_domains)?row.allowed_domains:[],
+      lastUsedAt:row.last_used_at||null,
+      updatedAt:row.updated_at||null,
+      domain:requested,
+    }))
 }
 
-export async function resolveVaultCredentialForBrowser(ownerId:string,domain:string){
-  const match=await findVaultCredentialForDomain(ownerId,domain)
+export async function findVaultCredentialForDomain(ownerId:string,domain:string){
+  const matches=await listVaultCredentialsForDomain(ownerId,domain)
+  if(!matches.length)return null
+  if(matches.length>1)throw new Error('vault_credential_ambiguous')
+  return matches[0]
+}
+
+export async function resolveVaultCredentialForBrowser(ownerId:string,domain:string,credentialId?:string|null){
+  const requested=normalizeVaultDomain(domain)
+  if(!requested)return null
+  const telegramId=await ownerTelegramId(ownerId)
+  const explicitId=String(credentialId||'').trim()
+
+  if(explicitId){
+    const secret=await resolveVaultCredentialForDomain({
+      telegramId,
+      credentialId:explicitId,
+      domain:requested,
+    })
+    return {...secret,telegramId}
+  }
+
+  const match=await findVaultCredentialForDomain(ownerId,requested)
   if(!match)return null
   const secret=await resolveVaultCredentialForDomain({
     telegramId:match.telegramId,
