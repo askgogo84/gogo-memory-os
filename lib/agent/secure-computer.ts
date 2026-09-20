@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
-import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
+import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 const MAX_ACTIONS = 12
@@ -129,7 +129,7 @@ async function getComputer(userId:string,targetUrl:string){
     ports:BROWSER_PORTS, resources:{vcpus:1}, networkPolicy:BROWSER_SETUP_NETWORK,
   } as any)
   await ensureBrowserRuntime(sandbox)
-  await sandbox.writeFiles([{path:'gogo-browser.js',content:Buffer.from(BROWSER_SCRIPT)}])
+  await sandbox.writeFiles([{path:`${SANDBOX_WORKDIR}/gogo-browser.js`,content:Buffer.from(BROWSER_SCRIPT)}])
   const {allow}=allowedHosts(targetUrl)
   await sandbox.updateNetworkPolicy({allow} as any)
   return {sandbox,name}
@@ -163,7 +163,7 @@ function normalizeActions(raw:any,initialUrl:string):BrowserAction[]{
 async function inspect(userId:string,url:string){
   const {sandbox,name}=await getComputer(userId,url)
   const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[]})).toString('base64')
-  const result=await sandbox.runCommand({cmd:'node',args:['gogo-browser.js',payload]})
+  const result=await sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload]})
   if(result.exitCode!==0)throw new Error(`secure_browser_read_failed:${safeText(await result.stderr(),700)}`)
   const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
   if(!lines.length)throw new Error('secure_browser_empty_output')
@@ -229,7 +229,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       const currentUrl=String(page.url||target.toString())
       const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
       const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions})).toString('base64')
-      const result=await first.sandbox.runCommand({cmd:'node',args:['gogo-browser.js',payload]})
+      const result=await first.sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload]})
       if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
       const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
