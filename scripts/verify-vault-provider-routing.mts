@@ -16,6 +16,16 @@ assert.equal(exactCommand?.mode,'read')
 assert.match(String(exactCommand?.url||''),/instagram\.com/)
 assert.match(String(exactCommand?.objective||''),/Find the AI reels I saved recently on Instagram/)
 
+for (const [input,host] of [
+  ['Check my Amazon orders','amazon.in'],
+  ['Search LinkedIn for my saved post','linkedin.com'],
+  ['Open Flipkart wishlist','flipkart.com'],
+] as const) {
+  const command=parseConnectedProviderReadCommand(input)
+  assert.equal(command?.mode,'read',input+' must remain a provider read')
+  assert.match(String(command?.url||''),new RegExp(host.replace('.', '\\.') ))
+}
+
 assert.equal(
   parseConnectedProviderReadCommand('save this as a reminder: check my Amazon orders tomorrow'),
   null,
