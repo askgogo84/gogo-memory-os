@@ -63,16 +63,29 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   const provider=findVaultProviderInText(raw)
   if(!provider)return null
   const lower=raw.toLowerCase()
-  // This shortcut is only for pure provider reads. Explicit deterministic
-  // commands such as reminders/lists/calendar must keep their normal routing
-  // even when the reminder text itself mentions a connected provider.
-  const deterministicMutation=
-    /\b(?:remind(?:er| me)?|save\s+(?:this\s+)?as\s+a\s+reminder|create\s+(?:a\s+)?(?:reminder|calendar event|event|list)|schedule\s+(?:this|it|a\s+reminder|an?\s+event))\b/.test(lower) ||
+
+  // Deterministic mutations always keep their native handlers, even when the
+  // content mentions a connected provider such as Amazon or Instagram.
+  const isReminderMutation=
+    /\bremind(?:er| me)?\b/.test(lower) ||
+    /\bsave\s+(?:this\s+)?as\s+a\s+reminder\b/.test(lower) ||
+    /\bcreate\s+(?:a\s+)?reminder\b/.test(lower)
+  const isCalendarOrListMutation=
+    /\bcreate\s+(?:a\s+)?(?:calendar event|event|list)\b/.test(lower) ||
+    /\bschedule\s+(?:this|it|a\s+reminder|an?\s+event)\b/.test(lower) ||
     /\badd\b.{0,180}\bto\s+(?:my\s+)?(?:calendar|list)\b/.test(lower)
-  if(deterministicMutation)return null
-  const readSignal=/\b(find|search|show|look|check|open|read|see|saved|reels?|posts?|orders?|wishlist|messages?|inbox|bookings?|history|receipts?|invoices?)\b/.test(lower)
-  const writeSignal=/\b(send|reply|post|publish|comment|like|follow|unfollow|delete|edit|change|buy|purchase|checkout|pay|book|reserve|submit)\b/.test(lower)
-  if(!readSignal||writeSignal)return null
+  if(isReminderMutation||isCalendarOrListMutation)return null
+
+  // Provider writes are never treated as low-risk reads.
+  const providerWrite=
+    /\b(?:send|reply|publish|comment|like|follow|unfollow|delete|edit|change|buy|purchase|checkout|pay|book|reserve|submit)\b/.test(lower) ||
+    /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(lower)
+  if(providerWrite)return null
+
+  const providerRead=
+    /\b(?:find|search|show|look|check|open|read|see|saved|reels?|posts?|orders?|wishlist|messages?|inbox|bookings?|history|receipts?|invoices?)\b/.test(lower)
+  if(!providerRead)return null
+
   return {
     url:provider.loginUrl,
     objective:safe(raw,1800),
