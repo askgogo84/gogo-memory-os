@@ -230,11 +230,28 @@ export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:stri
     .maybeSingle()
   if(error)throw new Error(`browser_resume_read_failed:${error.message}`)
   if(!run||run.type!=='secure_browser')throw new Error('browser_resume_run_not_found')
-  if(!['paused','failed'].includes(String(run.status)))throw new Error('browser_resume_not_paused')
+  if(!['paused','failed','waiting_approval'].includes(String(run.status)))throw new Error('browser_resume_not_paused')
 
   const meta:any=run.metadata_json||{}
   const mode=String(meta.mode||'read') as BrowserMode
-  if(mode==='execute')throw new Error('browser_resume_execute_requires_approval')
+
+  // Consequential runs must resume through the exact approval path. The
+  // approval survives a password/MFA pause, so we revalidate it rather than
+  // silently downgrading the run or bypassing approval.
+  if(mode==='execute'){
+    const {data:approved,error:approvalError}=await supabaseAdmin.from('agent_approvals')
+      .select('id,status')
+      .eq('run_id',String(params.runId))
+      .eq('telegram_id',String(tg))
+      .eq('status','approved')
+      .order('resolved_at',{ascending:false})
+      .limit(1)
+      .maybeSingle()
+    if(approvalError)throw new Error(`browser_resume_approval_failed:${approvalError.message}`)
+    if(!approved)throw new Error('approval_required')
+    return executeApprovedBrowserCommand({actor:params.actor,runId:String(params.runId)})
+  }
+
   const command:BrowserCommand={
     url:String(meta.url||''),
     objective:safe(meta.objective,1800),
@@ -243,6 +260,31 @@ export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:stri
     approvalAction:meta.approval_action||undefined,
   }
   if(!command.url)throw new Error('browser_resume_missing_url')
+
+  // Re-evaluate the CURRENT permission and policy on every resume. A user may
+  // have changed Safe Mode/browser permissions while the run was paused.
+  const level=await permission(tg)
+  const policy=evaluateAgentExecutionPolicy({
+    capability:'browser',
+    permissionLevel:level,
+    mode,
+    risk:command.risk,
+    irreversible:false,
+    approvalStatus:null,
+  })
+  if(!policy.allowed)throw new Error(`browser_resume_permission_blocked:${policy.reason}`)
+
+  const sentinel=evaluateAgentSentinel({
+    capability:'browser',
+    mode,
+    risk:command.risk,
+    irreversible:false,
+    approved:false,
+    instruction:command.objective,
+    url:command.url,
+    actionCount:12,
+  })
+  if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
 
   const {data:step,error:stepError}=await supabaseAdmin.from('agent_steps')
     .select('id')
