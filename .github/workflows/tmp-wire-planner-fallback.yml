@@ -13,7 +13,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import json
+          import json, re
           p=Path('lib/agent/general-planner.ts')
           s=p.read_text()
           old_import="import Anthropic from '@anthropic-ai/sdk'\n"
@@ -22,30 +22,10 @@ jobs:
           old_client="const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })\n\n"
           assert old_client in s
           s=s.replace(old_client,'',1)
-          old="""  try {
-            const result = await anthropic.messages.create({
-              model: 'claude-haiku-4-5',
-              max_tokens: 2200,
-              temperature: 0,
-              messages: [{ role: 'user', content: prompt }],
-            })
-            const out = result.content[0]?.type === 'text' ? result.content[0].text : ''
-            return normalizePlan(parseJsonLoose(out))
-          } catch (err: any) {
-            console.error('GENERAL_AGENT_PLAN_FAILED:', err?.message || err)
-            return null
-          }
-          """
-          new="""  try {
-            const out = await completeAgentPlanPrompt(prompt)
-            return normalizePlan(parseJsonLoose(out))
-          } catch (err: any) {
-            console.error('GENERAL_AGENT_PLAN_FAILED:', err?.message || err)
-            return null
-          }
-          """
-          assert old in s
-          p.write_text(s.replace(old,new,1))
+          pattern=r"    const result = await anthropic\.messages\.create\(\{[\s\S]*?    const out = result\.content\[0\]\?\.type === 'text' \? result\.content\[0\]\.text : ''\n"
+          s,n=re.subn(pattern,"    const out = await completeAgentPlanPrompt(prompt)\n",s,count=1)
+          assert n == 1, 'planner call block not found'
+          p.write_text(s)
           pkg=Path('package.json')
           data=json.loads(pkg.read_text())
           extra='npx --yes tsx scripts/verify-agent-planner-provider-fallback.mts'
