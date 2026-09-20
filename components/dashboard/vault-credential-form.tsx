@@ -7,6 +7,7 @@ export function VaultCredentialForm(props:{
   provider:string
   providerLabel:string
   credentialId?:string
+  returnRun?:string
   usernameLabel:string
   secretLabel:string
   note:string
@@ -36,7 +37,18 @@ export function VaultCredentialForm(props:{
       if(!res.ok||!data?.ok)throw new Error(String(data?.error||'save_failed'))
       setSecret('')
       setSaved(true)
-      setTimeout(()=>router.push('/dashboard/you/vault'),650)
+      if(props.returnRun){
+        try{
+          await fetch('/api/dashboard/agent/runs/'+encodeURIComponent(props.returnRun)+'/resume',{
+            method:'POST',
+            headers:{'content-type':'application/json'},
+            body:'{}',
+          })
+        }catch{}
+        setTimeout(()=>router.push('/dashboard/activity/'+encodeURIComponent(props.returnRun)),650)
+      }else{
+        setTimeout(()=>router.push('/dashboard/you/vault'),650)
+      }
     }catch{
       setError('Could not save this login securely. Check the details and try again.')
     }finally{
