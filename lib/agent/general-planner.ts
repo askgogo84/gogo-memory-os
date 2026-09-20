@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { completeAgentPlanPrompt } from './planner-provider'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { classifyAgentRequest, type AgentApprovalAction } from './classifier'
@@ -13,8 +13,6 @@ import {
 import { evaluateAgentExecutionPolicy, type AgentCapability, type AgentPermissionLevel } from './policy'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
 const MAX_STEPS = 10
 const CONSEQUENTIAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments'])
@@ -161,13 +159,7 @@ export async function planGeneralAgentRequest(text: string): Promise<GeneralPlan
   if (!shouldUseGeneralPlanner(text)) return null
   const prompt = `You are the planning layer for AskGogo, a private personal agent. Turn the user's OUTCOME into 2-${MAX_STEPS} concrete executable steps using ONLY these tools:\n\nmemory, files, reminders, lists, tasks, email, calendar, web_search, travel, artifact\n\nMission rules:\n- Cover every explicit deliverable in the user's request. Do not collapse a multi-part mission into one search or one prose answer.\n- Prefer safe, reversible work first. Put consequential actions such as calendar changes, sends, bookings or external submissions after safe preparation so useful work can finish before an approval pause.\n- If the user says to use what AskGogo already knows, include a memory step near the beginning. Never reveal sensitive identifiers in the plan.\n- If the user explicitly names multiple tasks, use separate task steps when needed so every named task is represented. Each task instruction must literally include the task text; do not rely on hidden context from another step.\n- If the user requests a packing/list deliverable, include a lists step.\n- If the user requests a reminder, include a reminders step. If its exact trigger depends on a future choice that is not known yet, do not invent a date or flight; make the dependency explicit so execution pauses for the missing input.\n- For flight research, phrase the executable instruction as “Search flights from ORIGIN to DESTINATION on DATE” so route direction and date can be verified deterministically.\n- If the user requests a brief/report/artifact, place the artifact after the safe preparatory work but BEFORE a later approval-required or unresolved-dependency step when the artifact can summarize the prepared plan. Do not block a useful draft artifact behind an approval unless it explicitly requires post-execution results.\n- For calendar writes, include exact dates in the instruction. Calendar writes always wait for deterministic approval before execution.\n- The plan sees ONLY this user request. Never assume hidden values, credentials, document numbers or account data.\n- Each instruction must be self-contained and executable by that tool.\n- Use web_search only for public-web research; it can read/search but cannot submit forms.\n- email can read/draft/send, but sending will be stopped by a deterministic approval gate.\n- calendar can read/create/change; writes will be stopped by approval.\n- travel can read/organize; bookings will be stopped by approval.\n- payments/purchases are NOT an available planner tool; if the user asks to spend money, prepare only and let deterministic browser/travel execution stop before purchase.\n- artifact creates a private structured output from the results of previous steps.\n- Do not put secrets or guessed private values into instructions.\n- Return JSON only.\n\nShape:\n{"title":"short outcome","reason":"why multiple tools are needed","steps":[{"tool":"memory","title":"Review relevant context","instruction":"Find relevant saved context for this trip without revealing sensitive identifiers."},{"tool":"web_search","title":"Research flight options","instruction":"Search flights from Bengaluru to Mumbai on 15 September 2026"},{"tool":"tasks","title":"Create check-in task","instruction":"Create task: Complete web check-in"},{"tool":"artifact","title":"Create trip brief","instruction":"Create a concise private brief from this run","artifactType":"trip","artifactTitle":"Mumbai work trip brief"}]}\n\nUser request: ${JSON.stringify(String(text || '').slice(0, 1800))}`
   try {
-    const result = await anthropic.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 2200,
-      temperature: 0,
-      messages: [{ role: 'user', content: prompt }],
-    })
-    const out = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    const out = await completeAgentPlanPrompt(prompt)
     return normalizePlan(parseJsonLoose(out))
   } catch (err: any) {
     console.error('GENERAL_AGENT_PLAN_FAILED:', err?.message || err)

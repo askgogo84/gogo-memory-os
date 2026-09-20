@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const planner = readFileSync(new URL('../lib/agent/general-planner.ts', import.meta.url), 'utf8')
+const plannerProvider = readFileSync(new URL('../lib/agent/planner-provider.ts', import.meta.url), 'utf8')
 const missionTools = readFileSync(new URL('../lib/agent/mission-tools.ts', import.meta.url), 'utf8')
 const calendarRead = readFileSync(new URL('../lib/agent/calendar-read.ts', import.meta.url), 'utf8')
 const runRoute = readFileSync(new URL('../app/api/agent/run/route.ts', import.meta.url), 'utf8')
@@ -18,7 +19,9 @@ assert.match(planner, /payments\/purchases are NOT an available planner tool/i)
 
 assert.match(planner, /The plan sees ONLY this user request/i)
 assert.match(planner, /User request: \$\{JSON\.stringify\(String\(text \|\| ''\)\.slice\(0, 1800\)\)\}/)
-assert.match(planner, /messages: \[\{ role: 'user', content: prompt \}\]/)
+assert.match(planner, /completeAgentPlanPrompt\(prompt\)/)
+assert.match(plannerProvider, /messages:\[\{role:'user',content:prompt\}\]/)
+assert.match(plannerProvider, /completePlannerPromptWithFallback\(prompt,anthropicComplete,openAiComplete\)/)
 
 assert.match(planner, /classifyAgentRequest\(step\.instruction\)/)
 assert.match(planner, /evaluateAgentExecutionPolicy/)
