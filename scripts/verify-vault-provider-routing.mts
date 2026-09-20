@@ -16,6 +16,17 @@ assert.equal(exactCommand?.mode,'read')
 assert.match(String(exactCommand?.url||''),/instagram\.com/)
 assert.match(String(exactCommand?.objective||''),/Find the AI reels I saved recently on Instagram/)
 
+assert.equal(
+  parseConnectedProviderReadCommand('save this as a reminder: check my Amazon orders tomorrow'),
+  null,
+  'explicit reminder commands must not be stolen by provider-read preflight',
+)
+assert.equal(
+  parseConnectedProviderReadCommand('add check my Amazon orders to my calendar tomorrow at 9am'),
+  null,
+  'explicit calendar commands must keep deterministic routing',
+)
+
 const browser=await import('node:fs').then(fs=>fs.readFileSync('lib/agent/browser-command.ts','utf8'))
 assert.match(browser,/parseConnectedProviderReadCommand/)
 assert.match(browser,/parseBrowserCommand\(params\.text\)\|\|parseConnectedProviderReadCommand\(params\.text\)/)
