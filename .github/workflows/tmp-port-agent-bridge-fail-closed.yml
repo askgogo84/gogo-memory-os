@@ -15,37 +15,14 @@ jobs:
           from pathlib import Path
           p=Path('lib/feature-intents.ts')
           s=p.read_text()
-          old="""  } catch (err: any) {
-    console.error('WHATSAPP_AGENT_BRIDGE_FAILED:', err?.message || err)
-    return null
-  }
-}
-"""
-          new="""  } catch (err: any) {
-    console.error('WHATSAPP_AGENT_BRIDGE_FAILED:', err?.message || err)
-    // Infrastructure/execution failure is not a routing non-match. Fail closed
-    // instead of falling through to processIncomingMessage/plain LLM.
-    return 'I hit a problem while running that AskGogo action, so I stopped instead of guessing or falling back to an unverified answer. Please try again shortly.'
-  }
-}
-"""
+          old="  } catch (err: any) {\n    console.error('WHATSAPP_AGENT_BRIDGE_FAILED:', err?.message || err)\n    return null\n  }\n}\n"
+          new="  } catch (err: any) {\n    console.error('WHATSAPP_AGENT_BRIDGE_FAILED:', err?.message || err)\n    // Infrastructure/execution failure is not a routing non-match. Fail closed\n    // instead of falling through to processIncomingMessage/plain LLM.\n    return 'I hit a problem while running that AskGogo action, so I stopped instead of guessing or falling back to an unverified answer. Please try again shortly.'\n  }\n}\n"
           assert old in s, 'feature-intents catch block changed; refusing blind patch'
           p.write_text(s.replace(old,new,1))
-
           t=Path('scripts/verify-agent-whatsapp-bridge.mts')
           q=t.read_text()
           anchor="assert.match(router,/read-only Gmail, Contacts and Drive/)\n"
-          addition="""
-
-// An infrastructure/execution exception is materially different from a clean
-// routing non-match. It must fail closed instead of falling through to a plain
-// LLM response that could invent completion or provider data.
-const bridgeFailureCatch=router.indexOf("console.error('WHATSAPP_AGENT_BRIDGE_FAILED:'")
-assert.ok(bridgeFailureCatch>=0,'bridge failure catch must exist')
-const bridgeFailureTail=router.slice(bridgeFailureCatch,bridgeFailureCatch+900)
-assert.ok(!/return\\s+null/.test(bridgeFailureTail),'bridge exceptions must never fall through as routing non-matches')
-assert.match(bridgeFailureTail,/stopped instead of guessing/)
-"""
+          addition="\n// Infrastructure/execution exceptions are not clean routing non-matches.\nconst bridgeFailureCatch=router.indexOf(\"console.error('WHATSAPP_AGENT_BRIDGE_FAILED:'\")\nassert.ok(bridgeFailureCatch>=0,'bridge failure catch must exist')\nconst bridgeFailureTail=router.slice(bridgeFailureCatch,bridgeFailureCatch+900)\nassert.ok(!/return\\s+null/.test(bridgeFailureTail),'bridge exceptions must never fall through as routing non-matches')\nassert.match(bridgeFailureTail,/stopped instead of guessing/)\n"
           assert anchor in q, 'WhatsApp bridge regression anchor changed; refusing blind patch'
           t.write_text(q.replace(anchor,anchor+addition,1))
           PY
