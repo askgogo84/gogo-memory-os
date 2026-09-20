@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 export function VaultCredentialForm(props:{
   provider:string
   providerLabel:string
+  credentialId?:string
   usernameLabel:string
   secretLabel:string
   note:string
@@ -28,9 +29,10 @@ export function VaultCredentialForm(props:{
       const res=await fetch('/api/dashboard/vault',{
         method:'POST',
         headers:{'content-type':'application/json'},
-        body:JSON.stringify({provider:props.provider,username,secret,accountLabel}),
+        body:JSON.stringify({provider:props.provider,credentialId:props.credentialId||null,username,secret,accountLabel}),
       })
       const data=await res.json().catch(()=>({}))
+      if(res.status===409){setError('That account label is already used for this provider. Choose another label or update the existing login.');return}
       if(!res.ok||!data?.ok)throw new Error(String(data?.error||'save_failed'))
       setSecret('')
       setSaved(true)
@@ -72,7 +74,7 @@ export function VaultCredentialForm(props:{
 
     <button type="submit" disabled={busy||!username||!secret}
       className="flex h-12 w-full items-center justify-center rounded-[14px] bg-gogo-ink px-5 text-[14px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
-      {busy?'Saving securely…':'Save to Vault'}
+      {busy?'Saving securely…':props.credentialId?'Update Vault login':'Save to Vault'}
     </button>
   </form>
 }
