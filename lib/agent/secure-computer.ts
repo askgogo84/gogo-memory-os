@@ -256,7 +256,7 @@ async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;
       GOGO_VAULT_SECRET:params.secret,
     },
   } as any)
-  if(result.exitCode!==0)throw new Error(`vault_browser_login_failed:${safeText(await result.stderr(),500)}`)
+  if(result.exitCode!==0)throw new Error('vault_browser_login_failed')
   const stdout=await result.stdout()
   const lines=String(stdout||'').trim().split('\n').filter(Boolean)
   if(!lines.length)throw new Error('vault_browser_login_empty')
@@ -306,6 +306,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     let page=first.page
     let actionLog:any[]=[]
     let anyPlannedSubmit=false
+    let vaultAttempted=false
 
     for(let wave=0;wave<(params.mode==='read'?MAX_RESEARCH_WAVES:1);wave++){
       const providerBlock=detectProviderAccessBlock(page)
@@ -318,11 +319,70 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:providerBlock,pageText:safeText(page.text,1200),forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
       }
 
-      const authGate=detectHumanAuthGate(page)
-      if(authGate.required){
-        // Same rule as the provider block above: human auth is a handoff outcome,
-        // so the sandbox must stay alive for the takeover server.
-        return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:authGate.message||'Human authentication is required before Gogo can continue.',pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:authGate.reason}
+      let authGate=detectHumanAuthGate(page)
+      const loginish=pageLooksLikeLogin(page)
+
+      // Vault is tried only for ordinary username/password login. Secrets are
+      // resolved in the trusted backend, passed to the sandbox as command-scoped
+      // environment variables, and injected directly by Playwright. They are
+      // never exposed to the model planner, task objective, Activity, or logs.
+      if(!vaultAttempted && (authGate.reason==='password'||loginish)){
+        const currentUrl=String(page.url||target.toString())
+        let host=''
+        try{host=new URL(currentUrl).hostname}catch{}
+        const credential=host
+          ? await resolveVaultCredentialForBrowser(params.userId,host).catch((err:any)=>{
+              console.error('VAULT_BROWSER_MATCH_FAILED:',err?.message||err)
+              return null
+            })
+          : null
+
+        if(credential){
+          vaultAttempted=true
+          try{
+            page=await attemptVaultLogin({
+              sandbox:first.sandbox,
+              url:currentUrl,
+              username:credential.username,
+              secret:credential.secret,
+            })
+            actionLog.push({kind:'vault_login',detail:`Saved ${credential.provider} login`,status:'done'})
+            authGate=detectHumanAuthGate(page)
+            const stillLogin=pageLooksLikeLogin(page)
+            const loginText=`${page?.title||''} ${page?.text||''}`.toLowerCase()
+            const explicitFailure=/\b(incorrect|wrong|invalid)\s+(?:username|email|phone|password|credentials?)\b|\bpassword\s+(?:is\s+)?incorrect\b|\btry\s+again\b/.test(loginText)
+
+            if(!authGate.required&&!stillLogin){
+              await recordVaultBrowserOutcome({
+                telegramId:credential.telegramId,credentialId:credential.credentialId,
+                provider:credential.provider,domain:credential.domain,outcome:'login_success',
+              }).catch(()=>{})
+            }else if(explicitFailure){
+              await recordVaultBrowserOutcome({
+                telegramId:credential.telegramId,credentialId:credential.credentialId,
+                provider:credential.provider,domain:credential.domain,outcome:'login_failed',
+                reason:'provider_rejected_credentials',
+              }).catch(()=>{})
+            }else{
+              await recordVaultBrowserOutcome({
+                telegramId:credential.telegramId,credentialId:credential.credentialId,
+                provider:credential.provider,domain:credential.domain,outcome:'human_challenge',
+                reason:authGate.reason||'login_not_completed',
+              }).catch(()=>{})
+            }
+          }catch(err:any){
+            console.error('VAULT_BROWSER_LOGIN_FAILED:',err?.message||err)
+          }
+        }
+      }
+
+      authGate=detectHumanAuthGate(page)
+      if(authGate.required||pageLooksLikeLogin(page)){
+        // Human-only challenges stay in the provider browser. If no saved
+        // credential exists (or the provider still requires MFA/CAPTCHA), Gogo
+        // pauses and hands off rather than asking for secrets in chat.
+        const reason=authGate.reason||'password'
+        return {status:'blocked',url:String(page.url||target),title:safeText(page.title,300),summary:authGate.message||'This site needs a secure sign-in before Gogo can continue.',pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason}
       }
 
       const actions=await planActions(params.objective,page,params.mode)
