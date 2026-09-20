@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { parseFlightIdentifier, parseWebWatchCommand } from '../lib/agent/watch-command'
-import { normalizeWebSearchWatcher } from '../lib/agent/watchers'
+import { parseFlightIdentifier, parseProductStockWatchCommand, parseWebWatchCommand } from '../lib/agent/watch-command'
+import { assessProductAvailabilityText, normalizeProductStockWatcher, normalizeWebSearchWatcher } from '../lib/agent/watchers'
 import {
   assessWebWatchResult,
   canonicalWatcherUrl,
@@ -36,6 +36,53 @@ for (const c of cases) {
 assert.equal(parseWebWatchCommand('What is on my calendar?'), null)
 assert.equal(parseWebWatchCommand('Watch a movie tonight'), null)
 assert.equal(parseWebWatchCommand('monitor'), null)
+
+
+const productWatch = parseProductStockWatchCommand(
+  'Alert me if this size comes up -https://sensesindia.in/products/legacy-polo-sweater-fossil-grey in XL size ..add it to cart and alert me',
+)
+assert.ok(productWatch, 'product stock watch should parse')
+assert.equal(productWatch.productUrl, 'https://sensesindia.in/products/legacy-polo-sweater-fossil-grey')
+assert.equal(productWatch.variant, 'XL')
+assert.equal(productWatch.addToCart, true)
+assert.equal(productWatch.delivery, 'both')
+assert.equal(productWatch.cadenceMinutes, 60, 'product stock watches default to hourly polling')
+
+const notifyOnlyProductWatch = parseProductStockWatchCommand(
+  'Notify me when https://shop.example.com/products/jacket is back in stock in L size',
+)
+assert.ok(notifyOnlyProductWatch)
+assert.equal(notifyOnlyProductWatch.variant, 'L')
+assert.equal(notifyOnlyProductWatch.addToCart, false)
+
+assert.equal(parseProductStockWatchCommand('Is XL available at this store?'), null, 'URL + watch intent are required')
+assert.equal(parseProductStockWatchCommand('Alert me about https://example.com/product'), null, 'availability + variant are required')
+
+const normalizedProductWatch = normalizeProductStockWatcher({
+  title:'Jacket — XL',
+  productUrl:'https://shop.example.com/jacket#size',
+  variant:'XL',
+  addToCart:true,
+  cadenceMinutes:2,
+  delivery:'whatsapp',
+})
+assert.ok(normalizedProductWatch)
+assert.equal(normalizedProductWatch.variant, 'XL')
+assert.equal(normalizedProductWatch.addToCart, true)
+assert.equal(normalizedProductWatch.cadenceMinutes, 15)
+
+assert.equal(
+  assessProductAvailabilityText('Size XL Sold out. Notify me when available.', 'XL'),
+  'unavailable',
+)
+assert.equal(
+  assessProductAvailabilityText('Size XL Available now. Add to cart', 'XL'),
+  'available',
+)
+assert.equal(
+  assessProductAvailabilityText('Choose a colour and size.', 'XL'),
+  'unknown',
+)
 
 // Production regression: a stale pending flight follow-up must never reinterpret
 // an unrelated time phrase such as "at 9:00 AM" as flight number "AT 9".

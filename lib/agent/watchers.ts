@@ -4,6 +4,7 @@ import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { checkCostAllowance, COST_ESTIMATES_PAISE, getCostBudget, recordCostEvent } from '@/lib/services/cost-guard'
 import { adaptiveWatcherCadence } from './watch-cost-policy'
+import { runSecureBrowser } from './secure-computer'
 import {
   appendBoundedHistory,
   assessWebWatchResult,
@@ -19,6 +20,15 @@ export type DeadlineWatcherCondition = {
   deadline: string
   notifyBeforeHours: number
   delivery: WatcherDelivery
+}
+
+export type ProductStockWatcherCondition = {
+  title: string
+  productUrl: string
+  variant: string
+  addToCart: boolean
+  delivery: WatcherDelivery
+  cadenceMinutes: number
 }
 
 export type WebSearchWatcherCondition = {
@@ -46,6 +56,25 @@ export function normalizeDeadlineWatcher(input: any): DeadlineWatcherCondition |
   const delivery = normalizeDelivery(input?.delivery)
   if (!title || !deadline) return null
   return { title, deadline, notifyBeforeHours, delivery }
+}
+
+export function normalizeProductStockWatcher(input: any): ProductStockWatcherCondition | null {
+  const title = String(input?.title || '').trim().slice(0, 180)
+  const rawUrl = String(input?.productUrl || '').trim()
+  let productUrl = ''
+  try {
+    const url = new URL(rawUrl)
+    if (['http:','https:'].includes(url.protocol)) {
+      url.hash = ''
+      productUrl = url.toString()
+    }
+  } catch {}
+  const variant = String(input?.variant || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+  const addToCart = input?.addToCart === true
+  const delivery = normalizeDelivery(input?.delivery)
+  const cadenceMinutes = Math.max(15, Math.min(24 * 60, Math.floor(Number(input?.cadenceMinutes || 60))))
+  if (!title || !productUrl || !variant) return null
+  return { title, productUrl, variant, addToCart, delivery, cadenceMinutes }
 }
 
 export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition | null {
@@ -79,6 +108,25 @@ export async function createDeadlineWatcher(params: {
     active: true,
     last_state_json: {},
     next_check_at: nextCheck.toISOString(),
+  }).select('id, type, condition_json, cadence_minutes, active, next_check_at, created_at').single()
+  if (error || !data) throw new Error(`agent_watcher_create_failed:${error?.message || 'unknown'}`)
+  return data
+}
+
+export async function createProductStockWatcher(params: {
+  telegramId: string
+  condition: ProductStockWatcherCondition
+  goalId?: string | null
+}) {
+  const { data, error } = await supabaseAdmin.from('agent_watchers').insert({
+    telegram_id:params.telegramId,
+    goal_id:params.goalId || null,
+    type:'product_stock',
+    condition_json:params.condition,
+    cadence_minutes:params.condition.cadenceMinutes,
+    active:true,
+    last_state_json:{ availability:'unknown', blockedNotified:false, cartAttempted:false },
+    next_check_at:new Date().toISOString(),
   }).select('id, type, condition_json, cadence_minutes, active, next_check_at, created_at').single()
   if (error || !data) throw new Error(`agent_watcher_create_failed:${error?.message || 'unknown'}`)
   return data
@@ -167,7 +215,7 @@ async function activeWebWatchCount(telegramId:string) {
   const { count, error } = await supabaseAdmin.from('agent_watchers')
     .select('id', { count:'exact', head:true })
     .eq('telegram_id', telegramId)
-    .eq('type', 'web_search')
+    .in('type', ['web_search','product_stock'])
     .eq('active', true)
   if (error) throw new Error(`agent_watcher_count_failed:${error.message}`)
   return Math.max(1, count || 1)
@@ -206,6 +254,252 @@ async function processDeadlineWatcher(watcher:any, now:Date) {
     updated_at:now.toISOString(),
   }).eq('id', watcher.id)
   return { triggered:false, failed:false }
+}
+
+
+export function assessProductAvailabilityText(pageText: string, variant: string): 'available'|'unavailable'|'unknown' {
+  const text = String(pageText || '').replace(/\s+/g, ' ').toLowerCase()
+  const wanted = String(variant || '').trim().toLowerCase()
+  if (!text || !wanted) return 'unknown'
+
+  const unavailable = /\b(sold\s*out|out\s*of\s*stock|currently\s*unavailable|not\s*available|notify\s*me\s*when\s*available|coming\s*soon)\b/i
+  const available = /\b(add\s*to\s*(?:cart|bag|basket)|available|in\s*stock|buy\s*now)\b/i
+  const indexes:number[] = []
+  let from = 0
+  while (indexes.length < 12) {
+    const index = text.indexOf(wanted, from)
+    if (index < 0) break
+    indexes.push(index)
+    from = index + wanted.length
+  }
+
+  for (const index of indexes) {
+    const local = text.slice(Math.max(0, index - 220), Math.min(text.length, index + wanted.length + 260))
+    if (unavailable.test(local) && !/\badd\s*to\s*(?:cart|bag|basket)\b/i.test(local)) return 'unavailable'
+    if (available.test(local) && !unavailable.test(local)) return 'available'
+  }
+
+  if (/\badd\s*to\s*(?:cart|bag|basket)\b/i.test(text) && !unavailable.test(text)) return 'available'
+  if (unavailable.test(text) && !/\badd\s*to\s*(?:cart|bag|basket)\b/i.test(text)) return 'unavailable'
+  return 'unknown'
+}
+
+function cartLooksVerified(pageText: string) {
+  const text = String(pageText || '').replace(/\s+/g, ' ').toLowerCase()
+  return /\b(added\s*to\s*(?:cart|bag|basket)|view\s*(?:cart|bag|basket)|go\s*to\s*(?:cart|bag|basket)|your\s*(?:cart|bag|basket)\s*\(?\s*1\b|(?:cart|bag|basket)\s*\(?\s*1\b)/i.test(text)
+}
+
+async function createProductIdea(telegramId:string, condition:ProductStockWatcherCondition, watcherId:string, cartVerified:boolean) {
+  const { error } = await supabaseAdmin.from('agent_ideas').insert({
+    telegram_id:telegramId,
+    title:`${condition.title} is available`,
+    reason:`${condition.variant} is now available on the product page.`,
+    expected_value:cartVerified
+      ? 'Gogo verified the requested variant in your cart. Checkout still needs your approval.'
+      : 'Open the product now while the requested variant is available.',
+    value_score:0.95,
+    action_label:cartVerified ? 'Review cart' : 'Open product',
+    source_refs:[{ type:'watcher', id:watcherId }, { type:'url', url:condition.productUrl }],
+    status:'new',
+  })
+  if (error) console.error('AGENT_PRODUCT_WATCH_IDEA_FAILED:', error.message)
+}
+
+async function processProductStockWatcher(watcher:any, now:Date) {
+  const condition = normalizeProductStockWatcher(watcher.condition_json)
+  if (!condition) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,
+      last_checked_at:now.toISOString(),
+      last_state_json:{ error:'invalid_condition' },
+      next_check_at:null,
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:true }
+  }
+
+  const telegramId = String(watcher.telegram_id)
+  const budget = await getCostBudget(telegramId)
+  if (budget.activeWebWatchersMax <= 0) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,
+      last_checked_at:now.toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), costGuard:'plan_not_eligible', stoppedAt:now.toISOString() },
+      next_check_at:null,
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  const allowance = await checkCostAllowance(telegramId, COST_ESTIMATES_PAISE.web_search_basic)
+  if (!allowance.allowed) {
+    const deferMinutes = allowance.state?.maxWatcherCadenceMinutes || budget.maxWatcherCadenceMinutes || 1440
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:deferMinutes,
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + deferMinutes * 60_000).toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), costGuard:'deferred', costGuardReason:allowance.reason || 'budget' },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  let browser:any
+  try {
+    browser = await runSecureBrowser({
+      userId:telegramId,
+      url:condition.productUrl,
+      objective:`Check only whether product variant/size "${condition.variant}" is currently available. Select that variant if the page requires it. Do not add to cart, buy, checkout, log in, submit personal data, or make any consequential action.`,
+      mode:'read',
+    })
+  } catch (err:any) {
+    const retryMinutes = Math.max(60, condition.cadenceMinutes)
+    await supabaseAdmin.from('agent_watchers').update({
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + retryMinutes * 60_000).toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), lastError:'browser_check_failed', lastErrorAt:now.toISOString() },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    console.error('AGENT_PRODUCT_WATCH_BROWSER_FAILED:', watcher.id, err?.message || err)
+    return { triggered:false, failed:true }
+  }
+
+  await recordCostEvent({
+    telegramId,
+    category:'web_search_basic',
+    metadata:{ source:'product_stock_watch', watcher_id:String(watcher.id) },
+  })
+
+  if (browser.status === 'blocked') {
+    const alreadyNotified = watcher.last_state_json?.blockedNotified === true
+    const retryMinutes = Math.max(240, budget.maxWatcherCadenceMinutes || 240)
+    if (!alreadyNotified) {
+      await sendWhatsAppIfWanted(
+        telegramId,
+        condition.delivery,
+        `I’m watching ${condition.title}, but this store is currently blocking Gogo’s cloud browser, so I can’t honestly verify ${condition.variant} stock yet. I’ll keep retrying in the background. If you want to check immediately, open: ${condition.productUrl}`,
+      ).catch(err => console.error('AGENT_PRODUCT_WATCH_WHATSAPP_FAILED:', err?.message || err))
+    }
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:retryMinutes,
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + retryMinutes * 60_000).toISOString(),
+      last_state_json:{
+        ...(watcher.last_state_json || {}),
+        blockedNotified:true,
+        blockReason:browser.blockReason || 'browser_blocked',
+        blockedAt:now.toISOString(),
+      },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  const availability = assessProductAvailabilityText(browser.pageText, condition.variant)
+  const priorAvailability = String(watcher.last_state_json?.availability || 'unknown')
+
+  if (availability !== 'available') {
+    const quietChecks = Math.max(0, Number(watcher.last_state_json?.quietChecks || 0)) + 1
+    // Product availability is a direct page check, not a broad web-search watch.
+    // Keep the user's promised hourly cadence while the cost guard allows it.
+    const cadenceMinutes = Math.max(60, condition.cadenceMinutes)
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:cadenceMinutes,
+      condition_json:{ ...condition, cadenceMinutes },
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
+      last_state_json:{
+        ...(watcher.last_state_json || {}),
+        availability,
+        quietChecks,
+        lastUrl:browser.url || condition.productUrl,
+        lastTitle:browser.title || '',
+        costGuard:'ok',
+      },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  if (priorAvailability === 'available' && watcher.last_state_json?.triggered === true) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,
+      next_check_at:null,
+      last_checked_at:now.toISOString(),
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  let cartVerified = false
+  let cartStatus = 'not_requested'
+  let handoffReason:string | null = null
+
+  if (condition.addToCart) {
+    cartStatus = 'attempted'
+    try {
+      const cart = await runSecureBrowser({
+        userId:telegramId,
+        url:condition.productUrl,
+        objective:`Select product variant/size "${condition.variant}" and add exactly one item to the cart/bag. Stop immediately after it is added. Do not checkout, place an order, pay, authenticate, or submit personal/payment data.`,
+        mode:'draft',
+      })
+      if (cart.status === 'blocked') {
+        cartStatus = 'blocked'
+        handoffReason = cart.blockReason || 'browser_blocked'
+      } else {
+        cartVerified = cartLooksVerified(cart.pageText)
+        cartStatus = cartVerified ? 'verified' : 'not_verified'
+      }
+    } catch (err:any) {
+      cartStatus = 'failed'
+      console.error('AGENT_PRODUCT_WATCH_CART_FAILED:', watcher.id, err?.message || err)
+    }
+  }
+
+  await createProductIdea(telegramId, condition, String(watcher.id), cartVerified)
+  const actionText = !condition.addToCart
+    ? 'I found it available.'
+    : cartVerified
+      ? 'I added one to your cart and verified the cart state.'
+      : handoffReason
+        ? 'It is available, but the store requires you to continue on the site before I can complete the cart step.'
+        : 'It is available, but I could not verify that the cart step completed.'
+
+  await sendWhatsAppIfWanted(
+    telegramId,
+    condition.delivery,
+    `✅ ${condition.variant} is available\n\n${condition.title}\n${actionText}\n\n${condition.productUrl}\n\nI will not checkout or make a payment without your approval.`,
+  ).catch(err => console.error('AGENT_PRODUCT_WATCH_WHATSAPP_FAILED:', err?.message || err))
+
+  await writeActivity(telegramId, `Product watcher triggered: ${condition.title}`, {
+    watcher_id:watcher.id,
+    type:'product_stock',
+    variant:condition.variant,
+    product_url:condition.productUrl,
+    cart_status:cartStatus,
+  })
+
+  await supabaseAdmin.from('agent_watchers').update({
+    active:false,
+    last_checked_at:now.toISOString(),
+    next_check_at:null,
+    last_state_json:{
+      ...(watcher.last_state_json || {}),
+      availability:'available',
+      triggered:true,
+      triggeredAt:now.toISOString(),
+      cartAttempted:condition.addToCart,
+      cartStatus,
+      cartVerified,
+      handoffReason,
+      lastUrl:browser.url || condition.productUrl,
+      lastTitle:browser.title || '',
+      costGuard:'ok',
+    },
+    updated_at:now.toISOString(),
+  }).eq('id', watcher.id)
+  return { triggered:true, failed:false }
 }
 
 async function processWebSearchWatcher(watcher:any, now:Date) {
@@ -385,7 +679,9 @@ export async function processDueAgentWatchers(limit = 40) {
         ? await processDeadlineWatcher(watcher, now)
         : watcher.type === 'web_search'
           ? await processWebSearchWatcher(watcher, now)
-          : null
+          : watcher.type === 'product_stock'
+            ? await processProductStockWatcher(watcher, now)
+            : null
       if (!outcome) {
         await supabaseAdmin.from('agent_watchers').update({ next_check_at: new Date(now.getTime() + 3600_000).toISOString(), last_checked_at: now.toISOString() }).eq('id', watcher.id)
         continue
