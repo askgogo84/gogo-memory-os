@@ -6,6 +6,7 @@ import { runSecureBrowser, type BrowserMode } from './secure-computer'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
+import { findVaultProviderInText } from '@/lib/vault/providers'
 
 export type BrowserCommand = {
   url:string
@@ -55,6 +56,22 @@ export function parseBrowserCommand(text:string):BrowserCommand|null{
   }
 }
 
+export function parseConnectedProviderReadCommand(text:string):BrowserCommand|null{
+  const raw=String(text||'').trim()
+  if(!raw)return null
+  const provider=findVaultProviderInText(raw)
+  if(!provider)return null
+  const lower=raw.toLowerCase()
+  const readSignal=/\b(find|search|show|look|check|open|read|see|saved|reels?|posts?|orders?|wishlist|messages?|inbox|bookings?|history|receipts?|invoices?)\b/.test(lower)
+  const writeSignal=/\b(send|reply|post|publish|comment|like|follow|unfollow|delete|edit|change|buy|purchase|checkout|pay|book|reserve|submit)\b/.test(lower)
+  if(!readSignal||writeSignal)return null
+  return {
+    url:provider.loginUrl,
+    objective:safe(raw,1800),
+    mode:'read',
+    risk:'low',
+  }
+}
 async function permission(tg:number):Promise<AgentPermissionLevel>{
   const {data,error}=await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',String(tg)).eq('capability','browser').maybeSingle()
   if(error)throw new Error(`browser_permission_failed:${error.message}`)
@@ -163,7 +180,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
 }
 
 export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:AgentSurface;text:string}){
-  const command=parseBrowserCommand(params.text);if(!command)return null
+  const command=parseBrowserCommand(params.text)||parseConnectedProviderReadCommand(params.text);if(!command)return null
   const sentinel=evaluateAgentSentinel({capability:'browser',mode:command.mode,risk:command.risk,irreversible:command.mode==='execute',approved:false,instruction:command.objective,url:command.url,actionCount:12})
   if(!sentinel.allowed && sentinel.reason!=='approval_missing'){
     return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Sentinel blocked this browser request: ${sentinel.reason}`,handledBy:'secure-browser' as const}
