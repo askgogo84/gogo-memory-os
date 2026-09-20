@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
-import { tryCreateFlightWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebWatchFromCommand } from './watch-command'
+import { tryCreateFlightWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
@@ -203,6 +203,9 @@ export async function tryRunWhatsAppAgent(params: {
 
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
+
+  const productWatchStatus = await tryGetProductStockWatchStatusFromCommand({ actor, text:params.text })
+  if (productWatchStatus) return { ...productWatchStatus, handledBy:String(productWatchStatus.handledBy || 'product-stock-watch-status') }
 
   const flightWatch = await tryCreateFlightWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (flightWatch) return { ...flightWatch, handledBy:String(flightWatch.handledBy || 'flight-watch') }
