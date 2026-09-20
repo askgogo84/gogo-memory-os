@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { classifyPdfTextLocally, parseFlightTicketText } from '../lib/services/pdf-reader'
+import { classifyPdfTextLocally } from '../lib/services/pdf-reader'
+import { parseFlightTicketTextSafe } from '../lib/services/pdf-reader-whatsapp'
 
 const etihadText=`
 All times are local to each city
@@ -53,7 +54,7 @@ Electronic ticket receipt
 `
 
 assert.equal(classifyPdfTextLocally(etihadText),'TICKET')
-const parsed=parseFlightTicketText(etihadText)
+const parsed=parseFlightTicketTextSafe(etihadText)
 assert.ok(parsed)
 assert.equal(parsed?.type,'flight')
 assert.equal(parsed?.flights.length,2)
@@ -64,6 +65,13 @@ assert.deepEqual(parsed?.flights.map(f=>[f.from,f.to,f.date,f.departure,f.arriva
 assert.deepEqual(parsed?.passengers,['Divyashree Urs'])
 
 assert.equal(classifyPdfTextLocally('Invoice number 123. Total USD 55.00. Thank you for your purchase.'),null)
-assert.equal(parseFlightTicketText('This is a normal document with no booking reference.'),null)
+assert.equal(parseFlightTicketTextSafe('This is a normal document with no booking reference.'),null)
+
+// Regression guard: aircraft models must never become flight numbers.
+assert.equal(parseFlightTicketTextSafe(`
+BLR 22:15 27 Sep 2026 Boeing 787-9 AUH 00:35 28 Sep 2026
+Booking reference B8XIQC
+EY 239 • Etihad
+` )?.flights[0]?.flightNo,'EY239')
 
 console.log('PDF local ticket fallback regression passed')
