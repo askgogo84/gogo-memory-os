@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
+import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 
 const CALENDAR_CALLBACK_URL = 'https://app.askgogo.in/api/calendar/callback'
 const CALENDAR_STATE_TTL_MS = 10 * 60 * 1000
@@ -88,11 +89,13 @@ export async function exchangeCode(code: string): Promise<{ access_token: string
 
 export async function refreshAccessToken(refreshToken: string): Promise<string | null> {
   try {
+    const decryptedRefreshToken = decryptGoogleToken(refreshToken)
+    if (!decryptedRefreshToken) return null
     const response = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        refresh_token: refreshToken,
+        refresh_token: decryptedRefreshToken,
         client_id: process.env.GOOGLE_CLIENT_ID!,
         client_secret: process.env.GOOGLE_CLIENT_SECRET!,
         grant_type: 'refresh_token',
