@@ -17,7 +17,7 @@ function clean(value:unknown,max=500){
   return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)
 }
 
-function actionFamily(text:string){
+export function shadowActionFamily(text:string){
   const t=String(text||'').toLowerCase()
   if(/\b(calendar|schedule|diary)\b/.test(t)&&/\b(add|save|put|block|schedule)\b/.test(t))return 'calendar'
   if(/\b(remind|reminder|alert|notify)\b/.test(t))return 'remind'
@@ -31,9 +31,9 @@ function actionFamily(text:string){
   return 'other'
 }
 
-function needsContext(text:string){
+export function shadowNeedsContext(text:string){
   const t=String(text||'').trim().toLowerCase()
-  if(/\b(it|this|that|these|those|them|there|same|above|earlier|previous|last one|the trip|the flight|the booking|the document|the file|the order|the hotel|the ticket|continue|proceed)\b/.test(t))return true
+  if(/\b(it|this|that|these|those|them|there|same|usual|above|earlier|previous|last one|last time|the trip|the flight|the booking|the document|the file|the order|the hotel|the ticket|continue|proceed)\b/.test(t))return true
   return t.length<=80 && /^(save|add|put|monitor|watch|track|book|reserve|check|find|remind|send|forward|open|continue|proceed)\b/.test(t)
 }
 
@@ -73,7 +73,7 @@ export async function observeShadowBrainTurn(params:{
   eventId?:string|null
 }):Promise<ShadowBrainObservation>{
   const classified=classifyAgentRequest(params.text)
-  const contextual=needsContext(params.text)
+  const contextual=shadowNeedsContext(params.text)
   let mission:any=null,trip:any=null
   try{
     [mission,trip]=await Promise.all([activeMission(params.actor),recentTrip(params.actor)])
@@ -101,7 +101,7 @@ export async function observeShadowBrainTurn(params:{
   if(contextual&&!focusRef){ambiguous=true;confidence=0.25}
 
   const observation:ShadowBrainObservation={
-    actionFamily:actionFamily(params.text),
+    actionFamily:shadowActionFamily(params.text),
     capability:classified.capability,
     needsContext:contextual,
     focusKind,focusRef,focusSummary,
