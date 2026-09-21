@@ -134,6 +134,56 @@ async function readReminderQuery(actor: AgentActor, text: string) {
   return `${heading}\n\n${rows.map((row: any, index: number) => `${index + 1}. ${row.message || 'Reminder'} — ${fmt.format(new Date(row.remind_at))}`).join('\n')}`
 }
 
+
+function parseReminderMutation(text: string): { target: string | null; timeText: string } | null {
+  const raw = String(text || '').trim().replace(/\s+/g, ' ')
+  if (!/\b(move|reschedule|change|update|make)\b/i.test(raw)) return null
+  const time = raw.match(/\b(?:to|for|at)\s+((?:\d{1,2}(?::\d{2})?\s*(?:am|pm)))(?:\s+(today|tomorrow))?/i)
+  if (!time) return null
+  const quoted = raw.match(/["“]([^"”]+)["”]/)
+  const named = raw.match(/(?:move|reschedule|change|update)\s+(?:the\s+)?(.+?)\s+reminder\s+(?:to|for|at)\b/i)
+  let target = quoted?.[1] || named?.[1] || null
+  if (target) target = cleanListItem(target).replace(/^the\s+/i, '').trim()
+  const day = time[2] ? ` ${time[2]}` : ''
+  return { target, timeText: `${time[1]}${day}` }
+}
+
+async function tryRunReminderMutation(params: { actor: AgentActor; surface: AgentSurface; text: string }): Promise<CompoundRunResult | null> {
+  const mutation = parseReminderMutation(params.text)
+  if (!mutation) return null
+  if (!mutation.target || /^(?:it|that|this)$/i.test(mutation.target)) {
+    return { runId: 'none', status: 'failed', capability: 'reminders', risk: 'low',
+      text: 'Which reminder do you want me to move? Please name it so I do not change the wrong reminder.',
+      handledBy: 'compound-plan', steps: [] }
+  }
+  const { data, error } = await supabaseAdmin.from('reminders')
+    .select('id,message,remind_at,timezone').eq('telegram_id', params.actor.legacyTelegramId).eq('sent', false)
+    .order('remind_at', { ascending: true }).limit(100)
+  if (error) throw new Error(`reminder_mutation_read_failed:${error.message}`)
+  const norm=(v:string)=>String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
+  const needle=norm(mutation.target)
+  const matches=(data||[]).filter((r:any)=>{const h=norm(r.message);return h===needle||h.includes(needle)||needle.includes(h)})
+  if (matches.length !== 1) {
+    const msg = matches.length ? `I found ${matches.length} matching reminders for “${mutation.target}”. Please tell me which time you mean.` : `I could not find an active reminder matching “${mutation.target}”. I did not create a new one.`
+    return { runId:'none', status:'failed', capability:'reminders', risk:'low', text:msg, handledBy:'compound-plan', steps:[] }
+  }
+  const row:any=matches[0]
+  const timezone=await actorTimezone(params.actor)
+  const base=new Date(row.remind_at)
+  const day=/\btomorrow\b/i.test(mutation.timeText)?new Date(Date.now()+36*60*60*1000):/\btoday\b/i.test(mutation.timeText)?new Date():base
+  const dateKey=localDateKey(day,timezone)
+  const tm=mutation.timeText.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i)!
+  let hour=Number(tm[1])%12;if(tm[3].toLowerCase()==='pm')hour+=12
+  // Asia/Kolkata is the product default; preserve the existing timezone contract without silently creating.
+  const offset=timezone==='Asia/Kolkata'?'+05:30':'Z'
+  const due=new Date(`${dateKey}T${String(hour).padStart(2,'0')}:${String(Number(tm[2]||0)).padStart(2,'0')}:00${offset}`)
+  const { error:updateError }=await supabaseAdmin.from('reminders').update({remind_at:due.toISOString()}).eq('id',row.id).eq('telegram_id',params.actor.legacyTelegramId)
+  if(updateError)throw new Error(`reminder_mutation_update_failed:${updateError.message}`)
+  return { runId:'none',status:'completed',capability:'reminders',risk:'low',
+    text:`✅ Reminder updated\n\n${row.message}\nNew time: ${new Intl.DateTimeFormat('en-IN',{timeZone:timezone,weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(due)}`,
+    handledBy:'compound-plan',steps:[] }
+}
+
 async function createSimpleRun(params: {
   actor: AgentActor
   surface: AgentSurface
@@ -376,6 +426,9 @@ export async function tryRunExpiryReminderPlan(params: {
 }): Promise<CompoundRunResult | null> {
   const readOnly = await tryRunReadOnlyCoreQuery(params)
   if (readOnly) return readOnly
+
+  const reminderMutation = await tryRunReminderMutation(params)
+  if (reminderMutation) return reminderMutation
 
   const listReminder = await tryRunListReminderPlan(params)
   if (listReminder) return listReminder
