@@ -2,6 +2,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runSecureBrowser } from './secure-computer'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
+import { assertApprovalBinding } from './approval-binding'
+import { checkinApprovalFingerprintInput } from './life-event-approval-binding'
 import type { AgentActor } from './actor'
 
 function safe(value: unknown, max = 600) {
@@ -51,7 +53,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
       .select('id,status,payload_json')
       .eq('id', lifeEventActionId).eq('life_event_id', lifeEventId).eq('telegram_id', tg).maybeSingle(),
     supabaseAdmin.from('agent_approvals')
-      .select('id,status,execution_payload')
+      .select('id,status,execution_payload,action_hash,policy_version')
       .eq('run_id', params.runId).eq('telegram_id', tg).eq('action_type', 'booking').eq('status', 'approved')
       .order('resolved_at', { ascending: false }).limit(1).maybeSingle(),
   ])
@@ -65,6 +67,17 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
   const confirmation = String(event.confirmation_ref || '').trim()
   const url = String(meta.checkin_url || (event.metadata_json as any)?.checkInUrl || '').trim()
   if (!confirmation || !url) throw new Error('checkin_context_incomplete')
+
+  assertApprovalBinding(checkinApprovalFingerprintInput({
+    runId:params.runId,
+    lifeEventId:String(lifeEventId),
+    lifeEventActionId:String(lifeEventActionId),
+    checkinUrl:url,
+    seatPolicy:String(meta.seat_policy||''),
+    provider:event.provider,
+    title:event.title,
+    confirmationRef:confirmation,
+  }),approval)
 
   const permissionLevel = await browserPermission(tg)
   const policy = evaluateAgentExecutionPolicy({
