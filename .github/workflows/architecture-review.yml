@@ -10,6 +10,14 @@ on:
       - 'scripts/verify-brain-vault-architecture.mts'
       - 'package.json'
       - '.github/workflows/architecture-review.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/architecture/**'
+      - 'scripts/review-brain-vault-architecture-with-claude.mts'
+      - 'scripts/verify-brain-vault-architecture.mts'
+      - 'package.json'
+      - '.github/workflows/architecture-review.yml'
   workflow_dispatch:
 
 jobs:
