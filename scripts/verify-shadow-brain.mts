@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { shadowActionFamily, shadowNeedsContext } from '../lib/agent/shadow-brain'
 
 const shadow=readFileSync('lib/agent/shadow-brain.ts','utf8')
 const whatsapp=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
@@ -27,3 +28,12 @@ assert.doesNotMatch(shadow,/\.from\('agent_runs'\)\.insert/)
 assert.doesNotMatch(shadow,/\.from\('agent_approvals'\)\.insert/)
 
 console.log('Shadow Brain observe-only verification passed')
+
+assert.equal(shadowNeedsContext('Order my usual pizza'),true)
+assert.equal(shadowNeedsContext('Same as last time'),true)
+assert.equal(shadowNeedsContext('Save it to my calendar'),true)
+assert.equal(shadowNeedsContext('Monitor it and tell me if anything changes'),true)
+assert.equal(shadowNeedsContext('Book the second one'),false)
+assert.equal(shadowActionFamily('Save it to my calendar'),'calendar')
+assert.equal(shadowActionFamily('Monitor it and tell me if anything changes'),'monitor')
+assert.equal(shadowActionFamily('Book it'),'book')
