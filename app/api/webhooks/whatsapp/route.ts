@@ -1061,6 +1061,36 @@ _"${originalText}"_
       }
     }
 
+    // Reminder reads and reschedules must reach the deterministic compound reminder
+    // router before legacy feature/process-message paths. Live verification showed the
+    // legacy path returned all active reminders for an explicit date, bypassing the
+    // date-aware reader entirely.
+    const isDeterministicReminderCommand =
+      /^(?:what|which|show|list|display|my|pending|active|upcoming)\b.*\breminders?\b/i.test(text) ||
+      /^(?:move|reschedule|change|update)\b.*(?:\breminder\b|\bit\b|\bthat\b|\bthis\b)/i.test(text)
+    if (isDeterministicReminderCommand) {
+      const reminderAgent = await tryRunWhatsAppAgent({
+        user: resolvedUser,
+        text,
+        messageId: inboundMessageSid || null,
+      })
+      if (reminderAgent) {
+        await recordShadowRouterOutcome({
+          telegramId:resolvedUser.telegramId,
+          surface:'whatsapp',
+          eventId:inboundMessageSid,
+          actualHandler:reminderAgent.handledBy || 'whatsapp-agent-reminder',
+          actualCapability:'reminders',
+          status:reminderAgent.status || null,
+          runId:reminderAgent.runId || null,
+        }).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reminderAgent.text)
+        await sendWhatsAppMessage(from, reminderAgent.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
     const featureReply = await routeFeatureIntent(from, text, { telegramId: resolvedUser.telegramId, caption: bodyText }) ||
       (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText, { telegramId: resolvedUser.telegramId }) : null)
     if (featureReply) {
