@@ -104,11 +104,19 @@ function localDateKey(value: Date, timezone: string) {
 async function readReminderQuery(actor: AgentActor, text: string) {
   const timezone = await actorTimezone(actor)
   const lower = String(text || '').toLowerCase()
-  const targetDate = /\btomorrow\b/i.test(lower)
+  const explicit = lower.match(/\b(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?\b/i)
+    || lower.match(/\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday),?\s+(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(\d{4}))?\b/i)
+  const months: Record<string, number> = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12 }
+  let explicitDate: string | null = null
+  if (explicit) {
+    const year = Number(explicit[3] || new Intl.DateTimeFormat('en',{timeZone:timezone,year:'numeric'}).format(new Date()))
+    explicitDate = `${year}-${String(months[explicit[2].toLowerCase()]).padStart(2,'0')}-${String(Number(explicit[1])).padStart(2,'0')}`
+  }
+  const targetDate = explicitDate || (/\btomorrow\b/i.test(lower)
     ? localDateKey(new Date(Date.now() + 36 * 60 * 60 * 1000), timezone)
     : /\btoday\b/i.test(lower)
       ? localDateKey(new Date(), timezone)
-      : null
+      : null)
 
   const { data, error } = await supabaseAdmin.from('reminders')
     .select('id,message,remind_at,timezone')
@@ -151,7 +159,21 @@ function parseReminderMutation(text: string): { target: string | null; timeText:
 async function tryRunReminderMutation(params: { actor: AgentActor; surface: AgentSurface; text: string }): Promise<CompoundRunResult | null> {
   const mutation = parseReminderMutation(params.text)
   if (!mutation) return null
-  if (!mutation.target || /^(?:it|that|this)$/i.test(mutation.target)) {
+  let resolvedTarget = mutation.target
+  if (!resolvedTarget || /^(?:it|that|this)$/i.test(resolvedTarget)) {
+    const { data: recent } = await supabaseAdmin.from('conversations')
+      .select('content,role,created_at').eq('telegram_id', params.actor.legacyTelegramId)
+      .order('created_at', { ascending: false }).limit(8)
+    const quoted = (recent || []).map((r:any)=>String(r.content||''))
+      .map((s:string)=>s.match(/["“]([^"”]+)["”]/)?.[1]).find(Boolean)
+    if (quoted) resolvedTarget = quoted
+    else {
+      const reminderMention = (recent || []).map((r:any)=>String(r.content||''))
+        .map((s:string)=>s.match(/(?:your\s+)?(.+?)\s+reminder\s+is\s+set/i)?.[1]).find(Boolean)
+      if (reminderMention) resolvedTarget = cleanListItem(reminderMention)
+    }
+  }
+  if (!resolvedTarget || /^(?:it|that|this)$/i.test(resolvedTarget)) {
     return { runId: 'none', status: 'failed', capability: 'reminders', risk: 'low',
       text: 'Which reminder do you want me to move? Please name it so I do not change the wrong reminder.',
       handledBy: 'compound-plan', steps: [] }
@@ -161,10 +183,10 @@ async function tryRunReminderMutation(params: { actor: AgentActor; surface: Agen
     .order('remind_at', { ascending: true }).limit(100)
   if (error) throw new Error(`reminder_mutation_read_failed:${error.message}`)
   const norm=(v:string)=>String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
-  const needle=norm(mutation.target)
+  const needle=norm(resolvedTarget)
   const matches=(data||[]).filter((r:any)=>{const h=norm(r.message);return h===needle||h.includes(needle)||needle.includes(h)})
   if (matches.length !== 1) {
-    const msg = matches.length ? `I found ${matches.length} matching reminders for “${mutation.target}”. Please tell me which time you mean.` : `I could not find an active reminder matching “${mutation.target}”. I did not create a new one.`
+    const msg = matches.length ? `I found ${matches.length} matching reminders for “${resolvedTarget}”. Please tell me which time you mean.` : `I could not find an active reminder matching “${resolvedTarget}”. I did not create a new one.`
     return { runId:'none', status:'failed', capability:'reminders', risk:'low', text:msg, handledBy:'compound-plan', steps:[] }
   }
   const row:any=matches[0]
