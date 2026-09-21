@@ -3,6 +3,7 @@ import { createCalendarEventAtIso, getCalendarTokens } from '@/lib/bot/handlers/
 import { wallTimeToUtcIso } from '@/lib/dashboard/wall-time'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
+import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 
 export type TravelCalendarPlan = { target: string }
 
@@ -220,10 +221,18 @@ export async function tryPrepareTravelCalendarPlan(params:{actor:AgentActor;surf
       {label:'Departure',value:`${found.leg.date||found.ticket.doc_date||''} · ${found.leg.departure}`.trim()},
       {label:'Action',value:'Add flight departure to Google Calendar'},
     ]
+    const binding=buildApprovalBinding({
+      missionId:runId,
+      stepId:steps[3],
+      capability:'calendar',
+      actionType:'calendar_change',
+      target:'calendar:primary',
+      payload:{eventTitle,startIso},
+    })
     const {data:approval,error:approvalError}=await supabaseAdmin.from('agent_approvals').insert({
       telegram_id:String(tg),run_id:runId,action_type:'calendar_change',title:'Add saved flight to Calendar',
       description:'Gogo found the saved flight and prepared a departure event. Approve before anything is written to Google Calendar.',
-      payload_preview:preview,execution_payload:{plan_type:'memory_ticket_to_calendar',eventTitle,startIso,stepId:steps[3]},risk_level:'medium',status:'pending',
+      payload_preview:preview,execution_payload:{plan_type:'memory_ticket_to_calendar',eventTitle,startIso,stepId:steps[3]},risk_level:'medium',status:'pending',...binding,
     }).select('id').single()
     if(approvalError||!approval?.id)throw new Error(`travel_calendar_approval_failed:${approvalError?.message||'unknown'}`)
     await supabaseAdmin.from('agent_runs').update({
@@ -247,8 +256,16 @@ export async function executeApprovedTravelCalendarPlan(params:{actor:AgentActor
   if(!run)throw new Error('agent_run_not_found')
   const meta:any=run.metadata_json||{}
   if(meta.plan_type!=='memory_ticket_to_calendar')throw new Error('not_travel_calendar_plan')
-  const {data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('action_type','calendar_change').order('requested_at',{ascending:false}).limit(1).maybeSingle()
+  const {data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('action_type','calendar_change').order('requested_at',{ascending:false}).limit(1).maybeSingle()
   if(approval?.status!=='approved')throw new Error('approval_required')
+  assertApprovalBinding({
+    missionId:params.runId,
+    stepId:String(meta.stepId||''),
+    capability:'calendar',
+    actionType:'calendar_change',
+    target:'calendar:primary',
+    payload:{eventTitle:String(meta.eventTitle||''),startIso:String(meta.startIso||'')},
+  },approval)
 
   if(!(await calendarEnabled(tg))){
     await supabaseAdmin.from('agent_runs').update({status:'paused',summary:'Blocked by Gogo Safe Mode: Calendar is off.',updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))

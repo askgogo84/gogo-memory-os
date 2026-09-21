@@ -2,8 +2,28 @@ import { createHash } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { refreshAccessToken } from '@/lib/google-calendar'
 import type { AgentActor } from './actor'
+import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 
 const PLAN_TYPE = 'booking_event_calendar'
+
+function bookingCalendarApprovalInput(runId:string,input:BookingCalendarInput){
+  return {
+    missionId:runId,
+    stepId:'calendar-create',
+    capability:'calendar',
+    actionType:'calendar_change',
+    target:'life_event:'+String(input.lifeEventId),
+    payload:{
+      title:String(input.title||''),
+      startAt:String(input.startAt||''),
+      endAt:String(input.endAt||''),
+      timezone:String(input.timezone||''),
+      location:String(input.location||''),
+      provider:String(input.provider||''),
+      endEstimated:Boolean(input.endEstimated),
+    },
+  }
+}
 function safe(v: unknown, max = 600) { return String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max) }
 function validIso(v: unknown) { const s=String(v||'').trim(); return s&&Number.isFinite(Date.parse(s))?s:'' }
 export function bookingCalendarEventId(lifeEventId:string){return `gogo${createHash('sha256').update(`booking-life-event:${lifeEventId}`).digest('hex').slice(0,32)}`}
@@ -15,17 +35,25 @@ async function existingPending(actor:AgentActor,lifeEventId:string){
   for(const r of runs||[]){
     const m:any=r.metadata_json||{}
     if(m.plan_type!==PLAN_TYPE||String(m.life_event_id||'')!==lifeEventId)continue
-    const{data:a}=await supabaseAdmin.from('agent_approvals').select('id,status,execution_payload').eq('run_id',r.id).eq('telegram_id',String(actor.legacyTelegramId)).in('status',['pending','approved']).limit(1).maybeSingle()
-    if(a?.id)return{runId:String(r.id),approvalId:String(a.id),metadata:m,executionPayload:(a.execution_payload as any)||{}}
+    const{data:a}=await supabaseAdmin.from('agent_approvals').select('id,status,execution_payload,action_hash,policy_version').eq('run_id',r.id).eq('telegram_id',String(actor.legacyTelegramId)).in('status',['pending','approved']).limit(1).maybeSingle()
+    if(a?.id)return{runId:String(r.id),approvalId:String(a.id),metadata:m,executionPayload:(a.execution_payload as any)||{},actionHash:(a as any).action_hash||null,policyVersion:(a as any).policy_version||null}
   }
   return null
 }
 
 async function relinkExistingPending(params:{actor:AgentActor;input:BookingCalendarInput;existing:any}){
-  if(!params.input.lifeEventActionId)return
   const tg=String(params.actor.legacyTelegramId),now=new Date().toISOString()
   const priorMeta:any=params.existing.metadata||{}
   const proposedEvent:BookingCalendarInput={...(priorMeta.proposedEvent||{}),...params.input,lifeEventActionId:params.input.lifeEventActionId}
+  const currentBinding=buildApprovalBinding(bookingCalendarApprovalInput(params.existing.runId,proposedEvent))
+  if(!params.existing.actionHash||currentBinding.action_hash!==String(params.existing.actionHash)){
+    await Promise.all([
+      supabaseAdmin.from('agent_approvals').update({status:'expired',resolved_at:now,resolution_note:'Material booking calendar details changed after approval request.'}).eq('id',params.existing.approvalId).eq('telegram_id',tg).in('status',['pending','approved']),
+      supabaseAdmin.from('agent_runs').update({status:'paused',summary:'Booking details changed. A fresh Calendar approval is required.',updated_at:now}).eq('id',params.existing.runId).eq('telegram_id',tg),
+    ])
+    return false
+  }
+  if(!params.input.lifeEventActionId)return true
   const priorExecution:any=params.existing.executionPayload||{}
   const [{error:runError},{error:approvalError}]=await Promise.all([
     supabaseAdmin.from('agent_runs').update({
@@ -44,15 +72,17 @@ async function relinkExistingPending(params:{actor:AgentActor;input:BookingCalen
     metadata_json:{approval_id:params.existing.approvalId,life_event_id:params.input.lifeEventId,life_event_action_id:params.input.lifeEventActionId,source:PLAN_TYPE},
   })
   if(activityError)console.error('BOOKING_CALENDAR_ACTIVITY_FAILED:',activityError.message)
+  return true
 }
 
 export async function prepareBookingCalendarApproval(params:{actor:AgentActor;input:BookingCalendarInput}){
   const start=validIso(params.input.startAt),end=validIso(params.input.endAt);if(!start||!end||Date.parse(end)<=Date.parse(start))return null
   const existing=await existingPending(params.actor,params.input.lifeEventId)
-  if(existing){await relinkExistingPending({actor:params.actor,input:params.input,existing});return{runId:existing.runId,approvalId:existing.approvalId}}
+  if(existing){const reused=await relinkExistingPending({actor:params.actor,input:params.input,existing});if(reused)return{runId:existing.runId,approvalId:existing.approvalId}}
   const tg=String(params.actor.legacyTelegramId),now=new Date().toISOString()
   const{data:run,error}=await supabaseAdmin.from('agent_runs').insert({telegram_id:tg,type:'life_event',capability:'calendar',status:'waiting_approval',title:`Add ${safe(params.input.title,140)} to calendar`,summary:'Booking details are resolved. Waiting for approval to block the calendar.',progress:90,why:'A confirmed booking should become a calendar commitment after user approval.',source:'booking_closure',metadata_json:{plan_type:PLAN_TYPE,life_event_id:params.input.lifeEventId,life_event_action_id:params.input.lifeEventActionId||null,proposedEvent:params.input},started_at:now,updated_at:now}).select('id').single();if(error||!run?.id)throw new Error(`booking_calendar_run_create_failed:${error?.message||'unknown'}`)
-  const{data:approval,error:ae}=await supabaseAdmin.from('agent_approvals').insert({telegram_id:tg,run_id:String(run.id),action_type:'calendar_change',title:'Block calendar for this booking',description:'Create the confirmed event on Google Calendar. No purchase, cancellation or provider change will be made.',payload_preview:[{label:'Event',value:safe(params.input.title,180)},{label:'Starts',value:start},{label:'Ends',value:`${end}${params.input.endEstimated?' (estimated)':''}`},{label:'Venue',value:safe(params.input.location||'Not provided',180)}],execution_payload:{plan_type:PLAN_TYPE,action:'create_booking_calendar_event',lifeEventId:params.input.lifeEventId,lifeEventActionId:params.input.lifeEventActionId||null},risk_level:'medium',status:'pending'}).select('id').single();if(ae||!approval?.id)throw new Error(`booking_calendar_approval_create_failed:${ae?.message||'unknown'}`)
+  const binding=buildApprovalBinding(bookingCalendarApprovalInput(String(run.id),{...params.input,startAt:start,endAt:end}))
+  const{data:approval,error:ae}=await supabaseAdmin.from('agent_approvals').insert({telegram_id:tg,run_id:String(run.id),action_type:'calendar_change',title:'Block calendar for this booking',description:'Create the confirmed event on Google Calendar. No purchase, cancellation or provider change will be made.',payload_preview:[{label:'Event',value:safe(params.input.title,180)},{label:'Starts',value:start},{label:'Ends',value:`${end}${params.input.endEstimated?' (estimated)':''}`},{label:'Venue',value:safe(params.input.location||'Not provided',180)}],execution_payload:{plan_type:PLAN_TYPE,action:'create_booking_calendar_event',lifeEventId:params.input.lifeEventId,lifeEventActionId:params.input.lifeEventActionId||null},risk_level:'medium',status:'pending',...binding}).select('id').single();if(ae||!approval?.id)throw new Error(`booking_calendar_approval_create_failed:${ae?.message||'unknown'}`)
   const { error: activityError } = await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:String(run.id),event_type:'approval_requested',message:'Approval required before blocking Google Calendar for the confirmed booking.',metadata_json:{approval_id:approval.id,life_event_id:params.input.lifeEventId,life_event_action_id:params.input.lifeEventActionId||null,source:PLAN_TYPE}})
   if(activityError)console.error('BOOKING_CALENDAR_ACTIVITY_FAILED:',activityError.message)
   return{runId:String(run.id),approvalId:String(approval.id)}
@@ -64,10 +94,11 @@ export async function executeApprovedBookingCalendar(params:{actor:AgentActor;ru
   const tg=String(params.actor.legacyTelegramId)
   const{data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json,status').eq('id',params.runId).eq('telegram_id',tg).maybeSingle();if(error)throw new Error(`booking_calendar_run_read_failed:${error.message}`);if(!run)throw new Error('agent_run_not_found')
   const meta:any=run.metadata_json||{};if(String(meta.plan_type||'')!==PLAN_TYPE)throw new Error('not_booking_calendar_plan');const ev:BookingCalendarInput=meta.proposedEvent;if(!ev||!validIso(ev.startAt)||!validIso(ev.endAt))throw new Error('booking_calendar_event_invalid')
-  const{data:approval,error:ae}=await supabaseAdmin.from('agent_approvals').select('id,status,execution_payload').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','calendar_change').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle();if(ae)throw new Error(`booking_calendar_approval_read_failed:${ae.message}`);if(!approval||(approval.execution_payload as any)?.action!=='create_booking_calendar_event')throw new Error('approval_required')
+  const{data:approval,error:ae}=await supabaseAdmin.from('agent_approvals').select('id,status,execution_payload,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','calendar_change').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle();if(ae)throw new Error(`booking_calendar_approval_read_failed:${ae.message}`);if(!approval||(approval.execution_payload as any)?.action!=='create_booking_calendar_event')throw new Error('approval_required')
   const executionPayload:any=approval.execution_payload||{}
   const lifeEventActionId=ev.lifeEventActionId||executionPayload.lifeEventActionId||meta.life_event_action_id||undefined
   const linkedEvent:BookingCalendarInput={...ev,lifeEventActionId}
+  assertApprovalBinding(bookingCalendarApprovalInput(params.runId,linkedEvent),approval)
   const token=await calendarToken(params.actor),eventId=bookingCalendarEventId(linkedEvent.lifeEventId)
   const endpoint='https://www.googleapis.com/calendar/v3/calendars/primary/events',body={id:eventId,summary:linkedEvent.title,location:linkedEvent.location||undefined,description:[linkedEvent.provider?`Provider: ${linkedEvent.provider}`:'',linkedEvent.sourceUrl?`Booking source: ${linkedEvent.sourceUrl}`:'',linkedEvent.endEstimated?'End time is estimated by AskGogo because the provider did not expose a duration.':'','Saved by AskGogo booking closure.'].filter(Boolean).join('\n'),start:{dateTime:linkedEvent.startAt,timeZone:linkedEvent.timezone||'Asia/Kolkata'},end:{dateTime:linkedEvent.endAt,timeZone:linkedEvent.timezone||'Asia/Kolkata'},extendedProperties:{private:{askgogo_run_id:params.runId,askgogo_life_event_id:linkedEvent.lifeEventId,askgogo_source:PLAN_TYPE}}}
   let response=await fetch(endpoint,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store'}),data:any=await response.json().catch(()=>({})),reused=false

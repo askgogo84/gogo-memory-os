@@ -4,6 +4,8 @@ import { sendAgentPush } from './push'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
 import type { AgentActor } from './actor'
+import { buildApprovalBinding } from './approval-binding'
+import { checkinApprovalFingerprintInput } from './life-event-approval-binding'
 
 const LEASE_MINUTES = 10
 const DEFER_PENDING_EXECUTOR_MINUTES = 60
@@ -197,18 +199,19 @@ async function requestFlightCheckinApproval(params: { telegramId: string; event:
   }
 
   const seat = freeSeatPolicy(event)
+  const checkinUrl=String((prepared.data.payload_json as any)?.checkInUrl || (action.payload_json as any)?.checkInUrl || '')
   const runId = await createRun({
     telegramId, event, action, status: 'waiting_approval',
     summary: 'Airline check-in is prepared. Waiting for your approval before Gogo submits it.',
     metadata: {
       plan_type: 'life_event_checkin',
-      checkin_url: String((prepared.data.payload_json as any)?.checkInUrl || (action.payload_json as any)?.checkInUrl || ''),
+      checkin_url: checkinUrl,
       seat_policy: seat.policy,
     },
   })
 
   const { data: existing, error: existingError } = await supabaseAdmin.from('agent_approvals')
-    .select('id,status')
+    .select('id,status,action_hash,policy_version')
     .eq('telegram_id', telegramId)
     .eq('run_id', runId)
     .eq('action_type', 'booking')
@@ -217,7 +220,26 @@ async function requestFlightCheckinApproval(params: { telegramId: string; event:
     .maybeSingle()
   if (existingError) throw new Error(`life_event_approval_lookup_failed:${existingError.message}`)
 
+  const binding=buildApprovalBinding(checkinApprovalFingerprintInput({
+    runId,
+    lifeEventId:String(event.id),
+    lifeEventActionId:String(action.id),
+    checkinUrl,
+    seatPolicy:seat.policy,
+    provider:event.provider,
+    title:event.title,
+    confirmationRef:event.confirmation_ref,
+  }))
+
   let approvalId = String(existing?.id || '')
+  if (approvalId && String((existing as any).action_hash||'')!==binding.action_hash) {
+    await supabaseAdmin.from('agent_approvals').update({
+      status:'expired',
+      resolved_at:new Date().toISOString(),
+      resolution_note:'Check-in target or booking context changed after approval request.',
+    }).eq('id',approvalId).eq('telegram_id',telegramId).in('status',['pending','approved'])
+    approvalId=''
+  }
   if (!approvalId) {
     const { data, error } = await supabaseAdmin.from('agent_approvals').insert({
       telegram_id: telegramId,
@@ -234,6 +256,7 @@ async function requestFlightCheckinApproval(params: { telegramId: string; event:
       execution_payload: { plan_type: 'life_event_checkin', lifeEventId: String(event.id), lifeEventActionId: String(action.id), action: 'submit_web_checkin' },
       risk_level: 'high',
       status: 'pending',
+      ...binding,
     }).select('id').single()
     if (error || !data?.id) throw new Error(`life_event_approval_create_failed:${error?.message || 'unknown'}`)
     approvalId = String(data.id)

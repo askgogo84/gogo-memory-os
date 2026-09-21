@@ -1,4 +1,5 @@
 import { completeAgentPlanPrompt } from './planner-provider'
+import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { classifyAgentRequest, type AgentApprovalAction } from './classifier'
@@ -306,6 +307,14 @@ async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPla
 }
 
 async function requestApproval(params:{actor:AgentActor;runId:string;step:GeneralPlanStep;stepId:string;ordinal:number;totalSteps:number;approvalAction:AgentApprovalAction;risk:'low'|'medium'|'high';reason:string}) {
+  const binding=buildApprovalBinding({
+    missionId:params.runId,
+    stepId:params.stepId,
+    capability:capabilityForStep(params.step),
+    actionType:params.approvalAction,
+    target:'tool:'+params.step.tool,
+    payload:{instruction:safeLog(params.step.instruction,1200),ordinal:params.ordinal},
+  })
   const { data, error } = await supabaseAdmin.from('agent_approvals').insert({
     telegram_id:String(params.actor.legacyTelegramId), run_id:params.runId,
     action_type:params.approvalAction, title:params.step.title,
@@ -316,7 +325,7 @@ async function requestApproval(params:{actor:AgentActor;runId:string;step:Genera
       {label:'Risk',value:params.risk},
     ],
     execution_payload:{ plan_type:'general_multi_tool', ordinal:params.ordinal, stepId:params.stepId },
-    risk_level:params.risk, status:'pending',
+    risk_level:params.risk, status:'pending', ...binding,
   }).select('id').single()
   if (error || !data?.id) throw new Error(`general_plan_approval_failed:${error?.message || 'unknown'}`)
   await updateStep(params.stepId, 'waiting_approval')
@@ -423,9 +432,21 @@ export async function resumeApprovedGeneralPlan(params:{actor:AgentActor;runId:s
   const plan=normalizePlan(meta.plan)
   const stepIds=Array.isArray(meta.stepIds)?meta.stepIds.map(String):[]
   if(!plan||stepIds.length!==plan.steps.length)throw new Error('general_plan_metadata_invalid')
-  const {data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,execution_payload').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
+  const {data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,execution_payload,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   const ordinal=Number(approval?.execution_payload?.ordinal||0)
   if(!approval||!ordinal||ordinal>plan.steps.length)throw new Error('general_plan_approval_missing')
+  const approvedStep=plan.steps[ordinal-1]
+  const approvedStepId=stepIds[ordinal-1]
+  const approvedClassified=classifyStep(approvedStep)
+  if(!approvedClassified.approvalAction)throw new Error('approved_action_missing')
+  assertApprovalBinding({
+    missionId:params.runId,
+    stepId:approvedStepId,
+    capability:approvedClassified.capability,
+    actionType:approvedClassified.approvalAction,
+    target:'tool:'+approvedStep.tool,
+    payload:{instruction:safeLog(approvedStep.instruction,1200),ordinal},
+  },approval)
   await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Approval received. Gogo is continuing the plan.',updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
   const result=await executePlanFromOrdinal({actor:params.actor,runId:params.runId,plan,stepIds,startOrdinal:ordinal,missionText:String(meta.input_text||''),messageId:params.messageId,approvedOrdinal:ordinal})
   if(result.status!=='waiting_approval')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approval.id).eq('telegram_id',String(tg))

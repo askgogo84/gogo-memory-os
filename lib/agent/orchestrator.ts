@@ -4,6 +4,7 @@ import { classifyAgentRequest } from './classifier'
 import { dispatchThroughSameBrain } from './same-brain'
 import { evaluateAgentExecutionPolicy, type AgentCapability, type AgentPermissionLevel } from './policy'
 import type { AgentActor } from './actor'
+import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 
 export type AgentSurface = 'web' | 'ios' | 'android' | 'whatsapp'
 
@@ -119,6 +120,14 @@ async function requestApproval(params: {
   classified: ReturnType<typeof classifyAgentRequest>
 }) {
   if (!params.classified.approvalAction) return null
+  const binding = buildApprovalBinding({
+    missionId: params.runId,
+    stepId: 'run',
+    capability: params.classified.capability,
+    actionType: params.classified.approvalAction,
+    target: 'capability:' + params.classified.capability,
+    payload: { input_text: safeInput(params.text), capability: params.classified.capability },
+  })
   const { data, error } = await supabaseAdmin
     .from('agent_approvals')
     .insert({
@@ -134,6 +143,7 @@ async function requestApproval(params: {
       execution_payload: { input_text: safeInput(params.text), capability: params.classified.capability },
       risk_level: params.classified.risk,
       status: 'pending',
+      ...binding,
     })
     .select('id')
     .single()
@@ -166,12 +176,24 @@ async function executeStoredRun(params: { actor: AgentActor; runId: string; mess
 
   const { data: approval } = await supabaseAdmin
     .from('agent_approvals')
-    .select('id, status')
+    .select('id, status, action_hash, policy_version')
     .eq('run_id', params.runId)
     .eq('telegram_id', String(params.actor.legacyTelegramId))
     .order('requested_at', { ascending: false })
     .limit(1)
     .maybeSingle()
+
+  if (approval?.status === 'approved') {
+    if (!classified.approvalAction) throw new Error('approved_action_missing')
+    assertApprovalBinding({
+      missionId: params.runId,
+      stepId: 'run',
+      capability: classified.capability,
+      actionType: classified.approvalAction,
+      target: 'capability:' + classified.capability,
+      payload: { input_text: text, capability: classified.capability },
+    }, approval)
+  }
 
   const directUserApproval = classified.mode === 'execute' && classified.risk === 'low' && !classified.irreversible && !CONSEQUENTAL.has(classified.capability)
   const policy = evaluateAgentExecutionPolicy({
