@@ -1065,9 +1065,11 @@ _"${originalText}"_
     // router before legacy feature/process-message paths. Live verification showed the
     // legacy path returned all active reminders for an explicit date, bypassing the
     // date-aware reader entirely.
-    const isDeterministicReminderCommand =
+    const hasCalendarNoun = /\b(?:meeting|meetings|calendar|event|events|appointment|appointments)\b/i.test(text)
+    const isDeterministicReminderCommand = !hasCalendarNoun && (
       /^(?:what|which|show|list|display|my|pending|active|upcoming)\b.*\breminders?\b/i.test(text) ||
       /^(?:move|reschedule|change|update)\b.*(?:\breminder\b|\bit\b|\bthat\b|\bthis\b)/i.test(text)
+    )
     if (isDeterministicReminderCommand) {
       const reminderAgent = await tryRunWhatsAppAgent({
         user: resolvedUser,

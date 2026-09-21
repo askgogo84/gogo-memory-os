@@ -349,8 +349,14 @@ export async function routeFeatureIntent(
       return result.text || null
     }
 
-    const agent = await tryRunWhatsAppAgent({ user, text })
-    if(agent?.text)return agent.text
+    // Calendar/meeting/event/appointment commands belong to processIncomingMessage's
+    // calendar handlers. Do not re-enter the generic agent bridge here: reminder
+    // mutation parsing is intentionally broad and would otherwise steal reschedules.
+    const hasCalendarNoun = /\b(?:meeting|meetings|calendar|event|events|appointment|appointments)\b/i.test(text)
+    if (!hasCalendarNoun) {
+      const agent = await tryRunWhatsAppAgent({ user, text })
+      if(agent?.text)return agent.text
+    }
 
     if(normalized.changed){
       const repaired=await dispatchThroughSameBrain({actor,text})
