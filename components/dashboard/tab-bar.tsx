@@ -2,38 +2,26 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { TAB_ICONS } from './icons'
 
-// Mobile prioritises the product promise: daily context, agentic work and memory.
-// Talk to Gogo remains available as the floating action button.
-export const TABS = [
-  { key: 'today', label: 'Today', href: '/dashboard/today' },
-  { key: 'activity', label: 'Activity', href: '/dashboard/activity' },
-  { key: 'memory', label: 'Memory', href: '/dashboard/memory' },
-  { key: 'calendar', label: 'Calendar', href: '/dashboard/calendar' },
-  { key: 'you', label: 'You', href: '/dashboard/you' },
+const tabs=[
+  { key: 'today', label:'Today',href:'/dashboard/home',glyph:'⌂'},
+  { key: 'gogo', label:'Gogo',href:'/dashboard/chat',glyph:'◉'},
+  { key: 'activity', label:'Activity',href:'/dashboard/activity',glyph:'↳'},
+  { key: 'memory', label:'Memory',href:'/dashboard/memory',glyph:'◇'},
+  { key: 'you', label:'You',href:'/dashboard/you',glyph:'♙'},
 ] as const
 
-export function TabBar() {
-  const pathname = usePathname()
-
+export function TabBar(){
+  const pathname=usePathname()
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-[480px] border-t border-gogo-ink/8 bg-gogo-surface/96 shadow-[0_-10px_32px_rgba(45,32,22,.05)] backdrop-blur-xl lg:hidden">
-      {TABS.map(({ key, label, href }) => {
-        const Icon = TAB_ICONS[key]
-        const active = pathname === href || pathname.startsWith(`${href}/`)
-        return (
-          <Link
-            key={key}
-            href={href}
-            aria-current={active ? 'page' : undefined}
-            className={`relative flex min-h-16 flex-1 flex-col items-center justify-center gap-1 py-2 transition-colors duration-300 ${active ? 'text-gogo-teal' : 'text-gogo-ink/42'}`}
-          >
-            {active && <span className="absolute top-0 h-[3px] w-7 rounded-b-full bg-gogo-teal" />}
-            <Icon className="block h-[22px] w-[22px]" />
-            <span className="text-[10.5px] font-semibold">{label}</span>
-          </Link>
-        )
+    <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto flex max-w-[520px] border-t border-[#1f1f1f] bg-[#0f0f0f]/98 backdrop-blur-xl lg:hidden">
+      {tabs.map(t=>{
+        const active=pathname===t.href||pathname.startsWith(t.href+'/')
+        return <Link key={t.key} href={t.href} className={`relative flex min-h-16 flex-1 flex-col items-center justify-center gap-1 text-[10px] font-medium transition ${active?'text-[#f2efea]':'text-[#6a6a6a]'}`}>
+          {active&&<span className="absolute top-0 h-[2px] w-7 rounded-b-full bg-[#2fb8a6]"/>}
+          <span className={`text-[18px] ${active?'text-[#2fb8a6]':'text-[#6a6a6a]'}`}>{t.glyph}</span>
+          <span>{t.label}</span>
+        </Link>
       })}
     </nav>
   )

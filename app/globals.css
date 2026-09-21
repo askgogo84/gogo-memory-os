@@ -218,3 +218,123 @@ body {
   color: var(--foreground);
   font-family: var(--font-onest), Onest, system-ui, sans-serif;
 }
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   AskGogo Final-Dark dashboard system
+   Source of truth: uploaded "AskGogo dashboard surfaces-Final-Dark".
+   This is intentionally scoped to /dashboard only; /admin keeps its founder UI.
+   ────────────────────────────────────────────────────────────────────────── */
+.dashboard-root.final-dark {
+  --color-gogo-orange: #d9a441;
+  --color-gogo-orange-deep: #e8dcc8;
+  --color-gogo-teal: #2fb8a6;
+  --color-gogo-teal-soft: #123d38;
+  --color-gogo-plum: #9a9a9a;
+  --color-gogo-plum-deep: #c9c9c4;
+  --color-gogo-plum-tint: #1f1f1f;
+  --color-gogo-ink: #f2efea;
+  --color-gogo-ink-2: #c9c9c4;
+  --color-gogo-ink-3: #9a9a9a;
+  --color-gogo-ink-4: #6a6a6a;
+  --color-gogo-sand: #3a2a1e;
+  --color-gogo-orange-tint: #211b12;
+  --color-gogo-cream: #0b0b0b;
+  --color-gogo-rail: #0f0f0f;
+  --color-gogo-surface: #161616;
+  --background: #0b0b0b;
+  --foreground: #f2efea;
+  color-scheme: dark;
+  background:#0b0b0b;
+}
+
+.dashboard-root.final-dark .dashboard-shell {
+  background:#0b0b0b;
+  background-image:none;
+}
+
+.dashboard-root.final-dark .dashboard-rail {
+  background:#0f0f0f;
+  border-color:#1f1f1f;
+  box-shadow:inset -1px 0 0 #1f1f1f;
+}
+
+.dashboard-root.final-dark .dashboard-brand {
+  border-color:#1f1f1f !important;
+  background:#111111 !important;
+  box-shadow:none !important;
+}
+
+.dashboard-root.final-dark .dashboard-brand-wordmark {
+  font-family:var(--font-onest), Onest, system-ui, sans-serif;
+  font-size:18px;
+  font-weight:650;
+  letter-spacing:-.02em;
+}
+
+.dashboard-root.final-dark .dashboard-nav-active {
+  border-color:#2a2a2a;
+  background:#1c1c1c;
+  box-shadow:none;
+}
+.dashboard-root.final-dark .dashboard-nav-active::before {
+  background:#2fb8a6;
+}
+.dashboard-root.final-dark .dashboard-rail-status {
+  background:#141414;
+  border:1px solid #1f1f1f;
+  color:#c9c9c4;
+  box-shadow:none;
+}
+
+.dashboard-root.final-dark main {
+  background:#0b0b0b;
+}
+
+.dashboard-root.final-dark .zen-home,
+.dashboard-root.final-dark .zen-hero-card,
+.dashboard-root.final-dark .zen-home-glass,
+.dashboard-root.final-dark .zen-home-pill {
+  background:#161616;
+  border-color:#2a2a2a;
+  box-shadow:none;
+}
+
+.dashboard-root.final-dark .final-dark-panel {
+  border:1px solid #1f1f1f;
+  background:#111111;
+  border-radius:14px;
+}
+.dashboard-root.final-dark .final-dark-card {
+  border:1px solid #1f1f1f;
+  background:#161616;
+  border-radius:12px;
+}
+.dashboard-root.final-dark .final-dark-muted {
+  color:#9a9a9a;
+}
+.dashboard-root.final-dark .final-dark-eyebrow {
+  color:#6a6a6a;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.dashboard-root.final-dark .final-dark-title {
+  color:#f2efea;
+  font-weight:560;
+  letter-spacing:-.03em;
+}
+.dashboard-root.final-dark .final-dark-pill {
+  border:1px solid #2a2a2a;
+  background:#161616;
+  color:#c9c9c4;
+}
+.dashboard-root.final-dark .final-dark-teal { color:#2fb8a6; }
+.dashboard-root.final-dark .final-dark-amber { color:#d9a441; }
+.dashboard-root.final-dark .final-dark-danger { color:#d96c5f; }
+.dashboard-root.final-dark .final-dark-success { color:#7fb069; }
+
+@media (max-width:1023px) {
+  .dashboard-root.final-dark .dashboard-shell { max-width:none; }
+}
