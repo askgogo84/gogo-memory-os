@@ -39,7 +39,9 @@ function linkify(text: string) {
 function MessageBubble({ message }: { message: ChatMessage }) {
   return (
     <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[88%] whitespace-pre-wrap rounded-[22px] px-4 py-3 text-[14px] leading-6 shadow-sm sm:max-w-[78%] ${message.role === 'user' ? 'rounded-br-[7px] bg-gogo-ink text-white' : 'rounded-bl-[7px] border border-gogo-ink/7 bg-gogo-surface text-gogo-ink'}`}>
+      <div className={`max-w-[88%] whitespace-pre-wrap rounded-[22px] px-4 py-3 text-[14px] leading-6 shadow-sm sm:max-w-[78%] ${message.role === 'user'
+        ? 'rounded-br-[7px] border border-[#d8d4ce] bg-[#f2efea] text-[#0b0b0b]'
+        : 'rounded-bl-[7px] border border-[#2a2a2a] bg-[#161616] text-[#f2efea]'}`}>
         {linkify(message.content)}
         {message.mediaUrl && <img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 w-auto rounded-2xl border border-gogo-ink/8" />}
       </div>
