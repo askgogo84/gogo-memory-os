@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { getAdminAnalytics } from '@/lib/bot/handlers/admin-analytics'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,9 +35,15 @@ function getSprintStats(whatsappUsers: number) {
 
 export default async function AdminPage() {
   let analytics: any
+  let waitlistCount = 0
 
   try {
-    analytics = await getAdminAnalytics()
+    const [adminAnalytics, waitlist] = await Promise.all([
+      getAdminAnalytics(),
+      supabaseAdmin.from('waitlist').select('id', { count: 'exact', head: true }),
+    ])
+    analytics = adminAnalytics
+    waitlistCount = waitlist.count || 0
   } catch (error) {
     return (
       <main className="min-h-screen bg-slate-50 p-8 text-slate-950">
@@ -72,6 +79,12 @@ export default async function AdminPage() {
               className="flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
             >
               👥 Manage Users & Plans
+            </a>
+            <a
+              href="/admin/waitlist"
+              className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-white px-5 py-3 text-sm font-semibold text-emerald-700 shadow-sm hover:bg-emerald-50"
+            >
+              ✦ Waitlist {waitlistCount}
             </a>
             <div className="rounded-2xl bg-slate-950 px-5 py-3 text-sm text-white shadow-sm">Live data from Supabase</div>
           </div>
