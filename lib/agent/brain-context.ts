@@ -150,7 +150,19 @@ export function resolveContextualTurnDeterministically(text:string,snapshot:Brai
   const family=actionFamily(text)
   const focus=snapshot.focus
   const original=safe(text,1200)
-  const resolved=original+'\n\nSame Brain context: “it/this/that” refers to '+focus.summary+'. Continue the same user outcome; do not create unrelated work.'
+  let resolved=original+'\n\nSame Brain context: “it/this/that” refers to '+focus.summary+'. Continue the same user outcome; do not create unrelated work.'
+  // Give mature deterministic executors a self-contained mission instead of
+  // teaching each executor pronouns. This is still only context resolution;
+  // calendar/browser/booking/payment executors keep their approval authority.
+  if(focus.kind==='trip'&&family==='calendar'){
+    resolved='Find my latest flight trip ('+focus.summary+') and add it to my calendar'
+  }else if(focus.kind==='trip'&&family==='monitor'){
+    resolved='Monitor my latest flight trip ('+focus.summary+') and tell me if anything changes'
+  }else if(focus.kind==='trip'&&(family==='research'||family==='ask')){
+    resolved='Check this for my latest flight trip ('+focus.summary+'). User request: '+original
+  }else if(focus.kind==='trip'&&family==='remind'){
+    resolved='Set the requested reminder for my latest flight trip ('+focus.summary+'). User request: '+original
+  }
   return {originalText:original,resolvedText:resolved,usedContext:true,focus,actionFamily:family,confidence:0.92,requiresClarification:false,source:'deterministic'}
 }
 
