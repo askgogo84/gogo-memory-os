@@ -21,8 +21,8 @@ const nav: NavItem[] = [
   { href:'/dashboard/agent?section=background', label:'Background', glyph:'◎', badgeKey:'watchers', match:(p,s)=>p==='/dashboard/agent'&&s==='background' },
   { href:'/dashboard/agent?section=goals', label:'Goals', glyph:'○', match:(p,s)=>p==='/dashboard/agent'&&s==='goals' },
   { href:'/dashboard/memory', label:'Memory', glyph:'◇' },
-  { href:'/dashboard/memory?section=library', label:'Library', glyph:'▣', match:(p,s)=>p==='/dashboard/memory'&&s==='library' },
-  { href:'/dashboard/you?section=connections', label:'Connections', glyph:'⌁', match:(p,s)=>p==='/dashboard/you'&&s==='connections' },
+  { href:'/dashboard/library', label:'Library', glyph:'▣' },
+  { href:'/dashboard/connections', label:'Connections', glyph:'⌁' },
   { href:'/dashboard/you/vault', label:'Vault', glyph:'▰' },
   { href:'/dashboard/you', label:'You', glyph:'♙', match:(p,s)=>p==='/dashboard/you'&&!s },
 ]
