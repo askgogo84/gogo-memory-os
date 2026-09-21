@@ -9,5 +9,7 @@ assert.match(source,/check\[- \]\?in confirmation/,'confirmation-specific check-
 assert.match(source,/you\(\?:'\|’\)re checked in|you are checked in|checked in successfully/,'explicit checked-in confirmation must remain accepted')
 assert.match(source,/checkin_confirmation_not_verified/,'unverified execution must remain paused/blocked rather than completed')
 assert.match(source,/checkin_execution_uncertain/,'lost execution evidence must remain non-retriable/uncertain')
+assert.match(source,/status: 'outcome_unknown'/,'uncertain approved check-in outcomes must persist explicit outcome_unknown state')
+assert.match(source,/reconciliationRequired:true/,'uncertain approved check-in outcomes must require provider reconciliation before retry')
 
 console.log('✅ Check-in terminal-evidence safety regression passed')
