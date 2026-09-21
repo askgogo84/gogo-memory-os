@@ -469,6 +469,7 @@ export function isCalendarAction(text: string) {
   return (
     CALENDAR_WORD_RE.test(lower) ||   // calendar + common misspellings (calender/calandar/…)
     lower.includes('meeting') ||
+    /\b(?:events?|appointments?)\b/i.test(lower) ||
     lower.includes('schedule call') ||
     lower.includes('add call') ||
     lower.includes('book call') ||
@@ -592,7 +593,9 @@ export async function buildCalendarActionReply(
     try {
       if (absolute) {
         const start = istWallTimeToUtcDate(absolute.year, absolute.month, absolute.day, 0, 0)
-        const end = istWallTimeToUtcDate(absolute.year, absolute.month, absolute.day, 23, 59)
+        const nextDayAnchor = new Date(Date.UTC(absolute.year, absolute.month - 1, absolute.day, 12, 0, 0))
+        nextDayAnchor.setUTCDate(nextDayAnchor.getUTCDate() + 1)
+        const end = istWallTimeToUtcDate(nextDayAnchor.getUTCFullYear(), nextDayAnchor.getUTCMonth() + 1, nextDayAnchor.getUTCDate(), 0, 0)
         events = await fetchPrimaryCalendarEvents(tokens.accessToken, start.toISOString(), end.toISOString(), 'GCAL_ABSOLUTE_EVENTS_FAILED')
       } else {
         events = await getEventsForTarget(tokens.accessToken, target)
