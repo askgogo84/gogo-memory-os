@@ -26,13 +26,14 @@ const calendar=resolveContextualTurnDeterministically('Save it my calendar',snap
 assert.ok(calendar)
 assert.equal(calendar?.actionFamily,'calendar')
 assert.equal(calendar?.usedContext,true)
+assert.match(calendar?.resolvedText||'',/^Find my latest flight trip/)
 assert.match(calendar?.resolvedText||'',/Bengaluru to New York/)
 assert.match(calendar?.resolvedText||'',/EY239 \/ EY1/)
 assert.match(calendar?.resolvedText||'',/B8XIQC/)
 
 const monitor=resolveContextualTurnDeterministically('Monitor it and tell me if anything changes',snapshot)
 assert.equal(monitor?.actionFamily,'monitor')
-assert.match(monitor?.resolvedText||'',/Same Brain context/)
+assert.match(monitor?.resolvedText||'',/^Monitor my latest flight trip/)
 
 const book=resolveContextualTurnDeterministically('Book it',snapshot)
 assert.equal(book?.actionFamily,'book')
