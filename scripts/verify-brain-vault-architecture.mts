@@ -23,7 +23,7 @@ assert.match(migration,/Router Retirement/i)
 assert.match(migration,/Rollback/i)
 assert.match(migration,/Evidence Normalization/i)
 
-for(let i=1;i<=40;i++){ const id='J'+String(i).padStart(2,'0'); assert.match(matrix,new RegExp('\\| '+id+' \\|')) }
+for(let i=1;i<=63;i++){ const id='J'+String(i).padStart(2,'0'); assert.match(matrix,new RegExp('\\| '+id+' \\|')) }
 assert.match(matrix,/no mutation before approval/i)
 assert.match(matrix,/no secret plaintext/i)
 assert.match(matrix,/no success claim without evidence/i)
