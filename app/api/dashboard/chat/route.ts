@@ -10,6 +10,7 @@ import { isPublicTravelResearchRequest, tryRunTravelResearch } from '@/lib/agent
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
+import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
@@ -95,9 +96,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+    const shadowEventId = `web-${randomUUID()}`
 
     try {
-      await observeShadowBrainTurn({ actor, surface:'web', text, eventId:randomUUID() })
+      await observeShadowBrainTurn({ actor, surface:'web', text, eventId:shadowEventId })
     } catch (shadowError:any) {
       console.error('SHADOW_BRAIN_DASHBOARD_FAILED:', String(shadowError?.message || shadowError).slice(0,180))
     }
@@ -105,6 +107,7 @@ export async function POST(req: NextRequest) {
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
     if (readOnlySchedule?.horizon === 'tomorrow') {
       const summary = await readTomorrowSchedule({ actor })
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'read-only-schedule',actualCapability:'calendar',status:'completed'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, summary.text)
       return NextResponse.json({ text: summary.text, handledBy: 'read-only-schedule', status:'completed', readOnly:true, mutated:false })
     }
@@ -112,6 +115,7 @@ export async function POST(req: NextRequest) {
     const dayIntent = detectDashboardDayIntent(text)
     if (dayIntent) {
       const dayReply = await getDashboardDayReply(session.telegramId, dayIntent)
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'dashboard-day'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, dayReply)
       return NextResponse.json({ text: dayReply, handledBy: 'dashboard-day' })
     }
@@ -124,12 +128,14 @@ export async function POST(req: NextRequest) {
         ? '\n\nI paused before the consequential provider action. Open Gogo Agent to approve or reject it.'
         : ''
       const reply = `${appointmentFollowup.text || ''}${suffix}`
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:appointmentFollowup.handledBy,actualCapability:(appointmentFollowup as any).capability||'browser',status:appointmentFollowup.status,runId:appointmentFollowup.runId}).catch(()=>{})
       await saveConversation(user.telegram_id, text, reply)
       return NextResponse.json({ text: reply, handledBy: appointmentFollowup.handledBy, runId: appointmentFollowup.runId, status: appointmentFollowup.status })
     }
 
     const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:'web', text })
     if (appointmentResearch) {
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:appointmentResearch.handledBy,actualCapability:(appointmentResearch as any).capability||'browser',status:appointmentResearch.status,runId:appointmentResearch.runId}).catch(()=>{})
       await saveConversation(user.telegram_id, text, appointmentResearch.text)
       return NextResponse.json({ text: appointmentResearch.text, handledBy: appointmentResearch.handledBy, runId: appointmentResearch.runId, status: appointmentResearch.status })
     }
@@ -139,6 +145,7 @@ export async function POST(req: NextRequest) {
     // from storing source='whatsapp' and later pushing IRCTC handoff/results there.
     const trainResearch = await tryRunTrainResearch({ actor, surface:'web', text })
     if (trainResearch) {
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:trainResearch.handledBy,actualCapability:(trainResearch as any).capability||'travel',status:trainResearch.status,runId:trainResearch.runId}).catch(()=>{})
       await saveConversation(user.telegram_id, text, trainResearch.text)
       return NextResponse.json({
         text: trainResearch.text,
@@ -158,6 +165,7 @@ export async function POST(req: NextRequest) {
         ? '\n\nI paused before the consequential provider action. Open Gogo Agent to approve or reject it.'
         : ''
       const reply = `${browserTask.text || ''}${suffix}`
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:browserTask.handledBy,actualCapability:(browserTask as any).capability||'browser',status:browserTask.status,runId:browserTask.runId}).catch(()=>{})
       await saveConversation(user.telegram_id, text, reply)
       return NextResponse.json({
         text: reply,
@@ -178,6 +186,7 @@ export async function POST(req: NextRequest) {
         ? '\n\nI paused at a consequential step. Open Gogo Agent to review and approve or reject it.'
         : ''
       const reply = `${mission.text || ''}${suffix}`
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:mission.handledBy,actualCapability:(mission as any).capability||null,status:mission.status,runId:mission.runId}).catch(()=>{})
       await saveConversation(user.telegram_id, text, reply)
       return NextResponse.json({ text: reply, handledBy: mission.handledBy, runId: mission.runId, status: mission.status })
     }
@@ -185,6 +194,7 @@ export async function POST(req: NextRequest) {
     if (isPublicTravelResearchRequest(text)) {
       const travel = await tryRunTravelResearch({ actor, surface:'web', text })
       if (travel) {
+        await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:travel.handledBy,actualCapability:(travel as any).capability||'travel',status:(travel as any).status||null,runId:(travel as any).runId||null}).catch(()=>{})
         await saveConversation(user.telegram_id, text, travel.text)
         return NextResponse.json({ text: travel.text, handledBy: travel.handledBy })
       }
@@ -196,6 +206,7 @@ export async function POST(req: NextRequest) {
     })
 
     if (featureReply) {
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'feature-intent'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, featureReply)
       return NextResponse.json({ text: redactSecretShapedText(featureReply), handledBy: 'feature-intent' })
     }
@@ -206,8 +217,18 @@ export async function POST(req: NextRequest) {
       text,
       userName: user.name || 'Gogo',
       messageType: 'text',
-      messageId: `web-${randomUUID()}`,
+      messageId: shadowEventId,
     })
+
+    await recordShadowRouterOutcome({
+      telegramId:user.telegram_id,
+      surface:'web',
+      eventId:shadowEventId,
+      actualHandler:result.handledBy || 'same-brain',
+      actualCapability:(result as any).capability || null,
+      status:(result as any).status || null,
+      runId:(result as any).runId || null,
+    }).catch(()=>{})
 
     return NextResponse.json({
       text: redactSecretShapedText(result.text),
