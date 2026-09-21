@@ -52,18 +52,98 @@ async function activeMission(actor:AgentActor){
 async function recentTrip(actor:AgentActor){
   const cutoff=new Date(Date.now()-48*60*60*1000).toISOString()
   const {data,error}=await supabaseAdmin.from('travel_tickets')
-    .select('id,booking_group,from_city,to_city,depart_at,flight_no,airline,pnr')
+    .select('id,booking_group,leg_index,from_city,to_city,depart_at,flight_no,airline,pnr,created_at')
     .eq('telegram_id',actor.legacyTelegramId)
     .gte('depart_at',cutoff)
-    .order('depart_at',{ascending:true})
-    .limit(6)
+    .order('created_at',{ascending:false})
+    .limit(12)
   if(error)throw error
   if(!data?.length)return null
-  const first=data[0],last=data[data.length-1]
+  const newest=data[0]
+  const groupKey=String(newest.booking_group||newest.pnr||newest.id)
+  const legs=data.filter((row:any)=>String(row.booking_group||row.pnr||row.id)===groupKey)
+    .sort((a:any,b:any)=>Date.parse(String(a.depart_at||''))-Date.parse(String(b.depart_at||'')))
+  const first=legs[0]||newest,last=legs[legs.length-1]||newest
   return {
-    ref:'trip:'+String(first.booking_group||first.pnr||first.id),
+    ref:'trip:'+groupKey,
     summary:[clean(first.from_city,80)+' to '+clean(last.to_city,80),first.flight_no?clean(first.flight_no,30):'',last.flight_no&&last.flight_no!==first.flight_no?clean(last.flight_no,30):''].filter(Boolean).join(', '),
+    createdAt:String(newest.created_at||''),
   }
+}
+
+export type ShadowFocusCandidate={
+  kind:'mission'|'trip'|'none'
+  ref:string|null
+  summary:string|null
+  confidence:number
+  ambiguous:boolean
+}
+
+function recentEnough(iso:unknown,minutes=15){
+  const t=Date.parse(String(iso||''))
+  return Number.isFinite(t) && (Date.now()-t)<=minutes*60_000
+}
+
+export function selectShadowFocus(params:{
+  text:string
+  contextual:boolean
+  mission?:{id:string;title?:string|null;summary?:string|null;updated_at?:string|null}|null
+  trip?:{ref:string;summary:string;createdAt?:string|null}|null
+}):ShadowFocusCandidate{
+  const text=String(params.text||'')
+  const mission=params.mission||null
+  const trip=params.trip||null
+  const explicitTrip=/\b(flight|trip|ticket|pnr|boarding|airline|check[- ]?in)\b/i.test(text)
+  const missionFresh=Boolean(mission&&recentEnough(mission.updated_at,15))
+  const tripFresh=Boolean(trip&&recentEnough(trip.createdAt,15))
+
+  if(explicitTrip&&trip){
+    return {kind:'trip',ref:trip.ref,summary:trip.summary,confidence:0.97,ambiguous:false}
+  }
+
+  if(params.contextual&&missionFresh&&tripFresh){
+    return {kind:'none',ref:null,summary:null,confidence:0.35,ambiguous:true}
+  }
+
+  if(params.contextual&&missionFresh&&mission){
+    return {
+      kind:'mission',
+      ref:'run:'+String(mission.id),
+      summary:clean([mission.title,mission.summary].filter(Boolean).join(' — '),500),
+      confidence:0.91,
+      ambiguous:false,
+    }
+  }
+
+  if(params.contextual&&tripFresh&&trip){
+    return {kind:'trip',ref:trip.ref,summary:trip.summary,confidence:0.91,ambiguous:false}
+  }
+
+  if(params.contextual&&mission){
+    return {
+      kind:'mission',
+      ref:'run:'+String(mission.id),
+      summary:clean([mission.title,mission.summary].filter(Boolean).join(' — '),500),
+      confidence:0.76,
+      ambiguous:false,
+    }
+  }
+
+  if(params.contextual&&trip){
+    return {kind:'trip',ref:trip.ref,summary:trip.summary,confidence:0.72,ambiguous:false}
+  }
+
+  if(!params.contextual&&mission){
+    return {
+      kind:'mission',
+      ref:'run:'+String(mission.id),
+      summary:clean([mission.title,mission.summary].filter(Boolean).join(' — '),500),
+      confidence:0.68,
+      ambiguous:false,
+    }
+  }
+
+  return {kind:'none',ref:null,summary:null,confidence:params.contextual?0.25:0.9,ambiguous:params.contextual}
 }
 
 export async function observeShadowBrainTurn(params:{
@@ -81,31 +161,17 @@ export async function observeShadowBrainTurn(params:{
     console.error('SHADOW_BRAIN_CONTEXT_FAILED:',clean(error?.message||error,180))
   }
 
-  let focusKind:ShadowBrainObservation['focusKind']='none'
-  let focusRef:string|null=null
-  let focusSummary:string|null=null
-  let confidence=contextual?0.55:0.9
-  let ambiguous=false
-
-  // Fresh structured trip beats stale paused background work for contextual turns.
-  if(contextual&&trip){
-    focusKind='trip';focusRef=trip.ref;focusSummary=trip.summary;confidence=0.88
-  }else if(mission){
-    focusKind='mission';focusRef='run:'+String(mission.id)
-    focusSummary=clean([mission.title,mission.summary].filter(Boolean).join(' — '),500)
-    confidence=contextual?0.78:0.7
-  }else if(trip){
-    focusKind='trip';focusRef=trip.ref;focusSummary=trip.summary;confidence=contextual?0.82:0.6
-  }
-
-  if(contextual&&!focusRef){ambiguous=true;confidence=0.25}
+  const focus=selectShadowFocus({text:params.text,contextual,mission,trip})
 
   const observation:ShadowBrainObservation={
     actionFamily:shadowActionFamily(params.text),
     capability:classified.capability,
     needsContext:contextual,
-    focusKind,focusRef,focusSummary,
-    confidence,ambiguous,
+    focusKind:focus.kind,
+    focusRef:focus.ref,
+    focusSummary:focus.summary,
+    confidence:focus.confidence,
+    ambiguous:focus.ambiguous,
   }
 
   const {error}=await supabaseAdmin.from('agent_activity').insert({
