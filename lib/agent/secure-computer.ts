@@ -3,8 +3,9 @@ import { Sandbox } from '@vercel/sandbox'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
+import { upsertVaultSession } from '@/lib/vault/session-store'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
+import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_GENERATION, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 const MAX_ACTIONS = 12
@@ -389,6 +390,17 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
                 telegramId:credential.telegramId,credentialId:credential.credentialId,
                 provider:credential.provider,domain:credential.domain,outcome:'login_success',
               }).catch(()=>{})
+              await upsertVaultSession({
+                telegramId:credential.telegramId,
+                provider:credential.provider,
+                domain:credential.domain,
+                credentialId:credential.credentialId,
+                sandboxName:first.name,
+                profileGeneration:SANDBOX_GENERATION,
+                status:'active',
+                authMethod:'vault_credential',
+                metadata:{source:'secure_browser'},
+              }).catch((err:any)=>console.error('VAULT_SESSION_UPSERT_FAILED:',String(err?.message||err).slice(0,180)))
             }else if(explicitFailure){
               await recordVaultBrowserOutcome({
                 telegramId:credential.telegramId,credentialId:credential.credentialId,
@@ -400,6 +412,17 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
                 telegramId:credential.telegramId,credentialId:credential.credentialId,
                 provider:credential.provider,domain:credential.domain,outcome:'human_challenge',
                 reason:authGate.reason||'login_not_completed',
+              }).catch(()=>{})
+              await upsertVaultSession({
+                telegramId:credential.telegramId,
+                provider:credential.provider,
+                domain:credential.domain,
+                credentialId:credential.credentialId,
+                sandboxName:first.name,
+                profileGeneration:SANDBOX_GENERATION,
+                status:'human_challenge',
+                authMethod:'vault_credential',
+                metadata:{source:'secure_browser',challenge:authGate.reason||'login_not_completed'},
               }).catch(()=>{})
             }
           }catch(err:any){
