@@ -24,3 +24,7 @@ for(const required of [
 ]) assert.ok(migration.includes(required),required+' missing from schema foundation')
 
 console.log('Brain v1.1 schema foundation verification passed')
+
+const lockdown=readFileSync('supabase/migrations/20260921052000_brain_v1_1_lease_rpc_lockdown.sql','utf8')
+assert.match(lockdown,/revoke execute[\s\S]*from anon, authenticated/i)
+assert.match(lockdown,/grant execute[\s\S]*to service_role/i)
