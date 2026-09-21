@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
@@ -7,6 +8,7 @@ import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
 import { findVaultProviderInText } from '@/lib/vault/providers'
+import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 
 export type BrowserCommand = {
   url:string
@@ -18,6 +20,22 @@ export type BrowserCommand = {
 }
 
 function safe(value:unknown,max=1800){return redactSecretShapedText(String(value??'').trim().slice(0,max))}
+
+function browserApprovalFingerprintInput(runId:string,stepId:string,command:BrowserCommand){
+  const u=new URL(command.url)
+  return {
+    missionId:runId,
+    stepId,
+    capability:'browser',
+    actionType:String(command.approvalAction||'submit_form'),
+    target:u.origin+u.pathname,
+    payload:{
+      objective:safe(command.objective,1200),
+      url_sha256:createHash('sha256').update(command.url).digest('hex'),
+      mode:'execute',
+    },
+  }
+}
 
 function extractUrl(text:string){
   const m=String(text||'').match(/https?:\/\/[^\s<>)\]}]+/i)
@@ -137,12 +155,13 @@ async function makeRun(params:{actor:AgentActor;surface:AgentSurface;command:Bro
 async function approval(params:{actor:AgentActor;runId:string;stepId:string;command:BrowserCommand}){
   if(!params.command.approvalAction)return null
   const host=new URL(params.command.url).hostname
+  const binding=buildApprovalBinding(browserApprovalFingerprintInput(params.runId,params.stepId,params.command))
   const {data,error}=await supabaseAdmin.from('agent_approvals').insert({
     telegram_id:String(params.actor.legacyTelegramId),run_id:params.runId,action_type:params.command.approvalAction,
     title:`Approve browser action on ${host}`,
     description:'Gogo can prepare and inspect the website safely, but this action may submit information, make a booking, or spend money.',
     payload_preview:[{label:'Website',value:host},{label:'Action',value:safe(params.command.objective,500)},{label:'Risk',value:'high'}],
-    execution_payload:{plan_type:'secure_browser',stepId:params.stepId,url:params.command.url},risk_level:'high',status:'pending',
+    execution_payload:{plan_type:'secure_browser',stepId:params.stepId,url:params.command.url},risk_level:'high',status:'pending',...binding,
   }).select('id').single()
   if(error||!data?.id)throw new Error(`browser_approval_failed:${error?.message||'unknown'}`)
   await supabaseAdmin.from('agent_steps').update({status:'waiting_approval'}).eq('id',params.stepId)
@@ -240,8 +259,11 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
   if(error)throw new Error(`agent_run_read_failed:${error.message}`);if(!run)throw new Error('agent_run_not_found')
   const meta:any=run.metadata_json||{};if(meta.plan_type!=='secure_browser')throw new Error('not_secure_browser_run')
   const command:BrowserCommand={url:String(meta.url||''),objective:safe(meta.objective,1800),mode:'execute',risk:'high',approvalAction:meta.approval_action||'submit_form',vaultCredentialId:String(meta.vault_credential_id||'').trim()||undefined}
-  const {data:approved}=await supabaseAdmin.from('agent_approvals').select('id,status').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
+  const {data:approved}=await supabaseAdmin.from('agent_approvals').select('id,status,execution_payload,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!approved)throw new Error('approval_required')
+  const approvedStepId=String((approved.execution_payload as any)?.stepId||'')
+  if(!approvedStepId)throw new Error('approval_binding_step_missing')
+  assertApprovalBinding(browserApprovalFingerprintInput(params.runId,approvedStepId,command),approved)
   const level=await permission(tg)
   const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:level,mode:'execute',risk:'high',irreversible:true,approvalStatus:'approved'})
   if(!policy.allowed)throw new Error(policy.reason)
