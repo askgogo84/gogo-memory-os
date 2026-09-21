@@ -131,7 +131,7 @@ async function prepareFlightCheckin(params: { telegramId: string; event: any; ac
     await markAction(String(action.id), 'blocked', { ...(payload || {}), blockedReason: 'missing_checkin_url_or_confirmation' })
     const runId = await createRun({ telegramId, event, action, status: 'paused', summary: 'Gogo could not safely prepare check-in because the verified check-in URL or booking reference is missing.' })
     await activity(telegramId, runId, 'life_event_blocked', 'Flight check-in preparation paused because required booking context is missing.', { life_event_id: event.id })
-    return { status: 'outcome_unknown' as const, runId }
+    return { status: 'blocked' as const, runId }
   }
 
   const permissionLevel = await browserPermission(telegramId)
