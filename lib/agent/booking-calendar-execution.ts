@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { refreshAccessToken } from '@/lib/google-calendar'
 import type { AgentActor } from './actor'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
+import { reconcileGoogleCalendarEvent, shouldTreatMutationFailureAsUnknown } from './outcome-reconciliation'
 
 const PLAN_TYPE = 'booking_event_calendar'
 
@@ -101,9 +102,73 @@ export async function executeApprovedBookingCalendar(params:{actor:AgentActor;ru
   assertApprovalBinding(bookingCalendarApprovalInput(params.runId,linkedEvent),approval)
   const token=await calendarToken(params.actor),eventId=bookingCalendarEventId(linkedEvent.lifeEventId)
   const endpoint='https://www.googleapis.com/calendar/v3/calendars/primary/events',body={id:eventId,summary:linkedEvent.title,location:linkedEvent.location||undefined,description:[linkedEvent.provider?`Provider: ${linkedEvent.provider}`:'',linkedEvent.sourceUrl?`Booking source: ${linkedEvent.sourceUrl}`:'',linkedEvent.endEstimated?'End time is estimated by AskGogo because the provider did not expose a duration.':'','Saved by AskGogo booking closure.'].filter(Boolean).join('\n'),start:{dateTime:linkedEvent.startAt,timeZone:linkedEvent.timezone||'Asia/Kolkata'},end:{dateTime:linkedEvent.endAt,timeZone:linkedEvent.timezone||'Asia/Kolkata'},extendedProperties:{private:{askgogo_run_id:params.runId,askgogo_life_event_id:linkedEvent.lifeEventId,askgogo_source:PLAN_TYPE}}}
-  let response=await fetch(endpoint,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store'}),data:any=await response.json().catch(()=>({})),reused=false
-  if(response.status===409){response=await fetch(`${endpoint}/${encodeURIComponent(eventId)}`,{headers:{Authorization:`Bearer ${token}`},cache:'no-store'});data=await response.json().catch(()=>({}));reused=response.ok}
-  if(!response.ok){if(response.status===401||response.status===403)throw new Error('calendar_reconnect_required');throw new Error(`booking_calendar_create_failed:${response.status}`)}
+  let response:Response|null=null,data:any={},reused=false
+  let mutationFailureStatus:number|null=null
+  try{
+    response=await fetch(endpoint,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store'})
+    mutationFailureStatus=response.status
+    data=await response.json().catch(()=>({}))
+  }catch{
+    mutationFailureStatus=null
+  }
+
+  if(response?.status===409){
+    const reconciled=await reconcileGoogleCalendarEvent({accessToken:token,eventId})
+    if(reconciled.state==='verified_completed'){
+      data={id:String(reconciled.evidence.eventId||eventId),htmlLink:String(reconciled.evidence.htmlLink||'')}
+      reused=true
+      response=new Response(null,{status:200})
+    }else if(reconciled.state==='still_unknown'){
+      const at=new Date().toISOString()
+      await supabaseAdmin.from('agent_runs').update({
+        status:'outcome_unknown',progress:95,
+        summary:'Google Calendar may have created this booking event, but AskGogo could not verify the final provider state. It will reconcile before any retry.',
+        error:'calendar_outcome_unknown',updated_at:at,
+        metadata_json:{...meta,calendarExecution:{eventId,reconciliation:reconciled,attemptedAt:at}},
+      }).eq('id',params.runId).eq('telegram_id',tg)
+      return{runId:params.runId,status:'outcome_unknown' as const,capability:'calendar' as const,risk:'medium' as const,handledBy:'booking-event-calendar' as const,text:'I lost reliable confirmation from Google Calendar. I will not create another event until I can verify whether this one already exists.'}
+    }
+  }
+
+  if(!response?.ok && shouldTreatMutationFailureAsUnknown(mutationFailureStatus)){
+    const reconciled=await reconcileGoogleCalendarEvent({accessToken:token,eventId})
+    if(reconciled.state==='verified_completed'){
+      data={id:String(reconciled.evidence.eventId||eventId),htmlLink:String(reconciled.evidence.htmlLink||'')}
+      reused=true
+      response=new Response(null,{status:200})
+    }else if(reconciled.state==='verified_absent'){
+      try{
+        response=await fetch(endpoint,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store'})
+        data=await response.json().catch(()=>({}))
+        mutationFailureStatus=response.status
+      }catch{
+        response=null
+        mutationFailureStatus=null
+      }
+    }
+  }
+
+  if(!response?.ok){
+    if(response&&(response.status===401||response.status===403))throw new Error('calendar_reconnect_required')
+    if(shouldTreatMutationFailureAsUnknown(response?.status??mutationFailureStatus)){
+      const reconciled=await reconcileGoogleCalendarEvent({accessToken:token,eventId})
+      if(reconciled.state==='verified_completed'){
+        data={id:String(reconciled.evidence.eventId||eventId),htmlLink:String(reconciled.evidence.htmlLink||'')}
+        reused=true
+      }else{
+        const at=new Date().toISOString()
+        await supabaseAdmin.from('agent_runs').update({
+          status:'outcome_unknown',progress:95,
+          summary:'Google Calendar may have created this booking event, but AskGogo could not verify the final provider state. It will reconcile before any retry.',
+          error:'calendar_outcome_unknown',updated_at:at,
+          metadata_json:{...meta,calendarExecution:{eventId,reconciliation:reconciled,attemptedAt:at}},
+        }).eq('id',params.runId).eq('telegram_id',tg)
+        return{runId:params.runId,status:'outcome_unknown' as const,capability:'calendar' as const,risk:'medium' as const,handledBy:'booking-event-calendar' as const,text:'I lost reliable confirmation from Google Calendar. I will not create another event until I can verify whether this one already exists.'}
+      }
+    }else{
+      throw new Error(`booking_calendar_create_failed:${response?.status||'network'}`)
+    }
+  }
   const now=new Date().toISOString(),{data:eventRow}=await supabaseAdmin.from('life_events').select('metadata_json').eq('id',linkedEvent.lifeEventId).eq('telegram_id',tg).maybeSingle(),nextMeta={...((eventRow?.metadata_json as any)||{}),calendar:{eventId:data.id||eventId,htmlLink:data.htmlLink||'',createdAt:now}}
   const writes:any[]=[
     supabaseAdmin.from('agent_runs').update({status:'completed',progress:100,summary:'Booking added to Google Calendar.',completed_at:now,updated_at:now,metadata_json:{...meta,life_event_action_id:lifeEventActionId||null,proposedEvent:linkedEvent,calendarExecution:{eventId:data.id||eventId,htmlLink:data.htmlLink||'',reused,executedAt:now}}}).eq('id',params.runId).eq('telegram_id',tg),
