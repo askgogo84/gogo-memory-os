@@ -17,7 +17,17 @@ Do not replace production executors until the new architecture proves parity in 
 - Vault availability not represented in shared context
 - background events living outside interactive mission continuity
 
-## Phase 0 — Freeze and baseline
+## Phase 0 — Freeze, schema reconciliation and baseline
+
+Before brain work:
+- make repository migrations reproduce production agent/runtime schema
+- resolve documented D1/D4 silent constraint failures
+- ensure clean-clone test setup works
+- add per-user processing lock primitive
+- add inbound event idempotency storage
+- define privacy disconnect/revoke/delete behavior for connected accounts
+
+
 
 Deliverables:
 - architecture spec
@@ -178,3 +188,25 @@ Rollback must preserve:
 - world objects
 
 Only routing authority rolls back; stored state must remain forward-compatible.
+
+
+## Deferred complexity
+
+Do not implement before scale requires it:
+- full event replay/event-sourced reconstruction
+- per-object optimistic versioning everywhere
+- durable versioned focus graph
+- global entity merge engine
+
+Use a per-user serial processing lock, short-lived focus, explicit selection priority and clarification-on-ambiguity in the first production architecture.
+
+## Parallel stabilization track
+
+Run alongside architecture work:
+- D1/D4 DB/schema failures
+- mail hijack
+- false browser-unavailable copy
+- Gmail disconnect/revoke/delete
+- askgogo.in waitlist/fundraising proof
+
+These are not prerequisites to writing the architecture, but schema/privacy items are prerequisites to Shadow Brain activation.
