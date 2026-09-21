@@ -137,7 +137,13 @@ async function loadVault(actor:AgentActor){
 
 export async function loadBrainSnapshot(actor:AgentActor):Promise<BrainSnapshot>{
   const [tripState,runState,recentConversation,vault]=await Promise.all([loadTrips(actor),loadRuns(actor),loadConversation(actor),loadVault(actor)])
-  let focus:BrainFocus|null=runState.focus||tripState.focus||null
+  const tail=recentConversation.slice(-4).map(row=>row.content).join(' ')
+  const sharedTripIsSalient=Boolean(tripState.focus)&&/\b(flight ticket saved|ticket saved|flight|pnr|boarding|trip)\b/i.test(tail)
+  // Salience beats stale state: a just-shared/recognized trip becomes the active
+  // object even if an unrelated older browser run is paused. A genuinely active
+  // queued/running/waiting-approval mission still wins when there is no fresh
+  // structured-share signal.
+  let focus:BrainFocus|null=sharedTripIsSalient?tripState.focus:(runState.focus||tripState.focus||null)
   if(!focus){
     const last=recentConversation.slice().reverse().find(row=>row.role==='assistant'||row.role==='user')
     if(last?.content)focus={kind:'conversation',ref:'conversation:latest',summary:safe(last.content,500)}
