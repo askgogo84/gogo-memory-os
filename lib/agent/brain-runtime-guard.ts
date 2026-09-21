@@ -43,7 +43,7 @@ export async function claimInboundEvent(params:{
   if(String((error as any)?.code||'')!=='23505')throw new Error(`inbound_event_claim_failed:${error?.message||'unknown'}`)
 
   const {data:existing,error:readError}=await supabaseAdmin.from('agent_inbound_events')
-    .select('id,status,result_json,owner_token,lease_until')
+    .select('id,status,result_json,owner_token,lease_until,external_user_id,telegram_id')
     .eq('surface',surface).eq('event_key',eventKey).maybeSingle()
   if(readError||!existing?.id)throw new Error(`inbound_event_duplicate_read_failed:${readError?.message||'unknown'}`)
 
