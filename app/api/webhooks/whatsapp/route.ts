@@ -43,6 +43,7 @@ import { routeFeatureIntent } from '@/lib/feature-intents'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
+import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
 import {
@@ -1044,6 +1045,15 @@ _"${originalText}"_
         messageId: inboundMessageSid || null,
       })
       if (providerAgent) {
+        await recordShadowRouterOutcome({
+          telegramId:resolvedUser.telegramId,
+          surface:'whatsapp',
+          eventId:inboundMessageSid,
+          actualHandler:providerAgent.handledBy || 'whatsapp-agent',
+          actualCapability:(providerAgent as any).capability || null,
+          status:providerAgent.status || null,
+          runId:providerAgent.runId || null,
+        }).catch(()=>{})
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', providerAgent.text)
         await sendWhatsAppMessage(from, providerAgent.text)
@@ -1054,6 +1064,12 @@ _"${originalText}"_
     const featureReply = await routeFeatureIntent(from, text, { telegramId: resolvedUser.telegramId, caption: bodyText }) ||
       (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText, { telegramId: resolvedUser.telegramId }) : null)
     if (featureReply) {
+      await recordShadowRouterOutcome({
+        telegramId:resolvedUser.telegramId,
+        surface:'whatsapp',
+        eventId:inboundMessageSid,
+        actualHandler:'legacy-feature-intent',
+      }).catch(()=>{})
       await saveConversation(resolvedUser.telegramId, 'user', text)
       await saveConversation(resolvedUser.telegramId, 'assistant', featureReply)
       await sendWhatsAppMessage(from, featureReply)
@@ -1061,6 +1077,13 @@ _"${originalText}"_
     }
 
     if (isPaymentIntentCommand(text)) {
+      await recordShadowRouterOutcome({
+        telegramId:resolvedUser.telegramId,
+        surface:'whatsapp',
+        eventId:inboundMessageSid,
+        actualHandler:'payment-intent',
+        actualCapability:'payments',
+      }).catch(()=>{})
       const reply = await buildPaymentIntentReply({ telegramId: resolvedUser.telegramId, text, userName: resolvedUser.name })
       await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -1336,6 +1359,15 @@ _Reminder cancelled._`
 
     await sendThinkingIfNeeded(from, text)
     const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', messageId: inboundMessageSid || null })
+    await recordShadowRouterOutcome({
+      telegramId:resolvedUser.telegramId,
+      surface:'whatsapp',
+      eventId:inboundMessageSid,
+      actualHandler:(result as any).handledBy || 'process-message',
+      actualCapability:(result as any).capability || null,
+      status:(result as any).status || null,
+      runId:(result as any).runId || null,
+    }).catch(()=>{})
     const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(result.text, originalText) : result.text
     // Send visual card if process-message returned a mediaUrl
     if ((result as any).mediaUrl) {
