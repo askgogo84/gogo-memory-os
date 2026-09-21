@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "if [ \"$VERCEL_GIT_COMMIT_REF\" = \"architecture/brain-vault-v1-20260921\" ]; then npx --yes tsx scripts/review-brain-vault-architecture-with-claude.mts; fi; next build",
+    "build": "if [ \"$VERCEL_GIT_COMMIT_REF\" = \"architecture/brain-vault-v1-20260921\" ]; then npx --yes tsx scripts/review-brain-vault-architecture-with-claude.mts --write public/claude-architecture-review.txt; fi; next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
