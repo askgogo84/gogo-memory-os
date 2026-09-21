@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { dirname } from 'node:path'
 
 const files = [
   'docs/architecture/BRAIN_VAULT_ARCHITECTURE_V1.md',
@@ -46,6 +47,7 @@ console.log(output)
 const writeIndex = process.argv.indexOf('--write')
 if (writeIndex >= 0) {
   const target = process.argv[writeIndex + 1] || 'docs/architecture/CLAUDE_REVIEW_V1.md'
+  mkdirSync(dirname(target),{recursive:true})
   writeFileSync(target, output, 'utf8')
   console.error('architecture_review_written:' + target)
 }
