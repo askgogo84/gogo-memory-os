@@ -18,6 +18,7 @@ import { initializeBackgroundGoal } from './goal-engine'
 import { tryRecoverAppointmentOption } from './appointment-followup-recovery'
 import { tryRunAppointmentFollowup } from './appointment-followup'
 import { tryRunAppointmentResearch } from './appointment-research'
+import { resolveBrainTurn } from './brain-context'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -204,65 +205,96 @@ export async function tryRunWhatsAppAgent(params: {
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
 
-  const productWatchStatus = await tryGetProductStockWatchStatusFromCommand({ actor, text:params.text })
+  // Unified Same Brain preflight. Resolve pronouns/implicit references once,
+  // before specialists compete for the turn. This layer never executes actions:
+  // downstream policy, approval, Sentinel, Vault and terminal-evidence gates keep
+  // their existing authority.
+  const brain = await resolveBrainTurn({ actor, text:params.text })
+  const routedText = brain.resolution.resolvedText
+
+  if (brain.resolution.requiresClarification) {
+    return {
+      text:'I can continue this, but I need you to tell me which recent item you mean.',
+      status:'paused',
+      handledBy:'same-brain-context',
+    }
+  }
+
+  if (brain.resolution.usedContext) {
+    await supabaseAdmin.from('agent_activity').insert({
+      telegram_id:String(actor.legacyTelegramId),
+      event_type:'brain_context_resolved',
+      message:'Same Brain connected this turn to the active context.',
+      metadata_json:{
+        surface:'whatsapp',
+        focus_kind:brain.resolution.focus?.kind||null,
+        focus_ref:brain.resolution.focus?.ref||null,
+        action_family:brain.resolution.actionFamily,
+        resolver:brain.resolution.source,
+        vault_providers:brain.snapshot.vault.map(v=>({provider:v.provider,status:v.status,domains:v.domains})),
+      },
+    }).then(({error})=>{if(error)console.error('WHATSAPP_BRAIN_ACTIVITY_FAILED:',error.message)})
+  }
+
+  const productWatchStatus = await tryGetProductStockWatchStatusFromCommand({ actor, text:routedText })
   if (productWatchStatus) return { ...productWatchStatus, handledBy:String(productWatchStatus.handledBy || 'product-stock-watch-status') }
 
-  const inboxTriageWatch = await tryCreateInboxTriageWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
+  const inboxTriageWatch = await tryCreateInboxTriageWatchFromCommand({ actor, surface:'whatsapp', text:routedText })
   if (inboxTriageWatch) return { ...inboxTriageWatch, handledBy:String(inboxTriageWatch.handledBy || 'inbox-triage-watch') }
 
-  const flightWatch = await tryCreateFlightWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
+  const flightWatch = await tryCreateFlightWatchFromCommand({ actor, surface:'whatsapp', text:routedText })
   if (flightWatch) return { ...flightWatch, handledBy:String(flightWatch.handledBy || 'flight-watch') }
 
-  const appointmentRecovery = await withWhatsAppBrowserBudget(actor, tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text }))
+  const appointmentRecovery = await withWhatsAppBrowserBudget(actor, tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:routedText }))
   if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String((appointmentRecovery as any).handledBy || 'appointment-followup-recovery') }
 
-  const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:'whatsapp', text:params.text })
+  const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:'whatsapp', text:routedText })
   if (appointmentFollowup) return { ...appointmentFollowup, text:`${appointmentFollowup.text || ''}${appointmentFollowup.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(appointmentFollowup.handledBy || 'appointment-followup') }
 
-  const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:'whatsapp', text:params.text })
+  const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:'whatsapp', text:routedText })
   if (appointmentResearch) return { ...appointmentResearch, handledBy:String(appointmentResearch.handledBy || 'appointment-research') }
 
   // CONTINUE resumes a paused handoff: a state read plus extraction, not a browser
   // session. It gets its own guard ABOVE the research call and is NOT wrapped in the
   // browser budget, whose timeout resolved falsy and let CONTINUE fall through.
-  const trainResume = await tryResumeTrainHandoff({ actor, text:params.text })
+  const trainResume = await tryResumeTrainHandoff({ actor, text:routedText })
   if (trainResume) return { ...trainResume, handledBy:String(trainResume.handledBy || 'train-handoff-resume') }
 
-  const trainResearch = await withWhatsAppBrowserBudget(actor, tryRunTrainResearch({ actor, surface:'whatsapp', text:params.text }))
+  const trainResearch = await withWhatsAppBrowserBudget(actor, tryRunTrainResearch({ actor, surface:'whatsapp', text:routedText }))
   if (trainResearch) return { ...(trainResearch as any), handledBy:String((trainResearch as any).handledBy || 'train-research') }
 
-  if (shouldPreferSpecialistTravel(params.text)) {
-    const specialistTravel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
+  if (shouldPreferSpecialistTravel(routedText)) {
+    const specialistTravel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:routedText })
     if (specialistTravel) {
-      const hardened = await hardenTravelResearchResult(specialistTravel, params.text)
+      const hardened = await hardenTravelResearchResult(specialistTravel, routedText)
       return { ...hardened, handledBy:String(hardened.handledBy || 'travel-research') }
     }
   }
 
-  const productStockWatch = await tryCreateProductStockWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
+  const productStockWatch = await tryCreateProductStockWatchFromCommand({ actor, surface:'whatsapp', text:routedText })
   if (productStockWatch) return { ...productStockWatch, handledBy:String(productStockWatch.handledBy || 'product-stock-watch') }
 
-  const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
+  const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'whatsapp', text:routedText })
   if (webWatch) return { ...webWatch, handledBy:String(webWatch.handledBy || 'background-web-watch') }
 
-  const browser = await withWhatsAppBrowserBudget(actor, tryRunBrowserCommand({ actor, surface:'whatsapp', text:params.text }))
+  const browser = await withWhatsAppBrowserBudget(actor, tryRunBrowserCommand({ actor, surface:'whatsapp', text:routedText }))
   if (browser) return { ...(browser as any), text:`${(browser as any).text || ''}${(browser as any).status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String((browser as any).handledBy || 'secure-browser') }
 
-  const travelCalendar = await tryPrepareTravelCalendarPlan({ actor, surface:'whatsapp', text:params.text })
+  const travelCalendar = await tryPrepareTravelCalendarPlan({ actor, surface:'whatsapp', text:routedText })
   if (travelCalendar) return { ...travelCalendar, text:`${travelCalendar.text || ''}${travelCalendar.status === 'waiting_approval' ? '\n\nReply *APPROVE* to add it, or *REJECT* to stop.' : ''}`, handledBy:String(travelCalendar.handledBy || 'travel-calendar-plan') }
 
-  const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
+  const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:routedText, messageId:params.messageId })
   if (compound) return { ...compound, handledBy:compound.handledBy }
 
-  const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
+  const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:routedText, messageId:params.messageId })
   if (persistent) return { ...persistent, handledBy:String(persistent.handledBy || 'persistent-general-plan') }
 
-  const general = await tryRunGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
+  const general = await tryRunGeneralPlan({ actor, surface:'whatsapp', text:routedText, messageId:params.messageId })
   if (general) return { ...general, text:`${general.text || ''}${general.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(general.handledBy || 'general-plan') }
 
-  const travel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
+  const travel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:routedText })
   if (travel) {
-    const hardened = await hardenTravelResearchResult(travel, params.text)
+    const hardened = await hardenTravelResearchResult(travel, routedText)
     return { ...hardened, handledBy:String(hardened.handledBy || 'travel-research') }
   }
 
