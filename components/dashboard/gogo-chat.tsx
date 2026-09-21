@@ -77,6 +77,7 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
   const [historyOpen,setHistoryOpen]=useState(false)
   const [snapshot,setSnapshot]=useState<AgentSnapshot>({runs:[],watchers:[],approvals:[]})
   const endRef=useRef<HTMLDivElement|null>(null)
+  const messageScrollRef=useRef<HTMLDivElement|null>(null)
 
   async function loadSnapshot(){
     try{
@@ -113,7 +114,10 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
   },[])
 
   useEffect(()=>{
-    if(!historyOpen)endRef.current?.scrollIntoView({behavior:'smooth',block:'end'})
+    if(historyOpen)return
+    const el=messageScrollRef.current
+    if(!el)return
+    requestAnimationFrame(()=>{ el.scrollTop=el.scrollHeight })
   },[messages,sending,historyOpen])
 
   const archived=useMemo(()=>messages.slice(0,Math.max(0,messages.length-12)),[messages])
@@ -147,8 +151,8 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
     void submit()
   }
 
-  return <div className="mx-auto grid h-[calc(100dvh-7rem)] min-h-[650px] w-full max-w-[1320px] overflow-hidden border border-[#1f1f1f] bg-[#0b0b0b] lg:grid-cols-[minmax(0,1fr)_320px]">
-    <section className="flex min-h-0 min-w-0 flex-col">
+  return <div className="mx-auto grid h-[calc(100dvh-6rem)] min-h-[520px] w-full max-w-[1320px] overflow-hidden border border-[#1f1f1f] bg-[#0b0b0b] lg:h-[calc(100dvh-4.25rem)] lg:grid-cols-[minmax(0,1fr)_320px]">
+    <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <header className="shrink-0 border-b border-[#1f1f1f] px-6 py-5 lg:px-8">
         <div className="flex items-start justify-between gap-5">
           <div>
@@ -159,7 +163,7 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 lg:px-8">
+      <div ref={messageScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5 lg:px-8">
         {loading&&<div className="py-16 text-center text-[12px] text-[#6a6a6a]">Bringing your conversation in…</div>}
         {!loading&&visible.length===0&&<div className="py-20 text-center">
           <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[#efe6d7] text-[16px] font-semibold text-[#0b0b0b]">G</div>
@@ -173,7 +177,7 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-[#1f1f1f] px-6 py-4 lg:px-8">
+      <div className="sticky bottom-0 z-20 shrink-0 border-t border-[#1f1f1f] bg-[#0b0b0b] px-6 py-4 lg:px-8">
         <div className="mx-auto max-w-[850px]">
           {error&&<div className="mb-2 rounded-[10px] border border-red-500/20 bg-red-500/5 px-3 py-2 text-[11px] text-red-400">{error}</div>}
           <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
@@ -187,7 +191,7 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
       </div>
     </section>
 
-    <aside className="hidden border-l border-[#1f1f1f] bg-[#0f0f0f] p-5 lg:block">
+    <aside className="hidden h-full overflow-y-auto border-l border-[#1f1f1f] bg-[#0f0f0f] p-5 lg:block">
       <div className="flex items-center gap-3 border-b border-[#1f1f1f] pb-4">
         <Avatar/>
         <div>
