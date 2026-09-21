@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { refreshGmailAccessToken } from '@/lib/google-gmail'
+import { decryptGoogleToken, encryptGoogleToken } from '@/lib/security/google-token-crypto'
 import type { AgentActor } from './actor'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -18,10 +19,11 @@ async function token(actor: AgentActor) {
     .eq('telegram_id', actor.legacyTelegramId).maybeSingle()
   if (error) throw new Error(`gmail_ticket_credentials_failed:${error.message}`)
   if (!data?.gmail_connected) return null
-  let access = String(data.gmail_access_token || '')
-  if (!access && data.gmail_refresh_token) access = await refreshGmailAccessToken(String(data.gmail_refresh_token)) || ''
+  let access = decryptGoogleToken(String(data.gmail_access_token || ''))
+  const refreshToken = decryptGoogleToken(String(data.gmail_refresh_token || ''))
+  if (!access && refreshToken) access = await refreshGmailAccessToken(refreshToken) || ''
   if (!access) return null
-  return { access, refreshToken: String(data.gmail_refresh_token || '') }
+  return { access, refreshToken }
 }
 
 async function gmailFetch(actor: AgentActor, url: string) {
@@ -31,7 +33,7 @@ async function gmailFetch(actor: AgentActor, url: string) {
   if (response.status === 401 && creds.refreshToken) {
     const next = await refreshGmailAccessToken(creds.refreshToken)
     if (!next) return null
-    await supabaseAdmin.from('users').update({ gmail_access_token: next }).eq('telegram_id', actor.legacyTelegramId)
+    await supabaseAdmin.from('users').update({ gmail_access_token: encryptGoogleToken(next) }).eq('telegram_id', actor.legacyTelegramId)
     response = await fetch(url, { headers: { Authorization: `Bearer ${next}` }, cache: 'no-store' })
   }
   if (!response.ok) return null
