@@ -133,9 +133,26 @@ export async function createCalendarEvent(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(event),
+      cache: 'no-store',
     }
   )
-  return response.json()
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || !body?.id) {
+    console.error('GCAL_EVENT_CREATE_FAILED:', response.status, JSON.stringify(body).slice(0, 500))
+    return { error: body?.error?.message || `Google Calendar create failed: ${response.status}`, status: response.status }
+  }
+  // Never claim success from the POST alone. Read the created resource back from
+  // Google so a permission/scope/account inconsistency cannot masquerade as success.
+  const verify = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(body.id)}`,
+    { headers: { 'Authorization': `Bearer ${accessToken}` }, cache: 'no-store' }
+  )
+  const verified = await verify.json().catch(() => ({}))
+  if (!verify.ok || !verified?.id || verified.id !== body.id) {
+    console.error('GCAL_EVENT_CREATE_VERIFY_FAILED:', verify.status, JSON.stringify(verified).slice(0, 500))
+    return { error: 'Google Calendar did not verify the created event.', status: verify.status, createdId: body.id }
+  }
+  return verified
 }
 
 export async function fetchPrimaryCalendarEvents(
