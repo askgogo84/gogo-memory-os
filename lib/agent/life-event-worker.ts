@@ -271,11 +271,11 @@ async function requestFlightCheckinApproval(params: { telegramId: string; event:
 
 async function stopUncertainReclaimedCheckin(telegramId: string, event: any, action: any) {
   const runId = await createRun({
-    telegramId, event, action, status: 'paused',
-    summary: 'A previous approved check-in attempt lost its execution lease. Gogo will not retry automatically because the airline may already have processed it.',
-    metadata: { plan_type: 'life_event_checkin_uncertain' },
+    telegramId, event, action, status: 'outcome_unknown',
+    summary: 'A previous approved check-in attempt lost its execution lease. The airline may already have processed it, so Gogo will not retry until the provider state is reconciled.',
+    metadata: { plan_type: 'life_event_checkin_uncertain', outcome_state:'unknown', reconciliation_required:true },
   })
-  await markAction(String(action.id), 'blocked', { ...(action.payload_json || {}), blockedReason: 'checkin_execution_uncertain', reclaimedAt: new Date().toISOString() })
+  await markAction(String(action.id), 'blocked', { ...(action.payload_json || {}), blockedReason: 'checkin_execution_uncertain', outcomeUnknown:true, reconciliationRequired:true, reclaimedAt: new Date().toISOString() })
   await supabaseAdmin.from('life_events').update({ lifecycle_state: 'needs_attention', updated_at: new Date().toISOString() }).eq('id', event.id).eq('telegram_id', telegramId)
   await activity(telegramId, runId, 'life_event_checkin_uncertain', 'Gogo did not retry a stale approved airline check-in because the prior execution outcome is uncertain.', { life_event_id: event.id, action_key: action.action_key })
   await sendAgentPush(telegramId, { title: 'Please verify airline check-in', body: 'A previous approved check-in attempt ended without reliable confirmation. Gogo will not retry automatically.', path: '/agent', data: { runId, lifeEventId: String(event.id) } }).catch(() => {})
