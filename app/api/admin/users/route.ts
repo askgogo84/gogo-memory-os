@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAdminSession } from '@/lib/admin/auth'
+import { verifySameOrigin } from '@/lib/dashboard/guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,6 +14,9 @@ function getClient() {
 }
 
 export async function GET(req: NextRequest) {
+  const admin = await requireAdminSession()
+  if (!admin.ok) return NextResponse.json({ error: admin.reason }, { status: admin.status })
+
   const q = req.nextUrl.searchParams.get('q') || ''
   const db = getClient()
 
@@ -36,6 +41,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const blocked = verifySameOrigin(req)
+  if (blocked) return blocked
+  const admin = await requireAdminSession()
+  if (!admin.ok) return NextResponse.json({ error: admin.reason }, { status: admin.status })
+
   const body = await req.json()
   const { action, phone, tier, name } = body
   const db = getClient()

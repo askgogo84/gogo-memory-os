@@ -1,4 +1,14 @@
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+import { redirect } from 'next/navigation'
+import { requireAdminSession } from '@/lib/admin/auth'
+
+export const dynamic = 'force-dynamic'
+
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  const admin = await requireAdminSession()
+  if (!admin.ok) {
+    redirect(admin.status === 401 ? '/dashboard' : '/dashboard/home')
+  }
+
   return (
     <div style={{
       colorScheme: 'light',
