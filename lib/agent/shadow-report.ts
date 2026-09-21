@@ -7,6 +7,40 @@ type ActivityRow = {
   metadata_json:any
 }
 
+export function evaluateShadowPromotion(input:{
+  observations:number
+  paired:number
+  contextual:number
+  contextualAmbiguous:number
+  capabilityComparable:number
+  capabilityMatches:number
+  contextualHandledByLegacy:number
+}){
+  const pairingRate=input.observations?input.paired/input.observations:0
+  const contextualAmbiguityRate=input.contextual?input.contextualAmbiguous/input.contextual:0
+  const capabilityAgreementRate=input.capabilityComparable?input.capabilityMatches/input.capabilityComparable:null
+  const failures:string[]=[]
+
+  if(input.paired<50)failures.push('paired_events_below_50')
+  if(pairingRate<0.95)failures.push('pairing_rate_below_95_percent')
+  if(contextualAmbiguityRate>0.10)failures.push('contextual_ambiguity_rate_above_10_percent')
+  if(capabilityAgreementRate!==null&&capabilityAgreementRate<0.90)failures.push('capability_agreement_below_90_percent')
+  if(input.capabilityComparable===0)failures.push('no_comparable_capability_events')
+  if(input.contextualHandledByLegacy>0)failures.push('contextual_legacy_cases_require_manual_review')
+
+  return {
+    eligibleForReadOnlyContextAuthority:failures.length===0,
+    failures,
+    thresholds:{
+      minimumPairedEvents:50,
+      minimumPairingRate:0.95,
+      maximumContextualAmbiguityRate:0.10,
+      minimumCapabilityAgreementRate:0.90,
+      contextualLegacyCasesRequireManualReview:true,
+    },
+  }
+}
+
 export async function getShadowBrainReport(params:{hours?:number;limit?:number}={}){
   const hours=Math.max(1,Math.min(Number(params.hours||24),168))
   const limit=Math.max(20,Math.min(Number(params.limit||1000),5000))
@@ -31,7 +65,7 @@ export async function getShadowBrainReport(params:{hours?:number;limit?:number}=
     byEvent.set(id,item)
   }
 
-  let observations=0,paired=0,contextual=0,ambiguous=0,capabilityComparable=0,capabilityMatches=0
+  let observations=0,paired=0,contextual=0,ambiguous=0,contextualAmbiguous=0,capabilityComparable=0,capabilityMatches=0
   let contextualHandledByLegacy=0
   const handlers=new Map<string,number>()
   const actionFamilies=new Map<string,number>()
@@ -45,7 +79,7 @@ export async function getShadowBrainReport(params:{hours?:number;limit?:number}=
     const needsContext=om.needs_context===true
     const isAmbiguous=om.ambiguous===true
     if(needsContext)contextual++
-    if(isAmbiguous)ambiguous++
+    if(isAmbiguous){ambiguous++;if(needsContext)contextualAmbiguous++}
     const af=String(om.action_family||'other')
     actionFamilies.set(af,(actionFamilies.get(af)||0)+1)
 
@@ -85,6 +119,19 @@ export async function getShadowBrainReport(params:{hours?:number;limit?:number}=
     .sort((a,b)=>b[1]-a[1])
     .map(([name,count])=>({name,count}))
 
+  const rates={
+    pairingRate:observations?paired/observations:0,
+    contextualRate:observations?contextual/observations:0,
+    ambiguityRate:observations?ambiguous/observations:0,
+    contextualAmbiguityRate:contextual?contextualAmbiguous/contextual:0,
+    capabilityAgreementRate:capabilityComparable?capabilityMatches/capabilityComparable:null,
+    contextualLegacyRate:contextual?contextualHandledByLegacy/contextual:0,
+  }
+  const promotion=evaluateShadowPromotion({
+    observations,paired,contextual,contextualAmbiguous,
+    capabilityComparable,capabilityMatches,contextualHandledByLegacy,
+  })
+
   return {
     windowHours:hours,
     generatedAt:new Date().toISOString(),
@@ -94,17 +141,13 @@ export async function getShadowBrainReport(params:{hours?:number;limit?:number}=
       unpaired:Math.max(0,observations-paired),
       contextual,
       ambiguous,
+      contextualAmbiguous,
       capabilityComparable,
       capabilityMatches,
       contextualHandledByLegacy,
     },
-    rates:{
-      pairingRate:observations?paired/observations:0,
-      contextualRate:observations?contextual/observations:0,
-      ambiguityRate:observations?ambiguous/observations:0,
-      capabilityAgreementRate:capabilityComparable?capabilityMatches/capabilityComparable:null,
-      contextualLegacyRate:contextual?contextualHandledByLegacy/contextual:0,
-    },
+    rates,
+    promotion,
     handlers:top(handlers),
     actionFamilies:top(actionFamilies),
     mismatches:mismatches.slice(-100).reverse(),
