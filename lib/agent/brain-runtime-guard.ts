@@ -9,6 +9,13 @@ export type InboundClaim = {
   result?:Record<string,unknown>
 }
 
+export function inboundClaimNeedsRecovery(status:string, leaseUntil:string|null|undefined, nowMs=Date.now()){
+  if(status==='failed')return true
+  if(status!=='claimed')return false
+  const leaseMs=leaseUntil?Date.parse(leaseUntil):NaN
+  return !Number.isFinite(leaseMs)||leaseMs<=nowMs
+}
+
 export async function claimInboundEvent(params:{
   surface:string
   eventKey:string
@@ -36,16 +43,62 @@ export async function claimInboundEvent(params:{
   if(String((error as any)?.code||'')!=='23505')throw new Error(`inbound_event_claim_failed:${error?.message||'unknown'}`)
 
   const {data:existing,error:readError}=await supabaseAdmin.from('agent_inbound_events')
-    .select('id,status,result_json,owner_token,lease_until')
+    .select('id,status,result_json,owner_token,lease_until,external_user_id,telegram_id')
     .eq('surface',surface).eq('event_key',eventKey).maybeSingle()
   if(readError||!existing?.id)throw new Error(`inbound_event_duplicate_read_failed:${readError?.message||'unknown'}`)
 
+  const existingStatus=String(existing.status||'claimed') as InboundClaim['status']
+  const result=(existing.result_json&&typeof existing.result_json==='object')?existing.result_json:{}
+
+  if(!inboundClaimNeedsRecovery(existingStatus,existing.lease_until)){
+    return {
+      id:String(existing.id),
+      ownerToken:'',
+      duplicate:true,
+      status:existingStatus,
+      result,
+    }
+  }
+
+  const nowIso=new Date().toISOString()
+  let reclaim=supabaseAdmin.from('agent_inbound_events').update({
+    status:'claimed',
+    owner_token:ownerToken,
+    lease_until:leaseUntil,
+    error:null,
+    result_json:{},
+    updated_at:nowIso,
+    external_user_id:params.externalUserId?String(params.externalUserId):existing.external_user_id,
+    telegram_id:params.telegramId!=null?String(params.telegramId):existing.telegram_id,
+  }).eq('id',String(existing.id))
+
+  if(existingStatus==='failed'){
+    reclaim=reclaim.eq('status','failed')
+  }else{
+    reclaim=reclaim.eq('status','claimed')
+    reclaim=existing.lease_until
+      ? reclaim.lte('lease_until',nowIso)
+      : reclaim.is('lease_until',null)
+  }
+
+  const {data:reclaimed,error:reclaimError}=await reclaim.select('id,status').maybeSingle()
+  if(reclaimError)throw new Error(`inbound_event_reclaim_failed:${reclaimError.message}`)
+
+  if(reclaimed?.id){
+    return {id:String(reclaimed.id),ownerToken,duplicate:false,status:'claimed'}
+  }
+
+  const {data:current,error:currentError}=await supabaseAdmin.from('agent_inbound_events')
+    .select('id,status,result_json')
+    .eq('surface',surface).eq('event_key',eventKey).maybeSingle()
+  if(currentError||!current?.id)throw new Error(`inbound_event_reclaim_race_read_failed:${currentError?.message||'unknown'}`)
+
   return {
-    id:String(existing.id),
-    ownerToken:String(existing.owner_token||''),
+    id:String(current.id),
+    ownerToken:'',
     duplicate:true,
-    status:String(existing.status||'claimed') as InboundClaim['status'],
-    result:(existing.result_json&&typeof existing.result_json==='object')?existing.result_json:{},
+    status:String(current.status||'claimed') as InboundClaim['status'],
+    result:(current.result_json&&typeof current.result_json==='object')?current.result_json:{},
   }
 }
 

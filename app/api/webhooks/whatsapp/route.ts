@@ -41,6 +41,7 @@ import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
+import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
 import {
   isAudioContentType,
@@ -257,6 +258,11 @@ export async function POST(req: NextRequest) {
   // Hoisted out of the try so the catch can reach it to send a user-facing error reply.
   // Empty until we've parsed the inbound number; the catch guards on it.
   let from = ''
+  let inboundClaim:any=null
+  let inboundClaimOwned=false
+  let inboundFailed=false
+  let brainUserKey=''
+  let brainLeaseOwner=''
   try {
     const formData = await req.formData()
 
@@ -285,6 +291,20 @@ export async function POST(req: NextRequest) {
     const inboundMessageSid = String(formData.get('MessageSid') || formData.get('SmsMessageSid') || '').trim()
     from = normalizeWhatsAppNumber(fromRaw)
 
+    if (inboundMessageSid) {
+      inboundClaim = await claimInboundEvent({
+        surface:'whatsapp',
+        eventKey:inboundMessageSid,
+        externalUserId:from || fromRaw,
+        leaseSeconds:120,
+      })
+      inboundClaimOwned = !inboundClaim.duplicate
+      if (inboundClaim.duplicate) {
+        console.log('WHATSAPP_INBOUND_DUPLICATE:', { messageSid: inboundMessageSid, status: inboundClaim.status })
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
     console.log('RAW_TWILIO:', Object.fromEntries([...formData.entries()]))
     console.log('WhatsApp inbound:', { fromRaw, from, profileName, numMedia, messageSid: inboundMessageSid, body: String(formData.get('Body') || ''), mediaType: String(formData.get('MediaContentType0') || ''), allKeys: [...formData.keys()].join(',') })
     if (!from) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
@@ -310,6 +330,18 @@ export async function POST(req: NextRequest) {
     if (inboundMessageSid) sendWhatsAppTyping(inboundMessageSid).catch((error: any) => console.error('WHATSAPP_TYPING_BACKGROUND_FAILED:', error?.message || error))
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
+
+    brainUserKey = `user:${resolvedUser.telegramId}`
+    const brainLease = await acquireBrainUserLease(brainUserKey, 90)
+    if (!brainLease) {
+      if (inboundClaimOwned && inboundClaim) {
+        await failInboundEvent({ id: inboundClaim.id, ownerToken: inboundClaim.ownerToken, error: 'brain_user_lease_busy' })
+        inboundClaimOwned = false
+      }
+      return new NextResponse('Busy', { status: 503 })
+    }
+    brainLeaseOwner = brainLease.ownerToken
+
     const bodyText = String(formData.get('Body') || '').slice(0, 2000) // Security: cap input length.trim()
 
     // ── Interactive onboarding menu for new users ───────────────────
@@ -1301,6 +1333,7 @@ _Reminder cancelled._`
 
     return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
   } catch (error: any) {
+    inboundFailed = true
     console.error('WhatsApp webhook error:', error)
     // Never leave the user in silence on an error. We only reach this catch from an
     // INBOUND message, so we're inside the 24h session window — a freeform reply
@@ -1315,6 +1348,25 @@ _Reminder cancelled._`
       }
     }
     return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+  } finally {
+    if (inboundClaimOwned && inboundClaim) {
+      try {
+        if (inboundFailed) {
+          await failInboundEvent({ id: inboundClaim.id, ownerToken: inboundClaim.ownerToken, error: 'whatsapp_processing_failed' })
+        } else {
+          await completeInboundEvent({ id: inboundClaim.id, ownerToken: inboundClaim.ownerToken, result: { accepted:true } })
+        }
+      } catch (guardError:any) {
+        console.error('WHATSAPP_INBOUND_GUARD_FINALIZE_FAILED:', guardError?.message || guardError)
+      }
+    }
+    if (brainUserKey && brainLeaseOwner) {
+      try {
+        await releaseBrainUserLease(brainUserKey, brainLeaseOwner)
+      } catch (leaseError:any) {
+        console.error('WHATSAPP_BRAIN_LEASE_RELEASE_FAILED:', leaseError?.message || leaseError)
+      }
+    }
   }
 }
 
