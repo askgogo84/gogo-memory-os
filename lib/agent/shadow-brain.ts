@@ -23,7 +23,7 @@ export function shadowActionFamily(text:string){
   if(/\b(remind|reminder|alert|notify)\b/.test(t))return 'remind'
   if(/\b(monitor|watch|track|keep an eye|let me know when|tell me when)\b/.test(t))return 'monitor'
   if(/\b(book|reserve|reservation|check[- ]?in)\b/.test(t))return 'book'
-  if(/\b(buy|purchase|checkout|order it|pay for)\b/.test(t))return 'buy'
+  if(/\b(buy|purchase|checkout|order(?:\s+(?:it|this|that|my\s+usual))?|pay for)\b/.test(t))return 'buy'
   if(/\b(send|forward|email|message|reply)\b/.test(t))return 'send'
   if(/\b(save|remember|keep this|store this)\b/.test(t))return 'save'
   if(/\b(check|find|research|look up|requirements?|what do i need|what about|show|compare|search)\b/.test(t))return 'research'
@@ -33,7 +33,7 @@ export function shadowActionFamily(text:string){
 
 export function shadowNeedsContext(text:string){
   const t=String(text||'').trim().toLowerCase()
-  if(/\b(it|this|that|these|those|them|there|same|usual|above|earlier|previous|last one|last time|the trip|the flight|the booking|the document|the file|the order|the hotel|the ticket|continue|proceed)\b/.test(t))return true
+  if(/\b(it|this|that|these|those|them|there|same|usual|above|earlier|previous|last one|last time|first one|second one|third one|fourth one|the trip|the flight|the booking|the document|the file|the order|the hotel|the ticket|continue|proceed)\b/.test(t))return true
   return t.length<=80 && /^(save|add|put|monitor|watch|track|book|reserve|check|find|remind|send|forward|open|continue|proceed)\b/.test(t)
 }
 
