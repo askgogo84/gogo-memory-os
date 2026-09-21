@@ -1,6 +1,6 @@
 # AskGogo Brain + Vault Architecture v1
 
-Status: Architecture freeze / design review
+Status: Architecture v1.1 hardening review
 Date: 2026-09-21
 Scope: Unified internal brain, world state, missions, Vault, Secure Computer, approvals, evidence, watchers, cross-surface continuity
 Non-goal: Replace all current executors in one release
@@ -21,6 +21,19 @@ The execution substrate may include deterministic handlers, APIs, specialists, S
 
 ## 2. Architectural invariants
 
+### v1.1 launch invariants
+
+1. Per-user work is processed one-at-a-time through a Postgres-backed user lock; duplicate inbound events are idempotently ignored.
+2. Every approval is bound to the exact action approved by an immutable hash of target, action, payload, amount/value, object reference, and policy version; execution re-checks the hash.
+3. Trust classes are enforced in code. Only USER_INSTRUCTION and SYSTEM_POLICY may grant authority. External content may provide facts but never execution authority.
+4. Execution distinguishes failed from outcome_unknown. Unknown outcomes must be reconciled with the provider before any retry.
+5. Vault has three trust layers: metadata, encrypted secret store, and authenticated session/browser-profile material. Cookies, session storage and refresh tokens are secrets.
+6. Repository migrations are the schema source of truth. Shadow Brain does not start until repo migrations match the production schema and constraint expectations.
+7. Privacy lifecycle is a launch gate for connected-account features: disconnect, remote token revocation where supported, local token deletion, and user data deletion must be defined and tested.
+8. WhatsApp is treated as a structured services surface for missions, reminders, dues, bookings and other bounded workflows rather than as an unrestricted execution surface.
+
+### End-state invariants
+
 1. There is exactly one context-resolution authority.
 2. There is exactly one active mission graph per user outcome, even across surfaces.
 3. LLMs may propose intent/context/plans but may never grant themselves execution authority.
@@ -33,6 +46,22 @@ The execution substrate may include deterministic handlers, APIs, specialists, S
 10. Existing mature executors are wrapped before they are replaced.
 
 ## 3. System layers
+
+### 3.0 Near-term concurrency model
+
+For the current scale, AskGogo does not require full event-sourced replay or per-object optimistic versioning.
+
+Instead:
+- acquire a per-user Postgres advisory/application lock before mutating brain/mission state
+- process one user event at a time
+- require an inbound event idempotency key
+- keep an append-only audit log of important transitions
+- use provider/object-specific idempotency keys for external mutations
+- introduce full replay/versioned world state only if scale/concurrency requires it later
+
+This is intentionally simpler than a distributed event-sourcing system while preserving deterministic user-level behavior.
+
+
 
 ### 3.1 Universal Event Ingress
 
@@ -491,7 +520,65 @@ It must not expose:
 - stack traces
 - internal tool names
 
-## 4. Cross-surface continuity
+## 4. Trust classes
+
+Every input/value passed into the brain or planner carries a trust class:
+
+- SYSTEM_POLICY
+- USER_INSTRUCTION
+- CONNECTED_ACCOUNT_DATA
+- EXTERNAL_WEB_DATA
+- DOCUMENT_CONTENT
+- MODEL_INFERENCE
+- EXECUTION_EVIDENCE
+
+Only SYSTEM_POLICY and USER_INSTRUCTION can authorize an action or modify approval state.
+
+CONNECTED_ACCOUNT_DATA, EXTERNAL_WEB_DATA and DOCUMENT_CONTENT may contribute facts only. Prompt-injection text embedded in emails, webpages or PDFs is data, never authority.
+
+MODEL_INFERENCE may propose context or a plan but cannot grant authority.
+
+EXECUTION_EVIDENCE may prove what occurred but does not itself authorize a new action.
+
+## 5. Exact approval binding
+
+Before a consequential action is presented for approval, compute an immutable action fingerprint over the exact material being approved, including:
+- capability/action type
+- target provider/object
+- normalized payload
+- amount/value where relevant
+- object reference/version if available
+- policy version
+- mission id + step id
+
+At execution time, recompute and compare the fingerprint. Any material drift invalidates the approval and requires a fresh preview/approval.
+
+## 6. Outcome reconciliation
+
+Execution status includes:
+- completed
+- failed
+- outcome_unknown
+
+outcome_unknown means the provider may have completed the action but AskGogo did not receive reliable terminal confirmation.
+
+Retry rule:
+1. query/reconcile provider state using idempotency/reference data
+2. if completion is verified, attach evidence and mark completed
+3. if absence is verified, retry using the same idempotency key
+4. if still uncertain, remain outcome_unknown and ask/alert rather than duplicate the mutation
+
+## 7. Vault trust layers
+
+Vault is split into:
+
+1. Vault Metadata — safe for Brain: provider, allowed domains, account label, status, opaque credential reference.
+2. Vault Secret Store — encrypted usernames/passwords/API/refresh/access tokens. Only trusted broker code can decrypt.
+3. Session Vault — browser profiles, cookies, local/session storage and authenticated provider sessions. These are secret-class material and never enter model/world-state prompts.
+
+The Brain receives only metadata and coarse outcomes such as authenticated / needs_reauth / human_auth_required.
+
+## 8. Cross-surface continuity
 
 All surfaces resolve to canonical AgentActor/user identity.
 
@@ -505,7 +592,7 @@ WhatsApp, Dashboard, mobile and background jobs must read/write:
 
 Surface-specific UI is presentation only.
 
-## 5. Failure model
+## 9. Failure model
 
 ### Provider LLM unavailable
 - fail over planner provider
@@ -541,7 +628,7 @@ Surface-specific UI is presentation only.
 ### Duplicate event
 - idempotency key prevents duplicate mutations
 
-## 6. Existing production mapping
+## 10. Existing production mapping
 
 Current modules should be wrapped, not rewritten immediately.
 
@@ -569,7 +656,7 @@ Current modules should be wrapped, not rewritten immediately.
 | agent_approvals | approval persistence |
 | travel_tickets/documents | existing domain objects during migration |
 
-## 7. Migration strategy
+## 11. Migration strategy
 
 ### Phase 0 - Architecture freeze
 - no new brain-routing quick fixes
@@ -609,7 +696,7 @@ Current modules should be wrapped, not rewritten immediately.
 ### Phase 8 - Router retirement
 - remove first-match feature routing only after journey parity is green
 
-## 8. Release gates
+## 12. Release gates
 
 A brain release may merge only if:
 - legacy regression matrix green
@@ -622,7 +709,7 @@ A brain release may merge only if:
 - Vercel preview READY
 - production post-deploy smoke checks pass
 
-## 9. Non-negotiable E2E journeys
+## 13. Non-negotiable E2E journeys
 
 1. Share flight PDF -> ask details -> save calendar -> approve -> event evidence
 2. Share flight PDF -> monitor -> watcher created -> change event -> notify
@@ -640,7 +727,17 @@ A brain release may merge only if:
 14. Ambiguous "book it" with two candidate hotels -> clarification, no mutation
 15. Check-in request -> no "checked in" until boarding-pass/terminal evidence exists
 
-## 10. Architectural decision
+## 14. Deferred until scale
+
+The following are intentionally deferred until usage justifies their complexity:
+- full event sourcing with deterministic replay
+- durable versioned focus state across every object
+- global entity-resolution/merge engine across PDF/email/screenshot duplicates
+- fine-grained optimistic versioning for every world object
+
+Near-term focus uses the last explicit/recent structured object with a short expiry and asks when unsure.
+
+## 15. Architectural decision
 
 AskGogo is not a chatbot with features.
 
@@ -653,3 +750,36 @@ AskGogo is a persistent event-driven personal operating system with:
 - isolated credential handling
 - evidence-backed completion
 - prospective background intelligence
+
+
+## 16. Schema source of truth gate
+
+Before Shadow Brain begins:
+- inventory production tables, columns, enums and constraints used by agent_runs, agent_steps, agent_threads, approvals, watchers, Vault and related runtime paths
+- add/reconcile repository migrations until a clean clone can create the production-compatible schema
+- convert silent constraint failures into explicit surfaced errors
+- restore a clean-clone test path
+- track any intentional production-only divergence explicitly
+
+This is a release blocker for Brain migration because mission/runtime correctness cannot depend on undocumented production schema.
+
+## 17. Privacy lifecycle gate
+
+Connected-account launch requirements:
+- disconnect flow
+- remote token revocation where provider supports it
+- local encrypted token deletion
+- deletion propagation for connected-account derived data where required
+- user-requested account/data deletion path
+- tests proving revoked/disconnected credentials cannot be used by background jobs or Secure Computer
+
+## 18. Parallel production stabilization
+
+Architecture work must not block high-value production stabilization. These tracks run in parallel:
+- schema D1/D4 silent database failures and migration reconciliation
+- mail-intent hijack / routing regressions
+- false “cannot browse” behavior
+- Gmail disconnect/revoke/delete lifecycle
+- waitlist/fundraising proof on askgogo.in
+
+These fixes must preserve current safety boundaries and should not introduce new architecture shortcuts.
