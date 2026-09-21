@@ -469,6 +469,7 @@ export function isCalendarAction(text: string) {
   return (
     CALENDAR_WORD_RE.test(lower) ||   // calendar + common misspellings (calender/calandar/…)
     lower.includes('meeting') ||
+    /\b(?:events?|appointments?)\b/i.test(lower) ||
     lower.includes('schedule call') ||
     lower.includes('add call') ||
     lower.includes('book call') ||
@@ -546,6 +547,8 @@ export async function createCalendarEventAtIso(
 export function isCalendarViewRequest(text: string): boolean {
   const lower = (text || '').toLowerCase().trim()
   return (
+    /^(?:what|which)\s+(?:meetings?|events?|appointments?)\s+(?:do\s+i\s+have|are\s+(?:on|scheduled))(?:\s+on|\s+for)?\s+.+/i.test(lower) ||
+    /^(?:show|list|display)\s+(?:me\s+)?(?:my\s+)?(?:meetings?|events?|appointments?)\s+(?:on|for)\s+.+/i.test(lower) ||
     lower.includes('calendar today') ||
     lower.includes('calendar tomorrow') ||
     lower.includes('calendar for today') ||
@@ -585,9 +588,18 @@ export async function buildCalendarActionReply(
 
   if (wantsCalendarView) {
     const target = targetFromText(text)
+    const absolute = parseAbsoluteDate(text)
     let events: any[]
     try {
-      events = await getEventsForTarget(tokens.accessToken, target)
+      if (absolute) {
+        const start = istWallTimeToUtcDate(absolute.year, absolute.month, absolute.day, 0, 0)
+        const nextDayAnchor = new Date(Date.UTC(absolute.year, absolute.month - 1, absolute.day, 12, 0, 0))
+        nextDayAnchor.setUTCDate(nextDayAnchor.getUTCDate() + 1)
+        const end = istWallTimeToUtcDate(nextDayAnchor.getUTCFullYear(), nextDayAnchor.getUTCMonth() + 1, nextDayAnchor.getUTCDate(), 0, 0)
+        events = await fetchPrimaryCalendarEvents(tokens.accessToken, start.toISOString(), end.toISOString(), 'GCAL_ABSOLUTE_EVENTS_FAILED')
+      } else {
+        events = await getEventsForTarget(tokens.accessToken, target)
+      }
     } catch (err) {
       // Fetch failed — say so instead of the empty-day copy, mirroring the morning
       // briefing (getCalendarState → "Couldn't reach Google Calendar"). Empty vs failed
@@ -606,8 +618,8 @@ export async function buildCalendarActionReply(
       return {
         handled: true,
         reply:
-          `📅 *Your calendar ${targetLabel(target)}*\n\n` +
-          `No calendar events lined up ${targetLabel(target)}.\n\n` +
+          `📅 *Your calendar ${absolute ? `${absolute.day}/${absolute.month}/${absolute.year}` : targetLabel(target)}*\n\n` +
+          `No calendar events lined up ${absolute ? 'for that date' : targetLabel(target)}.\n\n` +
           `Try:\n` +
           `• Add meeting tomorrow at 4 pm\n` +
           `• Plan my day`,
@@ -617,7 +629,7 @@ export async function buildCalendarActionReply(
     return {
       handled: true,
       reply:
-        `📅 *Your calendar ${targetLabel(target)}*\n\n` +
+        `📅 *Your calendar ${absolute ? `${absolute.day}/${absolute.month}/${absolute.year}` : targetLabel(target)}*\n\n` +
         events
           .slice(0, 7)
           .map((event: any) => {
