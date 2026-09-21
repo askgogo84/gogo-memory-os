@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchLatestEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
+import { decryptGoogleToken, encryptGoogleToken } from '@/lib/security/google-token-crypto'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  let accessToken = user.gmail_access_token || null
+  let accessToken = decryptGoogleToken(String(user.gmail_access_token || '')) || null
   let refreshed = false
   let emails: any[] = []
 
@@ -41,8 +42,9 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  if (!emails.length && user.gmail_refresh_token) {
-    const refreshedToken = await refreshGmailAccessToken(user.gmail_refresh_token)
+  const refreshToken = decryptGoogleToken(String(user.gmail_refresh_token || ''))
+  if (!emails.length && refreshToken) {
+    const refreshedToken = await refreshGmailAccessToken(refreshToken)
 
     if (refreshedToken) {
       refreshed = true
@@ -50,7 +52,7 @@ export async function GET(req: NextRequest) {
 
       await supabaseAdmin
         .from('users')
-        .update({ gmail_access_token: refreshedToken })
+        .update({ gmail_access_token: encryptGoogleToken(refreshedToken) })
         .eq('telegram_id', Number(telegramId))
 
       try {
