@@ -128,13 +128,13 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     const reason = safe(error?.message || 'secure_browser_execution_failed', 400)
     await Promise.all([
       supabaseAdmin.from('agent_runs').update({
-        status: 'paused', progress: 65,
-        summary: 'Gogo lost reliable execution evidence during airline check-in, so it stopped and will not retry automatically.',
+        status: 'outcome_unknown', progress: 65,
+        summary: 'Gogo lost reliable execution evidence during airline check-in. The outcome is unknown, so it will reconcile provider state before any retry.',
         error: 'checkin_execution_uncertain', updated_at: at,
       }).eq('id', params.runId).eq('telegram_id', tg).eq('status', 'running'),
       supabaseAdmin.from('life_event_actions').update({
         status: 'blocked',
-        payload_json: { ...(action.payload_json as any || {}), blockedReason: 'checkin_execution_uncertain', attemptedAt: at, executionError: reason },
+        payload_json: { ...(action.payload_json as any || {}), blockedReason: 'checkin_execution_uncertain', outcomeUnknown:true, reconciliationRequired:true, attemptedAt: at, executionError: reason },
         updated_at: at,
       }).eq('id', lifeEventActionId).eq('telegram_id', tg).eq('status', 'running'),
       supabaseAdmin.from('life_events').update({ lifecycle_state: 'needs_attention', updated_at: at })
@@ -147,12 +147,12 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     }).catch(() => {})
     return {
       runId: params.runId,
-      status: 'paused' as const,
+      status: 'outcome_unknown' as const,
       capability: 'travel' as const,
       risk: 'high' as const,
       handledBy: 'life-event-checkin' as const,
       blockedReason: 'checkin_execution_uncertain' as const,
-      text: 'I lost reliable confirmation while the airline flow was running. I stopped and will not retry automatically because a second attempt could duplicate an irreversible check-in. Please verify the airline status before continuing.',
+      text: 'I lost reliable confirmation while the airline flow was running. I have marked the outcome as unknown and will not retry automatically because a second attempt could duplicate an irreversible check-in. The airline status must be reconciled before continuing.',
     }
   }
 
