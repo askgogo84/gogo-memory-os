@@ -72,9 +72,14 @@ export async function claimInboundEvent(params:{
     telegram_id:params.telegramId!=null?String(params.telegramId):existing.telegram_id,
   }).eq('id',String(existing.id))
 
-  reclaim=existingStatus==='failed'
-    ? reclaim.eq('status','failed')
-    : reclaim.eq('status','claimed').lte('lease_until',nowIso)
+  if(existingStatus==='failed'){
+    reclaim=reclaim.eq('status','failed')
+  }else{
+    reclaim=reclaim.eq('status','claimed')
+    reclaim=existing.lease_until
+      ? reclaim.lte('lease_until',nowIso)
+      : reclaim.is('lease_until',null)
+  }
 
   const {data:reclaimed,error:reclaimError}=await reclaim.select('id,status').maybeSingle()
   if(reclaimError)throw new Error(`inbound_event_reclaim_failed:${reclaimError.message}`)
