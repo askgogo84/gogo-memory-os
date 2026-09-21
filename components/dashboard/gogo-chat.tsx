@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 type ChatMessage={
   role:'user'|'assistant'
@@ -32,7 +33,7 @@ function linkify(text:string){
 }
 
 function Avatar(){
-  return <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#efe6d7] text-[11px] font-semibold text-[#0b0b0b]">G</div>
+  return <div className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full bg-[#efe6d7]"><GogoCharacter state="calm" size={30} showStatus={false}/></div>
 }
 
 function Message({message}:{message:ChatMessage}){
