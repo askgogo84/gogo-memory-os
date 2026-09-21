@@ -143,16 +143,21 @@ export async function createCalendarEvent(
   }
   // Never claim success from the POST alone. Read the created resource back from
   // Google so a permission/scope/account inconsistency cannot masquerade as success.
-  const verify = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(body.id)}`,
-    { headers: { 'Authorization': `Bearer ${accessToken}` }, cache: 'no-store' }
-  )
-  const verified = await verify.json().catch(() => ({}))
-  if (!verify.ok || !verified?.id || verified.id !== body.id) {
-    console.error('GCAL_EVENT_CREATE_VERIFY_FAILED:', verify.status, JSON.stringify(verified).slice(0, 500))
-    return { error: 'Google Calendar did not verify the created event.', status: verify.status, createdId: body.id }
+  try {
+    const verify = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(body.id)}`,
+      { headers: { 'Authorization': `Bearer ${accessToken}` }, cache: 'no-store' }
+    )
+    const verified = await verify.json().catch(() => ({}))
+    if (verify.ok && verified?.id === body.id) return verified
+    console.error('GCAL_EVENT_CREATE_VERIFY_UNKNOWN:', verify.status, JSON.stringify(verified).slice(0, 500))
+  } catch (err: any) {
+    console.error('GCAL_EVENT_CREATE_VERIFY_UNKNOWN:', String(err?.message || err).slice(0, 300))
   }
-  return verified
+  // The POST already succeeded and returned an event id. A failed readback is an
+  // UNKNOWN verification outcome, not a failed create. Return the created resource
+  // with an explicit verification marker so callers never encourage a duplicate retry.
+  return { ...body, verification: 'unknown' }
 }
 
 export async function fetchPrimaryCalendarEvents(
