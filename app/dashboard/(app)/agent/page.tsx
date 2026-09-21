@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 const LEVELS = ['off','read','draft','ask','auto'] as const
@@ -17,6 +18,8 @@ async function api(path:string, init:RequestInit={}){
 }
 
 export default function AgentDashboardPage(){
+  const searchParams=useSearchParams()
+  const section=searchParams.get('section')||''
   const [snapshot,setSnapshot]=useState<Snapshot|null>(null)
   const [loading,setLoading]=useState(true)
   const [busy,setBusy]=useState('')
@@ -123,62 +126,60 @@ export default function AgentDashboardPage(){
   if(loading&&!snapshot)return <div className="mx-auto max-w-[1440px] py-16 text-sm text-gogo-ink-3">Opening Gogo Agent…</div>
 
   const runtime=snapshot?.runtime||{}
+  const sectionTitle=section==='approvals'?'Needs you':section==='background'?'Background':section==='goals'?'Goals':'Gogo Agent'
+  const sectionCopy=section==='approvals'?'Gogo asks before anything that sends, spends, books or submits.':section==='background'?'What Gogo is watching for you, and what it has actually seen.':section==='goals'?'Longer outcomes Gogo can keep moving in the background.':'Plan, act and keep working. Consequential actions stop for your approval.'
   const agentState = busy ? 'acting' : counts.approvals ? 'approval' : counts.watchers ? 'watching' : 'acting'
 
   return <div className="mx-auto w-full max-w-[1440px] space-y-5 pb-10">
-    <header className="relative overflow-hidden rounded-[34px] bg-[linear-gradient(135deg,#34190d_0%,#542b17_55%,#38233e_100%)] px-7 py-8 text-white shadow-[0_28px_70px_rgba(58,36,24,.20)] lg:px-9">
-      <div className="pointer-events-none absolute -right-20 -top-28 h-72 w-72 rounded-full bg-gogo-orange/20 blur-[90px]" />
-      <div className="pointer-events-none absolute bottom-[-8rem] left-[36%] h-64 w-64 rounded-full bg-gogo-plum/25 blur-[90px]" />
-      <div className="relative flex flex-col gap-7 xl:flex-row xl:items-center xl:justify-between">
+    <header className="border-b border-[#1f1f1f] pb-5 pt-1">
+      <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
         <div className="flex items-center gap-5">
-          <div className="hidden h-24 w-24 shrink-0 place-items-center rounded-[26px] border border-white/10 bg-white/8 shadow-inner lg:grid">
-            <GogoCharacter state={agentState} size={86} dark showStatus={agentState === 'watching'} />
-          </div>
+          <div className="hidden h-14 w-14 shrink-0 place-items-center rounded-full bg-[#f2efea] lg:grid"><GogoCharacter state={agentState} size={52} showStatus={false} /></div>
           <div>
-            <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-[.22em] text-[#ff9a3d]"><span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_5px_rgba(52,211,153,.10)]"/>Gogo Agent · live</div>
-            <h1 className="mt-3 font-serif text-[40px] font-semibold leading-none tracking-[-.8px] lg:text-[48px]">Plan. Act. Watch.</h1>
-            <p className="mt-3 max-w-2xl text-[13px] leading-6 text-white/70">Give Gogo an outcome. Safe work can run immediately; consequential actions stop for your approval. Background Gogo keeps watching when you leave.</p>
+            <div className="final-dark-eyebrow">{section==='background'?'Background Gogo':section==='approvals'?'Control boundary':section==='goals'?'Longer outcomes':'Gogo Agent · live'}</div>
+            <h1 className="final-dark-title mt-2 text-[34px] leading-none lg:text-[40px]">{sectionTitle}</h1>
+            <p className="mt-3 max-w-2xl text-[13px] leading-6 text-[#9a9a9a]">{sectionCopy}</p>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{Object.entries(counts).map(([k,v])=><div key={k} className="min-w-[92px] rounded-[18px] border border-white/8 bg-white/8 px-4 py-3 text-center backdrop-blur"><div className="font-serif text-[27px] font-semibold leading-none">{v}</div><div className="mt-1.5 text-[8px] font-bold uppercase tracking-[.14em] text-white/45">{k}</div></div>)}</div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{Object.entries(counts).map(([k,v])=><div key={k} className="min-w-[92px] rounded-[10px] border border-[#1f1f1f] bg-[#111] px-4 py-3 text-center"><div className="text-[22px] font-semibold leading-none text-[#f2efea]">{v}</div><div className="mt-1.5 text-[8px] font-bold uppercase tracking-[.14em] text-[#6a6a6a]">{k}</div></div>)}</div>
       </div>
     </header>
 
-    <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+    {!section&&<section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
       <RuntimePill label="Control plane" value={`${runtime.controlPlaneRegion||'bom1'} · ${runtime.controlPlane||'Vercel'}`} />
       <RuntimePill label="Secure computer" value={`${runtime.secureComputerRegion||'bom1'} · ${runtime.secureComputer||'Vercel Sandbox'}`} />
       <RuntimePill label="Browser" value={runtime.browser||'Chromium + Playwright'} />
       <RuntimePill label="Background" value={`watch ${runtime.watcherCadenceMinutes||15}m · goals ${runtime.goalReviewCadenceMinutes||15}m`} />
       <RuntimePill label="Human auth" value={runtime.interactiveTakeover==='enabled'?'takeover enabled':'pauses safely'} />
-    </section>
+    </section>}
 
     {error&&<div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] text-red-700">{error}</div>}
 
-    <section className="relative overflow-hidden rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/92 p-6 shadow-[0_18px_55px_rgba(62,35,18,.07)]">
+    {!section&&<section className="relative overflow-hidden rounded-[14px] border border-[#1f1f1f] bg-[#111] p-5">
       <div className="pointer-events-none absolute -right-14 -top-20 h-48 w-48 rounded-full bg-gogo-orange/8 blur-3xl" />
       <div className="relative flex flex-wrap items-center justify-between gap-3"><div><div className="text-[9px] font-bold uppercase tracking-[.18em] text-gogo-orange">Command Gogo</div><h2 className="mt-1 font-serif text-[28px] font-semibold text-gogo-ink">What outcome do you want?</h2></div>{activeThread&&<button onClick={()=>setActiveThread(null)} className="rounded-full border border-gogo-orange/15 bg-gogo-orange/8 px-3.5 py-2 text-[10px] font-semibold text-gogo-orange">Workspace: {activeThread.title} ×</button>}</div>
       <div className="relative mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_150px]"><textarea value={command} onChange={e=>setCommand(e.target.value)} placeholder="e.g. Compare the cheapest BLR → Mumbai flights next week" className="min-h-[96px] resize-none rounded-[20px] border border-gogo-ink/10 bg-gogo-cream/60 px-4 py-4 text-[13px] leading-6 text-gogo-ink outline-none transition focus:border-gogo-orange/45 focus:bg-gogo-surface"/><button onClick={run} disabled={!command.trim()||!!busy} className="rounded-[20px] bg-gogo-orange px-5 py-3 text-[12px] font-bold text-white shadow-[0_14px_28px_rgba(241,130,25,.22)] transition hover:bg-gogo-orange-deep disabled:opacity-40">{busy==='run'?'Working…':'Run with Gogo →'}</button></div>
       {result&&<div className="relative mt-4 whitespace-pre-wrap rounded-[20px] border border-gogo-ink/7 bg-gogo-cream/60 px-4 py-4 text-[11px] leading-5 text-gogo-ink-2">{result}</div>}
-    </section>
+    </section>}
 
     <div className="grid gap-5 xl:grid-cols-2">
-      <Panel title="Approvals" eyebrow="You stay in control" badge={String(snapshot?.approvals?.length||0)}>{!snapshot?.approvals?.length?<Empty text="Nothing is waiting for your approval."/>:snapshot.approvals.map((a:any)=><Card key={a.id}><div className="flex items-start justify-between gap-3"><div><b>{a.title}</b><p>{a.description}</p><span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-1 text-[8px] font-bold uppercase text-amber-700">{a.risk} risk</span></div></div><div className="mt-3 flex gap-2"><button onClick={()=>resolveApproval(a,'reject')} className="btn-secondary">Reject</button><button onClick={()=>resolveApproval(a,'approve')} className="btn-primary">Approve & run</button></div></Card>)}</Panel>
-      <Panel title="Background Gogo" eyebrow="Keeps watching" badge={String(snapshot?.watchers?.length||0)}>{!snapshot?.watchers?.length?<Empty text="No active watches. Ask Gogo to watch a price, deadline or change."/>:snapshot.watchers.map((w:any)=><Card key={w.id}><b>{w.title}</b><p>{w.type.replaceAll('_',' ')} · every {w.cadenceMinutes} min</p><p>Next: {w.nextCheckAt?new Date(w.nextCheckAt).toLocaleString():'—'}</p><button onClick={()=>stopWatcher(w.id)} className="mt-3 btn-secondary">Stop</button></Card>)}</Panel>
-      <Panel title="Goals" eyebrow="Longer outcomes" badge={String(snapshot?.goals?.length||0)}><div className="mb-3 flex gap-2"><input value={goal} onChange={e=>setGoal(e.target.value)} placeholder="Outcome for Background Gogo" className="input flex-1"/><button onClick={createGoal} className="btn-primary">Create</button></div>{!snapshot?.goals?.length?<Empty text="No active goals. Create one for work that should keep moving."/>:snapshot.goals.map((g:any)=><Card key={g.id}><div className="flex justify-between gap-3"><b>{g.title}</b><span>{g.progress||0}%</span></div><div className="mt-2 h-1.5 rounded-full bg-gogo-ink/8"><div className="h-1.5 rounded-full bg-gogo-orange" style={{width:`${Math.max(2,g.progress||0)}%`}}/></div><p>{g.nextAction||g.outcome}</p>{g.blockers?.length>0&&<><p className="text-red-600">Blocked: {g.blockers.join(', ')}</p><button onClick={()=>resumeGoal(g)} disabled={!!busy} className="mt-3 btn-primary">{busy===`goal-resume:${g.id}`?'Resuming…':'Reviewed · continue'}</button></>}</Card>)}</Panel>
-      <Panel title="Ideas" eyebrow="Proactive suggestions" badge={String(snapshot?.ideas?.length||0)}>{!snapshot?.ideas?.length?<Empty text="No new proactive ideas right now."/>:snapshot.ideas.map((i:any)=><Card key={i.id}><b>{i.title}</b><p>{i.reason}</p><p className="text-gogo-orange">{i.expectedValue}</p></Card>)}</Panel>
+      {(!section||section==='approvals')&&<Panel title="Approvals" eyebrow="You stay in control" badge={String(snapshot?.approvals?.length||0)}>{!snapshot?.approvals?.length?<Empty text="Nothing is waiting for your approval."/>:snapshot.approvals.map((a:any)=><Card key={a.id}><div className="flex items-start justify-between gap-3"><div><b>{a.title}</b><p>{a.description}</p><span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-1 text-[8px] font-bold uppercase text-amber-700">{a.risk} risk</span></div></div><div className="mt-3 flex gap-2"><button onClick={()=>resolveApproval(a,'reject')} className="btn-secondary">Reject</button><button onClick={()=>resolveApproval(a,'approve')} className="btn-primary">Approve & run</button></div></Card>)}</Panel>}
+      {(!section||section==='background')&&<Panel title="Background Gogo" eyebrow="Keeps watching" badge={String(snapshot?.watchers?.length||0)}>{!snapshot?.watchers?.length?<Empty text="No active watches. Ask Gogo to watch a price, deadline or change."/>:snapshot.watchers.map((w:any)=><Card key={w.id}><b>{w.title}</b><p>{w.type.replaceAll('_',' ')} · every {w.cadenceMinutes} min</p><p>Next: {w.nextCheckAt?new Date(w.nextCheckAt).toLocaleString():'—'}</p><button onClick={()=>stopWatcher(w.id)} className="mt-3 btn-secondary">Stop</button></Card>)}</Panel>}
+      {(!section||section==='goals')&&<Panel title="Goals" eyebrow="Longer outcomes" badge={String(snapshot?.goals?.length||0)}><div className="mb-3 flex gap-2"><input value={goal} onChange={e=>setGoal(e.target.value)} placeholder="Outcome for Background Gogo" className="input flex-1"/><button onClick={createGoal} className="btn-primary">Create</button></div>{!snapshot?.goals?.length?<Empty text="No active goals. Create one for work that should keep moving."/>:snapshot.goals.map((g:any)=><Card key={g.id}><div className="flex justify-between gap-3"><b>{g.title}</b><span>{g.progress||0}%</span></div><div className="mt-2 h-1.5 rounded-full bg-gogo-ink/8"><div className="h-1.5 rounded-full bg-gogo-orange" style={{width:`${Math.max(2,g.progress||0)}%`}}/></div><p>{g.nextAction||g.outcome}</p>{g.blockers?.length>0&&<><p className="text-red-600">Blocked: {g.blockers.join(', ')}</p><button onClick={()=>resumeGoal(g)} disabled={!!busy} className="mt-3 btn-primary">{busy===`goal-resume:${g.id}`?'Resuming…':'Reviewed · continue'}</button></>}</Card>)}</Panel>}
+      {!section&&<Panel title="Ideas" eyebrow="Proactive suggestions" badge={String(snapshot?.ideas?.length||0)}>{!snapshot?.ideas?.length?<Empty text="No new proactive ideas right now."/>:snapshot.ideas.map((i:any)=><Card key={i.id}><b>{i.title}</b><p>{i.reason}</p><p className="text-gogo-orange">{i.expectedValue}</p></Card>)}</Panel>}
     </div>
 
-    <Panel title="Activity" eyebrow="What Gogo actually did" badge={String(snapshot?.runs?.length||0)}>{!snapshot?.runs?.length?<Empty text="No Agent runs yet. Give Gogo an outcome above."/>:<div className="space-y-2.5">{snapshot.runs.map((r:any)=><Card key={r.id}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><b className="block truncate">{r.title}</b><p className="line-clamp-2">{r.summary}</p></div><span className="rounded-full bg-gogo-ink/6 px-2.5 py-1 text-[8px] font-bold uppercase tracking-[.06em]">{r.status} · {r.capability}</span></div>{r.steps?.length>0&&<div className="mt-3 grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">{r.steps.map((s:any)=><div key={s.id} className="flex items-center gap-2 rounded-xl bg-gogo-cream/70 px-3 py-2 text-[9px]"><span className={`h-2 w-2 rounded-full ${s.status==='completed'?'bg-emerald-400':s.status==='failed'?'bg-red-400':s.status==='waiting_approval'?'bg-amber-400':'bg-gogo-orange'}`}/><span className="w-5 text-gogo-ink-4">{s.ordinal}</span><span className="min-w-0 flex-1 truncate font-medium">{s.title}</span></div>)}</div>}</Card>)}</div>}</Panel>
+    {!section&&<Panel title="Activity" eyebrow="What Gogo actually did" badge={String(snapshot?.runs?.length||0)}>{!snapshot?.runs?.length?<Empty text="No Agent runs yet. Give Gogo an outcome above."/>:<div className="space-y-2.5">{snapshot.runs.map((r:any)=><Card key={r.id}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><b className="block truncate">{r.title}</b><p className="line-clamp-2">{r.summary}</p></div><span className="rounded-full bg-gogo-ink/6 px-2.5 py-1 text-[8px] font-bold uppercase tracking-[.06em]">{r.status} · {r.capability}</span></div>{r.steps?.length>0&&<div className="mt-3 grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">{r.steps.map((s:any)=><div key={s.id} className="flex items-center gap-2 rounded-xl bg-gogo-cream/70 px-3 py-2 text-[9px]"><span className={`h-2 w-2 rounded-full ${s.status==='completed'?'bg-emerald-400':s.status==='failed'?'bg-red-400':s.status==='waiting_approval'?'bg-amber-400':'bg-gogo-orange'}`}/><span className="w-5 text-gogo-ink-4">{s.ordinal}</span><span className="min-w-0 flex-1 truncate font-medium">{s.title}</span></div>)}</div>}</Card>)}</div>}</Panel>}
 
-    <Panel title="Safe Mode / Sentinel" eyebrow="Permission boundaries" badge="permissions">
+    {!section&&<Panel title="Safe Mode / Sentinel" eyebrow="Permission boundaries" badge="permissions">
       <p className="mb-4 max-w-3xl text-[11px] leading-5 text-gogo-ink-3">Choose how far Gogo may go for each capability. “Ask” means Gogo must stop for approval. Consequential sends, bookings, purchases and external changes remain approval-gated.</p>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{snapshot?.permissions?.map((p:any)=><div key={p.capability} className="rounded-[18px] border border-gogo-ink/7 bg-gogo-cream/42 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><b className="text-[12px] text-gogo-ink">{p.label}</b><p className="mt-1 text-[9.5px] leading-4 text-gogo-ink-3">{p.description}</p></div><select value={p.level} onChange={e=>permission(p.capability,e.target.value)} disabled={busy===`permission:${p.capability}`} className="shrink-0 rounded-xl border border-gogo-ink/10 bg-gogo-surface px-2 py-1.5 text-[9px] font-semibold text-gogo-ink">{LEVELS.map(l=><option key={l} value={l}>{l}</option>)}</select></div>{p.irreversibleAlwaysAsk&&<div className="mt-3 flex items-center gap-1.5 text-[8px] font-semibold text-amber-700"><span className="h-1.5 w-1.5 rounded-full bg-amber-500"/>Consequential actions always ask</div>}</div>)}</div>
-    </Panel>
+    </Panel>}
 
-    <div className="grid gap-5 xl:grid-cols-2">
+    {!section&&<div className="grid gap-5 xl:grid-cols-2">
       <Panel title="Workspaces" eyebrow="Separate context, shared memory" badge={String(threads.length)}><div className="mb-3 flex gap-2"><input value={threadTitle} onChange={e=>setThreadTitle(e.target.value)} placeholder="e.g. CreditIQ Seed Raise" className="input flex-1"/><button onClick={createThread} className="btn-primary">Create</button></div><div className="grid gap-2 sm:grid-cols-2">{threads.length?threads.map((t:any)=><button key={t.id} onClick={()=>setActiveThread(t)} className={`rounded-[16px] border p-3 text-left transition ${activeThread?.id===t.id?'border-gogo-orange bg-gogo-orange/6':'border-gogo-ink/7 bg-gogo-cream/40 hover:border-gogo-orange/20'}`}><b className="text-[11px]">{t.title}</b><p className="mt-1 text-[9px] text-gogo-ink-3">Separate context · shared Memory</p></button>):<Empty text="No workspaces yet."/>}</div></Panel>
       <Panel title="Artifacts" eyebrow="Outputs Gogo created" badge={String(snapshot?.artifacts?.length||0)}>{!snapshot?.artifacts?.length?<Empty text="No artifacts created yet."/>:<div className="grid gap-2 sm:grid-cols-2">{snapshot.artifacts.map((a:any)=><button key={a.id} onClick={()=>openArtifact(a.id)} className="block w-full rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/40 p-3 text-left transition hover:border-gogo-orange/25"><b className="text-[11px]">{a.title}</b><p className="mt-1 text-[9px] text-gogo-ink-3">{a.subtitle||a.type}</p></button>)}</div>}{artifact&&<pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded-2xl bg-gogo-ink p-4 text-[9px] leading-4 text-white/80">{JSON.stringify(artifact,null,2)}</pre>}</Panel>
-    </div>
+    </div>}
 
     <style jsx>{`
       :global(.btn-primary){border-radius:14px;background:#f18219;color:white;padding:10px 14px;font-size:10px;font-weight:800;box-shadow:0 8px 18px rgba(241,130,25,.16)}
