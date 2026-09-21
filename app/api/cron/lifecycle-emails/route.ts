@@ -1,5 +1,5 @@
-import { timingSafeEqual } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
+import { isCronAuthorized } from '@/lib/security/cron-auth'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { LIFECYCLE_EMAILS, renderLifecycleEmail } from '@/lib/email/lifecycle'
 import { sendAskGogoEmail } from '@/lib/email/resend'
@@ -11,34 +11,12 @@ export const maxDuration = 60
 const MIN_GAP_MS = 20 * 60 * 60 * 1000
 const MAX_SENDS_PER_RUN = 50
 
-function secretMatches(provided: string | null, expected: string) {
-  if (!provided) return false
-  const a = Buffer.from(provided)
-  const b = Buffer.from(expected)
-  return a.length === b.length && timingSafeEqual(a, b)
-}
-
-function isAuthorized(req: NextRequest) {
-  const expected = process.env.CRON_SECRET
-  if (!expected) return true
-  const querySecret = new URL(req.url).searchParams.get('secret')
-  const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
-  return secretMatches(bearer, expected) || secretMatches(querySecret, expected)
-}
-
-function daysSince(iso: string | null | undefined) {
-  if (!iso) return 0
-  const t = new Date(iso).getTime()
-  if (!Number.isFinite(t)) return 0
-  return Math.max(0, Math.floor((Date.now() - t) / 86400000))
-}
-
 function firstName(name: string | null | undefined) {
   return (name || 'there').trim().split(/\s+/)[0] || 'there'
 }
 
 export async function GET(req: NextRequest) {
-  if (!isAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  if (!isCronAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
 
   const url = new URL(req.url)
   const dryRun = ['1', 'true', 'yes'].includes((url.searchParams.get('dry') || '').toLowerCase())
