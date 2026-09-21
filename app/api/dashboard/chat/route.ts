@@ -9,6 +9,7 @@ import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/
 import { isPublicTravelResearchRequest, tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { resolveAgentActor } from '@/lib/agent/actor'
+import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
@@ -94,6 +95,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+
+    try {
+      await observeShadowBrainTurn({ actor, surface:'web', text, eventId:randomUUID() })
+    } catch (shadowError:any) {
+      console.error('SHADOW_BRAIN_DASHBOARD_FAILED:', String(shadowError?.message || shadowError).slice(0,180))
+    }
 
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
     if (readOnlySchedule?.horizon === 'tomorrow') {

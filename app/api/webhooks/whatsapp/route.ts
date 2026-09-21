@@ -41,6 +41,8 @@ import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
+import { resolveAgentActor } from '@/lib/agent/actor'
+import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
 import {
@@ -832,6 +834,18 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, images and PDFs now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    try {
+      const shadowActor = await resolveAgentActor({ telegramId:String(resolvedUser.telegramId), surface:'whatsapp' })
+      await observeShadowBrainTurn({
+        actor:shadowActor,
+        surface:'whatsapp',
+        text,
+        eventId:inboundMessageSid || null,
+      })
+    } catch (shadowError:any) {
+      console.error('SHADOW_BRAIN_WHATSAPP_FAILED:', String(shadowError?.message || shadowError).slice(0,180))
     }
 
     if (isReceiptItemizeCommand(text)) {
