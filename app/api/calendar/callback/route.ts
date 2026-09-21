@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { consumeCalendarOauthState, exchangeCode } from '@/lib/google-calendar'
+import { encryptGoogleToken, hasGoogleTokenEncryptionKey } from '@/lib/security/google-token-crypto'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,8 +24,13 @@ export async function GET(req: NextRequest) {
     return new NextResponse(failedPageHtml(), { status:400, headers:{'Content-Type':'text/html; charset=utf-8'} })
   }
 
+  if (!hasGoogleTokenEncryptionKey()) {
+    console.error('GOOGLE_TOKEN_ENCRYPTION_KEY_MISSING')
+    return new NextResponse(failedPageHtml(), { status:503, headers:{'Content-Type':'text/html; charset=utf-8'} })
+  }
+
   const { error } = await supabaseAdmin.from('users').update({
-    google_refresh_token: tokens.refresh_token,
+    google_refresh_token: encryptGoogleToken(tokens.refresh_token),
     google_calendar_connected: true,
   }).eq('telegram_id', telegramId)
 
