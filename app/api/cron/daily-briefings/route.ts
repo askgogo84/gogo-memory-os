@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { timingSafeEqual } from 'crypto'
+import { isCronAuthorized } from '@/lib/security/cron-auth'
 import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildMorningBriefing } from '@/lib/bot/handlers/morning-briefing'
@@ -96,27 +96,12 @@ async function weekAheadSummary(telegramId: number): Promise<string | null> {
   return `🗓️ *Week ahead* (${rows.length} upcoming):\n${lines.join('\n')}`
 }
 
-function secretMatches(provided: string | null, expected: string) {
-  if (!provided) return false
-  const a = Buffer.from(provided)
-  const b = Buffer.from(expected)
-  return a.length === b.length && timingSafeEqual(a, b)
-}
-
-function isAuthorized(req: NextRequest) {
-  const expected = process.env.CRON_SECRET
-  if (!expected) return true
-  const querySecret = new URL(req.url).searchParams.get('secret')
-  const bearerSecret = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
-  return secretMatches(bearerSecret, expected) || secretMatches(querySecret, expected)
-}
-
 function firstName(value: string | null | undefined) {
   return (value || 'there').trim().split(/\s+/)[0] || 'there'
 }
 
 export async function GET(req: NextRequest) {
-  if (!isAuthorized(req)) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
   }
 
