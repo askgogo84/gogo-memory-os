@@ -1,0 +1,56 @@
+name: Brain Vault Architecture Review
+
+on:
+  push:
+    branches:
+      - architecture/brain-vault-v1-20260921
+    paths:
+      - 'docs/architecture/**'
+      - 'scripts/review-brain-vault-architecture-with-claude.mts'
+      - 'scripts/verify-brain-vault-architecture.mts'
+      - 'package.json'
+      - '.github/workflows/architecture-review.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Verify architecture contract
+        run: npm run architecture:verify
+
+  claude_review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: verify
+    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ARCHITECTURE_REVIEW_MODEL: claude-sonnet-4-5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Run Claude adversarial architecture review
+        run: npm run architecture:review
+      - name: Upload Claude review
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-brain-vault-architecture-review
+          path: docs/architecture/CLAUDE_REVIEW_V1.md
+          if-no-files-found: error
