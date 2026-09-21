@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
+import { isCronAuthorized } from '@/lib/security/cron-auth'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildMorningBriefing } from '@/lib/bot/handlers/morning-briefing'
 import { sendTelegramMessage } from '@/lib/channels/telegram'
@@ -23,7 +24,8 @@ function todayIstDateKey() {
   }).format(new Date())
 }
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
+  if (!isCronAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
   const nowKey = currentIstTimeKey()
   const todayKey = todayIstDateKey()
 
