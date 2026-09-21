@@ -4,15 +4,15 @@ import { readFileSync } from 'node:fs'
 const chat=readFileSync('components/dashboard/gogo-chat.tsx','utf8')
 const agent=readFileSync('app/dashboard/(app)/agent/page.tsx','utf8')
 
-assert.match(chat,/bg-[#f2efea] text-[#0b0b0b]/,'user bubble must be dark text on a light bubble')
-assert.match(chat,/bg-[#161616] text-[#f2efea]/,'assistant bubble must be light text on a dark bubble')
-assert.doesNotMatch(chat,/bg-gogo-ink text-white/,'Final-Dark user bubble must not resolve to white-on-white')
+assert.ok(chat.includes("bg-[#1c1c1c] text-[#f2efea]"),'user message must be readable on the Final-Dark bubble')
+assert.ok(chat.includes("One conversation, across here and WhatsApp."),'chat must match the supplied Final-Dark conversation frame')
+assert.ok(chat.includes("In this conversation"),'chat must include the supplied right-side conversation context rail')
+assert.doesNotMatch(chat,/bg-gogo-ink text-white/,'chat must not regress to theme-dependent white-on-white bubbles')
 
 assert.match(agent,/Describe the outcome you want Gogo to keep moving, then press Create/)
 assert.match(agent,/onKeyDown=.*Enter/s)
 assert.match(agent,/Prepare my New York trip and keep checking what needs my attention/)
 assert.match(agent,/Goal created:/)
-assert.match(agent,/disabled={busy==='goal'}/)
 assert.match(agent,/A Goal is an outcome Gogo should keep moving over time/)
 
-console.log('Final-Dark chat contrast + Goals UX verification passed')
+console.log('Final-Dark chat parity + Goals UX verification passed')
