@@ -202,3 +202,78 @@ Response composer receives only:
 - prospective recommendations
 
 It does not inspect raw secrets or raw provider stack traces.
+
+
+## Concurrency Contract
+
+All mutating brain/mission handling for one canonical user must acquire the same Postgres-backed user lock before state changes.
+
+The lock protects:
+- focus updates
+- mission creation/transition
+- approval state changes
+- watcher creation/cancellation
+- world-object mutations
+
+Inbound events also require a unique idempotency key. Duplicate delivery returns the previously recorded result or no-op state.
+
+## Trust Class Contract
+
+Every planner/context input is tagged as one of:
+- SYSTEM_POLICY
+- USER_INSTRUCTION
+- CONNECTED_ACCOUNT_DATA
+- EXTERNAL_WEB_DATA
+- DOCUMENT_CONTENT
+- MODEL_INFERENCE
+- EXECUTION_EVIDENCE
+
+Only SYSTEM_POLICY and USER_INSTRUCTION can authorize or broaden execution.
+
+## Approval Binding Contract
+
+Approval stores an immutable action_hash computed from:
+- mission id
+- step id
+- capability/action type
+- target provider/object
+- normalized action payload
+- amount/value where applicable
+- policy version
+- object reference/version where available
+
+Execution recomputes the hash. A mismatch invalidates approval.
+
+## Outcome Unknown Contract
+
+CapabilityResult.status may also be 'outcome_unknown'.
+
+A capability must use outcome_unknown when the provider may have completed a mutation but terminal confirmation is missing.
+
+No automatic retry is allowed until reconciliation checks provider state using provider/idempotency references.
+
+## Session Vault Contract
+
+Authenticated browser profiles, cookies, localStorage, sessionStorage, refresh/access tokens and persisted sessions are secret-class material.
+
+Session material:
+- never enters model prompts
+- never enters world-object free text
+- never enters agent_activity
+- is available only to trusted browser/Vault broker code
+- follows secure deletion/reauth rules
+
+## Schema Source-of-Truth Contract
+
+Production runtime tables and constraints must be reproducible from repository migrations before Shadow Brain rollout.
+
+A clean clone must be able to provision the schema needed by:
+- agent_runs
+- agent_steps
+- agent_threads
+- approvals
+- watchers
+- Vault
+- evidence/runtime persistence
+
+Silent database write failures are release blockers.
