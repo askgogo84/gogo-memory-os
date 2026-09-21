@@ -145,7 +145,7 @@ export async function loadBrainSnapshot(actor:AgentActor):Promise<BrainSnapshot>
   return {focus,recentTrips:tripState.trips,recentRuns:runState.runs,recentConversation,vault}
 }
 
-function deterministicResolution(text:string,snapshot:BrainSnapshot):BrainTurnResolution|null{
+export function resolveContextualTurnDeterministically(text:string,snapshot:BrainSnapshot):BrainTurnResolution|null{
   if(!needsBrainContext(text)||!snapshot.focus)return null
   const family=actionFamily(text)
   const focus=snapshot.focus
@@ -206,7 +206,7 @@ async function modelResolution(text:string,snapshot:BrainSnapshot):Promise<Brain
 
 export async function resolveBrainTurn(params:{actor:AgentActor;text:string}):Promise<{snapshot:BrainSnapshot;resolution:BrainTurnResolution}>{
   const snapshot=await loadBrainSnapshot(params.actor)
-  const deterministic=deterministicResolution(params.text,snapshot)
+  const deterministic=resolveContextualTurnDeterministically(params.text,snapshot)
   if(deterministic)return {snapshot,resolution:deterministic}
   if(needsBrainContext(params.text)){
     const model=await modelResolution(params.text,snapshot)
