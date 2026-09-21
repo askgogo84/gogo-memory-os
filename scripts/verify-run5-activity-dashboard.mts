@@ -10,7 +10,7 @@ const side=fs.readFileSync('components/dashboard/side-rail.tsx','utf8')
 const tabs=fs.readFileSync('components/dashboard/tab-bar.tsx','utf8')
 
 assert.match(activity,/What Gogo has done, newest first/)
-assert.match(activity,/Reminders.*Browser.*Research.*Documents/s)
+for (const filter of ['Reminders','Browser','Research','Documents']) assert.match(activity,new RegExp(filter),`Activity must expose ${filter} filter`)
 assert.match(detail,/Open browser view/)
 assert.match(browser,/Blocked by the provider/)
 assert.match(browser,/Take control/)

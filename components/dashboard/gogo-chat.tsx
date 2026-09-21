@@ -2,206 +2,223 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
 
-type ChatMessage = {
-  role: 'user' | 'assistant'
-  content: string
-  createdAt?: string
-  mediaUrl?: string | null
+type ChatMessage={
+  role:'user'|'assistant'
+  content:string
+  createdAt?:string
+  mediaUrl?:string|null
 }
 
-const DRINKS: Record<string, { emoji: string; label: string; line: string }> = {
-  coffee: { emoji: '☕', label: 'Coffee', line: 'Coffee with Gogo' },
-  tea: { emoji: '🍵', label: 'Tea', line: 'Tea with Gogo' },
-  matcha: { emoji: '🍃', label: 'Matcha', line: 'Matcha with Gogo' },
-  water: { emoji: '💧', label: 'Water', line: 'A clear moment with Gogo' },
-  hot_chocolate: { emoji: '🍫', label: 'Hot chocolate', line: 'Hot chocolate with Gogo' },
-  coconut_water: { emoji: '🥥', label: 'Coconut water', line: 'Coconut water with Gogo' },
+type AgentSnapshot={
+  runs:any[]
+  watchers:any[]
+  approvals:any[]
 }
 
-const QUICK = [
+const QUICK=[
   'What do I have today?',
   'Find a saved document',
   'Show my reminders',
   'Plan my day',
 ]
 
-const CURRENT_CONTEXT_MESSAGES = 4
-
-function linkify(text: string) {
-  const parts = String(text || '').split(/(https?:\/\/[^\s]+)/g)
-  return parts.map((part, index) => /^https?:\/\//.test(part)
-    ? <a key={index} href={part} target="_blank" rel="noreferrer" className="font-semibold text-gogo-orange underline underline-offset-2">{part}</a>
+function linkify(text:string){
+  const parts=String(text||'').split(/(https?:\/\/[^\s]+)/g)
+  return parts.map((part,index)=>/^https?:\/\//.test(part)
+    ? <a key={index} href={part} target="_blank" rel="noreferrer" className="font-medium text-[#2fb8a6] underline underline-offset-2">{part}</a>
     : <span key={index}>{part}</span>)
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
-  return (
-    <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[88%] whitespace-pre-wrap rounded-[22px] px-4 py-3 text-[14px] leading-6 shadow-sm sm:max-w-[78%] ${message.role === 'user' ? 'rounded-br-[7px] bg-gogo-ink text-white' : 'rounded-bl-[7px] border border-gogo-ink/7 bg-gogo-surface text-gogo-ink'}`}>
-        {linkify(message.content)}
-        {message.mediaUrl && <img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 w-auto rounded-2xl border border-gogo-ink/8" />}
-      </div>
-    </div>
-  )
+function Avatar(){
+  return <div className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full bg-[#efe6d7]"><GogoCharacter state="calm" size={30} showStatus={false}/></div>
 }
 
-export function GogoChat({ initialDrink = 'coffee' }: { initialDrink?: string }) {
-  const searchParams = useSearchParams()
-  const initialPrompt = searchParams.get('prompt') || ''
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [text, setText] = useState(initialPrompt)
-  const [loading, setLoading] = useState(true)
-  const [sending, setSending] = useState(false)
-  const [error, setError] = useState('')
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const endRef = useRef<HTMLDivElement | null>(null)
-  const drink = DRINKS[initialDrink] || DRINKS.coffee
+function Message({message}:{message:ChatMessage}){
+  if(message.role==='user'){
+    return <div className="flex justify-end">
+      <div className="max-w-[78%] rounded-[16px] bg-[#1c1c1c] px-4 py-3 text-[14px] leading-6 text-[#f2efea]">
+        {linkify(message.content)}
+        {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
+      </div>
+    </div>
+  }
+  return <div className="flex items-start gap-3">
+    <Avatar/>
+    <div className="max-w-[78%] pt-1 text-[14px] leading-6 text-[#f2efea]">
+      {linkify(message.content)}
+      {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
+    </div>
+  </div>
+}
 
-  useEffect(() => {
-    let live = true
-    fetch('/api/dashboard/chat', { cache: 'no-store' })
-      .then(async (res) => {
-        if (!res.ok) throw new Error('history')
+function RailRow({title,meta,tone='muted',href}:{title:string;meta:string;tone?:'muted'|'teal'|'amber'|'green';href?:string}){
+  const dot=tone==='teal'?'bg-[#2fb8a6]':tone==='amber'?'bg-[#d9a441]':tone==='green'?'bg-[#7fb069]':'bg-[#6a6a6a]'
+  const body=<div className="flex items-start gap-3 border-t border-[#1f1f1f] py-3 first:border-t-0">
+    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dot}`}/>
+    <div className="min-w-0 flex-1">
+      <div className="truncate text-[12px] font-medium text-[#f2efea]">{title}</div>
+      <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#6a6a6a]">{meta}</div>
+    </div>
+  </div>
+  return href?<Link href={href} className="block hover:bg-[#111]">{body}</Link>:body
+}
+
+export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
+  const searchParams=useSearchParams()
+  const initialPrompt=searchParams.get('prompt')||''
+  const [messages,setMessages]=useState<ChatMessage[]>([])
+  const [text,setText]=useState(initialPrompt)
+  const [loading,setLoading]=useState(true)
+  const [sending,setSending]=useState(false)
+  const [error,setError]=useState('')
+  const [historyOpen,setHistoryOpen]=useState(false)
+  const [snapshot,setSnapshot]=useState<AgentSnapshot>({runs:[],watchers:[],approvals:[]})
+  const endRef=useRef<HTMLDivElement|null>(null)
+
+  async function loadSnapshot(){
+    try{
+      const res=await fetch('/api/agent/snapshot',{cache:'no-store',credentials:'same-origin'})
+      if(!res.ok)return
+      const data=await res.json()
+      setSnapshot({
+        runs:Array.isArray(data.runs)?data.runs:[],
+        watchers:Array.isArray(data.watchers)?data.watchers:[],
+        approvals:Array.isArray(data.approvals)?data.approvals:[],
+      })
+    }catch{}
+  }
+
+  useEffect(()=>{
+    let live=true
+    Promise.all([
+      fetch('/api/dashboard/chat',{cache:'no-store'}).then(async res=>{
+        if(!res.ok)throw new Error('history')
         return res.json()
+      }),
+      fetch('/api/agent/snapshot',{cache:'no-store',credentials:'same-origin'}).then(r=>r.ok?r.json():null).catch(()=>null),
+    ]).then(([chat,agent])=>{
+      if(!live)return
+      setMessages(Array.isArray(chat.messages)?chat.messages:[])
+      if(agent)setSnapshot({
+        runs:Array.isArray(agent.runs)?agent.runs:[],
+        watchers:Array.isArray(agent.watchers)?agent.watchers:[],
+        approvals:Array.isArray(agent.approvals)?agent.approvals:[],
       })
-      .then((data) => {
-        if (!live) return
-        setMessages(Array.isArray(data.messages) ? data.messages : [])
+    }).catch(()=>live&&setError('I could not load the recent conversation. You can still start a new message.'))
+      .finally(()=>live&&setLoading(false))
+    return()=>{live=false}
+  },[])
+
+  useEffect(()=>{
+    if(!historyOpen)endRef.current?.scrollIntoView({behavior:'smooth',block:'end'})
+  },[messages,sending,historyOpen])
+
+  const archived=useMemo(()=>messages.slice(0,Math.max(0,messages.length-12)),[messages])
+  const visible=historyOpen?messages:messages.slice(-12)
+  const activeRun=snapshot.runs.find(r=>['running','queued','paused','waiting_approval'].includes(r.status))||null
+
+  async function submit(value?:string){
+    const next=String(value??text).trim()
+    if(!next||sending)return
+    setText('');setError('');setSending(true);setHistoryOpen(false)
+    setMessages(m=>[...m,{role:'user',content:next}])
+    try{
+      const res=await fetch('/api/dashboard/chat',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({text:next}),
       })
-      .catch(() => live && setError('I could not load the recent conversation. You can still start a new message.'))
-      .finally(() => live && setLoading(false))
-    return () => { live = false }
-  }, [])
-
-  useEffect(() => {
-    if (!historyOpen) endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages, sending, historyOpen])
-
-  const empty = useMemo(() => !loading && messages.length === 0, [loading, messages.length])
-  const currentMessages = useMemo(() => messages.slice(-CURRENT_CONTEXT_MESSAGES), [messages])
-  const archivedMessages = useMemo(() => messages.slice(0, Math.max(0, messages.length - CURRENT_CONTEXT_MESSAGES)), [messages])
-  const lastUserMessage = useMemo(() => [...messages].reverse().find((message) => message.role === 'user')?.content || '', [messages])
-
-  async function submit(value?: string) {
-    const next = String(value ?? text).trim()
-    if (!next || sending) return
-    setError('')
-    setText('')
-    setHistoryOpen(false)
-    setMessages((m) => [...m, { role: 'user', content: next }])
-    setSending(true)
-    try {
-      const res = await fetch('/api/dashboard/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: next }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.message || 'chat')
-      setMessages((m) => [...m, {
-        role: 'assistant',
-        content: String(data.text || 'Done.'),
-        mediaUrl: data.mediaUrl || null,
-      }])
-    } catch (e: any) {
-      setError(e?.message && e.message !== 'chat' ? e.message : 'Gogo had trouble with that. Try once more.')
-    } finally {
+      const data=await res.json().catch(()=>({}))
+      if(!res.ok)throw new Error(data?.message||'chat')
+      setMessages(m=>[...m,{role:'assistant',content:String(data.text||'Done.'),mediaUrl:data.mediaUrl||null}])
+      void loadSnapshot()
+    }catch(e:any){
+      setError(e?.message&&e.message!=='chat'?e.message:'Gogo had trouble with that. Try once more.')
+    }finally{
       setSending(false)
     }
   }
 
-  function onSubmit(e: FormEvent) {
+  function onSubmit(e:FormEvent){
     e.preventDefault()
     void submit()
   }
 
-  return (
-    <div className="relative grid h-[calc(100dvh-7rem)] min-h-[640px] overflow-hidden rounded-[32px] border border-gogo-ink/7 bg-gogo-surface/68 shadow-[0_28px_80px_rgba(62,35,18,.06)] backdrop-blur-xl lg:grid-cols-[260px_minmax(0,1fr)]">
-      <aside className="relative hidden overflow-hidden border-r border-gogo-ink/7 bg-gogo-rail/54 p-6 lg:flex lg:flex-col">
-        <div className="pointer-events-none absolute -left-20 top-20 h-64 w-64 rounded-full bg-gogo-orange/10 blur-3xl" />
-        <div className="relative">
-          <div className="text-[10px] font-bold uppercase tracking-[0.17em] text-gogo-orange">Gogo room</div>
-          <h2 className="mt-2 font-serif text-[28px] font-semibold text-gogo-ink">{drink.line}</h2>
-          <p className="mt-2 text-[12px] leading-5 text-gogo-ink-3">One live context. Everything older stays nearby, not in your way.</p>
+  return <div className="mx-auto grid h-[calc(100dvh-7rem)] min-h-[650px] w-full max-w-[1320px] overflow-hidden border border-[#1f1f1f] bg-[#0b0b0b] lg:grid-cols-[minmax(0,1fr)_320px]">
+    <section className="flex min-h-0 min-w-0 flex-col">
+      <header className="shrink-0 border-b border-[#1f1f1f] px-6 py-5 lg:px-8">
+        <div className="flex items-start justify-between gap-5">
+          <div>
+            <h1 className="text-[32px] font-medium tracking-[-.03em] text-[#f2efea]">Gogo</h1>
+            <p className="mt-1 text-[12px] text-[#9a9a9a]">One conversation, across here and WhatsApp.</p>
+          </div>
+          {archived.length>0&&<button type="button" onClick={()=>setHistoryOpen(v=>!v)} className="rounded-full border border-[#2a2a2a] px-3 py-1.5 text-[10px] text-[#9a9a9a] hover:text-[#f2efea]">{historyOpen?'Current':'History'}</button>}
         </div>
-        <div className="relative mt-8 flex flex-1 flex-col items-center justify-center">
-          <div className="absolute h-44 w-44 rounded-full bg-gogo-plum/10 blur-3xl" />
-          <div className="relative drop-shadow-[0_20px_28px_rgba(77,42,25,.13)]"><GogoCharacter state={sending ? 'thinking' : 'listening'} size={132} showStatus={sending} /></div>
-          <div className="mt-3 rounded-full border border-gogo-ink/8 bg-gogo-surface/80 px-4 py-2 text-sm font-semibold text-gogo-ink-2 shadow-sm"><span className="mr-2">{drink.emoji}</span>{drink.label}</div>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 lg:px-8">
+        {loading&&<div className="py-16 text-center text-[12px] text-[#6a6a6a]">Bringing your conversation in…</div>}
+        {!loading&&visible.length===0&&<div className="py-20 text-center">
+          <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[#efe6d7] text-[16px] font-semibold text-[#0b0b0b]">G</div>
+          <h2 className="mt-4 text-[22px] font-medium text-[#f2efea]">What should we work on?</h2>
+          <p className="mx-auto mt-2 max-w-lg text-[12px] leading-5 text-[#6a6a6a]">Ask Gogo here or on WhatsApp. The same context, tasks, approvals and background work carry across both.</p>
+        </div>}
+        <div className="mx-auto flex max-w-[850px] flex-col gap-5">
+          {visible.map((message,index)=><Message key={`${index}-${message.createdAt||''}`} message={message}/>)}
+          {sending&&<div className="flex items-start gap-3"><Avatar/><div className="pt-1 text-[13px] text-[#9a9a9a]">Gogo is working<span className="animate-pulse">…</span></div></div>}
+          <div ref={endRef}/>
         </div>
-        <a href="/dashboard/agent" className="relative mb-2 rounded-[16px] border border-gogo-orange/15 bg-gogo-orange/8 px-4 py-3 text-center text-[12px] font-bold text-gogo-orange transition hover:bg-gogo-orange/12">See what Gogo is doing →</a>
-        <a href="/dashboard/personalize" className="relative rounded-[16px] border border-gogo-ink/8 bg-gogo-surface/72 px-4 py-3 text-center text-[12px] font-bold text-gogo-ink-2 transition hover:text-gogo-orange">Change your Gogo space →</a>
-      </aside>
+      </div>
 
-      <section className="relative flex min-h-0 min-w-0 flex-col overflow-hidden">
-        <header className="z-20 flex shrink-0 items-center gap-3 border-b border-gogo-ink/7 bg-gogo-surface/86 px-5 py-4 backdrop-blur-xl lg:px-7">
-          <div className="lg:hidden"><GogoCharacter state={sending ? 'thinking' : 'listening'} size={40} showStatus={sending} /></div>
-          <div className="min-w-0">
-            <div className="font-serif text-[22px] font-semibold text-gogo-ink">Talk to Gogo</div>
-            <div className="truncate text-[11px] text-gogo-ink-3">{lastUserMessage ? `Current context · ${lastUserMessage}` : 'Your current context stays here.'}</div>
+      <div className="shrink-0 border-t border-[#1f1f1f] px-6 py-4 lg:px-8">
+        <div className="mx-auto max-w-[850px]">
+          {error&&<div className="mb-2 rounded-[10px] border border-red-500/20 bg-red-500/5 px-3 py-2 text-[11px] text-red-400">{error}</div>}
+          <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+            {QUICK.map(q=><button key={q} type="button" onClick={()=>void submit(q)} className="shrink-0 rounded-full border border-[#2a2a2a] px-3 py-1.5 text-[10px] text-[#9a9a9a] hover:border-[#3a3a3a] hover:text-[#f2efea]">{q}</button>)}
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            {archivedMessages.length > 0 && (
-              <button type="button" onClick={() => setHistoryOpen((value) => !value)} className="rounded-full border border-gogo-ink/8 bg-gogo-cream/75 px-3 py-1.5 text-[10px] font-bold text-gogo-ink-2 transition hover:border-gogo-orange/25 hover:text-gogo-orange">
-                {historyOpen ? 'Close history' : `History · ${archivedMessages.length}`}
-              </button>
-            )}
-            <span className="rounded-full border border-emerald-600/15 bg-emerald-500/8 px-3 py-1.5 text-[10px] font-bold text-emerald-700">Live</span>
-          </div>
-        </header>
-
-        {historyOpen && (
-          <div className="absolute inset-x-0 top-[73px] z-30 max-h-[48%] overflow-hidden border-b border-gogo-ink/8 bg-gogo-cream/96 shadow-[0_24px_60px_rgba(62,35,18,.12)] backdrop-blur-2xl">
-            <div className="flex items-center justify-between border-b border-gogo-ink/6 px-5 py-3 lg:px-7">
-              <div><div className="text-[10px] font-bold uppercase tracking-[0.15em] text-gogo-orange">Archive</div><div className="text-xs text-gogo-ink-3">Earlier context — open only when you need it.</div></div>
-              <button type="button" onClick={() => setHistoryOpen(false)} className="rounded-full px-3 py-1.5 text-xs font-bold text-gogo-ink-3 hover:bg-gogo-ink/5 hover:text-gogo-ink">Done</button>
-            </div>
-            <div className="max-h-[360px] overflow-y-auto px-4 py-4 sm:px-6 lg:px-8">
-              <div className="mx-auto flex max-w-3xl flex-col gap-3 opacity-85">
-                {archivedMessages.map((message, index) => <MessageBubble key={`archive-${index}-${message.createdAt || ''}`} message={message} />)}
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
-          {loading && <div className="mx-auto mt-16 max-w-md text-center text-sm text-gogo-ink-3">Bringing your current context into this room…</div>}
-          {empty && (
-            <div className="mx-auto mt-8 max-w-xl text-center">
-              <div className="mx-auto flex justify-center"><GogoCharacter state="calm" size={104} showStatus={false} hands /></div>
-              <h3 className="mt-3 font-serif text-[30px] font-semibold text-gogo-ink">What’s on your mind?</h3>
-              <p className="mt-2 text-sm leading-6 text-gogo-ink-3">Start here. Gogo keeps this window focused on what matters now.</p>
-            </div>
-          )}
-
-          <div className="mx-auto flex max-w-3xl flex-col gap-4">
-            {!loading && currentMessages.length > 0 && (
-              <div className="mb-1 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-gogo-ink-4"><span className="h-1.5 w-1.5 rounded-full bg-gogo-orange" />Current context</div>
-            )}
-            {currentMessages.map((message, index) => <MessageBubble key={`current-${index}-${message.createdAt || ''}`} message={message} />)}
-            {sending && (
-              <div className="flex justify-start"><div className="flex items-center gap-2 rounded-[20px] rounded-bl-[7px] border border-gogo-orange/15 bg-gogo-orange/6 px-4 py-3 text-sm font-medium text-gogo-ink-3"><GogoCharacter state="thinking" size={28} showStatus />Gogo is working<span className="animate-pulse">…</span></div></div>
-            )}
-            <div ref={endRef} />
-          </div>
+          <form onSubmit={onSubmit} className="flex items-end gap-2 border border-[#2a2a2a] bg-[#111] p-2">
+            <textarea value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void submit()}}} rows={1} maxLength={2000} placeholder="Message Gogo…" className="max-h-28 min-h-11 flex-1 resize-none bg-transparent px-3 py-2.5 text-[14px] leading-6 text-[#f2efea] outline-none placeholder:text-[#6a6a6a]"/>
+            <button disabled={sending||!text.trim()} className="grid h-10 w-10 shrink-0 place-items-center rounded-[8px] bg-[#efe6d7] text-[17px] font-semibold text-[#0b0b0b] disabled:opacity-30" aria-label="Send">↑</button>
+          </form>
         </div>
+      </div>
+    </section>
 
-        <div className="z-20 shrink-0 border-t border-gogo-ink/7 bg-gogo-surface/92 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-3xl">
-            {error && <div className="mb-2 rounded-xl bg-red-500/8 px-3 py-2 text-[12px] text-red-700">{error}</div>}
-            <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
-              {QUICK.map((q) => <button key={q} type="button" onClick={() => void submit(q)} className="shrink-0 rounded-full border border-gogo-ink/8 bg-gogo-cream/70 px-3 py-1.5 text-[10px] font-semibold text-gogo-ink-2 transition hover:border-gogo-orange/25 hover:text-gogo-orange">{q}</button>)}
-            </div>
-            <form onSubmit={onSubmit} className="flex items-end gap-2 rounded-[22px] border border-gogo-ink/10 bg-gogo-cream/80 p-2 shadow-[0_14px_40px_rgba(62,35,18,.05)]">
-              <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submit() } }} rows={1} maxLength={2000} placeholder="What next?" className="max-h-28 min-h-11 flex-1 resize-none bg-transparent px-3 py-2.5 text-[14px] leading-6 text-gogo-ink outline-none placeholder:text-gogo-ink-4" />
-              <button disabled={sending || !text.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-[16px] bg-gogo-orange text-lg font-bold text-white shadow-[0_10px_24px_rgba(238,122,48,.24)] transition disabled:opacity-40" aria-label="Send">↑</button>
-            </form>
-            <div className="mt-1.5 flex items-center justify-between gap-3 px-1 text-[10px] text-gogo-ink-4"><span>Current context stays visible. Older messages move to History.</span><a href="/dashboard/agent" className="shrink-0 font-bold text-gogo-orange">Open Agent →</a></div>
-          </div>
+    <aside className="hidden border-l border-[#1f1f1f] bg-[#0f0f0f] p-5 lg:block">
+      <div className="flex items-center gap-3 border-b border-[#1f1f1f] pb-4">
+        <Avatar/>
+        <div>
+          <div className="text-[13px] font-medium text-[#f2efea]">Gogo</div>
+          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-[#9a9a9a]"><span className={`h-2 w-2 rounded-full ${activeRun?'bg-[#2fb8a6]':'bg-[#6a6a6a]'}`}/>{activeRun?'Working':'Ready'}</div>
+        </div>
+      </div>
+
+      <div className="py-4 text-[11px] leading-5 text-[#9a9a9a]">{activeRun?.summary||'Gogo is ready. Nothing consequential happens without your approval.'}</div>
+
+      <section className="mt-2">
+        <div className="flex items-center justify-between text-[9px] font-semibold uppercase tracking-[.12em] text-[#6a6a6a]"><span>Needs you</span><span className="text-[#d9a441]">{snapshot.approvals.length}</span></div>
+        <div className="mt-2">
+          {snapshot.approvals.length?snapshot.approvals.slice(0,3).map(a=><RailRow key={a.id} tone="amber" title={a.title||'Approval needed'} meta={a.description||'Gogo is waiting for your decision.'} href="/dashboard/agent?section=approvals"/>):<div className="py-3 text-[10px] text-[#6a6a6a]">Nothing is waiting.</div>}
         </div>
       </section>
-    </div>
-  )
+
+      <section className="mt-5">
+        <div className="flex items-center justify-between text-[9px] font-semibold uppercase tracking-[.12em] text-[#6a6a6a]"><span>In the background</span><Link href="/dashboard/agent?section=background" className="normal-case tracking-normal text-[#9a9a9a]">All</Link></div>
+        <div className="mt-2">
+          {snapshot.watchers.length?snapshot.watchers.slice(0,4).map(w=><RailRow key={w.id} tone="teal" title={w.title||'Background watch'} meta={`${String(w.type||'watch').replaceAll('_',' ')} · every ${w.cadenceMinutes||60} min`} href="/dashboard/agent?section=background"/>):<div className="py-3 text-[10px] text-[#6a6a6a]">No active background watches.</div>}
+        </div>
+      </section>
+
+      <section className="mt-5">
+        <div className="text-[9px] font-semibold uppercase tracking-[.12em] text-[#6a6a6a]">In this conversation</div>
+        <div className="mt-2">
+          {snapshot.runs.slice(0,4).map(r=><RailRow key={r.id} tone={r.status==='completed'?'green':r.status==='waiting_approval'?'amber':'muted'} title={r.title||'Gogo task'} meta={r.summary||r.status} href={`/dashboard/activity/${r.id}`}/>)}
+          {!snapshot.runs.length&&<div className="py-3 text-[10px] text-[#6a6a6a]">No task activity yet.</div>}
+        </div>
+      </section>
+    </aside>
+  </div>
 }

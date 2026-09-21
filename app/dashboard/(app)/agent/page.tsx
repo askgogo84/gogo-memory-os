@@ -81,12 +81,21 @@ export default function AgentDashboardPage(){
   }
 
   async function createGoal(){
-    const outcome=goal.trim();if(!outcome||busy)return
-    setBusy('goal')
+    const outcome=goal.trim()
+    if(!outcome){
+      setError('Describe the outcome you want Gogo to keep moving, then press Create.')
+      return
+    }
+    if(busy)return
+    setBusy('goal');setError('');setResult('')
     try{
       const title=outcome.replace(/[.!?].*$/,'').slice(0,120)||'Gogo goal'
-      await api('/api/agent/goals',{method:'POST',body:JSON.stringify({title,outcome,deadline:null})})
-      setGoal('');await load(true)
+      const body=await api('/api/agent/goals',{method:'POST',body:JSON.stringify({title,outcome,deadline:null})})
+      setGoal('')
+      setResult(body?.goal?.status==='blocked'
+        ? 'Goal saved, but background planning is blocked. Open the goal again after the planner is available.'
+        : `Goal created: ${body?.goal?.title||title}. Background Gogo will keep reviewing the next safe steps.`)
+      await load(true)
     }catch(e:any){setError(e?.message||'Could not create goal.')}
     finally{setBusy('')}
   }
@@ -165,7 +174,28 @@ export default function AgentDashboardPage(){
     <div className="grid gap-5 xl:grid-cols-2">
       {(!section||section==='approvals')&&<Panel title="Approvals" eyebrow="You stay in control" badge={String(snapshot?.approvals?.length||0)}>{!snapshot?.approvals?.length?<Empty text="Nothing is waiting for your approval."/>:snapshot.approvals.map((a:any)=><Card key={a.id}><div className="flex items-start justify-between gap-3"><div><b>{a.title}</b><p>{a.description}</p><span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-1 text-[8px] font-bold uppercase text-amber-700">{a.risk} risk</span></div></div><div className="mt-3 flex gap-2"><button onClick={()=>resolveApproval(a,'reject')} className="btn-secondary">Reject</button><button onClick={()=>resolveApproval(a,'approve')} className="btn-primary">Approve & run</button></div></Card>)}</Panel>}
       {(!section||section==='background')&&<Panel title="Background Gogo" eyebrow="Keeps watching" badge={String(snapshot?.watchers?.length||0)}>{!snapshot?.watchers?.length?<Empty text="No active watches. Ask Gogo to watch a price, deadline or change."/>:snapshot.watchers.map((w:any)=><Card key={w.id}><b>{w.title}</b><p>{w.type.replaceAll('_',' ')} · every {w.cadenceMinutes} min</p><p>Next: {w.nextCheckAt?new Date(w.nextCheckAt).toLocaleString():'—'}</p><button onClick={()=>stopWatcher(w.id)} className="mt-3 btn-secondary">Stop</button></Card>)}</Panel>}
-      {(!section||section==='goals')&&<Panel title="Goals" eyebrow="Longer outcomes" badge={String(snapshot?.goals?.length||0)}><div className="mb-3 flex gap-2"><input value={goal} onChange={e=>setGoal(e.target.value)} placeholder="Outcome for Background Gogo" className="input flex-1"/><button onClick={createGoal} className="btn-primary">Create</button></div>{!snapshot?.goals?.length?<Empty text="No active goals. Create one for work that should keep moving."/>:snapshot.goals.map((g:any)=><Card key={g.id}><div className="flex justify-between gap-3"><b>{g.title}</b><span>{g.progress||0}%</span></div><div className="mt-2 h-1.5 rounded-full bg-gogo-ink/8"><div className="h-1.5 rounded-full bg-gogo-orange" style={{width:`${Math.max(2,g.progress||0)}%`}}/></div><p>{g.nextAction||g.outcome}</p>{g.blockers?.length>0&&<><p className="text-red-600">Blocked: {g.blockers.join(', ')}</p><button onClick={()=>resumeGoal(g)} disabled={!!busy} className="mt-3 btn-primary">{busy===`goal-resume:${g.id}`?'Resuming…':'Reviewed · continue'}</button></>}</Card>)}</Panel>}
+      {(!section||section==='goals')&&<Panel title="Goals" eyebrow="Longer outcomes" badge={String(snapshot?.goals?.length||0)}>
+        <p className="mb-3 text-[11px] leading-5 text-gogo-ink-3">A Goal is an outcome Gogo should keep moving over time — for example, “Prepare my New York trip and keep checking anything that needs my attention.” Gogo can research and monitor automatically, but it still stops for approval before consequential actions.</p>
+        <div className="mb-2 flex gap-2">
+          <input
+            value={goal}
+            onChange={e=>{setGoal(e.target.value);if(error.startsWith('Describe the outcome'))setError('')}}
+            onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();void createGoal()}}}
+            placeholder="Describe an outcome for Background Gogo…"
+            className="input flex-1"
+          />
+          <button onClick={()=>void createGoal()} disabled={busy==='goal'} className="btn-primary disabled:opacity-40">{busy==='goal'?'Creating…':'Create goal'}</button>
+        </div>
+        <div className="mb-4 flex flex-wrap gap-2">
+          {[
+            'Prepare my New York trip and keep checking what needs my attention',
+            'Track the best time to buy the item I am watching',
+            'Keep my upcoming travel documents and check-in steps organised',
+          ].map(example=><button key={example} type="button" onClick={()=>setGoal(example)} className="rounded-full border border-gogo-ink/8 bg-gogo-cream/40 px-3 py-1.5 text-[9px] text-gogo-ink-3 hover:border-gogo-orange/30 hover:text-gogo-orange">{example}</button>)}
+        </div>
+        {section==='goals'&&result&&<div className="mb-4 rounded-[14px] border border-emerald-500/15 bg-emerald-500/6 px-4 py-3 text-[10.5px] leading-5 text-emerald-500">{result}</div>}
+        {!snapshot?.goals?.length?<Empty text="No active goals yet. Pick an example above or describe an outcome, then create it."/>:snapshot.goals.map((g:any)=><Card key={g.id}><div className="flex justify-between gap-3"><b>{g.title}</b><span>{g.progress||0}%</span></div><div className="mt-2 h-1.5 rounded-full bg-gogo-ink/8"><div className="h-1.5 rounded-full bg-gogo-orange" style={{width:`${Math.max(2,g.progress||0)}%`}}/></div><p>{g.nextAction||g.outcome}</p>{g.blockers?.length>0&&<><p className="text-red-600">Blocked: {g.blockers.join(', ')}</p><button onClick={()=>resumeGoal(g)} disabled={!!busy} className="mt-3 btn-primary">{busy===`goal-resume:${g.id}`?'Resuming…':'Reviewed · continue'}</button></>}</Card>)}
+      </Panel>}
       {!section&&<Panel title="Ideas" eyebrow="Proactive suggestions" badge={String(snapshot?.ideas?.length||0)}>{!snapshot?.ideas?.length?<Empty text="No new proactive ideas right now."/>:snapshot.ideas.map((i:any)=><Card key={i.id}><b>{i.title}</b><p>{i.reason}</p><p className="text-gogo-orange">{i.expectedValue}</p></Card>)}</Panel>}
     </div>
 

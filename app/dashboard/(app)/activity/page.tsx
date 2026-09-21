@@ -5,7 +5,7 @@ import { browserContextForRun, getDashboardActivityRuns, type DashboardActivityR
 
 export const dynamic='force-dynamic'
 
-const FILTERS=['All','Reminders','Browser','Research','Documents'] as const
+const FILTERS=['All','Browser','Research','Reminders','Documents'] as const
 type Filter=(typeof FILTERS)[number]
 
 function fmtTime(value:string|null){
@@ -98,7 +98,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
     <header className="flex flex-col gap-4 border-b border-[#2A2A2A]/70 pb-5 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <p className="text-[11px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">AskGogo</p>
-        <h1 className="mt-1 font-serif text-[34px] font-semibold leading-none tracking-[-.02em] text-[#F2EFEA] lg:text-[38px]">Activity</h1>
+        <h1 className="mt-1 text-[36px] font-medium leading-none tracking-[-.035em] text-[#F2EFEA] lg:text-[40px]">Activity</h1>
         <p className="mt-2 text-[13px] text-[#6A6A6A]">What Gogo has done, newest first.</p>
       </div>
       <div className="flex gap-1.5 overflow-x-auto pb-1">
