@@ -1,5 +1,7 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
+import { resolveUser } from '@/lib/bot/resolve-user'
+import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import {
   deleteTelegramMessage,
   sendTelegramAnimation,
@@ -28,6 +30,11 @@ export async function POST(req: NextRequest) {
   // Hoisted out of the try so the catch can reach it to send a user-facing error reply.
   // Null until we've parsed the inbound chat; the catch guards on it.
   let chatId: number | null = null
+  let inboundClaim:any=null
+  let inboundClaimOwned=false
+  let inboundFailed=false
+  let brainUserKey=''
+  let brainLeaseOwner=''
   try {
     const body = await req.json()
     const message = body?.message || body?.edited_message
@@ -38,6 +45,31 @@ export async function POST(req: NextRequest) {
 
     chatId = Number(message.chat.id)
     const userName = getTelegramUserName(message)
+    const updateId = body?.update_id
+    const eventKey = updateId != null
+      ? String(updateId)
+      : `${chatId}:${String(message?.message_id || 'unknown')}`
+
+    inboundClaim = await claimInboundEvent({
+      surface:'telegram',
+      eventKey,
+      externalUserId:String(chatId),
+      leaseSeconds:120,
+    })
+    inboundClaimOwned = !inboundClaim.duplicate
+    if (inboundClaim.duplicate) {
+      return NextResponse.json({ ok:true, duplicate:true, status:inboundClaim.status })
+    }
+
+    const resolvedUser = await resolveUser({ channel:'telegram', externalUserId:String(chatId), userName })
+    brainUserKey = `user:${resolvedUser.telegramId}`
+    const brainLease = await acquireBrainUserLease(brainUserKey, 90)
+    if (!brainLease) {
+      await failInboundEvent({ id: inboundClaim.id, ownerToken: inboundClaim.ownerToken, error:'brain_user_lease_busy' })
+      inboundClaimOwned = false
+      return NextResponse.json({ ok:false, error:'busy' }, { status:503 })
+    }
+    brainLeaseOwner = brainLease.ownerToken
 
     let inputText = ''
     let messageType: 'text' | 'voice' | 'image' | 'document' = 'text'
@@ -103,6 +135,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true })
   } catch (error: any) {
+    inboundFailed = true
     console.error('Telegram webhook error:', error)
     // Never leave the user in silence on an error. Telegram has no 24h-window
     // restriction, but we only reach this catch from an inbound message anyway.
@@ -119,5 +152,24 @@ export async function POST(req: NextRequest) {
       { ok: false, error: error?.message || 'Unknown error' },
       { status: 200 }
     )
+  } finally {
+    if (inboundClaimOwned && inboundClaim) {
+      try {
+        if (inboundFailed) {
+          await failInboundEvent({ id: inboundClaim.id, ownerToken: inboundClaim.ownerToken, error:'telegram_processing_failed' })
+        } else {
+          await completeInboundEvent({ id: inboundClaim.id, ownerToken: inboundClaim.ownerToken, result:{ accepted:true } })
+        }
+      } catch (guardError:any) {
+        console.error('TELEGRAM_INBOUND_GUARD_FINALIZE_FAILED:', guardError?.message || guardError)
+      }
+    }
+    if (brainUserKey && brainLeaseOwner) {
+      try {
+        await releaseBrainUserLease(brainUserKey, brainLeaseOwner)
+      } catch (leaseError:any) {
+        console.error('TELEGRAM_BRAIN_LEASE_RELEASE_FAILED:', leaseError?.message || leaseError)
+      }
+    }
   }
 }
