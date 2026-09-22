@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
-import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand } from './watch-command'
+import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
@@ -204,6 +204,12 @@ export async function tryRunWhatsAppAgent(params: {
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
 
+  const watcherStop = await tryStopWatcherFromCommand({ actor, text:params.text })
+  if (watcherStop) return { ...watcherStop, handledBy:String(watcherStop.handledBy || 'watcher-stop') }
+
+  const watcherStatus = await tryGetWatcherStatusFromCommand({ actor, text:params.text })
+  if (watcherStatus) return { ...watcherStatus, handledBy:String(watcherStatus.handledBy || 'watcher-status') }
+
   const productWatchStatus = await tryGetProductStockWatchStatusFromCommand({ actor, text:params.text })
   if (productWatchStatus) return { ...productWatchStatus, handledBy:String(productWatchStatus.handledBy || 'product-stock-watch-status') }
 
@@ -241,6 +247,9 @@ export async function tryRunWhatsAppAgent(params: {
 
   const productStockWatch = await tryCreateProductStockWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (productStockWatch) return { ...productStockWatch, handledBy:String(productStockWatch.handledBy || 'product-stock-watch') }
+
+  const webPageWatch = await tryCreateWebPageWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
+  if (webPageWatch) return { ...webPageWatch, handledBy:String(webPageWatch.handledBy || 'web-page-watch') }
 
   const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (webWatch) return { ...webWatch, handledBy:String(webWatch.handledBy || 'background-web-watch') }
