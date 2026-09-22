@@ -354,13 +354,20 @@ function suppressRun(row:any){
 }
 
 async function syncRuns(telegramId:string,current:Set<string>){
-  const {data,error}=await supabaseAdmin.from('agent_runs')
-    .select('id,status,title,summary,error,updated_at,started_at,capability')
-    .eq('telegram_id',telegramId)
-    .in('status',['waiting_approval','paused','outcome_unknown'])
-    .order('updated_at',{ascending:false}).limit(30)
-  if(error)throw new Error(`open_loop_run_read_failed:${error.message}`)
-  for(const row of data||[]){
+  const rows:any[]=[]
+  const pageSize=200
+  for(let from=0;;from+=pageSize){
+    const {data,error}=await supabaseAdmin.from('agent_runs')
+      .select('id,status,title,summary,error,updated_at,started_at,capability')
+      .eq('telegram_id',telegramId)
+      .in('status',['waiting_approval','paused','outcome_unknown'])
+      .order('updated_at',{ascending:false})
+      .range(from,from+pageSize-1)
+    if(error)throw new Error(`open_loop_run_read_failed:${error.message}`)
+    rows.push(...(data||[]))
+    if((data||[]).length<pageSize)break
+  }
+  for(const row of rows){
     if(suppressRun(row))continue
     const status=String(row.status)
     const input:OpenLoopInput={
