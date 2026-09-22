@@ -40,7 +40,7 @@ import {
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
-import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
+import { tryRunWhatsAppAgent, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
@@ -1044,10 +1044,11 @@ _"${originalText}"_
     if(jevIntent){
       const agentIntent=['watcher','reminder_read','reminder_mutation','travel_research','browser_action'].includes(jevIntent)
       if(agentIntent){
-        const promotedAgent=await tryRunWhatsAppAgent({
+        const promotedAgent=await tryRunWhatsAppJevSpecialist({
           user:resolvedUser,
           text,
           messageId:inboundMessageSid||null,
+          intent:jevIntent as 'watcher'|'reminder_read'|'reminder_mutation'|'travel_research'|'browser_action',
         })
         if(promotedAgent){
           await recordJevRoutingHint({
