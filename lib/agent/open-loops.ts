@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
+import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
+import { fetchGmailAttentionThreads, refreshGmailAccessToken } from '@/lib/services/google-gmail'
 
 export type OpenLoopKind='followup'|'waiting_on'|'commitment'|'approval'|'mission'|'life_event'|'meeting_action'|'other'
 
@@ -32,7 +34,9 @@ function hash(value:string){
   return createHash('sha256').update(value).digest('hex').slice(0,40)
 }
 function fingerprintFor(input:OpenLoopInput){
-  const stable=[input.kind,input.sourceType,input.sourceId||'',normalize(input.title)].join('|')
+  const stable=input.sourceId
+    ? [input.kind,input.sourceType,input.sourceId].join('|')
+    : [input.kind,input.sourceType,normalize(input.title)].join('|')
   return hash(stable)
 }
 function isoPlusHours(hours:number){
@@ -343,6 +347,98 @@ async function syncLifeActions(telegramId:string,current:Set<string>){
   }
 }
 
+function headerEmail(value:unknown){
+  const raw=clean(value,240).toLowerCase()
+  const angle=raw.match(/<([^>]+@[^>]+)>/)
+  if(angle?.[1])return angle[1].trim()
+  const direct=raw.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)
+  return direct?.[0]?.toLowerCase()||''
+}
+
+function headerName(value:unknown){
+  const raw=clean(value,180)
+  const before=raw.split('<')[0]?.replace(/^["']|["']$/g,'').trim()
+  return before||headerEmail(raw)||'the sender'
+}
+
+function looksLikeReplyExpected(text:string){
+  return /\?|\b(?:please|could you|can you|would you|let me know|confirm|confirmation|share|send|update|status|review|approve|approval|feedback|thoughts|when can|when will|follow(?:ing)? up|revert|respond|reply)\b/i.test(text)
+}
+
+function looksLikeIncomingAction(text:string){
+  return /\b(?:action required|please|could you|can you|need you to|kindly|confirm|approve|approval|review|sign|send|share|reply|respond|provide|submit|complete|urgent|by today|by tomorrow|deadline)\b/i.test(text)
+}
+
+async function syncGmailAttention(telegramId:string,current:Set<string>){
+  const [{data:user,error:userError},{data:consent,error:consentError}]=await Promise.all([
+    supabaseAdmin.from('users')
+      .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token')
+      .eq('telegram_id',Number(telegramId)).maybeSingle(),
+    supabaseAdmin.from('user_consent_settings')
+      .select('gmail_enabled').eq('telegram_id',Number(telegramId)).maybeSingle(),
+  ])
+  if(userError)throw new Error(`open_loop_gmail_user_failed:${userError.message}`)
+  if(consentError)throw new Error(`open_loop_gmail_consent_failed:${consentError.message}`)
+  if(!user?.gmail_connected||consent?.gmail_enabled===false)return
+
+  const ownEmail=String(user.gmail_email||'').trim().toLowerCase()
+  if(!ownEmail)return
+
+  let accessToken=''
+  const refreshToken=decryptGoogleToken(user.gmail_refresh_token)
+  if(refreshToken){
+    accessToken=String(await refreshGmailAccessToken(refreshToken)||'')
+  }
+  if(!accessToken)accessToken=decryptGoogleToken(user.gmail_access_token)
+  if(!accessToken)throw new Error('open_loop_gmail_token_unavailable')
+
+  const threads=await fetchGmailAttentionThreads(accessToken,12)
+  for(const thread of threads){
+    const messages=thread.messages||[]
+    if(!messages.length)continue
+    const last=messages[messages.length-1]
+    const fromEmail=headerEmail(last.from)
+    const ownLast=fromEmail===ownEmail
+    const ageHours=(Date.now()-Number(last.internalDate||0))/3600_000
+    const subject=clean(last.subject||thread.subject||'(No subject)',180)
+    const combined=clean(`${subject} ${last.snippet||''}`,700)
+
+    if(ownLast){
+      if(ageHours<24||!looksLikeReplyExpected(combined))continue
+      const recipient=headerName(last.to)
+      const input:OpenLoopInput={
+        telegramId,kind:'waiting_on',
+        title:`Waiting for reply from ${recipient} — ${subject}`,
+        summary:clean(last.snippet||`You sent the latest message in this email thread and are still waiting for a reply.`,900),
+        priority:ageHours>=72?0.94:ageHours>=48?0.9:0.86,
+        nextCheckAt:isoPlusHours(12),
+        sourceType:'gmail_thread',sourceId:String(thread.id),
+        sourceRefs:[{type:'gmail_thread',id:String(thread.id)}],
+        evidence:{last_message_id:last.id,last_message_from:last.from,last_message_to:last.to,last_internal_date:last.internalDate,direction:'outbound_waiting'},
+        observedAt:new Date(Number(last.internalDate||Date.now())).toISOString(),
+      }
+      const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
+      continue
+    }
+
+    if(last.isUnread&&looksLikeIncomingAction(combined)){
+      const sender=headerName(last.from)
+      const input:OpenLoopInput={
+        telegramId,kind:'commitment',
+        title:`Reply to ${sender} — ${subject}`,
+        summary:clean(last.snippet||'This unread email appears to ask for an action or response.',900),
+        priority:/\b(?:urgent|action required|today|deadline)\b/i.test(combined)?0.96:0.88,
+        nextCheckAt:isoPlusHours(6),
+        sourceType:'gmail_thread',sourceId:String(thread.id),
+        sourceRefs:[{type:'gmail_thread',id:String(thread.id)}],
+        evidence:{last_message_id:last.id,last_message_from:last.from,last_internal_date:last.internalDate,direction:'inbound_action',unread:true},
+        observedAt:new Date(Number(last.internalDate||Date.now())).toISOString(),
+      }
+      const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
+    }
+  }
+}
+
 async function syncConversationSignals(telegramId:string){
   const {data:consent}=await supabaseAdmin.from('user_consent_settings')
     .select('memory_enabled').eq('telegram_id',Number(telegramId)).maybeSingle()
@@ -392,12 +488,13 @@ async function resolveMissingSourceLoops(telegramId:string,current:Set<string>,s
 export async function syncOpenLoopsForUser(telegramId:string|number){
   const tg=String(telegramId)
   const current=new Set<string>()
-  const sourceTypes=['followup','approval','agent_run','life_event_action'] as const
+  const sourceTypes=['followup','approval','agent_run','life_event_action','gmail_thread'] as const
   const results=await Promise.allSettled([
     syncFollowups(tg,current),
     syncApprovals(tg,current),
     syncRuns(tg,current),
     syncLifeActions(tg,current),
+    syncGmailAttention(tg,current),
     syncConversationSignals(tg),
   ])
   const failures=results.filter((x):x is PromiseRejectedResult=>x.status==='rejected').map(x=>clean(x.reason?.message||x.reason,180))
@@ -522,7 +619,7 @@ export async function processOpenLoopScoutPass(limit=80){
     supabaseAdmin.from('agent_runs').select('telegram_id').in('status',['waiting_approval','paused','outcome_unknown']).limit(1000),
     supabaseAdmin.from('life_event_actions').select('telegram_id').in('status',['waiting_approval','blocked']).limit(1000),
     supabaseAdmin.from('followups').select('whatsapp_id').in('status',['pending','fired']).limit(1000),
-    supabaseAdmin.from('users').select('telegram_id,whatsapp_id').not('whatsapp_id','is',null).limit(3000),
+    supabaseAdmin.from('users').select('telegram_id,whatsapp_id,gmail_connected').not('whatsapp_id','is',null).limit(3000),
   ])
   const ids=new Set<string>()
   for(const result of [conversationResult,approvalResult,runResult,lifeResult]){
@@ -533,6 +630,7 @@ export async function processOpenLoopScoutPass(limit=80){
   for(const user of userResult.data||[]){
     const phone=normalizedPhone((user as any).whatsapp_id)
     if(phone&&(user as any).telegram_id)phoneToTelegram.set(phone,String((user as any).telegram_id))
+    if((user as any).gmail_connected&&(user as any).telegram_id)ids.add(String((user as any).telegram_id))
   }
   for(const follow of followupResult.data||[]){
     const tg=phoneToTelegram.get(normalizedPhone((follow as any).whatsapp_id))
