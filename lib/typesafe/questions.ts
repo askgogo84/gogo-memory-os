@@ -1,5 +1,5 @@
 export const JEV_SHADOW_MODEL = 'jev-latest'
-export const JEV_SHADOW_VERSION = 'jev-shadow-v1'
+export const JEV_SHADOW_VERSION = 'jev-shadow-v1.1'
 
 export const JEV_INTENT_CRITERIA = {
   reminder_read: 'Read, list, inspect, or answer questions about reminders without changing them.',
@@ -16,11 +16,11 @@ export const JEV_INTENT_CRITERIA = {
 } as const
 
 export const JEV_ACTION_MODE_CRITERIA = {
-  read: 'The user only wants information or inspection; no stored or external state should change.',
-  private_write: 'The user wants a reversible private AskGogo state change such as a reminder, list, task, or memory update.',
-  consequential_write: 'The user wants an external or consequential action such as calendar mutation, browser submission, booking, payment, or sending.',
-  research: 'The user wants search, comparison, or investigation without executing a consequential action.',
-  clarify: 'The request is too ambiguous to act safely without asking the user for clarification.',
+  read: 'Read/inspect existing state only. Examples: list reminders, show calendar, list active watchers, ask watcher status.',
+  private_write: 'Reversible private AskGogo state change. Includes creating, stopping, or updating watchers; reminders; lists; tasks; memory.',
+  consequential_write: 'External/consequential write. Includes calendar mutation, browser form submission, booking, payment, purchase, or sending.',
+  research: 'Search/compare/investigate without changing stored or external state.',
+  clarify: 'Too ambiguous to choose a safe action without clarification.',
 } as const
 
 export const JEV_REFERENT_CRITERIA = {
@@ -42,7 +42,7 @@ export function buildJevShadowQuestions() {
     },
     action_mode: {
       type: 'choice',
-      instructions: 'Classify what kind of application behavior the user is requesting. Distinguish read-only, reversible private writes, consequential external writes, research, and requests that need clarification.',
+      instructions: 'Choose the requested behavior. Creating/stopping a background watcher is private_write; asking what is being watched is read. Calendar/browser/booking/payment writes are consequential_write.',
       criteria: JEV_ACTION_MODE_CRITERIA,
     },
     referent_kind: {
