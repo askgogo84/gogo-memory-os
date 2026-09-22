@@ -164,3 +164,8 @@ assert.match(webhook,/isOpenLoopActionCandidate\(text\)/)
 assert.match(openLoops,/proactive_backoff_until:until/)
 assert.match(openLoops,/Draft only — I haven't sent anything/)
 console.log('Attention Actions v1 snooze + safe draft routing verified')
+
+assert.match(bridge,/export async function tryRunWhatsAppAttentionCommand/)
+assert.match(webhook,/tryRunWhatsAppAttentionCommand\(/)
+assert.doesNotMatch(webhook,/const attentionAgent = await tryRunWhatsAppAgent\(/)
+console.log('Attention first-refusal is isolated from unrelated agent specialists')
