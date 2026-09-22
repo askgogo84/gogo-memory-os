@@ -67,3 +67,18 @@ assert.equal(parsed.actionMode.choice,'private_write')
 assert.equal(parsed.referentKind.choice,'reminder')
 assert.equal(parsed.latencyMs,17)
 console.log('Jev shadow request/response verification passed')
+
+const malformed=parseJevShadowResponse({model:'jev-latest',answers:{}},5)
+assert.equal(malformed.ok,false)
+assert.equal(malformed.error,'typesafe_malformed_response')
+
+const sensitiveRequest=buildJevShadowRequest({
+  text:'my password is P@ssw0rd!',
+  currentCapability:'memory',
+  currentActionFamily:'save',
+  needsContext:false,
+  focusKind:'none',
+  focusSummary:null,
+})
+assert.doesNotMatch(JSON.stringify(sensitiveRequest),/P@ssw0rd/)
+console.log('Jev malformed-response and request redaction verification passed')
