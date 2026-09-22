@@ -40,7 +40,7 @@ import {
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
-import { tryRunWhatsAppAgent, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
+import { tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
@@ -1053,7 +1053,7 @@ _"${originalText}"_
     // Give them first refusal before semantic feature routing so "what am I waiting on?"
     // cannot be mistaken for a generic question or reminder query.
     if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text) || isOpenLoopActionCandidate(text)) {
-      const attentionAgent = await tryRunWhatsAppAgent({
+      const attentionAgent = await tryRunWhatsAppAttentionCommand({
         user:resolvedUser,
         text,
         messageId:inboundMessageSid||null,
