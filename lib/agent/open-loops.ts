@@ -627,6 +627,12 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
   }
 }
 
+export async function shouldHandleOpenLoopResolution(params:{actor:AgentActor;text:string}){
+  if(parseOpenLoopResolution(params.text))return true
+  if(!isOpenLoopResolutionCandidate(params.text))return false
+  return recentOpenLoopListShown(params.actor.legacyTelegramId)
+}
+
 export async function handleOpenLoopResolution(params:{actor:AgentActor;text:string}){
   let parsed=parseOpenLoopResolution(params.text)
   if(!parsed&&isOpenLoopResolutionCandidate(params.text)){
