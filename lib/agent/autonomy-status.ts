@@ -7,13 +7,13 @@ function fmt(iso:string|null|undefined,timezone='Asia/Kolkata'){
   try{return new Intl.DateTimeFormat('en-IN',{timeZone:timezone,weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(iso))}catch{return ''}
 }
 
-function isAutonomyStatus(text:string){
+export function isAutonomyStatus(text:string){
   const t=clean(text,500).toLowerCase()
   return /^(?:what(?:'s| is)?|show me|give me)\s+(?:are\s+you\s+)?(?:working on|doing|handling|tracking)\s+(?:for\s+me|in the background)\??$/.test(t)
     || /^(?:what(?:'s| is)?|show me)\s+(?:my\s+)?(?:agent|gogo|background)\s+(?:status|activity|work)\??$/.test(t)
 }
 
-function isConnectionStatus(text:string){
+export function isConnectionStatus(text:string){
   const t=clean(text,500).toLowerCase()
   return /^(?:which|what)\s+(?:google\s+)?(?:account|email|calendar|gmail)(?:\s+account)?\s+(?:am\s+i|is)\s+connected\s+(?:to|with)\??$/.test(t)
     || /^(?:which|what)\s+(?:email|calendar)\s+(?:am\s+i|is)\s+connected\s+(?:to|with)\??$/.test(t)
