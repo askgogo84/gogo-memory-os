@@ -35,11 +35,11 @@
     },
     {
       "path": "/api/cron/autonomy-pulse",
-      "schedule": "*/30 * * * *"
+      "schedule": "10,40 * * * *"
     },
     {
       "path": "/api/cron/open-loops",
-      "schedule": "*/30 * * * *"
+      "schedule": "5,35 * * * *"
     },
     {
       "path": "/api/followups",
