@@ -7,6 +7,7 @@ import { promotedJevIntent } from '../lib/agent/jev-router'
 const shadow=readFileSync('lib/agent/shadow-brain.ts','utf8')
 const whatsapp=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
 const dashboard=readFileSync('app/api/dashboard/chat/route.ts','utf8')
+const jevRouter=readFileSync('lib/agent/jev-router.ts','utf8')
 
 assert.match(shadow,/event_type:'shadow_brain_observation'/)
 assert.match(shadow,/shadow_version:'shadow-brain-v1'/)
@@ -28,7 +29,8 @@ assert.match(dashboard,/tryRunTrainResearch\(\{ actor, surface:'web', text \}/)
 // WhatsApp may now retain the Jev result only as a specialist first-refusal hint.
 assert.match(whatsapp,/brainObservation\s*=\s*await observeShadowBrainTurn/)
 assert.match(whatsapp,/promotedJevIntent\(brainObservation\?\.jev\)/)
-assert.match(whatsapp,/execution_authority:false|first_refusal_only/)
+assert.match(jevRouter,/execution_authority:false/)
+assert.match(jevRouter,/first_refusal_only/)
 assert.doesNotMatch(dashboard,/const\s+\w+\s*=\s*await observeShadowBrainTurn/)
 assert.doesNotMatch(shadow,/\.from\('agent_runs'\)\.insert/)
 assert.doesNotMatch(shadow,/\.from\('agent_approvals'\)\.insert/)
