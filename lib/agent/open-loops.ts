@@ -776,6 +776,123 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
   }
 }
 
+export function isOpenLoopActionCandidate(text:string){
+  const raw=clean(text,500)
+  return /^(?:snooze|pause)\s+(?:open\s+loop\s+)?#?\d{1,2}\s+(?:for\s+\d{1,3}\s*(?:hours?|days?)|until\s+tomorrow)$/i.test(raw)
+    || /^draft\s+(?:a\s+)?follow[- ]?up\s+(?:for\s+)?(?:open\s+loop\s+)?#?\d{1,2}$/i.test(raw)
+}
+
+function parseOpenLoopSnooze(text:string,{allowGeneric=false}:{allowGeneric?:boolean}={}){
+  const raw=clean(text,500)
+  const explicit=raw.match(/^(?:snooze|pause)\s+open\s+loop\s+#?(\d{1,2})\s+(?:for\s+(\d{1,3})\s*(hours?|days?)|until\s+(tomorrow))$/i)
+  const generic=allowGeneric
+    ? raw.match(/^(?:snooze|pause)\s+#?(\d{1,2})\s+(?:for\s+(\d{1,3})\s*(hours?|days?)|until\s+(tomorrow))$/i)
+    : null
+  const match=explicit||generic
+  if(!match)return null
+  const index=Number(match[1])
+  if(!Number.isInteger(index)||index<1||index>20)return null
+  let hours=24
+  if(match[2]){
+    const amount=Math.max(1,Math.min(30*24,Number(match[2])))
+    const unit=String(match[3]||'hours').toLowerCase()
+    hours=unit.startsWith('day')?amount*24:amount
+  }
+  return {index,hours}
+}
+
+function parseOpenLoopDraft(text:string,{allowGeneric=false}:{allowGeneric?:boolean}={}){
+  const raw=clean(text,500)
+  const explicit=raw.match(/^draft\s+(?:a\s+)?follow[- ]?up\s+(?:for\s+)?open\s+loop\s+#?(\d{1,2})$/i)
+  const generic=allowGeneric
+    ? raw.match(/^draft\s+(?:a\s+)?follow[- ]?up\s+(?:for\s+)?#?(\d{1,2})$/i)
+    : null
+  const match=explicit||generic
+  if(!match)return null
+  const index=Number(match[1])
+  return Number.isInteger(index)&&index>=1&&index<=20?{index}:null
+}
+
+function draftFromOpenLoop(loop:any){
+  const title=clean(loop?.title,240)
+  let person=''
+  let topic=''
+  const patterns=[
+    /^Follow up with (.+?)(?: about (.+)| — (.+)|$)/i,
+    /^Waiting on (.+?)(?: to (.+)| — (.+)|$)/i,
+    /^Waiting for reply from (.+?)(?: — (.+)|$)/i,
+    /^Reply to (.+?)(?: — (.+)|$)/i,
+  ]
+  for(const pattern of patterns){
+    const match=title.match(pattern)
+    if(!match)continue
+    person=clean(match[1],100)
+    topic=clean(match[2]||match[3]||'',180)
+    break
+  }
+  if(!topic){
+    topic=clean(loop?.summary,180)
+      .replace(/^(?:meeting action item|waiting to follow up with)\s*:?\s*/i,'')
+  }
+  if(!topic||topic.toLowerCase()===title.toLowerCase())topic=''
+  const greeting=person?`Hi ${person},`:'Hi,'
+  const subject=topic?` on ${topic}`:''
+  return `${greeting} just following up${subject}. Please let me know when you get a chance. Thanks.`
+}
+
+export async function shouldHandleOpenLoopAction(params:{actor:AgentActor;text:string}){
+  const raw=clean(params.text,500)
+  if(/\bopen\s+loop\b/i.test(raw))return isOpenLoopActionCandidate(raw)
+  if(!isOpenLoopActionCandidate(raw))return false
+  return recentOpenLoopListShown(params.actor.legacyTelegramId)
+}
+
+export async function handleOpenLoopAction(params:{actor:AgentActor;text:string}){
+  const raw=clean(params.text,500)
+  const explicit=/\bopen\s+loop\b/i.test(raw)
+  if(!explicit&&!(await recentOpenLoopListShown(params.actor.legacyTelegramId)))return null
+  const snooze=parseOpenLoopSnooze(raw,{allowGeneric:!explicit})
+  const draft=parseOpenLoopDraft(raw,{allowGeneric:!explicit})
+  if(!snooze&&!draft)return null
+
+  const loops=await listOpenLoops(params.actor.legacyTelegramId,20)
+  const index=snooze?.index||draft?.index||0
+  const target=loops[index-1] as any
+  if(!target){
+    return {runId:'open-loop-action-missing',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`I don't have an active open loop #${index}. Ask *what needs my attention?* to see the current list.`,handledBy:'open-loops'}
+  }
+
+  if(snooze){
+    const until=new Date(Date.now()+snooze.hours*3600_000).toISOString()
+    const {error}=await supabaseAdmin.from('agent_open_loops').update({
+      proactive_backoff_until:until,
+      updated_at:new Date().toISOString(),
+    }).eq('id',target.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('status','active')
+    if(error)throw new Error(`open_loop_snooze_failed:${error.message}`)
+    const human=snooze.hours%24===0?`${snooze.hours/24} day${snooze.hours===24?'':'s'}`:`${snooze.hours} hour${snooze.hours===1?'':'s'}`
+    return {
+      runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
+      text:`😴 Snoozed proactive nudges for *${clean(target.title,180)}* for ${human}. It stays in your open-loop list.`,
+      handledBy:'open-loops',
+    }
+  }
+
+  const sourceType=String(target.source_type||'')
+  if(['approval','agent_run','life_event_action'].includes(sourceType)){
+    return {
+      runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
+      text:`That item is a system action rather than a follow-up message. Ask *what are you working on for me?* to see its current state.`,
+      handledBy:'open-loops',
+    }
+  }
+  const draftText=draftFromOpenLoop(target)
+  return {
+    runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
+    text:`📝 *Draft follow-up*\n\n${draftText}\n\n_Draft only — I haven't sent anything._`,
+    handledBy:'open-loops',
+  }
+}
+
 export async function shouldHandleOpenLoopResolution(params:{actor:AgentActor;text:string}){
   if(parseOpenLoopResolution(params.text))return true
   if(!isOpenLoopResolutionCandidate(params.text))return false
