@@ -813,7 +813,7 @@ function parseOpenLoopDraft(text:string,{allowGeneric=false}:{allowGeneric?:bool
   return Number.isInteger(index)&&index>=1&&index<=20?{index}:null
 }
 
-function draftFromOpenLoop(loop:any){
+export function draftFromOpenLoop(loop:any){
   const title=clean(loop?.title,240)
   let person=''
   let topic=''
