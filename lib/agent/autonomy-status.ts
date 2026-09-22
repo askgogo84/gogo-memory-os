@@ -63,7 +63,12 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
   ])
   const failed=results.find((result:any)=>result.error)
   if(failed?.error)throw new Error(`autonomy_status_read_failed:${failed.error.message}`)
-  const [runs,watchers,approvals,events,ideas,openLoops]=results.map((result:any)=>result.data||[])
+  const [rawRuns,watchers,approvals,events,ideas,openLoops]=results.map((result:any)=>result.data||[])
+  const runs=(rawRuns||[]).filter((run:any)=>{
+    if(String(run.status)!=='paused')return true
+    const updated=Date.parse(String(run.updated_at||''))
+    return Number.isFinite(updated)&&(Date.now()-updated)<=24*3600_000
+  })
 
   const blocks:string[]=[]
   if(approvals?.length)blocks.push(`🛡️ *Waiting for you*\n${approvals.map((a:any)=>`• ${clean(a.title,160)}`).join('\n')}`)
