@@ -888,6 +888,14 @@ export async function handleOpenLoopAction(params:{actor:AgentActor;text:string}
       handledBy:'open-loops',
     }
   }
+  const draftable=target.kind==='followup'||target.kind==='waiting_on'||sourceType==='gmail_thread'
+  if(!draftable){
+    return {
+      runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
+      text:`That item is something you need to do rather than a message you are waiting on. I won't invent a follow-up recipient.`,
+      handledBy:'open-loops',
+    }
+  }
   const draftText=draftFromOpenLoop(target)
   return {
     runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
