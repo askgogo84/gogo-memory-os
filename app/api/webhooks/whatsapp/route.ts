@@ -44,7 +44,7 @@ import { tryRunWhatsAppAgent, tryRunWhatsAppJevSpecialist } from '@/lib/agent/wh
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
-import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, isOpenLoopQuery, isOpenLoopResolutionCandidate } from '@/lib/agent/open-loops'
+import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, captureJevOpenLoopFromTurn, isOpenLoopQuery, isOpenLoopResolutionCandidate } from '@/lib/agent/open-loops'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
@@ -848,9 +848,15 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         text,
         eventId:inboundMessageSid || null,
       })
-      await captureExplicitOpenLoopFromTurn({ actor:shadowActor, text }).catch((err:any)=>
+      const explicitOpenLoop=await captureExplicitOpenLoopFromTurn({ actor:shadowActor, text }).catch((err:any)=>{
         console.error('OPEN_LOOP_CAPTURE_FAILED:', String(err?.message || err).slice(0,180))
-      )
+        return null
+      })
+      if(!explicitOpenLoop){
+        await captureJevOpenLoopFromTurn({ actor:shadowActor, text, jev:brainObservation?.jev }).catch((err:any)=>
+          console.error('OPEN_LOOP_JEV_CAPTURE_FAILED:', String(err?.message || err).slice(0,180))
+        )
+      }
       await autoResolveOpenLoopsFromTurn({ actor:shadowActor, text }).catch((err:any)=>
         console.error('OPEN_LOOP_AUTO_RESOLVE_FAILED:', String(err?.message || err).slice(0,180))
       )
