@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { parseExplicitOpenLoop, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate, isUncertainOrNegatedCompletion, parseOpenLoopResolution } from '../lib/agent/open-loops'
+import { draftFromOpenLoop, parseExplicitOpenLoop, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate, isUncertainOrNegatedCompletion, parseOpenLoopResolution } from '../lib/agent/open-loops'
 
 const wait=parseExplicitOpenLoop("I'm still waiting on Srinivas to send the corrected JSON.")
 assert.ok(wait)
@@ -52,6 +52,14 @@ assert.equal(isOpenLoopActionCandidate('snooze 2 until tomorrow'),true)
 assert.equal(isOpenLoopActionCandidate('draft follow-up for open loop 2'),true)
 assert.equal(isOpenLoopActionCandidate('draft follow-up for 2'),true)
 assert.equal(isOpenLoopActionCandidate('send follow-up for 2'),false)
+assert.equal(
+  draftFromOpenLoop({title:'Waiting on Srinivas to send the corrected JSON',summary:'Waiting for the corrected JSON'}),
+  'Hi Srinivas, just following up regarding corrected JSON. Please let me know when you get a chance. Thanks.'
+)
+assert.equal(
+  draftFromOpenLoop({title:'Follow up with Nithin about pending salaries',summary:'Pending salaries'}),
+  'Hi Nithin, just following up regarding pending salaries. Please let me know when you get a chance. Thanks.'
+)
 
 const bridge=readFileSync('lib/agent/whatsapp-bridge.ts','utf8')
 const webhook=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
