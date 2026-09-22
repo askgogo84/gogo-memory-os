@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
+import { syncOpenLoopsForUser } from './open-loops'
 
 function clean(value:unknown,max=300){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
 function fmt(iso:string|null|undefined,timezone='Asia/Kolkata'){
@@ -49,6 +50,7 @@ export async function tryGetConnectionStatus(params:{actor:AgentActor;text:strin
 export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}){
   if(!isAutonomyStatus(params.text))return null
   const tg=String(params.actor.legacyTelegramId)
+  await syncOpenLoopsForUser(tg).catch((err:any)=>console.error('AUTONOMY_STATUS_OPEN_LOOP_SYNC_FAILED:',err?.message||err))
   const {data:user}=await supabaseAdmin.from('users').select('timezone').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
   const timezone=String(user?.timezone||'Asia/Kolkata')
   const results=await Promise.all([
