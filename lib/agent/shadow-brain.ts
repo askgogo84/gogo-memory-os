@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { classifyAgentRequest } from './classifier'
 import type { AgentActor } from './actor'
+import { runJevShadow } from '@/lib/typesafe/jev-shadow'
 
 export type ShadowBrainObservation = {
   actionFamily:string
@@ -174,6 +175,22 @@ export async function observeShadowBrainTurn(params:{
     ambiguous:focus.ambiguous,
   }
 
+  const jev=await runJevShadow({
+    text:params.text,
+    currentCapability:observation.capability,
+    currentActionFamily:observation.actionFamily,
+    needsContext:observation.needsContext,
+    focusKind:observation.focusKind,
+    focusSummary:observation.focusSummary,
+    timeoutMs:300,
+  }).catch((err:any)=>({
+    ok:false,version:'jev-shadow-v1',model:'jev-latest',latencyMs:0,
+    intent:{choice:null,confidence:null,probabilities:{}},
+    actionMode:{choice:null,confidence:null,probabilities:{}},
+    referentKind:{choice:null,confidence:null,probabilities:{}},
+    error:clean(err?.message||err,120),
+  }))
+
   const {error}=await supabaseAdmin.from('agent_activity').insert({
     telegram_id:String(params.actor.legacyTelegramId),
     event_type:'shadow_brain_observation',
@@ -190,6 +207,16 @@ export async function observeShadowBrainTurn(params:{
       confidence:observation.confidence,
       ambiguous:observation.ambiguous,
       shadow_version:'shadow-brain-v1',
+      jev_shadow:jev?{
+        ok:Boolean(jev.ok),
+        version:jev.version,
+        model:jev.model,
+        latency_ms:jev.latencyMs,
+        intent:jev.intent,
+        action_mode:jev.actionMode,
+        referent_kind:jev.referentKind,
+        error:jev.error||null,
+      }:null,
     },
   })
   if(error)console.error('SHADOW_BRAIN_ACTIVITY_FAILED:',error.message)
