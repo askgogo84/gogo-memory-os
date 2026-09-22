@@ -57,7 +57,7 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     .select('id,type,condition_json,cadence_minutes,last_checked_at,next_check_at,active,created_at,updated_at')
     .eq('telegram_id',tg)
     .eq('active',true)
-    .order('updated_at',{ascending:false})
+    .order('created_at',{ascending:false})
     .limit(12)
   if(error)throw new Error(`watcher_status_read_failed:${error.message}`)
   if(!data?.length) {
@@ -103,7 +103,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
     return {runId:'watcher-stop-all',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${data?.length||0} active background monitor${data?.length===1?'':'s'}.`,handledBy:'watcher-stop'}
   }
   const {data:latest,error:readError}=await supabaseAdmin.from('agent_watchers')
-    .select('id,type,condition_json').eq('telegram_id',tg).eq('active',true).order('updated_at',{ascending:false}).limit(1).maybeSingle()
+    .select('id,type,condition_json,created_at').eq('telegram_id',tg).eq('active',true).order('created_at',{ascending:false}).limit(1).maybeSingle()
   if(readError)throw new Error(`watcher_stop_read_failed:${readError.message}`)
   if(!latest?.id)return {runId:'watcher-stop-none',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:'There is no active background monitor to stop.',handledBy:'watcher-stop'}
   const {error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()}).eq('id',latest.id).eq('telegram_id',tg)
@@ -361,7 +361,7 @@ export async function tryCreateProductStockWatchFromCommand(params: {
   const { count, error: countError } = await supabaseAdmin.from('agent_watchers')
     .select('id', { count:'exact', head:true })
     .eq('telegram_id', tg)
-    .in('type', ['web_search','product_stock'])
+    .in('type', ['web_search','web_page','product_stock'])
     .eq('active', true)
   if (countError) throw new Error(`agent_watcher_count_failed:${countError.message}`)
   const activeWatcherCount = count || 0
@@ -592,7 +592,7 @@ export async function tryCreateWebWatchFromCommand(params: {
   const { count, error: countError } = await supabaseAdmin.from('agent_watchers')
     .select('id', { count:'exact', head:true })
     .eq('telegram_id', tg)
-    .eq('type', 'web_search')
+    .in('type', ['web_search','web_page','product_stock'])
     .eq('active', true)
   if (countError) throw new Error(`agent_watcher_count_failed:${countError.message}`)
   const activeWatcherCount = count || 0
