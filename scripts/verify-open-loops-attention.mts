@@ -194,3 +194,10 @@ console.log('Attention numbered actions are snapshot-bound and snooze truth matc
 assert.match(openLoops,/snooze 2 for 4 hours/)
 assert.match(openLoops,/draft follow-up for 2/)
 console.log('Attention scout page rotation + action discoverability verified')
+
+assert.match(openLoops,/stale_provider_access_limited/)
+assert.doesNotMatch(openLoops,/String\(row\?\.status\)==='paused'&&age>24\*3600_000/)
+assert.match(autonomyStatus,/terminalPauseErrors/)
+assert.match(autonomyStatus,/\.limit\(30\)/)
+assert.match(autonomyStatus,/\.slice\(0,6\)/)
+console.log('Only known terminal pauses are retired; resumable paused missions remain visible and filtering happens before the display limit')
