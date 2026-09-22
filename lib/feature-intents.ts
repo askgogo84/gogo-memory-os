@@ -178,6 +178,29 @@ async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<
     if(pending&&isStrictlyFreshFollowupState(pending,15)&&pending.payload?.startIso&&!pending.payload?.consumed){
       const reply=await createCalendarConflictEvent(telegramId,pending.payload)
       if(reply){
+        // The feature-intent approval path is independent of the Agent approval
+        // orchestrator. Verify the exact staged event against Google before consuming
+        // approval or returning any success-shaped copy.
+        const tokens=await getCalendarTokens(telegramId)
+        if(!tokens.connected||!tokens.accessToken)return `I couldn't verify that calendar change, so I won't claim it was added.`
+        const start=new Date(pending.payload.startIso)
+        const dayStart=new Date(start.getTime());dayStart.setUTCHours(0,0,0,0)
+        const dayEnd=new Date(dayStart.getTime());dayEnd.setUTCDate(dayEnd.getUTCDate()+1)
+        let verified=false
+        try{
+          const events=await fetchPrimaryCalendarEvents(tokens.accessToken,dayStart.toISOString(),dayEnd.toISOString(),'GCAL_FEATURE_APPROVAL_VERIFY_FAILED')
+          const norm=(v:string)=>String(v||'').toLowerCase().replace(/["“”']/g,'').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
+          const wanted=norm(String(pending.payload.title||''))
+          const wantedStart=new Date(pending.payload.startIso).getTime()
+          verified=(events||[]).some((ev:any)=>{
+            const sameTitle=norm(String(ev?.summary||''))===wanted
+            const actualStart=ev?.start?.dateTime?new Date(ev.start.dateTime).getTime():NaN
+            return sameTitle&&Number.isFinite(actualStart)&&Math.abs(actualStart-wantedStart)<60000
+          })
+        }catch(err){console.error('CALENDAR_FEATURE_APPROVAL_VERIFY_FAILED:',err)}
+        if(!verified){
+          return `⚠️ I couldn't verify this event in Google Calendar, so I won't claim it was scheduled. Please don't retry yet.`
+        }
         await saveFollowupState(telegramId,'calendar_create_approval',{consumed:true,created_at:new Date().toISOString()})
         return reply
       }
