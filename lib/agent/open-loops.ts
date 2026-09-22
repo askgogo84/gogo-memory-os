@@ -421,7 +421,7 @@ function looksLikeIncomingAction(text:string){
 }
 
 function looksLikeIncomingPromise(text:string){
-  return /\b(?:i(?:'ll| will)|we(?:'ll| will)|will)\s+(?:send|share|resend|reply|respond|confirm|approve|review|deliver|update|call|get\s+back|revert)|\b(?:by|before)\s+(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|end of day|eod|end of week)\b/i.test(text)
+  return /\b(?:i(?:'ll| will)|we(?:'ll| will)|i\s+can|we\s+can)\s+(?:send|share|resend|reply|respond|confirm|approve|review|deliver|update|call|get\s+back|revert)\b/i.test(text)
 }
 
 function isAutomatedGmailMessage(message:any){
