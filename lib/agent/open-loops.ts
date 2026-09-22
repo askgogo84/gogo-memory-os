@@ -794,8 +794,9 @@ function parseOpenLoopSnooze(text:string,{allowGeneric=false}:{allowGeneric?:boo
   if(!Number.isInteger(index)||index<1||index>20)return null
   let hours=24
   if(match[2]){
-    const amount=Math.max(1,Math.min(30*24,Number(match[2])))
     const unit=String(match[3]||'hours').toLowerCase()
+    const rawAmount=Math.max(1,Number(match[2]))
+    const amount=unit.startsWith('day')?Math.min(30,rawAmount):Math.min(30*24,rawAmount)
     hours=unit.startsWith('day')?amount*24:amount
   }
   return {index,hours}
