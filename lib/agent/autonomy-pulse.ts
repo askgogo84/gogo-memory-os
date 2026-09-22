@@ -29,6 +29,7 @@ async function candidateUserIds(){
     supabaseAdmin.from('agent_ideas').select('telegram_id').eq('status','new').gte('created_at',since).limit(500),
     supabaseAdmin.from('agent_runs').select('telegram_id').in('status',['waiting_approval','paused','outcome_unknown','failed']).gte('updated_at',since).limit(500),
     supabaseAdmin.from('life_events').select('telegram_id').gte('start_at',new Date().toISOString()).lte('start_at',future).limit(500),
+    supabaseAdmin.from('agent_open_loops').select('telegram_id').eq('status','active').gte('priority',0.85).limit(500),
   ]
   const results=await Promise.all(queries)
   const ids=new Set<string>()
@@ -66,16 +67,23 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
   const nowIso=new Date().toISOString()
   const future72=new Date(Date.now()+72*3600_000).toISOString()
   const since48=new Date(Date.now()-48*3600_000).toISOString()
-  const [{data:approvals},{data:ideas},{data:runs},{data:events}]=await Promise.all([
+  const [{data:approvals},{data:ideas},{data:runs},{data:events},{data:openLoops}]=await Promise.all([
     supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at').eq('telegram_id',telegramId).eq('status','pending').order('requested_at',{ascending:false}).limit(3),
     supabaseAdmin.from('agent_ideas').select('id,title,reason,expected_value,value_score,action_label,created_at,snoozed_until,source_refs').eq('telegram_id',telegramId).eq('status','new').order('value_score',{ascending:false}).limit(8),
     supabaseAdmin.from('agent_runs').select('id,status,title,summary,updated_at,error').eq('telegram_id',telegramId).in('status',['waiting_approval','paused','outcome_unknown','failed']).gte('updated_at',since48).order('updated_at',{ascending:false}).limit(6),
     supabaseAdmin.from('life_events').select('id,event_type,title,start_at,location,lifecycle_state,next_action_at').eq('telegram_id',telegramId).gte('start_at',nowIso).lte('start_at',future72).order('start_at',{ascending:true}).limit(5),
+    supabaseAdmin.from('agent_open_loops').select('id,kind,title,summary,priority,due_at,next_check_at,source_type').eq('telegram_id',telegramId).eq('status','active').gte('priority',0.85).order('priority',{ascending:false}).limit(8),
   ])
   const items:PulseItem[]=[]
 
   for(const a of approvals||[]){
     items.push({key:`approval:${a.id}`,score:100,line:`🛡️ *Needs your approval*: ${clean(a.title,160)}`,kind:'approval'})
+  }
+  for(const loop of openLoops||[]){
+    if(loop.next_check_at && Date.parse(String(loop.next_check_at))>Date.now())continue
+    const score=Math.round(Math.max(0,Math.min(1,Number(loop.priority||0.8)))*100)
+    const badge=loop.kind==='followup'?'📨':loop.kind==='waiting_on'?'⏳':loop.kind==='approval'?'🛡️':loop.kind==='life_event'?'✈️':'🧠'
+    items.push({key:`open_loop:${loop.id}`,score,line:`${badge} *Open loop*: ${clean(loop.title,170)}`,kind:'open_loop'})
   }
   for(const e of events||[]){
     const hours=(new Date(e.start_at).getTime()-Date.now())/3600_000
