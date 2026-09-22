@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
+import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { fetchGmailAttentionThreads, refreshGmailAccessToken } from '@/lib/services/google-gmail'
 
@@ -509,6 +510,35 @@ export async function syncOpenLoopsForUser(telegramId:string|number){
   // failure must never make an existing open loop disappear.
   const resolved=await resolveMissingSourceLoops(tg,current,[...successfulSourceTypes]).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
   return {telegramId:tg,resolved,failures}
+}
+
+export async function captureJevOpenLoopFromTurn(params:{actor:AgentActor;text:string;jev?:JevShadowResult|null;observedAt?:string|null}){
+  const jev=params.jev
+  if(!jev?.ok)return null
+  const choice=String(jev.attentionState?.choice||'')
+  const confidence=Number(jev.attentionState?.confidence||0)
+  if(confidence<0.93||!['waiting_on','followup','commitment'].includes(choice))return null
+  if(parseExplicitOpenLoop(params.text))return null
+  const {data:consent}=await supabaseAdmin.from('user_consent_settings')
+    .select('memory_enabled').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
+  if(consent?.memory_enabled===false)return null
+  const raw=clean(params.text,700)
+  const kind=choice as 'waiting_on'|'followup'|'commitment'
+  const title=kind==='waiting_on'
+    ? `Waiting on: ${clean(raw,180)}`
+    : kind==='followup'
+      ? `Follow up: ${clean(raw,180)}`
+      : `Need to follow through: ${clean(raw,180)}`
+  return upsertOpenLoop({
+    telegramId:params.actor.legacyTelegramId,
+    kind,title,summary:raw,
+    priority:kind==='followup'?0.88:kind==='waiting_on'?0.85:0.82,
+    nextCheckAt:kind==='commitment'?isoPlusHours(12):isoPlusHours(24),
+    sourceType:'conversation',
+    sourceRefs:[{type:'whatsapp_turn',semantic:'jev'}],
+    evidence:{surface:'whatsapp',jev_attention_state:choice,jev_confidence:confidence},
+    observedAt:params.observedAt||new Date().toISOString(),
+  })
 }
 
 export async function captureExplicitOpenLoopFromTurn(params:{actor:AgentActor;text:string;observedAt?:string|null}){
