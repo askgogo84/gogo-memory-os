@@ -131,12 +131,22 @@ function loopTokens(value:unknown){
     .filter(token=>token.length>2&&!LOOP_STOPWORDS.has(token))
 }
 
+export function isUncertainOrNegatedCompletion(text:string){
+  const raw=clean(text,1200)
+  if(/[?]\s*$/.test(raw))return true
+  if(/^(?:did|has|have|can|could|would|will|is|are|do|does|check|tell me|do you know)\b/i.test(raw))return true
+  if(/\b(?:hasn't|has not|haven't|have not|didn't|did not|not yet|still waiting|no reply|no response|no update|waiting on|waiting for|if|whether)\b/i.test(raw))return true
+  return false
+}
+
 function looksLikeCompletionStatement(text:string){
+  if(isUncertainOrNegatedCompletion(text))return false
   return /\b(sent|shared|resent|replied|responded|got\s+back|confirmed|approved|reviewed|delivered|updated|called|received|got\s+(?:the|it)|completed|finished|resolved|submitted|signed|came\s+through|has\s+arrived|arrived)\b/i.test(text)
 }
 
 export async function autoResolveOpenLoopsFromTurn(params:{actor:AgentActor;text:string;jev?:JevShadowResult|null}){
   const raw=clean(params.text,1200)
+  if(isUncertainOrNegatedCompletion(raw))return []
   const semanticCompletion=Boolean(
     params.jev?.ok &&
     String(params.jev.attentionState?.choice||'')==='completed' &&
@@ -410,6 +420,20 @@ function looksLikeIncomingAction(text:string){
   return /\b(?:action required|please|could you|can you|need you to|kindly|confirm|approve|approval|review|sign|send|share|reply|respond|provide|submit|complete|urgent|by today|by tomorrow|deadline)\b/i.test(text)
 }
 
+function looksLikeIncomingPromise(text:string){
+  return /\b(?:i(?:'ll| will)|we(?:'ll| will)|i\s+can|we\s+can)\s+(?:send|share|resend|reply|respond|confirm|approve|review|deliver|update|call|get\s+back|revert)\b/i.test(text)
+}
+
+function isAutomatedGmailMessage(message:any){
+  const from=headerEmail(message?.from)
+  if(/(?:^|[._+-])(no-?reply|do-?not-?reply|newsletter|digest|notifications?)(?:[._+-]|@)/i.test(from))return true
+  if(clean(message?.listId,240))return true
+  if(/\b(?:bulk|list|junk)\b/i.test(clean(message?.precedence,80)))return true
+  const auto=clean(message?.autoSubmitted,120).toLowerCase()
+  if(auto&&auto!=='no')return true
+  return false
+}
+
 async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string,keepFingerprint:string|null){
   const {data,error}=await supabaseAdmin.from('agent_open_loops')
     .select('id,fingerprint')
@@ -485,17 +509,35 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
       continue
     }
 
-    if(last.isUnread&&looksLikeIncomingAction(combined)){
+    if(looksLikeIncomingPromise(combined)&&!isAutomatedGmailMessage(last)){
+      const sender=headerName(last.from)
+      const input:OpenLoopInput={
+        telegramId,kind:'waiting_on',
+        title:`Waiting on ${sender} — ${subject}`,
+        summary:clean(last.snippet||'The sender committed to a follow-up or deliverable in this email thread.',900),
+        priority:/\b(?:today|eod|urgent)\b/i.test(combined)?0.94:0.88,
+        nextCheckAt:isoPlusHours(12),
+        sourceType:'gmail_thread',sourceId:String(thread.id),
+        sourceRefs:[{type:'gmail_thread',id:String(thread.id)}],
+        evidence:{last_message_id:last.id,last_message_from:last.from,last_internal_date:last.internalDate,direction:'incoming_promise',unread:last.isUnread},
+        observedAt:new Date(Number(last.internalDate||Date.now())).toISOString(),
+      }
+      const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
+      await resolveOtherGmailLoopsForThread(telegramId,String(thread.id),fp)
+      continue
+    }
+
+    if(looksLikeIncomingAction(combined)&&!isAutomatedGmailMessage(last)){
       const sender=headerName(last.from)
       const input:OpenLoopInput={
         telegramId,kind:'commitment',
         title:`Reply to ${sender} — ${subject}`,
-        summary:clean(last.snippet||'This unread email appears to ask for an action or response.',900),
-        priority:/\b(?:urgent|action required|today|deadline)\b/i.test(combined)?0.96:0.88,
+        summary:clean(last.snippet||'This email appears to ask for an action or response.',900),
+        priority:/\b(?:urgent|action required|today|deadline)\b/i.test(combined)?0.96:(last.isUnread?0.9:0.87),
         nextCheckAt:isoPlusHours(6),
         sourceType:'gmail_thread',sourceId:String(thread.id),
         sourceRefs:[{type:'gmail_thread',id:String(thread.id)}],
-        evidence:{last_message_id:last.id,last_message_from:last.from,last_internal_date:last.internalDate,direction:'inbound_action',unread:true},
+        evidence:{last_message_id:last.id,last_message_from:last.from,last_internal_date:last.internalDate,direction:'inbound_action',unread:last.isUnread},
         observedAt:new Date(Number(last.internalDate||Date.now())).toISOString(),
       }
       const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
@@ -665,7 +707,8 @@ export async function captureExplicitOpenLoopFromTurn(params:{actor:AgentActor;t
 export function isOpenLoopQuery(text:string){
   const t=clean(text,500).toLowerCase().replace(/[?!.]+$/g,'')
   return /^(?:what|which|show|list)\s+(?:are\s+)?(?:my\s+)?(?:open loops|pending follow[- ]?ups|follow[- ]?ups|things i(?:'m| am) waiting on|things still pending|pending items|unresolved items)$/.test(t)
-    || /^what\s+(?:am i waiting on|still needs follow[- ]?up|is still pending)$/.test(t)
+    || /^what\s+(?:am i waiting on|still needs follow[- ]?up|is still pending|needs my attention|needs attention|should i follow up on)$/.test(t)
+    || /^(?:show|give)\s+me\s+(?:what\s+)?needs\s+my\s+attention$/.test(t)
 }
 
 export function isOpenLoopResolutionCandidate(text:string){
@@ -725,9 +768,10 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
     message:'Gogo showed the current open-loop list.',
     metadata_json:{open_loop_ids:loops.map((loop:any)=>String(loop.id)).slice(0,12)},
   }).then(({error})=>{if(error)console.error('OPEN_LOOP_LIST_ACTIVITY_FAILED:',error.message)})
+  const attentionWording=/needs\s+(?:my\s+)?attention|should\s+i\s+follow\s+up/i.test(params.text)
   return {
     runId:'open-loops-list',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
-    text:`🧠 *Your open loops*\n\n${lines.join('\n')}\n\nSay *mark 2 done* to close one.`,
+    text:`🧠 *${attentionWording?'What needs your attention':'Your open loops'}*\n\n${lines.join('\n')}\n\nSay *mark 2 done* to close one.`,
     handledBy:'open-loops',
   }
 }

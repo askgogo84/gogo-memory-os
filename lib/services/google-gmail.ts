@@ -315,6 +315,9 @@ export type GmailAttentionMessage = {
   snippet:string
   labelIds:string[]
   isUnread:boolean
+  listId:string
+  precedence:string
+  autoSubmitted:string
 }
 
 export type GmailAttentionThread = {
@@ -339,7 +342,7 @@ async function listAttentionMessageRefs(accessToken:string,maxResults=40){
 async function fetchAttentionThread(accessToken:string,threadId:string):Promise<GmailAttentionThread|null>{
   const res=await gmailFetchJson(
     accessToken,
-    `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID`
+    `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=List-Id&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted`
   )
   if(!res.ok){
     console.error('Gmail attention thread fetch failed:',threadId,res.status)
@@ -359,6 +362,9 @@ async function fetchAttentionThread(accessToken:string,threadId:string):Promise<
       snippet:String(message.snippet||''),
       labelIds,
       isUnread:labelIds.includes('UNREAD'),
+      listId:getHeader(headers,'List-Id')||'',
+      precedence:getHeader(headers,'Precedence')||'',
+      autoSubmitted:getHeader(headers,'Auto-Submitted')||'',
     } satisfies GmailAttentionMessage
   }).filter((message:GmailAttentionMessage)=>message.id)
     .sort((a:GmailAttentionMessage,b:GmailAttentionMessage)=>a.internalDate-b.internalDate)

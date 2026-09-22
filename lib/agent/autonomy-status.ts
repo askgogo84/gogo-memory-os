@@ -59,7 +59,7 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
     supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at').eq('telegram_id',tg).eq('status','pending').order('requested_at',{ascending:false}).limit(5),
     supabaseAdmin.from('life_events').select('id,title,event_type,start_at,location,lifecycle_state').eq('telegram_id',tg).gte('start_at',new Date().toISOString()).order('start_at',{ascending:true}).limit(5),
     supabaseAdmin.from('agent_ideas').select('id,title,reason,value_score,status,created_at').eq('telegram_id',tg).eq('status','new').order('value_score',{ascending:false}).limit(4),
-    supabaseAdmin.from('agent_open_loops').select('id,kind,title,priority,due_at,updated_at').eq('telegram_id',tg).eq('status','active').order('priority',{ascending:false}).limit(8),
+    supabaseAdmin.from('agent_open_loops').select('id,kind,title,priority,due_at,updated_at,source_type').eq('telegram_id',tg).eq('status','active').not('source_type','in','(approval,agent_run,life_event_action)').order('priority',{ascending:false}).limit(8),
   ])
   const failed=results.find((result:any)=>result.error)
   if(failed?.error)throw new Error(`autonomy_status_read_failed:${failed.error.message}`)

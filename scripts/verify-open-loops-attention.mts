@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { parseExplicitOpenLoop, isOpenLoopQuery, isOpenLoopResolutionCandidate, parseOpenLoopResolution } from '../lib/agent/open-loops'
+import { parseExplicitOpenLoop, isOpenLoopQuery, isOpenLoopResolutionCandidate, isUncertainOrNegatedCompletion, parseOpenLoopResolution } from '../lib/agent/open-loops'
 
 const wait=parseExplicitOpenLoop("I'm still waiting on Srinivas to send the corrected JSON.")
 assert.ok(wait)
@@ -35,9 +35,14 @@ assert.ok(expected)
 assert.equal(expected.kind,'waiting_on')
 
 assert.equal(parseExplicitOpenLoop('I need to know the weather tomorrow.'),null)
+assert.equal(isUncertainOrNegatedCompletion('Did Srinivas send the JSON?'),true)
+assert.equal(isUncertainOrNegatedCompletion("Srinivas hasn't sent the JSON yet."),true)
+assert.equal(isUncertainOrNegatedCompletion('Srinivas sent the JSON.'),false)
 assert.equal(isOpenLoopQuery('What am I waiting on?'),true)
 assert.equal(isOpenLoopQuery('What are my open loops?'),true)
 assert.equal(isOpenLoopQuery('What meetings do I have tomorrow?'),false)
+assert.equal(isOpenLoopQuery('What needs my attention?'),true)
+assert.equal(isOpenLoopQuery('Show me what needs my attention'),true)
 assert.equal(parseOpenLoopResolution('mark 2 done'),null)
 assert.deepEqual(parseOpenLoopResolution('mark open loop 2 done'),{index:2,mode:'resolved'})
 assert.equal(isOpenLoopResolutionCandidate('mark 2 done'),true)
@@ -114,3 +119,36 @@ assert.match(openLoops,/\['approval','agent_run','life_event_action'\]\.includes
 assert.match(openLoops,/open_loop_followup_resolve_failed/)
 assert.match(openLoops,/resolveOtherGmailLoopsForThread\(telegramId,String\(thread\.id\),null\)/)
 console.log('Attention manual-close source truth and Gmail follow-up reset verified')
+
+const autonomyPulse=readFileSync('lib/agent/autonomy-pulse.ts','utf8')
+const autonomyStatus=readFileSync('lib/agent/autonomy-status.ts','utf8')
+assert.match(autonomyPulse,/not\('source_type','in','\(approval,agent_run,life_event_action\)'\)/)
+assert.match(autonomyPulse,/open_loop_backoff_ids/)
+assert.match(autonomyPulse,/nextAttentionAt/)
+assert.match(autonomyPulse,/proactive_backoff_until/)
+assert.match(autonomyStatus,/not\('source_type','in','\(approval,agent_run,life_event_action\)'\)/)
+console.log('Attention UX v2 query, dedupe and proactive backoff verification passed')
+
+assert.match(vercel,/"path": "\/api\/cron\/open-loops"[\s\S]*?"schedule": "5,35 \* \* \* \*"/)
+assert.match(vercel,/"path": "\/api\/cron\/autonomy-pulse"[\s\S]*?"schedule": "10,40 \* \* \* \*"/)
+assert.match(autonomyPulse,/next_check_at\.is\.null,next_check_at\.lte/)
+console.log('Attention scout-before-pulse scheduling and due-only candidate filtering verified')
+
+const backoffMigration=readFileSync('supabase/migrations/20260922165500_agent_open_loop_proactive_backoff.sql','utf8')
+assert.match(backoffMigration,/proactive_backoff_until/)
+assert.doesNotMatch(autonomyPulse,/update\(\{next_check_at:nextAttentionAt/)
+console.log('Attention proactive backoff is isolated from source check timing')
+
+assert.doesNotMatch(openLoops,/if\(last\.isUnread&&looksLikeIncomingAction/)
+assert.match(openLoops,/unread:last\.isUnread/)
+console.log('Gmail action loops survive read/unread state changes until thread truth resolves them')
+
+assert.match(gmail,/metadataHeaders=List-Id/)
+assert.match(gmail,/metadataHeaders=Auto-Submitted/)
+assert.match(openLoops,/isAutomatedGmailMessage/)
+assert.match(openLoops,/!isAutomatedGmailMessage\(last\)/)
+console.log('Automated Gmail newsletters/no-reply traffic is suppressed from Attention')
+
+assert.match(openLoops,/looksLikeIncomingPromise/)
+assert.match(openLoops,/direction:'incoming_promise'/)
+console.log('Incoming Gmail promises remain tracked as waiting-on commitments')
