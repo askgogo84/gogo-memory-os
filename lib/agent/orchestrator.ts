@@ -238,15 +238,25 @@ async function executeStoredRun(params: { actor: AgentActor; runId: string; mess
     if (classified.capability === 'calendar' && classified.mode === 'execute' && approval?.status === 'approved') {
       const tokens = await getCalendarTokens(params.actor.legacyTelegramId)
       if (!tokens.connected || !tokens.accessToken) throw new Error('calendar_post_approval_verification_unavailable')
-      const absolute = parseAbsoluteDate(text)
+      let absolute = parseAbsoluteDate(text)
+      if (!absolute) {
+        const nowParts = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
+        const get=(k:string)=>Number(nowParts.find(p=>p.type===k)?.value)
+        const base=new Date(Date.UTC(get('year'),get('month')-1,get('day'),12,0,0))
+        const delta=/\bday after tomorrow\b/i.test(text)?2:/\btomorrow\b/i.test(text)?1:/\btoday\b/i.test(text)?0:null
+        if(delta!=null){base.setUTCDate(base.getUTCDate()+delta);absolute={year:base.getUTCFullYear(),month:base.getUTCMonth()+1,day:base.getUTCDate()}}
+      }
       if (!absolute) throw new Error('calendar_post_approval_date_missing')
       const start = new Date(Date.UTC(absolute.year, absolute.month - 1, absolute.day, -5, -30, 0))
       const next = new Date(Date.UTC(absolute.year, absolute.month - 1, absolute.day + 1, -5, -30, 0))
       const events = await fetchPrimaryCalendarEvents(tokens.accessToken, start.toISOString(), next.toISOString(), 'GCAL_APPROVAL_VERIFY_FAILED')
-      const quoted = text.match(/["“]([^"”]+)["”]/)?.[1]?.trim().toLowerCase()
-      const meaningful = quoted
-        ? events.some((ev:any)=>String(ev?.summary||'').trim().toLowerCase() === quoted)
-        : events.length > 0
+      const norm=(v:string)=>String(v||'').toLowerCase().replace(/["“”']/g,'').replace(/\b(?:meeting|event|appointment)\b/g,' ').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
+      const quoted = text.match(/["“]([^"”]+)["”]/)?.[1]
+      const unquoted = text.match(/(?:meeting|event|appointment)\s+(?:called|titled)\s+(.+?)\s+(?:for|on|at)\b/i)?.[1]
+        || text.match(/(?:add|create|schedule|book)\s+(?:a\s+|an\s+)?(.+?)\s+(?:on|for|at)\b/i)?.[1]
+      const expectedTitle=norm(quoted||unquoted||'')
+      if (!expectedTitle) throw new Error('calendar_post_approval_title_missing')
+      const meaningful = events.some((ev:any)=>{const actual=norm(ev?.summary||'');return actual===expectedTitle||actual.includes(expectedTitle)||expectedTitle.includes(actual)})
       if (!meaningful) throw new Error('calendar_post_approval_verification_failed')
     }
 
