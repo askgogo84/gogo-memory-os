@@ -15,6 +15,7 @@ import { executeApprovedAgentRun } from './orchestrator'
 import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
+import { tryGetAutonomyStatus, tryGetConnectionStatus } from './autonomy-status'
 import { tryRecoverAppointmentOption } from './appointment-followup-recovery'
 import { tryRunAppointmentFollowup } from './appointment-followup'
 import { tryRunAppointmentResearch } from './appointment-research'
@@ -203,6 +204,12 @@ export async function tryRunWhatsAppAgent(params: {
 
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
+
+  const connectionStatus = await tryGetConnectionStatus({ actor, text:params.text })
+  if (connectionStatus) return { ...connectionStatus, handledBy:String(connectionStatus.handledBy || 'connection-status') }
+
+  const autonomyStatus = await tryGetAutonomyStatus({ actor, text:params.text })
+  if (autonomyStatus) return { ...autonomyStatus, handledBy:String(autonomyStatus.handledBy || 'autonomy-status') }
 
   const watcherStop = await tryStopWatcherFromCommand({ actor, text:params.text })
   if (watcherStop) return { ...watcherStop, handledBy:String(watcherStop.handledBy || 'watcher-stop') }
