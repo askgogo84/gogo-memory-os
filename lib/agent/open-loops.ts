@@ -348,7 +348,10 @@ function suppressRun(row:any){
   const error=clean(row?.error,160)
   if(['stale_provider_access_limited','background_browser_resume_expired','stale_run_recovered','background_browser_actor_missing'].includes(error))return true
   const age=Date.now()-Date.parse(String(row?.updated_at||0))
-  if(String(row?.status)==='paused'&&age>7*86400_000)return true
+  // A paused provider/browser mission is an attention item only while it is fresh.
+  // After a day it becomes historical run state, not something Gogo should keep
+  // surfacing as if the user still owes it attention.
+  if(String(row?.status)==='paused'&&age>24*3600_000)return true
   return false
 }
 
