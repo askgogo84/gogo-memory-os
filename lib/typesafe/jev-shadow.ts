@@ -1,4 +1,4 @@
-import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { isSecretShapedMemory, redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { buildJevShadowQuestions, JEV_SHADOW_MODEL, JEV_SHADOW_VERSION } from './questions'
 
 export type JevShadowChoice = {
@@ -15,6 +15,7 @@ export type JevShadowResult = {
   intent: JevShadowChoice
   actionMode: JevShadowChoice
   referentKind: JevShadowChoice
+  usage?: { inputTokens: number | null; outputTokens: number | null }
   error?: string
 }
 
@@ -60,8 +61,30 @@ export function buildJevShadowRequest(params: {
   }
 }
 
+function validChoiceAnswer(value: any) {
+  return Boolean(value && value.type === 'choice' && typeof value.choice === 'string' && value.choice.trim() && Number.isFinite(Number(value.confidence)) && value.probabilities && typeof value.probabilities === 'object')
+}
+
 export function parseJevShadowResponse(raw: any, latencyMs = 0): JevShadowResult {
   const answers = raw?.answers || {}
+  const valid = validChoiceAnswer(answers.intent) && validChoiceAnswer(answers.action_mode) && validChoiceAnswer(answers.referent_kind)
+  const usage = {
+    inputTokens: Number.isFinite(Number(raw?.usage?.input_tokens)) ? Number(raw.usage.input_tokens) : null,
+    outputTokens: Number.isFinite(Number(raw?.usage?.output_tokens)) ? Number(raw.usage.output_tokens) : null,
+  }
+  if (!valid) {
+    return {
+      ok: false,
+      version: JEV_SHADOW_VERSION,
+      model: String(raw?.model || JEV_SHADOW_MODEL),
+      latencyMs,
+      intent: emptyChoice(),
+      actionMode: emptyChoice(),
+      referentKind: emptyChoice(),
+      usage,
+      error: 'typesafe_malformed_response',
+    }
+  }
   return {
     ok: true,
     version: JEV_SHADOW_VERSION,
@@ -70,6 +93,7 @@ export function parseJevShadowResponse(raw: any, latencyMs = 0): JevShadowResult
     intent: parseChoice(answers.intent),
     actionMode: parseChoice(answers.action_mode),
     referentKind: parseChoice(answers.referent_kind),
+    usage,
   }
 }
 
@@ -84,6 +108,20 @@ export async function runJevShadow(params: {
 }): Promise<JevShadowResult | null> {
   const apiKey = String(process.env.TYPESAFE_API_KEY || '').trim()
   if (!apiKey) return null
+
+  if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || ''))) {
+    return {
+      ok: false,
+      version: JEV_SHADOW_VERSION,
+      model: JEV_SHADOW_MODEL,
+      latencyMs: 0,
+      intent: emptyChoice(),
+      actionMode: emptyChoice(),
+      referentKind: emptyChoice(),
+      usage: { inputTokens: null, outputTokens: null },
+      error: 'typesafe_sensitive_state_withheld',
+    }
+  }
 
   const timeoutMs = Math.max(50, Math.min(Number(params.timeoutMs || 350), 1500))
   const controller = new AbortController()
@@ -110,6 +148,7 @@ export async function runJevShadow(params: {
         intent: emptyChoice(),
         actionMode: emptyChoice(),
         referentKind: emptyChoice(),
+        usage: { inputTokens: null, outputTokens: null },
         error: `typesafe_http_${response.status}`,
       }
     }
@@ -123,6 +162,7 @@ export async function runJevShadow(params: {
       intent: emptyChoice(),
       actionMode: emptyChoice(),
       referentKind: emptyChoice(),
+      usage: { inputTokens: null, outputTokens: null },
       error: err?.name === 'AbortError' ? 'typesafe_timeout' : String(err?.message || 'typesafe_error').slice(0, 120),
     }
   } finally {
