@@ -279,7 +279,7 @@ export async function executeApprovedTravelCalendarPlan(params:{actor:AgentActor
   if(meta.stepId)await stepState(String(meta.stepId),'running')
   try{
     const reply=await createCalendarEventAtIso(tg,String(meta.eventTitle||'Flight departure'),String(meta.startIso||''))
-    if(!reply||/connect google calendar|calendar error|couldn.?t add/i.test(reply))throw new Error('calendar_create_failed')
+    if(!reply||/connect google calendar|calendar error|couldn.?t add|calendar write not verified|won't claim it was added|not verified/i.test(reply))throw new Error('calendar_create_failed_or_unverified')
     if(meta.stepId)await stepState(String(meta.stepId),'completed',{created:true})
     const completedAt=new Date().toISOString()
     await supabaseAdmin.from('agent_runs').update({status:'completed',summary:String(reply).slice(0,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',params.runId).eq('telegram_id',String(tg))
