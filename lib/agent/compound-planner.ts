@@ -168,8 +168,8 @@ async function tryRunReminderMutation(params: { actor: AgentActor; surface: Agen
     // an arbitrary recent quoted string: an older calendar title (e.g. an E2E meeting)
     // can otherwise steal "it" from the reminder created one turn ago.
     const reminderSpecific = (recent || []).map((r:any)=>String(r.content||'')).map((s:string)=>{
-      const set = s.match(/(?:reminder\s+(?:set|updated)[\s\S]*?\n\n)?([^\n]+?)(?:\s+(?:today|tomorrow)\s+at|\nNew time:|$)/i)?.[1]
-      if (set && !/^reminder\s/i.test(set.trim())) return cleanListItem(set)
+      const set = s.match(/reminder\s+(?:set|updated)[\s\S]*?\n\n([^\n]+?)(?:\s+(?:today|tomorrow)\s+at|\nNew time:|$)/i)?.[1]
+      if (set) return cleanListItem(set)
       const explicit = s.match(/(?:remind\s+me\s+(?:today|tomorrow)?\s*(?:at\s+[^\s]+\s+)?to\s+)(.+?)[.?!]*$/i)?.[1]
       return explicit ? cleanListItem(explicit) : null
     }).find(Boolean)
