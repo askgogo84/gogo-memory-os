@@ -5,6 +5,8 @@ import { dispatchThroughSameBrain } from './same-brain'
 import { evaluateAgentExecutionPolicy, type AgentCapability, type AgentPermissionLevel } from './policy'
 import type { AgentActor } from './actor'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
+import { getCalendarTokens, parseAbsoluteDate } from '@/lib/bot/handlers/calendar-actions'
+import { fetchPrimaryCalendarEvents } from '@/lib/google-calendar'
 
 export type AgentSurface = 'web' | 'ios' | 'android' | 'whatsapp'
 
@@ -229,6 +231,25 @@ async function executeStoredRun(params: { actor: AgentActor; runId: string; mess
   await activity(params.actor, params.runId, 'run_started', `Gogo started: ${classified.title}`, { capability: classified.capability, handled_by: 'same-brain' })
   try {
     const result = await dispatchThroughSameBrain({ actor: params.actor, text, messageId: params.messageId })
+
+    // Consequential calendar approvals are not complete until Google itself shows
+    // provider-side evidence. Legacy feature handlers can produce success-shaped copy;
+    // never promote that copy to an executed approval without a Google read-back.
+    if (classified.capability === 'calendar' && classified.mode === 'execute' && approval?.status === 'approved') {
+      const tokens = await getCalendarTokens(params.actor.legacyTelegramId)
+      if (!tokens.connected || !tokens.accessToken) throw new Error('calendar_post_approval_verification_unavailable')
+      const absolute = parseAbsoluteDate(text)
+      if (!absolute) throw new Error('calendar_post_approval_date_missing')
+      const start = new Date(Date.UTC(absolute.year, absolute.month - 1, absolute.day, -5, -30, 0))
+      const next = new Date(Date.UTC(absolute.year, absolute.month - 1, absolute.day + 1, -5, -30, 0))
+      const events = await fetchPrimaryCalendarEvents(tokens.accessToken, start.toISOString(), next.toISOString(), 'GCAL_APPROVAL_VERIFY_FAILED')
+      const quoted = text.match(/["“]([^"”]+)["”]/)?.[1]?.trim().toLowerCase()
+      const meaningful = quoted
+        ? events.some((ev:any)=>String(ev?.summary||'').trim().toLowerCase() === quoted)
+        : events.length > 0
+      if (!meaningful) throw new Error('calendar_post_approval_verification_failed')
+    }
+
     const completedAt = new Date().toISOString()
     await supabaseAdmin.from('agent_runs').update({
       status: 'completed',
