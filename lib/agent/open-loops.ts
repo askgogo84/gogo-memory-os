@@ -420,6 +420,10 @@ function looksLikeIncomingAction(text:string){
   return /\b(?:action required|please|could you|can you|need you to|kindly|confirm|approve|approval|review|sign|send|share|reply|respond|provide|submit|complete|urgent|by today|by tomorrow|deadline)\b/i.test(text)
 }
 
+function looksLikeIncomingPromise(text:string){
+  return /\b(?:i(?:'ll| will)|we(?:'ll| will)|will)\s+(?:send|share|resend|reply|respond|confirm|approve|review|deliver|update|call|get\s+back|revert)|\b(?:by|before)\s+(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|end of day|eod|end of week)\b/i.test(text)
+}
+
 function isAutomatedGmailMessage(message:any){
   const from=headerEmail(message?.from)
   if(/(?:^|[._+-])(no-?reply|do-?not-?reply|newsletter|digest|notifications?)(?:[._+-]|@)/i.test(from))return true
@@ -498,6 +502,24 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
         sourceType:'gmail_thread',sourceId:String(thread.id),
         sourceRefs:[{type:'gmail_thread',id:String(thread.id)}],
         evidence:{last_message_id:last.id,last_message_from:last.from,last_message_to:last.to,last_internal_date:last.internalDate,direction:'outbound_waiting'},
+        observedAt:new Date(Number(last.internalDate||Date.now())).toISOString(),
+      }
+      const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
+      await resolveOtherGmailLoopsForThread(telegramId,String(thread.id),fp)
+      continue
+    }
+
+    if(looksLikeIncomingPromise(combined)&&!isAutomatedGmailMessage(last)){
+      const sender=headerName(last.from)
+      const input:OpenLoopInput={
+        telegramId,kind:'waiting_on',
+        title:`Waiting on ${sender} — ${subject}`,
+        summary:clean(last.snippet||'The sender committed to a follow-up or deliverable in this email thread.',900),
+        priority:/\b(?:today|eod|urgent)\b/i.test(combined)?0.94:0.88,
+        nextCheckAt:isoPlusHours(12),
+        sourceType:'gmail_thread',sourceId:String(thread.id),
+        sourceRefs:[{type:'gmail_thread',id:String(thread.id)}],
+        evidence:{last_message_id:last.id,last_message_from:last.from,last_internal_date:last.internalDate,direction:'incoming_promise',unread:last.isUnread},
         observedAt:new Date(Number(last.internalDate||Date.now())).toISOString(),
       }
       const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
