@@ -186,6 +186,41 @@ export async function autoResolveOpenLoopsFromTurn(params:{actor:AgentActor;text
 async function upsertOpenLoop(input:OpenLoopInput){
   const telegramId=String(input.telegramId)
   const fingerprint=fingerprintFor(input)
+
+  if(input.sourceType==='conversation'){
+    const {data:similar,error:similarError}=await supabaseAdmin.from('agent_open_loops')
+      .select('id,title,status,resolved_at,last_seen_at,fingerprint')
+      .eq('telegram_id',telegramId)
+      .eq('source_type','conversation')
+      .eq('kind',input.kind)
+      .eq('status','active')
+      .order('updated_at',{ascending:false})
+      .limit(20)
+    if(similarError)throw new Error(`open_loop_similarity_read_failed:${similarError.message}`)
+    const incomingTokens=[...new Set(loopTokens(input.title))]
+    const best=(similar||[]).map((row:any)=>{
+      const existingTokens=[...new Set(loopTokens(row.title))]
+      const overlap=incomingTokens.filter(token=>existingTokens.includes(token))
+      const union=new Set([...incomingTokens,...existingTokens]).size
+      return {row,overlap,score:union?overlap.length/union:0}
+    }).filter((item:any)=>item.overlap.length>=2&&item.score>=0.62)
+      .sort((a:any,b:any)=>b.score-a.score)[0]
+    if(best?.row?.id){
+      const {error:updateError}=await supabaseAdmin.from('agent_open_loops').update({
+        title:clean(input.title,240),
+        summary:clean(input.summary||input.title,1200),
+        priority:Math.max(clampPriority(input.priority),0.7),
+        next_check_at:input.nextCheckAt||null,
+        due_at:input.dueAt||null,
+        source_refs:input.sourceRefs||[],
+        evidence_json:{...(input.evidence||{}),semantic_dedupe_score:best.score},
+        last_seen_at:input.observedAt||new Date().toISOString(),
+        updated_at:new Date().toISOString(),
+      }).eq('id',best.row.id).eq('telegram_id',telegramId).eq('status','active')
+      if(updateError)throw new Error(`open_loop_similarity_update_failed:${updateError.message}`)
+      return {id:String(best.row.id),fingerprint:String(best.row.fingerprint),updated:true,semanticDedupe:true}
+    }
+  }
   const observedAt=input.observedAt&&Number.isFinite(Date.parse(input.observedAt))?input.observedAt:new Date().toISOString()
   const {data:existing,error:readError}=await supabaseAdmin.from('agent_open_loops')
     .select('id,status,resolved_at,last_seen_at')
