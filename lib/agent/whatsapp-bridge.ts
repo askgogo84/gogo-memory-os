@@ -239,6 +239,29 @@ export async function tryRunWhatsAppJevSpecialist(params:{
   }
 }
 
+export async function tryRunWhatsAppAttentionCommand(params:{
+  user:ResolvedUser
+  text:string
+  messageId?:string|number|null
+}):Promise<WhatsAppAgentResult|null>{
+  const actor=actorFromResolvedUser(params.user)
+  if(!actor)return null
+
+  if(await shouldHandleOpenLoopAction({actor,text:params.text})){
+    const action=await handleOpenLoopAction({actor,text:params.text})
+    if(action)return {...action,handledBy:String(action.handledBy||'open-loops')}
+  }
+
+  if(await shouldHandleOpenLoopResolution({actor,text:params.text})){
+    const resolution=await handleOpenLoopResolution({actor,text:params.text})
+    if(resolution)return {...resolution,handledBy:String(resolution.handledBy||'open-loops')}
+  }
+
+  const query=await handleOpenLoopQuery({actor,text:params.text})
+  if(query)return {...query,handledBy:String(query.handledBy||'open-loops')}
+  return null
+}
+
 export async function tryRunWhatsAppAgent(params: {
   user: ResolvedUser
   text: string
@@ -256,18 +279,8 @@ export async function tryRunWhatsAppAgent(params: {
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
 
-  if (await shouldHandleOpenLoopAction({ actor, text:params.text })) {
-    const openLoopAction = await handleOpenLoopAction({ actor, text:params.text })
-    if (openLoopAction) return { ...openLoopAction, handledBy:String(openLoopAction.handledBy || 'open-loops') }
-  }
-
-  if (await shouldHandleOpenLoopResolution({ actor, text:params.text })) {
-    const openLoopResolution = await handleOpenLoopResolution({ actor, text:params.text })
-    if (openLoopResolution) return { ...openLoopResolution, handledBy:String(openLoopResolution.handledBy || 'open-loops') }
-  }
-
-  const openLoopQuery = await handleOpenLoopQuery({ actor, text:params.text })
-  if (openLoopQuery) return { ...openLoopQuery, handledBy:String(openLoopQuery.handledBy || 'open-loops') }
+  const attentionCommand=await tryRunWhatsAppAttentionCommand(params)
+  if(attentionCommand)return attentionCommand
 
   const connectionStatus = await tryGetConnectionStatus({ actor, text:params.text })
   if (connectionStatus) return { ...connectionStatus, handledBy:String(connectionStatus.handledBy || 'connection-status') }
