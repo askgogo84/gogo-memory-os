@@ -176,8 +176,15 @@ async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<
   if(confirm){
     const pending=await getLatestFollowupState(telegramId,'calendar_create_approval')
     if(pending&&isStrictlyFreshFollowupState(pending,15)&&pending.payload?.startIso&&!pending.payload?.consumed){
+      // Consume before the external write. A successful Google POST followed by
+      // an uncertain readback must never leave a replayable approval that can duplicate.
+      await saveFollowupState(telegramId,'calendar_create_approval',{consumed:true,created_at:new Date().toISOString()})
       const reply=await createCalendarConflictEvent(telegramId,pending.payload)
       if(reply){
+        // Preserve actionable non-success responses from the create layer (limits,
+        // provider errors, reconnect guidance) rather than disguising them as verify failures.
+        const successShaped=/^\s*✅\s*\*?Calendar event added/i.test(reply)
+        if(!successShaped)return reply
         // The feature-intent approval path is independent of the Agent approval
         // orchestrator. Verify the exact staged event against Google before consuming
         // approval or returning any success-shaped copy.
@@ -201,7 +208,6 @@ async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<
         if(!verified){
           return `⚠️ I couldn't verify this event in Google Calendar, so I won't claim it was scheduled. Please don't retry yet.`
         }
-        await saveFollowupState(telegramId,'calendar_create_approval',{consumed:true,created_at:new Date().toISOString()})
         return reply
       }
       return `I couldn't add that calendar event just now. Please try again.`
