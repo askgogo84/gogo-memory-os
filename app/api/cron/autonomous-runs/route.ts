@@ -93,7 +93,16 @@ export async function GET(request:Request){
       if(!claimed?.id)continue
       browserClaimed++
       const actor=await actorFor(String(run.telegram_id))
-      if(!actor){browserFailed++;continue}
+      if(!actor){
+        browserFailed++
+        const at=new Date().toISOString()
+        await supabaseAdmin.from('agent_runs').update({
+          status:'failed',error:'background_browser_actor_missing',
+          summary:'Gogo could not resume this browser task because the user identity is unavailable.',
+          completed_at:at,updated_at:at,
+        }).eq('id',run.id).eq('telegram_id',String(run.telegram_id)).eq('status','paused')
+        continue
+      }
       try{
         const result=await resumePausedBrowserRun({actor,runId:String(run.id)})
         if(result.status==='completed')browserDone++;else browserPaused++
