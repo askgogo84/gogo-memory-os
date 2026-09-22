@@ -14,3 +14,10 @@ assert.match(browser,/if\(mode==='execute'\)/)
 assert.match(browser,/approval_required/)
 
 console.log('Background secure-browser resume verification passed')
+
+
+assert.match(worker,/browserResumeCutoff/)
+assert.match(worker,/background_browser_resume_expired/)
+assert.match(worker,/\.gte\('updated_at',browserResumeCutoff\)/)
+assert.match(worker,/continued \$\{taskLabel\}/)
+console.log('Stale background browser resurrection guard verified')
