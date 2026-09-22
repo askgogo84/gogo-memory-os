@@ -679,7 +679,8 @@ export function parseOpenLoopResolution(text:string,{allowGeneric=false}:{allowG
   const explicit=raw.match(/^(?:mark|close|resolve|finish|dismiss)\s+open\s+loop\s+#?(\d{1,2})\s*(?:done|resolved|complete|completed)?$/i)
   if(explicit?.[1])return {index:Number(explicit[1]),mode:/dismiss/i.test(raw)?'dismissed' as const:'resolved' as const}
   if(!allowGeneric)return null
-  const numbered=raw.match(/^(?:mark|close|resolve|finish|dismiss)\s+#?(\d{1,2})\s+(?:done|resolved|complete|completed)$/i)
+  const numbered=raw.match(/^dismiss\s+#?(\d{1,2})$/i)
+    || raw.match(/^(?:mark|close|resolve|finish|dismiss)\s+#?(\d{1,2})\s+(?:done|resolved|complete|completed)$/i)
     || raw.match(/^#?(\d{1,2})\s+(?:is\s+)?(?:done|resolved|complete|completed)$/i)
   if(numbered?.[1])return {index:Number(numbered[1]),mode:/dismiss/i.test(raw)?'dismissed' as const:'resolved' as const}
   return null
