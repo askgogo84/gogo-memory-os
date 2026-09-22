@@ -49,6 +49,14 @@ export type WebSearchWatcherCondition = {
   burstUntil?: string | null
 }
 
+export type WebPageWatcherCondition = {
+  title: string
+  url: string
+  watch: 'title' | 'content'
+  delivery: WatcherDelivery
+  cadenceMinutes: number
+}
+
 function validDate(value: unknown): string | null {
   const d = new Date(String(value || ''))
   return Number.isFinite(d.getTime()) ? d.toISOString() : null
@@ -92,6 +100,20 @@ export function normalizeProductStockWatcher(input: any): ProductStockWatcherCon
   const cadenceMinutes = Math.max(15, Math.min(24 * 60, Math.floor(Number(input?.cadenceMinutes || 60))))
   if (!title || !productUrl || !variant) return null
   return { title, productUrl, variant, addToCart, delivery, cadenceMinutes }
+}
+
+export function normalizeWebPageWatcher(input:any): WebPageWatcherCondition | null {
+  const title=String(input?.title||'Page watch').replace(/\s+/g,' ').trim().slice(0,180)
+  let url=''
+  try{
+    const u=new URL(String(input?.url||'').trim())
+    if(['http:','https:'].includes(u.protocol)){u.hash='';url=u.toString()}
+  }catch{}
+  const watch=String(input?.watch||'title')==='content'?'content':'title'
+  const delivery=normalizeDelivery(input?.delivery)
+  const cadenceMinutes=Math.max(60,Math.min(24*60,Math.floor(Number(input?.cadenceMinutes||60))))
+  if(!title||!url)return null
+  return {title,url,watch,delivery,cadenceMinutes}
 }
 
 export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition | null {
@@ -165,6 +187,25 @@ export async function createProductStockWatcher(params: {
     next_check_at:new Date().toISOString(),
   }).select('id, type, condition_json, cadence_minutes, active, next_check_at, created_at').single()
   if (error || !data) throw new Error(`agent_watcher_create_failed:${error?.message || 'unknown'}`)
+  return data
+}
+
+export async function createWebPageWatcher(params:{
+  telegramId:string
+  condition:WebPageWatcherCondition
+  goalId?:string|null
+}) {
+  const {data,error}=await supabaseAdmin.from('agent_watchers').insert({
+    telegram_id:params.telegramId,
+    goal_id:params.goalId||null,
+    type:'web_page',
+    condition_json:params.condition,
+    cadence_minutes:params.condition.cadenceMinutes,
+    active:true,
+    last_state_json:{baseline:null,lastTitle:null,lastContentHash:null,quietChecks:0},
+    next_check_at:new Date().toISOString(),
+  }).select('id,type,condition_json,cadence_minutes,active,next_check_at,created_at').single()
+  if(error||!data)throw new Error(`agent_watcher_create_failed:${error?.message||'unknown'}`)
   return data
 }
 
@@ -251,7 +292,7 @@ async function activeWebWatchCount(telegramId:string) {
   const { count, error } = await supabaseAdmin.from('agent_watchers')
     .select('id', { count:'exact', head:true })
     .eq('telegram_id', telegramId)
-    .in('type', ['web_search','product_stock'])
+    .in('type', ['web_search','web_page','product_stock'])
     .eq('active', true)
   if (error) throw new Error(`agent_watcher_count_failed:${error.message}`)
   return Math.max(1, count || 1)
@@ -691,6 +732,121 @@ async function processProductStockWatcher(watcher:any, now:Date) {
   return { triggered:true, failed:false }
 }
 
+function stablePageContent(value:unknown){
+  return String(value||'')
+    .toLowerCase()
+    .replace(/\b(?:last\s+updated|updated|generated|refreshed)\s*(?:at|on)?\s*[:=-]?\s*[^\n]{0,40}/gi,' ')
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?\b/gi,' ')
+    .replace(/\b\d{4}-\d{2}-\d{2}(?:t\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?z?)?\b/gi,' ')
+    .replace(/\b\d+\s+(?:seconds?|minutes?|hours?)\s+ago\b/gi,' ')
+    .replace(/\s+/g,' ')
+    .trim()
+    .slice(0,12000)
+}
+
+function pageContentMateriallyChanged(previous:string,current:string){
+  if(!previous||!current)return previous!==current
+  if(previous===current)return false
+  const a=new Set(previous.split(/\s+/).filter(Boolean))
+  const b=new Set(current.split(/\s+/).filter(Boolean))
+  if(!a.size||!b.size)return previous!==current
+  let intersection=0
+  for(const token of a)if(b.has(token))intersection++
+  const union=new Set([...a,...b]).size
+  const similarity=union?intersection/union:1
+  return similarity<0.94
+}
+
+async function processWebPageWatcher(watcher:any,now:Date){
+  const condition=normalizeWebPageWatcher(watcher.condition_json)
+  if(!condition){
+    await supabaseAdmin.from('agent_watchers').update({active:false,last_checked_at:now.toISOString(),next_check_at:null,last_state_json:{error:'invalid_condition'},updated_at:now.toISOString()}).eq('id',watcher.id)
+    return {triggered:false,failed:true}
+  }
+
+  const telegramId=String(watcher.telegram_id)
+  const allowance=await checkCostAllowance(telegramId,COST_ESTIMATES_PAISE.secure_compute_minute)
+  if(!allowance.allowed){
+    const deferMinutes=allowance.state?.maxWatcherCadenceMinutes||1440
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:deferMinutes,last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime()+deferMinutes*60_000).toISOString(),
+      last_state_json:{...(watcher.last_state_json||{}),costGuard:'deferred',costGuardReason:allowance.reason||'budget'},
+      updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:false}
+  }
+
+  let browser:any
+  try{
+    browser=await runSecureBrowser({
+      userId:telegramId,
+      url:condition.url,
+      objective:condition.watch==='title'
+        ? 'Read only. Inspect this exact page and report its current document title. Do not click, fill, submit, log in, or navigate away.'
+        : 'Read only. Inspect this exact page and report its visible content. Do not click, fill, submit, log in, or navigate away.',
+      mode:'read',
+      objectiveTrust:'USER_INSTRUCTION',
+    })
+    await recordCostEvent({telegramId,category:'secure_compute_minute',metadata:{source:'background_gogo',watcher_id:String(watcher.id),watcher_type:'web_page'}})
+  }catch(err:any){
+    const cadence=Math.max(120,condition.cadenceMinutes)
+    await supabaseAdmin.from('agent_watchers').update({
+      last_checked_at:now.toISOString(),next_check_at:new Date(now.getTime()+cadence*60_000).toISOString(),
+      last_state_json:{...(watcher.last_state_json||{}),lastError:String(err?.message||'browser_failed').slice(0,300),lastErrorAt:now.toISOString()},
+      updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:false}
+  }
+
+  if(!browser||browser.status==='failed'||browser.status==='blocked'){
+    const cadence=Math.max(120,condition.cadenceMinutes)
+    await supabaseAdmin.from('agent_watchers').update({
+      last_checked_at:now.toISOString(),next_check_at:new Date(now.getTime()+cadence*60_000).toISOString(),
+      last_state_json:{...(watcher.last_state_json||{}),lastError:browser?.blockReason||browser?.status||'browser_unverified',lastErrorAt:now.toISOString()},
+      updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:false}
+  }
+
+  const currentTitle=String(browser.title||'').replace(/\s+/g,' ').trim().slice(0,500)
+  const stableContent=stablePageContent(browser.pageText||'')
+  const contentHash=createHash('sha256').update(stableContent).digest('hex')
+  const state:any=watcher.last_state_json||{}
+  const baselineMissing=!state.baseline
+  const changed=condition.watch==='title'
+    ? (!baselineMissing && String(state.lastTitle||'')!==currentTitle)
+    : (!baselineMissing && pageContentMateriallyChanged(String(state.lastStableContent||''),stableContent))
+
+  if(changed){
+    const what=condition.watch==='title'
+      ? `Page title changed from “${String(state.lastTitle||'').slice(0,180)}” to “${currentTitle.slice(0,180)}”.`
+      : 'The visible page content changed materially since the last verified check.'
+    await supabaseAdmin.from('agent_ideas').insert({
+      telegram_id:telegramId,title:condition.title,reason:what,
+      expected_value:`${condition.url}\n${what}`.slice(0,900),value_score:0.9,
+      action_label:'Review page',source_refs:[{type:'watcher',id:String(watcher.id)},{type:'url',url:condition.url}],status:'new',
+    }).then(({error})=>{if(error)console.error('AGENT_PAGE_WATCH_IDEA_FAILED:',error.message)})
+    await sendWhatsAppIfWanted(telegramId,condition.delivery,`🌐 *Gogo noticed a page change*\n\n${condition.title}\n${what}\n\n${condition.url}`)
+      .catch(err=>console.error('AGENT_PAGE_WATCH_WHATSAPP_FAILED:',err?.message||err))
+    await writeActivity(telegramId,`Background Gogo detected a page change: ${condition.title}`,{watcher_id:watcher.id,type:'web_page',url:condition.url,watch:condition.watch,title:currentTitle})
+  }
+
+  const quietChecks=changed?0:Math.max(0,Number(state.quietChecks||0))+1
+  const cadence=Math.min(24*60,changed?condition.cadenceMinutes:Math.max(condition.cadenceMinutes,quietChecks>=4?240:quietChecks>=2?120:condition.cadenceMinutes))
+  await supabaseAdmin.from('agent_watchers').update({
+    cadence_minutes:cadence,condition_json:{...condition,cadenceMinutes:cadence},
+    last_checked_at:now.toISOString(),next_check_at:new Date(now.getTime()+cadence*60_000).toISOString(),
+    last_state_json:{
+      ...state,baseline:true,lastTitle:currentTitle,lastContentHash:contentHash,lastStableContent:stableContent,quietChecks,
+      baselineAt:state.baselineAt||now.toISOString(),lastChangedAt:changed?now.toISOString():state.lastChangedAt||null,
+      lastVerifiedAt:now.toISOString(),lastError:null,
+    },
+    updated_at:now.toISOString(),
+  }).eq('id',watcher.id)
+  return {triggered:changed,failed:false}
+}
+
 async function processWebSearchWatcher(watcher:any, now:Date) {
   const condition = normalizeWebSearchWatcher(watcher.condition_json)
   if (!condition) {
@@ -868,6 +1024,8 @@ export async function processDueAgentWatchers(limit = 40) {
         ? await processDeadlineWatcher(watcher, now)
         : watcher.type === 'web_search'
           ? await processWebSearchWatcher(watcher, now)
+          : watcher.type === 'web_page'
+            ? await processWebPageWatcher(watcher, now)
           : watcher.type === 'product_stock'
             ? await processProductStockWatcher(watcher, now)
             : watcher.type === 'email_triage'

@@ -40,11 +40,14 @@ export function buildJevShadowRequest(params: {
   needsContext: boolean
   focusKind: string
   focusSummary?: string | null
+  recentContext?: string | null
 }) {
   const rawText = String(params.text || '').slice(0, 1800)
   const rawSummary = String(params.focusSummary || '').slice(0, 500)
+  const rawRecent = String(params.recentContext || '').slice(0, 2400)
   const safeText = isSecretShapedMemory(rawText) ? '[sensitive turn withheld from TypeSafe]' : redactSecretShapedText(rawText)
   const safeSummary = isSecretShapedMemory(rawSummary) ? '[sensitive context withheld from TypeSafe]' : redactSecretShapedText(rawSummary)
+  const safeRecent = isSecretShapedMemory(rawRecent) ? '[sensitive recent context withheld from TypeSafe]' : redactSecretShapedText(rawRecent)
   return {
     model: JEV_SHADOW_MODEL,
     state: {
@@ -57,6 +60,7 @@ export function buildJevShadowRequest(params: {
         message_looks_contextual: Boolean(params.needsContext),
         current_focus_kind: String(params.focusKind || 'none').slice(0, 80),
         current_focus_summary: safeSummary || null,
+        recent_conversation: safeRecent || null,
       },
     },
     questions: buildJevShadowQuestions(),
@@ -106,12 +110,13 @@ export async function runJevShadow(params: {
   needsContext: boolean
   focusKind: string
   focusSummary?: string | null
+  recentContext?: string | null
   timeoutMs?: number
 }): Promise<JevShadowResult | null> {
   const apiKey = String(process.env.TYPESAFE_API_KEY || '').trim()
   if (!apiKey) return null
 
-  if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || ''))) {
+  if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || '')) || isSecretShapedMemory(String(params.recentContext || ''))) {
     return {
       ok: false,
       version: JEV_SHADOW_VERSION,

@@ -50,6 +50,19 @@ async function activeMission(actor:AgentActor){
   return data||null
 }
 
+async function recentConversation(actor:AgentActor){
+  const {data,error}=await supabaseAdmin.from('conversations')
+    .select('role,content,created_at')
+    .eq('telegram_id',actor.legacyTelegramId)
+    .order('created_at',{ascending:false})
+    .limit(8)
+  if(error)throw error
+  return (data||[]).slice().reverse().map((row:any)=>{
+    const role=String(row.role||'user')==='assistant'?'assistant':'user'
+    return `${role}: ${clean(row.content,360)}`
+  }).join('\n').slice(0,2400)
+}
+
 async function recentTrip(actor:AgentActor){
   const cutoff=new Date(Date.now()-48*60*60*1000).toISOString()
   const {data,error}=await supabaseAdmin.from('travel_tickets')
@@ -155,9 +168,9 @@ export async function observeShadowBrainTurn(params:{
 }):Promise<ShadowBrainObservation>{
   const classified=classifyAgentRequest(params.text)
   const contextual=shadowNeedsContext(params.text)
-  let mission:any=null,trip:any=null
+  let mission:any=null,trip:any=null,recentContext=''
   try{
-    [mission,trip]=await Promise.all([activeMission(params.actor),recentTrip(params.actor)])
+    [mission,trip,recentContext]=await Promise.all([activeMission(params.actor),recentTrip(params.actor),recentConversation(params.actor)])
   }catch(error:any){
     console.error('SHADOW_BRAIN_CONTEXT_FAILED:',clean(error?.message||error,180))
   }
@@ -180,9 +193,12 @@ export async function observeShadowBrainTurn(params:{
     currentCapability:observation.capability,
     currentActionFamily:observation.actionFamily,
     needsContext:observation.needsContext,
-    focusKind:observation.focusKind,
-    focusSummary:observation.focusSummary,
-    timeoutMs:300,
+    // Keep passive mission focus for existing Shadow Brain telemetry, but do not
+    // feed an unrelated stale mission to Jev unless this turn actually needs context.
+    focusKind:observation.needsContext?observation.focusKind:'none',
+    focusSummary:observation.needsContext?observation.focusSummary:null,
+    recentContext,
+    timeoutMs:900,
   }).catch((err:any)=>({
     ok:false,version:'jev-shadow-v1',model:'jev-latest',latencyMs:0,
     intent:{choice:null,confidence:null,probabilities:{}},

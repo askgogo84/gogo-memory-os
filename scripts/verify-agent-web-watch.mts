@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { parseFlightIdentifier, parseInboxTriageWatchCommand, parseProductStockWatchCommand, parseWebWatchCommand } from '../lib/agent/watch-command'
-import { assessProductAvailabilityText, inboxActionStep, normalizeProductStockWatcher, normalizeWebSearchWatcher } from '../lib/agent/watchers'
+import { parseFlightIdentifier, parseInboxTriageWatchCommand, parseProductStockWatchCommand, parseWebPageWatchCommand, parseWebWatchCommand } from '../lib/agent/watch-command'
+import { assessProductAvailabilityText, inboxActionStep, normalizeProductStockWatcher, normalizeWebPageWatcher, normalizeWebSearchWatcher } from '../lib/agent/watchers'
 import {
   assessWebWatchResult,
   canonicalWatcherUrl,
@@ -36,6 +36,30 @@ for (const c of cases) {
 assert.equal(parseWebWatchCommand('What is on my calendar?'), null)
 assert.equal(parseWebWatchCommand('Watch a movie tonight'), null)
 assert.equal(parseWebWatchCommand('monitor'), null)
+
+
+const pageTitleWatch=parseWebPageWatchCommand('Monitor https://example.com and tell me if the page title changes.')
+assert.ok(pageTitleWatch)
+assert.equal(pageTitleWatch.url,'https://example.com/')
+assert.equal(pageTitleWatch.watch,'title')
+assert.equal(pageTitleWatch.delivery,'both')
+assert.ok(pageTitleWatch.cadenceMinutes>=60)
+
+const pageContentWatch=parseWebPageWatchCommand('Watch https://example.com/news and alert me if the page changes')
+assert.ok(pageContentWatch)
+assert.equal(pageContentWatch.watch,'content')
+assert.equal(parseWebPageWatchCommand('Open https://example.com now'),null)
+
+const normalizedPage=normalizeWebPageWatcher({
+  title:'Example page',
+  url:'https://example.com/#top',
+  watch:'title',
+  cadenceMinutes:2,
+  delivery:'whatsapp',
+})
+assert.ok(normalizedPage)
+assert.equal(normalizedPage.url,'https://example.com/')
+assert.equal(normalizedPage.cadenceMinutes,60)
 
 assert.ok(parseInboxTriageWatchCommand('Quietly read my mail and give me steps to take'))
 assert.ok(parseInboxTriageWatchCommand('Watch my inbox and tell me what needs my attention'))
