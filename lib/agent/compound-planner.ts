@@ -164,14 +164,16 @@ async function tryRunReminderMutation(params: { actor: AgentActor; surface: Agen
     const { data: recent } = await supabaseAdmin.from('conversations')
       .select('content,role,created_at').eq('telegram_id', params.actor.legacyTelegramId)
       .order('created_at', { ascending: false }).limit(8)
-    const quoted = (recent || []).map((r:any)=>String(r.content||''))
-      .map((s:string)=>s.match(/["“]([^"”]+)["”]/)?.[1]).find(Boolean)
-    if (quoted) resolvedTarget = quoted
-    else {
-      const reminderMention = (recent || []).map((r:any)=>String(r.content||''))
-        .map((s:string)=>s.match(/(?:your\s+)?(.+?)\s+reminder\s+is\s+set/i)?.[1]).find(Boolean)
-      if (reminderMention) resolvedTarget = cleanListItem(reminderMention)
-    }
+    // Resolve pronouns from the newest reminder-specific turn only. Never scan for
+    // an arbitrary recent quoted string: an older calendar title (e.g. an E2E meeting)
+    // can otherwise steal "it" from the reminder created one turn ago.
+    const reminderSpecific = (recent || []).map((r:any)=>String(r.content||'')).map((s:string)=>{
+      const set = s.match(/reminder\s+(?:set|updated)[\s\S]*?\n\n([^\n]+?)(?:\s+(?:today|tomorrow)\s+at|\nNew time:|$)/i)?.[1]
+      if (set) return cleanListItem(set)
+      const explicit = s.match(/(?:remind\s+me\s+(?:today|tomorrow)?\s*(?:at\s+[^\s]+\s+)?to\s+)(.+?)[.?!]*$/i)?.[1]
+      return explicit ? cleanListItem(explicit) : null
+    }).find(Boolean)
+    if (reminderSpecific) resolvedTarget = reminderSpecific
   }
   if (!resolvedTarget || /^(?:it|that|this)$/i.test(resolvedTarget)) {
     return { runId: 'none', status: 'failed', capability: 'reminders', risk: 'low',
