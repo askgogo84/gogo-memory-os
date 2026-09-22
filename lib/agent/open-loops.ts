@@ -507,6 +507,45 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
   return 'ok' as const
 }
 
+async function syncMeetingActionMemories(telegramId:string){
+  const since=new Date(Date.now()-30*86400_000).toISOString()
+  const {data,error}=await supabaseAdmin.from('memories')
+    .select('id,content,created_at')
+    .eq('telegram_id',Number(telegramId))
+    .gte('created_at',since)
+    .order('created_at',{ascending:false})
+    .limit(120)
+  if(error)throw new Error(`open_loop_meeting_memory_read_failed:${error.message}`)
+  let captured=0
+  for(const row of data||[]){
+    let parsed:any=null
+    try{parsed=JSON.parse(String(row.content||''))}catch{continue}
+    if(parsed?.type!=='followup_state'||parsed?.kind!=='meeting_action_items')continue
+    const items=Array.isArray(parsed?.payload?.items)?parsed.payload.items:[]
+    for(let index=0;index<items.length;index++){
+      const item=items[index]
+      const message=clean(item?.message,220)
+      if(!message)continue
+      const due=String(item?.remindAtIso||'').trim()
+      await upsertOpenLoop({
+        telegramId,kind:'meeting_action',
+        title:message,
+        summary:`Meeting action item: ${message}`,
+        priority:0.87,
+        dueAt:Number.isFinite(Date.parse(due))?due:null,
+        nextCheckAt:Number.isFinite(Date.parse(due))?due:isoPlusHoursFrom(row.created_at,24),
+        sourceType:'meeting_action',
+        sourceId:`${row.id}:${index}`,
+        sourceRefs:[{type:'meeting_action_state',id:String(row.id),index}],
+        evidence:{memory_id:String(row.id),item_index:index},
+        observedAt:row.created_at||null,
+      })
+      captured++
+    }
+  }
+  return captured
+}
+
 async function syncConversationSignals(telegramId:string){
   const {data:consent}=await supabaseAdmin.from('user_consent_settings')
     .select('memory_enabled').eq('telegram_id',Number(telegramId)).maybeSingle()
@@ -563,6 +602,7 @@ export async function syncOpenLoopsForUser(telegramId:string|number){
     syncRuns(tg,current),
     syncLifeActions(tg,current),
     syncGmailAttention(tg,current),
+    syncMeetingActionMemories(tg),
     syncConversationSignals(tg),
   ])
   const failures=results.filter((x):x is PromiseRejectedResult=>x.status==='rejected').map(x=>clean(x.reason?.message||x.reason,180))
@@ -716,16 +756,17 @@ export async function handleOpenLoopResolution(params:{actor:AgentActor;text:str
 
 export async function processOpenLoopScoutPass(limit=80){
   const since=new Date(Date.now()-72*3600_000).toISOString()
-  const [conversationResult,approvalResult,runResult,lifeResult,followupResult,userResult]=await Promise.all([
+  const [conversationResult,approvalResult,runResult,lifeResult,followupResult,userResult,memoryResult]=await Promise.all([
     supabaseAdmin.from('conversations').select('telegram_id').eq('role','user').gte('created_at',since).order('created_at',{ascending:false}).limit(3000),
     supabaseAdmin.from('agent_approvals').select('telegram_id').eq('status','pending').limit(1000),
     supabaseAdmin.from('agent_runs').select('telegram_id').in('status',['waiting_approval','paused','outcome_unknown']).limit(1000),
     supabaseAdmin.from('life_event_actions').select('telegram_id').in('status',['waiting_approval','blocked']).limit(1000),
     supabaseAdmin.from('followups').select('whatsapp_id').in('status',['pending','fired']).limit(1000),
-    supabaseAdmin.from('users').select('telegram_id,whatsapp_id,gmail_connected').not('whatsapp_id','is',null).limit(3000),
+    supabaseAdmin.from('users').select('telegram_id,whatsapp_id,gmail_connected').limit(3000),
+    supabaseAdmin.from('memories').select('telegram_id').gte('created_at',since).order('created_at',{ascending:false}).limit(3000),
   ])
   const ids=new Set<string>()
-  for(const result of [conversationResult,approvalResult,runResult,lifeResult]){
+  for(const result of [conversationResult,approvalResult,runResult,lifeResult,memoryResult]){
     if(result.error)console.error('OPEN_LOOP_SCOUT_CANDIDATE_FAILED:',result.error.message)
     for(const row of result.data||[])if((row as any).telegram_id)ids.add(String((row as any).telegram_id))
   }
