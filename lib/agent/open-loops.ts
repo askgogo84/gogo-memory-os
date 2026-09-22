@@ -375,6 +375,25 @@ function looksLikeIncomingAction(text:string){
   return /\b(?:action required|please|could you|can you|need you to|kindly|confirm|approve|approval|review|sign|send|share|reply|respond|provide|submit|complete|urgent|by today|by tomorrow|deadline)\b/i.test(text)
 }
 
+async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string,keepFingerprint:string|null){
+  const {data,error}=await supabaseAdmin.from('agent_open_loops')
+    .select('id,fingerprint')
+    .eq('telegram_id',telegramId)
+    .eq('source_type','gmail_thread')
+    .eq('source_id',threadId)
+    .eq('status','active')
+    .limit(10)
+  if(error)throw new Error(`open_loop_gmail_existing_failed:${error.message}`)
+  const ids=(data||[]).filter((row:any)=>!keepFingerprint||String(row.fingerprint)!==keepFingerprint).map((row:any)=>row.id)
+  if(!ids.length)return 0
+  const at=new Date().toISOString()
+  const {error:updateError}=await supabaseAdmin.from('agent_open_loops').update({
+    status:'resolved',resolved_at:at,updated_at:at,
+  }).in('id',ids).eq('telegram_id',telegramId).eq('status','active')
+  if(updateError)throw new Error(`open_loop_gmail_resolve_failed:${updateError.message}`)
+  return ids.length
+}
+
 async function syncGmailAttention(telegramId:string,current:Set<string>){
   const [{data:user,error:userError},{data:consent,error:consentError}]=await Promise.all([
     supabaseAdmin.from('users')
@@ -424,6 +443,7 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
         observedAt:new Date(Number(last.internalDate||Date.now())).toISOString(),
       }
       const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
+      await resolveOtherGmailLoopsForThread(telegramId,String(thread.id),fp)
       continue
     }
 
@@ -441,7 +461,13 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
         observedAt:new Date(Number(last.internalDate||Date.now())).toISOString(),
       }
       const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
+      await resolveOtherGmailLoopsForThread(telegramId,String(thread.id),fp)
+      continue
     }
+
+    // We successfully inspected this thread and its latest state no longer
+    // represents a waiting/reply loop. Resolve only this verified thread.
+    await resolveOtherGmailLoopsForThread(telegramId,String(thread.id),null)
   }
   return 'ok' as const
 }
@@ -495,7 +521,7 @@ async function resolveMissingSourceLoops(telegramId:string,current:Set<string>,s
 export async function syncOpenLoopsForUser(telegramId:string|number){
   const tg=String(telegramId)
   const current=new Set<string>()
-  const sourceTypes=['followup','approval','agent_run','life_event_action','gmail_thread'] as const
+  const sourceTypes=['followup','approval','agent_run','life_event_action'] as const
   const results=await Promise.allSettled([
     syncFollowups(tg,current),
     syncApprovals(tg,current),
@@ -505,12 +531,7 @@ export async function syncOpenLoopsForUser(telegramId:string|number){
     syncConversationSignals(tg),
   ])
   const failures=results.filter((x):x is PromiseRejectedResult=>x.status==='rejected').map(x=>clean(x.reason?.message||x.reason,180))
-  const successfulSourceTypes=sourceTypes.filter((sourceType,index)=>{
-    const result=results[index]
-    if(result?.status!=='fulfilled')return false
-    if(sourceType==='gmail_thread'&&result.value==='skip')return false
-    return true
-  })
+  const successfulSourceTypes=sourceTypes.filter((_,index)=>results[index]?.status==='fulfilled')
   // Reconcile only sources that were read successfully. A transient provider/DB
   // failure must never make an existing open loop disappear.
   const resolved=await resolveMissingSourceLoops(tg,current,[...successfulSourceTypes]).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
