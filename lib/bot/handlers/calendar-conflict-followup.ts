@@ -139,6 +139,15 @@ async function addCalendarEventFromPayload(telegramId: number, payload: Calendar
     )
   }
 
+  if (!created?.id || created?.verification === 'unknown') {
+    console.error('GCAL_CONFLICT_CREATE_NOT_VERIFIED:', { id: created?.id || null, verification: created?.verification || null })
+    return (
+      `⚠️ *Calendar write not verified*\n\n` +
+      `Google may have received the moved event, but I couldn't verify it in your primary calendar.\n\n` +
+      `I won't claim it was added, and I won't retry automatically.`
+    )
+  }
+
   await logUsage(telegramId, 'calendar_event', {
     title: payload.title,
     startIso: payload.startIso,

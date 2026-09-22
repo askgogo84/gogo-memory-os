@@ -449,6 +449,17 @@ async function createEventFromPayload(
     )
   }
 
+  // A POST can return an id while the mandatory provider read-back is unknown.
+  // That is not verified success and must never produce success-shaped copy.
+  if (!created?.id || created?.verification === 'unknown') {
+    console.error('GCAL_CREATE_NOT_VERIFIED:', { id: created?.id || null, verification: created?.verification || null })
+    return (
+      `⚠️ *Calendar write not verified*\n\n` +
+      `Google may have received the request, but I couldn't verify the event in your primary calendar.\n\n` +
+      `I won't claim it was added, and I won't retry automatically.`
+    )
+  }
+
   await logUsage(telegramId, 'calendar_event', {
     title: payload.title,
     startIso: payload.startIso,
