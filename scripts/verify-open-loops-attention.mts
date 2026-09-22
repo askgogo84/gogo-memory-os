@@ -194,3 +194,8 @@ console.log('Attention numbered actions are snapshot-bound and snooze truth matc
 assert.match(openLoops,/snooze 2 for 4 hours/)
 assert.match(openLoops,/draft follow-up for 2/)
 console.log('Attention scout page rotation + action discoverability verified')
+
+assert.match(openLoops,/String\(row\?\.status\)==='paused'&&age>24\*3600_000/)
+assert.match(autonomyStatus,/String\(run\.status\)!=='paused'/)
+assert.match(autonomyStatus,/24\*3600_000/)
+console.log('Historical paused missions are excluded from Attention and live status after 24h')
