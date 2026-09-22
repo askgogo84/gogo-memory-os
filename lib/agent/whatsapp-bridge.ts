@@ -188,6 +188,56 @@ async function tryCreateGoal(actor: AgentActor, text: string): Promise<WhatsAppA
   }
 }
 
+export async function tryRunWhatsAppJevSpecialist(params:{
+  user:ResolvedUser
+  text:string
+  messageId?:string|number|null
+  intent:'watcher'|'reminder_read'|'reminder_mutation'|'travel_research'|'browser_action'
+}):Promise<WhatsAppAgentResult|null>{
+  const actor=actorFromResolvedUser(params.user)
+  if(!actor)return null
+
+  if(params.intent==='reminder_read'||params.intent==='reminder_mutation'){
+    const reminder=await tryRunExpiryReminderPlan({actor,surface:'whatsapp',text:params.text,messageId:params.messageId})
+    return reminder ? {...reminder,handledBy:String(reminder.handledBy||'compound-plan')} : null
+  }
+
+  if(params.intent==='watcher'){
+    const stop=await tryStopWatcherFromCommand({actor,text:params.text})
+    if(stop)return {...stop,handledBy:String(stop.handledBy||'watcher-stop')}
+    const status=await tryGetWatcherStatusFromCommand({actor,text:params.text})
+    if(status)return {...status,handledBy:String(status.handledBy||'watcher-status')}
+    const stockStatus=await tryGetProductStockWatchStatusFromCommand({actor,text:params.text})
+    if(stockStatus)return {...stockStatus,handledBy:String(stockStatus.handledBy||'product-stock-watch-status')}
+    const inbox=await tryCreateInboxTriageWatchFromCommand({actor,surface:'whatsapp',text:params.text})
+    if(inbox)return {...inbox,handledBy:String(inbox.handledBy||'inbox-triage-watch')}
+    const flight=await tryCreateFlightWatchFromCommand({actor,surface:'whatsapp',text:params.text})
+    if(flight)return {...flight,handledBy:String(flight.handledBy||'flight-watch')}
+    const product=await tryCreateProductStockWatchFromCommand({actor,surface:'whatsapp',text:params.text})
+    if(product)return {...product,handledBy:String(product.handledBy||'product-stock-watch')}
+    const page=await tryCreateWebPageWatchFromCommand({actor,surface:'whatsapp',text:params.text})
+    if(page)return {...page,handledBy:String(page.handledBy||'web-page-watch')}
+    const web=await tryCreateWebWatchFromCommand({actor,surface:'whatsapp',text:params.text})
+    return web ? {...web,handledBy:String(web.handledBy||'background-web-watch')} : null
+  }
+
+  if(params.intent==='travel_research'){
+    if(!shouldPreferSpecialistTravel(params.text))return null
+    const travel=await tryRunTravelResearch({actor,surface:'whatsapp',text:params.text})
+    if(!travel)return null
+    const hardened=await hardenTravelResearchResult(travel,params.text)
+    return {...hardened,handledBy:String(hardened.handledBy||'travel-research')}
+  }
+
+  const browser=await withWhatsAppBrowserBudget(actor,tryRunBrowserCommand({actor,surface:'whatsapp',text:params.text}))
+  if(!browser)return null
+  return {
+    ...(browser as any),
+    text:`${(browser as any).text||''}${(browser as any).status==='waiting_approval'?'\n\nReply *APPROVE* to continue or *REJECT* to stop.':''}`,
+    handledBy:String((browser as any).handledBy||'secure-browser'),
+  }
+}
+
 export async function tryRunWhatsAppAgent(params: {
   user: ResolvedUser
   text: string
