@@ -177,3 +177,7 @@ assert.match(bridge,/export async function tryRunWhatsAppAttentionCommand/)
 assert.match(webhook,/tryRunWhatsAppAttentionCommand\(/)
 assert.doesNotMatch(webhook,/const attentionAgent = await tryRunWhatsAppAgent\(/)
 console.log('Attention first-refusal is isolated from unrelated agent specialists')
+
+assert.match(openLoops,/const draftable=target\.kind==='followup'\|\|target\.kind==='waiting_on'\|\|sourceType==='gmail_thread'/)
+assert.match(openLoops,/I won't invent a follow-up recipient/)
+console.log('Attention follow-up drafts are limited to loops with a real counterpart')
