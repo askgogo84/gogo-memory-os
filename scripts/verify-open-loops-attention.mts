@@ -87,7 +87,7 @@ const openLoops=readFileSync('lib/agent/open-loops.ts','utf8')
 assert.match(openLoops,/successfulSourceTypes/)
 assert.match(openLoops,/isoPlusHoursFrom\(row\.created_at,24\)/)
 assert.match(openLoops,/open_loops_list_shown/)
-assert.match(openLoops,/bucket%sorted\.length/)
+assert.match(openLoops,/\(bucket\*pageSize\)%sorted\.length/)
 console.log('Open-loop reconciliation, context-safe resolution and fair rotation verified')
 
 const gmail=readFileSync('lib/services/google-gmail.ts','utf8')
@@ -190,3 +190,7 @@ assert.match(openLoops,/\['approval','agent_run','life_event_action','meeting_ac
 assert.match(openLoops,/open_loop_followup_snooze_failed/)
 assert.match(openLoops,/check_at:until/)
 console.log('Attention numbered actions are snapshot-bound and snooze truth matches notification ownership')
+
+assert.match(openLoops,/snooze 2 for 4 hours/)
+assert.match(openLoops,/draft follow-up for 2/)
+console.log('Attention scout page rotation + action discoverability verified')
