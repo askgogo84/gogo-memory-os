@@ -25,3 +25,13 @@ assert.match(bridge,/tryGetAutonomyStatus/)
 assert.match(bridge,/tryGetConnectionStatus/)
 
 console.log('Autonomy Pulse + live status verification passed')
+
+assert.match(pulse,/stale_provider_access_limited/)
+assert.match(pulse,/background_browser_resume_expired/)
+assert.match(pulse,/fromMemoryTwin&&score<90/)
+assert.match(pulse,/!fromMemoryTwin&&score<85/)
+assert.match(pulse,/hasRecentWhatsAppSession/)
+assert.match(pulse,/sendWhatsApp\(String\(user\.whatsapp_id\),message\)/)
+assert.match(pulse,/sendWhatsAppReminderTemplate/)
+assert.match(pulse,/delivery_mode:activeSession\?'freeform':'template'/)
+console.log('Autonomy Pulse signal-quality and delivery-window verification passed')
