@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
+import { sendWhatsApp, sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
 
 const PULSE_COOLDOWN_MINUTES=180
 const MAX_USERS_PER_PASS=80
@@ -68,7 +68,7 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
   const since48=new Date(Date.now()-48*3600_000).toISOString()
   const [{data:approvals},{data:ideas},{data:runs},{data:events}]=await Promise.all([
     supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at').eq('telegram_id',telegramId).eq('status','pending').order('requested_at',{ascending:false}).limit(3),
-    supabaseAdmin.from('agent_ideas').select('id,title,reason,expected_value,value_score,action_label,created_at,snoozed_until').eq('telegram_id',telegramId).eq('status','new').order('value_score',{ascending:false}).limit(5),
+    supabaseAdmin.from('agent_ideas').select('id,title,reason,expected_value,value_score,action_label,created_at,snoozed_until,source_refs').eq('telegram_id',telegramId).eq('status','new').order('value_score',{ascending:false}).limit(8),
     supabaseAdmin.from('agent_runs').select('id,status,title,summary,updated_at,error').eq('telegram_id',telegramId).in('status',['waiting_approval','paused','outcome_unknown','failed']).gte('updated_at',since48).order('updated_at',{ascending:false}).limit(6),
     supabaseAdmin.from('life_events').select('id,event_type,title,start_at,location,lifecycle_state,next_action_at').eq('telegram_id',telegramId).gte('start_at',nowIso).lte('start_at',future72).order('start_at',{ascending:true}).limit(5),
   ])
@@ -84,8 +84,19 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     const where=clean(e.location,100)
     items.push({key:`event:${e.id}:${e.start_at}`,score,line:`✈️ *Upcoming*: ${clean(e.title,150)} — ${when}${where?` · ${where}`:''}`,kind:'life_event'})
   }
+  const suppressedRunErrors=new Set([
+    'stale_provider_access_limited',
+    'background_browser_resume_expired',
+    'stale_run_recovered',
+    'background_browser_actor_missing',
+  ])
   for(const r of runs||[]){
     if(String(r.status)==='waiting_approval')continue
+    const errorCode=clean(r.error,160)
+    if(suppressedRunErrors.has(errorCode))continue
+    const ageHours=(Date.now()-Date.parse(String(r.updated_at||0)))/3600_000
+    if(String(r.status)==='failed'&&ageHours>6)continue
+    if(String(r.status)==='paused'&&ageHours>24)continue
     const score=String(r.status)==='outcome_unknown'?92:String(r.status)==='failed'?86:80
     const label=String(r.status)==='outcome_unknown'?'needs verification':String(r.status)==='failed'?'hit a blocker':'is paused'
     items.push({key:`run:${r.id}:${r.status}`,score,line:`🧠 *${clean(r.title,150)}* ${label}. ${clean(r.summary,190)}`,kind:'run'})
@@ -94,7 +105,12 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
   for(const idea of ideas||[]){
     if(idea.snoozed_until && Date.parse(String(idea.snoozed_until))>now)continue
     const score=Math.round(Math.max(0,Math.min(1,Number(idea.value_score||0.75)))*100)
-    if(score<78)continue
+    const refs=Array.isArray(idea.source_refs)?idea.source_refs:[]
+    const fromMemoryTwin=refs.some((ref:any)=>String(ref?.type||'')==='memory_twin')
+    // Memory Twin suggestions are useful in the dashboard, but only exceptionally
+    // strong ones should interrupt the user proactively.
+    if(fromMemoryTwin&&score<90)continue
+    if(!fromMemoryTwin&&score<85)continue
     items.push({key:`idea:${idea.id}`,score,line:`💡 *${clean(idea.title,150)}*: ${clean(idea.reason||idea.expected_value,200)}`,kind:'idea'})
   }
 
@@ -102,6 +118,23 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
   for(const item of items.sort((a,b)=>b.score-a.score))if(!dedup.has(item.key))dedup.set(item.key,item)
   const top=Array.from(dedup.values()).slice(0,3)
   return {items:top,fingerprint:fingerprint(top.map(x=>x.key))}
+}
+
+async function hasRecentWhatsAppSession(telegramId:string){
+  const cutoff=new Date(Date.now()-23*3600_000).toISOString()
+  const {data,error}=await supabaseAdmin.from('agent_activity')
+    .select('id')
+    .eq('telegram_id',telegramId)
+    .eq('event_type','shadow_brain_observation')
+    .contains('metadata_json',{surface:'whatsapp'})
+    .gte('created_at',cutoff)
+    .order('created_at',{ascending:false})
+    .limit(1)
+  if(error){
+    console.error('AUTONOMY_PULSE_SESSION_READ_FAILED:',error.message)
+    return false
+  }
+  return Boolean(data?.length)
 }
 
 async function sendPulse(telegramId:string){
@@ -127,20 +160,25 @@ async function sendPulse(telegramId:string){
     '',
     'Reply *what are you working on for me?* for the full live status.',
   ].join('\n')
-  // This cron can run outside WhatsApp's 24-hour service window, so proactive
-  // delivery must use an approved Utility template. Reuse the existing reminder
-  // template until a dedicated autonomy-pulse template is configured.
-  const templateLabel=[
-    'Gogo update',
-    ...pulse.items.map(item=>item.line.replace(/[*_]/g,'').replace(/^\S+\s*/,'').trim()),
-  ].join(' · ').slice(0,400)
-  const delivered=await sendWhatsAppReminderTemplate(String(user.whatsapp_id),templateLabel)
-  if(!delivered?.sid)throw new Error('autonomy_pulse_template_not_accepted')
+  // Use natural free-form copy while the WhatsApp service window is open.
+  // Outside the window we must fall back to an approved Utility template.
+  const activeSession=await hasRecentWhatsAppSession(telegramId)
+  let delivered:any=null
+  if(activeSession){
+    delivered=await sendWhatsApp(String(user.whatsapp_id),message)
+  }else{
+    const templateLabel=[
+      'Gogo update',
+      ...pulse.items.map(item=>item.line.replace(/[*_]/g,'').replace(/^\S+\s*/,'').trim()),
+    ].join(' · ').slice(0,400)
+    delivered=await sendWhatsAppReminderTemplate(String(user.whatsapp_id),templateLabel)
+  }
+  if(!delivered?.sid)throw new Error('autonomy_pulse_delivery_not_accepted')
   await supabaseAdmin.from('agent_activity').insert({
     telegram_id:telegramId,
     event_type:'autonomy_pulse_sent',
     message:'Background Gogo proactively surfaced high-signal items.',
-    metadata_json:{fingerprint:pulse.fingerprint,item_keys:pulse.items.map(x=>x.key),kinds:pulse.items.map(x=>x.kind)},
+    metadata_json:{fingerprint:pulse.fingerprint,item_keys:pulse.items.map(x=>x.key),kinds:pulse.items.map(x=>x.kind),delivery_mode:activeSession?'freeform':'template'},
   })
   return {sent:true,count:pulse.items.length}
 }
