@@ -857,7 +857,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
           console.error('OPEN_LOOP_JEV_CAPTURE_FAILED:', String(err?.message || err).slice(0,180))
         )
       }
-      await autoResolveOpenLoopsFromTurn({ actor:shadowActor, text }).catch((err:any)=>
+      await autoResolveOpenLoopsFromTurn({ actor:shadowActor, text, jev:brainObservation?.jev }).catch((err:any)=>
         console.error('OPEN_LOOP_AUTO_RESOLVE_FAILED:', String(err?.message || err).slice(0,180))
       )
     } catch (shadowError:any) {
