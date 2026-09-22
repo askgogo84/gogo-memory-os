@@ -100,3 +100,7 @@ assert.match(jevShadow,/attentionState/)
 assert.match(webhook,/captureJevOpenLoopFromTurn/)
 assert.match(webhook,/autoResolveOpenLoopsFromTurn\(\{ actor:shadowActor, text, jev:brainObservation\?\.jev \}\)/)
 console.log('Gmail read + Jev semantic Attention integration verified')
+
+assert.match(openLoops,/semantic_dedupe_score/)
+assert.match(openLoops,/open_loop_similarity_read_failed/)
+console.log('Conversational open-loop semantic dedupe wiring verified')
