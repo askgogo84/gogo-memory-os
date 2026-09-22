@@ -834,9 +834,11 @@ function draftFromOpenLoop(loop:any){
     topic=clean(loop?.summary,180)
       .replace(/^(?:meeting action item|waiting to follow up with)\s*:?\s*/i,'')
   }
+  topic=clean(topic,180)
+    .replace(/^(?:send|share|resend|reply|respond|confirm|review|deliver|update|call|get\s+back(?:\s+about)?)\s+(?:the\s+)?/i,'')
   if(!topic||topic.toLowerCase()===title.toLowerCase())topic=''
   const greeting=person?`Hi ${person},`:'Hi,'
-  const subject=topic?` on ${topic}`:''
+  const subject=topic?` regarding ${topic}`:''
   return `${greeting} just following up${subject}. Please let me know when you get a chance. Thanks.`
 }
 
