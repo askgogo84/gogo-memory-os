@@ -188,6 +188,7 @@ export async function observeShadowBrainTurn(params:{
     intent:{choice:null,confidence:null,probabilities:{}},
     actionMode:{choice:null,confidence:null,probabilities:{}},
     referentKind:{choice:null,confidence:null,probabilities:{}},
+    usage:{inputTokens:null,outputTokens:null},
     error:clean(err?.message||err,120),
   }))
 
@@ -215,6 +216,7 @@ export async function observeShadowBrainTurn(params:{
         intent:jev.intent,
         action_mode:jev.actionMode,
         referent_kind:jev.referentKind,
+        usage:jev.usage||null,
         error:jev.error||null,
       }:null,
     },
