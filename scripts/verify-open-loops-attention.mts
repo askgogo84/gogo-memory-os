@@ -124,3 +124,8 @@ assert.match(autonomyPulse,/open_loop_backoff_ids/)
 assert.match(autonomyPulse,/nextAttentionAt/)
 assert.match(autonomyStatus,/not\('source_type','in','\(approval,agent_run,life_event_action\)'\)/)
 console.log('Attention UX v2 query, dedupe and proactive backoff verification passed')
+
+assert.match(vercel,/"path": "\/api\/cron\/open-loops"[\s\S]*?"schedule": "5,35 \* \* \* \*"/)
+assert.match(vercel,/"path": "\/api\/cron\/autonomy-pulse"[\s\S]*?"schedule": "10,40 \* \* \* \*"/)
+assert.match(autonomyPulse,/next_check_at\.is\.null,next_check_at\.lte/)
+console.log('Attention scout-before-pulse scheduling and due-only candidate filtering verified')
