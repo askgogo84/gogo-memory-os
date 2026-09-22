@@ -701,7 +701,7 @@ async function recentOpenLoopListShown(telegramId:string|number){
 export async function listOpenLoops(telegramId:string|number,limit=10){
   await syncOpenLoopsForUser(telegramId)
   const {data,error}=await supabaseAdmin.from('agent_open_loops')
-    .select('id,kind,title,summary,priority,due_at,next_check_at,source_type,updated_at')
+    .select('id,kind,title,summary,priority,due_at,next_check_at,source_type,source_id,updated_at')
     .eq('telegram_id',String(telegramId)).eq('status','active')
     .order('priority',{ascending:false}).order('updated_at',{ascending:false}).limit(limit)
   if(error)throw new Error(`open_loop_list_failed:${error.message}`)
@@ -749,6 +749,19 @@ export async function handleOpenLoopResolution(params:{actor:AgentActor;text:str
   if(!target){
     return {runId:'open-loop-resolve-missing',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`I don't have an active open loop #${parsed.index}. Ask *what are my open loops?* to see the current list.`,handledBy:'open-loops'}
   }
+  const sourceType=String(target.source_type||'')
+  if(parsed.mode==='resolved'&&['approval','agent_run','life_event_action'].includes(sourceType)){
+    const guidance=sourceType==='approval'
+      ? 'This approval is still pending. Use *APPROVE* or *REJECT* so I can update the real action safely.'
+      : 'The underlying task is still active. I won’t mark it complete just because the attention item was numbered.'
+    return {runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`⚠️ ${guidance}\n\n${clean(target.title,180)}`,handledBy:'open-loops'}
+  }
+
+  if(parsed.mode==='resolved'&&sourceType==='followup'&&target.source_id){
+    const {error:followError}=await supabaseAdmin.from('followups').update({status:'resolved'}).eq('id',target.source_id).in('status',['pending','fired'])
+    if(followError)throw new Error(`open_loop_followup_resolve_failed:${followError.message}`)
+  }
+
   const at=new Date().toISOString()
   const {error}=await supabaseAdmin.from('agent_open_loops').update({
     status:parsed.mode,resolved_at:at,updated_at:at,
