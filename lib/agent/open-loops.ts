@@ -792,7 +792,7 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
   const attentionWording=/needs\s+(?:my\s+)?attention|should\s+i\s+follow\s+up/i.test(params.text)
   return {
     runId:'open-loops-list',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
-    text:`🧠 *${attentionWording?'What needs your attention':'Your open loops'}*\n\n${lines.join('\n')}\n\nSay *mark 2 done* to close one.`,
+    text:`🧠 *${attentionWording?'What needs your attention':'Your open loops'}*\n\n${lines.join('\n')}\n\nSay *mark 2 done* to close one, *snooze 2 for 4 hours* to pause nudges, or *draft follow-up for 2* for a follow-up item.`,
     handledBy:'open-loops',
   }
 }
@@ -1023,9 +1023,12 @@ export async function processOpenLoopScoutPass(limit=80){
   let processed=0,failed=0,resolved=0
   const failures:string[]=[]
   const sorted=Array.from(ids).sort()
+  const pageSize=Math.max(1,Math.min(limit,sorted.length||1))
   const bucket=Math.floor(Date.now()/(30*60_000))
-  const offset=sorted.length?bucket%sorted.length:0
-  const rotated=[...sorted.slice(offset),...sorted.slice(0,offset)].slice(0,Math.max(1,limit))
+  // Advance by one full page every pass. Advancing by only one user would make
+  // the tail of a large eligible population wait hundreds of cron cycles.
+  const offset=sorted.length?(bucket*pageSize)%sorted.length:0
+  const rotated=[...sorted.slice(offset),...sorted.slice(0,offset)].slice(0,pageSize)
   for(const telegramId of rotated){
     try{
       const result=await syncOpenLoopsForUser(telegramId)
