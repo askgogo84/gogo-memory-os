@@ -890,8 +890,29 @@ export async function handleOpenLoopAction(params:{actor:AgentActor;text:string}
     return {runId:'open-loop-action-missing',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`Open loop #${index} changed or closed since I showed the list. Ask *what needs my attention?* again before acting on a number.`,handledBy:'open-loops'}
   }
 
+  const sourceType=String(target.source_type||'')
   if(snooze){
+    if(['approval','agent_run','life_event_action','meeting_action'].includes(sourceType)){
+      const guidance=sourceType==='approval'
+        ? 'This is a pending approval, so I cannot truthfully snooze its independent approval notification from the Attention queue.'
+        : sourceType==='meeting_action'
+          ? 'This meeting action may have its own reminder. Use the reminder controls if you want to snooze that notification.'
+          : 'This item has its own mission/life-event notification path, so I cannot claim an Attention-only snooze will silence it.'
+      return {
+        runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
+        text:`⚠️ ${guidance}\n\n${clean(target.title,180)}`,
+        handledBy:'open-loops',
+      }
+    }
+
     const until=new Date(Date.now()+snooze.hours*3600_000).toISOString()
+    if(sourceType==='followup'&&target.source_id){
+      const {error:followError}=await supabaseAdmin.from('followups').update({
+        status:'pending',
+        check_at:until,
+      }).eq('id',target.source_id).in('status',['pending','fired'])
+      if(followError)throw new Error(`open_loop_followup_snooze_failed:${followError.message}`)
+    }
     const {error}=await supabaseAdmin.from('agent_open_loops').update({
       proactive_backoff_until:until,
       updated_at:new Date().toISOString(),
@@ -905,7 +926,6 @@ export async function handleOpenLoopAction(params:{actor:AgentActor;text:string}
     }
   }
 
-  const sourceType=String(target.source_type||'')
   if(['approval','agent_run','life_event_action'].includes(sourceType)){
     return {
       runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
