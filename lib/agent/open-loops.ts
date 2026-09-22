@@ -665,7 +665,8 @@ export async function captureExplicitOpenLoopFromTurn(params:{actor:AgentActor;t
 export function isOpenLoopQuery(text:string){
   const t=clean(text,500).toLowerCase().replace(/[?!.]+$/g,'')
   return /^(?:what|which|show|list)\s+(?:are\s+)?(?:my\s+)?(?:open loops|pending follow[- ]?ups|follow[- ]?ups|things i(?:'m| am) waiting on|things still pending|pending items|unresolved items)$/.test(t)
-    || /^what\s+(?:am i waiting on|still needs follow[- ]?up|is still pending)$/.test(t)
+    || /^what\s+(?:am i waiting on|still needs follow[- ]?up|is still pending|needs my attention|needs attention|should i follow up on)$/.test(t)
+    || /^(?:show|give)\s+me\s+(?:what\s+)?needs\s+my\s+attention$/.test(t)
 }
 
 export function isOpenLoopResolutionCandidate(text:string){
@@ -725,9 +726,10 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
     message:'Gogo showed the current open-loop list.',
     metadata_json:{open_loop_ids:loops.map((loop:any)=>String(loop.id)).slice(0,12)},
   }).then(({error})=>{if(error)console.error('OPEN_LOOP_LIST_ACTIVITY_FAILED:',error.message)})
+  const attentionWording=/needs\s+(?:my\s+)?attention|should\s+i\s+follow\s+up/i.test(params.text)
   return {
     runId:'open-loops-list',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
-    text:`🧠 *Your open loops*\n\n${lines.join('\n')}\n\nSay *mark 2 done* to close one.`,
+    text:`🧠 *${attentionWording?'What needs your attention':'Your open loops'}*\n\n${lines.join('\n')}\n\nSay *mark 2 done* to close one.`,
     handledBy:'open-loops',
   }
 }
