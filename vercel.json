@@ -38,6 +38,10 @@
       "schedule": "*/30 * * * *"
     },
     {
+      "path": "/api/cron/open-loops",
+      "schedule": "*/30 * * * *"
+    },
+    {
       "path": "/api/followups",
       "schedule": "30 3 * * *"
     },
