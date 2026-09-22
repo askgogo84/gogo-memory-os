@@ -44,7 +44,7 @@ import { tryRunWhatsAppAgent, tryRunWhatsAppJevSpecialist } from '@/lib/agent/wh
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
-import { captureExplicitOpenLoopFromTurn } from '@/lib/agent/open-loops'
+import { captureExplicitOpenLoopFromTurn, isOpenLoopQuery, parseOpenLoopResolution } from '@/lib/agent/open-loops'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
@@ -1037,6 +1037,32 @@ _"${originalText}"_
         await saveConversation(resolvedUser.telegramId, 'assistant', bucketReply)
         await sendWhatsAppMessage(from, bucketReply)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
+    // Open-loop / Attention commands are deterministic state reads/writes.
+    // Give them first refusal before semantic feature routing so "what am I waiting on?"
+    // cannot be mistaken for a generic question or reminder query.
+    if (isOpenLoopQuery(text) || parseOpenLoopResolution(text)) {
+      const attentionAgent = await tryRunWhatsAppAgent({
+        user:resolvedUser,
+        text,
+        messageId:inboundMessageSid||null,
+      })
+      if(attentionAgent){
+        await recordShadowRouterOutcome({
+          telegramId:resolvedUser.telegramId,
+          surface:'whatsapp',
+          eventId:inboundMessageSid,
+          actualHandler:attentionAgent.handledBy||'open-loops',
+          actualCapability:'orchestrator',
+          status:attentionAgent.status||null,
+          runId:attentionAgent.runId||null,
+        }).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',attentionAgent.text)
+        await sendWhatsAppMessage(from,attentionAgent.text)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
       }
     }
 
