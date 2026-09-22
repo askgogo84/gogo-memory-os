@@ -38,6 +38,10 @@ function fingerprintFor(input:OpenLoopInput){
 function isoPlusHours(hours:number){
   return new Date(Date.now()+Math.max(1,hours)*3600_000).toISOString()
 }
+function isoPlusHoursFrom(base:string|null|undefined,hours:number){
+  const start=Date.parse(String(base||''))
+  return new Date((Number.isFinite(start)?start:Date.now())+Math.max(1,hours)*3600_000).toISOString()
+}
 function clampPriority(value:number|undefined,fallback=0.75){
   const n=Number(value)
   return Number.isFinite(n)?Math.max(0,Math.min(1,n)):fallback
@@ -267,7 +271,9 @@ async function syncConversationSignals(telegramId:string){
     if(!parsed)continue
     await upsertOpenLoop({
       telegramId,kind:parsed.kind,title:parsed.title,summary:parsed.summary,priority:parsed.priority,
-      nextCheckAt:parsed.kind==='followup'||parsed.kind==='waiting_on'?isoPlusHours(24):isoPlusHours(12),
+      nextCheckAt:parsed.kind==='followup'||parsed.kind==='waiting_on'
+        ? isoPlusHoursFrom(row.created_at,24)
+        : isoPlusHoursFrom(row.created_at,12),
       sourceType:'conversation',sourceId:null,
       sourceRefs:[{type:'conversation',id:String(row.id)}],
       evidence:{conversation_id:String(row.id)},
@@ -278,8 +284,8 @@ async function syncConversationSignals(telegramId:string){
   return captured
 }
 
-async function resolveMissingSourceLoops(telegramId:string,current:Set<string>){
-  const sourceTypes=['followup','approval','agent_run','life_event_action']
+async function resolveMissingSourceLoops(telegramId:string,current:Set<string>,sourceTypes:string[]){
+  if(!sourceTypes.length)return 0
   const {data,error}=await supabaseAdmin.from('agent_open_loops')
     .select('id,fingerprint,source_type')
     .eq('telegram_id',telegramId).eq('status','active').in('source_type',sourceTypes).limit(200)
@@ -298,6 +304,7 @@ async function resolveMissingSourceLoops(telegramId:string,current:Set<string>){
 export async function syncOpenLoopsForUser(telegramId:string|number){
   const tg=String(telegramId)
   const current=new Set<string>()
+  const sourceTypes=['followup','approval','agent_run','life_event_action'] as const
   const results=await Promise.allSettled([
     syncFollowups(tg,current),
     syncApprovals(tg,current),
@@ -306,7 +313,10 @@ export async function syncOpenLoopsForUser(telegramId:string|number){
     syncConversationSignals(tg),
   ])
   const failures=results.filter((x):x is PromiseRejectedResult=>x.status==='rejected').map(x=>clean(x.reason?.message||x.reason,180))
-  const resolved=await resolveMissingSourceLoops(tg,current).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
+  const successfulSourceTypes=sourceTypes.filter((_,index)=>results[index]?.status==='fulfilled')
+  // Reconcile only sources that were read successfully. A transient provider/DB
+  // failure must never make an existing open loop disappear.
+  const resolved=await resolveMissingSourceLoops(tg,current,[...successfulSourceTypes]).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
   return {telegramId:tg,resolved,failures}
 }
 
@@ -333,12 +343,34 @@ export function isOpenLoopQuery(text:string){
     || /^what\s+(?:am i waiting on|still needs follow[- ]?up|is still pending)$/.test(t)
 }
 
-export function parseOpenLoopResolution(text:string){
+export function isOpenLoopResolutionCandidate(text:string){
   const raw=clean(text,400)
-  const numbered=raw.match(/^(?:mark|close|resolve|finish|dismiss)\s+(?:open\s+loop\s+)?#?(\d{1,2})\s+(?:done|resolved|complete|completed)?$/i)
+  return /^(?:mark|close|resolve|finish|dismiss)\s+(?:open\s+loop\s+)?#?\d{1,2}(?:\s+(?:done|resolved|complete|completed))?$/i.test(raw)
+    || /^#?\d{1,2}\s+(?:is\s+)?(?:done|resolved|complete|completed)$/i.test(raw)
+}
+
+export function parseOpenLoopResolution(text:string,{allowGeneric=false}:{allowGeneric?:boolean}={}){
+  const raw=clean(text,400)
+  const explicit=raw.match(/^(?:mark|close|resolve|finish|dismiss)\s+open\s+loop\s+#?(\d{1,2})\s*(?:done|resolved|complete|completed)?$/i)
+  if(explicit?.[1])return {index:Number(explicit[1]),mode:/dismiss/i.test(raw)?'dismissed' as const:'resolved' as const}
+  if(!allowGeneric)return null
+  const numbered=raw.match(/^(?:mark|close|resolve|finish|dismiss)\s+#?(\d{1,2})\s+(?:done|resolved|complete|completed)$/i)
     || raw.match(/^#?(\d{1,2})\s+(?:is\s+)?(?:done|resolved|complete|completed)$/i)
   if(numbered?.[1])return {index:Number(numbered[1]),mode:/dismiss/i.test(raw)?'dismissed' as const:'resolved' as const}
   return null
+}
+
+async function recentOpenLoopListShown(telegramId:string|number){
+  const cutoff=new Date(Date.now()-10*60_000).toISOString()
+  const {data,error}=await supabaseAdmin.from('agent_activity')
+    .select('id')
+    .eq('telegram_id',String(telegramId))
+    .eq('event_type','open_loops_list_shown')
+    .gte('created_at',cutoff)
+    .order('created_at',{ascending:false})
+    .limit(1)
+  if(error)throw new Error(`open_loop_recent_list_read_failed:${error.message}`)
+  return Boolean(data?.length)
 }
 
 export async function listOpenLoops(telegramId:string|number,limit=10){
@@ -361,6 +393,12 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
     const badge=loop.kind==='approval'?'🛡️':loop.kind==='followup'?'📨':loop.kind==='waiting_on'?'⏳':loop.kind==='mission'?'🧠':loop.kind==='life_event'?'✈️':'•'
     return `${index+1}. ${badge} ${clean(loop.title,180)}`
   })
+  await supabaseAdmin.from('agent_activity').insert({
+    telegram_id:String(params.actor.legacyTelegramId),
+    event_type:'open_loops_list_shown',
+    message:'Gogo showed the current open-loop list.',
+    metadata_json:{open_loop_ids:loops.map((loop:any)=>String(loop.id)).slice(0,12)},
+  }).then(({error})=>{if(error)console.error('OPEN_LOOP_LIST_ACTIVITY_FAILED:',error.message)})
   return {
     runId:'open-loops-list',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
     text:`🧠 *Your open loops*\n\n${lines.join('\n')}\n\nSay *mark 2 done* to close one.`,
@@ -369,7 +407,11 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
 }
 
 export async function handleOpenLoopResolution(params:{actor:AgentActor;text:string}){
-  const parsed=parseOpenLoopResolution(params.text)
+  let parsed=parseOpenLoopResolution(params.text)
+  if(!parsed&&isOpenLoopResolutionCandidate(params.text)){
+    if(!(await recentOpenLoopListShown(params.actor.legacyTelegramId)))return null
+    parsed=parseOpenLoopResolution(params.text,{allowGeneric:true})
+  }
   if(!parsed)return null
   const loops=await listOpenLoops(params.actor.legacyTelegramId,20)
   const target=loops[parsed.index-1] as any
@@ -411,7 +453,11 @@ export async function processOpenLoopScoutPass(limit=80){
 
   let processed=0,failed=0,resolved=0
   const failures:string[]=[]
-  for(const telegramId of Array.from(ids).sort().slice(0,Math.max(1,limit))){
+  const sorted=Array.from(ids).sort()
+  const bucket=Math.floor(Date.now()/(30*60_000))
+  const offset=sorted.length?bucket%sorted.length:0
+  const rotated=[...sorted.slice(offset),...sorted.slice(0,offset)].slice(0,Math.max(1,limit))
+  for(const telegramId of rotated){
     try{
       const result=await syncOpenLoopsForUser(telegramId)
       processed++;resolved+=result.resolved
