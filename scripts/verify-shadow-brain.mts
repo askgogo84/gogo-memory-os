@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { shadowActionFamily, shadowNeedsContext } from '../lib/agent/shadow-brain'
 import { buildJevShadowRequest, parseJevShadowResponse } from '../lib/typesafe/jev-shadow'
+import { promotedJevIntent } from '../lib/agent/jev-router'
 
 const shadow=readFileSync('lib/agent/shadow-brain.ts','utf8')
 const whatsapp=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
 const dashboard=readFileSync('app/api/dashboard/chat/route.ts','utf8')
+const jevRouter=readFileSync('lib/agent/jev-router.ts','utf8')
 
 assert.match(shadow,/event_type:'shadow_brain_observation'/)
 assert.match(shadow,/shadow_version:'shadow-brain-v1'/)
@@ -24,13 +26,16 @@ assert.match(whatsapp,/tryRunWhatsAppAgent\(\{[\s\S]*text,/)
 assert.match(dashboard,/tryRunAppointmentResearch\(\{ actor, surface:'web', text \}/)
 assert.match(dashboard,/tryRunTrainResearch\(\{ actor, surface:'web', text \}/)
 
-// Shadow output is intentionally not assigned or passed to a production router.
-assert.doesNotMatch(whatsapp,/const\s+\w+\s*=\s*await observeShadowBrainTurn/)
+// WhatsApp may now retain the Jev result only as a specialist first-refusal hint.
+assert.match(whatsapp,/brainObservation\s*=\s*await observeShadowBrainTurn/)
+assert.match(whatsapp,/promotedJevIntent\(brainObservation\?\.jev\)/)
+assert.match(jevRouter,/execution_authority:false/)
+assert.match(jevRouter,/first_refusal_only/)
 assert.doesNotMatch(dashboard,/const\s+\w+\s*=\s*await observeShadowBrainTurn/)
 assert.doesNotMatch(shadow,/\.from\('agent_runs'\)\.insert/)
 assert.doesNotMatch(shadow,/\.from\('agent_approvals'\)\.insert/)
 
-console.log('Shadow Brain observe-only verification passed')
+console.log('Shadow Brain safe-promotion verification passed')
 
 assert.equal(shadowNeedsContext('Order my usual pizza'),true)
 assert.equal(shadowNeedsContext('Same as last time'),true)
@@ -82,3 +87,13 @@ const sensitiveRequest=buildJevShadowRequest({
 })
 assert.doesNotMatch(JSON.stringify(sensitiveRequest),/P@ssw0rd/)
 console.log('Jev malformed-response and request redaction verification passed')
+
+
+const promoted={
+  ...parsed,
+  intent:{...parsed.intent,choice:'watcher',confidence:0.97,probabilities:{watcher:0.98,other:0.02}},
+}
+assert.equal(promotedJevIntent(promoted as any),'watcher')
+assert.equal(promotedJevIntent({...promoted,intent:{...promoted.intent,confidence:0.89}} as any),null)
+assert.equal(promotedJevIntent({...promoted,intent:{...promoted.intent,choice:'general_reasoning',confidence:0.99}} as any),null)
+console.log('Jev first-refusal promotion gate verification passed')

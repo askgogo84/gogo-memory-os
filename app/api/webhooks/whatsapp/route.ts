@@ -40,9 +40,10 @@ import {
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
-import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
+import { tryRunWhatsAppAgent, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
-import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
+import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
+import { promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
@@ -837,9 +838,10 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    let brainObservation:ShadowBrainObservation|null=null
     try {
       const shadowActor = await resolveAgentActor({ telegramId:String(resolvedUser.telegramId), surface:'whatsapp' })
-      await observeShadowBrainTurn({
+      brainObservation = await observeShadowBrainTurn({
         actor:shadowActor,
         surface:'whatsapp',
         text,
@@ -1031,6 +1033,69 @@ _"${originalText}"_
         await saveConversation(resolvedUser.telegramId, 'assistant', bucketReply)
         await sendWhatsAppMessage(from, bucketReply)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
+    // Jev is promoted only to specialist *first refusal*. It may choose which
+    // existing capability gets the first chance to parse the turn, but it never grants
+    // execution authority. The specialist still has to validate the command and all
+    // existing approval/policy/provider-verification gates remain unchanged.
+    const jevIntent=promotedJevIntent(brainObservation?.jev)
+    if(jevIntent){
+      const agentIntent=['watcher','reminder_read','reminder_mutation','travel_research','browser_action'].includes(jevIntent)
+      if(agentIntent){
+        const promotedAgent=await tryRunWhatsAppJevSpecialist({
+          user:resolvedUser,
+          text,
+          messageId:inboundMessageSid||null,
+          intent:jevIntent as 'watcher'|'reminder_read'|'reminder_mutation'|'travel_research'|'browser_action',
+        })
+        if(promotedAgent){
+          await recordJevRoutingHint({
+            telegramId:resolvedUser.telegramId,
+            eventId:inboundMessageSid,
+            intent:jevIntent,
+            handler:promotedAgent.handledBy||'whatsapp-agent',
+            confidence:brainObservation?.jev?.intent?.confidence??null,
+            latencyMs:brainObservation?.jev?.latencyMs??null,
+          }).catch(()=>{})
+          await recordShadowRouterOutcome({
+            telegramId:resolvedUser.telegramId,
+            surface:'whatsapp',
+            eventId:inboundMessageSid,
+            actualHandler:promotedAgent.handledBy||'whatsapp-agent',
+            actualCapability:(promotedAgent as any).capability||null,
+            status:promotedAgent.status||null,
+            runId:promotedAgent.runId||null,
+          }).catch(()=>{})
+          await saveConversation(resolvedUser.telegramId,'user',text)
+          await saveConversation(resolvedUser.telegramId,'assistant',promotedAgent.text)
+          await sendWhatsAppMessage(from,promotedAgent.text)
+          return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+        }
+      }else if(jevIntent==='calendar_read'||jevIntent==='calendar_mutation'){
+        const promotedCalendar=await routeFeatureIntent(from,text,{telegramId:resolvedUser.telegramId,caption:bodyText})
+        if(promotedCalendar){
+          await recordJevRoutingHint({
+            telegramId:resolvedUser.telegramId,
+            eventId:inboundMessageSid,
+            intent:jevIntent,
+            handler:'legacy-feature-intent',
+            confidence:brainObservation?.jev?.intent?.confidence??null,
+            latencyMs:brainObservation?.jev?.latencyMs??null,
+          }).catch(()=>{})
+          await recordShadowRouterOutcome({
+            telegramId:resolvedUser.telegramId,
+            surface:'whatsapp',
+            eventId:inboundMessageSid,
+            actualHandler:'legacy-feature-intent',
+            actualCapability:'calendar',
+          }).catch(()=>{})
+          await saveConversation(resolvedUser.telegramId,'user',text)
+          await saveConversation(resolvedUser.telegramId,'assistant',promotedCalendar)
+          await sendWhatsAppMessage(from,promotedCalendar)
+          return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+        }
       }
     }
 
