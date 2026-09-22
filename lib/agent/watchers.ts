@@ -761,7 +761,7 @@ async function processWebPageWatcher(watcher:any,now:Date){
         ? 'Read only. Inspect this exact page and report its current document title. Do not click, fill, submit, log in, or navigate away.'
         : 'Read only. Inspect this exact page and report its visible content. Do not click, fill, submit, log in, or navigate away.',
       mode:'read',
-      objectiveTrust:'user',
+      objectiveTrust:'USER_INSTRUCTION',
     })
     await recordCostEvent({telegramId,category:'secure_compute_minute',metadata:{source:'background_gogo',watcher_id:String(watcher.id),watcher_type:'web_page'}})
   }catch(err:any){
