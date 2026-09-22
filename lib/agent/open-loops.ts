@@ -729,17 +729,38 @@ export function parseOpenLoopResolution(text:string,{allowGeneric=false}:{allowG
   return null
 }
 
-async function recentOpenLoopListShown(telegramId:string|number){
+async function recentOpenLoopListSnapshot(telegramId:string|number){
   const cutoff=new Date(Date.now()-10*60_000).toISOString()
   const {data,error}=await supabaseAdmin.from('agent_activity')
-    .select('id')
+    .select('metadata_json,created_at')
     .eq('telegram_id',String(telegramId))
     .eq('event_type','open_loops_list_shown')
     .gte('created_at',cutoff)
     .order('created_at',{ascending:false})
     .limit(1)
+    .maybeSingle()
   if(error)throw new Error(`open_loop_recent_list_read_failed:${error.message}`)
-  return Boolean(data?.length)
+  const ids=Array.isArray((data as any)?.metadata_json?.open_loop_ids)
+    ? (data as any).metadata_json.open_loop_ids.map((id:any)=>String(id||'')).filter(Boolean).slice(0,20)
+    : []
+  return ids.length?ids:null
+}
+
+async function recentOpenLoopListShown(telegramId:string|number){
+  return Boolean(await recentOpenLoopListSnapshot(telegramId))
+}
+
+async function openLoopFromSnapshot(telegramId:string|number,index:number,snapshot:string[]){
+  const id=snapshot[index-1]
+  if(!id)return null
+  const {data,error}=await supabaseAdmin.from('agent_open_loops')
+    .select('id,kind,title,summary,priority,due_at,next_check_at,proactive_backoff_until,source_type,source_id,updated_at')
+    .eq('id',id)
+    .eq('telegram_id',String(telegramId))
+    .eq('status','active')
+    .maybeSingle()
+  if(error)throw new Error(`open_loop_snapshot_target_failed:${error.message}`)
+  return data||null
 }
 
 export async function listOpenLoops(telegramId:string|number,limit=10){
@@ -776,6 +797,158 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
   }
 }
 
+export function isOpenLoopActionCandidate(text:string){
+  const raw=clean(text,500)
+  return /^(?:snooze|pause)\s+(?:open\s+loop\s+)?#?\d{1,2}\s+(?:for\s+\d{1,3}\s*(?:hours?|days?)|until\s+tomorrow)$/i.test(raw)
+    || /^draft\s+(?:a\s+)?follow[- ]?up\s+(?:for\s+)?(?:open\s+loop\s+)?#?\d{1,2}$/i.test(raw)
+}
+
+function parseOpenLoopSnooze(text:string,{allowGeneric=false}:{allowGeneric?:boolean}={}){
+  const raw=clean(text,500)
+  const explicit=raw.match(/^(?:snooze|pause)\s+open\s+loop\s+#?(\d{1,2})\s+(?:for\s+(\d{1,3})\s*(hours?|days?)|until\s+(tomorrow))$/i)
+  const generic=allowGeneric
+    ? raw.match(/^(?:snooze|pause)\s+#?(\d{1,2})\s+(?:for\s+(\d{1,3})\s*(hours?|days?)|until\s+(tomorrow))$/i)
+    : null
+  const match=explicit||generic
+  if(!match)return null
+  const index=Number(match[1])
+  if(!Number.isInteger(index)||index<1||index>20)return null
+  let hours=24
+  if(match[2]){
+    const unit=String(match[3]||'hours').toLowerCase()
+    const rawAmount=Math.max(1,Number(match[2]))
+    const amount=unit.startsWith('day')?Math.min(30,rawAmount):Math.min(30*24,rawAmount)
+    hours=unit.startsWith('day')?amount*24:amount
+  }
+  return {index,hours}
+}
+
+function parseOpenLoopDraft(text:string,{allowGeneric=false}:{allowGeneric?:boolean}={}){
+  const raw=clean(text,500)
+  const explicit=raw.match(/^draft\s+(?:a\s+)?follow[- ]?up\s+(?:for\s+)?open\s+loop\s+#?(\d{1,2})$/i)
+  const generic=allowGeneric
+    ? raw.match(/^draft\s+(?:a\s+)?follow[- ]?up\s+(?:for\s+)?#?(\d{1,2})$/i)
+    : null
+  const match=explicit||generic
+  if(!match)return null
+  const index=Number(match[1])
+  return Number.isInteger(index)&&index>=1&&index<=20?{index}:null
+}
+
+export function draftFromOpenLoop(loop:any){
+  const title=clean(loop?.title,240)
+  let person=''
+  let topic=''
+  const patterns=[
+    /^Follow up with (.+?)(?: about (.+)| — (.+)|$)/i,
+    /^Waiting on (.+?)(?: to (.+)| — (.+)|$)/i,
+    /^Waiting for reply from (.+?)(?: — (.+)|$)/i,
+    /^Reply to (.+?)(?: — (.+)|$)/i,
+  ]
+  for(const pattern of patterns){
+    const match=title.match(pattern)
+    if(!match)continue
+    person=clean(match[1],100)
+    topic=clean(match[2]||match[3]||'',180)
+    break
+  }
+  if(!topic){
+    topic=clean(loop?.summary,180)
+      .replace(/^(?:meeting action item|waiting to follow up with)\s*:?\s*/i,'')
+  }
+  topic=clean(topic,180)
+    .replace(/^(?:send|share|resend|reply|respond|confirm|review|deliver|update|call|get\s+back(?:\s+about)?)\s+(?:the\s+)?/i,'')
+  if(!topic||topic.toLowerCase()===title.toLowerCase())topic=''
+  const greeting=person?`Hi ${person},`:'Hi,'
+  const subject=topic?` regarding ${topic}`:''
+  return `${greeting} just following up${subject}. Please let me know when you get a chance. Thanks.`
+}
+
+export async function shouldHandleOpenLoopAction(params:{actor:AgentActor;text:string}){
+  const raw=clean(params.text,500)
+  if(!isOpenLoopActionCandidate(raw))return false
+  if(/\bopen\s+loop\b/i.test(raw))return true
+  return recentOpenLoopListShown(params.actor.legacyTelegramId)
+}
+
+export async function handleOpenLoopAction(params:{actor:AgentActor;text:string}){
+  const raw=clean(params.text,500)
+  const explicit=/\bopen\s+loop\b/i.test(raw)
+  const snooze=parseOpenLoopSnooze(raw,{allowGeneric:!explicit})
+  const draft=parseOpenLoopDraft(raw,{allowGeneric:!explicit})
+  if(!snooze&&!draft)return null
+
+  const snapshot=await recentOpenLoopListSnapshot(params.actor.legacyTelegramId)
+  if(!snapshot){
+    return explicit
+      ? {runId:'open-loop-action-needs-list',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:'Ask *what needs my attention?* first so I can bind the number to the exact item you saw.',handledBy:'open-loops'}
+      : null
+  }
+  const index=snooze?.index||draft?.index||0
+  const target=await openLoopFromSnapshot(params.actor.legacyTelegramId,index,snapshot) as any
+  if(!target){
+    return {runId:'open-loop-action-missing',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`Open loop #${index} changed or closed since I showed the list. Ask *what needs my attention?* again before acting on a number.`,handledBy:'open-loops'}
+  }
+
+  const sourceType=String(target.source_type||'')
+  if(snooze){
+    if(['approval','agent_run','life_event_action','meeting_action'].includes(sourceType)){
+      const guidance=sourceType==='approval'
+        ? 'This is a pending approval, so I cannot truthfully snooze its independent approval notification from the Attention queue.'
+        : sourceType==='meeting_action'
+          ? 'This meeting action may have its own reminder. Use the reminder controls if you want to snooze that notification.'
+          : 'This item has its own mission/life-event notification path, so I cannot claim an Attention-only snooze will silence it.'
+      return {
+        runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
+        text:`⚠️ ${guidance}\n\n${clean(target.title,180)}`,
+        handledBy:'open-loops',
+      }
+    }
+
+    const until=new Date(Date.now()+snooze.hours*3600_000).toISOString()
+    if(sourceType==='followup'&&target.source_id){
+      const {error:followError}=await supabaseAdmin.from('followups').update({
+        status:'pending',
+        check_at:until,
+      }).eq('id',target.source_id).in('status',['pending','fired'])
+      if(followError)throw new Error(`open_loop_followup_snooze_failed:${followError.message}`)
+    }
+    const {error}=await supabaseAdmin.from('agent_open_loops').update({
+      proactive_backoff_until:until,
+      updated_at:new Date().toISOString(),
+    }).eq('id',target.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('status','active')
+    if(error)throw new Error(`open_loop_snooze_failed:${error.message}`)
+    const human=snooze.hours%24===0?`${snooze.hours/24} day${snooze.hours===24?'':'s'}`:`${snooze.hours} hour${snooze.hours===1?'':'s'}`
+    return {
+      runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
+      text:`😴 Snoozed proactive nudges for *${clean(target.title,180)}* for ${human}. It stays in your open-loop list.`,
+      handledBy:'open-loops',
+    }
+  }
+
+  if(['approval','agent_run','life_event_action'].includes(sourceType)){
+    return {
+      runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
+      text:`That item is a system action rather than a follow-up message. Ask *what are you working on for me?* to see its current state.`,
+      handledBy:'open-loops',
+    }
+  }
+  const draftable=target.kind==='followup'||target.kind==='waiting_on'||sourceType==='gmail_thread'
+  if(!draftable){
+    return {
+      runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
+      text:`That item is something you need to do rather than a message you are waiting on. I won't invent a follow-up recipient.`,
+      handledBy:'open-loops',
+    }
+  }
+  const draftText=draftFromOpenLoop(target)
+  return {
+    runId:`open-loop-${target.id}`,status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
+    text:`📝 *Draft follow-up*\n\n${draftText}\n\n_Draft only — I haven't sent anything._`,
+    handledBy:'open-loops',
+  }
+}
+
 export async function shouldHandleOpenLoopResolution(params:{actor:AgentActor;text:string}){
   if(parseOpenLoopResolution(params.text))return true
   if(!isOpenLoopResolutionCandidate(params.text))return false
@@ -783,16 +956,21 @@ export async function shouldHandleOpenLoopResolution(params:{actor:AgentActor;te
 }
 
 export async function handleOpenLoopResolution(params:{actor:AgentActor;text:string}){
+  const explicit=Boolean(parseOpenLoopResolution(params.text))
   let parsed=parseOpenLoopResolution(params.text)
   if(!parsed&&isOpenLoopResolutionCandidate(params.text)){
-    if(!(await recentOpenLoopListShown(params.actor.legacyTelegramId)))return null
     parsed=parseOpenLoopResolution(params.text,{allowGeneric:true})
   }
   if(!parsed)return null
-  const loops=await listOpenLoops(params.actor.legacyTelegramId,20)
-  const target=loops[parsed.index-1] as any
+  const snapshot=await recentOpenLoopListSnapshot(params.actor.legacyTelegramId)
+  if(!snapshot){
+    return explicit
+      ? {runId:'open-loop-resolve-needs-list',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:'Ask *what are my open loops?* first so I can bind the number to the exact item you saw.',handledBy:'open-loops'}
+      : null
+  }
+  const target=await openLoopFromSnapshot(params.actor.legacyTelegramId,parsed.index,snapshot) as any
   if(!target){
-    return {runId:'open-loop-resolve-missing',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`I don't have an active open loop #${parsed.index}. Ask *what are my open loops?* to see the current list.`,handledBy:'open-loops'}
+    return {runId:'open-loop-resolve-missing',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`Open loop #${parsed.index} changed or closed since I showed the list. Ask *what are my open loops?* again before acting on a number.`,handledBy:'open-loops'}
   }
   const sourceType=String(target.source_type||'')
   if(parsed.mode==='resolved'&&['approval','agent_run','life_event_action'].includes(sourceType)){

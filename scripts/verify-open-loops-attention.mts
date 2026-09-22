@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { parseExplicitOpenLoop, isOpenLoopQuery, isOpenLoopResolutionCandidate, isUncertainOrNegatedCompletion, parseOpenLoopResolution } from '../lib/agent/open-loops'
+import { draftFromOpenLoop, parseExplicitOpenLoop, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate, isUncertainOrNegatedCompletion, parseOpenLoopResolution } from '../lib/agent/open-loops'
 
 const wait=parseExplicitOpenLoop("I'm still waiting on Srinivas to send the corrected JSON.")
 assert.ok(wait)
@@ -47,6 +47,19 @@ assert.equal(parseOpenLoopResolution('mark 2 done'),null)
 assert.deepEqual(parseOpenLoopResolution('mark open loop 2 done'),{index:2,mode:'resolved'})
 assert.equal(isOpenLoopResolutionCandidate('mark 2 done'),true)
 assert.deepEqual(parseOpenLoopResolution('dismiss 3',{allowGeneric:true}),{index:3,mode:'dismissed'})
+assert.equal(isOpenLoopActionCandidate('snooze open loop 2 for 4 hours'),true)
+assert.equal(isOpenLoopActionCandidate('snooze 2 until tomorrow'),true)
+assert.equal(isOpenLoopActionCandidate('draft follow-up for open loop 2'),true)
+assert.equal(isOpenLoopActionCandidate('draft follow-up for 2'),true)
+assert.equal(isOpenLoopActionCandidate('send follow-up for 2'),false)
+assert.equal(
+  draftFromOpenLoop({title:'Waiting on Srinivas to send the corrected JSON',summary:'Waiting for the corrected JSON'}),
+  'Hi Srinivas, just following up regarding corrected JSON. Please let me know when you get a chance. Thanks.'
+)
+assert.equal(
+  draftFromOpenLoop({title:'Follow up with Nithin about pending salaries',summary:'Pending salaries'}),
+  'Hi Nithin, just following up regarding pending salaries. Please let me know when you get a chance. Thanks.'
+)
 
 const bridge=readFileSync('lib/agent/whatsapp-bridge.ts','utf8')
 const webhook=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
@@ -152,3 +165,28 @@ console.log('Automated Gmail newsletters/no-reply traffic is suppressed from Att
 assert.match(openLoops,/looksLikeIncomingPromise/)
 assert.match(openLoops,/direction:'incoming_promise'/)
 console.log('Incoming Gmail promises remain tracked as waiting-on commitments')
+
+assert.match(bridge,/handleOpenLoopAction/)
+assert.match(bridge,/shouldHandleOpenLoopAction/)
+assert.match(webhook,/isOpenLoopActionCandidate\(text\)/)
+assert.match(openLoops,/proactive_backoff_until:until/)
+assert.match(openLoops,/Draft only — I haven't sent anything/)
+console.log('Attention Actions v1 snooze + safe draft routing verified')
+
+assert.match(bridge,/export async function tryRunWhatsAppAttentionCommand/)
+assert.match(webhook,/tryRunWhatsAppAttentionCommand\(/)
+assert.doesNotMatch(webhook,/const attentionAgent = await tryRunWhatsAppAgent\(/)
+console.log('Attention first-refusal is isolated from unrelated agent specialists')
+
+assert.match(openLoops,/const draftable=target\.kind==='followup'\|\|target\.kind==='waiting_on'\|\|sourceType==='gmail_thread'/)
+assert.match(openLoops,/I won't invent a follow-up recipient/)
+console.log('Attention follow-up drafts are limited to loops with a real counterpart')
+
+assert.match(openLoops,/recentOpenLoopListSnapshot/)
+assert.match(openLoops,/openLoopFromSnapshot/)
+assert.match(openLoops,/metadata_json\.open_loop_ids/)
+assert.doesNotMatch(openLoops,/const loops=await listOpenLoops\(params\.actor\.legacyTelegramId,20\)[\s\S]{0,500}const target=loops\[/)
+assert.match(openLoops,/\['approval','agent_run','life_event_action','meeting_action'\]\.includes\(sourceType\)/)
+assert.match(openLoops,/open_loop_followup_snooze_failed/)
+assert.match(openLoops,/check_at:until/)
+console.log('Attention numbered actions are snapshot-bound and snooze truth matches notification ownership')
