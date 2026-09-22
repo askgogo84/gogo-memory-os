@@ -729,17 +729,38 @@ export function parseOpenLoopResolution(text:string,{allowGeneric=false}:{allowG
   return null
 }
 
-async function recentOpenLoopListShown(telegramId:string|number){
+async function recentOpenLoopListSnapshot(telegramId:string|number){
   const cutoff=new Date(Date.now()-10*60_000).toISOString()
   const {data,error}=await supabaseAdmin.from('agent_activity')
-    .select('id')
+    .select('metadata_json,created_at')
     .eq('telegram_id',String(telegramId))
     .eq('event_type','open_loops_list_shown')
     .gte('created_at',cutoff)
     .order('created_at',{ascending:false})
     .limit(1)
+    .maybeSingle()
   if(error)throw new Error(`open_loop_recent_list_read_failed:${error.message}`)
-  return Boolean(data?.length)
+  const ids=Array.isArray((data as any)?.metadata_json?.open_loop_ids)
+    ? (data as any).metadata_json.open_loop_ids.map((id:any)=>String(id||'')).filter(Boolean).slice(0,20)
+    : []
+  return ids.length?ids:null
+}
+
+async function recentOpenLoopListShown(telegramId:string|number){
+  return Boolean(await recentOpenLoopListSnapshot(telegramId))
+}
+
+async function openLoopFromSnapshot(telegramId:string|number,index:number,snapshot:string[]){
+  const id=snapshot[index-1]
+  if(!id)return null
+  const {data,error}=await supabaseAdmin.from('agent_open_loops')
+    .select('id,kind,title,summary,priority,due_at,next_check_at,proactive_backoff_until,source_type,source_id,updated_at')
+    .eq('id',id)
+    .eq('telegram_id',String(telegramId))
+    .eq('status','active')
+    .maybeSingle()
+  if(error)throw new Error(`open_loop_snapshot_target_failed:${error.message}`)
+  return data||null
 }
 
 export async function listOpenLoops(telegramId:string|number,limit=10){
@@ -845,24 +866,28 @@ export function draftFromOpenLoop(loop:any){
 
 export async function shouldHandleOpenLoopAction(params:{actor:AgentActor;text:string}){
   const raw=clean(params.text,500)
-  if(/\bopen\s+loop\b/i.test(raw))return isOpenLoopActionCandidate(raw)
   if(!isOpenLoopActionCandidate(raw))return false
+  if(/\bopen\s+loop\b/i.test(raw))return true
   return recentOpenLoopListShown(params.actor.legacyTelegramId)
 }
 
 export async function handleOpenLoopAction(params:{actor:AgentActor;text:string}){
   const raw=clean(params.text,500)
   const explicit=/\bopen\s+loop\b/i.test(raw)
-  if(!explicit&&!(await recentOpenLoopListShown(params.actor.legacyTelegramId)))return null
   const snooze=parseOpenLoopSnooze(raw,{allowGeneric:!explicit})
   const draft=parseOpenLoopDraft(raw,{allowGeneric:!explicit})
   if(!snooze&&!draft)return null
 
-  const loops=await listOpenLoops(params.actor.legacyTelegramId,20)
+  const snapshot=await recentOpenLoopListSnapshot(params.actor.legacyTelegramId)
+  if(!snapshot){
+    return explicit
+      ? {runId:'open-loop-action-needs-list',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:'Ask *what needs my attention?* first so I can bind the number to the exact item you saw.',handledBy:'open-loops'}
+      : null
+  }
   const index=snooze?.index||draft?.index||0
-  const target=loops[index-1] as any
+  const target=await openLoopFromSnapshot(params.actor.legacyTelegramId,index,snapshot) as any
   if(!target){
-    return {runId:'open-loop-action-missing',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`I don't have an active open loop #${index}. Ask *what needs my attention?* to see the current list.`,handledBy:'open-loops'}
+    return {runId:'open-loop-action-missing',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`Open loop #${index} changed or closed since I showed the list. Ask *what needs my attention?* again before acting on a number.`,handledBy:'open-loops'}
   }
 
   if(snooze){
@@ -911,16 +936,21 @@ export async function shouldHandleOpenLoopResolution(params:{actor:AgentActor;te
 }
 
 export async function handleOpenLoopResolution(params:{actor:AgentActor;text:string}){
+  const explicit=Boolean(parseOpenLoopResolution(params.text))
   let parsed=parseOpenLoopResolution(params.text)
   if(!parsed&&isOpenLoopResolutionCandidate(params.text)){
-    if(!(await recentOpenLoopListShown(params.actor.legacyTelegramId)))return null
     parsed=parseOpenLoopResolution(params.text,{allowGeneric:true})
   }
   if(!parsed)return null
-  const loops=await listOpenLoops(params.actor.legacyTelegramId,20)
-  const target=loops[parsed.index-1] as any
+  const snapshot=await recentOpenLoopListSnapshot(params.actor.legacyTelegramId)
+  if(!snapshot){
+    return explicit
+      ? {runId:'open-loop-resolve-needs-list',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:'Ask *what are my open loops?* first so I can bind the number to the exact item you saw.',handledBy:'open-loops'}
+      : null
+  }
+  const target=await openLoopFromSnapshot(params.actor.legacyTelegramId,parsed.index,snapshot) as any
   if(!target){
-    return {runId:'open-loop-resolve-missing',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`I don't have an active open loop #${parsed.index}. Ask *what are my open loops?* to see the current list.`,handledBy:'open-loops'}
+    return {runId:'open-loop-resolve-missing',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:`Open loop #${parsed.index} changed or closed since I showed the list. Ask *what are my open loops?* again before acting on a number.`,handledBy:'open-loops'}
   }
   const sourceType=String(target.source_type||'')
   if(parsed.mode==='resolved'&&['approval','agent_run','life_event_action'].includes(sourceType)){
