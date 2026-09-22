@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { parseExplicitOpenLoop, isOpenLoopQuery, isOpenLoopResolutionCandidate, parseOpenLoopResolution } from '../lib/agent/open-loops'
+import { parseExplicitOpenLoop, isOpenLoopQuery, isOpenLoopResolutionCandidate, isUncertainOrNegatedCompletion, parseOpenLoopResolution } from '../lib/agent/open-loops'
 
 const wait=parseExplicitOpenLoop("I'm still waiting on Srinivas to send the corrected JSON.")
 assert.ok(wait)
@@ -35,6 +35,9 @@ assert.ok(expected)
 assert.equal(expected.kind,'waiting_on')
 
 assert.equal(parseExplicitOpenLoop('I need to know the weather tomorrow.'),null)
+assert.equal(isUncertainOrNegatedCompletion('Did Srinivas send the JSON?'),true)
+assert.equal(isUncertainOrNegatedCompletion("Srinivas hasn't sent the JSON yet."),true)
+assert.equal(isUncertainOrNegatedCompletion('Srinivas sent the JSON.'),false)
 assert.equal(isOpenLoopQuery('What am I waiting on?'),true)
 assert.equal(isOpenLoopQuery('What are my open loops?'),true)
 assert.equal(isOpenLoopQuery('What meetings do I have tomorrow?'),false)
