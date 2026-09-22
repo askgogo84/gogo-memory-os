@@ -292,7 +292,7 @@ async function activeWebWatchCount(telegramId:string) {
   const { count, error } = await supabaseAdmin.from('agent_watchers')
     .select('id', { count:'exact', head:true })
     .eq('telegram_id', telegramId)
-    .in('type', ['web_search','product_stock'])
+    .in('type', ['web_search','web_page','product_stock'])
     .eq('active', true)
   if (error) throw new Error(`agent_watcher_count_failed:${error.message}`)
   return Math.max(1, count || 1)
@@ -732,6 +732,31 @@ async function processProductStockWatcher(watcher:any, now:Date) {
   return { triggered:true, failed:false }
 }
 
+function stablePageContent(value:unknown){
+  return String(value||'')
+    .toLowerCase()
+    .replace(/\b(?:last\s+updated|updated|generated|refreshed)\s*(?:at|on)?\s*[:=-]?\s*[^\n]{0,40}/gi,' ')
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?\b/gi,' ')
+    .replace(/\b\d{4}-\d{2}-\d{2}(?:t\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?z?)?\b/gi,' ')
+    .replace(/\b\d+\s+(?:seconds?|minutes?|hours?)\s+ago\b/gi,' ')
+    .replace(/\s+/g,' ')
+    .trim()
+    .slice(0,12000)
+}
+
+function pageContentMateriallyChanged(previous:string,current:string){
+  if(!previous||!current)return previous!==current
+  if(previous===current)return false
+  const a=new Set(previous.split(/\s+/).filter(Boolean))
+  const b=new Set(current.split(/\s+/).filter(Boolean))
+  if(!a.size||!b.size)return previous!==current
+  let intersection=0
+  for(const token of a)if(b.has(token))intersection++
+  const union=new Set([...a,...b]).size
+  const similarity=union?intersection/union:1
+  return similarity<0.94
+}
+
 async function processWebPageWatcher(watcher:any,now:Date){
   const condition=normalizeWebPageWatcher(watcher.condition_json)
   if(!condition){
@@ -785,12 +810,13 @@ async function processWebPageWatcher(watcher:any,now:Date){
   }
 
   const currentTitle=String(browser.title||'').replace(/\s+/g,' ').trim().slice(0,500)
-  const contentHash=createHash('sha256').update(String(browser.pageText||'')).digest('hex')
+  const stableContent=stablePageContent(browser.pageText||'')
+  const contentHash=createHash('sha256').update(stableContent).digest('hex')
   const state:any=watcher.last_state_json||{}
   const baselineMissing=!state.baseline
   const changed=condition.watch==='title'
     ? (!baselineMissing && String(state.lastTitle||'')!==currentTitle)
-    : (!baselineMissing && String(state.lastContentHash||'')!==contentHash)
+    : (!baselineMissing && pageContentMateriallyChanged(String(state.lastStableContent||''),stableContent))
 
   if(changed){
     const what=condition.watch==='title'
@@ -812,7 +838,7 @@ async function processWebPageWatcher(watcher:any,now:Date){
     cadence_minutes:cadence,condition_json:{...condition,cadenceMinutes:cadence},
     last_checked_at:now.toISOString(),next_check_at:new Date(now.getTime()+cadence*60_000).toISOString(),
     last_state_json:{
-      ...state,baseline:true,lastTitle:currentTitle,lastContentHash:contentHash,quietChecks,
+      ...state,baseline:true,lastTitle:currentTitle,lastContentHash:contentHash,lastStableContent:stableContent,quietChecks,
       baselineAt:state.baselineAt||now.toISOString(),lastChangedAt:changed?now.toISOString():state.lastChangedAt||null,
       lastVerifiedAt:now.toISOString(),lastError:null,
     },
