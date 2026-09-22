@@ -379,10 +379,10 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
   ])
   if(userError)throw new Error(`open_loop_gmail_user_failed:${userError.message}`)
   if(consentError)throw new Error(`open_loop_gmail_consent_failed:${consentError.message}`)
-  if(!user?.gmail_connected||consent?.gmail_enabled===false)return
+  if(!user?.gmail_connected||consent?.gmail_enabled===false)return 'skip' as const
 
   const ownEmail=String(user.gmail_email||'').trim().toLowerCase()
-  if(!ownEmail)return
+  if(!ownEmail)return 'skip' as const
 
   let accessToken=''
   const refreshToken=decryptGoogleToken(user.gmail_refresh_token)
@@ -437,6 +437,7 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
       const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
     }
   }
+  return 'ok' as const
 }
 
 async function syncConversationSignals(telegramId:string){
@@ -498,7 +499,12 @@ export async function syncOpenLoopsForUser(telegramId:string|number){
     syncConversationSignals(tg),
   ])
   const failures=results.filter((x):x is PromiseRejectedResult=>x.status==='rejected').map(x=>clean(x.reason?.message||x.reason,180))
-  const successfulSourceTypes=sourceTypes.filter((_,index)=>results[index]?.status==='fulfilled')
+  const successfulSourceTypes=sourceTypes.filter((sourceType,index)=>{
+    const result=results[index]
+    if(result?.status!=='fulfilled')return false
+    if(sourceType==='gmail_thread'&&result.value==='skip')return false
+    return true
+  })
   // Reconcile only sources that were read successfully. A transient provider/DB
   // failure must never make an existing open loop disappear.
   const resolved=await resolveMissingSourceLoops(tg,current,[...successfulSourceTypes]).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
