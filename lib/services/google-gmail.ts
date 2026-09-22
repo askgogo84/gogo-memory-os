@@ -302,3 +302,81 @@ export async function fetchLatestEmails(accessToken: string, maxResults = 3) {
 export async function fetchUnreadEmails(accessToken: string, maxResults = 3) {
   return fetchEmails(accessToken, 'unread', maxResults)
 }
+
+
+export type GmailAttentionMessage = {
+  id:string
+  threadId:string
+  subject:string
+  from:string
+  to:string
+  date:string
+  internalDate:number
+  snippet:string
+  labelIds:string[]
+  isUnread:boolean
+}
+
+export type GmailAttentionThread = {
+  id:string
+  subject:string
+  messages:GmailAttentionMessage[]
+}
+
+async function listAttentionMessageRefs(accessToken:string,maxResults=40){
+  const q=encodeURIComponent('newer_than:14d -in:spam -in:trash')
+  const res=await gmailFetchJson(
+    accessToken,
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${Math.max(1,Math.min(80,maxResults))}&q=${q}`
+  )
+  if(!res.ok){
+    console.error('Gmail attention list failed:',res.status)
+    throw new Error(res.status===403?'gmail_scope_required':`gmail_attention_list_failed_${res.status}`)
+  }
+  return res.data.messages||[]
+}
+
+async function fetchAttentionThread(accessToken:string,threadId:string):Promise<GmailAttentionThread|null>{
+  const res=await gmailFetchJson(
+    accessToken,
+    `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID`
+  )
+  if(!res.ok){
+    console.error('Gmail attention thread fetch failed:',threadId,res.status)
+    return null
+  }
+  const messages=(res.data.messages||[]).map((message:any)=>{
+    const headers=message.payload?.headers||[]
+    const labelIds=Array.isArray(message.labelIds)?message.labelIds:[]
+    return {
+      id:String(message.id||''),
+      threadId:String(message.threadId||threadId),
+      subject:getHeader(headers,'Subject')||'(No subject)',
+      from:getHeader(headers,'From')||'Unknown sender',
+      to:getHeader(headers,'To')||'',
+      date:getHeader(headers,'Date')||'',
+      internalDate:Number(message.internalDate||0),
+      snippet:String(message.snippet||''),
+      labelIds,
+      isUnread:labelIds.includes('UNREAD'),
+    } satisfies GmailAttentionMessage
+  }).filter((message:GmailAttentionMessage)=>message.id)
+    .sort((a:GmailAttentionMessage,b:GmailAttentionMessage)=>a.internalDate-b.internalDate)
+
+  if(!messages.length)return null
+  return {id:String(res.data.id||threadId),subject:messages[messages.length-1].subject,messages}
+}
+
+/**
+ * Read-only Gmail attention surface. Returns recent thread metadata/snippets only;
+ * callers decide whether a thread represents a follow-up or action item.
+ */
+export async function fetchGmailAttentionThreads(accessToken:string,maxThreads=12):Promise<GmailAttentionThread[]>{
+  const refs=await listAttentionMessageRefs(accessToken,Math.max(20,maxThreads*3))
+  const threadIds=[...new Set((refs||[]).map((row:any)=>String(row.threadId||'')).filter(Boolean))].slice(0,Math.max(1,Math.min(20,maxThreads)))
+  const settled=await Promise.allSettled(threadIds.map(id=>fetchAttentionThread(accessToken,id)))
+  return settled
+    .filter((x):x is PromiseFulfilledResult<GmailAttentionThread|null>=>x.status==='fulfilled')
+    .map(x=>x.value)
+    .filter((x):x is GmailAttentionThread=>Boolean(x))
+}
