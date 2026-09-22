@@ -54,7 +54,7 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
   const {data:user}=await supabaseAdmin.from('users').select('timezone').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
   const timezone=String(user?.timezone||'Asia/Kolkata')
   const results=await Promise.all([
-    supabaseAdmin.from('agent_runs').select('id,status,title,summary,progress,updated_at').eq('telegram_id',tg).in('status',['queued','running','waiting_approval','paused','outcome_unknown']).order('updated_at',{ascending:false}).limit(6),
+    supabaseAdmin.from('agent_runs').select('id,status,title,summary,progress,updated_at,error').eq('telegram_id',tg).in('status',['queued','running','waiting_approval','paused','outcome_unknown']).order('updated_at',{ascending:false}).limit(30),
     supabaseAdmin.from('agent_watchers').select('id,type,condition_json,cadence_minutes,next_check_at,active,created_at').eq('telegram_id',tg).eq('active',true).order('created_at',{ascending:false}).limit(8),
     supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at').eq('telegram_id',tg).eq('status','pending').order('requested_at',{ascending:false}).limit(5),
     supabaseAdmin.from('life_events').select('id,title,event_type,start_at,location,lifecycle_state').eq('telegram_id',tg).gte('start_at',new Date().toISOString()).order('start_at',{ascending:true}).limit(5),
@@ -64,11 +64,11 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
   const failed=results.find((result:any)=>result.error)
   if(failed?.error)throw new Error(`autonomy_status_read_failed:${failed.error.message}`)
   const [rawRuns,watchers,approvals,events,ideas,openLoops]=results.map((result:any)=>result.data||[])
+  const terminalPauseErrors=new Set(['stale_provider_access_limited','background_browser_resume_expired','stale_run_recovered','background_browser_actor_missing'])
   const runs=(rawRuns||[]).filter((run:any)=>{
     if(String(run.status)!=='paused')return true
-    const updated=Date.parse(String(run.updated_at||''))
-    return Number.isFinite(updated)&&(Date.now()-updated)<=24*3600_000
-  })
+    return !terminalPauseErrors.has(String(run.error||''))
+  }).slice(0,6)
 
   const blocks:string[]=[]
   if(approvals?.length)blocks.push(`🛡️ *Waiting for you*\n${approvals.map((a:any)=>`• ${clean(a.title,160)}`).join('\n')}`)
