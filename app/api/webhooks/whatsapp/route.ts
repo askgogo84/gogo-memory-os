@@ -42,7 +42,8 @@ import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } 
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
-import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
+import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
+import { promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
@@ -837,9 +838,10 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    let brainObservation:ShadowBrainObservation|null=null
     try {
       const shadowActor = await resolveAgentActor({ telegramId:String(resolvedUser.telegramId), surface:'whatsapp' })
-      await observeShadowBrainTurn({
+      brainObservation = await observeShadowBrainTurn({
         actor:shadowActor,
         surface:'whatsapp',
         text,
