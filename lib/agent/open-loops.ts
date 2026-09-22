@@ -420,6 +420,16 @@ function looksLikeIncomingAction(text:string){
   return /\b(?:action required|please|could you|can you|need you to|kindly|confirm|approve|approval|review|sign|send|share|reply|respond|provide|submit|complete|urgent|by today|by tomorrow|deadline)\b/i.test(text)
 }
 
+function isAutomatedGmailMessage(message:any){
+  const from=headerEmail(message?.from)
+  if(/(?:^|[._+-])(no-?reply|do-?not-?reply|newsletter|digest|notifications?)(?:[._+-]|@)/i.test(from))return true
+  if(clean(message?.listId,240))return true
+  if(/\b(?:bulk|list|junk)\b/i.test(clean(message?.precedence,80)))return true
+  const auto=clean(message?.autoSubmitted,120).toLowerCase()
+  if(auto&&auto!=='no')return true
+  return false
+}
+
 async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string,keepFingerprint:string|null){
   const {data,error}=await supabaseAdmin.from('agent_open_loops')
     .select('id,fingerprint')
@@ -495,7 +505,7 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
       continue
     }
 
-    if(looksLikeIncomingAction(combined)){
+    if(looksLikeIncomingAction(combined)&&!isAutomatedGmailMessage(last)){
       const sender=headerName(last.from)
       const input:OpenLoopInput={
         telegramId,kind:'commitment',
