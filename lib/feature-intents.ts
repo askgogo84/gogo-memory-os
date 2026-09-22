@@ -163,7 +163,11 @@ async function stageCalendarApproval(telegramId:number,payload:CalendarApprovalP
 
 async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<string|null>{
   const raw=String(text||'').trim()
-  const cancel=/^(cancel|no|don't add|do not add|leave it)$/i.test(raw)
+  // WhatsApp quick-reply titles include presentation emoji (e.g. "✅ Yes, add it").
+  // Normalize those before approval matching so the calendar capability owns the
+  // approval turn instead of letting it fall through to a generic/LLM handler.
+  const approvalText=raw.replace(/^[\s↩️↪️✅☑️✔️❌✖️🗓️📅]+/u,'').trim()
+  const cancel=/^(cancel|no|don't add|do not add|leave it)$/i.test(approvalText)
   if(cancel){
     const pending=await getLatestFollowupState(telegramId,'calendar_create_approval')
     if(pending&&isStrictlyFreshFollowupState(pending,15)&&pending.payload?.startIso&&!pending.payload?.consumed){
@@ -172,7 +176,7 @@ async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<
     }
   }
 
-  const confirm=/^(yes|yeah|yep|approve|approved|confirm|confirmed|add it|go ahead)$/i.test(raw)
+  const confirm=/^(yes(?:,?\s+add it)?|yeah|yep|approve|approved|confirm|confirmed|add it|go ahead)$/i.test(approvalText)
   if(confirm){
     const pending=await getLatestFollowupState(telegramId,'calendar_create_approval')
     if(pending&&isStrictlyFreshFollowupState(pending,15)&&pending.payload?.startIso&&!pending.payload?.consumed){
