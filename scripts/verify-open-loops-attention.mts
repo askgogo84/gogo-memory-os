@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { parseExplicitOpenLoop, isOpenLoopQuery, isOpenLoopResolutionCandidate, isUncertainOrNegatedCompletion, parseOpenLoopResolution } from '../lib/agent/open-loops'
+import { parseExplicitOpenLoop, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate, isUncertainOrNegatedCompletion, parseOpenLoopResolution } from '../lib/agent/open-loops'
 
 const wait=parseExplicitOpenLoop("I'm still waiting on Srinivas to send the corrected JSON.")
 assert.ok(wait)
@@ -47,6 +47,11 @@ assert.equal(parseOpenLoopResolution('mark 2 done'),null)
 assert.deepEqual(parseOpenLoopResolution('mark open loop 2 done'),{index:2,mode:'resolved'})
 assert.equal(isOpenLoopResolutionCandidate('mark 2 done'),true)
 assert.deepEqual(parseOpenLoopResolution('dismiss 3',{allowGeneric:true}),{index:3,mode:'dismissed'})
+assert.equal(isOpenLoopActionCandidate('snooze open loop 2 for 4 hours'),true)
+assert.equal(isOpenLoopActionCandidate('snooze 2 until tomorrow'),true)
+assert.equal(isOpenLoopActionCandidate('draft follow-up for open loop 2'),true)
+assert.equal(isOpenLoopActionCandidate('draft follow-up for 2'),true)
+assert.equal(isOpenLoopActionCandidate('send follow-up for 2'),false)
 
 const bridge=readFileSync('lib/agent/whatsapp-bridge.ts','utf8')
 const webhook=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
@@ -152,3 +157,10 @@ console.log('Automated Gmail newsletters/no-reply traffic is suppressed from Att
 assert.match(openLoops,/looksLikeIncomingPromise/)
 assert.match(openLoops,/direction:'incoming_promise'/)
 console.log('Incoming Gmail promises remain tracked as waiting-on commitments')
+
+assert.match(bridge,/handleOpenLoopAction/)
+assert.match(bridge,/shouldHandleOpenLoopAction/)
+assert.match(webhook,/isOpenLoopActionCandidate\(text\)/)
+assert.match(openLoops,/proactive_backoff_until:until/)
+assert.match(openLoops,/Draft only — I haven't sent anything/)
+console.log('Attention Actions v1 snooze + safe draft routing verified')
