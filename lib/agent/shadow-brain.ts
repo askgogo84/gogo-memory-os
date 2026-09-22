@@ -35,11 +35,14 @@ export function shadowActionFamily(text:string){
 export function shadowNeedsContext(text:string){
   const t=String(text||'').trim().toLowerCase()
   if(!t)return false
-  // Self-contained commands with an explicit URL or explicit reminder payload should
-  // not inherit unrelated prior focus just because they start with an action verb.
+  const referential=/\b(it|this|that|these|those|them|there|same|usual|above|earlier|previous|last one|last time|first one|second one|third one|fourth one|the trip|the flight|the booking|the document|the file|the order|the hotel|the ticket|continue|proceed)\b/
+  // Referential language always wins: adding a URL or wrapping the reference in a
+  // reminder does not make the request self-contained.
+  if(referential.test(t))return true
+  // Self-contained commands with an explicit URL or fully specified reminder payload
+  // do not inherit unrelated prior focus merely because they start with an action verb.
   if(/https?:\/\//i.test(t))return false
   if(/^remind\s+me\b/i.test(t)&&/\b(today|tomorrow|at\s+\d|in\s+\d)\b/i.test(t)&&/\bto\s+\S+/i.test(t))return false
-  if(/\b(it|this|that|these|those|them|there|same|usual|above|earlier|previous|last one|last time|first one|second one|third one|fourth one|the trip|the flight|the booking|the document|the file|the order|the hotel|the ticket|continue|proceed)\b/.test(t))return true
   return t.length<=80 && /^(save|add|put|monitor|watch|track|book|reserve|check|find|remind|send|forward|open|continue|proceed)\b/.test(t)
 }
 
