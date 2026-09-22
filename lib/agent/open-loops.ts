@@ -131,7 +131,7 @@ function loopTokens(value:unknown){
     .filter(token=>token.length>2&&!LOOP_STOPWORDS.has(token))
 }
 
-function isUncertainOrNegatedCompletion(text:string){
+export function isUncertainOrNegatedCompletion(text:string){
   const raw=clean(text,1200)
   if(/[?]\s*$/.test(raw))return true
   if(/^(?:did|has|have|can|could|would|will|is|are|do|does|check|tell me|do you know)\b/i.test(raw))return true
