@@ -34,6 +34,10 @@
       "schedule": "17 * * * *"
     },
     {
+      "path": "/api/cron/autonomy-pulse",
+      "schedule": "*/30 * * * *"
+    },
+    {
       "path": "/api/followups",
       "schedule": "30 3 * * *"
     },
