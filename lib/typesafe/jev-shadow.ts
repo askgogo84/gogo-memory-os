@@ -44,7 +44,7 @@ export function buildJevShadowRequest(params: {
 }) {
   const rawText = String(params.text || '').slice(0, 1800)
   const rawSummary = String(params.focusSummary || '').slice(0, 500)
-  const rawRecent = String(params.recentContext || '').slice(0, 2400)
+  const rawRecent = params.needsContext ? String(params.recentContext || '').slice(0, 1200) : ''
   const safeText = isSecretShapedMemory(rawText) ? '[sensitive turn withheld from TypeSafe]' : redactSecretShapedText(rawText)
   const safeSummary = isSecretShapedMemory(rawSummary) ? '[sensitive context withheld from TypeSafe]' : redactSecretShapedText(rawSummary)
   const safeRecent = isSecretShapedMemory(rawRecent) ? '[sensitive recent context withheld from TypeSafe]' : redactSecretShapedText(rawRecent)
@@ -116,7 +116,7 @@ export async function runJevShadow(params: {
   const apiKey = String(process.env.TYPESAFE_API_KEY || '').trim()
   if (!apiKey) return null
 
-  if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || '')) || isSecretShapedMemory(String(params.recentContext || ''))) {
+  if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || '')) || (params.needsContext && isSecretShapedMemory(String(params.recentContext || '')))) {
     return {
       ok: false,
       version: JEV_SHADOW_VERSION,
