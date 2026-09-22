@@ -131,12 +131,22 @@ function loopTokens(value:unknown){
     .filter(token=>token.length>2&&!LOOP_STOPWORDS.has(token))
 }
 
+function isUncertainOrNegatedCompletion(text:string){
+  const raw=clean(text,1200)
+  if(/[?]\s*$/.test(raw))return true
+  if(/^(?:did|has|have|can|could|would|will|is|are|do|does|check|tell me|do you know)\b/i.test(raw))return true
+  if(/\b(?:hasn't|has not|haven't|have not|didn't|did not|not yet|still waiting|no reply|no response|no update|waiting on|waiting for|if|whether)\b/i.test(raw))return true
+  return false
+}
+
 function looksLikeCompletionStatement(text:string){
+  if(isUncertainOrNegatedCompletion(text))return false
   return /\b(sent|shared|resent|replied|responded|got\s+back|confirmed|approved|reviewed|delivered|updated|called|received|got\s+(?:the|it)|completed|finished|resolved|submitted|signed|came\s+through|has\s+arrived|arrived)\b/i.test(text)
 }
 
 export async function autoResolveOpenLoopsFromTurn(params:{actor:AgentActor;text:string;jev?:JevShadowResult|null}){
   const raw=clean(params.text,1200)
+  if(isUncertainOrNegatedCompletion(raw))return []
   const semanticCompletion=Boolean(
     params.jev?.ok &&
     String(params.jev.attentionState?.choice||'')==='completed' &&
