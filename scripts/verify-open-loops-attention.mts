@@ -122,6 +122,7 @@ const autonomyStatus=readFileSync('lib/agent/autonomy-status.ts','utf8')
 assert.match(autonomyPulse,/not\('source_type','in','\(approval,agent_run,life_event_action\)'\)/)
 assert.match(autonomyPulse,/open_loop_backoff_ids/)
 assert.match(autonomyPulse,/nextAttentionAt/)
+assert.match(autonomyPulse,/proactive_backoff_until/)
 assert.match(autonomyStatus,/not\('source_type','in','\(approval,agent_run,life_event_action\)'\)/)
 console.log('Attention UX v2 query, dedupe and proactive backoff verification passed')
 
@@ -129,3 +130,8 @@ assert.match(vercel,/"path": "\/api\/cron\/open-loops"[\s\S]*?"schedule": "5,35 
 assert.match(vercel,/"path": "\/api\/cron\/autonomy-pulse"[\s\S]*?"schedule": "10,40 \* \* \* \*"/)
 assert.match(autonomyPulse,/next_check_at\.is\.null,next_check_at\.lte/)
 console.log('Attention scout-before-pulse scheduling and due-only candidate filtering verified')
+
+const backoffMigration=readFileSync('supabase/migrations/20260922165500_agent_open_loop_proactive_backoff.sql','utf8')
+assert.match(backoffMigration,/proactive_backoff_until/)
+assert.doesNotMatch(autonomyPulse,/update\(\{next_check_at:nextAttentionAt/)
+console.log('Attention proactive backoff is isolated from source check timing')
