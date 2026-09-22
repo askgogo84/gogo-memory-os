@@ -464,7 +464,10 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
     const combined=clean(`${subject} ${last.snippet||''}`,700)
 
     if(ownLast){
-      if(ageHours<24||!looksLikeReplyExpected(combined))continue
+      if(ageHours<24||!looksLikeReplyExpected(combined)){
+        await resolveOtherGmailLoopsForThread(telegramId,String(thread.id),null)
+        continue
+      }
       const recipient=headerName(last.to)
       const input:OpenLoopInput={
         telegramId,kind:'waiting_on',
