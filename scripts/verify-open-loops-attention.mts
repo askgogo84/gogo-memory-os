@@ -15,6 +15,25 @@ const commitment=parseExplicitOpenLoop('I need to send the security approval tod
 assert.ok(commitment)
 assert.equal(commitment.kind,'commitment')
 
+
+const implied=parseExplicitOpenLoop("Srinivas said he'll send the corrected JSON by Friday.")
+assert.ok(implied)
+assert.equal(implied.kind,'waiting_on')
+assert.match(implied.title,/Srinivas/i)
+assert.match(implied.title,/JSON/i)
+
+const noResponse=parseExplicitOpenLoop('Still no response from BCL India.')
+assert.ok(noResponse)
+assert.equal(noResponse.kind,'followup')
+
+const requested=parseExplicitOpenLoop('I asked Nithin to confirm the salary release.')
+assert.ok(requested)
+assert.equal(requested.kind,'waiting_on')
+
+const expected=parseExplicitOpenLoop('Security approval is expected today.')
+assert.ok(expected)
+assert.equal(expected.kind,'waiting_on')
+
 assert.equal(parseExplicitOpenLoop('I need to know the weather tomorrow.'),null)
 assert.equal(isOpenLoopQuery('What am I waiting on?'),true)
 assert.equal(isOpenLoopQuery('What are my open loops?'),true)
@@ -51,3 +70,15 @@ assert.match(openLoops,/isoPlusHoursFrom\(row\.created_at,24\)/)
 assert.match(openLoops,/open_loops_list_shown/)
 assert.match(openLoops,/bucket%sorted\.length/)
 console.log('Open-loop reconciliation, context-safe resolution and fair rotation verified')
+
+const gmail=readFileSync('lib/services/google-gmail.ts','utf8')
+assert.match(gmail,/fetchGmailAttentionThreads/)
+assert.match(gmail,/newer_than:14d/)
+assert.match(openLoops,/syncGmailAttention/)
+assert.match(openLoops,/gmail_thread/)
+assert.match(openLoops,/outbound_waiting/)
+assert.match(openLoops,/inbound_action/)
+assert.match(openLoops,/autoResolveOpenLoopsFromTurn/)
+assert.match(openLoops,/open_loop_auto_resolved/)
+assert.match(openLoops,/result\.value==='skip'/)
+console.log('Semantic completion + read-only Gmail attention wiring verified')
