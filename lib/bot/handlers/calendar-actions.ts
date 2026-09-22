@@ -327,7 +327,8 @@ export function parseCalendarCreate(text: string) {
   const absolute = parseAbsoluteDate(text)
   const parts = absolute || targetParts(target)
 
-  let title = cleanTitle(text)
+  const quotedTitle = text.match(/(?:called|titled)\s+["“]([^"”]+)["”]/i)?.[1]?.trim()
+  let title = quotedTitle ? quotedTitle.slice(0, 180) : cleanTitle(text)
 
   if (!title || title.length < 3) {
     title = lower.includes('call') ? 'Call' : 'Meeting'
