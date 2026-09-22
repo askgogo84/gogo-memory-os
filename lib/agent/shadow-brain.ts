@@ -34,6 +34,11 @@ export function shadowActionFamily(text:string){
 
 export function shadowNeedsContext(text:string){
   const t=String(text||'').trim().toLowerCase()
+  if(!t)return false
+  // Self-contained commands with an explicit URL or explicit reminder payload should
+  // not inherit unrelated prior focus just because they start with an action verb.
+  if(/https?:\/\//i.test(t))return false
+  if(/^remind\s+me\b/i.test(t)&&/\b(today|tomorrow|at\s+\d|in\s+\d)\b/i.test(t)&&/\bto\s+\S+/i.test(t))return false
   if(/\b(it|this|that|these|those|them|there|same|usual|above|earlier|previous|last one|last time|first one|second one|third one|fourth one|the trip|the flight|the booking|the document|the file|the order|the hotel|the ticket|continue|proceed)\b/.test(t))return true
   return t.length<=80 && /^(save|add|put|monitor|watch|track|book|reserve|check|find|remind|send|forward|open|continue|proceed)\b/.test(t)
 }
@@ -55,12 +60,12 @@ async function recentConversation(actor:AgentActor){
     .select('role,content,created_at')
     .eq('telegram_id',actor.legacyTelegramId)
     .order('created_at',{ascending:false})
-    .limit(8)
+    .limit(5)
   if(error)throw error
   return (data||[]).slice().reverse().map((row:any)=>{
     const role=String(row.role||'user')==='assistant'?'assistant':'user'
-    return `${role}: ${clean(row.content,360)}`
-  }).join('\n').slice(0,2400)
+    return `${role}: ${clean(row.content,240)}`
+  }).join('\n').slice(0,1200)
 }
 
 async function recentTrip(actor:AgentActor){
