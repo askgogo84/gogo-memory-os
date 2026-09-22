@@ -495,17 +495,17 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
       continue
     }
 
-    if(last.isUnread&&looksLikeIncomingAction(combined)){
+    if(looksLikeIncomingAction(combined)){
       const sender=headerName(last.from)
       const input:OpenLoopInput={
         telegramId,kind:'commitment',
         title:`Reply to ${sender} — ${subject}`,
-        summary:clean(last.snippet||'This unread email appears to ask for an action or response.',900),
-        priority:/\b(?:urgent|action required|today|deadline)\b/i.test(combined)?0.96:0.88,
+        summary:clean(last.snippet||'This email appears to ask for an action or response.',900),
+        priority:/\b(?:urgent|action required|today|deadline)\b/i.test(combined)?0.96:(last.isUnread?0.9:0.87),
         nextCheckAt:isoPlusHours(6),
         sourceType:'gmail_thread',sourceId:String(thread.id),
         sourceRefs:[{type:'gmail_thread',id:String(thread.id)}],
-        evidence:{last_message_id:last.id,last_message_from:last.from,last_internal_date:last.internalDate,direction:'inbound_action',unread:true},
+        evidence:{last_message_id:last.id,last_message_from:last.from,last_internal_date:last.internalDate,direction:'inbound_action',unread:last.isUnread},
         observedAt:new Date(Number(last.internalDate||Date.now())).toISOString(),
       }
       const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
