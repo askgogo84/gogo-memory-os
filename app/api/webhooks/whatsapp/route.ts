@@ -44,7 +44,7 @@ import { tryRunWhatsAppAgent, tryRunWhatsAppJevSpecialist } from '@/lib/agent/wh
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
-import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, captureJevOpenLoopFromTurn, isOpenLoopQuery, isOpenLoopResolutionCandidate } from '@/lib/agent/open-loops'
+import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, captureJevOpenLoopFromTurn, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate } from '@/lib/agent/open-loops'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
@@ -1052,7 +1052,7 @@ _"${originalText}"_
     // Open-loop / Attention commands are deterministic state reads/writes.
     // Give them first refusal before semantic feature routing so "what am I waiting on?"
     // cannot be mistaken for a generic question or reminder query.
-    if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text)) {
+    if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text) || isOpenLoopActionCandidate(text)) {
       const attentionAgent = await tryRunWhatsAppAgent({
         user:resolvedUser,
         text,
