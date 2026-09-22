@@ -52,6 +52,7 @@ const migration=readFileSync('supabase/migrations/20260922154000_agent_open_loop
 
 assert.match(bridge,/handleOpenLoopQuery/)
 assert.match(bridge,/handleOpenLoopResolution/)
+assert.match(bridge,/shouldHandleOpenLoopResolution/)
 assert.match(webhook,/captureExplicitOpenLoopFromTurn/)
 assert.match(webhook,/isOpenLoopQuery\(text\) \|\| isOpenLoopResolutionCandidate\(text\)/)
 assert.match(pulse,/agent_open_loops/)
