@@ -148,3 +148,7 @@ assert.match(gmail,/metadataHeaders=Auto-Submitted/)
 assert.match(openLoops,/isAutomatedGmailMessage/)
 assert.match(openLoops,/!isAutomatedGmailMessage\(last\)/)
 console.log('Automated Gmail newsletters/no-reply traffic is suppressed from Attention')
+
+assert.match(openLoops,/looksLikeIncomingPromise/)
+assert.match(openLoops,/direction:'incoming_promise'/)
+console.log('Incoming Gmail promises remain tracked as waiting-on commitments')
