@@ -109,3 +109,8 @@ assert.match(openLoops,/syncMeetingActionMemories/)
 assert.match(openLoops,/meeting_action_items/)
 assert.match(openLoops,/kind:'meeting_action'/)
 console.log('Meeting action-item adoption into Attention queue verified')
+
+assert.match(openLoops,/\['approval','agent_run','life_event_action'\]\.includes\(sourceType\)/)
+assert.match(openLoops,/open_loop_followup_resolve_failed/)
+assert.match(openLoops,/resolveOtherGmailLoopsForThread\(telegramId,String\(thread\.id\),null\)/)
+console.log('Attention manual-close source truth and Gmail follow-up reset verified')
