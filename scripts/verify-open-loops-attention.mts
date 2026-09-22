@@ -181,3 +181,12 @@ console.log('Attention first-refusal is isolated from unrelated agent specialist
 assert.match(openLoops,/const draftable=target\.kind==='followup'\|\|target\.kind==='waiting_on'\|\|sourceType==='gmail_thread'/)
 assert.match(openLoops,/I won't invent a follow-up recipient/)
 console.log('Attention follow-up drafts are limited to loops with a real counterpart')
+
+assert.match(openLoops,/recentOpenLoopListSnapshot/)
+assert.match(openLoops,/openLoopFromSnapshot/)
+assert.match(openLoops,/metadata_json\.open_loop_ids/)
+assert.doesNotMatch(openLoops,/const loops=await listOpenLoops\(params\.actor\.legacyTelegramId,20\)[\s\S]{0,500}const target=loops\[/)
+assert.match(openLoops,/\['approval','agent_run','life_event_action','meeting_action'\]\.includes\(sourceType\)/)
+assert.match(openLoops,/open_loop_followup_snooze_failed/)
+assert.match(openLoops,/check_at:until/)
+console.log('Attention numbered actions are snapshot-bound and snooze truth matches notification ownership')
