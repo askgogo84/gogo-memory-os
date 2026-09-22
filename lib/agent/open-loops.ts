@@ -135,9 +135,14 @@ function looksLikeCompletionStatement(text:string){
   return /\b(sent|shared|resent|replied|responded|got\s+back|confirmed|approved|reviewed|delivered|updated|called|received|got\s+(?:the|it)|completed|finished|resolved|submitted|signed|came\s+through|has\s+arrived|arrived)\b/i.test(text)
 }
 
-export async function autoResolveOpenLoopsFromTurn(params:{actor:AgentActor;text:string}){
+export async function autoResolveOpenLoopsFromTurn(params:{actor:AgentActor;text:string;jev?:JevShadowResult|null}){
   const raw=clean(params.text,1200)
-  if(!raw||!looksLikeCompletionStatement(raw))return []
+  const semanticCompletion=Boolean(
+    params.jev?.ok &&
+    String(params.jev.attentionState?.choice||'')==='completed' &&
+    Number(params.jev.attentionState?.confidence||0)>=0.93
+  )
+  if(!raw||(!looksLikeCompletionStatement(raw)&&!semanticCompletion))return []
   const {data,error}=await supabaseAdmin.from('agent_open_loops')
     .select('id,kind,title,summary,source_type,updated_at')
     .eq('telegram_id',String(params.actor.legacyTelegramId))
