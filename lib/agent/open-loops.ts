@@ -346,20 +346,28 @@ async function syncApprovals(telegramId:string,current:Set<string>){
 
 function suppressRun(row:any){
   const error=clean(row?.error,160)
+  // Only suppress pauses that have a known terminal/recovered provider outcome.
+  // Generic paused runs may still be waiting for user input or a resumable handoff
+  // (for example train/general-plan flows), so age alone must never resolve them.
   if(['stale_provider_access_limited','background_browser_resume_expired','stale_run_recovered','background_browser_actor_missing'].includes(error))return true
-  const age=Date.now()-Date.parse(String(row?.updated_at||0))
-  if(String(row?.status)==='paused'&&age>7*86400_000)return true
   return false
 }
 
 async function syncRuns(telegramId:string,current:Set<string>){
-  const {data,error}=await supabaseAdmin.from('agent_runs')
-    .select('id,status,title,summary,error,updated_at,started_at,capability')
-    .eq('telegram_id',telegramId)
-    .in('status',['waiting_approval','paused','outcome_unknown'])
-    .order('updated_at',{ascending:false}).limit(30)
-  if(error)throw new Error(`open_loop_run_read_failed:${error.message}`)
-  for(const row of data||[]){
+  const rows:any[]=[]
+  const pageSize=200
+  for(let from=0;;from+=pageSize){
+    const {data,error}=await supabaseAdmin.from('agent_runs')
+      .select('id,status,title,summary,error,updated_at,started_at,capability')
+      .eq('telegram_id',telegramId)
+      .in('status',['waiting_approval','paused','outcome_unknown'])
+      .order('updated_at',{ascending:false})
+      .range(from,from+pageSize-1)
+    if(error)throw new Error(`open_loop_run_read_failed:${error.message}`)
+    rows.push(...(data||[]))
+    if((data||[]).length<pageSize)break
+  }
+  for(const row of rows){
     if(suppressRun(row))continue
     const status=String(row.status)
     const input:OpenLoopInput={
