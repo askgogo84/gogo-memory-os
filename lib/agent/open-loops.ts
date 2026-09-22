@@ -109,7 +109,7 @@ export function parseExplicitOpenLoop(text:string):{
     }
   }
 
-  const expected=raw.match(/^(.{3,120}?)\s+is\s+expected\s+(?:today|tomorrow|by\s+.+)$/i)
+  const expected=raw.match(/^(.{3,120}?)\s+is\s+expected\s+(?:today|tomorrow|by\s+.+?)[.?!]*$/i)
   if(expected?.[1]){
     const subject=clean(expected[1],110)
     if(subject)return {kind:'waiting_on',title:`Waiting on ${subject}`,summary:raw,priority:0.84}
