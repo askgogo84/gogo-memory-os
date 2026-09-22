@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
+import { sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
 
 const PULSE_COOLDOWN_MINUTES=180
 const MAX_USERS_PER_PASS=80
@@ -36,7 +36,17 @@ async function candidateUserIds(){
     if(result.error)console.error('AUTONOMY_PULSE_CANDIDATE_READ_FAILED:',result.error.message)
     for(const row of result.data||[])if(row.telegram_id)ids.add(String(row.telegram_id))
   }
-  return Array.from(ids).slice(0,MAX_USERS_PER_PASS)
+  // Rotate fairly across the eligible population: users already processed inside
+  // the pulse cooldown do not consume this pass's capacity.
+  const cooldownCutoff=new Date(Date.now()-PULSE_COOLDOWN_MINUTES*60_000).toISOString()
+  const {data:recent,error:recentError}=await supabaseAdmin.from('agent_activity')
+    .select('telegram_id')
+    .eq('event_type','autonomy_pulse_sent')
+    .gte('created_at',cooldownCutoff)
+    .limit(5000)
+  if(recentError)console.error('AUTONOMY_PULSE_RECENT_READ_FAILED:',recentError.message)
+  const recentlyProcessed=new Set((recent||[]).map((row:any)=>String(row.telegram_id||'')).filter(Boolean))
+  return Array.from(ids).filter(id=>!recentlyProcessed.has(id)).sort().slice(0,MAX_USERS_PER_PASS)
 }
 
 async function lastPulse(telegramId:string){
@@ -117,7 +127,15 @@ async function sendPulse(telegramId:string){
     '',
     'Reply *what are you working on for me?* for the full live status.',
   ].join('\n')
-  await sendWhatsAppMessage(String(user.whatsapp_id),message)
+  // This cron can run outside WhatsApp's 24-hour service window, so proactive
+  // delivery must use an approved Utility template. Reuse the existing reminder
+  // template until a dedicated autonomy-pulse template is configured.
+  const templateLabel=[
+    'Gogo update',
+    ...pulse.items.map(item=>item.line.replace(/[*_]/g,'').replace(/^\S+\s*/,'').trim()),
+  ].join(' · ').slice(0,400)
+  const delivered=await sendWhatsAppReminderTemplate(String(user.whatsapp_id),templateLabel)
+  if(!delivered?.sid)throw new Error('autonomy_pulse_template_not_accepted')
   await supabaseAdmin.from('agent_activity').insert({
     telegram_id:telegramId,
     event_type:'autonomy_pulse_sent',
