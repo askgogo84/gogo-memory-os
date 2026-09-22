@@ -138,3 +138,7 @@ const backoffMigration=readFileSync('supabase/migrations/20260922165500_agent_op
 assert.match(backoffMigration,/proactive_backoff_until/)
 assert.doesNotMatch(autonomyPulse,/update\(\{next_check_at:nextAttentionAt/)
 console.log('Attention proactive backoff is isolated from source check timing')
+
+assert.doesNotMatch(openLoops,/if\(last\.isUnread&&looksLikeIncomingAction/)
+assert.match(openLoops,/unread:last\.isUnread/)
+console.log('Gmail action loops survive read/unread state changes until thread truth resolves them')
