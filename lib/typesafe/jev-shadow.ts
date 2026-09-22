@@ -116,7 +116,7 @@ export async function runJevShadow(params: {
   const apiKey = String(process.env.TYPESAFE_API_KEY || '').trim()
   if (!apiKey) return null
 
-  if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || '')) || isSecretShapedMemory(String(params.recentContext || ''))) {
+  if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || '')) || (params.needsContext && isSecretShapedMemory(String(params.recentContext || '')))) {
     return {
       ok: false,
       version: JEV_SHADOW_VERSION,
