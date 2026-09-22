@@ -82,7 +82,95 @@ export function parseExplicitOpenLoop(text:string):{
     }
   }
 
+  const noResponse=raw.match(/^(?:still\s+)?no\s+(?:reply|response|update)\s+from\s+(.{2,120})[.?!]*$/i)
+  if(noResponse?.[1]){
+    const subject=clean(noResponse[1],110)
+    if(subject)return {kind:'followup',title:`Follow up with ${subject}`,summary:raw,priority:0.92}
+  }
+
+  const asked=raw.match(/\bi\s+(?:asked|requested)\s+(.{2,80}?)\s+to\s+(.{3,220})/i)
+  if(asked?.[1]&&asked?.[2]){
+    const subject=clean(asked[1],80)
+    const action=clean(asked[2].replace(/[.?!]+$/,''),200)
+    if(subject&&action)return {kind:'waiting_on',title:`Waiting on ${subject} to ${action}`,summary:raw,priority:0.86}
+  }
+
+  const promised=raw.match(/^(.{2,90}?)\s+(?:said\s+(?:he|she|they)?\s*(?:will|'ll|would)?|will|is\s+going\s+to)\s+(send|share|resend|reply|respond|get\s+back|confirm|approve|review|deliver|update|call)\s+(.{2,220})/i)
+  if(promised?.[1]&&promised?.[2]){
+    const subject=clean(promised[1].replace(/^(?:and\s+)?/i,''),90)
+    const action=clean(`${promised[2]} ${promised[3]||''}`.replace(/[.?!]+$/,''),220)
+    if(subject&&!/^(?:i|we|you)$/i.test(subject)&&action){
+      return {kind:'waiting_on',title:`Waiting on ${subject} to ${action}`,summary:raw,priority:0.87}
+    }
+  }
+
+  const expected=raw.match(/^(.{3,120}?)\s+is\s+expected\s+(?:today|tomorrow|by\s+.+)$/i)
+  if(expected?.[1]){
+    const subject=clean(expected[1],110)
+    if(subject)return {kind:'waiting_on',title:`Waiting on ${subject}`,summary:raw,priority:0.84}
+  }
+
   return null
+}
+
+const COMPLETION_STEMS:Record<string,string>={
+  sent:'send',sending:'send',shared:'share',sharing:'share',resend:'send',resent:'send',
+  replied:'reply',responded:'respond',response:'respond',confirmed:'confirm',approved:'approve',
+  reviewed:'review',delivered:'deliver',updated:'update',called:'call',received:'receive',
+  completed:'complete',finished:'finish',resolved:'resolve',submitted:'submit',signed:'sign',
+}
+const LOOP_STOPWORDS=new Set(['waiting','follow','up','with','to','need','the','a','an','on','for','about','and','or','is','are','was','were','my','our','your','their','this','that','still','please','after','before','by','today','tomorrow'])
+
+function loopTokens(value:unknown){
+  return normalize(value).split(' ').map(token=>COMPLETION_STEMS[token]||token)
+    .filter(token=>token.length>2&&!LOOP_STOPWORDS.has(token))
+}
+
+function looksLikeCompletionStatement(text:string){
+  return /\b(sent|shared|resent|replied|responded|got\s+back|confirmed|approved|reviewed|delivered|updated|called|received|got\s+(?:the|it)|completed|finished|resolved|submitted|signed|came\s+through|has\s+arrived|arrived)\b/i.test(text)
+}
+
+export async function autoResolveOpenLoopsFromTurn(params:{actor:AgentActor;text:string}){
+  const raw=clean(params.text,1200)
+  if(!raw||!looksLikeCompletionStatement(raw))return []
+  const {data,error}=await supabaseAdmin.from('agent_open_loops')
+    .select('id,kind,title,summary,source_type,updated_at')
+    .eq('telegram_id',String(params.actor.legacyTelegramId))
+    .eq('status','active')
+    .in('kind',['followup','waiting_on','commitment','meeting_action'])
+    .order('updated_at',{ascending:false})
+    .limit(30)
+  if(error)throw new Error(`open_loop_auto_resolve_read_failed:${error.message}`)
+  const textTokens=new Set(loopTokens(raw))
+  if(textTokens.size<2)return []
+
+  const ranked=(data||[]).map((loop:any)=>{
+    const tokens=loopTokens(`${loop.title} ${loop.summary||''}`)
+    const unique=[...new Set(tokens)]
+    const overlap=unique.filter(token=>textTokens.has(token))
+    const score=unique.length?overlap.length/Math.min(unique.length,Math.max(3,textTokens.size)):0
+    return {loop,overlap,score}
+  }).filter((item:any)=>item.overlap.length>=2&&item.score>=0.55)
+    .sort((a:any,b:any)=>b.score-a.score)
+
+  if(!ranked.length)return []
+  // Fail closed on ambiguity: a completion statement must identify one loop clearly.
+  if(ranked[1]&&Math.abs(ranked[0].score-ranked[1].score)<0.12)return []
+
+  const winner=ranked[0]
+  const at=new Date().toISOString()
+  const {error:updateError}=await supabaseAdmin.from('agent_open_loops').update({
+    status:'resolved',resolved_at:at,updated_at:at,
+    evidence_json:{auto_resolved_from:'conversation',completion_text:raw.slice(0,500),match_score:winner.score,matched_tokens:winner.overlap.slice(0,12)},
+  }).eq('id',winner.loop.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('status','active')
+  if(updateError)throw new Error(`open_loop_auto_resolve_failed:${updateError.message}`)
+  await supabaseAdmin.from('agent_activity').insert({
+    telegram_id:String(params.actor.legacyTelegramId),
+    event_type:'open_loop_auto_resolved',
+    message:`Gogo resolved an open loop from new completion evidence: ${clean(winner.loop.title,180)}`,
+    metadata_json:{open_loop_id:String(winner.loop.id),score:winner.score,matched_tokens:winner.overlap.slice(0,12)},
+  }).then(({error})=>{if(error)console.error('OPEN_LOOP_AUTO_RESOLVE_ACTIVITY_FAILED:',error.message)})
+  return [String(winner.loop.id)]
 }
 
 async function upsertOpenLoop(input:OpenLoopInput){
