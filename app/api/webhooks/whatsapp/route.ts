@@ -44,6 +44,7 @@ import { tryRunWhatsAppAgent, tryRunWhatsAppJevSpecialist } from '@/lib/agent/wh
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
+import { captureExplicitOpenLoopFromTurn } from '@/lib/agent/open-loops'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
@@ -847,6 +848,9 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         text,
         eventId:inboundMessageSid || null,
       })
+      await captureExplicitOpenLoopFromTurn({ actor:shadowActor, text }).catch((err:any)=>
+        console.error('OPEN_LOOP_CAPTURE_FAILED:', String(err?.message || err).slice(0,180))
+      )
     } catch (shadowError:any) {
       console.error('SHADOW_BRAIN_WHATSAPP_FAILED:', String(shadowError?.message || shadowError).slice(0,180))
     }
