@@ -4,11 +4,111 @@ import { buildGmailConnectUrl } from '@/lib/services/google-gmail'
 import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { createInboxTriageWatcher, createProductStockWatcher, createWebSearchWatcher, normalizeProductStockWatcher, normalizeWebSearchWatcher } from './watchers'
+import { createInboxTriageWatcher, createProductStockWatcher, createWebPageWatcher, createWebSearchWatcher, normalizeProductStockWatcher, normalizeWebPageWatcher, normalizeWebSearchWatcher } from './watchers'
 import { initialWatcherCadence, isUrgentWatchRequest, watcherUpgradeMessage } from './watch-cost-policy'
 
 function clean(value: unknown, max = 1000) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max)
+}
+
+
+function canonicalWatchUrl(value:string) {
+  try {
+    const u=new URL(value)
+    if(!['http:','https:'].includes(u.protocol))return ''
+    u.hash=''
+    return u.toString()
+  } catch { return '' }
+}
+
+export function parseWebPageWatchCommand(text:string) {
+  const raw=clean(text,2000)
+  if(!raw)return null
+  const urlMatch=raw.match(/https?:\/\/[^\s<>]+/i)
+  const url=canonicalWatchUrl(String(urlMatch?.[0]||'').replace(/[),.;!?]+$/g,''))
+  if(!url)return null
+  const watcherIntent=/\b(watch|monitor|track|keep\s+an\s+eye|let\s+me\s+know|tell\s+me|notify\s+me|alert\s+me)\b/i.test(raw)
+  if(!watcherIntent)return null
+  const titleIntent=/\b(page\s+title|title)\b/i.test(raw)
+  const changeIntent=/\b(change|changes|changed|update|updates|different|modified)\b/i.test(raw)
+  if(!changeIntent && !/\bwatch|monitor|track\b/i.test(raw))return null
+  let label='Web page'
+  try{label=new URL(url).hostname.replace(/^www\./,'')}catch{}
+  return normalizeWebPageWatcher({
+    title:`Watch: ${label}`,
+    url,
+    watch:titleIntent?'title':'content',
+    delivery:'both',
+    cadenceMinutes:60,
+  })
+}
+
+function isWatcherStatusQuery(text:string) {
+  const raw=clean(text,400).toLowerCase()
+  return /^(?:what|which)\s+(?:are\s+you\s+)?(?:monitoring|watching|tracking)(?:\s+for\s+me)?\??$/.test(raw)
+    || /^(?:show|list)\s+(?:my\s+)?(?:monitors?|watchers?|watches)\??$/.test(raw)
+    || /^what\s+(?:monitors?|watchers?|watches)\s+(?:do\s+i\s+have|are\s+active)\??$/.test(raw)
+}
+
+export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;text:string}) {
+  if(!isWatcherStatusQuery(params.text))return null
+  const tg=String(params.actor.legacyTelegramId)
+  const {data,error}=await supabaseAdmin.from('agent_watchers')
+    .select('id,type,condition_json,cadence_minutes,last_checked_at,next_check_at,active,created_at,updated_at')
+    .eq('telegram_id',tg)
+    .eq('active',true)
+    .order('updated_at',{ascending:false})
+    .limit(12)
+  if(error)throw new Error(`watcher_status_read_failed:${error.message}`)
+  if(!data?.length) {
+    return {
+      runId:'watcher-status-none',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
+      text:'You do not have any active background monitors right now.',
+      handledBy:'watcher-status',
+    }
+  }
+  const lines=data.map((row:any,index:number)=>{
+    const condition:any=row.condition_json||{}
+    let label=String(condition.title||row.type||'Watch')
+    if(row.type==='web_page') label=`${label} — ${condition.watch==='title'?'page title':'page content'}`
+    else if(row.type==='web_search') label=`${label} — web search`
+    else if(row.type==='product_stock') label=`${label} — ${condition.variant||'stock'}`
+    else if(row.type==='email_triage') label='Inbox action watch'
+    const cadence=Math.max(1,Number(row.cadence_minutes||60))
+    return `${index+1}. ${label} — active, checking about every ${cadence} min`
+  })
+  return {
+    runId:'watcher-status-active',status:'watching' as const,capability:'browser' as const,risk:'low' as const,
+    text:`🔎 *Active background monitors*\n\n${lines.join('\n')}\n\nSay *stop monitoring that* to stop the most recent one.`,
+    handledBy:'watcher-status',
+  }
+}
+
+function stopWatcherIntent(text:string) {
+  const raw=clean(text,400).toLowerCase()
+  if(/^(?:stop|cancel|remove|disable)\s+(?:all\s+)?(?:monitoring|watching|tracking|monitors?|watchers?|watches)\b/.test(raw))return raw.includes('all')?'all':'latest'
+  if(/^(?:stop|cancel|remove|disable)\s+(?:monitoring|watching|tracking)\s+(?:that|it|this)\b/.test(raw))return 'latest'
+  if(/^(?:stop|cancel)\s+(?:that|this)\s+(?:watch|monitor)\b/.test(raw))return 'latest'
+  return null
+}
+
+export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:string}) {
+  const intent=stopWatcherIntent(params.text)
+  if(!intent)return null
+  const tg=String(params.actor.legacyTelegramId)
+  if(intent==='all'){
+    const {data,error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
+      .eq('telegram_id',tg).eq('active',true).select('id')
+    if(error)throw new Error(`watcher_stop_failed:${error.message}`)
+    return {runId:'watcher-stop-all',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${data?.length||0} active background monitor${data?.length===1?'':'s'}.`,handledBy:'watcher-stop'}
+  }
+  const {data:latest,error:readError}=await supabaseAdmin.from('agent_watchers')
+    .select('id,type,condition_json').eq('telegram_id',tg).eq('active',true).order('updated_at',{ascending:false}).limit(1).maybeSingle()
+  if(readError)throw new Error(`watcher_stop_read_failed:${readError.message}`)
+  if(!latest?.id)return {runId:'watcher-stop-none',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:'There is no active background monitor to stop.',handledBy:'watcher-stop'}
+  const {error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()}).eq('id',latest.id).eq('telegram_id',tg)
+  if(error)throw new Error(`watcher_stop_failed:${error.message}`)
+  return {runId:`watcher-stop-${latest.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${String((latest.condition_json as any)?.title||'that monitor')}.`,handledBy:'watcher-stop'}
 }
 
 export function parseWebWatchCommand(text: string) {
@@ -410,6 +510,50 @@ export async function tryGetProductStockWatchStatusFromCommand(params: {
     risk:'low' as const,
     text:`The product watch is no longer active, and I don’t have a verified ${variant} availability event to report. I won’t claim it was available without verification.`,
     handledBy:'product-stock-watch-status',
+  }
+}
+
+export async function tryCreateWebPageWatchFromCommand(params:{
+  actor:AgentActor
+  surface:AgentSurface
+  text:string
+}) {
+  const parsed=parseWebPageWatchCommand(params.text)
+  if(!parsed)return null
+  const tg=String(params.actor.legacyTelegramId)
+  if(!(await browserWatchAllowed(params.actor.legacyTelegramId))) {
+    return {runId:'page-watch-blocked',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:'Browser monitoring is off in Gogo Safe Mode. Turn Browser access back on to create this watch.',blockedReason:'browser_permission_off',handledBy:'web-page-watch'}
+  }
+  const budget=await getCostBudget(tg)
+  if(budget.activeWebWatchersMax<=0) {
+    return {runId:'page-watch-plan-blocked',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:watcherUpgradeMessage(budget.planCode),blockedReason:'plan_background_watch_unavailable',handledBy:'web-page-watch'}
+  }
+  const {count,error:countError}=await supabaseAdmin.from('agent_watchers').select('id',{count:'exact',head:true}).eq('telegram_id',tg).in('type',['web_search','web_page','product_stock']).eq('active',true)
+  if(countError)throw new Error(`agent_watcher_count_failed:${countError.message}`)
+  if((count||0)>=budget.activeWebWatchersMax) {
+    return {runId:'page-watch-plan-limit',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:watcherUpgradeMessage(budget.planCode),blockedReason:'plan_background_watch_limit',handledBy:'web-page-watch'}
+  }
+  const cadenceMinutes=Math.max(60,Number(budget.baseWatcherCadenceMinutes||60))
+  const condition={...parsed,cadenceMinutes}
+  const now=new Date().toISOString()
+  const {data:run,error:runError}=await supabaseAdmin.from('agent_runs').insert({
+    telegram_id:tg,type:'watcher',capability:'browser',status:'completed',title:condition.title,
+    summary:`Background Gogo will inspect ${condition.url} and alert only when the verified ${condition.watch} changes.`,
+    progress:100,why:'You asked Gogo to keep monitoring a specific web page in the background.',source:params.surface,
+    metadata_json:{input_text:clean(params.text,2000),watcher_type:'web_page',url:condition.url,watch:condition.watch,cadence_minutes:cadenceMinutes},
+    started_at:now,updated_at:now,
+  }).select('id').single()
+  if(runError||!run?.id)throw new Error(`agent_run_create_failed:${runError?.message||'unknown'}`)
+  const watcher=await createWebPageWatcher({telegramId:tg,condition})
+  await supabaseAdmin.from('agent_activity').insert({
+    telegram_id:tg,run_id:String(run.id),event_type:'watcher_created',
+    message:`Background Gogo started a browser-backed page watch: ${condition.url}`.slice(0,900),
+    metadata_json:{watcher_id:watcher.id,type:'web_page',url:condition.url,watch:condition.watch,cadence_minutes:cadenceMinutes},
+  })
+  return {
+    runId:String(run.id),status:'completed' as const,capability:'browser' as const,risk:'low' as const,
+    text:`Background Gogo is now monitoring ${condition.url}. I’ll establish a verified baseline with the persistent browser, then check about every ${cadenceMinutes} minutes and alert you only if the page ${condition.watch} changes. You can ask *what are you monitoring for me?* or say *stop monitoring that*.`,
+    handledBy:'web-page-watch',
   }
 }
 
