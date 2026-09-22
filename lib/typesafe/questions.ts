@@ -1,5 +1,5 @@
 export const JEV_SHADOW_MODEL = 'jev-latest'
-export const JEV_SHADOW_VERSION = 'jev-shadow-v1.1'
+export const JEV_SHADOW_VERSION = 'jev-shadow-v1.2'
 
 export const JEV_INTENT_CRITERIA = {
   reminder_read: 'Read, list, inspect, or answer questions about reminders without changing them.',
@@ -21,6 +21,14 @@ export const JEV_ACTION_MODE_CRITERIA = {
   consequential_write: 'External/consequential write. Includes calendar mutation, browser form submission, booking, payment, purchase, or sending.',
   research: 'Search/compare/investigate without changing stored or external state.',
   clarify: 'Too ambiguous to choose a safe action without clarification.',
+} as const
+
+export const JEV_ATTENTION_CRITERIA = {
+  none: 'No unresolved commitment or completion evidence is expressed.',
+  waiting_on: 'Someone else has committed to provide, send, confirm, reply, deliver, update, or get back to the user and it is still pending.',
+  followup: 'The user needs to follow up because a reply/update has not arrived or explicitly says a follow-up is needed.',
+  commitment: 'The user has an unresolved action they need to do, such as send, call, submit, review, confirm, finish, pay, book, or reply.',
+  completed: 'The message provides evidence that a previously pending commitment or waiting item has been completed, delivered, replied to, approved, received, or otherwise resolved.',
 } as const
 
 export const JEV_REFERENT_CRITERIA = {
@@ -49,6 +57,11 @@ export function buildJevShadowQuestions() {
       type: 'choice',
       instructions: 'If the message uses pronouns, ordinals, shorthand, or continuation language, choose what kind of prior object it most likely refers to. Choose none when the message stands alone.',
       criteria: JEV_REFERENT_CRITERIA,
+    },
+    attention_state: {
+      type: 'choice',
+      instructions: 'Classify whether this turn creates or resolves an attention/open-loop state. Do not invent commitments. Choose none unless the message itself contains evidence of waiting, follow-up, a user commitment, or completion.',
+      criteria: JEV_ATTENTION_CRITERIA,
     },
   } as const
 }

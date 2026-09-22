@@ -25,6 +25,7 @@ import { buildCalendarActionReply, createCalendarConflictEvent, createCalendarEv
 import { isCalendarMutation, isCalendarMutationConfirm, buildCalendarMutationReply, confirmCalendarMutation } from './handlers/calendar-mutations'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
+import { buildGmailConnectReply, buildGmailReadReply } from './handlers/gmail-read'
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { indexMemory } from '@/lib/services/memory-index'
@@ -899,21 +900,33 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   if (intent.type === 'email_action') {
-    // Email reading is disabled (gmail.readonly scope dropped). No Gmail API call.
-    const reply = `Email reading isn't available right now.`
+    // Keep email mutation fail-closed. Gmail is read-only here; drafts/sends remain
+    // separate consequential capabilities with their own approval boundary.
+    const reply = `I can read the Gmail context you approved, but I won't send or modify email from this read-only path. Ask me to *show the latest email* first, then I can help you prepare a reply safely.`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'read_gmail') {
-    // Email reading is disabled (gmail.readonly scope dropped).
-    const reply = `Email reading isn't available right now.`
+    const mode=/\bunread\b/i.test(incomingText)?'unread':'latest'
+    let reply=''
+    try{
+      reply=await buildGmailReadReply(resolvedUser.telegramId,mode,5)
+    }catch(err:any){
+      console.error('GMAIL_READ_HANDLER_FAILED:',err?.message||err)
+      reply=`I couldn't read Gmail right now. I did not invent any inbox results. Please try again shortly.`
+    }
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'connect_gmail') {
-    const reply = `Gmail connection isn't available right now.`
+    let reply=''
+    try{reply=await buildGmailConnectReply(resolvedUser.telegramId)}
+    catch(err:any){
+      console.error('GMAIL_CONNECT_HANDLER_FAILED:',err?.message||err)
+      reply='Google Workspace connection is temporarily unavailable.'
+    }
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }

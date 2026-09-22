@@ -61,15 +61,19 @@ assert.equal((jevRequest.questions.intent as any).type,'choice')
 assert.ok('reminder_mutation' in (jevRequest.questions.intent as any).criteria)
 assert.ok('calendar_mutation' in (jevRequest.questions.intent as any).criteria)
 assert.equal((jevRequest.questions.referent_kind as any).type,'choice')
+assert.equal((jevRequest.questions.attention_state as any).type,'choice')
+assert.ok('waiting_on' in (jevRequest.questions.attention_state as any).criteria)
 
 const parsed=parseJevShadowResponse({answers:{
   intent:{type:'choice',choice:'reminder_mutation',confidence:0.94,probabilities:{reminder_mutation:0.94,calendar_mutation:0.03}},
   action_mode:{type:'choice',choice:'private_write',confidence:0.91,probabilities:{private_write:0.91}},
   referent_kind:{type:'choice',choice:'reminder',confidence:0.89,probabilities:{reminder:0.89}},
+  attention_state:{type:'choice',choice:'none',confidence:0.96,probabilities:{none:0.96}},
 }},17)
 assert.equal(parsed.intent.choice,'reminder_mutation')
 assert.equal(parsed.actionMode.choice,'private_write')
 assert.equal(parsed.referentKind.choice,'reminder')
+assert.equal(parsed.attentionState.choice,'none')
 assert.equal(parsed.latencyMs,17)
 console.log('Jev shadow request/response verification passed')
 

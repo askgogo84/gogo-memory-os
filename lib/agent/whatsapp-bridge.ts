@@ -16,6 +16,7 @@ import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
 import { tryGetAutonomyStatus, tryGetConnectionStatus } from './autonomy-status'
+import { handleOpenLoopQuery, handleOpenLoopResolution, shouldHandleOpenLoopResolution } from './open-loops'
 import { tryRecoverAppointmentOption } from './appointment-followup-recovery'
 import { tryRunAppointmentFollowup } from './appointment-followup'
 import { tryRunAppointmentResearch } from './appointment-research'
@@ -254,6 +255,14 @@ export async function tryRunWhatsAppAgent(params: {
 
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
+
+  if (await shouldHandleOpenLoopResolution({ actor, text:params.text })) {
+    const openLoopResolution = await handleOpenLoopResolution({ actor, text:params.text })
+    if (openLoopResolution) return { ...openLoopResolution, handledBy:String(openLoopResolution.handledBy || 'open-loops') }
+  }
+
+  const openLoopQuery = await handleOpenLoopQuery({ actor, text:params.text })
+  if (openLoopQuery) return { ...openLoopQuery, handledBy:String(openLoopQuery.handledBy || 'open-loops') }
 
   const connectionStatus = await tryGetConnectionStatus({ actor, text:params.text })
   if (connectionStatus) return { ...connectionStatus, handledBy:String(connectionStatus.handledBy || 'connection-status') }
