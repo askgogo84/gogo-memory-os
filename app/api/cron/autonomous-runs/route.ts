@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { resumePersistentGeneralPlan } from '@/lib/agent/persistent-general-plan'
 import type { AgentActor } from '@/lib/agent/actor'
 import { runQueuedTrainResearch } from '@/lib/agent/train-research'
+import { resumePausedBrowserRun } from '@/lib/agent/browser-command'
 import { sendWhatsApp } from '@/lib/whatsapp'
 
 export const dynamic = 'force-dynamic'
@@ -61,6 +62,69 @@ export async function GET(request:Request){
         results.push({runId:String(run.id),status:'error'})
       }
     }
+    // ---- secure_browser: continue safe read/draft work after WhatsApp timeout ----
+    // WhatsApp only waits ~42s. If a provider is slow, the webhook pauses the run
+    // instead of leaving the user with silence. The background worker claims that
+    // exact timeout outcome and resumes the SAME persistent browser task. Execute-mode
+    // work still requires its existing approval and is never auto-resumed here.
+    let browserClaimed=0,browserDone=0,browserPaused=0,browserFailed=0
+    const {data:pausedBrowsers,error:browserReadError}=await supabaseAdmin.from('agent_runs')
+      .select('id,telegram_id,status,error,metadata_json,updated_at')
+      .eq('type','secure_browser')
+      .eq('status','paused')
+      .eq('error','whatsapp_browser_response_timeout')
+      .order('updated_at',{ascending:true})
+      .limit(3)
+    if(browserReadError)console.error('BROWSER_BACKGROUND_QUEUE_READ_FAILED:',browserReadError.message)
+    for(const run of pausedBrowsers||[]){
+      const meta:any=run.metadata_json||{}
+      const mode=String(meta.mode||'read')
+      if(mode==='execute'){browserPaused++;continue}
+      const claimTag=`background_resume_claimed:${new Date().toISOString()}`
+      const {data:claimed,error:claimError}=await supabaseAdmin.from('agent_runs')
+        .update({error:claimTag,updated_at:new Date().toISOString()})
+        .eq('id',run.id)
+        .eq('telegram_id',String(run.telegram_id))
+        .eq('status','paused')
+        .eq('error','whatsapp_browser_response_timeout')
+        .select('id')
+        .maybeSingle()
+      if(claimError){browserFailed++;console.error('BROWSER_BACKGROUND_CLAIM_FAILED:',run.id,claimError.message);continue}
+      if(!claimed?.id)continue
+      browserClaimed++
+      const actor=await actorFor(String(run.telegram_id))
+      if(!actor){
+        browserFailed++
+        const at=new Date().toISOString()
+        await supabaseAdmin.from('agent_runs').update({
+          status:'failed',error:'background_browser_actor_missing',
+          summary:'Gogo could not resume this browser task because the user identity is unavailable.',
+          completed_at:at,updated_at:at,
+        }).eq('id',run.id).eq('telegram_id',String(run.telegram_id)).eq('status','paused')
+        continue
+      }
+      try{
+        const result=await resumePausedBrowserRun({actor,runId:String(run.id)})
+        if(result.status==='completed')browserDone++;else browserPaused++
+        if(actor.whatsappId&&result?.text){
+          await sendWhatsApp(actor.whatsappId,
+            result.status==='completed'
+              ? `✅ Background Gogo finished the browser task\n\n${result.text}`
+              : result.text
+          )
+        }
+        results.push({runId:String(run.id),status:result.status,browser:true})
+      }catch(err:any){
+        browserFailed++
+        console.error('BROWSER_BACKGROUND_RESUME_FAILED:',run.id,err?.message||err)
+        const at=new Date().toISOString()
+        await supabaseAdmin.from('agent_runs').update({
+          status:'failed',error:String(err?.message||'background_browser_resume_failed').slice(0,500),
+          summary:'Gogo could not finish the background browser task.',completed_at:at,updated_at:at,
+        }).eq('id',run.id).eq('telegram_id',String(run.telegram_id)).eq('status','paused')
+      }
+    }
+
     // ---- train_research: background execution ----
     // The WhatsApp webhook only ENQUEUES train runs (42s budget, function killed after
     // reply). This worker claims them with an optimistic lock, runs the browser with the
@@ -104,7 +168,7 @@ export async function GET(request:Request){
         try{if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not complete the train search. I did not invent timings or availability. Try again shortly, or check IRCTC directly.')}catch{}
       }
     }
-    return NextResponse.json({ok:true,checked,resumed,completed,failed,skipped,trainClaimed,trainDone,trainFailed,trainRequeued,results})
+    return NextResponse.json({ok:true,checked,resumed,completed,failed,skipped,browserClaimed,browserDone,browserPaused,browserFailed,trainClaimed,trainDone,trainFailed,trainRequeued,results})
   }catch(err:any){
     console.error('AUTONOMOUS_CRON_FAILED:',err?.message||err)
     return NextResponse.json({ok:false,error:'autonomous_worker_failed'},{status:500})
