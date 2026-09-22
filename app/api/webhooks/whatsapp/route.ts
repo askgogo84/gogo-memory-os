@@ -1036,6 +1036,68 @@ _"${originalText}"_
       }
     }
 
+    // Jev is promoted only to specialist *first refusal*. It may choose which
+    // existing capability gets the first chance to parse the turn, but it never grants
+    // execution authority. The specialist still has to validate the command and all
+    // existing approval/policy/provider-verification gates remain unchanged.
+    const jevIntent=promotedJevIntent(brainObservation?.jev)
+    if(jevIntent){
+      const agentIntent=['watcher','reminder_read','reminder_mutation','travel_research','browser_action'].includes(jevIntent)
+      if(agentIntent){
+        const promotedAgent=await tryRunWhatsAppAgent({
+          user:resolvedUser,
+          text,
+          messageId:inboundMessageSid||null,
+        })
+        if(promotedAgent){
+          await recordJevRoutingHint({
+            telegramId:resolvedUser.telegramId,
+            eventId:inboundMessageSid,
+            intent:jevIntent,
+            handler:promotedAgent.handledBy||'whatsapp-agent',
+            confidence:brainObservation?.jev?.intent?.confidence??null,
+            latencyMs:brainObservation?.jev?.latencyMs??null,
+          }).catch(()=>{})
+          await recordShadowRouterOutcome({
+            telegramId:resolvedUser.telegramId,
+            surface:'whatsapp',
+            eventId:inboundMessageSid,
+            actualHandler:promotedAgent.handledBy||'whatsapp-agent',
+            actualCapability:(promotedAgent as any).capability||null,
+            status:promotedAgent.status||null,
+            runId:promotedAgent.runId||null,
+          }).catch(()=>{})
+          await saveConversation(resolvedUser.telegramId,'user',text)
+          await saveConversation(resolvedUser.telegramId,'assistant',promotedAgent.text)
+          await sendWhatsAppMessage(from,promotedAgent.text)
+          return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+        }
+      }else if(jevIntent==='calendar_read'||jevIntent==='calendar_mutation'){
+        const promotedCalendar=await routeFeatureIntent(from,text,{telegramId:resolvedUser.telegramId,caption:bodyText})
+        if(promotedCalendar){
+          await recordJevRoutingHint({
+            telegramId:resolvedUser.telegramId,
+            eventId:inboundMessageSid,
+            intent:jevIntent,
+            handler:'legacy-feature-intent',
+            confidence:brainObservation?.jev?.intent?.confidence??null,
+            latencyMs:brainObservation?.jev?.latencyMs??null,
+          }).catch(()=>{})
+          await recordShadowRouterOutcome({
+            telegramId:resolvedUser.telegramId,
+            surface:'whatsapp',
+            eventId:inboundMessageSid,
+            actualHandler:'legacy-feature-intent',
+            actualCapability:'calendar',
+          }).catch(()=>{})
+          await saveConversation(resolvedUser.telegramId,'user',text)
+          await saveConversation(resolvedUser.telegramId,'assistant',promotedCalendar)
+          await sendWhatsAppMessage(from,promotedCalendar)
+          return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+        }
+      }
+    }
+
     // Vault/provider read tasks must beat legacy feature routing. A phrase like
     // "Find the AI reels I saved recently on Instagram" contains words such as
     // "saved" that legacy media-memory handlers can mistake for a save command.
