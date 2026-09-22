@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { classifyAgentRequest } from './classifier'
 import type { AgentActor } from './actor'
-import { runJevShadow } from '@/lib/typesafe/jev-shadow'
+import { runJevShadow, type JevShadowResult } from '@/lib/typesafe/jev-shadow'
 
 export type ShadowBrainObservation = {
   actionFamily:string
@@ -12,6 +12,7 @@ export type ShadowBrainObservation = {
   focusSummary:string|null
   confidence:number
   ambiguous:boolean
+  jev?:JevShadowResult|null
 }
 
 function clean(value:unknown,max=500){
@@ -247,5 +248,5 @@ export async function observeShadowBrainTurn(params:{
   })
   if(error)console.error('SHADOW_BRAIN_ACTIVITY_FAILED:',error.message)
 
-  return observation
+  return { ...observation, jev }
 }
