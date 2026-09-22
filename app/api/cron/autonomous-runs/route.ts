@@ -67,12 +67,43 @@ export async function GET(request:Request){
     // instead of leaving the user with silence. The background worker claims that
     // exact timeout outcome and resumes the SAME persistent browser task. Execute-mode
     // work still requires its existing approval and is never auto-resumed here.
-    let browserClaimed=0,browserDone=0,browserPaused=0,browserFailed=0
-    const {data:pausedBrowsers,error:browserReadError}=await supabaseAdmin.from('agent_runs')
-      .select('id,telegram_id,status,error,metadata_json,updated_at')
+    let browserClaimed=0,browserDone=0,browserPaused=0,browserFailed=0,browserExpired=0
+    const browserResumeCutoff=new Date(Date.now()-2*3600_000).toISOString()
+
+    // Never resurrect ancient WhatsApp timeouts. Before this guard, a week-old
+    // dentist-browser task was resumed after deployment and produced a confusing
+    // out-of-context WhatsApp message. Expire old timeout rows silently instead.
+    const {data:expiredBrowsers,error:expiredReadError}=await supabaseAdmin.from('agent_runs')
+      .select('id,telegram_id')
       .eq('type','secure_browser')
       .eq('status','paused')
       .eq('error','whatsapp_browser_response_timeout')
+      .lt('updated_at',browserResumeCutoff)
+      .limit(20)
+    if(expiredReadError)console.error('BROWSER_BACKGROUND_EXPIRED_READ_FAILED:',expiredReadError.message)
+    for(const stale of expiredBrowsers||[]){
+      const at=new Date().toISOString()
+      const {data:expired}=await supabaseAdmin.from('agent_runs').update({
+        status:'failed',
+        error:'background_browser_resume_expired',
+        summary:'This browser task expired before Background Gogo could safely resume it.',
+        completed_at:at,
+        updated_at:at,
+      }).eq('id',stale.id)
+        .eq('telegram_id',String(stale.telegram_id))
+        .eq('status','paused')
+        .eq('error','whatsapp_browser_response_timeout')
+        .select('id')
+        .maybeSingle()
+      if(expired?.id)browserExpired++
+    }
+
+    const {data:pausedBrowsers,error:browserReadError}=await supabaseAdmin.from('agent_runs')
+      .select('id,telegram_id,status,title,error,metadata_json,updated_at')
+      .eq('type','secure_browser')
+      .eq('status','paused')
+      .eq('error','whatsapp_browser_response_timeout')
+      .gte('updated_at',browserResumeCutoff)
       .order('updated_at',{ascending:true})
       .limit(3)
     if(browserReadError)console.error('BROWSER_BACKGROUND_QUEUE_READ_FAILED:',browserReadError.message)
@@ -107,10 +138,13 @@ export async function GET(request:Request){
         const result=await resumePausedBrowserRun({actor,runId:String(run.id)})
         if(result.status==='completed')browserDone++;else browserPaused++
         if(actor.whatsappId&&result?.text){
+          let host=''
+          try{host=new URL(String(meta.url||'')).hostname}catch{}
+          const taskLabel=host ? `your recent browser task on *${host}*` : 'your recent browser task'
           await sendWhatsApp(actor.whatsappId,
             result.status==='completed'
-              ? `✅ Background Gogo finished the browser task\n\n${result.text}`
-              : result.text
+              ? `✅ Background Gogo finished ${taskLabel}\n\n${result.text}`
+              : `Background Gogo continued ${taskLabel}, but it could not finish safely.\n\n${result.text}`
           )
         }
         results.push({runId:String(run.id),status:result.status,browser:true})
@@ -168,7 +202,7 @@ export async function GET(request:Request){
         try{if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not complete the train search. I did not invent timings or availability. Try again shortly, or check IRCTC directly.')}catch{}
       }
     }
-    return NextResponse.json({ok:true,checked,resumed,completed,failed,skipped,browserClaimed,browserDone,browserPaused,browserFailed,trainClaimed,trainDone,trainFailed,trainRequeued,results})
+    return NextResponse.json({ok:true,checked,resumed,completed,failed,skipped,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
   }catch(err:any){
     console.error('AUTONOMOUS_CRON_FAILED:',err?.message||err)
     return NextResponse.json({ok:false,error:'autonomous_worker_failed'},{status:500})
