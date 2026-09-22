@@ -41,8 +41,10 @@ export function buildJevShadowRequest(params: {
   focusKind: string
   focusSummary?: string | null
 }) {
-  const safeText = redactSecretShapedText(String(params.text || '').slice(0, 1800))
-  const safeSummary = redactSecretShapedText(String(params.focusSummary || '').slice(0, 500))
+  const rawText = String(params.text || '').slice(0, 1800)
+  const rawSummary = String(params.focusSummary || '').slice(0, 500)
+  const safeText = isSecretShapedMemory(rawText) ? '[sensitive turn withheld from TypeSafe]' : redactSecretShapedText(rawText)
+  const safeSummary = isSecretShapedMemory(rawSummary) ? '[sensitive context withheld from TypeSafe]' : redactSecretShapedText(rawSummary)
   return {
     model: JEV_SHADOW_MODEL,
     state: {
