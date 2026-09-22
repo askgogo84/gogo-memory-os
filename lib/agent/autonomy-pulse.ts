@@ -72,7 +72,7 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     supabaseAdmin.from('agent_ideas').select('id,title,reason,expected_value,value_score,action_label,created_at,snoozed_until,source_refs').eq('telegram_id',telegramId).eq('status','new').order('value_score',{ascending:false}).limit(8),
     supabaseAdmin.from('agent_runs').select('id,status,title,summary,updated_at,error').eq('telegram_id',telegramId).in('status',['waiting_approval','paused','outcome_unknown','failed']).gte('updated_at',since48).order('updated_at',{ascending:false}).limit(6),
     supabaseAdmin.from('life_events').select('id,event_type,title,start_at,location,lifecycle_state,next_action_at').eq('telegram_id',telegramId).gte('start_at',nowIso).lte('start_at',future72).order('start_at',{ascending:true}).limit(5),
-    supabaseAdmin.from('agent_open_loops').select('id,kind,title,summary,priority,due_at,next_check_at,source_type').eq('telegram_id',telegramId).eq('status','active').gte('priority',0.85).order('priority',{ascending:false}).limit(8),
+    supabaseAdmin.from('agent_open_loops').select('id,kind,title,summary,priority,due_at,next_check_at,source_type').eq('telegram_id',telegramId).eq('status','active').gte('priority',0.85).not('source_type','in','(approval,agent_run,life_event_action)').order('priority',{ascending:false}).limit(8),
   ])
   const items:PulseItem[]=[]
 
@@ -182,11 +182,23 @@ async function sendPulse(telegramId:string){
     delivered=await sendWhatsAppReminderTemplate(String(user.whatsapp_id),templateLabel)
   }
   if(!delivered?.sid)throw new Error('autonomy_pulse_delivery_not_accepted')
+  const surfacedOpenLoopIds=pulse.items
+    .map(item=>item.key.match(/^open_loop:(.+)$/)?.[1]||'')
+    .filter(Boolean)
+  if(surfacedOpenLoopIds.length){
+    const nextAttentionAt=new Date(Date.now()+24*3600_000).toISOString()
+    const {error:attentionError}=await supabaseAdmin.from('agent_open_loops')
+      .update({next_check_at:nextAttentionAt,updated_at:new Date().toISOString()})
+      .in('id',surfacedOpenLoopIds)
+      .eq('telegram_id',telegramId)
+      .eq('status','active')
+    if(attentionError)console.error('AUTONOMY_PULSE_OPEN_LOOP_BACKOFF_FAILED:',attentionError.message)
+  }
   await supabaseAdmin.from('agent_activity').insert({
     telegram_id:telegramId,
     event_type:'autonomy_pulse_sent',
     message:'Background Gogo proactively surfaced high-signal items.',
-    metadata_json:{fingerprint:pulse.fingerprint,item_keys:pulse.items.map(x=>x.key),kinds:pulse.items.map(x=>x.kind),delivery_mode:activeSession?'freeform':'template'},
+    metadata_json:{fingerprint:pulse.fingerprint,item_keys:pulse.items.map(x=>x.key),kinds:pulse.items.map(x=>x.kind),delivery_mode:activeSession?'freeform':'template',open_loop_backoff_ids:surfacedOpenLoopIds},
   })
   return {sent:true,count:pulse.items.length}
 }
