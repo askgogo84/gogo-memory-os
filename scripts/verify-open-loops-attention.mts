@@ -104,3 +104,8 @@ console.log('Gmail read + Jev semantic Attention integration verified')
 assert.match(openLoops,/semantic_dedupe_score/)
 assert.match(openLoops,/open_loop_similarity_read_failed/)
 console.log('Conversational open-loop semantic dedupe wiring verified')
+
+assert.match(openLoops,/syncMeetingActionMemories/)
+assert.match(openLoops,/meeting_action_items/)
+assert.match(openLoops,/kind:'meeting_action'/)
+console.log('Meeting action-item adoption into Attention queue verified')
