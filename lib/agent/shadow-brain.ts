@@ -147,9 +147,16 @@ export function selectShadowFocus(params:{
     return {kind:'trip',ref:trip.ref,summary:trip.summary,confidence:0.72,ambiguous:false}
   }
 
-  // Unrelated turns should not inherit a stale active mission merely because one
-  // exists. Recent conversation is passed separately to Jev for semantic referent
-  // resolution when the message is actually contextual.
+  if(!params.contextual&&mission){
+    return {
+      kind:'mission',
+      ref:'run:'+String(mission.id),
+      summary:clean([mission.title,mission.summary].filter(Boolean).join(' — '),500),
+      confidence:0.68,
+      ambiguous:false,
+    }
+  }
+
   return {kind:'none',ref:null,summary:null,confidence:params.contextual?0.25:0.9,ambiguous:params.contextual}
 }
 
@@ -186,8 +193,10 @@ export async function observeShadowBrainTurn(params:{
     currentCapability:observation.capability,
     currentActionFamily:observation.actionFamily,
     needsContext:observation.needsContext,
-    focusKind:observation.focusKind,
-    focusSummary:observation.focusSummary,
+    // Keep passive mission focus for existing Shadow Brain telemetry, but do not
+    // feed an unrelated stale mission to Jev unless this turn actually needs context.
+    focusKind:observation.needsContext?observation.focusKind:'none',
+    focusSummary:observation.needsContext?observation.focusSummary:null,
     recentContext,
     timeoutMs:900,
   }).catch((err:any)=>({
