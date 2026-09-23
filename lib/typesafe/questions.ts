@@ -65,16 +65,16 @@ export function buildJevShadowQuestions(params:{needsContext?:boolean}={}) {
       criteria: JEV_ATTENTION_CRITERIA,
     },
   }
+  base.decision_readiness={
+    type:'choice',
+    instructions:'Choose ready only if the request is specific enough to route safely now; otherwise clarify.',
+    criteria:JEV_READINESS_CRITERIA,
+  }
   if(params.needsContext){
     base.referent_kind={
       type:'choice',
       instructions:'Choose the kind of prior object referenced by this contextual turn.',
       criteria:JEV_REFERENT_CRITERIA,
-    }
-    base.decision_readiness={
-      type:'choice',
-      instructions:'Choose ready only if meaning and referenced object are specific enough to route safely; otherwise clarify.',
-      criteria:JEV_READINESS_CRITERIA,
     }
   }
   return base
