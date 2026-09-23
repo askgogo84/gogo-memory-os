@@ -44,7 +44,7 @@ async function getToken(telegramId: number): Promise<string | null> {
 }
 
 // ── Parsing helpers ──────────────────────────────────────────────────────────
-const STOP = new Set(['move','reschedule','resched','postpone','push','shift','change','cancel','delete','remove','clear','my','the','a','an','to','at','on','for','me','please','pls','event','appointment','appt','meeting','call','calendar','from','and'])
+const STOP = new Set(['move','reschedule','resched','postpone','push','shift','change','cancel','delete','remove','clear','my','the','a','an','to','at','on','for','me','please','pls','event','appointment','appt','meeting','call','calendar','from','and','am','pm','today','tomorrow'])
 
 function extractAction(t: string): 'move' | 'delete' {
   return /\b(cancel|delete|remove|clear)\b/i.test(t) ? 'delete' : 'move'
