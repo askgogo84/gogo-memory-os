@@ -29,9 +29,11 @@ export const GOOGLE_WORKSPACE_READ_SCOPES = [
   'https://www.googleapis.com/auth/drive.readonly',
 ] as const
 
+export const GOOGLE_GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send' as const
+
 type SignedGoogleState = {
   tg: number
-  purpose: 'connect' | 'oauth'
+  purpose: 'connect' | 'oauth' | 'send_connect' | 'send_oauth'
   exp: number
   nonce: string
 }
@@ -88,6 +90,21 @@ export function verifyGmailConnectToken(token: string): number | null {
   return decodeState(token, 'connect')?.tg || null
 }
 
+export function buildGmailSendConnectUrl(telegramId:number):string|null {
+  if(!Number.isFinite(telegramId)||telegramId===0)return null
+  const token=encodeState({
+    tg:telegramId,
+    purpose:'send_connect',
+    exp:Date.now()+CONNECT_TTL_MS,
+    nonce:randomBytes(16).toString('base64url'),
+  })
+  return token?`https://app.askgogo.in/api/gmail/send/connect?token=${encodeURIComponent(token)}`:null
+}
+
+export function verifyGmailSendConnectToken(token:string):number|null {
+  return decodeState(token,'send_connect')?.tg||null
+}
+
 function issueGmailOauthState(telegramId: number): string | null {
   return encodeState({
     tg: telegramId,
@@ -97,8 +114,21 @@ function issueGmailOauthState(telegramId: number): string | null {
   })
 }
 
+function issueGmailSendOauthState(telegramId:number):string|null {
+  return encodeState({
+    tg:telegramId,
+    purpose:'send_oauth',
+    exp:Date.now()+OAUTH_STATE_TTL_MS,
+    nonce:randomBytes(16).toString('base64url'),
+  })
+}
+
 export function consumeGmailOauthState(state: string): number | null {
   return decodeState(state, 'oauth')?.tg || null
+}
+
+export function consumeGmailSendOauthState(state:string):number|null {
+  return decodeState(state,'send_oauth')?.tg||null
 }
 
 export function getGmailAuthUrl(telegramId: number): string | null {
@@ -115,6 +145,22 @@ export function getGmailAuthUrl(telegramId: number): string | null {
     state,
   })
 
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
+}
+
+export function getGmailSendAuthUrl(telegramId:number):string|null {
+  const state=issueGmailSendOauthState(telegramId)
+  if(!state)return null
+  const params=new URLSearchParams({
+    client_id:process.env.GOOGLE_CLIENT_ID||'',
+    redirect_uri:GMAIL_CALLBACK_URL,
+    response_type:'code',
+    scope:[...GOOGLE_WORKSPACE_READ_SCOPES,GOOGLE_GMAIL_SEND_SCOPE].join(' '),
+    access_type:'offline',
+    prompt:'consent',
+    include_granted_scopes:'true',
+    state,
+  })
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
 }
 
