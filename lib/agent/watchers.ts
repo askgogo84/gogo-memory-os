@@ -380,6 +380,20 @@ function cartLooksVerified(pageText: string) {
   return /\b(added\s*to\s*(?:cart|bag|basket)|view\s*(?:cart|bag|basket)|go\s*to\s*(?:cart|bag|basket)|your\s*(?:cart|bag|basket)\s*\(?\s*1\b|(?:cart|bag|basket)\s*\(?\s*1\b)/i.test(text)
 }
 
+async function dismissWatcherIdeas(telegramId:string,watcherId:string,reason:string){
+  const {data,error}=await supabaseAdmin.from('agent_ideas')
+    .select('id').eq('telegram_id',telegramId).eq('status','new')
+    .contains('source_refs',[{type:'watcher',id:watcherId}]).limit(50)
+  if(error){console.error('AGENT_WATCHER_IDEA_READ_FAILED:',error.message);return 0}
+  const ids=(data||[]).map((row:any)=>row.id).filter(Boolean)
+  if(!ids.length)return 0
+  const {error:updateError}=await supabaseAdmin.from('agent_ideas')
+    .update({status:'dismissed'}).in('id',ids)
+    .eq('telegram_id',telegramId).eq('status','new')
+  if(updateError){console.error('AGENT_WATCHER_IDEA_DISMISS_FAILED:',updateError.message);return 0}
+  return ids.length
+}
+
 async function createProductIdea(telegramId:string, condition:ProductStockWatcherCondition, watcherId:string, cartVerified:boolean) {
   const { error } = await supabaseAdmin.from('agent_ideas').insert({
     telegram_id:telegramId,
@@ -631,6 +645,7 @@ async function processProductStockWatcher(watcher:any, now:Date) {
   const priorAvailability = String(watcher.last_state_json?.availability || 'unknown')
 
   if (availability !== 'available') {
+    await dismissWatcherIdeas(telegramId,String(watcher.id),'watcher_state_no_longer_available')
     const quietChecks = Math.max(0, Number(watcher.last_state_json?.quietChecks || 0)) + 1
     // Product availability is a direct page check, not a broad web-search watch.
     // Keep the user's promised hourly cadence while the cost guard allows it.
