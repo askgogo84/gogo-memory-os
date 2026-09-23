@@ -21,6 +21,7 @@ import { resolvePendingCalendar, looksLikeNewCommand } from '@/lib/bot/pending-f
 import { fetchPrimaryCalendarEvents } from '@/lib/google-calendar'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
+import { isGmailReplyCommand, tryRunGmailSendCommand } from '@/lib/agent/gmail-send'
 import { capabilityIsOff, parseAutonomyCommand, tryRunAdaptiveAutonomyCommand } from '@/lib/agent/adaptive-autonomy'
 import { isAdaptiveTrustQuery, tryRunAdaptiveTrustCommand } from '@/lib/agent/adaptive-trust'
 
@@ -330,6 +331,12 @@ export async function routeFeatureIntent(
       console.error('NUMBERED_CHECKLIST_SAVE_FAILED:', err?.message || err)
       return `I recognised this as a checklist, but I couldn't save every item just now. Please try once more — I won't turn it into an unrelated note.`
     }
+  }
+
+  if(extra?.telegramId&&isGmailReplyCommand(text)){
+    const actor={userId:String(extra.telegramId),legacyTelegramId:extra.telegramId,whatsappId:phone,name:'Gogo'}
+    const gmail=await tryRunGmailSendCommand({actor,text})
+    if(gmail?.text)return gmail.text
   }
 
   // Explicit list display establishes short-lived conversational list context.
