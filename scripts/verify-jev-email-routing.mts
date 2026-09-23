@@ -22,6 +22,7 @@ const parsed=parseJevShadowResponse({answers:{
 assert.equal(promotedJevIntent(parsed as any),'email_mutation')
 
 const bridge=readFileSync(new URL('../lib/agent/whatsapp-bridge.ts',import.meta.url),'utf8')
+const gmail=readFileSync(new URL('../lib/agent/gmail-send.ts',import.meta.url),'utf8')
 const wa=readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts',import.meta.url),'utf8')
 assert.match(bridge,/params\.intent==='email_mutation'/)
 assert.match(bridge,/tryRunGmailSendCommand/)
@@ -29,5 +30,7 @@ assert.match(bridge,/params\.intent==='email_read'/)
 assert.match(bridge,/dispatchThroughSameBrain/)
 assert.match(wa,/email_read/)
 assert.match(wa,/email_mutation/)
+assert.match(gmail,/risk_level:'high'/)
+assert.match(gmail,/action_type:'send_email'/)
 
 console.log('Jev email semantic routing first-refusal passed')
