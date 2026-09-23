@@ -10,8 +10,11 @@ assert.equal(isAdaptiveTrustQuery('What can you stop asking me about?'),true)
 assert.equal(isAdaptiveTrustQuery('Book my flight'),false)
 
 const trust=readFileSync(new URL('../lib/agent/adaptive-trust.ts',import.meta.url),'utf8')
-assert.match(trust,/status==='executed'.*risk_level.*'low'/s)
-assert.match(trust,/s\.success>=5&&s\.rejected===0&&s\.failed===0&&s\.highRisk===0/)
+assert.match(trust,/\.range\(from,from\+pageSize-1\)/)
+assert.match(trust,/execution_payload/)
+assert.match(trust,/current==='off'/)
+assert.match(trust,/s\.lowRiskSuccess>=5&&cleanHistory&&s\.highRiskSuccess===0/)
+assert.match(trust,/Patterns I’m learning/)
 assert.match(trust,/I will never change these automatically/)
 assert.match(trust,/Hard safety still overrides auto/)
 
