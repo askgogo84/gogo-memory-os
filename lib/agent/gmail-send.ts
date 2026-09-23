@@ -17,7 +17,7 @@ function norm(value:unknown){return clean(value,300).toLowerCase().replace(/[^a-
 export function isGmailReplyCommand(text:string){
   const raw=clean(text,1200)
   return /^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\s+(?:the\s+)?(?:latest\s+)?(?:email|mail|message)(?:\s+from)?\s+.+?\s+(?:saying|with|:)/i.test(raw)
-    || /^(?:send|send\s+it|send\s+this\s+reply)$/i.test(raw)
+    || /^(?:send\s+it|send\s+this\s+reply)$/i.test(raw)
 }
 
 export function parseGmailReplyCommand(text:string){
@@ -101,7 +101,7 @@ async function stageApproval(actor:AgentActor,draft:any){
 export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:string}){
   const raw=clean(params.text,2200)
 
-  if(/^(?:send|send\s+it|send\s+this\s+reply)$/i.test(raw)){
+  if(/^(?:send\s+it|send\s+this\s+reply)$/i.test(raw)){
     const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload?.draft)return null
     const sendAccess=await gmailAccess(params.actor,{requireSend:true})
