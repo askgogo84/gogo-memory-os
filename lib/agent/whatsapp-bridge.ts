@@ -31,6 +31,7 @@ export type WhatsAppAgentResult = {
   runId?: string
   status?: string
   handledBy: string
+  conversationPersisted?: boolean
 }
 
 const WHATSAPP_BROWSER_BUDGET_MS = 42_000
@@ -226,14 +227,23 @@ export async function tryRunWhatsAppJevSpecialist(params:{
   }
 
   if(params.intent==='email_read'){
+    if(parseAutonomyCommand(params.text))return null
+    if(await capabilityIsOff(actor.legacyTelegramId,'email')){
+      return {text:'Email is currently off in your Gogo autonomy settings. Say *set email autonomy to read* (or *draft*) to turn it back on.',status:'paused',handledBy:'adaptive-autonomy'}
+    }
     if(!/\b(?:email|emails|mail|gmail|inbox)\b/i.test(params.text))return null
     const result=await dispatchThroughSameBrain({actor,text:params.text,messageId:params.messageId})
-    return result?.text ? {text:result.text,handledBy:String(result.handledBy||'same-brain')} : null
+    return result?.text ? {text:result.text,handledBy:String(result.handledBy||'same-brain'),conversationPersisted:true} : null
   }
 
   if(params.intent==='list_task'||params.intent==='memory_context'){
+    if(parseAutonomyCommand(params.text))return null
+    const capability=params.intent==='list_task'?'lists':'memory'
+    if(await capabilityIsOff(actor.legacyTelegramId,capability)){
+      return {text:`${capability==='lists'?'Lists':'Memory'} are currently off in your Gogo autonomy settings. Say *set ${capability} autonomy to auto* (or *ask*) to turn it back on.`,status:'paused',handledBy:'adaptive-autonomy'}
+    }
     const result=await dispatchThroughSameBrain({actor,text:params.text,messageId:params.messageId})
-    return result?.text ? {text:result.text,handledBy:String(result.handledBy||'same-brain')} : null
+    return result?.text ? {text:result.text,handledBy:String(result.handledBy||'same-brain'),conversationPersisted:true} : null
   }
 
   if(params.intent==='watcher'){
