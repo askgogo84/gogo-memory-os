@@ -428,6 +428,7 @@ export async function tryCreateProductStockWatchFromCommand(params: {
         handledBy:'product-stock-watch',
       }
     }
+    await dismissIdeasForWatcherIds(tg,[String(recoveredWatcher.id)])
     const now=new Date().toISOString()
     const {error:restartError}=await supabaseAdmin.from('agent_watchers').update({
       active:true,next_check_at:now,last_checked_at:null,
