@@ -11,3 +11,8 @@ const genericPos=bridge.lastIndexOf('tryRunExpiryReminderPlan')
 const genericGate=bridge.lastIndexOf("capabilityIsOff(actor.legacyTelegramId,'reminders')",genericPos)
 assert.ok(genericGate>=0&&genericGate<genericPos,'generic compound reminder path must enforce off before execution')
 console.log('reminder autonomy off gates cover Jev and compound paths')
+
+assert.match(bridge,/if\(!parseAutonomyCommand\(params\.text\).*capabilityIsOff\(actor\.legacyTelegramId,'reminders'\)/s)
+const controlEscape=bridge.indexOf("if(parseAutonomyCommand(params.text))return null")
+assert.ok(controlEscape>=0,'autonomy recovery commands must bypass Jev reminder off gate')
+console.log('reminder off hard-stop covers downstream planners and preserves recovery command')
