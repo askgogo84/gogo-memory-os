@@ -63,18 +63,48 @@ async function lastPulse(telegramId:string){
   return data||null
 }
 
+async function fetchPulseIdeas(telegramId:string){
+  const rows:any[]=[]
+  const pageSize=200
+  for(let from=0;;from+=pageSize){
+    const {data,error}=await supabaseAdmin.from('agent_ideas')
+      .select('id,title,reason,expected_value,value_score,action_label,created_at,snoozed_until,source_refs')
+      .eq('telegram_id',telegramId).eq('status','new')
+      .order('value_score',{ascending:false}).range(from,from+pageSize-1)
+    if(error)throw new Error(`autonomy_pulse_idea_read_failed:${error.message}`)
+    rows.push(...(data||[]))
+    if((data||[]).length<pageSize)break
+  }
+  return rows
+}
+
 async function buildPulse(telegramId:string,timezone:string):Promise<{items:PulseItem[];fingerprint:string}>{
   const nowIso=new Date().toISOString()
   const future72=new Date(Date.now()+72*3600_000).toISOString()
   const since48=new Date(Date.now()-48*3600_000).toISOString()
-  const [{data:approvals},{data:ideas},{data:runs},{data:events},{data:openLoops}]=await Promise.all([
+  const [approvalRes,ideas,runsRes,eventsRes,openLoopsRes]=await Promise.all([
     supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at').eq('telegram_id',telegramId).eq('status','pending').order('requested_at',{ascending:false}).limit(3),
-    supabaseAdmin.from('agent_ideas').select('id,title,reason,expected_value,value_score,action_label,created_at,snoozed_until,source_refs').eq('telegram_id',telegramId).eq('status','new').order('value_score',{ascending:false}).limit(8),
+    fetchPulseIdeas(telegramId),
     supabaseAdmin.from('agent_runs').select('id,status,title,summary,updated_at,error').eq('telegram_id',telegramId).in('status',['waiting_approval','paused','outcome_unknown','failed']).gte('updated_at',since48).order('updated_at',{ascending:false}).limit(6),
     supabaseAdmin.from('life_events').select('id,event_type,title,start_at,location,lifecycle_state,next_action_at').eq('telegram_id',telegramId).gte('start_at',nowIso).lte('start_at',future72).order('start_at',{ascending:true}).limit(5),
     supabaseAdmin.from('agent_open_loops').select('id,kind,title,summary,priority,due_at,next_check_at,proactive_backoff_until,source_type').eq('telegram_id',telegramId).eq('status','active').gte('priority',0.85).not('source_type','in','(approval,agent_run,life_event_action)').or(`next_check_at.is.null,next_check_at.lte.${nowIso}`).or(`proactive_backoff_until.is.null,proactive_backoff_until.lte.${nowIso}`).order('priority',{ascending:false}).limit(8),
   ])
+  const approvals=approvalRes.data||[]
+  const runs=runsRes.data||[]
+  const events=eventsRes.data||[]
+  const openLoops=openLoopsRes.data||[]
   const items:PulseItem[]=[]
+  const ideaWatcherIds=[...new Set((ideas||[]).flatMap((idea:any)=>{
+    const refs=Array.isArray(idea.source_refs)?idea.source_refs:[]
+    return refs.filter((ref:any)=>String(ref?.type||'')==='watcher').map((ref:any)=>String(ref?.id||'')).filter(Boolean)
+  }))]
+  const activeIdeaWatchers=new Set<string>()
+  if(ideaWatcherIds.length){
+    const {data:activeWatcherRows,error:activeWatcherError}=await supabaseAdmin.from('agent_watchers')
+      .select('id').in('id',ideaWatcherIds).eq('telegram_id',telegramId).eq('active',true)
+    if(activeWatcherError)console.error('AUTONOMY_PULSE_IDEA_WATCHER_READ_FAILED:',activeWatcherError.message)
+    for(const row of activeWatcherRows||[])activeIdeaWatchers.add(String(row.id))
+  }
 
   for(const a of approvals||[]){
     items.push({key:`approval:${a.id}`,score:100,line:`🛡️ *Needs your approval*: ${clean(a.title,160)}`,kind:'approval'})
@@ -114,6 +144,8 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     if(idea.snoozed_until && Date.parse(String(idea.snoozed_until))>now)continue
     const score=Math.round(Math.max(0,Math.min(1,Number(idea.value_score||0.75)))*100)
     const refs=Array.isArray(idea.source_refs)?idea.source_refs:[]
+    const watcherRefs=refs.filter((ref:any)=>String(ref?.type||'')==='watcher').map((ref:any)=>String(ref?.id||'')).filter(Boolean)
+    if(watcherRefs.length&&!watcherRefs.some((id:string)=>activeIdeaWatchers.has(id)))continue
     const fromMemoryTwin=refs.some((ref:any)=>String(ref?.type||'')==='memory_twin')
     // Memory Twin suggestions are useful in the dashboard, but only exceptionally
     // strong ones should interrupt the user proactively.
