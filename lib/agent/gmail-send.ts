@@ -113,6 +113,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
       return {runId:'gmail-send-unavailable',status:'paused' as const,capability:'email' as const,risk:'high' as const,text:'Your Gmail connection needs to be reconnected before I can send.',handledBy:'gmail-send'}
     }
     const staged=await stageApproval(params.actor,state.payload.draft)
+    await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     return {runId:staged.runId,status:'waiting_approval' as const,capability:'email' as const,risk:'high' as const,approvalId:staged.approvalId,approvalRequired:true,text:`📧 Ready to send — approval required\n\n${preview(state.payload.draft)}\n\nNothing has been sent yet. Reply *APPROVE* to send or *REJECT* to stop.`,handledBy:'gmail-send'}
   }
 
@@ -151,6 +152,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     return {runId:'gmail-send-upgrade',status:'paused' as const,capability:'email' as const,risk:'high' as const,text:url?`I drafted the reply, but Gmail Send is not enabled yet. Approve the one-time upgrade here:\n${url}\n\nThen say *send it*. Nothing has been sent.`:'Gmail Send is not enabled yet.',handledBy:'gmail-send'}
   }
   const staged=await stageApproval(params.actor,draft)
+  await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
   return {runId:staged.runId,status:'waiting_approval' as const,capability:'email' as const,risk:'high' as const,approvalId:staged.approvalId,approvalRequired:true,text:`📧 Ready to send — approval required\n\n${preview(draft)}\n\nNothing has been sent yet. Reply *APPROVE* to send or *REJECT* to stop.`,handledBy:'gmail-send'}
 }
 
@@ -174,7 +176,9 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   if(!access.ok)throw new Error(access.reason||'gmail_send_unavailable')
 
   await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Sending approved Gmail reply.',progress:60,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',tg)
+  let mutationStarted=false
   try{
+    mutationStarted=true
     const sent=await sendGmailReply(access.accessToken,draft)
     const evidence=await verifyGmailSentMessage(access.accessToken,sent.id,draft.threadId)
     if(!evidence.verified){
@@ -192,8 +196,16 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
     return {runId:params.runId,status:'completed' as const,capability:'email' as const,risk:'high' as const,text:`✅ Sent and verified\n\nTo: ${draft.to}\nSubject: ${/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`}`,handledBy:'gmail-send'}
   }catch(err:any){
     const now=new Date().toISOString()
-    await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gmail send failed before provider confirmation.',progress:100,error:clean(err?.message||err,300),completed_at:now,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
+    const reason=clean(err?.message||err,300)
+    const definitiveNoSend=/^gmail_send_(?:scope_required|failed_(?:400|401|403|404|422))$/.test(reason)
+    if(mutationStarted&&!definitiveNoSend){
+      await supabaseAdmin.from('agent_runs').update({status:'outcome_unknown',summary:'Gmail send outcome is unknown after the provider request started.',progress:100,error:reason,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
+      await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)
+      await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
+      return {runId:params.runId,status:'paused' as const,capability:'email' as const,risk:'high' as const,text:'The approved Gmail send started, but I cannot prove whether Gmail completed it. I will not retry automatically because that could send a duplicate. Please check the thread before trying anything else.',handledBy:'gmail-send'}
+    }
+    await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gmail rejected the send before provider acceptance.',progress:100,error:reason,completed_at:now,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
     await supabaseAdmin.from('agent_approvals').update({status:'failed',resolved_at:now}).eq('id',approval.id).eq('telegram_id',tg)
-    return {runId:params.runId,status:'failed' as const,capability:'email' as const,risk:'high' as const,text:'I could not send the email. Nothing is marked successful. Please review the Gmail connection before trying again.',handledBy:'gmail-send'}
+    return {runId:params.runId,status:'failed' as const,capability:'email' as const,risk:'high' as const,text:'Gmail rejected the send before acceptance. Nothing is marked sent. Please review the Gmail Send connection before trying again.',handledBy:'gmail-send'}
   }
 }
