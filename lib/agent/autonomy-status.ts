@@ -24,7 +24,7 @@ export function isConnectionStatus(text:string){
 export async function tryGetConnectionStatus(params:{actor:AgentActor;text:string}){
   if(!isConnectionStatus(params.text))return null
   const {data,error}=await supabaseAdmin.from('users')
-    .select('gmail_connected,gmail_email,gmail_connected_at,google_calendar_connected')
+    .select('gmail_connected,gmail_send_connected,gmail_email,gmail_connected_at,google_calendar_connected')
     .eq('telegram_id',params.actor.legacyTelegramId)
     .maybeSingle()
   if(error)throw new Error(`connection_status_read_failed:${error.message}`)
@@ -32,6 +32,7 @@ export async function tryGetConnectionStatus(params:{actor:AgentActor;text:strin
   const lines:string[]=[]
   if(data.gmail_connected){
     lines.push(`📧 Gmail / Workspace: connected${data.gmail_email?` as *${clean(data.gmail_email,160)}*`:''}`)
+    lines.push(`✉️ Gmail Send: ${data.gmail_send_connected?'enabled (approval-gated)':'not enabled'}`)
   }else lines.push('📧 Gmail / Workspace: not connected')
   if(data.google_calendar_connected){
     lines.push('📅 Google Calendar: connected to its primary calendar')
