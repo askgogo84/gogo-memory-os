@@ -27,6 +27,8 @@ const wa=readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts',import.met
 assert.match(bridge,/params\.intent==='email_mutation'/)
 assert.match(bridge,/tryRunGmailSendCommand/)
 assert.match(bridge,/params\.intent==='email_read'/)
+assert.match(bridge,/capabilityIsOff\(actor\.legacyTelegramId,'email'\)/)
+assert.match(bridge,/conversationPersisted:true/)
 assert.match(bridge,/dispatchThroughSameBrain/)
 assert.match(wa,/email_read/)
 assert.match(wa,/email_mutation/)
