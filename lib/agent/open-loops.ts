@@ -773,12 +773,22 @@ async function openLoopFromSnapshot(telegramId:string|number,index:number,snapsh
 
 export async function listOpenLoops(telegramId:string|number,limit=10){
   await syncOpenLoopsForUser(telegramId)
+  const fetchLimit=Math.max(limit,Math.min(80,limit*5))
   const {data,error}=await supabaseAdmin.from('agent_open_loops')
     .select('id,kind,title,summary,priority,due_at,next_check_at,source_type,source_id,updated_at')
     .eq('telegram_id',String(telegramId)).eq('status','active')
-    .order('priority',{ascending:false}).order('updated_at',{ascending:false}).limit(limit)
+    .order('priority',{ascending:false}).order('updated_at',{ascending:false}).limit(fetchLimit)
   if(error)throw new Error(`open_loop_list_failed:${error.message}`)
-  return data||[]
+  const seen=new Set<string>()
+  const deduped:any[]=[]
+  for(const row of data||[]){
+    const key=`${String(row.kind||'')}|${normalize(row.title)}`
+    if(seen.has(key))continue
+    seen.add(key)
+    deduped.push(row)
+    if(deduped.length>=limit)break
+  }
+  return deduped
 }
 
 export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string}){
