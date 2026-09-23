@@ -1126,8 +1126,10 @@ _"${originalText}"_
             status:promotedAgent.status||null,
             runId:promotedAgent.runId||null,
           }).catch(()=>{})
-          await saveConversation(resolvedUser.telegramId,'user',text)
-          await saveConversation(resolvedUser.telegramId,'assistant',promotedAgent.text)
+          if(!promotedAgent.conversationPersisted){
+            await saveConversation(resolvedUser.telegramId,'user',text)
+            await saveConversation(resolvedUser.telegramId,'assistant',promotedAgent.text)
+          }
           await sendWhatsAppMessage(from,promotedAgent.text)
           return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
         }
