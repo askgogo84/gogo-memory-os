@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { consumeGmailOauthState, exchangeGmailCode, getGoogleEmail } from '@/lib/google-gmail'
+import { consumeGmailOauthState, consumeGmailSendOauthState, exchangeGmailCode, getGoogleEmail } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { encryptGoogleToken, hasGoogleTokenEncryptionKey } from '@/lib/security/google-token-crypto'
 
@@ -10,7 +10,10 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url)
     const code = url.searchParams.get('code')
     const state = url.searchParams.get('state') || ''
-    const telegramId = consumeGmailOauthState(state)
+    const sendTelegramId=consumeGmailSendOauthState(state)
+    const readTelegramId=sendTelegramId?null:consumeGmailOauthState(state)
+    const telegramId=sendTelegramId||readTelegramId
+    const sendUpgrade=Boolean(sendTelegramId)
 
     if (!code || !telegramId) {
       return NextResponse.json(
@@ -50,6 +53,10 @@ export async function GET(req: NextRequest) {
       gmail_connected_at: new Date().toISOString(),
       gmail_email: email,
     }
+    if(sendUpgrade){
+      payload.gmail_send_connected=true
+      payload.gmail_send_connected_at=new Date().toISOString()
+    }
 
     if (tokens.refresh_token) payload.gmail_refresh_token = encryptGoogleToken(tokens.refresh_token)
 
@@ -82,9 +89,9 @@ export async function GET(req: NextRequest) {
             <div class="mark">✓</div>
             <div class="eyebrow">One Gogo · connected</div>
             <h1>Google Workspace is ready.</h1>
-            <p class="ok">Gogo now has the read-only Google access you approved.</p>
+            <p class="ok">${sendUpgrade?'Gogo now has the Gmail Send access you explicitly approved.':'Gogo now has the read-only Google access you approved.'}</p>
             <p>Connected account: <span class="email">${email.replace(/[<>&"']/g, '')}</span></p>
-            <div class="privacy">Gogo can read the approved Gmail, Contacts and Drive context to help with your requests. Sending email, changing files, scheduling, booking or spending still requires the appropriate permission and approval boundary.</div>
+            <div class="privacy">${sendUpgrade?'Gogo may send Gmail only after the AskGogo approval boundary. This upgrade does not grant automatic sending, Drive mutation, booking or payment authority.':'Gogo can read the approved Gmail, Contacts and Drive context to help with your requests. Sending email, changing files, scheduling, booking or spending still requires the appropriate permission and approval boundary.'}</div>
             <p style="margin-top:22px">You can close this window and return to AskGogo.</p>
           </div>
         </body>
