@@ -17,6 +17,7 @@ export type JevShadowResult = {
   referentKind: JevShadowChoice
   attentionState: JevShadowChoice
   decisionReadiness: JevShadowChoice
+  contextual: boolean
   usage?: { inputTokens: number | null; outputTokens: number | null }
   error?: string
 }
@@ -91,6 +92,7 @@ export function parseJevShadowResponse(raw: any, latencyMs = 0): JevShadowResult
       referentKind: emptyChoice(),
       attentionState: emptyChoice(),
       decisionReadiness: emptyChoice(),
+      contextual: false,
       usage,
       error: 'typesafe_malformed_response',
     }
@@ -105,6 +107,7 @@ export function parseJevShadowResponse(raw: any, latencyMs = 0): JevShadowResult
     referentKind: parseChoice(answers.referent_kind),
     attentionState: parseChoice(answers.attention_state),
     decisionReadiness: parseChoice(answers.decision_readiness),
+    contextual: false,
     usage,
   }
 }
@@ -133,6 +136,7 @@ export async function runJevShadow(params: {
       referentKind: emptyChoice(),
       attentionState: emptyChoice(),
       decisionReadiness: emptyChoice(),
+      contextual: Boolean(params.needsContext),
       usage: { inputTokens: null, outputTokens: null },
       error: 'typesafe_sensitive_state_withheld',
     }
@@ -169,7 +173,8 @@ export async function runJevShadow(params: {
         error: `typesafe_http_${response.status}`,
       }
     }
-    return parseJevShadowResponse(body, Date.now() - started)
+    const parsed=parseJevShadowResponse(body, Date.now() - started)
+    return {...parsed,contextual:Boolean(params.needsContext)}
   } catch (err: any) {
     return {
       ok: false,
@@ -181,6 +186,7 @@ export async function runJevShadow(params: {
       referentKind: emptyChoice(),
       attentionState: emptyChoice(),
       decisionReadiness: emptyChoice(),
+      contextual: Boolean(params.needsContext),
       usage: { inputTokens: null, outputTokens: null },
       error: err?.name === 'AbortError' ? 'typesafe_timeout' : String(err?.message || 'typesafe_error').slice(0, 120),
     }
