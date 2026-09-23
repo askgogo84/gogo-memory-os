@@ -7,6 +7,8 @@ export type JevPromotedIntent =
   | 'reminder_mutation'
   | 'calendar_read'
   | 'calendar_mutation'
+  | 'email_read'
+  | 'email_mutation'
   | 'travel_research'
   | 'browser_action'
 
@@ -16,6 +18,8 @@ const PROMOTABLE = new Set<JevPromotedIntent>([
   'reminder_mutation',
   'calendar_read',
   'calendar_mutation',
+  'email_read',
+  'email_mutation',
   'travel_research',
   'browser_action',
 ])
@@ -58,7 +62,7 @@ export async function recordJevRoutingHint(params:{
       latency_ms:params.latencyMs,
       authority:'first_refusal_only',
       execution_authority:false,
-      router_version:'jev-router-v1.1',
+      router_version:'jev-router-v1.2',
     },
   })
   if(error)console.error('JEV_ROUTING_HINT_ACTIVITY_FAILED:',error.message)
