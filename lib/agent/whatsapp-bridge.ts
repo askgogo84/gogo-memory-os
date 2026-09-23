@@ -12,6 +12,7 @@ import { hardenTravelResearchResult } from './travel-research-sanitize'
 import { shouldPreferSpecialistTravel } from './specialist-routing'
 import { tryResumeTrainHandoff, tryRunTrainResearch } from './train-research'
 import { executeApprovedAgentRun } from './orchestrator'
+import { dispatchThroughSameBrain } from './same-brain'
 import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
@@ -199,7 +200,7 @@ export async function tryRunWhatsAppJevSpecialist(params:{
   user:ResolvedUser
   text:string
   messageId?:string|number|null
-  intent:'watcher'|'reminder_read'|'reminder_mutation'|'travel_research'|'browser_action'
+  intent:'watcher'|'reminder_read'|'reminder_mutation'|'email_read'|'email_mutation'|'travel_research'|'browser_action'
 }):Promise<WhatsAppAgentResult|null>{
   const actor=actorFromResolvedUser(params.user)
   if(!actor)return null
@@ -217,6 +218,17 @@ export async function tryRunWhatsAppJevSpecialist(params:{
     }
     const reminder=await tryRunExpiryReminderPlan({actor,surface:'whatsapp',text:params.text,messageId:params.messageId})
     return reminder ? {...reminder,handledBy:String(reminder.handledBy||'compound-plan')} : null
+  }
+
+  if(params.intent==='email_mutation'){
+    const gmail=await tryRunGmailSendCommand({actor,text:params.text})
+    return gmail ? {...gmail,handledBy:String(gmail.handledBy||'gmail-send')} : null
+  }
+
+  if(params.intent==='email_read'){
+    if(!/\b(?:email|emails|mail|gmail|inbox)\b/i.test(params.text))return null
+    const result=await dispatchThroughSameBrain({actor,text:params.text,messageId:params.messageId})
+    return result?.text ? {text:result.text,handledBy:String(result.handledBy||'same-brain')} : null
   }
 
   if(params.intent==='watcher'){
