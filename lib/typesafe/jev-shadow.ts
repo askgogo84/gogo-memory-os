@@ -76,8 +76,8 @@ function validChoiceAnswer(value: any) {
 
 export function parseJevShadowResponse(raw: any, latencyMs = 0, contextual = false): JevShadowResult {
   const answers = raw?.answers || {}
-  const coreValid = validChoiceAnswer(answers.intent) && validChoiceAnswer(answers.action_mode) && validChoiceAnswer(answers.attention_state)
-  const contextualValid = !contextual || (validChoiceAnswer(answers.referent_kind) && validChoiceAnswer(answers.decision_readiness))
+  const coreValid = validChoiceAnswer(answers.intent) && validChoiceAnswer(answers.action_mode) && validChoiceAnswer(answers.attention_state) && validChoiceAnswer(answers.decision_readiness)
+  const contextualValid = !contextual || validChoiceAnswer(answers.referent_kind)
   const valid = coreValid && contextualValid
   const usage = {
     inputTokens: Number.isFinite(Number(raw?.usage?.input_tokens)) ? Number(raw.usage.input_tokens) : null,
@@ -108,7 +108,7 @@ export function parseJevShadowResponse(raw: any, latencyMs = 0, contextual = fal
     actionMode: parseChoice(answers.action_mode),
     referentKind: contextual ? parseChoice(answers.referent_kind) : {choice:'none',confidence:1,probabilities:{none:1}},
     attentionState: parseChoice(answers.attention_state),
-    decisionReadiness: contextual ? parseChoice(answers.decision_readiness) : {choice:'ready',confidence:1,probabilities:{ready:1}},
+    decisionReadiness: parseChoice(answers.decision_readiness),
     contextual,
     usage,
   }
