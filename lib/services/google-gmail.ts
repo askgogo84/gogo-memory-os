@@ -29,9 +29,11 @@ export const GOOGLE_WORKSPACE_READ_SCOPES = [
   'https://www.googleapis.com/auth/drive.readonly',
 ] as const
 
+export const GOOGLE_GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send' as const
+
 type SignedGoogleState = {
   tg: number
-  purpose: 'connect' | 'oauth'
+  purpose: 'connect' | 'oauth' | 'send_connect' | 'send_oauth'
   exp: number
   nonce: string
 }
@@ -88,6 +90,21 @@ export function verifyGmailConnectToken(token: string): number | null {
   return decodeState(token, 'connect')?.tg || null
 }
 
+export function buildGmailSendConnectUrl(telegramId:number):string|null {
+  if(!Number.isFinite(telegramId)||telegramId===0)return null
+  const token=encodeState({
+    tg:telegramId,
+    purpose:'send_connect',
+    exp:Date.now()+CONNECT_TTL_MS,
+    nonce:randomBytes(16).toString('base64url'),
+  })
+  return token?`https://app.askgogo.in/api/gmail/send/connect?token=${encodeURIComponent(token)}`:null
+}
+
+export function verifyGmailSendConnectToken(token:string):number|null {
+  return decodeState(token,'send_connect')?.tg||null
+}
+
 function issueGmailOauthState(telegramId: number): string | null {
   return encodeState({
     tg: telegramId,
@@ -97,8 +114,21 @@ function issueGmailOauthState(telegramId: number): string | null {
   })
 }
 
+function issueGmailSendOauthState(telegramId:number):string|null {
+  return encodeState({
+    tg:telegramId,
+    purpose:'send_oauth',
+    exp:Date.now()+OAUTH_STATE_TTL_MS,
+    nonce:randomBytes(16).toString('base64url'),
+  })
+}
+
 export function consumeGmailOauthState(state: string): number | null {
   return decodeState(state, 'oauth')?.tg || null
+}
+
+export function consumeGmailSendOauthState(state:string):number|null {
+  return decodeState(state,'send_oauth')?.tg||null
 }
 
 export function getGmailAuthUrl(telegramId: number): string | null {
@@ -115,6 +145,22 @@ export function getGmailAuthUrl(telegramId: number): string | null {
     state,
   })
 
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
+}
+
+export function getGmailSendAuthUrl(telegramId:number):string|null {
+  const state=issueGmailSendOauthState(telegramId)
+  if(!state)return null
+  const params=new URLSearchParams({
+    client_id:process.env.GOOGLE_CLIENT_ID||'',
+    redirect_uri:GMAIL_CALLBACK_URL,
+    response_type:'code',
+    scope:[...GOOGLE_WORKSPACE_READ_SCOPES,GOOGLE_GMAIL_SEND_SCOPE].join(' '),
+    access_type:'offline',
+    prompt:'consent',
+    include_granted_scopes:'true',
+    state,
+  })
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
 }
 
@@ -307,6 +353,7 @@ export async function fetchUnreadEmails(accessToken: string, maxResults = 3) {
 export type GmailAttentionMessage = {
   id:string
   threadId:string
+  messageId:string
   subject:string
   from:string
   to:string
@@ -354,6 +401,7 @@ async function fetchAttentionThread(accessToken:string,threadId:string):Promise<
     return {
       id:String(message.id||''),
       threadId:String(message.threadId||threadId),
+      messageId:getHeader(headers,'Message-ID')||'',
       subject:getHeader(headers,'Subject')||'(No subject)',
       from:getHeader(headers,'From')||'Unknown sender',
       to:getHeader(headers,'To')||'',
@@ -385,4 +433,84 @@ export async function fetchGmailAttentionThreads(accessToken:string,maxThreads=1
     .filter((x):x is PromiseFulfilledResult<GmailAttentionThread|null>=>x.status==='fulfilled')
     .map(x=>x.value)
     .filter((x):x is GmailAttentionThread=>Boolean(x))
+}
+
+
+export async function searchGmailThreads(accessToken:string,searchText:string,maxThreads=20):Promise<GmailAttentionThread[]>{
+  const q=String(searchText||'').trim().slice(0,180)
+  if(!q)return []
+  const terms=q.replace(/["{}()]/g,' ').replace(/\s+/g,' ').trim()
+  const gmailQuery=encodeURIComponent(`${terms} newer_than:90d -in:spam -in:trash`)
+  const res=await gmailFetchJson(
+    accessToken,
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${Math.max(10,Math.min(80,maxThreads*3))}&q=${gmailQuery}`
+  )
+  if(!res.ok){
+    if(res.status===403)throw new Error('gmail_scope_required')
+    throw new Error(`gmail_search_failed_${res.status}`)
+  }
+  const threadIds=[...new Set((res.data.messages||[]).map((row:any)=>String(row.threadId||'')).filter(Boolean))]
+    .slice(0,Math.max(1,Math.min(40,maxThreads)))
+  const settled=await Promise.allSettled(threadIds.map(id=>fetchAttentionThread(accessToken,id)))
+  return settled
+    .filter((x):x is PromiseFulfilledResult<GmailAttentionThread|null>=>x.status==='fulfilled')
+    .map(x=>x.value)
+    .filter((x):x is GmailAttentionThread=>Boolean(x))
+}
+
+
+function base64Url(value:string){
+  return Buffer.from(value,'utf8').toString('base64url')
+}
+
+function sanitizeHeader(value:string){
+  return String(value||'').replace(/[\r\n]+/g,' ').trim()
+}
+
+export type GmailReplyDraft = {
+  threadId:string
+  to:string
+  subject:string
+  body:string
+  inReplyTo?:string|null
+}
+
+export async function sendGmailReply(accessToken:string,draft:GmailReplyDraft){
+  const subject=/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`
+  const headers=[
+    `To: ${sanitizeHeader(draft.to)}`,
+    `Subject: ${sanitizeHeader(subject)}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'MIME-Version: 1.0',
+  ]
+  if(draft.inReplyTo){
+    const mid=sanitizeHeader(draft.inReplyTo)
+    headers.push(`In-Reply-To: ${mid}`)
+    headers.push(`References: ${mid}`)
+  }
+  const raw=base64Url(`${headers.join('\r\n')}\r\n\r\n${draft.body}`)
+  const res=await withTimeout(fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
+    method:'POST',
+    headers:{Authorization:`Bearer ${accessToken}`,'Content-Type':'application/json'},
+    body:JSON.stringify({raw,threadId:draft.threadId}),
+    cache:'no-store',
+  }),12000)
+  const data=await res.json().catch(()=>({}))
+  if(!res.ok||!data?.id){
+    const err=res.status===403?'gmail_send_scope_required':`gmail_send_failed_${res.status}`
+    throw new Error(err)
+  }
+  return {id:String(data.id),threadId:String(data.threadId||draft.threadId)}
+}
+
+export async function verifyGmailSentMessage(accessToken:string,messageId:string,expectedThreadId:string){
+  const detail=await gmailFetchJson(
+    accessToken,
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=Subject&metadataHeaders=To`
+  )
+  if(!detail.ok)return {verified:false,reason:`gmail_verify_${detail.status}`}
+  const labels=Array.isArray(detail.data?.labelIds)?detail.data.labelIds:[]
+  const threadMatches=String(detail.data?.threadId||'')===String(expectedThreadId||'')
+  const sent=labels.includes('SENT')
+  return {verified:Boolean(sent&&threadMatches),reason:sent&&threadMatches?null:'gmail_provider_evidence_missing'}
 }

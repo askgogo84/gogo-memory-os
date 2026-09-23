@@ -54,6 +54,8 @@ async function disconnectWorkspace(actor:AgentActor) {
     gmail_connected:false,
     gmail_connected_at:null,
     gmail_email:null,
+    gmail_send_connected:false,
+    gmail_send_connected_at:null,
   }).eq('telegram_id',actor.legacyTelegramId)
   if(clearError)throw new Error(`workspace_disconnect_clear_failed:${clearError.message}`)
 
