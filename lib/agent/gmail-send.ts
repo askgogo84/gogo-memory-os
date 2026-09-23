@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
-import { buildGmailSendConnectUrl, fetchGmailAttentionThreads, refreshGmailAccessToken, sendGmailReply, verifyGmailSentMessage } from '@/lib/services/google-gmail'
+import { buildGmailSendConnectUrl, fetchGmailAttentionThreads, searchGmailThreads, refreshGmailAccessToken, sendGmailReply, verifyGmailSentMessage } from '@/lib/services/google-gmail'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 
@@ -49,7 +49,8 @@ async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:bo
 async function resolveThread(actor:AgentActor,target:string){
   const access=await gmailAccess(actor)
   if(!access.ok)return {access,match:null as any,ambiguous:false}
-  const threads=await fetchGmailAttentionThreads(access.accessToken,20)
+  let threads=await searchGmailThreads(access.accessToken,target,30)
+  if(!threads.length)threads=await fetchGmailAttentionThreads(access.accessToken,20)
   const q=norm(target)
   const candidates=threads.map(thread=>{
     const messages=thread.messages||[]
