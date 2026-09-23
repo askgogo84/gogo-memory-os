@@ -43,7 +43,7 @@ import { routeFeatureIntent } from '@/lib/feature-intents'
 import { tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
-import { promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
+import { jevClarificationReply, promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
 import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, captureJevOpenLoopFromTurn, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate } from '@/lib/agent/open-loops'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
@@ -1073,6 +1073,25 @@ _"${originalText}"_
         await sendWhatsAppMessage(from,attentionAgent.text)
         return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
       }
+    }
+
+    // High-confidence semantic ambiguity must stop before any broad legacy/router
+    // fallback gets a chance to act on the wrong object. This does not grant Jev
+    // execution authority; it only asks for the missing identifying detail.
+    const jevClarify=jevClarificationReply(brainObservation?.jev)
+    if(jevClarify){
+      await recordShadowRouterOutcome({
+        telegramId:resolvedUser.telegramId,
+        surface:'whatsapp',
+        eventId:inboundMessageSid,
+        actualHandler:'jev-clarification-guard',
+        actualCapability:null,
+        status:'paused',
+      }).catch(()=>{})
+      await saveConversation(resolvedUser.telegramId,'user',text)
+      await saveConversation(resolvedUser.telegramId,'assistant',jevClarify)
+      await sendWhatsAppMessage(from,jevClarify)
+      return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
     }
 
     // Jev is promoted only to specialist *first refusal*. It may choose which

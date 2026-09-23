@@ -63,3 +63,24 @@ export async function recordJevRoutingHint(params:{
   })
   if(error)console.error('JEV_ROUTING_HINT_ACTIVITY_FAILED:',error.message)
 }
+
+
+export function jevClarificationReply(jev:JevShadowResult|null|undefined):string|null{
+  if(!jev?.ok||!jev.contextual)return null
+  const readiness=String(jev.decisionReadiness?.choice||'')
+  const readinessConfidence=Number(jev.decisionReadiness?.confidence||0)
+  if(readiness!=='clarify'||readinessConfidence<0.9)return null
+
+  const referent=String(jev.referentKind?.choice||'other_context')
+  const referentConfidence=Number(jev.referentKind?.confidence||0)
+  const noun=referentConfidence>=0.6
+    ? referent==='reminder'?'reminder'
+      :referent==='calendar_event'?'meeting or calendar event'
+        :referent==='watcher'?'monitor or watcher'
+          :referent==='travel_option'?'travel option'
+            :referent==='mission'?'task or mission'
+              :'item'
+    :'item'
+
+  return `I’m not certain which ${noun} you mean, and I don’t want to act on the wrong one. Please name it or give me one identifying detail.`
+}
