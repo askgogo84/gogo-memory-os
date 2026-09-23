@@ -164,6 +164,7 @@ export async function runJevShadow(params: {
         actionMode: emptyChoice(),
         referentKind: emptyChoice(),
         attentionState: emptyChoice(),
+        decisionReadiness: emptyChoice(),
         usage: { inputTokens: null, outputTokens: null },
         error: `typesafe_http_${response.status}`,
       }
