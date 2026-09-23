@@ -75,6 +75,20 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     supabaseAdmin.from('agent_open_loops').select('id,kind,title,summary,priority,due_at,next_check_at,proactive_backoff_until,source_type').eq('telegram_id',telegramId).eq('status','active').gte('priority',0.85).not('source_type','in','(approval,agent_run,life_event_action)').or(`next_check_at.is.null,next_check_at.lte.${nowIso}`).or(`proactive_backoff_until.is.null,proactive_backoff_until.lte.${nowIso}`).order('priority',{ascending:false}).limit(8),
   ])
   const items:PulseItem[]=[]
+  const ideaWatcherIds=[...new Set((ideas||[]).flatMap((idea:any)=>{
+    const refs=Array.isArray(idea.source_refs)?idea.source_refs:[]
+    return refs.filter((ref:any)=>String(ref?.type||'')==='watcher').map((ref:any)=>String(ref?.id||'')).filter(Boolean)
+  }))]
+  const activeIdeaWatchers=new Set<string>()
+  if(ideaWatcherIds.length){
+    const {data:activeWatcherRows,error:activeWatcherError}=await supabaseAdmin.from('agent_watchers')
+      .select('id')
+      .in('id',ideaWatcherIds)
+      .eq('telegram_id',telegramId)
+      .eq('active',true)
+    if(activeWatcherError)console.error('AUTONOMY_PULSE_IDEA_WATCHER_READ_FAILED:',activeWatcherError.message)
+    for(const row of activeWatcherRows||[])activeIdeaWatchers.add(String(row.id))
+  }
 
   for(const a of approvals||[]){
     items.push({key:`approval:${a.id}`,score:100,line:`🛡️ *Needs your approval*: ${clean(a.title,160)}`,kind:'approval'})
@@ -114,6 +128,8 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     if(idea.snoozed_until && Date.parse(String(idea.snoozed_until))>now)continue
     const score=Math.round(Math.max(0,Math.min(1,Number(idea.value_score||0.75)))*100)
     const refs=Array.isArray(idea.source_refs)?idea.source_refs:[]
+    const watcherRefs=refs.filter((ref:any)=>String(ref?.type||'')==='watcher').map((ref:any)=>String(ref?.id||'')).filter(Boolean)
+    if(watcherRefs.length&&!watcherRefs.some((id:string)=>activeIdeaWatchers.has(id)))continue
     const fromMemoryTwin=refs.some((ref:any)=>String(ref?.type||'')==='memory_twin')
     // Memory Twin suggestions are useful in the dashboard, but only exceptionally
     // strong ones should interrupt the user proactively.
