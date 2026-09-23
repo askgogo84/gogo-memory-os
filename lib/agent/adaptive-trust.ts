@@ -68,10 +68,10 @@ export async function buildAdaptiveTrustSuggestions(actor:AgentActor){
     if(!cap)continue
     const s=stats.get(cap)||{success:0,rejected:0,failed:0,highRisk:0,latest:null}
     const status=String(a.status||'')
-    if(['approved','executed'].includes(status))s.success++
+    if(status==='executed'&&String(a.risk_level||'')==='low')s.success++
     else if(status==='rejected')s.rejected++
     else if(['failed','expired'].includes(status))s.failed++
-    if(String(a.risk_level||'')==='high')s.highRisk++
+    if(status==='executed'&&String(a.risk_level||'')==='high')s.highRisk++
     if(!s.latest)s.latest=String(a.requested_at||'')||null
     stats.set(cap,s)
   }
@@ -81,8 +81,8 @@ export async function buildAdaptiveTrustSuggestions(actor:AgentActor){
   for(const [cap,s] of stats.entries()){
     const current=permissions.get(cap)||DEFAULT_LEVEL[cap]
     if(current==='auto')continue
-    // Conservative promotion signal: repeated approvals, no negative signal,
-    // and no high-risk approvals in the evidence window.
+    // Conservative promotion signal: repeated successfully executed LOW-risk
+    // approvals, no negative signal, and no executed high-risk evidence.
     if(s.success>=5&&s.rejected===0&&s.failed===0&&s.highRisk===0)suggestions.push([cap,s])
   }
   suggestions.sort((a,b)=>b[1].success-a[1].success)
