@@ -392,8 +392,6 @@ async function dismissWatcherIdeas(telegramId:string,watcherId:string,reason:str
   if(!ids.length)return 0
   const {error:updateError}=await supabaseAdmin.from('agent_ideas').update({
     status:'dismissed',
-    reason,
-    updated_at:new Date().toISOString(),
   }).in('id',ids).eq('telegram_id',telegramId).eq('status','new')
   if(updateError){console.error('AGENT_WATCHER_IDEA_DISMISS_FAILED:',updateError.message);return 0}
   return ids.length
