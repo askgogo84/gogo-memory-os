@@ -70,6 +70,21 @@ export function parseAutonomyCommand(text:string):
   return null
 }
 
+
+export async function capabilityPermissionLevel(telegramId:string|number,capability:AgentCapability):Promise<AgentPermissionLevel>{
+  const {data,error}=await supabaseAdmin.from('agent_permissions')
+    .select('level')
+    .eq('telegram_id',String(telegramId))
+    .eq('capability',capability)
+    .maybeSingle()
+  if(error)throw new Error(`autonomy_permission_read_failed:${error.message}`)
+  return (data?.level as AgentPermissionLevel|undefined)||DEFAULT_LEVEL[capability]
+}
+
+export async function capabilityIsOff(telegramId:string|number,capability:AgentCapability){
+  return (await capabilityPermissionLevel(telegramId,capability))==='off'
+}
+
 async function readLevels(actor:AgentActor){
   const {data,error}=await supabaseAdmin.from('agent_permissions')
     .select('capability,level').eq('telegram_id',String(actor.legacyTelegramId))
