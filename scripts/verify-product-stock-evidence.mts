@@ -12,7 +12,13 @@ assert.equal(
 )
 assert.equal(
   assessProductAvailabilityText('Color Fossil Grey. Size: XL. Add to cart. Inclusive of all taxes.', 'XL'),
+  'unknown',
+  'bare size labels plus a global add-to-cart control are not proof that XL is selectable',
+)
+assert.equal(
+  assessProductAvailabilityText('Selected size: XL. Add to cart. Inclusive of all taxes.', 'XL'),
   'available',
+  'explicitly selected XL plus purchase control is variant-specific availability evidence',
 )
 assert.equal(
   assessProductAvailabilityText('Size XL is available now. Add to bag.', 'XL'),

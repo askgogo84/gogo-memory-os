@@ -344,8 +344,10 @@ export function assessProductAvailabilityText(pageText: string, variant: string)
   const unavailable = /\b(sold\s*out|out\s*of\s*stock|currently\s*unavailable|unavailable|not\s*available|notify\s*me\s*when\s*available|notify\s+when\s+available|email\s+me\s+when\s+available|coming\s*soon)\b/i
   const available = /\b(in\s*stock|available\s*now|available\s*today|ready\s*to\s*ship|add\s*to\s*(?:cart|bag|basket)|buy\s*now)\b/i
 
-  // Prefer an explicit selected-size marker such as `Size: XL`.
-  const selectedRe = new RegExp('\\b(?:selected\\s+size|size)\\s*[:=-]?\\s*' + wantedRe + '\\b', 'i')
+  // Only trust an explicit SELECTED variant marker. A bare `Size: XL` often
+  // appears in option lists, size guides, or accessibility text even when XL is
+  // disabled. Treating that as the selected SKU caused false-positive stock alerts.
+  const selectedRe = new RegExp('\\bselected\\s+size\\s*[:=-]?\\s*' + wantedRe + '\\b', 'i')
   const selected = selectedRe.exec(text)
   if (selected) {
     const selectedEnd = selected.index + selected[0].length
@@ -361,7 +363,7 @@ export function assessProductAvailabilityText(pageText: string, variant: string)
 
   // Without a selected-size marker, accept only direct variant/state wording.
   const directUnavailable = new RegExp(
-    '(?:\\b' + wantedRe + '\\b\\s*(?:is\\s+)?(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available)|(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available)\\s*(?:for\\s+)?\\b' + wantedRe + '\\b)',
+    '(?:\\b' + wantedRe + '\\b\\s*(?:is\\s+)?(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available|notify\\s*me\\s*when\\s*available|notify\\s+when\\s+available|email\\s+me\\s+when\\s+available)|(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available|notify\\s*me\\s*when\\s*available|notify\\s+when\\s+available|email\\s+me\\s+when\\s+available)\\s*(?:for\\s+)?\\b' + wantedRe + '\\b)',
     'i',
   )
   const directAvailable = new RegExp(
