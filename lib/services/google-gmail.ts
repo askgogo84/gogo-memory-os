@@ -436,6 +436,29 @@ export async function fetchGmailAttentionThreads(accessToken:string,maxThreads=1
 }
 
 
+export async function searchGmailThreads(accessToken:string,searchText:string,maxThreads=20):Promise<GmailAttentionThread[]>{
+  const q=String(searchText||'').trim().slice(0,180)
+  if(!q)return []
+  const terms=q.replace(/["{}()]/g,' ').replace(/\s+/g,' ').trim()
+  const gmailQuery=encodeURIComponent(`${terms} newer_than:90d -in:spam -in:trash`)
+  const res=await gmailFetchJson(
+    accessToken,
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${Math.max(10,Math.min(80,maxThreads*3))}&q=${gmailQuery}`
+  )
+  if(!res.ok){
+    if(res.status===403)throw new Error('gmail_scope_required')
+    throw new Error(`gmail_search_failed_${res.status}`)
+  }
+  const threadIds=[...new Set((res.data.messages||[]).map((row:any)=>String(row.threadId||'')).filter(Boolean))]
+    .slice(0,Math.max(1,Math.min(40,maxThreads)))
+  const settled=await Promise.allSettled(threadIds.map(id=>fetchAttentionThread(accessToken,id)))
+  return settled
+    .filter((x):x is PromiseFulfilledResult<GmailAttentionThread|null>=>x.status==='fulfilled')
+    .map(x=>x.value)
+    .filter((x):x is GmailAttentionThread=>Boolean(x))
+}
+
+
 function base64Url(value:string){
   return Buffer.from(value,'utf8').toString('base64url')
 }
