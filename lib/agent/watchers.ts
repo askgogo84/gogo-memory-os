@@ -363,7 +363,7 @@ export function assessProductAvailabilityText(pageText: string, variant: string)
 
   // Without a selected-size marker, accept only direct variant/state wording.
   const directUnavailable = new RegExp(
-    '(?:\\b' + wantedRe + '\\b\\s*(?:is\\s+)?(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available)|(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available)\\s*(?:for\\s+)?\\b' + wantedRe + '\\b)',
+    '(?:\\b' + wantedRe + '\\b\\s*(?:is\\s+)?(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available|notify\\s*me\\s*when\\s*available|notify\\s+when\\s+available|email\\s+me\\s+when\\s+available)|(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available|notify\\s*me\\s*when\\s*available|notify\\s+when\\s+available|email\\s+me\\s+when\\s+available)\\s*(?:for\\s+)?\\b' + wantedRe + '\\b)',
     'i',
   )
   const directAvailable = new RegExp(
