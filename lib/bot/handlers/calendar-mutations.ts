@@ -82,6 +82,19 @@ function fmtEvent(ev: any): string {
 function matchEvents(events: any[], phrase: string): any[] {
   const kws = keywords(phrase)
   const wantClock = clockIn(phrase)
+
+  // If one event contains every meaningful keyword from the user's title phrase,
+  // prefer it deterministically over loose one-word matches such as "test".
+  // Example: "Move the Final Brain Calendar Test meeting to 5 PM" should not
+  // fan out to every historical event whose title merely contains "test".
+  if (kws.length >= 2) {
+    const fullMatches = events.filter(ev => {
+      const title = String(ev?.summary || '').toLowerCase()
+      return kws.every(k => title.includes(k))
+    })
+    if (fullMatches.length === 1) return fullMatches
+  }
+
   const scored = events.map(ev => {
     const title = (ev.summary || '').toLowerCase()
     let score = 0
