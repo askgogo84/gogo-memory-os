@@ -16,6 +16,7 @@ import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
 import { tryGetAutonomyStatus, tryGetConnectionStatus } from './autonomy-status'
+import { capabilityIsOff, parseAutonomyCommand } from './adaptive-autonomy'
 import { tryRunAdaptiveAutonomyCommand } from './adaptive-autonomy'
 import { handleOpenLoopAction, handleOpenLoopQuery, handleOpenLoopResolution, shouldHandleOpenLoopAction, shouldHandleOpenLoopResolution } from './open-loops'
 import { tryRecoverAppointmentOption } from './appointment-followup-recovery'
@@ -200,6 +201,16 @@ export async function tryRunWhatsAppJevSpecialist(params:{
   if(!actor)return null
 
   if(params.intent==='reminder_read'||params.intent==='reminder_mutation'){
+    // Jev is only a semantic hint. Autonomy-control commands must be allowed to
+    // reach the control handler even when the target capability is currently off.
+    if(parseAutonomyCommand(params.text))return null
+    if(await capabilityIsOff(actor.legacyTelegramId,'reminders')){
+      return {
+        text:'Reminders are currently off in your Gogo autonomy settings. Say *set reminders autonomy to auto* (or *ask*) to turn them back on.',
+        status:'paused',
+        handledBy:'adaptive-autonomy',
+      }
+    }
     const reminder=await tryRunExpiryReminderPlan({actor,surface:'whatsapp',text:params.text,messageId:params.messageId})
     return reminder ? {...reminder,handledBy:String(reminder.handledBy||'compound-plan')} : null
   }
@@ -270,6 +281,18 @@ export async function tryRunWhatsAppAgent(params: {
 }): Promise<WhatsAppAgentResult | null> {
   const actor = actorFromResolvedUser(params.user)
   if (!actor) return null
+
+  // A disabled capability is a hard user preference. Stop any reminder-bearing
+  // command before compound/persistent/general planners can recreate a reminder
+  // through a different execution path. Autonomy-control commands are exempt so
+  // the user can always turn the capability back on.
+  if(!parseAutonomyCommand(params.text) && /\b(?:remind\s+me|reminders?)\b/i.test(params.text) && await capabilityIsOff(actor.legacyTelegramId,'reminders')){
+    return {
+      text:'Reminders are currently off in your Gogo autonomy settings. Say *set reminders autonomy to auto* (or *ask*) to turn them back on.',
+      status:'paused',
+      handledBy:'adaptive-autonomy',
+    }
+  }
 
   const decision = approvalIntent(params.text)
   if (decision) {
@@ -348,8 +371,10 @@ export async function tryRunWhatsAppAgent(params: {
   const travelCalendar = await tryPrepareTravelCalendarPlan({ actor, surface:'whatsapp', text:params.text })
   if (travelCalendar) return { ...travelCalendar, text:`${travelCalendar.text || ''}${travelCalendar.status === 'waiting_approval' ? '\n\nReply *APPROVE* to add it, or *REJECT* to stop.' : ''}`, handledBy:String(travelCalendar.handledBy || 'travel-calendar-plan') }
 
-  const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
-  if (compound) return { ...compound, handledBy:compound.handledBy }
+  if(!(await capabilityIsOff(actor.legacyTelegramId,'reminders'))){
+    const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
+    if (compound) return { ...compound, handledBy:compound.handledBy }
+  }
 
   const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (persistent) return { ...persistent, handledBy:String(persistent.handledBy || 'persistent-general-plan') }
