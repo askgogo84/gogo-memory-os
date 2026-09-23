@@ -22,6 +22,7 @@ import { fetchPrimaryCalendarEvents } from '@/lib/google-calendar'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import { capabilityIsOff, parseAutonomyCommand, tryRunAdaptiveAutonomyCommand } from '@/lib/agent/adaptive-autonomy'
+import { isAdaptiveTrustQuery, tryRunAdaptiveTrustCommand } from '@/lib/agent/adaptive-trust'
 
 function isSimpleWorkspaceRead(text:string) {
   const t=String(text||'')
@@ -265,11 +266,15 @@ export async function routeFeatureIntent(
   // Autonomy controls must run before reminder/list/calendar specialists so
   // commands like "set calendar autonomy to auto" cannot be stolen by a noun router.
   if(extra?.telegramId){
+    const actor={userId:String(extra.telegramId),legacyTelegramId:extra.telegramId,whatsappId:phone,name:'Gogo'}
     const autonomy=parseAutonomyCommand(text)
     if(autonomy){
-      const actor={userId:String(extra.telegramId),legacyTelegramId:extra.telegramId,whatsappId:phone,name:'Gogo'}
       const result=await tryRunAdaptiveAutonomyCommand({actor,text})
       if(result?.text)return result.text
+    }
+    if(isAdaptiveTrustQuery(text)){
+      const trust=await tryRunAdaptiveTrustCommand({actor,text})
+      if(trust?.text)return trust.text
     }
   }
 
