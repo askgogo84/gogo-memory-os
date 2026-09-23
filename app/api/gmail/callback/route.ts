@@ -31,6 +31,13 @@ export async function GET(req: NextRequest) {
       )
     }
 
+    if(sendUpgrade&&!tokens.refresh_token){
+      return NextResponse.json(
+        {ok:false,error:'Google did not return durable Gmail Send authorization. Please retry the upgrade.'},
+        {status:400}
+      )
+    }
+
     const email = await getGoogleEmail(tokens.access_token)
     if (!email) {
       return NextResponse.json(
