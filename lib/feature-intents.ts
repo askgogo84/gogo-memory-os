@@ -21,6 +21,7 @@ import { resolvePendingCalendar, looksLikeNewCommand } from '@/lib/bot/pending-f
 import { fetchPrimaryCalendarEvents } from '@/lib/google-calendar'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
+import { capabilityIsOff, parseAutonomyCommand, tryRunAdaptiveAutonomyCommand } from '@/lib/agent/adaptive-autonomy'
 
 function isSimpleWorkspaceRead(text:string) {
   const t=String(text||'')
@@ -261,6 +262,17 @@ export async function routeFeatureIntent(
   if(normalized.changed) console.info('INPUT_NORMALIZED_FOR_FEATURE_ROUTING:',{reasons:normalized.reasons,originalLength:String(text||'').length,normalizedLength:normalized.text.length})
   text=normalized.text
 
+  // Autonomy controls must run before reminder/list/calendar specialists so
+  // commands like "set calendar autonomy to auto" cannot be stolen by a noun router.
+  if(extra?.telegramId){
+    const autonomy=parseAutonomyCommand(text)
+    if(autonomy){
+      const actor={userId:String(extra.telegramId),legacyTelegramId:extra.telegramId,whatsappId:phone,name:'Gogo'}
+      const result=await tryRunAdaptiveAutonomyCommand({actor,text})
+      if(result?.text)return result.text
+    }
+  }
+
   if(extra?.telegramId){
     const snoozeReply=await tryHandleSnoozeCommand(extra.telegramId,phone,text)
     if(snoozeReply)return snoozeReply
@@ -283,6 +295,9 @@ export async function routeFeatureIntent(
   }
 
   if (extra?.telegramId && normalizeNaturalReminderSave(text)) {
+    if(await capabilityIsOff(extra.telegramId,'reminders')){
+      return 'Reminders are currently off in your Gogo autonomy settings. Say *set reminders autonomy to auto* (or *ask*) to turn them back on.'
+    }
     try {
       return await saveNaturalReminder({ telegramId: extra.telegramId, whatsappTo: phone, text })
     } catch (err:any) {
@@ -293,6 +308,9 @@ export async function routeFeatureIntent(
 
   const checklist = extra?.telegramId ? parseNumberedChecklist(text) : null
   if (extra?.telegramId && checklist) {
+    if(await capabilityIsOff(extra.telegramId,'lists')){
+      return 'Lists are currently off in your Gogo autonomy settings. Say *set lists autonomy to auto* (or *ask*) to turn them back on.'
+    }
     try {
       const listName = normalizeListName(checklist.listName)
       const result = await addToListDetailed(extra.telegramId, listName, checklist.items)
@@ -323,6 +341,9 @@ export async function routeFeatureIntent(
 
     const followupItems=parseActiveListAdd(text)
     if(followupItems){
+      if(await capabilityIsOff(extra.telegramId,'lists')){
+        return 'Lists are currently off in your Gogo autonomy settings. Say *set lists autonomy to auto* (or *ask*) to turn them back on.'
+      }
       const listName=await getActiveListName(extra.telegramId)
       if(listName){
         const result=await addToListDetailed(extra.telegramId,listName,followupItems)
