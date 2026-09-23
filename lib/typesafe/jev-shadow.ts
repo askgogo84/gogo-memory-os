@@ -16,6 +16,7 @@ export type JevShadowResult = {
   actionMode: JevShadowChoice
   referentKind: JevShadowChoice
   attentionState: JevShadowChoice
+  decisionReadiness: JevShadowChoice
   usage?: { inputTokens: number | null; outputTokens: number | null }
   error?: string
 }
@@ -74,7 +75,7 @@ function validChoiceAnswer(value: any) {
 
 export function parseJevShadowResponse(raw: any, latencyMs = 0): JevShadowResult {
   const answers = raw?.answers || {}
-  const valid = validChoiceAnswer(answers.intent) && validChoiceAnswer(answers.action_mode) && validChoiceAnswer(answers.referent_kind) && validChoiceAnswer(answers.attention_state)
+  const valid = validChoiceAnswer(answers.intent) && validChoiceAnswer(answers.action_mode) && validChoiceAnswer(answers.referent_kind) && validChoiceAnswer(answers.attention_state) && validChoiceAnswer(answers.decision_readiness)
   const usage = {
     inputTokens: Number.isFinite(Number(raw?.usage?.input_tokens)) ? Number(raw.usage.input_tokens) : null,
     outputTokens: Number.isFinite(Number(raw?.usage?.output_tokens)) ? Number(raw.usage.output_tokens) : null,
@@ -89,6 +90,7 @@ export function parseJevShadowResponse(raw: any, latencyMs = 0): JevShadowResult
       actionMode: emptyChoice(),
       referentKind: emptyChoice(),
       attentionState: emptyChoice(),
+      decisionReadiness: emptyChoice(),
       usage,
       error: 'typesafe_malformed_response',
     }
@@ -102,6 +104,7 @@ export function parseJevShadowResponse(raw: any, latencyMs = 0): JevShadowResult
     actionMode: parseChoice(answers.action_mode),
     referentKind: parseChoice(answers.referent_kind),
     attentionState: parseChoice(answers.attention_state),
+    decisionReadiness: parseChoice(answers.decision_readiness),
     usage,
   }
 }
@@ -129,6 +132,7 @@ export async function runJevShadow(params: {
       actionMode: emptyChoice(),
       referentKind: emptyChoice(),
       attentionState: emptyChoice(),
+      decisionReadiness: emptyChoice(),
       usage: { inputTokens: null, outputTokens: null },
       error: 'typesafe_sensitive_state_withheld',
     }
@@ -175,6 +179,7 @@ export async function runJevShadow(params: {
       actionMode: emptyChoice(),
       referentKind: emptyChoice(),
       attentionState: emptyChoice(),
+      decisionReadiness: emptyChoice(),
       usage: { inputTokens: null, outputTokens: null },
       error: err?.name === 'AbortError' ? 'typesafe_timeout' : String(err?.message || 'typesafe_error').slice(0, 120),
     }
