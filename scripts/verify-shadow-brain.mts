@@ -72,7 +72,7 @@ const nonContextRequest=buildJevShadowRequest({
   focusKind:'none',
 })
 assert.equal('referent_kind' in nonContextRequest.questions,false)
-assert.equal('decision_readiness' in nonContextRequest.questions,false)
+assert.equal('decision_readiness' in nonContextRequest.questions,true)
 assert.equal((jevRequest.questions.decision_readiness as any).type,'choice')
 assert.ok('clarify' in (jevRequest.questions.decision_readiness as any).criteria)
 
