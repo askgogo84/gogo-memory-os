@@ -1,5 +1,5 @@
 export const JEV_SHADOW_MODEL = 'jev-latest'
-export const JEV_SHADOW_VERSION = 'jev-shadow-v1.3'
+export const JEV_SHADOW_VERSION = 'jev-shadow-v1.5'
 
 export const JEV_INTENT_CRITERIA = {
   reminder_read: 'Read, list, inspect, or answer questions about reminders without changing them.',
@@ -47,32 +47,35 @@ export const JEV_REFERENT_CRITERIA = {
   other_context: 'The message depends on prior context, but none of the listed referent kinds fit.',
 } as const
 
-export function buildJevShadowQuestions() {
-  return {
+export function buildJevShadowQuestions(params:{needsContext?:boolean}={}) {
+  const base:any = {
     intent: {
       type: 'choice',
-      instructions: 'Choose the single best AskGogo capability intent for the user message. Prefer the most specific option. Do not infer permission to execute; classify meaning only.',
+      instructions: 'Choose the single best AskGogo capability intent. Classify meaning only; do not infer execution permission.',
       criteria: JEV_INTENT_CRITERIA,
     },
     action_mode: {
       type: 'choice',
-      instructions: 'Choose the requested behavior. Creating/stopping a background watcher is private_write; asking what is being watched is read. Calendar/browser/booking/payment writes are consequential_write.',
+      instructions: 'Choose read, private_write, consequential_write, research, or clarify.',
       criteria: JEV_ACTION_MODE_CRITERIA,
-    },
-    referent_kind: {
-      type: 'choice',
-      instructions: 'If the message uses pronouns, ordinals, shorthand, or continuation language, choose what kind of prior object it most likely refers to. Choose none when the message stands alone.',
-      criteria: JEV_REFERENT_CRITERIA,
     },
     attention_state: {
       type: 'choice',
-      instructions: 'Classify whether this turn creates or resolves an attention/open-loop state. Do not invent commitments. Choose none unless the message itself contains evidence of waiting, follow-up, a user commitment, or completion.',
+      instructions: 'Classify only explicit waiting, follow-up, user commitment, completion, or none.',
       criteria: JEV_ATTENTION_CRITERIA,
     },
-    decision_readiness: {
-      type: 'choice',
-      instructions: 'Decide whether the user request is semantically ready to route now or needs clarification first. This is about meaning/object ambiguity only, not whether approval is required. If a pronoun or shorthand could plausibly refer to multiple different objects or capabilities, choose clarify.',
-      criteria: JEV_READINESS_CRITERIA,
-    },
-  } as const
+  }
+  base.decision_readiness={
+    type:'choice',
+    instructions:'Choose ready only if the request is specific enough to route safely now; otherwise clarify.',
+    criteria:JEV_READINESS_CRITERIA,
+  }
+  if(params.needsContext){
+    base.referent_kind={
+      type:'choice',
+      instructions:'Choose the kind of prior object referenced by this contextual turn.',
+      criteria:JEV_REFERENT_CRITERIA,
+    }
+  }
+  return base
 }

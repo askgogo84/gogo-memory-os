@@ -63,6 +63,16 @@ assert.ok('calendar_mutation' in (jevRequest.questions.intent as any).criteria)
 assert.equal((jevRequest.questions.referent_kind as any).type,'choice')
 assert.equal((jevRequest.questions.attention_state as any).type,'choice')
 assert.ok('waiting_on' in (jevRequest.questions.attention_state as any).criteria)
+
+const nonContextRequest=buildJevShadowRequest({
+  text:'What meetings do I have tomorrow?',
+  currentCapability:'calendar',
+  currentActionFamily:'ask',
+  needsContext:false,
+  focusKind:'none',
+})
+assert.equal('referent_kind' in nonContextRequest.questions,false)
+assert.equal('decision_readiness' in nonContextRequest.questions,true)
 assert.equal((jevRequest.questions.decision_readiness as any).type,'choice')
 assert.ok('clarify' in (jevRequest.questions.decision_readiness as any).criteria)
 
@@ -72,7 +82,7 @@ const parsed=parseJevShadowResponse({answers:{
   referent_kind:{type:'choice',choice:'reminder',confidence:0.89,probabilities:{reminder:0.89}},
   attention_state:{type:'choice',choice:'none',confidence:0.96,probabilities:{none:0.96}},
   decision_readiness:{type:'choice',choice:'ready',confidence:0.95,probabilities:{ready:0.95,clarify:0.05}},
-}},17)
+}},17,true)
 assert.equal(parsed.intent.choice,'reminder_mutation')
 assert.equal(parsed.actionMode.choice,'private_write')
 assert.equal(parsed.referentKind.choice,'reminder')
@@ -81,7 +91,7 @@ assert.equal(parsed.decisionReadiness.choice,'ready')
 assert.equal(parsed.latencyMs,17)
 console.log('Jev shadow request/response verification passed')
 
-const malformed=parseJevShadowResponse({model:'jev-latest',answers:{}},5)
+const malformed=parseJevShadowResponse({model:'jev-latest',answers:{}},5,false)
 assert.equal(malformed.ok,false)
 assert.equal(malformed.error,'typesafe_malformed_response')
 

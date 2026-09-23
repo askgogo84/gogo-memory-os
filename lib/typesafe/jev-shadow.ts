@@ -45,9 +45,9 @@ export function buildJevShadowRequest(params: {
   focusSummary?: string | null
   recentContext?: string | null
 }) {
-  const rawText = String(params.text || '').slice(0, 1800)
-  const rawSummary = String(params.focusSummary || '').slice(0, 500)
-  const rawRecent = params.needsContext ? String(params.recentContext || '').slice(0, 1200) : ''
+  const rawText = String(params.text || '').slice(0, 1200)
+  const rawSummary = String(params.focusSummary || '').slice(0, 320)
+  const rawRecent = params.needsContext ? String(params.recentContext || '').slice(0, 700) : ''
   const safeText = isSecretShapedMemory(rawText) ? '[sensitive turn withheld from TypeSafe]' : redactSecretShapedText(rawText)
   const safeSummary = isSecretShapedMemory(rawSummary) ? '[sensitive context withheld from TypeSafe]' : redactSecretShapedText(rawSummary)
   const safeRecent = isSecretShapedMemory(rawRecent) ? '[sensitive recent context withheld from TypeSafe]' : redactSecretShapedText(rawRecent)
@@ -66,7 +66,7 @@ export function buildJevShadowRequest(params: {
         recent_conversation: safeRecent || null,
       },
     },
-    questions: buildJevShadowQuestions(),
+    questions: buildJevShadowQuestions({needsContext:params.needsContext}),
   }
 }
 
@@ -74,9 +74,11 @@ function validChoiceAnswer(value: any) {
   return Boolean(value && value.type === 'choice' && typeof value.choice === 'string' && value.choice.trim() && Number.isFinite(Number(value.confidence)) && value.probabilities && typeof value.probabilities === 'object')
 }
 
-export function parseJevShadowResponse(raw: any, latencyMs = 0): JevShadowResult {
+export function parseJevShadowResponse(raw: any, latencyMs = 0, contextual = false): JevShadowResult {
   const answers = raw?.answers || {}
-  const valid = validChoiceAnswer(answers.intent) && validChoiceAnswer(answers.action_mode) && validChoiceAnswer(answers.referent_kind) && validChoiceAnswer(answers.attention_state) && validChoiceAnswer(answers.decision_readiness)
+  const coreValid = validChoiceAnswer(answers.intent) && validChoiceAnswer(answers.action_mode) && validChoiceAnswer(answers.attention_state) && validChoiceAnswer(answers.decision_readiness)
+  const contextualValid = !contextual || validChoiceAnswer(answers.referent_kind)
+  const valid = coreValid && contextualValid
   const usage = {
     inputTokens: Number.isFinite(Number(raw?.usage?.input_tokens)) ? Number(raw.usage.input_tokens) : null,
     outputTokens: Number.isFinite(Number(raw?.usage?.output_tokens)) ? Number(raw.usage.output_tokens) : null,
@@ -92,7 +94,7 @@ export function parseJevShadowResponse(raw: any, latencyMs = 0): JevShadowResult
       referentKind: emptyChoice(),
       attentionState: emptyChoice(),
       decisionReadiness: emptyChoice(),
-      contextual: false,
+      contextual,
       usage,
       error: 'typesafe_malformed_response',
     }
@@ -104,10 +106,10 @@ export function parseJevShadowResponse(raw: any, latencyMs = 0): JevShadowResult
     latencyMs,
     intent: parseChoice(answers.intent),
     actionMode: parseChoice(answers.action_mode),
-    referentKind: parseChoice(answers.referent_kind),
+    referentKind: contextual ? parseChoice(answers.referent_kind) : {choice:'none',confidence:1,probabilities:{none:1}},
     attentionState: parseChoice(answers.attention_state),
     decisionReadiness: parseChoice(answers.decision_readiness),
-    contextual: false,
+    contextual,
     usage,
   }
 }
@@ -169,12 +171,12 @@ export async function runJevShadow(params: {
         referentKind: emptyChoice(),
         attentionState: emptyChoice(),
         decisionReadiness: emptyChoice(),
+        contextual: Boolean(params.needsContext),
         usage: { inputTokens: null, outputTokens: null },
         error: `typesafe_http_${response.status}`,
       }
     }
-    const parsed=parseJevShadowResponse(body, Date.now() - started)
-    return {...parsed,contextual:Boolean(params.needsContext)}
+    return parseJevShadowResponse(body, Date.now() - started, Boolean(params.needsContext))
   } catch (err: any) {
     return {
       ok: false,
