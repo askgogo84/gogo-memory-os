@@ -63,17 +63,21 @@ assert.ok('calendar_mutation' in (jevRequest.questions.intent as any).criteria)
 assert.equal((jevRequest.questions.referent_kind as any).type,'choice')
 assert.equal((jevRequest.questions.attention_state as any).type,'choice')
 assert.ok('waiting_on' in (jevRequest.questions.attention_state as any).criteria)
+assert.equal((jevRequest.questions.decision_readiness as any).type,'choice')
+assert.ok('clarify' in (jevRequest.questions.decision_readiness as any).criteria)
 
 const parsed=parseJevShadowResponse({answers:{
   intent:{type:'choice',choice:'reminder_mutation',confidence:0.94,probabilities:{reminder_mutation:0.94,calendar_mutation:0.03}},
   action_mode:{type:'choice',choice:'private_write',confidence:0.91,probabilities:{private_write:0.91}},
   referent_kind:{type:'choice',choice:'reminder',confidence:0.89,probabilities:{reminder:0.89}},
   attention_state:{type:'choice',choice:'none',confidence:0.96,probabilities:{none:0.96}},
+  decision_readiness:{type:'choice',choice:'ready',confidence:0.95,probabilities:{ready:0.95,clarify:0.05}},
 }},17)
 assert.equal(parsed.intent.choice,'reminder_mutation')
 assert.equal(parsed.actionMode.choice,'private_write')
 assert.equal(parsed.referentKind.choice,'reminder')
 assert.equal(parsed.attentionState.choice,'none')
+assert.equal(parsed.decisionReadiness.choice,'ready')
 assert.equal(parsed.latencyMs,17)
 console.log('Jev shadow request/response verification passed')
 
@@ -100,4 +104,6 @@ const promoted={
 assert.equal(promotedJevIntent(promoted as any),'watcher')
 assert.equal(promotedJevIntent({...promoted,intent:{...promoted.intent,confidence:0.89}} as any),null)
 assert.equal(promotedJevIntent({...promoted,intent:{...promoted.intent,choice:'general_reasoning',confidence:0.99}} as any),null)
+assert.equal(promotedJevIntent({...promoted,decisionReadiness:{choice:'clarify',confidence:0.86,probabilities:{clarify:0.86,ready:0.14}}} as any),null)
+assert.equal(promotedJevIntent({...promoted,referentKind:{choice:'reminder',confidence:0.61,probabilities:{reminder:0.61,calendar_event:0.30}}} as any),null)
 console.log('Jev first-refusal promotion gate verification passed')

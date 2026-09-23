@@ -25,6 +25,16 @@ export function promotedJevIntent(jev:JevShadowResult|null|undefined):JevPromote
   const intent=String(jev.intent?.choice||'') as JevPromotedIntent
   const confidence=Number(jev.intent?.confidence||0)
   if(!PROMOTABLE.has(intent)||confidence<0.9)return null
+
+  const readiness=String(jev.decisionReadiness?.choice||'')
+  const readinessConfidence=Number(jev.decisionReadiness?.confidence||0)
+  if(readiness==='clarify'&&readinessConfidence>=0.7)return null
+
+  const referent=String(jev.referentKind?.choice||'none')
+  const referentConfidence=Number(jev.referentKind?.confidence||0)
+  if(referent!=='none'&&referentConfidence<0.75)return null
+  if(jev.contextual&&referent==='none'&&referentConfidence<0.75)return null
+
   return intent
 }
 
@@ -48,7 +58,7 @@ export async function recordJevRoutingHint(params:{
       latency_ms:params.latencyMs,
       authority:'first_refusal_only',
       execution_authority:false,
-      router_version:'jev-router-v1',
+      router_version:'jev-router-v1.1',
     },
   })
   if(error)console.error('JEV_ROUTING_HINT_ACTIVITY_FAILED:',error.message)
