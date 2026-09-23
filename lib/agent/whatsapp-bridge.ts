@@ -16,6 +16,7 @@ import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
 import { tryGetAutonomyStatus, tryGetConnectionStatus } from './autonomy-status'
+import { tryRunAdaptiveTrustCommand } from './adaptive-trust'
 import { capabilityIsOff, parseAutonomyCommand } from './adaptive-autonomy'
 import { tryRunAdaptiveAutonomyCommand } from './adaptive-autonomy'
 import { handleOpenLoopAction, handleOpenLoopQuery, handleOpenLoopResolution, shouldHandleOpenLoopAction, shouldHandleOpenLoopResolution } from './open-loops'
@@ -305,6 +306,9 @@ export async function tryRunWhatsAppAgent(params: {
 
   const autonomyControl=await tryRunAdaptiveAutonomyCommand({actor,text:params.text})
   if(autonomyControl)return {...autonomyControl,handledBy:String(autonomyControl.handledBy||'adaptive-autonomy')}
+
+  const trustControl=await tryRunAdaptiveTrustCommand({actor,text:params.text})
+  if(trustControl)return {...trustControl,handledBy:String(trustControl.handledBy||'adaptive-trust')}
 
   const attentionCommand=await tryRunWhatsAppAttentionCommand(params)
   if(attentionCommand)return attentionCommand
