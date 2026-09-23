@@ -16,6 +16,7 @@ import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
 import { tryGetAutonomyStatus, tryGetConnectionStatus } from './autonomy-status'
+import { executeApprovedGmailSend, tryRunGmailSendCommand } from './gmail-send'
 import { tryRunAdaptiveTrustCommand } from './adaptive-trust'
 import { capabilityIsOff, parseAutonomyCommand } from './adaptive-autonomy'
 import { tryRunAdaptiveAutonomyCommand } from './adaptive-autonomy'
@@ -155,7 +156,9 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
           ? await executeApprovedLifeEventCheckin({ actor, runId:String(data.run_id) })
           : planType === 'booking_event_calendar'
             ? await executeApprovedBookingCalendar({ actor, runId:String(data.run_id) })
-            : await executeApprovedAgentRun({ actor, runId:String(data.run_id) })
+            : planType === 'gmail_send'
+              ? await executeApprovedGmailSend({ actor, runId:String(data.run_id) })
+              : await executeApprovedAgentRun({ actor, runId:String(data.run_id) })
   const suffix = result.status === 'waiting_approval' ? '\n\nAnother consequential step is ready. Reply *APPROVE* to continue or *REJECT* to stop.' : ''
   return { text:`${result.text || 'Approved and executed.'}${suffix}`, runId:String(data.run_id), status:result.status, handledBy:'whatsapp-agent-approval' }
 }
@@ -303,6 +306,9 @@ export async function tryRunWhatsAppAgent(params: {
 
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
+
+  const gmailSend=await tryRunGmailSendCommand({actor,text:params.text})
+  if(gmailSend)return {...gmailSend,handledBy:String(gmailSend.handledBy||'gmail-send')}
 
   const autonomyControl=await tryRunAdaptiveAutonomyCommand({actor,text:params.text})
   if(autonomyControl)return {...autonomyControl,handledBy:String(autonomyControl.handledBy||'adaptive-autonomy')}
