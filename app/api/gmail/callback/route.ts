@@ -59,8 +59,17 @@ export async function GET(req: NextRequest) {
       gmail_connected: true,
       gmail_connected_at: new Date().toISOString(),
       gmail_email: email,
+      gmail_send_connected:false,
+      gmail_send_connected_at:null,
     }
     if(sendUpgrade){
+      const grantedScopes=String(tokens.scope||'').split(/\s+/).filter(Boolean)
+      if(!grantedScopes.includes('https://www.googleapis.com/auth/gmail.send')){
+        return NextResponse.json(
+          {ok:false,error:'Google did not grant Gmail Send permission. Please retry the upgrade.'},
+          {status:400}
+        )
+      }
       payload.gmail_send_connected=true
       payload.gmail_send_connected_at=new Date().toISOString()
     }
