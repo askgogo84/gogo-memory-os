@@ -306,10 +306,52 @@ export async function tryCreateProductStockWatchFromCommand(params: {
   surface: AgentSurface
   text: string
 }) {
-  const parsed = parseProductStockWatchCommand(params.text)
-  if (!parsed) return null
-
   const tg = String(params.actor.legacyTelegramId)
+  let parsed = parseProductStockWatchCommand(params.text)
+  let recoveredWatcher:any = null
+
+  // Natural follow-up: allow users to restart a known product watch without
+  // pasting the URL again ("Monitor the Senses ... page for size XL").
+  if (!parsed) {
+    const raw=clean(params.text,1800)
+    const watcherIntent=/\b(alert|notify|tell\s+me|let\s+me\s+know|watch|monitor|track)\b/i.test(raw)
+    const availabilityIntent=/\b(in\s+stock|back\s+in\s+stock|available|availability|comes?\s+(?:back\s+)?up|becomes?\s+available)\b/i.test(raw)
+    const vm=raw.match(/\b(?:in\s+)?(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|5XL)\s+size\b/i)
+      ||raw.match(/\bsize\s*[:=-]?\s*(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|5XL)\b/i)
+    const wantedVariant=clean(vm?.[1]||'',40).toUpperCase()
+    if(watcherIntent&&availabilityIntent&&wantedVariant){
+      const {data:recent,error:recentError}=await supabaseAdmin.from('agent_watchers')
+        .select('id,active,condition_json,updated_at')
+        .eq('telegram_id',tg).eq('type','product_stock')
+        .order('updated_at',{ascending:false}).limit(12)
+      if(recentError)throw new Error(`agent_watcher_context_read_failed:${recentError.message}`)
+      const textTokens=new Set(raw.toLowerCase().replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter(t=>t.length>3&&!['monitor','watch','alert','notify','available','availability','size','page','when','this','that'].includes(t)))
+      const ranked=(recent||[]).map((row:any)=>{
+        const condition=normalizeProductStockWatcher(row.condition_json)
+        if(!condition||condition.variant.toUpperCase()!==wantedVariant)return null
+        const titleTokens=String(condition.title||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter((t:string)=>t.length>3)
+        const overlap=titleTokens.filter((t:string)=>textTokens.has(t)).length
+        return {row,condition,overlap}
+      }).filter(Boolean).sort((a:any,b:any)=>b.overlap-a.overlap)
+      const best:any=ranked[0]
+      const second:any=ranked[1]
+      const uniqueBest=best&&best.overlap>=2&&(!second||best.overlap>second.overlap)
+      if(uniqueBest){
+        parsed={...best.condition,addToCart:/\badd\s+(?:it|this|the\s+(?:item|product))?\s*(?:to|in)\s+(?:my\s+)?(?:cart|bag|basket)\b/i.test(raw)||best.condition.addToCart}
+        recoveredWatcher=best.row
+      } else if(best&&best.overlap>=2&&second&&best.overlap===second.overlap) {
+        return {
+          runId:'product-watch-ambiguous',
+          status:'paused' as const, capability:'browser' as const, risk:'low' as const,
+          text:'I found more than one matching product watch for that size. Please send the product link so I restart the correct one.',
+          blockedReason:'ambiguous_product_watch',
+          handledBy:'product-stock-watch',
+        }
+      }
+    }
+    if(!parsed)return null
+  }
+
   if (!(await browserWatchAllowed(params.actor.legacyTelegramId))) {
     return {
       runId:'product-watch-blocked',
@@ -331,6 +373,51 @@ export async function tryCreateProductStockWatchFromCommand(params: {
       risk:'low' as const,
       text:watcherUpgradeMessage(budget.planCode),
       blockedReason:'plan_background_watch_unavailable',
+      handledBy:'product-stock-watch',
+    }
+  }
+
+  if(recoveredWatcher?.id){
+    if(recoveredWatcher.active){
+      return {
+        runId:`product-watch-existing-${recoveredWatcher.id}`,
+        status:'completed' as const, capability:'browser' as const, risk:'low' as const,
+        text:`I’m already watching ${parsed.title}. I’ll alert you only when ${parsed.variant} is verifiably available.`,
+        handledBy:'product-stock-watch',
+      }
+    }
+    const { count:activeCount, error:activeCountError } = await supabaseAdmin.from('agent_watchers')
+      .select('id', { count:'exact', head:true })
+      .eq('telegram_id', tg)
+      .in('type', ['web_search','web_page','product_stock'])
+      .eq('active', true)
+    if(activeCountError)throw new Error(`agent_watcher_count_failed:${activeCountError.message}`)
+    if((activeCount||0)>=budget.activeWebWatchersMax){
+      return {
+        runId:'product-watch-plan-limit',
+        status:'paused' as const, capability:'browser' as const, risk:'low' as const,
+        text:watcherUpgradeMessage(budget.planCode),
+        blockedReason:'plan_background_watch_limit',
+        handledBy:'product-stock-watch',
+      }
+    }
+    const now=new Date().toISOString()
+    const {error:restartError}=await supabaseAdmin.from('agent_watchers').update({
+      active:true,next_check_at:now,last_checked_at:null,
+      condition_json:{...parsed,cadenceMinutes:60},
+      last_state_json:{availability:'unknown',blockedNotified:false,cartAttempted:false,quietChecks:0,restartedAt:now},
+      updated_at:now,
+    }).eq('id',recoveredWatcher.id).eq('telegram_id',tg)
+    if(restartError)throw new Error(`agent_watcher_restart_failed:${restartError.message}`)
+    await supabaseAdmin.from('agent_activity').insert({
+      telegram_id:tg,event_type:'watcher_restarted',
+      message:`Gogo restarted ${parsed.title} for ${parsed.variant} availability.`.slice(0,900),
+      metadata_json:{watcher_id:recoveredWatcher.id,type:'product_stock',variant:parsed.variant,product_url:parsed.productUrl},
+    })
+    return {
+      runId:`product-watch-restarted-${recoveredWatcher.id}`,
+      status:'completed' as const,capability:'browser' as const,risk:'low' as const,
+      text:`Restarted — I’ll check hourly and alert you only when ${parsed.variant} is verifiably available on ${parsed.title}.`,
       handledBy:'product-stock-watch',
     }
   }

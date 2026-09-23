@@ -44,7 +44,7 @@ async function getToken(telegramId: number): Promise<string | null> {
 }
 
 // ── Parsing helpers ──────────────────────────────────────────────────────────
-const STOP = new Set(['move','reschedule','resched','postpone','push','shift','change','cancel','delete','remove','clear','my','the','a','an','to','at','on','for','me','please','pls','event','appointment','appt','meeting','call','calendar','from','and'])
+const STOP = new Set(['move','reschedule','resched','postpone','push','shift','change','cancel','delete','remove','clear','my','the','a','an','to','at','on','for','me','please','pls','event','appointment','appt','meeting','call','calendar','from','and','am','pm','today','tomorrow'])
 
 function extractAction(t: string): 'move' | 'delete' {
   return /\b(cancel|delete|remove|clear)\b/i.test(t) ? 'delete' : 'move'
@@ -82,6 +82,19 @@ function fmtEvent(ev: any): string {
 function matchEvents(events: any[], phrase: string): any[] {
   const kws = keywords(phrase)
   const wantClock = clockIn(phrase)
+
+  // If one event contains every meaningful keyword from the user's title phrase,
+  // prefer it deterministically over loose one-word matches such as "test".
+  // Example: "Move the Final Brain Calendar Test meeting to 5 PM" should not
+  // fan out to every historical event whose title merely contains "test".
+  if (kws.length >= 2) {
+    const fullMatches = events.filter(ev => {
+      const title = String(ev?.summary || '').toLowerCase()
+      return kws.every(k => title.includes(k))
+    })
+    if (fullMatches.length === 1) return fullMatches
+  }
+
   const scored = events.map(ev => {
     const title = (ev.summary || '').toLowerCase()
     let score = 0

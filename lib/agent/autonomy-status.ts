@@ -65,9 +65,13 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
   if(failed?.error)throw new Error(`autonomy_status_read_failed:${failed.error.message}`)
   const [rawRuns,watchers,approvals,events,ideas,openLoops]=results.map((result:any)=>result.data||[])
   const terminalPauseErrors=new Set(['stale_provider_access_limited','background_browser_resume_expired','stale_run_recovered','background_browser_actor_missing'])
+  const runSeen=new Set<string>()
   const runs=(rawRuns||[]).filter((run:any)=>{
-    if(String(run.status)!=='paused')return true
-    return !terminalPauseErrors.has(String(run.error||''))
+    if(String(run.status)==='paused'&&terminalPauseErrors.has(String(run.error||'')))return false
+    const key=`${String(run.status||'')}|${clean(run.title,180).toLowerCase()}`
+    if(runSeen.has(key))return false
+    runSeen.add(key)
+    return true
   }).slice(0,6)
 
   const blocks:string[]=[]
