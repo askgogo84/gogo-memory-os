@@ -1,5 +1,5 @@
 export const JEV_SHADOW_MODEL = 'jev-latest'
-export const JEV_SHADOW_VERSION = 'jev-shadow-v1.2'
+export const JEV_SHADOW_VERSION = 'jev-shadow-v1.3'
 
 export const JEV_INTENT_CRITERIA = {
   reminder_read: 'Read, list, inspect, or answer questions about reminders without changing them.',
@@ -29,6 +29,12 @@ export const JEV_ATTENTION_CRITERIA = {
   followup: 'The user needs to follow up because a reply/update has not arrived or explicitly says a follow-up is needed.',
   commitment: 'The user has an unresolved action they need to do, such as send, call, submit, review, confirm, finish, pay, book, or reply.',
   completed: 'The message provides evidence that a previously pending commitment or waiting item has been completed, delivered, replied to, approved, received, or otherwise resolved.',
+} as const
+
+
+export const JEV_READINESS_CRITERIA = {
+  ready: 'The request is specific enough to route safely now. Any required approval or execution safety check can happen later in deterministic code.',
+  clarify: 'The request is semantically ambiguous in a way that could route to the wrong capability, wrong object, or wrong action unless the user clarifies first.',
 } as const
 
 export const JEV_REFERENT_CRITERIA = {
@@ -62,6 +68,11 @@ export function buildJevShadowQuestions() {
       type: 'choice',
       instructions: 'Classify whether this turn creates or resolves an attention/open-loop state. Do not invent commitments. Choose none unless the message itself contains evidence of waiting, follow-up, a user commitment, or completion.',
       criteria: JEV_ATTENTION_CRITERIA,
+    },
+    decision_readiness: {
+      type: 'choice',
+      instructions: 'Decide whether the user request is semantically ready to route now or needs clarification first. This is about meaning/object ambiguity only, not whether approval is required. If a pronoun or shorthand could plausibly refer to multiple different objects or capabilities, choose clarify.',
+      criteria: JEV_READINESS_CRITERIA,
     },
   } as const
 }
