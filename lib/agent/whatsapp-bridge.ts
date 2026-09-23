@@ -200,7 +200,7 @@ export async function tryRunWhatsAppJevSpecialist(params:{
   user:ResolvedUser
   text:string
   messageId?:string|number|null
-  intent:'watcher'|'reminder_read'|'reminder_mutation'|'email_read'|'email_mutation'|'travel_research'|'browser_action'
+  intent:'watcher'|'reminder_read'|'reminder_mutation'|'email_read'|'email_mutation'|'list_task'|'memory_context'|'travel_research'|'browser_action'
 }):Promise<WhatsAppAgentResult|null>{
   const actor=actorFromResolvedUser(params.user)
   if(!actor)return null
@@ -227,6 +227,11 @@ export async function tryRunWhatsAppJevSpecialist(params:{
 
   if(params.intent==='email_read'){
     if(!/\b(?:email|emails|mail|gmail|inbox)\b/i.test(params.text))return null
+    const result=await dispatchThroughSameBrain({actor,text:params.text,messageId:params.messageId})
+    return result?.text ? {text:result.text,handledBy:String(result.handledBy||'same-brain')} : null
+  }
+
+  if(params.intent==='list_task'||params.intent==='memory_context'){
     const result=await dispatchThroughSameBrain({actor,text:params.text,messageId:params.messageId})
     return result?.text ? {text:result.text,handledBy:String(result.handledBy||'same-brain')} : null
   }
