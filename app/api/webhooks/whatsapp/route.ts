@@ -1100,13 +1100,13 @@ _"${originalText}"_
     // existing approval/policy/provider-verification gates remain unchanged.
     const jevIntent=promotedJevIntent(brainObservation?.jev)
     if(jevIntent){
-      const agentIntent=['watcher','reminder_read','reminder_mutation','travel_research','browser_action'].includes(jevIntent)
+      const agentIntent=['watcher','reminder_read','reminder_mutation','email_read','email_mutation','list_task','memory_context','travel_research','browser_action'].includes(jevIntent)
       if(agentIntent){
         const promotedAgent=await tryRunWhatsAppJevSpecialist({
           user:resolvedUser,
           text,
           messageId:inboundMessageSid||null,
-          intent:jevIntent as 'watcher'|'reminder_read'|'reminder_mutation'|'travel_research'|'browser_action',
+          intent:jevIntent as 'watcher'|'reminder_read'|'reminder_mutation'|'email_read'|'email_mutation'|'list_task'|'memory_context'|'travel_research'|'browser_action',
         })
         if(promotedAgent){
           await recordJevRoutingHint({
@@ -1126,8 +1126,10 @@ _"${originalText}"_
             status:promotedAgent.status||null,
             runId:promotedAgent.runId||null,
           }).catch(()=>{})
-          await saveConversation(resolvedUser.telegramId,'user',text)
-          await saveConversation(resolvedUser.telegramId,'assistant',promotedAgent.text)
+          if(!promotedAgent.conversationPersisted){
+            await saveConversation(resolvedUser.telegramId,'user',text)
+            await saveConversation(resolvedUser.telegramId,'assistant',promotedAgent.text)
+          }
           await sendWhatsAppMessage(from,promotedAgent.text)
           return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
         }

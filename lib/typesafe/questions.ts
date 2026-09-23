@@ -6,6 +6,8 @@ export const JEV_INTENT_CRITERIA = {
   reminder_mutation: 'Create, move, reschedule, snooze, cancel, or otherwise change a reminder.',
   calendar_read: 'Read, list, inspect, or answer questions about calendar events or meetings without changing them.',
   calendar_mutation: 'Create, move, reschedule, cancel, invite to, or otherwise change a calendar event or meeting.',
+  email_read: 'Read, search, summarize, or inspect Gmail/email without sending or changing it.',
+  email_mutation: 'Draft, reply, forward, compose, or send email. Sending remains approval-gated by deterministic policy.',
   watcher: 'Create, inspect, update, or stop ongoing monitoring, alerts, watches, or condition checks.',
   travel_research: 'Research, compare, inspect, or discuss flights, hotels, trips, tickets, or travel options without booking.',
   browser_action: 'Navigate or act on an external website or provider, including forms, booking, checkout, or account actions.',

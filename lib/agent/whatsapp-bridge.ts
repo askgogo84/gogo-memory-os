@@ -12,6 +12,7 @@ import { hardenTravelResearchResult } from './travel-research-sanitize'
 import { shouldPreferSpecialistTravel } from './specialist-routing'
 import { tryResumeTrainHandoff, tryRunTrainResearch } from './train-research'
 import { executeApprovedAgentRun } from './orchestrator'
+import { dispatchThroughSameBrain } from './same-brain'
 import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
@@ -30,6 +31,7 @@ export type WhatsAppAgentResult = {
   runId?: string
   status?: string
   handledBy: string
+  conversationPersisted?: boolean
 }
 
 const WHATSAPP_BROWSER_BUDGET_MS = 42_000
@@ -199,7 +201,7 @@ export async function tryRunWhatsAppJevSpecialist(params:{
   user:ResolvedUser
   text:string
   messageId?:string|number|null
-  intent:'watcher'|'reminder_read'|'reminder_mutation'|'travel_research'|'browser_action'
+  intent:'watcher'|'reminder_read'|'reminder_mutation'|'email_read'|'email_mutation'|'list_task'|'memory_context'|'travel_research'|'browser_action'
 }):Promise<WhatsAppAgentResult|null>{
   const actor=actorFromResolvedUser(params.user)
   if(!actor)return null
@@ -217,6 +219,31 @@ export async function tryRunWhatsAppJevSpecialist(params:{
     }
     const reminder=await tryRunExpiryReminderPlan({actor,surface:'whatsapp',text:params.text,messageId:params.messageId})
     return reminder ? {...reminder,handledBy:String(reminder.handledBy||'compound-plan')} : null
+  }
+
+  if(params.intent==='email_mutation'){
+    const gmail=await tryRunGmailSendCommand({actor,text:params.text})
+    return gmail ? {...gmail,handledBy:String(gmail.handledBy||'gmail-send')} : null
+  }
+
+  if(params.intent==='email_read'){
+    if(parseAutonomyCommand(params.text))return null
+    if(await capabilityIsOff(actor.legacyTelegramId,'email')){
+      return {text:'Email is currently off in your Gogo autonomy settings. Say *set email autonomy to read* (or *draft*) to turn it back on.',status:'paused',handledBy:'adaptive-autonomy'}
+    }
+    if(!/\b(?:email|emails|mail|gmail|inbox)\b/i.test(params.text))return null
+    const result=await dispatchThroughSameBrain({actor,text:params.text,messageId:params.messageId})
+    return result?.text ? {text:result.text,handledBy:String(result.handledBy||'same-brain'),conversationPersisted:true} : null
+  }
+
+  if(params.intent==='list_task'||params.intent==='memory_context'){
+    if(parseAutonomyCommand(params.text))return null
+    const capability=params.intent==='list_task'?'lists':'memory'
+    if(await capabilityIsOff(actor.legacyTelegramId,capability)){
+      return {text:`${capability==='lists'?'Lists':'Memory'} are currently off in your Gogo autonomy settings. Say *set ${capability} autonomy to auto* (or *ask*) to turn it back on.`,status:'paused',handledBy:'adaptive-autonomy'}
+    }
+    const result=await dispatchThroughSameBrain({actor,text:params.text,messageId:params.messageId})
+    return result?.text ? {text:result.text,handledBy:String(result.handledBy||'same-brain'),conversationPersisted:true} : null
   }
 
   if(params.intent==='watcher'){
