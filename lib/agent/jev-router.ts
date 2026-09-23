@@ -33,6 +33,7 @@ export function promotedJevIntent(jev:JevShadowResult|null|undefined):JevPromote
   const referent=String(jev.referentKind?.choice||'none')
   const referentConfidence=Number(jev.referentKind?.confidence||0)
   if(referent!=='none'&&referentConfidence<0.75)return null
+  if(jev.contextual&&referent==='none'&&referentConfidence<0.75)return null
 
   return intent
 }
