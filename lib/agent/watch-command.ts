@@ -334,9 +334,19 @@ export async function tryCreateProductStockWatchFromCommand(params: {
         return {row,condition,overlap}
       }).filter(Boolean).sort((a:any,b:any)=>b.overlap-a.overlap)
       const best:any=ranked[0]
-      if(best&&best.overlap>=2){
+      const second:any=ranked[1]
+      const uniqueBest=best&&best.overlap>=2&&(!second||best.overlap>second.overlap)
+      if(uniqueBest){
         parsed={...best.condition,addToCart:/\badd\s+(?:it|this|the\s+(?:item|product))?\s*(?:to|in)\s+(?:my\s+)?(?:cart|bag|basket)\b/i.test(raw)||best.condition.addToCart}
         recoveredWatcher=best.row
+      } else if(best&&best.overlap>=2&&second&&best.overlap===second.overlap) {
+        return {
+          runId:'product-watch-ambiguous',
+          status:'paused' as const, capability:'browser' as const, risk:'low' as const,
+          text:'I found more than one matching product watch for that size. Please send the product link so I restart the correct one.',
+          blockedReason:'ambiguous_product_watch',
+          handledBy:'product-stock-watch',
+        }
       }
     }
     if(!parsed)return null
@@ -373,6 +383,21 @@ export async function tryCreateProductStockWatchFromCommand(params: {
         runId:`product-watch-existing-${recoveredWatcher.id}`,
         status:'completed' as const, capability:'browser' as const, risk:'low' as const,
         text:`I’m already watching ${parsed.title}. I’ll alert you only when ${parsed.variant} is verifiably available.`,
+        handledBy:'product-stock-watch',
+      }
+    }
+    const { count:activeCount, error:activeCountError } = await supabaseAdmin.from('agent_watchers')
+      .select('id', { count:'exact', head:true })
+      .eq('telegram_id', tg)
+      .in('type', ['web_search','web_page','product_stock'])
+      .eq('active', true)
+    if(activeCountError)throw new Error(`agent_watcher_count_failed:${activeCountError.message}`)
+    if((activeCount||0)>=budget.activeWebWatchersMax){
+      return {
+        runId:'product-watch-plan-limit',
+        status:'paused' as const, capability:'browser' as const, risk:'low' as const,
+        text:watcherUpgradeMessage(budget.planCode),
+        blockedReason:'plan_background_watch_limit',
         handledBy:'product-stock-watch',
       }
     }
