@@ -428,12 +428,13 @@ export function parseProductStockWatchCommand(text: string): ReturnType<typeof n
   if (!productUrl) return null
 
   const watcherIntent = /\b(alert|notify|tell\s+me|let\s+me\s+know|watch|monitor|track)\b/i.test(raw)
-  const availabilityIntent = /\b(in\s+stock|back\s+in\s+stock|available|availability|comes?\s+(?:back\s+)?up|becomes?\s+available)\b/i.test(raw)
+  const availabilityIntent = /\b(in\s+stock|back\s+in\s+stock|on\s+stock|comes?\s+(?:on|back\s+in)\s+stock|available|availability|comes?\s+(?:back\s+)?up|becomes?\s+available)\b/i.test(raw)
   if (!watcherIntent || !availabilityIntent) return null
 
   const variantMatch =
     raw.match(/\b(?:in\s+)?(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|5XL)\s+size\b/i)
     || raw.match(/\bsize\s*[:=-]?\s*(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|5XL)\b/i)
+    || raw.match(/\b(?:when|if)\s+(?:size\s+)?(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|3XL|4XL|5XL)\s+(?:comes?|is|becomes?)\s+(?:on|in|back\s+in)\s+stock\b/i)
   const variant = clean(variantMatch?.[1] || '', 40).toUpperCase()
   if (!variant) return null
 
