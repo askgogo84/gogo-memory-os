@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { classifyAgentRequest } from './classifier'
 import type { AgentActor } from './actor'
 import { runJevShadow, type JevShadowResult } from '@/lib/typesafe/jev-shadow'
+import { decisionDomain, decisionHints } from './decision-learning'
 
 export type ShadowBrainObservation = {
   actionFamily:string
@@ -197,6 +198,9 @@ export async function observeShadowBrainTurn(params:{
     ambiguous:focus.ambiguous,
   }
 
+  const learned=await decisionHints({actor:params.actor,text:params.text,domain:decisionDomain(observation.capability,observation.actionFamily)}).catch(()=>({preferredHandler:null,avoidHandlers:[],examples:[],confidence:0}))
+  const learnedContext=learned.preferredHandler?`Learned routing evidence: prefer ${learned.preferredHandler} at confidence ${learned.confidence.toFixed(2)}. Avoid: ${learned.avoidHandlers.join(', ')||'none'}.`:''
+
   const jev=await runJevShadow({
     text:params.text,
     currentCapability:observation.capability,
@@ -206,7 +210,7 @@ export async function observeShadowBrainTurn(params:{
     // feed an unrelated stale mission to Jev unless this turn actually needs context.
     focusKind:observation.needsContext?observation.focusKind:'none',
     focusSummary:observation.needsContext?observation.focusSummary:null,
-    recentContext,
+    recentContext:[recentContext,learnedContext].filter(Boolean).join('\n').slice(0,1200),
     timeoutMs:900,
   }).catch((err:any)=>({
     ok:false,version:'jev-shadow-v1',model:'jev-latest',latencyMs:0,
