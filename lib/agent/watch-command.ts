@@ -92,6 +92,32 @@ function stopWatcherIntent(text:string) {
   return null
 }
 
+async function dismissIdeasForWatcherIds(telegramId:string,watcherIds:string[]){
+  const ids=[...new Set(watcherIds.map(String).filter(Boolean))]
+  if(!ids.length)return 0
+  let dismissed=0
+  for(const watcherId of ids){
+    const pageSize=200
+    for(let from=0;;from+=pageSize){
+      const {data,error}=await supabaseAdmin.from('agent_ideas')
+        .select('id').eq('telegram_id',telegramId).eq('status','new')
+        .contains('source_refs',[{type:'watcher',id:watcherId}])
+        .order('created_at',{ascending:true}).range(from,from+pageSize-1)
+      if(error){console.error('WATCHER_STOP_IDEA_READ_FAILED:',error.message);break}
+      const ideaIds=(data||[]).map((row:any)=>row.id).filter(Boolean)
+      if(ideaIds.length){
+        const {error:updateError}=await supabaseAdmin.from('agent_ideas')
+          .update({status:'dismissed'}).in('id',ideaIds)
+          .eq('telegram_id',telegramId).eq('status','new')
+        if(updateError){console.error('WATCHER_STOP_IDEA_DISMISS_FAILED:',updateError.message);break}
+        dismissed+=ideaIds.length
+      }
+      if((data||[]).length<pageSize)break
+    }
+  }
+  return dismissed
+}
+
 export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:string}) {
   const intent=stopWatcherIntent(params.text)
   if(!intent)return null
@@ -100,6 +126,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
     const {data,error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
       .eq('telegram_id',tg).eq('active',true).select('id')
     if(error)throw new Error(`watcher_stop_failed:${error.message}`)
+    await dismissIdeasForWatcherIds(tg,(data||[]).map((row:any)=>String(row.id)))
     return {runId:'watcher-stop-all',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${data?.length||0} active background monitor${data?.length===1?'':'s'}.`,handledBy:'watcher-stop'}
   }
   const {data:latest,error:readError}=await supabaseAdmin.from('agent_watchers')
@@ -108,6 +135,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
   if(!latest?.id)return {runId:'watcher-stop-none',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:'There is no active background monitor to stop.',handledBy:'watcher-stop'}
   const {error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()}).eq('id',latest.id).eq('telegram_id',tg)
   if(error)throw new Error(`watcher_stop_failed:${error.message}`)
+  await dismissIdeasForWatcherIds(tg,[String(latest.id)])
   return {runId:`watcher-stop-${latest.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${String((latest.condition_json as any)?.title||'that monitor')}.`,handledBy:'watcher-stop'}
 }
 
@@ -401,6 +429,7 @@ export async function tryCreateProductStockWatchFromCommand(params: {
         handledBy:'product-stock-watch',
       }
     }
+    await dismissIdeasForWatcherIds(tg,[String(recoveredWatcher.id)])
     const now=new Date().toISOString()
     const {error:restartError}=await supabaseAdmin.from('agent_watchers').update({
       active:true,next_check_at:now,last_checked_at:null,
