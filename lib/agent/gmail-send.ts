@@ -166,7 +166,10 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
 
   const parsed=parseGmailReplyCommand(raw)
   if(!parsed)return null
-  const contextual=/^(?:that|this|the exact|it)$/i.test(parsed.target.trim())
+  // Natural reply commands include nouns after the referent ("that exact email").
+  // Treat the full phrase as selected-object context; never fuzzy-search it again.
+  const contextual=/^(?:that|this|it)(?:\s+exact)?(?:\s+(?:email|mail|message|one))?$/i.test(parsed.target.trim())
+    || /^(?:the\s+)?(?:selected|first|second|third)(?:\s+(?:email|mail|message|one))?$/i.test(parsed.target.trim())
   let selected:any=null
   if(contextual){
     const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_selected_message')
