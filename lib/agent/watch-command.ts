@@ -145,7 +145,45 @@ export function parsePriceWatchCommand(text:string){
   if(!m?.[1]||!m?.[2])return null
   const product=clean(m[1],160)
   const threshold=clean(m[2],80)
-  return {product,threshold}
+  const storage=product.match(/\b(128|256|512)\s*GB\b/i)?.[1]
+  const priceBasis=/\b(?:card|bank|offer|effective)\b/i.test(raw)?'offers':'unspecified'
+  return {product,threshold,storage:storage?`${storage}GB`:null,priceBasis}
+}
+
+type PendingPriceWatch={product:string;threshold:string;storage:string|null;priceBasis:'offers'|'list'|'unspecified';created_at:string}
+
+export async function tryRunPriceWatchClarification(params:{actor:AgentActor;surface:AgentSurface;text:string}){
+  const parsed=parsePriceWatchCommand(params.text)
+  if(parsed){
+    const missing:string[]=[]
+    if(!parsed.storage)missing.push('storage')
+    if(parsed.priceBasis==='unspecified')missing.push('price basis')
+    if(missing.length){
+      await clearFollowupState(params.actor.legacyTelegramId,'price_watch_clarification')
+      await saveFollowupState(params.actor.legacyTelegramId,'price_watch_clarification',{...parsed,created_at:new Date().toISOString()})
+      return {runId:'price-watch-clarify',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+        text:`Before I start the persistent watch: which storage should I track (for example 256GB or 512GB), and should the ${parsed.threshold} threshold include bank/card offers or use listed selling price only?`,handledBy:'price-watch-clarification'}
+    }
+  }
+  const state=await getLatestFollowupState(params.actor.legacyTelegramId,'price_watch_clarification')
+  if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload)return null
+  const raw=clean(params.text,600)
+  const storage=raw.match(/\b(128|256|512)\s*GB\b/i)?.[1]
+  const offers=/\b(?:include|with|count|card|bank)\b.*\b(?:offer|offers)\b|\bcard\s+offer/i.test(raw)
+  const list=/\b(?:list|listed|selling)\s+price\b/i.test(raw)
+  if(!storage&&!offers&&!list)return null
+  const p=state.payload as PendingPriceWatch
+  const resolvedStorage=storage?`${storage}GB`:p.storage
+  const resolvedBasis=offers?'offers':list?'list':p.priceBasis
+  if(!resolvedStorage||resolvedBasis==='unspecified'){
+    return {runId:'price-watch-clarify',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:'I still need both the storage size and whether card/bank offers should count toward the threshold.',handledBy:'price-watch-clarification'}
+  }
+  await clearFollowupState(params.actor.legacyTelegramId,'price_watch_clarification')
+  const basis=resolvedBasis==='offers'?'including bank/card offers':'listed selling price only'
+  const synthetic=`watch the web for ${p.product} ${resolvedStorage} price India and tell me if you find price below ${p.threshold} ${basis}`
+  const created=await tryCreateWebWatchFromCommand({actor:params.actor,surface:params.surface,text:synthetic})
+  if(!created)return null
+  return {...created,text:`Persistent watch created: ${p.product}, ${resolvedStorage}, India, threshold ${p.threshold}, ${basis}. ${created.text}`,handledBy:'price-watch-clarification'}
 }
 
 export function parseWebWatchCommand(text: string) {
