@@ -85,9 +85,20 @@ function formatLiveFlight(value:any,index:number){const price=Number.isFinite(Nu
 async function tryCreditIQLive(context:TravelContext,actor:AgentActor){if(context.kind!=='flight'||!context.origin?.code||!context.destination?.code||!context.startDate)return null;return searchCreditIQLiveFlights({from:context.origin.code,to:context.destination.code,date:context.startDate,dateTo:context.endDate||context.startDate,cabin:'economy',userLinkId: actor.creditiqUserId || null})}
 
 export async function tryRunTravelResearch(params:{actor:AgentActor;surface:AgentSurface;text:string}){
-  if(!isPublicTravelResearchRequest(params.text))return null
-  const context=buildTravelResearchContext(params.text);const queries=buildQueries(context,params.text);const tg=params.actor.legacyTelegramId;const now=new Date().toISOString()
-  const{data:run,error:runError}=await supabaseAdmin.from('agent_runs').insert({telegram_id:String(tg),type:'travel_research',capability:'travel',status:'running',title:`Travel task · ${context.routeLabel}`,summary:'Gogo is working on this travel task.',progress:10,why:'This is a task to obtain usable current travel options.',source:params.surface,metadata_json:{plan_type:'travel_research',input_text:safe(params.text,1800),queries,context,task_based:true},started_at:now,updated_at:now}).select('id').single();if(runError||!run?.id)throw new Error(`travel_research_run_create_failed:${runError?.message||'unknown'}`)
+  let effectiveText=params.text
+  const continuation=/^(?:continue|resume|carry on|keep going)(?:\s+(?:that|the|my))?.*?(?:travel|hotel|flight|research|search|task)?(?:\s+from\s+where\s+you\s+left\s+off)?[.!?]*$/i.test(String(params.text||'').trim())
+  if(continuation){
+    const {data:prior,error:priorError}=await supabaseAdmin.from('agent_runs')
+      .select('id,metadata_json,created_at').eq('telegram_id',String(params.actor.legacyTelegramId))
+      .eq('type','travel_research').order('created_at',{ascending:false}).limit(1).maybeSingle()
+    if(priorError)throw new Error(`travel_continuation_read_failed:${priorError.message}`)
+    const priorInput=safe((prior?.metadata_json as any)?.input_text||'',1800)
+    if(priorInput)effectiveText=priorInput
+    else return null
+  }
+  if(!isPublicTravelResearchRequest(effectiveText))return null
+  const context=buildTravelResearchContext(effectiveText);const queries=buildQueries(context,effectiveText);const tg=params.actor.legacyTelegramId;const now=new Date().toISOString()
+  const{data:run,error:runError}=await supabaseAdmin.from('agent_runs').insert({telegram_id:String(tg),type:'travel_research',capability:'travel',status:'running',title:`Travel task · ${context.routeLabel}`,summary:'Gogo is working on this travel task.',progress:10,why:'This is a task to obtain usable current travel options.',source:params.surface,metadata_json:{plan_type:'travel_research',input_text:safe(effectiveText,1800),continuation_requested:continuation,queries,context,task_based:true},started_at:now,updated_at:now}).select('id').single();if(runError||!run?.id)throw new Error(`travel_research_run_create_failed:${runError?.message||'unknown'}`)
   const runId=String(run.id);const{data:step,error:stepError}=await supabaseAdmin.from('agent_steps').insert({telegram_id:String(tg),run_id:runId,ordinal:1,tool_name:'travel',title:'Obtain actual travel results',status:'running',input_json:{queries,context},output_json:{},started_at:now}).select('id').single();if(stepError||!step?.id)throw new Error(`travel_research_step_create_failed:${stepError?.message||'unknown'}`)
   await addActivity(tg,runId,'run_started',`Gogo started the travel task for ${context.routeLabel}.`,{queries,task_based:true})
   try{
@@ -98,7 +109,7 @@ export async function tryRunTravelResearch(params:{actor:AgentActor;surface:Agen
       await supabaseAdmin.from('agent_runs').update({summary:'Live inventory was unavailable. Gogo is now working through the browser.',progress:45,updated_at:new Date().toISOString()}).eq('id',runId)
       await supabaseAdmin.from('agent_steps').update({title:'Work through live flight search in secure browser'}).eq('id',String(step.id))
       await addActivity(tg,runId,'browser_research_started','Gogo opened a secure browser to complete the flight-search task.',{route:context.routeLabel})
-      const browserTask=await runLiveFlightBrowserTask({actor:params.actor,context,objective:params.text})
+      const browserTask=await runLiveFlightBrowserTask({actor:params.actor,context,objective:effectiveText})
       if(browserTask?.options?.length){const completedAt=new Date().toISOString();const top=browserTask.options.slice(0,8);const text=`Flight task completed · ${context.routeLabel} · ${context.whenLabel}\nSource: browser-verified Google Flights page\n\n${top.map((f,i)=>`${i+1}. ${f.airline} · ${f.departure} → ${f.arrival} · ${f.stops===null?'stops not verified':f.stops===0?'non-stop':`${f.stops} stop${f.stops===1?'':'s'}`} · ${f.fareInr?`₹${f.fareInr.toLocaleString('en-IN')}`:'fare not verified'}\nEvidence: ${f.evidence}`).join('\n\n')}`;await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,source:'browser-live',inventoryType:'browser-verified',browser:browserTask.browser,flights:top},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} browser-verified flight options.`,{travel_engine:'secure-browser',result_count:top.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'browser-flight-task' as const}}
       await addActivity(tg,runId,'browser_research_incomplete','The browser could not produce verified flight rows; falling back to public sources.',{status:browserTask?.status||'no_result'})
     }
