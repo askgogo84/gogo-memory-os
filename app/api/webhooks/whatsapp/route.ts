@@ -1091,6 +1091,18 @@ _"${originalText}"_
       }
     }
 
+    // Gmail ordinal/context turns must resolve only against the latest persisted Gmail
+    // result set before attachment, document, memory or Jev semantic handlers can steal them.
+    if(/^(?:open|show|read|summari[sz]e)\s+(?:the\s+)?(?:first|second|third|1st|2nd|3rd)\s+one\b/i.test(text.trim()) || /^(?:who sent (?:that|it)|when did i receive (?:that|it)|what does (?:that|it) say|tell me about (?:that|it))\b/i.test(text.trim())){
+      const gmailContextAgent=await tryRunWhatsAppAgent({user:resolvedUser,text,messageId:inboundMessageSid||null})
+      if(gmailContextAgent?.handledBy==='gmail-context'){
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',gmailContextAgent.text)
+        await sendWhatsAppMessage(from,gmailContextAgent.text)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
     // Persisted travel continuation is grounded task state, not semantic ambiguity.
     // Give terse continue/resume turns first refusal before Jev clarification.
     if(/^(?:continue|resume|carry on|keep going)\b/i.test(text.trim())){
