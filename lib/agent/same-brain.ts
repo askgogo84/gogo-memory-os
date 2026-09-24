@@ -5,6 +5,7 @@ import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { buildGmailConnectUrl, revokeGoogleToken } from '@/lib/google-gmail'
 import { readWorkspaceDriveText, readWorkspaceEmailBrief, searchWorkspaceContacts, searchWorkspaceDrive, searchWorkspaceEmails } from './google-workspace-read'
+import { clearFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import type { AgentActor } from './actor'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 
@@ -100,6 +101,12 @@ async function tryWorkspaceRead(actor:AgentActor,text:string):Promise<string|nul
       }
 
       const lines=result.messages.slice(0,5).map((m:any,index:number)=>`${index+1}. ${m.subject}\nFrom: ${m.from}${m.date?`\nDate: ${m.date}`:''}${m.snippet?`\n${m.snippet}`:''}`)
+      await clearFollowupState(actor.legacyTelegramId,'gmail_search_results')
+      await saveFollowupState(actor.legacyTelegramId,'gmail_search_results',{messages:result.messages.slice(0,6),created_at:new Date().toISOString()})
+      if(result.messages.length===1){
+        await clearFollowupState(actor.legacyTelegramId,'gmail_selected_message')
+        await saveFollowupState(actor.legacyTelegramId,'gmail_selected_message',{message:result.messages[0],created_at:new Date().toISOString()})
+      }
       return `I found these in your connected Gmail:\n\n${lines.join('\n\n')}`
     }
     if(isContactRead(text)) {
