@@ -378,6 +378,12 @@ export async function tryRunWhatsAppAgent(params: {
   const flightWatch = await tryCreateFlightWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (flightWatch) return { ...flightWatch, handledBy:String(flightWatch.handledBy || 'flight-watch') }
 
+  // Product URL + explicit stock/size monitoring is deterministic shopping state,
+  // never travel/booking/provider intent. Give it first refusal before appointment,
+  // travel and generic browser/research handlers.
+  const earlyProductStockWatch = await tryCreateProductStockWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
+  if (earlyProductStockWatch) return { ...earlyProductStockWatch, handledBy:String(earlyProductStockWatch.handledBy || 'product-stock-watch') }
+
   const appointmentRecovery = await withWhatsAppBrowserBudget(actor, tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text }))
   if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String((appointmentRecovery as any).handledBy || 'appointment-followup-recovery') }
 
@@ -403,9 +409,6 @@ export async function tryRunWhatsAppAgent(params: {
       return { ...hardened, handledBy:String(hardened.handledBy || 'travel-research') }
     }
   }
-
-  const productStockWatch = await tryCreateProductStockWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
-  if (productStockWatch) return { ...productStockWatch, handledBy:String(productStockWatch.handledBy || 'product-stock-watch') }
 
   const webPageWatch = await tryCreateWebPageWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (webPageWatch) return { ...webPageWatch, handledBy:String(webPageWatch.handledBy || 'web-page-watch') }
