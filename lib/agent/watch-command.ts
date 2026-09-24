@@ -97,17 +97,23 @@ async function dismissIdeasForWatcherIds(telegramId:string,watcherIds:string[]){
   if(!ids.length)return 0
   let dismissed=0
   for(const watcherId of ids){
-    const {data,error}=await supabaseAdmin.from('agent_ideas')
-      .select('id').eq('telegram_id',telegramId).eq('status','new')
-      .contains('source_refs',[{type:'watcher',id:watcherId}]).limit(50)
-    if(error){console.error('WATCHER_STOP_IDEA_READ_FAILED:',error.message);continue}
-    const ideaIds=(data||[]).map((row:any)=>row.id).filter(Boolean)
-    if(!ideaIds.length)continue
-    const {error:updateError}=await supabaseAdmin.from('agent_ideas')
-      .update({status:'dismissed'}).in('id',ideaIds)
-      .eq('telegram_id',telegramId).eq('status','new')
-    if(updateError){console.error('WATCHER_STOP_IDEA_DISMISS_FAILED:',updateError.message);continue}
-    dismissed+=ideaIds.length
+    const pageSize=200
+    for(let from=0;;from+=pageSize){
+      const {data,error}=await supabaseAdmin.from('agent_ideas')
+        .select('id').eq('telegram_id',telegramId).eq('status','new')
+        .contains('source_refs',[{type:'watcher',id:watcherId}])
+        .order('created_at',{ascending:true}).range(from,from+pageSize-1)
+      if(error){console.error('WATCHER_STOP_IDEA_READ_FAILED:',error.message);break}
+      const ideaIds=(data||[]).map((row:any)=>row.id).filter(Boolean)
+      if(ideaIds.length){
+        const {error:updateError}=await supabaseAdmin.from('agent_ideas')
+          .update({status:'dismissed'}).in('id',ideaIds)
+          .eq('telegram_id',telegramId).eq('status','new')
+        if(updateError){console.error('WATCHER_STOP_IDEA_DISMISS_FAILED:',updateError.message);break}
+        dismissed+=ideaIds.length
+      }
+      if((data||[]).length<pageSize)break
+    }
   }
   return dismissed
 }
