@@ -216,7 +216,7 @@ export async function observeShadowBrainTurn(params:{
     learnedRouting:guarded,
     timeoutMs:900,
   }).catch((err:any)=>({
-    ok:false,version:'jev-shadow-v1',model:'jev-latest',latencyMs:0,
+    ok:false,version:'jev-shadow-v1',model:'jev-latest',latencyMs:0,contextual,
     intent:{choice:null,confidence:null,probabilities:{}},
     actionMode:{choice:null,confidence:null,probabilities:{}},
     referentKind:{choice:null,confidence:null,probabilities:{}},

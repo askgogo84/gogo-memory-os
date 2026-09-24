@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getLearningReport } from './learning-report'
 
 type ActivityRow = {
   event_type:string
@@ -135,6 +136,7 @@ export async function getShadowBrainReport(params:{hours?:number;limit?:number}=
   return {
     windowHours:hours,
     generatedAt:new Date().toISOString(),
+    sameBrainV2:await getLearningReport({hours,limit}),
     totals:{
       observations,
       paired,
