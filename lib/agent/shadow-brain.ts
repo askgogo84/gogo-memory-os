@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { classifyAgentRequest } from './classifier'
 import type { AgentActor } from './actor'
 import { runJevShadow, type JevShadowResult } from '@/lib/typesafe/jev-shadow'
-import { decisionDomain, decisionHints } from './decision-learning'
+import { decisionDomain, decisionHints, calibrateGuardedRouting } from './decision-learning'
 
 export type ShadowBrainObservation = {
   actionFamily:string
@@ -199,7 +199,8 @@ export async function observeShadowBrainTurn(params:{
   }
 
   const learned=await decisionHints({actor:params.actor,text:params.text,domain:decisionDomain(observation.capability,observation.actionFamily)}).catch(()=>({preferredHandler:null,avoidHandlers:[],examples:[],confidence:0}))
-  const learnedContext=learned.preferredHandler?`Learned routing evidence: prefer ${learned.preferredHandler} at confidence ${learned.confidence.toFixed(2)}. Avoid: ${learned.avoidHandlers.join(', ')||'none'}.`:''
+  const guarded=calibrateGuardedRouting({preferredHandler:learned.preferredHandler,confidence:learned.confidence,avoidHandlers:learned.avoidHandlers,conflictingTypedContext:observation.ambiguous,actionRequiresApproval:['buy','book','send'].includes(observation.actionFamily)})
+  const learnedContext=learned.preferredHandler?`Learned routing evidence: prefer ${learned.preferredHandler} at confidence ${learned.confidence.toFixed(2)}. Avoid: ${learned.avoidHandlers.join(', ')||'none'}. Live-use: ${guarded.useLearned?'allowed':'shadow-only'} (${guarded.reason}).`:''
 
   const jev=await runJevShadow({
     text:params.text,
