@@ -169,6 +169,13 @@ export async function planGeneralAgentRequest(text: string, onUsage?:(usage:Mode
   }
 }
 
+export type PreparedGeneralPlan={plan:GeneralPlan|null;modelUsage:ModelUsage[];startedAt:string}
+export async function prepareGeneralPlan(text:string):Promise<PreparedGeneralPlan>{
+  const modelUsage:ModelUsage[]=[],startedAt=new Date().toISOString()
+  const plan=await planGeneralAgentRequest(text,usage=>modelUsage.push(usage))
+  return {plan,modelUsage,startedAt}
+}
+
 async function permissionFor(tg: number, capability: AgentCapability): Promise<AgentPermissionLevel> {
   const { data, error } = await supabaseAdmin.from('agent_permissions')
     .select('level').eq('telegram_id', String(tg)).eq('capability', capability).maybeSingle()
@@ -403,9 +410,8 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
   return {runId:params.runId,status:'completed',capability:capabilityForStep(params.plan.steps[params.plan.steps.length-1]),risk:highestRisk,text:lastText||'Done. I completed the plan.',handledBy:'general-plan'}
 }
 
-export async function tryRunGeneralPlan(params:{actor:AgentActor;surface:AgentSurface;text:string;messageId?:string|number|null}):Promise<GeneralPlanResult|null>{
-  const modelUsage:ModelUsage[]=[]
-  const plan=await planGeneralAgentRequest(params.text,usage=>modelUsage.push(usage))
+export async function tryRunGeneralPlan(params:{actor:AgentActor;surface:AgentSurface;text:string;messageId?:string|number|null;prepared?:PreparedGeneralPlan}):Promise<GeneralPlanResult|null>{
+  const {plan,modelUsage,startedAt}=params.prepared||await prepareGeneralPlan(params.text)
   if(!plan)return null
   const tg=params.actor.legacyTelegramId
   const now=new Date().toISOString()
@@ -413,7 +419,7 @@ export async function tryRunGeneralPlan(params:{actor:AgentActor;surface:AgentSu
   const {data:run,error}=await supabaseAdmin.from('agent_runs').insert({
     telegram_id:String(tg),type:'general_plan',capability:firstCapability,status:'running',title:plan.title,
     summary:'Gogo created a multi-tool plan.',progress:2,why:plan.reason,source:params.surface,
-    metadata_json:{input_text:String(params.text).slice(0,2000),plan_type:'general_multi_tool',plan},started_at:now,updated_at:now,
+    metadata_json:{input_text:String(params.text).slice(0,2000),plan_type:'general_multi_tool',plan},started_at:startedAt,updated_at:now,
   }).select('id').single()
   if(error||!run?.id)throw new Error(`general_plan_run_create_failed:${error?.message||'unknown'}`)
   const runId=String(run.id)

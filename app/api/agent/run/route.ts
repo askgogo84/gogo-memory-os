@@ -7,7 +7,7 @@ import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 import { tryPrepareTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
-import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
+import { prepareGeneralPlan, tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { tryRunPersistentGeneralPlan } from '@/lib/agent/persistent-general-plan'
 import { tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { attachWorkspaceMeetingApproval } from '@/lib/agent/workspace-meeting-approval'
@@ -124,10 +124,11 @@ export async function POST(request: Request) {
     const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:session.surface, text })
     if (appointmentResearch) return respond(appointmentResearch, 200)
 
-    const persistentPlan = await tryRunPersistentGeneralPlan({ actor, surface: session.surface, text, messageId: body?.messageId || null })
+    const prepared=await prepareGeneralPlan(text)
+    const persistentPlan = await tryRunPersistentGeneralPlan({ actor, surface: session.surface, text, messageId: body?.messageId || null, prepared })
     if (persistentPlan) return respond(persistentPlan, persistentPlan.status === 'waiting_approval' ? 202 : 200)
 
-    const generalPlan = await tryRunGeneralPlan({ actor, surface: session.surface, text, messageId: body?.messageId || null })
+    const generalPlan = await tryRunGeneralPlan({ actor, surface: session.surface, text, messageId: body?.messageId || null, prepared })
     if (generalPlan) return respond(generalPlan, generalPlan.status === 'waiting_approval' ? 202 : 200)
 
     const liveHotels = await tryRunCreditIQHotelResearch({ actor, surface:session.surface, text })
@@ -154,3 +155,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'agent_run_failed' }, { status: 500 })
   }
 }
+

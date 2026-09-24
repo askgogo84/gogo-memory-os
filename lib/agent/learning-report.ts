@@ -49,8 +49,29 @@ export async function getLearningReport(params:{hours:number;limit:number}){
     .gte('created_at',new Date(Date.now()-params.hours*3600000).toISOString())
     .order('created_at',{ascending:false}).limit(params.limit)
   if(error)throw new Error('learning_report_read_failed')
-  const {data:runs,error:runError}=await supabaseAdmin.from('agent_runs').select('id,telegram_id,status,started_at,completed_at').eq('status','completed').gte('completed_at',new Date(Date.now()-params.hours*3600000).toISOString()).order('completed_at',{ascending:false}).limit(params.limit)
+  const taskLimit=Math.min(params.limit,200)
+  const {data:runs,error:runError}=await supabaseAdmin.from('agent_runs').select('id,telegram_id,status,started_at,completed_at').eq('status','completed').gte('completed_at',new Date(Date.now()-params.hours*3600000).toISOString()).order('completed_at',{ascending:false}).limit(taskLimit)
   if(runError)throw new Error('task_metrics_read_failed')
-  return {taskMeasurements:summarizeTaskMeasurements(runs||[],data||[]),taskSampleTruncated:(runs||[]).length===params.limit,windowHours:params.hours,sampleLimit:params.limit,truncated:(data||[]).length===params.limit,
+  // Completed tasks may have started before this report window. Read their full
+  // linked histories instead of dropping earlier planning/approval usage.
+  const taskActivity:any[]=[]
+  let historyTruncated=false
+  const readPages=async(query:()=>any)=>{
+    for(let offset=0;offset<20000;offset+=500){
+      const result=await query().order('created_at',{ascending:false}).range(offset,offset+499)
+      if(result.error)throw new Error('task_history_read_failed')
+      taskActivity.push(...(result.data||[]))
+      if((result.data||[]).length<500)return
+    }
+    historyTruncated=true
+  }
+  const ids=(runs||[]).map(r=>r.id)
+  for(let i=0;i<ids.length;i+=50)await readPages(()=>supabaseAdmin.from('agent_activity')
+    .select('event_type,created_at,telegram_id,run_id,metadata_json').in('run_id',ids.slice(i,i+50)).in('event_type',['model_usage','shadow_router_outcome']))
+  const eventIds=[...new Set(taskActivity.filter(r=>r.event_type==='shadow_router_outcome').map(r=>r.metadata_json?.event_id).filter(Boolean))]
+  for(let i=0;i<eventIds.length;i+=50)await readPages(()=>supabaseAdmin.from('agent_activity')
+    .select('event_type,created_at,telegram_id,run_id,metadata_json').eq('event_type','shadow_brain_observation').in('metadata_json->>event_id',eventIds.slice(i,i+50)))
+  return {taskMeasurements:historyTruncated?null:summarizeTaskMeasurements(runs||[],taskActivity),taskHistoryTruncated:historyTruncated,
+    taskSampleLimit:taskLimit,taskSampleTruncated:(runs||[]).length===taskLimit,windowHours:params.hours,sampleLimit:params.limit,truncated:(data||[]).length===params.limit,
     ...summarizeLearningActivity(data||[])}
 }

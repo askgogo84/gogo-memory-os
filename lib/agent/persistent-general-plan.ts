@@ -1,8 +1,9 @@
+import { recordTaskModelUsage } from './model-usage'
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { planGeneralAgentRequest, type GeneralPlanStep } from './general-planner'
+import { prepareGeneralPlan, type PreparedGeneralPlan, type GeneralPlanStep } from './general-planner'
 import {
   executeVerifiedMissionList,
   executeVerifiedMissionMemory,
@@ -171,8 +172,9 @@ export async function tryRunPersistentGeneralPlan(params: {
   surface: AgentSurface
   text: string
   messageId?: string | number | null
+  prepared?: PreparedGeneralPlan
 }) {
-  const plan = await planGeneralAgentRequest(params.text)
+  const {plan,modelUsage,startedAt}=params.prepared||await prepareGeneralPlan(params.text)
   if (!plan || !supportsPersistentSafePlan(plan.steps)) return null
 
   const duplicate=await findRecentDuplicate(params.actor,params.text)
@@ -210,6 +212,8 @@ export async function tryRunPersistentGeneralPlan(params: {
     },
   }
   const created = await createAutonomousRun({ actor: params.actor, source: params.surface, plan: runtimePlan })
+  await supabaseAdmin.from('agent_runs').update({started_at:startedAt}).eq('id',created.runId).eq('telegram_id',String(params.actor.legacyTelegramId))
+  await recordTaskModelUsage(params.actor.legacyTelegramId,created.runId,modelUsage).catch(()=>{})
   const executed = await drivePersistentRun(params.actor, created.runId, params.text, 10)
   const run = await runMetadata(created.runId, params.actor)
 
@@ -225,3 +229,4 @@ export async function tryRunPersistentGeneralPlan(params: {
     progress: Number(run.progress || 1),
   }
 }
+
