@@ -1096,6 +1096,7 @@ _"${originalText}"_
     if(/^(?:open|show|read|summari[sz]e)\s+(?:the\s+)?(?:first|second|third|1st|2nd|3rd)\s+one\b/i.test(text.trim()) || /^(?:who sent (?:that|it)|when did i receive (?:that|it)|what does (?:that|it) say|tell me about (?:that|it))\b/i.test(text.trim())){
       const gmailContextAgent=await tryRunWhatsAppAgent({user:resolvedUser,text,messageId:inboundMessageSid||null})
       if(gmailContextAgent?.handledBy==='gmail-context'){
+        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:'gmail-context',actualCapability:'email',status:gmailContextAgent.status||null}).catch(()=>{})
         await saveConversation(resolvedUser.telegramId,'user',text)
         await saveConversation(resolvedUser.telegramId,'assistant',gmailContextAgent.text)
         await sendWhatsAppMessage(from,gmailContextAgent.text)
