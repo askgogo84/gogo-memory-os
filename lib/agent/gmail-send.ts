@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
+import { recordDecisionLearning } from './decision-learning'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { buildGmailSendConnectUrl, fetchGmailAttentionThreads, searchGmailThreads, refreshGmailAccessToken, sendGmailReply, verifyGmailSentMessage } from '@/lib/services/google-gmail'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
@@ -248,6 +249,7 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
     await supabaseAdmin.from('agent_runs').update({status:'completed',summary:`Sent and verified Gmail reply to ${draft.to}.`,progress:100,completed_at:now,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
     await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)
     await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_verified',message:`Gmail reply sent and provider-verified: ${clean(draft.subject,180)}`,metadata_json:{gmail_message_id:sent.id,thread_id:sent.threadId,to:draft.to}})
+    recordDecisionLearning({actor:params.actor,text:'approved gmail send',domain:'email',handler:'gmail-send',objectKind:'gmail_thread',objectRef:String(sent.threadId||draft.threadId),outcome:'verified_success',verified:true}).catch(()=>{})
     await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     return {runId:params.runId,status:'completed' as const,capability:'email' as const,risk:'high' as const,text:`✅ Sent and verified\n\nTo: ${draft.to}\nSubject: ${/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`}`,handledBy:'gmail-send'}
   }catch(err:any){

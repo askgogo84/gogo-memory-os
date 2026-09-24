@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
+import { decisionDomain, recordDecisionLearning } from './decision-learning'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
@@ -307,6 +308,15 @@ export async function tryRunWhatsAppAttentionCommand(params:{
   return null
 }
 
+async function learnedReturn(actor:AgentActor,text:string,result:any,fallbackHandler:string){
+  if(!result)return null
+  const handler=String(result.handledBy||fallbackHandler)
+  const status=String(result.status||'completed')
+  const outcome:any=status==='completed'?'success':status==='failed'?'failed':status==='blocked'?'blocked':status==='waiting_approval'?'success':'unknown'
+  recordDecisionLearning({actor,text,domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified:false,objectRef:result.runId||null}).catch(()=>{})
+  return {...result,handledBy:handler}
+}
+
 export async function tryRunWhatsAppAgent(params: {
   user: ResolvedUser
   text: string
@@ -337,10 +347,10 @@ export async function tryRunWhatsAppAgent(params: {
   if (goal) return goal
 
   const gmailContext=await tryRunGmailContextCommand({actor,text:params.text})
-  if(gmailContext)return {...gmailContext,handledBy:String(gmailContext.handledBy||'gmail-context')}
+  if(gmailContext)return await learnedReturn(actor,params.text,gmailContext,'gmail-context')
 
     const gmailSend=await tryRunGmailSendCommand({actor,text:params.text})
-  if(gmailSend)return {...gmailSend,handledBy:String(gmailSend.handledBy||'gmail-send')}
+  if(gmailSend)return await learnedReturn(actor,params.text,gmailSend,'gmail-send')
 
   const autonomyControl=await tryRunAdaptiveAutonomyCommand({actor,text:params.text})
   if(autonomyControl)return {...autonomyControl,handledBy:String(autonomyControl.handledBy||'adaptive-autonomy')}
@@ -365,12 +375,12 @@ export async function tryRunWhatsAppAgent(params: {
   if(priceWatch)return {...priceWatch,handledBy:String(priceWatch.handledBy||'price-watch-clarification')}
 
   const watcherStop = await tryStopWatcherFromCommand({ actor, text:params.text })
-  if (watcherStop) return { ...watcherStop, handledBy:String(watcherStop.handledBy || 'watcher-stop') }
+  if (watcherStop) return await learnedReturn(actor,params.text,watcherStop,'watcher-stop')
   const watcherRestart = await tryRestartWatcherFromCommand({ actor, text:params.text })
-  if (watcherRestart) return { ...watcherRestart, handledBy:String(watcherRestart.handledBy || 'watcher-restart') }
+  if (watcherRestart) return await learnedReturn(actor,params.text,watcherRestart,'watcher-restart')
 
   const watcherStatus = await tryGetWatcherStatusFromCommand({ actor, text:params.text })
-  if (watcherStatus) return { ...watcherStatus, handledBy:String(watcherStatus.handledBy || 'watcher-status') }
+  if (watcherStatus) return await learnedReturn(actor,params.text,watcherStatus,'watcher-status')
 
   const productWatchStatus = await tryGetProductStockWatchStatusFromCommand({ actor, text:params.text })
   if (productWatchStatus) return { ...productWatchStatus, handledBy:String(productWatchStatus.handledBy || 'product-stock-watch-status') }
