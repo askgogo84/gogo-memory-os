@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
 import { decisionDomain, recordDecisionLearning } from './decision-learning'
-import { observedOutcome } from './decision-evidence'
+import { observedOutcome, learningDecisionId } from './decision-evidence'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
@@ -313,7 +313,7 @@ async function learnedReturn(actor:AgentActor,text:string,result:any,fallbackHan
   if(!result)return null
   const handler=String(result.handledBy||fallbackHandler)
   const outcome=observedOutcome(result.status)
-  await recordDecisionLearning({actor,text,decisionId:messageId?String(messageId):null,domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified:false,objectRef:result.runId||null}).catch(()=>{})
+  await recordDecisionLearning({actor,text,decisionId:learningDecisionId(messageId,result.runId),domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified:false,objectRef:result.runId||null}).catch(()=>{})
   return {...result,handledBy:handler}
 }
 
@@ -464,4 +464,3 @@ export async function tryRunWhatsAppAgent(params: {
 
   return null
 }
-

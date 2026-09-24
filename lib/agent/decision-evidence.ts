@@ -1,5 +1,11 @@
 // Pure, auditable evidence aggregation. No model scores, permissions or mutations.
 export const MIN_CALIBRATION_SAMPLES = 20
+export function learningDecisionId(messageId:unknown,runId?:unknown){
+  const run=String(runId||'')
+  // Provider execution reconciles by durable run identity, not the APPROVE turn.
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(run)
+    ?run:messageId?String(messageId):null
+}
 export type LearningEvidence = {
   handler:string; domain:string; outcome:string; verified?:boolean
   confidence?:number|null; similarity?:number; decision_id?:string|null

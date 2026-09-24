@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict'
-import { rankEvidence, summarizeEvidence, observedOutcome, finiteConfidence, calibrationBuckets } from '../lib/agent/decision-evidence'
+import { rankEvidence, summarizeEvidence, observedOutcome, finiteConfidence, calibrationBuckets, learningDecisionId } from '../lib/agent/decision-evidence'
 import { summarizeLearningActivity } from '../lib/agent/learning-report'
 import { recordDecisionLearning, recordDecisionCorrection } from '../lib/agent/decision-learning'
 import { supabaseAdmin } from '../lib/supabase-admin'
 
 const wins=Array.from({length:30},(_,i)=>({handler:'calendar-named-read',domain:'calendar',outcome:'verified_success',verified:true,decision_id:String(i)}))
+const run='11111111-1111-4111-8111-111111111111'
+assert.equal(learningDecisionId('inbound-message',run),run)
+assert.equal(learningDecisionId('another-turn','gmail-context-read'),'another-turn')
+const pending={...wins[0],decision_id:learningDecisionId('inbound-message',run)!,outcome:'blocked',verified:false}
+const terminal={...pending,decision_id:run,outcome:'verified_success',verified:true}
+assert.equal(summarizeEvidence([terminal,pending]).decisions,1)
+assert.equal(summarizeEvidence([terminal,pending]).verifiedCompletionRate,1)
 assert.equal(rankEvidence(wins.slice(0,3)).confidence,0,'sparse evidence stays shadow-only')
 assert.ok(rankEvidence(wins).confidence>=.82,'adequate verified evidence can graduate')
 assert.equal(rankEvidence(wins.map(r=>({...r,outcome:'success',verified:false}))).confidence,0,'assistant copy is not provider verification')
