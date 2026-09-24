@@ -34,3 +34,5 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Production build with fixture credentials
+        run: npm run build
