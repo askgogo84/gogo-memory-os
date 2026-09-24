@@ -354,6 +354,13 @@ export async function tryRunWhatsAppAgent(params: {
   const autonomyStatus = await tryGetAutonomyStatus({ actor, text:params.text })
   if (autonomyStatus) return { ...autonomyStatus, handledBy:String(autonomyStatus.handledBy || 'autonomy-status') }
 
+  // Price-watch clarification must run on the direct WhatsApp agent path too.
+  // The route-level watcher first-refusal calls this function directly (not the Jev
+  // specialist), so without this hook an underspecified price watch can fall through
+  // to generic web search instead of creating durable watcher state.
+  const priceWatch = await tryRunPriceWatchClarification({actor,surface:'whatsapp',text:params.text})
+  if(priceWatch)return {...priceWatch,handledBy:String(priceWatch.handledBy||'price-watch-clarification')}
+
   const watcherStop = await tryStopWatcherFromCommand({ actor, text:params.text })
   if (watcherStop) return { ...watcherStop, handledBy:String(watcherStop.handledBy || 'watcher-stop') }
 
