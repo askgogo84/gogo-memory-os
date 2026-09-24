@@ -119,26 +119,36 @@ async function dismissIdeasForWatcherIds(telegramId:string,watcherIds:string[]){
   return dismissed
 }
 
+function watcherIdentityTokens(value:unknown){
+  return clean(value,400).toLowerCase().replace(/[^a-z0-9]+/g,' ').split(/\s+/)
+    .filter(t=>t.length>2&&!['watch','watcher','monitor','monitoring','price','india','web','search'].includes(t))
+}
+
+async function canonicalActiveWatchers(telegramId:string){
+  const {data,error}=await supabaseAdmin.from('agent_watchers')
+    .select('id,type,condition_json,cadence_minutes,last_checked_at,next_check_at,active,created_at,updated_at')
+    .eq('telegram_id',telegramId).eq('active',true).order('created_at',{ascending:false}).limit(100)
+  if(error)throw new Error(`watcher_canonical_read_failed:${error.message}`)
+  return data||[]
+}
+
 export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:string}) {
   const intent=stopWatcherIntent(params.text)
   if(!intent)return null
   const tg=String(params.actor.legacyTelegramId)
   if(intent==='named'){
     const target=clean(params.text,400).toLowerCase().replace(/^(?:stop|cancel|remove|disable)\s+/,'').replace(/\s+(?:watcher|watch|monitor).*$/,'').trim()
-    const {data:rows,error:readError}=await supabaseAdmin.from('agent_watchers')
-      .select('id,type,condition_json,created_at').eq('telegram_id',tg).eq('active',true).order('created_at',{ascending:false}).limit(30)
-    if(readError)throw new Error(`watcher_stop_read_failed:${readError.message}`)
-    const norm=(v:unknown)=>clean(v,300).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
-    const q=norm(target)
-    const tokens=q.split(/\s+/).filter(t=>t.length>2&&!['the','watcher','watch','monitor'].includes(t))
-    const ranked=(rows||[]).map((row:any)=>{
-      const label=norm((row.condition_json as any)?.title||row.type)
-      const score=tokens.filter(t=>label.includes(t)).length
+    const rows=await canonicalActiveWatchers(tg)
+    const tokens=watcherIdentityTokens(target)
+    const ranked=rows.map((row:any)=>{
+      const label=String((row.condition_json as any)?.title||row.type)
+      const labelTokens=new Set(watcherIdentityTokens(label))
+      const score=tokens.filter(t=>labelTokens.has(t)).length
       return {row,label,score}
     }).filter((x:any)=>x.score>0).sort((a:any,b:any)=>b.score-a.score)
-    const best:any=ranked[0], second:any=ranked[1]
-    if(!best||best.score<Math.max(1,tokens.length-1)||second?.score===best.score){
-      return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:best?'I found more than one plausible active watcher. Please be more specific.':'I could not find that active watcher.',handledBy:'watcher-stop'}
+    const best:any=ranked[0],second:any=ranked[1]
+    if(!best||second?.score===best.score){
+      return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:best?'I found more than one plausible active watcher. Please be more specific.':'I could not find that active watcher in persistent watcher state.',handledBy:'watcher-stop'}
     }
     const chosen=best.row
     const now=new Date().toISOString()
@@ -147,9 +157,12 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
       .eq('id',chosen.id).eq('telegram_id',tg).eq('active',true)
       .select('id,active,next_check_at').maybeSingle()
     if(error)throw new Error(`watcher_stop_failed:${error.message}`)
-    if(!updated?.id||updated.active!==false||updated.next_check_at!==null)throw new Error('watcher_stop_not_persisted')
+    if(!updated?.id)throw new Error('watcher_stop_no_row_mutated')
+    const remaining=await canonicalActiveWatchers(tg)
+    if(remaining.some((row:any)=>String(row.id)===String(chosen.id)))throw new Error('watcher_stop_read_after_write_failed')
     await dismissIdeasForWatcherIds(tg,[String(chosen.id)])
-    return {runId:`watcher-stop-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${String((chosen.condition_json as any)?.title||'that monitor')}. The persistent watcher is inactive and no further checks are scheduled.`,handledBy:'watcher-stop'}
+    return {runId:`watcher-stop-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
+      text:`Stopped ${String((chosen.condition_json as any)?.title||'that monitor')}. Persistent state now shows ${remaining.length} active monitor${remaining.length===1?'':'s'}.`,handledBy:'watcher-stop'}
   }
   if(intent==='all'){
     const {data,error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
