@@ -12,7 +12,7 @@ function clean(value:unknown,max=500){return String(value??'').replace(/\s+/g,' 
 
 export function isAdaptiveTrustQuery(text:string){
   const raw=clean(text,700)
-  return /^(?:what should you do automatically|what can you learn from my approvals|show(?: me)? (?:my )?(?:autonomy|trust) suggestions|where can you be more autonomous|what can you stop asking me about)\??$/i.test(raw)
+  return /^(?:what should you do automatically|what can you learn from my approvals|what have you learned about what i usually approve|show(?: me)? (?:my )?(?:autonomy|trust) suggestions|show(?: me)? (?:my )?adaptive trust recommendations|where can you be more autonomous|where could i safely give you more autonomy|what can you stop asking me about)\??$/i.test(raw)
 }
 
 function capabilityFromActionType(actionType:string):AgentCapability|null{
