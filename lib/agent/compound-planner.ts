@@ -82,8 +82,18 @@ function isReminderReadQuery(text: string) {
   return (
     /^(?:what|which)\s+reminders?\s+(?:do\s+i\s+have|have\s+i|are\s+(?:set|scheduled))(?:\s+for\s+.+)?$/.test(raw) ||
     /^(?:show|list|display)\s+(?:me\s+)?(?:my\s+)?reminders?(?:\s+for\s+.+)?$/.test(raw) ||
+    /^(?:show|find)\s+(?:me\s+)?(?:my\s+)?reminder\s+(?:to|for|about)\s+.+$/.test(raw) ||
+    /^(?:how\s+many)\s+reminders?\s+do\s+i\s+have\s+(?:to|for|about)\s+.+$/.test(raw) ||
     /^(?:my|pending|active|upcoming)\s+reminders?(?:\s+for\s+.+)?$/.test(raw)
   )
+}
+
+function targetedReminderQuery(text:string):{query:string;countOnly:boolean}|null{
+  const raw=String(text||'').trim().replace(/[?!.]+$/g,'')
+  const count=raw.match(/^how\s+many\s+reminders?\s+do\s+i\s+have\s+(?:to|for|about)\s+(.+)$/i)
+  if(count?.[1])return {query:cleanListItem(count[1]),countOnly:true}
+  const one=raw.match(/^(?:show|find)\s+(?:me\s+)?(?:my\s+)?reminder\s+(?:to|for|about)\s+(.+)$/i)
+  return one?.[1]?{query:cleanListItem(one[1]),countOnly:false}:null
 }
 
 async function actorTimezone(actor: AgentActor) {
@@ -126,13 +136,21 @@ async function readReminderQuery(actor: AgentActor, text: string) {
     .limit(50)
   if (error) throw new Error(`compound_reminder_read_failed:${error.message}`)
 
-  const rows = (data || []).filter((row: any) => {
+  let rows = (data || []).filter((row: any) => {
     if (!targetDate) return true
     const due = new Date(String(row.remind_at || ''))
     return Number.isFinite(due.getTime()) && localDateKey(due, timezone) === targetDate
-  }).slice(0, 20)
+  })
+  const targeted=targetedReminderQuery(text)
+  if(targeted){
+    const norm=(v:string)=>String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
+    const q=norm(targeted.query)
+    rows=rows.filter((row:any)=>{const h=norm(row.message);return h===q||h.includes(q)||q.includes(h)})
+    if(targeted.countOnly)return `You have ${rows.length} active reminder${rows.length===1?'':'s'} matching “${targeted.query}”.`
+  }
+  rows=rows.slice(0,20)
 
-  if (!rows.length) return targetDate ? 'You have no reminders for that day.' : 'You have no active reminders.'
+  if (!rows.length) return targeted ? `I could not find an active reminder matching “${targeted.query}”.` : targetDate ? 'You have no reminders for that day.' : 'You have no active reminders.'
 
   const fmt = new Intl.DateTimeFormat('en-IN', {
     timeZone: timezone,
