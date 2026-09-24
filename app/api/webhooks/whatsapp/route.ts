@@ -1091,6 +1091,19 @@ _"${originalText}"_
       }
     }
 
+    // Persisted travel continuation is grounded task state, not semantic ambiguity.
+    // Give terse continue/resume turns first refusal before Jev clarification.
+    if(/^(?:continue|resume|carry on|keep going)\b/i.test(text.trim())){
+      const continuationAgent=await tryRunWhatsAppAgent({user:resolvedUser,text,messageId:inboundMessageSid||null})
+      if(continuationAgent){
+        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:continuationAgent.handledBy||'travel-continuation',actualCapability:(continuationAgent as any).capability||'travel',status:continuationAgent.status||null,runId:continuationAgent.runId||null}).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',continuationAgent.text)
+        await sendWhatsAppMessage(from,continuationAgent.text)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
     // Gmail draft/send/status commands are deterministic provider workflows.
     // Give them first refusal before Jev/read-only semantic routing so a draft cannot
     // be downgraded to Gmail read and a Send-status query cannot hallucinate scopes.
