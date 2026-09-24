@@ -132,6 +132,49 @@ async function canonicalActiveWatchers(telegramId:string){
   return data||[]
 }
 
+function restartWatcherIntent(text:string){
+  const raw=clean(text,400).toLowerCase()
+  return /^(?:restart|resume|reactivate|re-enable|reenable|start)\s+.+?\s+(?:watcher|watch|monitor)\b/.test(raw)?'named':null
+}
+
+export async function tryRestartWatcherFromCommand(params:{actor:AgentActor;text:string}){
+  if(!restartWatcherIntent(params.text))return null
+  const tg=String(params.actor.legacyTelegramId)
+  const target=clean(params.text,400).toLowerCase()
+    .replace(/^(?:restart|resume|reactivate|re-enable|reenable|start)\s+/,'')
+    .replace(/\s+(?:watcher|watch|monitor).*$/,'').trim()
+  const {data:rows,error:readError}=await supabaseAdmin.from('agent_watchers')
+    .select('id,type,condition_json,cadence_minutes,active,created_at,updated_at')
+    .eq('telegram_id',tg).eq('active',false).order('updated_at',{ascending:false}).limit(100)
+  if(readError)throw new Error(`watcher_restart_read_failed:${readError.message}`)
+  const tokens=watcherIdentityTokens(target)
+  const ranked=(rows||[]).map((row:any)=>{
+    const label=String((row.condition_json as any)?.title||row.type)
+    const labelTokens=new Set(watcherIdentityTokens(label))
+    const score=tokens.filter(t=>labelTokens.has(t)).length
+    return {row,label,score}
+  }).filter((x:any)=>x.score>0).sort((a:any,b:any)=>b.score-a.score)
+  const best:any=ranked[0],second:any=ranked[1]
+  if(!best||second?.score===best.score){
+    return {runId:'watcher-restart-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+      text:best?'I found more than one plausible stopped watcher. Please be more specific.':'I could not find that stopped watcher in persistent watcher state.',handledBy:'watcher-restart'}
+  }
+  const chosen=best.row
+  const now=new Date().toISOString()
+  const {data:updated,error}=await supabaseAdmin.from('agent_watchers')
+    .update({active:true,next_check_at:now,updated_at:now})
+    .eq('id',chosen.id).eq('telegram_id',tg).eq('active',false)
+    .select('id,active').maybeSingle()
+  if(error)throw new Error(`watcher_restart_failed:${error.message}`)
+  if(!updated?.id||updated.active!==true)throw new Error('watcher_restart_no_row_mutated')
+  const active=await canonicalActiveWatchers(tg)
+  if(!active.some((row:any)=>String(row.id)===String(chosen.id)))throw new Error('watcher_restart_read_after_write_failed')
+  await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,event_type:'watcher_restarted',
+    message:`Gogo restarted ${best.label}.`.slice(0,900),metadata_json:{watcher_id:chosen.id,type:chosen.type}})
+  return {runId:`watcher-restart-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
+    text:`Watch restarted: ${best.label} — active, checking about every ${Math.max(1,Number(chosen.cadence_minutes||60))} min. Persistent state now shows ${active.length} active monitor${active.length===1?'':'s'}.`,handledBy:'watcher-restart'}
+}
+
 export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:string}) {
   const intent=stopWatcherIntent(params.text)
   if(!intent)return null

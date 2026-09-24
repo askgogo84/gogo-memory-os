@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
-import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand } from './watch-command'
+import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
@@ -363,6 +363,8 @@ export async function tryRunWhatsAppAgent(params: {
 
   const watcherStop = await tryStopWatcherFromCommand({ actor, text:params.text })
   if (watcherStop) return { ...watcherStop, handledBy:String(watcherStop.handledBy || 'watcher-stop') }
+  const watcherRestart = await tryRestartWatcherFromCommand({ actor, text:params.text })
+  if (watcherRestart) return { ...watcherRestart, handledBy:String(watcherRestart.handledBy || 'watcher-restart') }
 
   const watcherStatus = await tryGetWatcherStatusFromCommand({ actor, text:params.text })
   if (watcherStatus) return { ...watcherStatus, handledBy:String(watcherStatus.handledBy || 'watcher-status') }
