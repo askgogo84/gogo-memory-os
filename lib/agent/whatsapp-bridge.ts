@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
-import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand } from './watch-command'
+import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, parsePriceWatchCommand, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
@@ -261,6 +261,12 @@ export async function tryRunWhatsAppJevSpecialist(params:{
     if(product)return {...product,handledBy:String(product.handledBy||'product-stock-watch')}
     const page=await tryCreateWebPageWatchFromCommand({actor,surface:'whatsapp',text:params.text})
     if(page)return {...page,handledBy:String(page.handledBy||'web-page-watch')}
+    const price=parsePriceWatchCommand(params.text)
+    if(price){
+      const synthetic=`watch the web for ${price.query} and tell me if you find ${price.triggerKeywords.join(' ')}`
+      const web=await tryCreateWebWatchFromCommand({actor,surface:'whatsapp',text:synthetic})
+      if(web)return {...web,handledBy:String(web.handledBy||'background-web-watch')}
+    }
     const web=await tryCreateWebWatchFromCommand({actor,surface:'whatsapp',text:params.text})
     return web ? {...web,handledBy:String(web.handledBy||'background-web-watch')} : null
   }
