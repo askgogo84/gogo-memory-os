@@ -16,7 +16,8 @@ export function isAutonomyStatus(text:string){
 
 export function isConnectionStatus(text:string){
   const t=clean(text,500).toLowerCase()
-  return /^(?:which|what)\s+(?:google\s+)?(?:account|email|calendar|gmail)(?:\s+account)?\s+(?:am\s+i|is)\s+connected\s+(?:to|with)\??$/.test(t)
+  return /^(?:which|what)\s+(?:google\s+)?(?:account|email|calendar|gmail)(?:\s+account)?\s+(?:am\s+i|is)\s+connected\s+(?:to|with)(?:\s+(?:askgogo|gogo|me))?\??$/.test(t)
+    || /^(?:which|what)\s+gmail\s+account\s+is\s+(?:currently\s+)?connected\s+to\s+(?:askgogo|gogo|me)\??$/.test(t)
     || /^(?:which|what)\s+(?:email|calendar)\s+(?:am\s+i|is)\s+connected\s+(?:to|with)\??$/.test(t)
     || /^show\s+(?:my\s+)?connected\s+(?:google\s+)?accounts?\??$/.test(t)
 }
