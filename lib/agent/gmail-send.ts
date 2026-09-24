@@ -106,6 +106,30 @@ async function stageApproval(actor:AgentActor,draft:any){
   return {runId,approvalId:String(approval.id)}
 }
 
+export async function tryRunGmailContextCommand(params:{actor:AgentActor;text:string}){
+  const raw=clean(params.text,1400)
+  const ordinal=raw.match(/^(?:open|show|read|summari[sz]e)\s+(?:the\s+)?(first|second|third|1st|2nd|3rd)\s+one\b/i)
+  if(ordinal){
+    const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_search_results')
+    if(!state||!isStrictlyFreshFollowupState(state,30)||!Array.isArray(state.payload?.messages))return null
+    const map:any={first:0,'1st':0,second:1,'2nd':1,third:2,'3rd':2}
+    const message=state.payload.messages[map[String(ordinal[1]).toLowerCase()]]
+    if(!message)return {runId:'gmail-context-ordinal-missing',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'That Gmail result number is not in the current search set.',handledBy:'gmail-context'}
+    await clearFollowupState(params.actor.legacyTelegramId,'gmail_selected_message')
+    await saveFollowupState(params.actor.legacyTelegramId,'gmail_selected_message',{message,created_at:new Date().toISOString()})
+    return {runId:'gmail-context-selected',status:'completed' as const,capability:'email' as const,risk:'low' as const,
+      text:`From: ${message.from||'Unknown sender'}\nDate: ${message.date||'Unknown date'}\nSubject: ${message.subject||'(No subject)'}\n\nSummary:\n${clean(message.snippet||'No preview available.',900)}`,handledBy:'gmail-context'}
+  }
+  if(/^(?:who sent (?:that|it)|when did i receive (?:that|it)|what does (?:that|it) say|tell me about (?:that|it))\b/i.test(raw)){
+    const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_selected_message')
+    if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload?.message)return null
+    const m=state.payload.message
+    return {runId:'gmail-context-read',status:'completed' as const,capability:'email' as const,risk:'low' as const,
+      text:`From: ${m.from||'Unknown sender'}\nDate: ${m.date||'Unknown date'}\nSubject: ${m.subject||'(No subject)'}\n\n${clean(m.snippet||'No preview available.',900)}`,handledBy:'gmail-context'}
+  }
+  return null
+}
+
 export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:string}){
   const raw=clean(params.text,2200)
 
