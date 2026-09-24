@@ -3,6 +3,7 @@ import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
 import { decisionDomain, recordDecisionLearning } from './decision-learning'
 import { observedOutcome, learningDecisionId } from './decision-evidence'
+import { isGmailVerificationQuery } from './gmail-verification'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
@@ -291,6 +292,7 @@ export async function tryRunWhatsAppAttentionCommand(params:{
   text:string
   messageId?:string|number|null
 }):Promise<WhatsAppAgentResult|null>{
+  if(isGmailVerificationQuery(params.text))return null
   const actor=actorFromResolvedUser(params.user)
   if(!actor)return null
 

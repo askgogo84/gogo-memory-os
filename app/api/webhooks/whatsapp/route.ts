@@ -46,6 +46,7 @@ import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent
 import { jevClarificationReply, promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
 import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, captureJevOpenLoopFromTurn, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate } from '@/lib/agent/open-loops'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
+import { isGmailVerificationQuery } from '@/lib/agent/gmail-verification'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
 import {
@@ -1134,6 +1135,7 @@ _"${originalText}"_
     // Give them first refusal before Jev/read-only semantic routing so a draft cannot
     // be downgraded to Gmail read and a Send-status query cannot hallucinate scopes.
     const isDeterministicGmailCommand =
+      isGmailVerificationQuery(text) ||
       /^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\b/i.test(text.trim()) ||
       /^(?:send\s+it|send\s+this\s+reply)$/i.test(text.trim()) ||
       /^(?:is\s+gmail\s+send\b|can\s+you\s+actually\s+send\s+gmail\b|check\s+my\s+gmail\s+send\s+connection)/i.test(text.trim())
@@ -1660,5 +1662,4 @@ _Reminder cancelled._`
     }
   }
 }
-
 

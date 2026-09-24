@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
-import { recordDecisionLearning, type DecisionDomain } from './decision-learning'
+import type { DecisionDomain } from './decision-learning'
 
 export type CorrectionTarget={decisionId:string;handler:string;domain:DecisionDomain;text:string}
 export function isExplicitRoutingCorrection(text:string){
@@ -31,7 +31,7 @@ export async function captureExplicitRoutingCorrection(actor:AgentActor,text:str
   if(decision.error||conversation.error)return null
   const target=correctionTarget({text,previous:decision.data,previousUserText:String(conversation.data?.content||'')})
   if(!target)return null
-  await recordDecisionLearning({actor,text:target.text,domain:target.domain,handler:target.handler,decisionId:target.decisionId,
-    outcome:'corrected',verified:false,firstRouteCorrect:false,correction:text})
+  // This could be a correction to the answer's content rather than its route.
+  // Defer negative routing evidence until a different handler actually handles it.
   return target
 }

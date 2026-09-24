@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { recordDecisionLearning } from './decision-learning'
+import { isGmailVerificationQuery, readGmailSendVerification } from './gmail-verification'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { buildGmailSendConnectUrl, fetchGmailAttentionThreads, searchGmailThreads, refreshGmailAccessToken, sendGmailReply, verifyGmailSentMessage } from '@/lib/services/google-gmail'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
@@ -133,6 +134,11 @@ export async function tryRunGmailContextCommand(params:{actor:AgentActor;text:st
 
 export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:string}){
   const raw=clean(params.text,2200)
+  if(isGmailVerificationQuery(raw))return readGmailSendVerification(params,async(messageId,threadId)=>{
+    const access=await gmailAccess(params.actor)
+    if(!access.ok)throw new Error('gmail_read_unavailable')
+    return verifyGmailSentMessage(access.accessToken,messageId,threadId)
+  })
 
   if(isGmailSendStatusQuery(raw)){
     const {data:user,error}=await supabaseAdmin.from('users')
@@ -237,6 +243,9 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   try{
     mutationStarted=true
     const sent=await sendGmailReply(access.accessToken,draft)
+    // Preserve the exact provider receipt even if the subsequent readback fails.
+    // This enables later read-only reconciliation without retrying the mutation.
+    await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_submitted',message:'Gmail returned a send receipt; verification is pending.',metadata_json:{gmail_message_id:sent.id,thread_id:sent.threadId}})
     const evidence=await verifyGmailSentMessage(access.accessToken,sent.id,draft.threadId)
     if(!evidence.verified){
       const now=new Date().toISOString()

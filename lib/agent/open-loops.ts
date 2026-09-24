@@ -134,7 +134,7 @@ function loopTokens(value:unknown){
 export function isUncertainOrNegatedCompletion(text:string){
   const raw=clean(text,1200)
   if(/[?]\s*$/.test(raw))return true
-  if(/^(?:did|has|have|can|could|would|will|is|are|do|does|check|tell me|do you know)\b/i.test(raw))return true
+  if(/^(?:did|has|have|was|can|could|would|will|is|are|do|does|verify|confirm|show|give me|check|tell me|do you know)\b/i.test(raw))return true
   if(/\b(?:hasn't|has not|haven't|have not|didn't|did not|not yet|still waiting|no reply|no response|no update|waiting on|waiting for|if|whether)\b/i.test(raw))return true
   return false
 }
