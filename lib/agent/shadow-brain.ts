@@ -3,6 +3,8 @@ import { classifyAgentRequest } from './classifier'
 import type { AgentActor } from './actor'
 import { runJevShadow, type JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { decisionDomain, decisionHints, calibrateGuardedRouting } from './decision-learning'
+import { captureExplicitRoutingCorrection } from './decision-feedback'
+import { isSecretShapedMemory, redactSecretShapedText } from '@/lib/bot/memory-redaction'
 
 export type ShadowBrainObservation = {
   actionFamily:string
@@ -177,6 +179,7 @@ export async function observeShadowBrainTurn(params:{
   eventId?:string|null
 }):Promise<ShadowBrainObservation>{
   const classified=classifyAgentRequest(params.text)
+  const correctionTarget=await captureExplicitRoutingCorrection(params.actor,params.text).catch(()=>null)
   const contextual=shadowNeedsContext(params.text)
   let mission:any=null,trip:any=null,recentContext=''
   try{
@@ -233,6 +236,8 @@ export async function observeShadowBrainTurn(params:{
     metadata_json:{
       surface:params.surface,
       event_id:params.eventId||null,
+      user_text:isSecretShapedMemory(params.text)?'[sensitive turn withheld]':redactSecretShapedText(clean(params.text,800)),
+      correction_target:correctionTarget,
       action_family:observation.actionFamily,
       capability:observation.capability,
       needs_context:observation.needsContext,
