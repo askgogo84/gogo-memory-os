@@ -1075,6 +1075,38 @@ _"${originalText}"_
       }
     }
 
+    // Deterministic reminder identity beats Jev ambiguity. A freshly-created reminder
+    // followed by "move it" is grounded state, not semantic ambiguity. Run this before
+    // the clarification guard so Jev cannot discard a valid reminder referent.
+    const hasCalendarNoun = /\b(?:meeting|meetings|calendar|event|events|appointment|appointments)\b/i.test(text)
+    const isDeterministicReminderCommand = !hasCalendarNoun && (
+      /^(?:what|which|show|list|display|my|pending|active|upcoming)\b.*\breminders?\b/i.test(text) ||
+      /^(?:show|find|when|what time|how many)\b.*\b(?:reminder|reminders|remind me|calling)\b/i.test(text) ||
+      /^(?:move|reschedule|change|update)\b.*(?:\breminder\b|\bit\b|\bthat\b|\bthis\b)/i.test(text)
+    )
+    if (isDeterministicReminderCommand) {
+      const reminderAgent = await tryRunWhatsAppAgent({
+        user: resolvedUser,
+        text,
+        messageId: inboundMessageSid || null,
+      })
+      if (reminderAgent) {
+        await recordShadowRouterOutcome({
+          telegramId:resolvedUser.telegramId,
+          surface:'whatsapp',
+          eventId:inboundMessageSid,
+          actualHandler:reminderAgent.handledBy || 'whatsapp-agent-reminder',
+          actualCapability:'reminders',
+          status:reminderAgent.status || null,
+          runId:reminderAgent.runId || null,
+        }).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reminderAgent.text)
+        await sendWhatsAppMessage(from, reminderAgent.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
     // High-confidence semantic ambiguity must stop before any broad legacy/router
     // fallback gets a chance to act on the wrong object. This does not grant Jev
     // execution authority; it only asks for the missing identifying detail.
@@ -1182,38 +1214,6 @@ _"${originalText}"_
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', providerAgent.text)
         await sendWhatsAppMessage(from, providerAgent.text)
-        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
-      }
-    }
-
-    // Reminder reads and reschedules must reach the deterministic compound reminder
-    // router before legacy feature/process-message paths. Live verification showed the
-    // legacy path returned all active reminders for an explicit date, bypassing the
-    // date-aware reader entirely.
-    const hasCalendarNoun = /\b(?:meeting|meetings|calendar|event|events|appointment|appointments)\b/i.test(text)
-    const isDeterministicReminderCommand = !hasCalendarNoun && (
-      /^(?:what|which|show|list|display|my|pending|active|upcoming)\b.*\breminders?\b/i.test(text) ||
-      /^(?:move|reschedule|change|update)\b.*(?:\breminder\b|\bit\b|\bthat\b|\bthis\b)/i.test(text)
-    )
-    if (isDeterministicReminderCommand) {
-      const reminderAgent = await tryRunWhatsAppAgent({
-        user: resolvedUser,
-        text,
-        messageId: inboundMessageSid || null,
-      })
-      if (reminderAgent) {
-        await recordShadowRouterOutcome({
-          telegramId:resolvedUser.telegramId,
-          surface:'whatsapp',
-          eventId:inboundMessageSid,
-          actualHandler:reminderAgent.handledBy || 'whatsapp-agent-reminder',
-          actualCapability:'reminders',
-          status:reminderAgent.status || null,
-          runId:reminderAgent.runId || null,
-        }).catch(()=>{})
-        await saveConversation(resolvedUser.telegramId, 'user', text)
-        await saveConversation(resolvedUser.telegramId, 'assistant', reminderAgent.text)
-        await sendWhatsAppMessage(from, reminderAgent.text)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
