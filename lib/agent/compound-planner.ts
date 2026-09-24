@@ -181,17 +181,33 @@ async function tryRunReminderMutation(params: { actor: AgentActor; surface: Agen
       handledBy: 'compound-plan', steps: [] }
   }
   const { data, error } = await supabaseAdmin.from('reminders')
-    .select('id,message,remind_at,timezone').eq('telegram_id', params.actor.legacyTelegramId).eq('sent', false)
+    .select('id,message,remind_at,timezone,created_at').eq('telegram_id', params.actor.legacyTelegramId).eq('sent', false)
     .order('remind_at', { ascending: true }).limit(100)
   if (error) throw new Error(`reminder_mutation_read_failed:${error.message}`)
   const norm=(v:string)=>String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
   const needle=norm(resolvedTarget)
   const matches=(data||[]).filter((r:any)=>{const h=norm(r.message);return h===needle||h.includes(needle)||needle.includes(h)})
-  if (matches.length !== 1) {
-    const msg = matches.length ? `I found ${matches.length} matching reminders for “${resolvedTarget}”. Please tell me which time you mean.` : `I could not find an active reminder matching “${resolvedTarget}”. I did not create a new one.`
-    return { runId:'none', status:'failed', capability:'reminders', risk:'low', text:msg, handledBy:'compound-plan', steps:[] }
+  let row:any=null
+  if(matches.length===1) row=matches[0]
+  else if(matches.length>1){
+    // Conversational mutation rule: when "it/that/this" was resolved from the
+    // immediately preceding reminder turn, bind the mutation to the newest matching
+    // reminder row. This preserves object identity even when older reminders share
+    // the same label. A move always PATCHES that row; it never creates a replacement.
+    const wasReferential=!mutation.target || /^(?:it|that|this)$/i.test(String(mutation.target||''))
+    if(wasReferential){
+      row=[...matches].sort((a:any,b:any)=>Date.parse(String(b.created_at||0))-Date.parse(String(a.created_at||0)))[0]||null
+    }
+    if(!row){
+      return { runId:'none', status:'failed', capability:'reminders', risk:'low',
+        text:`I found ${matches.length} matching reminders for “${resolvedTarget}”. Please tell me which time you mean.`,
+        handledBy:'compound-plan', steps:[] }
+    }
+  } else {
+    return { runId:'none', status:'failed', capability:'reminders', risk:'low',
+      text:`I could not find an active reminder matching “${resolvedTarget}”. I did not create a new one.`,
+      handledBy:'compound-plan', steps:[] }
   }
-  const row:any=matches[0]
   const timezone=await actorTimezone(params.actor)
   const base=new Date(row.remind_at)
   const day=/\btomorrow\b/i.test(mutation.timeText)?new Date(Date.now()+36*60*60*1000):/\btoday\b/i.test(mutation.timeText)?new Date():base
