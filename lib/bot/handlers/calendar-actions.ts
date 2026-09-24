@@ -561,6 +561,7 @@ export function isCalendarViewRequest(text: string): boolean {
   return (
     /^(?:what|which)\s+(?:meetings?|events?|appointments?)\s+(?:do\s+i\s+have|are\s+(?:on|scheduled))(?:\s+on|\s+for)?\s+.+/i.test(lower) ||
     /^(?:show|list|display)\s+(?:me\s+)?(?:my\s+)?(?:meetings?|events?|appointments?)\s+(?:on|for)\s+.+/i.test(lower) ||
+    /^(?:what\s+time|when)\s+(?:is|does)\s+.+(?:calendar|meeting|event|appointment).*(?:today|tomorrow|on\s+.+)?\??$/i.test(lower) ||
     lower.includes('calendar today') ||
     lower.includes('calendar tomorrow') ||
     lower.includes('calendar for today') ||
