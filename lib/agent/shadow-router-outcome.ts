@@ -47,6 +47,9 @@ export async function recordShadowRouterOutcome(params:{
     outcome,verified:false}).catch(()=>{})
   const target=m.correction_target
   if(target?.decisionId&&target.handler!==params.actualHandler&&params.status==='completed'){
+    await recordDecisionLearning({actor,text:target.text,domain:target.domain,handler:target.handler,
+      decisionId:target.decisionId,outcome:'corrected',verified:false,firstRouteCorrect:false,
+      correction:'explicit correction resolved by a different handler'}).catch(()=>{})
     // Record a replacement preference on the ORIGINAL utterance/domain. A
     // replacement choice is not proof of successful provider completion.
     await recordDecisionLearning({actor,text:target.text,domain:target.domain,handler:params.actualHandler,

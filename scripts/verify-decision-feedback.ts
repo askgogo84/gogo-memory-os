@@ -29,13 +29,17 @@ async function main(){
  try {
   const target=await captureExplicitRoutingCorrection({legacyTelegramId:123} as any,feedback.text)
   assert.equal(target?.decisionId,'event-1')
-  assert.equal(inserts.at(-1).metadata_json.outcome,'corrected')
-  assert.equal(inserts.at(-1).metadata_json.first_route_correct,false)
+  assert.equal(inserts.length,0,'answer-quality feedback alone must not suppress the route')
   observation={...observation,correction_target:target}
   await recordShadowRouterOutcome({telegramId:123,surface:'system',eventId:'correction-turn',actualHandler:'calendar-named-read',actualCapability:'calendar',status:'completed'})
+  assert.equal(inserts.at(-2).metadata_json.outcome,'corrected')
+  assert.equal(inserts.at(-2).metadata_json.first_route_correct,false)
   assert.equal(inserts.at(-1).metadata_json.outcome,'replacement')
   assert.equal(inserts.at(-1).metadata_json.user_text,'When is the meeting?')
   assert.equal(inserts.at(-1).metadata_json.decision_id,'event-1')
+  const correctionCount=inserts.filter(r=>r.metadata_json.outcome==='corrected').length
+  await recordShadowRouterOutcome({telegramId:123,surface:'system',eventId:'content-correction',actualHandler:'reminder-create',actualCapability:'calendar',status:'completed'})
+  assert.equal(inserts.filter(r=>r.metadata_json.outcome==='corrected').length,correctionCount,'same-handler content correction must not become negative routing evidence')
   observation={user_text:'Test read',capability:'memory'}
   for(const [domain,handler] of [['email','gmail-context'],['calendar','calendar-named-read'],['reminders','reminder-query'],['browser','watcher-status'],['travel','travel-research'],['browser','secure-browser'],['tasks','persistent-general-plan']]){
    await recordShadowRouterOutcome({telegramId:123,surface:'system',eventId:handler,actualHandler:handler,actualCapability:domain,status:'outcome_unknown'})
