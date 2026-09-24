@@ -17,7 +17,7 @@ import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
 import { tryGetAutonomyStatus, tryGetConnectionStatus } from './autonomy-status'
-import { executeApprovedGmailSend, tryRunGmailSendCommand } from './gmail-send'
+import { executeApprovedGmailSend, tryRunGmailSendCommand, tryRunGmailContextCommand } from './gmail-send'
 import { tryRunAdaptiveTrustCommand } from './adaptive-trust'
 import { capabilityIsOff, parseAutonomyCommand } from './adaptive-autonomy'
 import { tryRunAdaptiveAutonomyCommand } from './adaptive-autonomy'
@@ -336,7 +336,10 @@ export async function tryRunWhatsAppAgent(params: {
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
 
-  const gmailSend=await tryRunGmailSendCommand({actor,text:params.text})
+  const gmailContext=await tryRunGmailContextCommand({actor,text:params.text})
+  if(gmailContext)return {...gmailContext,handledBy:String(gmailContext.handledBy||'gmail-context')}
+
+    const gmailSend=await tryRunGmailSendCommand({actor,text:params.text})
   if(gmailSend)return {...gmailSend,handledBy:String(gmailSend.handledBy||'gmail-send')}
 
   const autonomyControl=await tryRunAdaptiveAutonomyCommand({actor,text:params.text})
