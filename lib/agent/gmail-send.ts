@@ -142,7 +142,13 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
 
   const parsed=parseGmailReplyCommand(raw)
   if(!parsed)return null
-  const resolved=await resolveThread(params.actor,parsed.target)
+  const contextual=/^(?:that|this|the exact|it)$/i.test(parsed.target.trim())
+  let selected:any=null
+  if(contextual){
+    const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_selected_message')
+    if(state&&isStrictlyFreshFollowupState(state,30)&&state.payload?.message)selected=state.payload.message
+  }
+  const resolved=selected?{access:await gmailAccess(params.actor),match:{thread:{id:selected.threadId,subject:selected.subject},incoming:selected},ambiguous:false}:await resolveThread(params.actor,parsed.target)
   if(!resolved.access.ok){
     return {runId:'gmail-reply-needs-google',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'Connect Google Workspace first so I can find the email thread.',handledBy:'gmail-send'}
   }

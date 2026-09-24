@@ -180,8 +180,9 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
 }
 
 export async function searchWorkspaceEmails(actor:AgentActor, input:string) {
+  const exactSubject=String(input||'').match(/subject\s+["“]([^"”]{2,240})["”]/i)?.[1]?.trim()
   const terms=workspaceSearchTerms(input)
-  const q=[...terms,'newer_than:2y'].join(' ').trim()
+  const q=exactSubject?`subject:"${exactSubject.replace(/"/g,'')}" -in:spam -in:trash`:[...terms,'newer_than:2y'].join(' ').trim()
   const params=new URLSearchParams({maxResults:String(MAX_EMAILS)})
   if(q)params.set('q',q)
   const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`)
