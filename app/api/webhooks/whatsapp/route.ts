@@ -1080,7 +1080,8 @@ _"${originalText}"_
     // the clarification guard so Jev cannot discard a valid reminder referent.
     const hasCalendarNoun = /\b(?:meeting|meetings|calendar|event|events|appointment|appointments)\b/i.test(text)
     const isDeterministicReminderCommand = !hasCalendarNoun && (
-      /^(?:what|which|show|list|display|my|pending|active|upcoming)\b.*\breminders?\b/i.test(text) ||\n      /^(?:show|find|when|what time|how many)\b.*\b(?:reminder|reminders|remind me|calling)\b/i.test(text) ||
+      /^(?:what|which|show|list|display|my|pending|active|upcoming)\b.*\breminders?\b/i.test(text) ||
+      /^(?:show|find|when|what time|how many)\b.*\b(?:reminder|reminders|remind me|calling)\b/i.test(text) ||
       /^(?:move|reschedule|change|update)\b.*(?:\breminder\b|\bit\b|\bthat\b|\bthis\b)/i.test(text)
     )
     if (isDeterministicReminderCommand) {
