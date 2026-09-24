@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   if (!ipHash) return NextResponse.json({ ok: false }, { status: 503 })
 
   const result = await issueDashboardOtp(phone, ipHash)
-  if (!result.ok) {
+  if (result.ok === false) {
     if (result.reason === 'invalid') return NextResponse.json({ ok: false, reason: 'invalid' }, { status: 400 })
     if (result.reason === 'throttled') {
       return NextResponse.json(
@@ -49,3 +49,4 @@ export async function POST(request: Request) {
     message: 'If this WhatsApp number is linked to AskGogo, a login code is on its way.',
   })
 }
+

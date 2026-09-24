@@ -9,7 +9,7 @@ export type AgentActor = {
   creditiqUserId?: string | null
 }
 
-export async function resolveAgentActor(session: AgentSession): Promise<AgentActor> {
+export async function resolveAgentActor(session: Omit<AgentSession,'surface'> & {surface:AgentSession['surface']|'whatsapp'}): Promise<AgentActor> {
   let query = supabaseAdmin
     .from('users')
     .select('id, telegram_id, whatsapp_id, name')
@@ -50,3 +50,4 @@ export async function resolveAgentActor(session: AgentSession): Promise<AgentAct
     creditiqUserId,
   }
 }
+

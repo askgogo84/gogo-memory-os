@@ -196,7 +196,7 @@ export async function createAutonomousRun(params: {
   }))
   const { error: stepError } = await supabaseAdmin.from('agent_steps').insert(rows)
   if (stepError) {
-    await supabaseAdmin.from('agent_runs').update({ status: 'failed', error: `step_create_failed:${stepError.message}`, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', runId).eq('telegram_id', telegramId).catch(() => {})
+    await Promise.resolve(supabaseAdmin.from('agent_runs').update({ status: 'failed', error: `step_create_failed:${stepError.message}`, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', runId).eq('telegram_id', telegramId)).catch(() => {})
     throw new Error(`autonomous_steps_create_failed:${stepError.message}`)
   }
   await activity(telegramId, runId, 'autonomous_plan_created', `Gogo created a ${rows.length}-step persistent plan.`, {
@@ -435,3 +435,4 @@ export async function appendAutonomousReplan(params: { actor: AgentActor; runId:
   await activity(telegramId,params.runId,'autonomous_plan_revised',`Gogo revised the plan and added ${rows.length} step${rows.length===1?'':'s'}.`,{reason:safe(params.reason,500),plan_revision:revision,added_steps:rows.map(row=>({tool:row.tool_name,title:row.title}))})
   return{added:rows.length,planRevision:revision}
 }
+

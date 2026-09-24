@@ -154,6 +154,7 @@ export type ProcessIncomingParams = {
 }
 
 export type ProcessIncomingResult = {
+  handledBy?: string
   text: string
   resolvedUser: Awaited<ReturnType<typeof resolveUser>>
   mediaUrl?: string
@@ -534,7 +535,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (intent.type === 'dashboard') {
     const issue = await issueToken(resolvedUser.telegramId)
     let reply: string
-    if (issue.ok) {
+    if (issue.ok === true) {
       reply =
         `Here's your private dashboard, Gogo — it opens once and expires in 15 minutes:\n\n` +
         `https://app.askgogo.in/dashboard?t=${issue.token}\n\n` +
@@ -1042,7 +1043,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'web_search') {
     const guard = await guardAiAction(resolvedUser.telegramId)
-    if (!guard.ok) {
+    if (guard.ok === false) {
       await saveConversation(resolvedUser.telegramId, 'assistant', guard.reply)
       return { text: formatOutgoingText(params.channel, guard.reply), resolvedUser }
     }
@@ -1240,7 +1241,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   if (parsed.type === 'search') {
     const guard = await guardAiAction(resolvedUser.telegramId)
-    if (!guard.ok) {
+    if (guard.ok === false) {
       finalReply = guard.reply
     } else {
       const searchContext = await searchWeb(parsed.query)
@@ -1254,4 +1255,5 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   await saveConversation(resolvedUser.telegramId, 'assistant', formatted)
   return { text: formatted, resolvedUser }
 }
+
 

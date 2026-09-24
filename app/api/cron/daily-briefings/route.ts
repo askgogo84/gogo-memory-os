@@ -192,7 +192,7 @@ export async function GET(req: NextRequest) {
             stream: 'daily-brief',
           })
 
-          if (!send.ok) throw new Error(send.error)
+          if (send.ok === false) throw new Error(send.error)
 
           const { error: logError } = await supabaseAdmin.from('daily_brief_email_log').insert({
             telegram_id: telegramId,
@@ -227,3 +227,4 @@ export async function GET(req: NextRequest) {
     failures,
   })
 }
+

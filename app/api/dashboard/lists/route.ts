@@ -33,10 +33,11 @@ export async function POST(request: Request) {
   }
 
   const res = await createList(tgNum, name)
-  if (!res.ok) {
+  if (res.ok === false) {
     const status = res.reason === 'exists' ? 409 : 500
     const error = res.reason === 'exists' ? 'You already have a list with that name.' : undefined
     return NextResponse.json({ ok: false, error }, { status })
   }
   return NextResponse.json({ ok: true })
 }
+

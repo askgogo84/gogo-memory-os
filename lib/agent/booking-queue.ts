@@ -47,7 +47,7 @@ export async function queueBookingClosure(params: { telegramId: number; text: st
   const title = titleFrom(params.text)
   let event = await existingByUrl(params.telegramId, url)
   if (!event) {
-    event = await registerLifeEvent({
+    const registered = await registerLifeEvent({
       telegramId: params.telegramId,
       eventType: 'event',
       subtype: /movie|watching|cinema|theatre/i.test(params.text) ? 'movie_booking' : 'event_booking',
@@ -57,6 +57,7 @@ export async function queueBookingClosure(params: { telegramId: number; text: st
       metadata: { bookingUrl: url, closureQueued: true, schedulePending: true },
       sourceRefs: [{ source: 'whatsapp', kind: 'booking_link', url }],
     })
+    event = { id:registered.id, metadata_json:{bookingUrl:url,closureQueued:true,schedulePending:true}, source_refs:[{source:'whatsapp',kind:'booking_link',url}], title, provider }
   }
   const lifeEventId = String(event.id)
   const nowDate = new Date()
@@ -101,3 +102,4 @@ export async function queueBookingClosure(params: { telegramId: number; text: st
     text: `🎟️ *Got it — I’m handling this booking now.*\n\nI’m opening the provider link and checking your connected email in the background for the booking details and the actual provider-issued ticket/QR.\n\nI’ll send the completed booking back here with the ticket/QR, reminder and calendar action — you don’t need to reopen the link.`,
   }
 }
+

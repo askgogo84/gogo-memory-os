@@ -31,6 +31,8 @@ jobs:
       - name: Full regression suite
         run: npm test
 
-      - name: Typecheck (advisory baseline)
-        continue-on-error: true
+      - name: Typecheck
         run: npm run typecheck
+
+      - name: Production build with fixture credentials
+        run: npm run build

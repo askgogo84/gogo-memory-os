@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   }
 
   const verified = await verifyDashboardOtp(challengeId, otp)
-  if (!verified.ok) {
+  if (verified.ok === false) {
     const status = verified.reason === 'error' || verified.reason === 'misconfigured' ? 503 : 401
     return NextResponse.json({ ok: false }, { status })
   }
@@ -40,3 +40,4 @@ export async function POST(request: Request) {
 
   return NextResponse.json({ ok: true })
 }
+

@@ -102,11 +102,12 @@ export async function tryRunCreditIQHotelResearch(params: { actor: AgentActor; s
     return `${index + 1}. ${hotelName(hotel)}${bits.length ? `\n${bits.join(' · ')}` : ''}${redemptionLabel(hotel)}${link ? `\nBooking/provider link: ${link}` : ''}`
   }).join('\n\n')}\n\nThese are provider-returned hotel results through CreditIQ. A hotel-chain match may identify a sourced loyalty or card path, but it does not prove award-night availability or an exact points price. Projected redemption is never treated as executable until verified. Availability and final price must be repriced before any approved booking action.`
 
-  await supabaseAdmin.from('agent_activity').insert({
+  await Promise.resolve(supabaseAdmin.from('agent_activity').insert({
     telegram_id:String(tg), run_id:runId, event_type:'run_completed',
     message:`CreditIQ returned ${top.length} live hotel options${pointsAware ? ' with linked rewards context' : ''}.`,
     metadata_json:{ result_count:top.length, provider:live.source, travel_engine:'creditiq', points_aware:pointsAware },
-  }).catch(()=>{})
+  })).catch(()=>{})
 
   return { runId, status:'completed' as const, capability:'travel' as const, risk:'low' as const, text, handledBy:'creditiq-hotels' as const }
 }
+

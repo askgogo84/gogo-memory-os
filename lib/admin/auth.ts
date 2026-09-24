@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
 
 export type AdminSession =
-  | { ok: true; telegramId: string; whatsappId: string }
+  | { ok: true; telegramId: string; whatsappId: string; status?: never; reason?: never }
   | { ok: false; status: 401 | 403; reason: 'unauthenticated' | 'invalid_session' | 'user_lookup_failed' | 'not_admin' }
 
 export async function requireAdminSession(): Promise<AdminSession> {
@@ -34,3 +34,4 @@ export async function requireAdminSession(): Promise<AdminSession> {
 
   return { ok: true, telegramId, whatsappId }
 }
+
