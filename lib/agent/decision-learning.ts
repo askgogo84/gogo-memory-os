@@ -17,3 +17,19 @@ export async function recordDecisionCorrection(p:{actor:AgentActor;text:string;d
 export async function recordDecisionClarification(p:{actor:AgentActor;text:string;domain:DecisionDomain;handler:string}){
   await recordDecisionLearning({actor:p.actor,text:p.text,domain:p.domain,handler:p.handler,outcome:'clarified',verified:false})
 }
+
+export type GuardedRoutingDecision={useLearned:boolean;handler:string|null;confidence:number;reason:string}
+const CONSEQUENTIAL=/gmail-send|calendar-create|book|checkout|purchase|payment|send-email|delete|submit/i
+export function calibrateGuardedRouting(p:{preferredHandler:string|null;confidence:number;avoidHandlers:string[];typedContextHandler?:string|null;conflictingTypedContext?:boolean;actionRequiresApproval?:boolean}):GuardedRoutingDecision{
+  if(!p.preferredHandler)return{useLearned:false,handler:null,confidence:0,reason:'no_learned_preference'}
+  if(p.actionRequiresApproval||CONSEQUENTIAL.test(p.preferredHandler))return{useLearned:false,handler:null,confidence:p.confidence,reason:'safety_kernel'}
+  if(p.conflictingTypedContext)return{useLearned:false,handler:null,confidence:p.confidence,reason:'typed_context_conflict'}
+  if(p.typedContextHandler&&p.typedContextHandler!==p.preferredHandler)return{useLearned:false,handler:null,confidence:p.confidence,reason:'typed_context_wins'}
+  if(p.avoidHandlers.includes(p.preferredHandler))return{useLearned:false,handler:null,confidence:p.confidence,reason:'negative_evidence'}
+  if(p.confidence<0.82)return{useLearned:false,handler:null,confidence:p.confidence,reason:'below_live_threshold'}
+  return{useLearned:true,handler:p.preferredHandler,confidence:p.confidence,reason:'high_confidence_non_consequential'}
+}
+export async function guardedRoutingHint(p:{actor:AgentActor;text:string;domain:DecisionDomain;typedContextHandler?:string|null;conflictingTypedContext?:boolean;actionRequiresApproval?:boolean}){
+  const hints=await decisionHints({actor:p.actor,text:p.text,domain:p.domain})
+  return {...hints,decision:calibrateGuardedRouting({...hints,typedContextHandler:p.typedContextHandler,conflictingTypedContext:p.conflictingTypedContext,actionRequiresApproval:p.actionRequiresApproval})}
+}
