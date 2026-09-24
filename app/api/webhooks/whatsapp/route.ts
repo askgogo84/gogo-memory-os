@@ -1049,6 +1049,17 @@ _"${originalText}"_
       }
     }
 
+    // Provider verification questions are evidence reads, never open-loop completion.
+    if(/\b(?:gmail|email|message)\b/i.test(text)&&/\b(?:actually\s+send|sent|provider\s+verification|verification\s+status|verify|confirmed|did\s+.*send)\b/i.test(text)){
+      const evidenceAgent=await tryRunWhatsAppAgent({user:resolvedUser,text,messageId:inboundMessageSid||null})
+      if(evidenceAgent?.handledBy==='gmail-send-verification'){
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',evidenceAgent.text)
+        await sendWhatsAppMessage(from,evidenceAgent.text)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
     // Open-loop / Attention commands are deterministic state reads/writes.
     // Give them first refusal before semantic feature routing so "what am I waiting on?"
     // cannot be mistaken for a generic question or reminder query.
