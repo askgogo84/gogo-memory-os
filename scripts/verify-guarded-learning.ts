@@ -17,6 +17,7 @@ const rejected = [
   calibrateGuardedRouting({...base,conflictingTypedContext:true}),
   calibrateGuardedRouting({...base,actionRequiresApproval:true}),
   calibrateGuardedRouting({...base,preferredHandler:'gmail-send'}),
+  calibrateGuardedRouting({...base,preferredHandler:'unknown-plugin-mutation'}),
 ]
 for (const decision of rejected) {
   assert.equal(decision.useLearned,false)
@@ -75,6 +76,12 @@ try {
   await observeShadowBrainTurn({actor:{legacyTelegramId:123} as any,surface:'system',text:currentText})
   assert.equal(captured.state.learned_routing.preferred_handler,'gmail-context')
   assert.equal(inserted.metadata_json.learned_routing.useLearned,true)
+  for(const text of ['List my watchers','What are you working on right now?','Did Gmail actually send that message?']){
+    captured=null
+    await observeShadowBrainTurn({actor:{legacyTelegramId:123} as any,surface:'system',text})
+    assert.equal(captured,null,'deterministic read must not call Jev')
+    assert.equal(inserted.metadata_json.jev_attempted,false)
+  }
 } finally {
   supabaseAdmin.from=originalFrom
   globalThis.fetch=originalFetch

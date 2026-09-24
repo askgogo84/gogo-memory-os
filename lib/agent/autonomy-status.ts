@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { syncOpenLoopsForUser } from './open-loops'
-import { partitionAttentionRuns, ideaWatcherIds, currentWatcherIdeas, watcherSupportsCurrentIdea } from './attention-state'
+import { isAutonomyStatus, partitionAttentionRuns, ideaWatcherIds, currentWatcherIdeas, watcherSupportsCurrentIdea } from './attention-state'
 
 function clean(value:unknown,max=300){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
 function fmt(iso:string|null|undefined,timezone='Asia/Kolkata'){
@@ -9,11 +9,7 @@ function fmt(iso:string|null|undefined,timezone='Asia/Kolkata'){
   try{return new Intl.DateTimeFormat('en-IN',{timeZone:timezone,weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(iso))}catch{return ''}
 }
 
-export function isAutonomyStatus(text:string){
-  const t=clean(text,500).toLowerCase()
-  return /^(?:what(?:'s| is)?|show me|give me)\s+(?:are\s+you\s+)?(?:working on|doing|handling|tracking)(?:\s+(?:for\s+me|in the background|right now|now))*\??$/.test(t)
-    || /^(?:what(?:'s| is)?|show me)\s+(?:my\s+)?(?:agent|gogo|background)\s+(?:status|activity|work)\??$/.test(t)
-}
+export { isAutonomyStatus } from './attention-state'
 
 export function isConnectionStatus(text:string){
   const t=clean(text,500).toLowerCase()

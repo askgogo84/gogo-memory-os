@@ -1,3 +1,4 @@
+import { verifiedReadEvidence } from './read-evidence'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
@@ -8,7 +9,7 @@ import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, 
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
-import { tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
+import { prepareGeneralPlan, tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
 import { tryRunPersistentGeneralPlan } from './persistent-general-plan'
 import { tryRunTravelResearch } from './travel-research'
 import { hardenTravelResearchResult } from './travel-research-sanitize'
@@ -34,6 +35,7 @@ export type WhatsAppAgentResult = {
   runId?: string
   status?: string
   handledBy: string
+  verification?: {verified:boolean;source:string;kind:string;objectKind:string;objectRef:string|null}
   conversationPersisted?: boolean
 }
 
@@ -314,8 +316,9 @@ export async function tryRunWhatsAppAttentionCommand(params:{
 async function learnedReturn(actor:AgentActor,text:string,result:any,fallbackHandler:string,messageId?:string|number|null){
   if(!result)return null
   const handler=String(result.handledBy||fallbackHandler)
-  const outcome=observedOutcome(result.status)
-  await recordDecisionLearning({actor,text,decisionId:learningDecisionId(messageId,result.runId),domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified:false,objectRef:result.runId||null}).catch(()=>{})
+  const verified=verifiedReadEvidence(handler,result.status,result.verification)
+  const outcome=verified?'verified_success':observedOutcome(result.status)
+  await recordDecisionLearning({actor,text,decisionId:learningDecisionId(messageId,result.runId),domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified,objectKind:result.verification?.objectKind||null,objectRef:result.verification?.objectRef||result.runId||null}).catch(()=>{})
   return {...result,handledBy:handler}
 }
 
@@ -452,10 +455,11 @@ export async function tryRunWhatsAppAgent(params: {
     if (compound) return await learnedReturn(actor,params.text,compound,String(compound.handledBy||'compound-plan'),params.messageId)
   }
 
-  const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
+  const prepared=await prepareGeneralPlan(params.text)
+  const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId, prepared })
   if (persistent) return await learnedReturn(actor,params.text,persistent,'persistent-general-plan',params.messageId)
 
-  const general = await tryRunGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
+  const general = await tryRunGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId, prepared })
   if (general) return { ...general, text:`${general.text || ''}${general.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(general.handledBy || 'general-plan') }
 
   const travel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
