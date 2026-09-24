@@ -1075,6 +1075,23 @@ _"${originalText}"_
       }
     }
 
+    // Watcher lifecycle commands are persistent state operations, not one-shot web
+    // searches. Give them deterministic first refusal before Jev/generic search.
+    const isDeterministicWatcherCommand =
+      /^(?:watch|monitor|track)\b/i.test(text.trim()) ||
+      /^(?:show|list)\s+(?:my\s+)?(?:active\s+)?(?:watchers?|watches|monitors?)\b/i.test(text.trim()) ||
+      /^(?:stop|cancel|remove|disable|restart)\b.*\b(?:watcher|watch|monitor)\b/i.test(text.trim())
+    if(isDeterministicWatcherCommand){
+      const watcherAgent=await tryRunWhatsAppAgent({user:resolvedUser,text,messageId:inboundMessageSid||null})
+      if(watcherAgent){
+        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:watcherAgent.handledBy||'watcher',actualCapability:'browser',status:watcherAgent.status||null,runId:watcherAgent.runId||null}).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',watcherAgent.text)
+        await sendWhatsAppMessage(from,watcherAgent.text)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
     // Gmail draft/send/status commands are deterministic provider workflows.
     // Give them first refusal before Jev/read-only semantic routing so a draft cannot
     // be downgraded to Gmail read and a Send-status query cannot hallucinate scopes.
