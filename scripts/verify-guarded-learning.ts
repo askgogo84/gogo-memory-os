@@ -43,7 +43,7 @@ let captured:any=null
 let inserted:any=null
 ;(supabaseAdmin as any).from=(table:string)=>{
   const result=table==='agent_activity'
-    ? {data:Array.from({length:8},()=>({metadata_json:{schema:'same-brain-v2',domain:currentText.includes('visa')?'browser':currentText.includes('calendar')?'calendar':currentText.includes('memory')?'other':'email',user_text:currentText,handler:'gmail-context',outcome:'verified_success',verified:true}})),error:null}
+    ? {data:Array.from({length:30},(_,i)=>({metadata_json:{decision_id:String(i),schema:'same-brain-v2',domain:currentText.includes('visa')?'browser':currentText.includes('calendar')?'calendar':currentText.includes('memory')?'other':'email',user_text:currentText,handler:'gmail-context',outcome:'verified_success',verified:true}})),error:null}
     : {data:[],error:null}
   const chain:any={then:(resolve:any)=>Promise.resolve(result).then(resolve)}
   for(const method of ['select','eq','in','gte','order','limit'])chain[method]=()=>chain

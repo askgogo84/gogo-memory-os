@@ -243,13 +243,14 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
       await supabaseAdmin.from('agent_runs').update({status:'outcome_unknown',summary:'Gmail accepted the send, but provider verification is incomplete.',progress:100,error:evidence.reason,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
       await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)
       await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
+      await recordDecisionLearning({actor:params.actor,decisionId:params.runId,text:'approved gmail send',domain:'email',handler:'gmail-send',objectKind:'gmail_thread',objectRef:draft.threadId,outcome:'unknown',verified:false}).catch(()=>{})
       return {runId:params.runId,status:'paused' as const,capability:'email' as const,risk:'high' as const,text:'Gmail accepted the approved send, but I could not verify the final SENT/thread state. I will not retry automatically because that could duplicate the email.',handledBy:'gmail-send'}
     }
     const now=new Date().toISOString()
     await supabaseAdmin.from('agent_runs').update({status:'completed',summary:`Sent and verified Gmail reply to ${draft.to}.`,progress:100,completed_at:now,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
     await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)
     await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_verified',message:`Gmail reply sent and provider-verified: ${clean(draft.subject,180)}`,metadata_json:{gmail_message_id:sent.id,thread_id:sent.threadId,to:draft.to}})
-    recordDecisionLearning({actor:params.actor,text:'approved gmail send',domain:'email',handler:'gmail-send',objectKind:'gmail_thread',objectRef:String(sent.threadId||draft.threadId),outcome:'verified_success',verified:true}).catch(()=>{})
+    await recordDecisionLearning({actor:params.actor,decisionId:params.runId,text:'approved gmail send',domain:'email',handler:'gmail-send',objectKind:'gmail_thread',objectRef:String(sent.threadId||draft.threadId),outcome:'verified_success',verified:true}).catch(()=>{})
     await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     return {runId:params.runId,status:'completed' as const,capability:'email' as const,risk:'high' as const,text:`✅ Sent and verified\n\nTo: ${draft.to}\nSubject: ${/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`}`,handledBy:'gmail-send'}
   }catch(err:any){
@@ -260,10 +261,13 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
       await supabaseAdmin.from('agent_runs').update({status:'outcome_unknown',summary:'Gmail send outcome is unknown after the provider request started.',progress:100,error:reason,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
       await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)
       await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
+      await recordDecisionLearning({actor:params.actor,decisionId:params.runId,text:'approved gmail send',domain:'email',handler:'gmail-send',objectKind:'gmail_thread',objectRef:draft.threadId,outcome:'unknown',verified:false}).catch(()=>{})
       return {runId:params.runId,status:'paused' as const,capability:'email' as const,risk:'high' as const,text:'The approved Gmail send started, but I cannot prove whether Gmail completed it. I will not retry automatically because that could send a duplicate. Please check the thread before trying anything else.',handledBy:'gmail-send'}
     }
     await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gmail rejected the send before provider acceptance.',progress:100,error:reason,completed_at:now,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
     await supabaseAdmin.from('agent_approvals').update({status:'failed',resolved_at:now}).eq('id',approval.id).eq('telegram_id',tg)
+    await recordDecisionLearning({actor:params.actor,decisionId:params.runId,text:'approved gmail send',domain:'email',handler:'gmail-send',objectKind:'gmail_thread',objectRef:draft.threadId,outcome:'failed',verified:false}).catch(()=>{})
     return {runId:params.runId,status:'failed' as const,capability:'email' as const,risk:'high' as const,text:'Gmail rejected the send before acceptance. Nothing is marked sent. Please review the Gmail Send connection before trying again.',handledBy:'gmail-send'}
   }
 }
+

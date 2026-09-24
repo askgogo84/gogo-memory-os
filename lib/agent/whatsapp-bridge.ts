@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
 import { decisionDomain, recordDecisionLearning } from './decision-learning'
+import { observedOutcome } from './decision-evidence'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
@@ -273,7 +274,7 @@ export async function tryRunWhatsAppJevSpecialist(params:{
     const travel=await tryRunTravelResearch({actor,surface:'whatsapp',text:params.text})
     if(!travel)return null
     const hardened=await hardenTravelResearchResult(travel,params.text)
-    return await learnedReturn(actor,params.text,hardened,'travel-research')
+    return await learnedReturn(actor,params.text,hardened,'travel-research',params.messageId)
   }
 
   const browser=await withWhatsAppBrowserBudget(actor,tryRunBrowserCommand({actor,surface:'whatsapp',text:params.text}))
@@ -308,12 +309,11 @@ export async function tryRunWhatsAppAttentionCommand(params:{
   return null
 }
 
-async function learnedReturn(actor:AgentActor,text:string,result:any,fallbackHandler:string){
+async function learnedReturn(actor:AgentActor,text:string,result:any,fallbackHandler:string,messageId?:string|number|null){
   if(!result)return null
   const handler=String(result.handledBy||fallbackHandler)
-  const status=String(result.status||'completed')
-  const outcome:any=status==='completed'?'success':status==='failed'?'failed':status==='blocked'?'blocked':status==='waiting_approval'?'success':'unknown'
-  recordDecisionLearning({actor,text,domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified:false,objectRef:result.runId||null}).catch(()=>{})
+  const outcome=observedOutcome(result.status)
+  await recordDecisionLearning({actor,text,decisionId:messageId?String(messageId):null,domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified:false,objectRef:result.runId||null}).catch(()=>{})
   return {...result,handledBy:handler}
 }
 
@@ -347,10 +347,10 @@ export async function tryRunWhatsAppAgent(params: {
   if (goal) return goal
 
   const gmailContext=await tryRunGmailContextCommand({actor,text:params.text})
-  if(gmailContext)return await learnedReturn(actor,params.text,gmailContext,'gmail-context')
+  if(gmailContext)return await learnedReturn(actor,params.text,gmailContext,'gmail-context',params.messageId)
 
     const gmailSend=await tryRunGmailSendCommand({actor,text:params.text})
-  if(gmailSend)return await learnedReturn(actor,params.text,gmailSend,'gmail-send')
+  if(gmailSend)return await learnedReturn(actor,params.text,gmailSend,'gmail-send',params.messageId)
 
   const autonomyControl=await tryRunAdaptiveAutonomyCommand({actor,text:params.text})
   if(autonomyControl)return {...autonomyControl,handledBy:String(autonomyControl.handledBy||'adaptive-autonomy')}
@@ -375,12 +375,12 @@ export async function tryRunWhatsAppAgent(params: {
   if(priceWatch)return {...priceWatch,handledBy:String(priceWatch.handledBy||'price-watch-clarification')}
 
   const watcherStop = await tryStopWatcherFromCommand({ actor, text:params.text })
-  if (watcherStop) return await learnedReturn(actor,params.text,watcherStop,'watcher-stop')
+  if (watcherStop) return await learnedReturn(actor,params.text,watcherStop,'watcher-stop',params.messageId)
   const watcherRestart = await tryRestartWatcherFromCommand({ actor, text:params.text })
-  if (watcherRestart) return await learnedReturn(actor,params.text,watcherRestart,'watcher-restart')
+  if (watcherRestart) return await learnedReturn(actor,params.text,watcherRestart,'watcher-restart',params.messageId)
 
   const watcherStatus = await tryGetWatcherStatusFromCommand({ actor, text:params.text })
-  if (watcherStatus) return await learnedReturn(actor,params.text,watcherStatus,'watcher-status')
+  if (watcherStatus) return await learnedReturn(actor,params.text,watcherStatus,'watcher-status',params.messageId)
 
   const productWatchStatus = await tryGetProductStockWatchStatusFromCommand({ actor, text:params.text })
   if (productWatchStatus) return { ...productWatchStatus, handledBy:String(productWatchStatus.handledBy || 'product-stock-watch-status') }
@@ -389,13 +389,13 @@ export async function tryRunWhatsAppAgent(params: {
   if (inboxTriageWatch) return { ...inboxTriageWatch, handledBy:String(inboxTriageWatch.handledBy || 'inbox-triage-watch') }
 
   const flightWatch = await tryCreateFlightWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
-  if (flightWatch) return await learnedReturn(actor,params.text,flightWatch,'flight-watch')
+  if (flightWatch) return await learnedReturn(actor,params.text,flightWatch,'flight-watch',params.messageId)
 
   // Product URL + explicit stock/size monitoring is deterministic shopping state,
   // never travel/booking/provider intent. Give it first refusal before appointment,
   // travel and generic browser/research handlers.
   const earlyProductStockWatch = await tryCreateProductStockWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
-  if (earlyProductStockWatch) return await learnedReturn(actor,params.text,earlyProductStockWatch,'product-stock-watch')
+  if (earlyProductStockWatch) return await learnedReturn(actor,params.text,earlyProductStockWatch,'product-stock-watch',params.messageId)
 
   const appointmentRecovery = await withWhatsAppBrowserBudget(actor, tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text }))
   if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String((appointmentRecovery as any).handledBy || 'appointment-followup-recovery') }
@@ -429,15 +429,15 @@ export async function tryRunWhatsAppAgent(params: {
     const specialistTravel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
     if (specialistTravel) {
       const hardened = await hardenTravelResearchResult(specialistTravel, params.text)
-      return await learnedReturn(actor,params.text,hardened,'travel-research')
+      return await learnedReturn(actor,params.text,hardened,'travel-research',params.messageId)
     }
   }
 
   const webPageWatch = await tryCreateWebPageWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
-  if (webPageWatch) return await learnedReturn(actor,params.text,webPageWatch,'web-page-watch')
+  if (webPageWatch) return await learnedReturn(actor,params.text,webPageWatch,'web-page-watch',params.messageId)
 
   const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
-  if (webWatch) return await learnedReturn(actor,params.text,webWatch,'background-web-watch')
+  if (webWatch) return await learnedReturn(actor,params.text,webWatch,'background-web-watch',params.messageId)
 
   const browser = await withWhatsAppBrowserBudget(actor, tryRunBrowserCommand({ actor, surface:'whatsapp', text:params.text }))
   if (browser) return { ...(browser as any), text:`${(browser as any).text || ''}${(browser as any).status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String((browser as any).handledBy || 'secure-browser') }
@@ -447,11 +447,11 @@ export async function tryRunWhatsAppAgent(params: {
 
   if(!(await capabilityIsOff(actor.legacyTelegramId,'reminders'))){
     const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
-    if (compound) return await learnedReturn(actor,params.text,compound,String(compound.handledBy||'compound-plan'))
+    if (compound) return await learnedReturn(actor,params.text,compound,String(compound.handledBy||'compound-plan'),params.messageId)
   }
 
   const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
-  if (persistent) return await learnedReturn(actor,params.text,persistent,'persistent-general-plan')
+  if (persistent) return await learnedReturn(actor,params.text,persistent,'persistent-general-plan',params.messageId)
 
   const general = await tryRunGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (general) return { ...general, text:`${general.text || ''}${general.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(general.handledBy || 'general-plan') }
@@ -464,3 +464,4 @@ export async function tryRunWhatsAppAgent(params: {
 
   return null
 }
+
