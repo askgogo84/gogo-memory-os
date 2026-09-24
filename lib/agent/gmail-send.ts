@@ -106,6 +106,31 @@ async function stageApproval(actor:AgentActor,draft:any){
   return {runId,approvalId:String(approval.id)}
 }
 
+export function isGmailSendVerificationQuery(text:string){
+  const raw=clean(text,1000)
+  return /\b(?:gmail|email|message)\b/i.test(raw)&&/\b(?:actually\s+send|sent|provider\s+verification|verification\s+status|verify|confirmed|thread\s+it\s+was\s+sent|did\s+.*send)\b/i.test(raw)
+}
+
+export async function tryRunGmailSendVerificationQuery(params:{actor:AgentActor;text:string}){
+  if(!isGmailSendVerificationQuery(params.text))return null
+  const tg=String(params.actor.legacyTelegramId)
+  const {data:run,error}=await supabaseAdmin.from('agent_runs')
+    .select('id,status,summary,error,metadata_json,completed_at,updated_at')
+    .eq('telegram_id',tg).eq('type','gmail_send').order('updated_at',{ascending:false}).limit(1).maybeSingle()
+  if(error)throw new Error(`gmail_send_verify_read_failed:${error.message}`)
+  if(!run)return {runId:'gmail-send-verify-none',status:'completed' as const,capability:'email' as const,risk:'low' as const,text:'I do not have a Gmail send execution to verify yet.',handledBy:'gmail-send-verification'}
+  const draft:any=(run.metadata_json as any)?.draft||{}
+  const {data:activity}=await supabaseAdmin.from('agent_activity').select('metadata_json,message,created_at')
+    .eq('telegram_id',tg).eq('run_id',String(run.id)).eq('event_type','gmail_send_verified').order('created_at',{ascending:false}).limit(1).maybeSingle()
+  const ev:any=activity?.metadata_json||{}
+  if(run.status==='completed'&&activity){
+    return {runId:String(run.id),status:'completed' as const,capability:'email' as const,risk:'low' as const,
+      text:`✅ Gmail provider verification: VERIFIED\n\nTo: ${draft.to||ev.to||'unknown'}\nSubject: ${/^re:/i.test(String(draft.subject||''))?draft.subject:`Re: ${draft.subject||''}`}\nThread ID: ${ev.thread_id||draft.threadId||'unavailable'}\nProvider message ID: ${ev.gmail_message_id||'unavailable'}\n\nGmail returned SENT evidence on the same thread.`,handledBy:'gmail-send-verification'}
+  }
+  if(run.status==='outcome_unknown')return {runId:String(run.id),status:'paused' as const,capability:'email' as const,risk:'low' as const,text:`⚠️ Gmail provider verification is incomplete. I will not claim it was sent or retry automatically. Thread: ${draft.threadId||'unavailable'}.`,handledBy:'gmail-send-verification'}
+  return {runId:String(run.id),status:'completed' as const,capability:'email' as const,risk:'low' as const,text:`Latest Gmail send status: ${run.status}. ${run.summary||''}`.trim(),handledBy:'gmail-send-verification'}
+}
+
 export async function tryRunGmailContextCommand(params:{actor:AgentActor;text:string}){
   const raw=clean(params.text,1400)
   const ordinal=raw.match(/^(?:open|show|read|summari[sz]e)\s+(?:the\s+)?(first|second|third|1st|2nd|3rd)\s+one\b/i)
