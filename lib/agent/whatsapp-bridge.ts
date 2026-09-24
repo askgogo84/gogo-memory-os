@@ -273,7 +273,7 @@ export async function tryRunWhatsAppJevSpecialist(params:{
     const travel=await tryRunTravelResearch({actor,surface:'whatsapp',text:params.text})
     if(!travel)return null
     const hardened=await hardenTravelResearchResult(travel,params.text)
-    return {...hardened,handledBy:String(hardened.handledBy||'travel-research')}
+    return await learnedReturn(actor,params.text,hardened,'travel-research')
   }
 
   const browser=await withWhatsAppBrowserBudget(actor,tryRunBrowserCommand({actor,surface:'whatsapp',text:params.text}))
@@ -389,13 +389,13 @@ export async function tryRunWhatsAppAgent(params: {
   if (inboxTriageWatch) return { ...inboxTriageWatch, handledBy:String(inboxTriageWatch.handledBy || 'inbox-triage-watch') }
 
   const flightWatch = await tryCreateFlightWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
-  if (flightWatch) return { ...flightWatch, handledBy:String(flightWatch.handledBy || 'flight-watch') }
+  if (flightWatch) return await learnedReturn(actor,params.text,flightWatch,'flight-watch')
 
   // Product URL + explicit stock/size monitoring is deterministic shopping state,
   // never travel/booking/provider intent. Give it first refusal before appointment,
   // travel and generic browser/research handlers.
   const earlyProductStockWatch = await tryCreateProductStockWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
-  if (earlyProductStockWatch) return { ...earlyProductStockWatch, handledBy:String(earlyProductStockWatch.handledBy || 'product-stock-watch') }
+  if (earlyProductStockWatch) return await learnedReturn(actor,params.text,earlyProductStockWatch,'product-stock-watch')
 
   const appointmentRecovery = await withWhatsAppBrowserBudget(actor, tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text }))
   if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String((appointmentRecovery as any).handledBy || 'appointment-followup-recovery') }
@@ -429,15 +429,15 @@ export async function tryRunWhatsAppAgent(params: {
     const specialistTravel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
     if (specialistTravel) {
       const hardened = await hardenTravelResearchResult(specialistTravel, params.text)
-      return { ...hardened, handledBy:String(hardened.handledBy || 'travel-research') }
+      return await learnedReturn(actor,params.text,hardened,'travel-research')
     }
   }
 
   const webPageWatch = await tryCreateWebPageWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
-  if (webPageWatch) return { ...webPageWatch, handledBy:String(webPageWatch.handledBy || 'web-page-watch') }
+  if (webPageWatch) return await learnedReturn(actor,params.text,webPageWatch,'web-page-watch')
 
   const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
-  if (webWatch) return { ...webWatch, handledBy:String(webWatch.handledBy || 'background-web-watch') }
+  if (webWatch) return await learnedReturn(actor,params.text,webWatch,'background-web-watch')
 
   const browser = await withWhatsAppBrowserBudget(actor, tryRunBrowserCommand({ actor, surface:'whatsapp', text:params.text }))
   if (browser) return { ...(browser as any), text:`${(browser as any).text || ''}${(browser as any).status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String((browser as any).handledBy || 'secure-browser') }
@@ -447,11 +447,11 @@ export async function tryRunWhatsAppAgent(params: {
 
   if(!(await capabilityIsOff(actor.legacyTelegramId,'reminders'))){
     const compound = await tryRunExpiryReminderPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
-    if (compound) return { ...compound, handledBy:compound.handledBy }
+    if (compound) return await learnedReturn(actor,params.text,compound,String(compound.handledBy||'compound-plan'))
   }
 
   const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
-  if (persistent) return { ...persistent, handledBy:String(persistent.handledBy || 'persistent-general-plan') }
+  if (persistent) return await learnedReturn(actor,params.text,persistent,'persistent-general-plan')
 
   const general = await tryRunGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (general) return { ...general, text:`${general.text || ''}${general.status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String(general.handledBy || 'general-plan') }
