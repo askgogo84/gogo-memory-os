@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { saveFollowupState } from './followup-state'
+import { recordDecisionLearning } from '@/lib/agent/decision-learning'
+import type { AgentActor } from '@/lib/agent/actor'
 import {
   createCalendarEvent,
   fetchPrimaryCalendarEvents,
@@ -466,6 +468,7 @@ async function createEventFromPayload(
     startIso: payload.startIso,
     endIso: payload.endIso,
   })
+  recordDecisionLearning({actor:{userId:String(telegramId),legacyTelegramId:telegramId,name:'Gogo'} as AgentActor,text:`create calendar event ${payload.title}`,domain:'calendar',handler:'calendar-create',objectKind:'calendar_event',objectRef:String(created.id),outcome:'verified_success',verified:true}).catch(()=>{})
 
   return (
     `✅ *Calendar event added*\n\n` +
