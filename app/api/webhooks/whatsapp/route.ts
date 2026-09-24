@@ -1075,6 +1075,21 @@ _"${originalText}"_
       }
     }
 
+    // Named calendar time reads are provider-backed reads, not reminder creation.
+    // Route them before Jev/reminder fallbacks so a question like "What time is
+    // <event> tomorrow?" can never create unrelated reminder state.
+    const isNamedCalendarRead=/^(?:what\s+time|when)\s+(?:is|does)\s+.+(?:calendar|meeting|event|appointment).*(?:today|tomorrow|on\s+.+)?\??$/i.test(text.trim())
+    if(isNamedCalendarRead){
+      const calendarReply=await routeFeatureIntent(from,text,{telegramId:resolvedUser.telegramId,caption:bodyText})
+      if(calendarReply){
+        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:'calendar-named-read',actualCapability:'calendar'}).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',calendarReply)
+        await sendWhatsAppMessage(from,calendarReply)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
     // Deterministic reminder identity beats Jev ambiguity. A freshly-created reminder
     // followed by "move it" is grounded state, not semantic ambiguity. Run this before
     // the clarification guard so Jev cannot discard a valid reminder referent.
