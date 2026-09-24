@@ -46,7 +46,7 @@ export function parseWebPageWatchCommand(text:string) {
 function isWatcherStatusQuery(text:string) {
   const raw=clean(text,400).toLowerCase()
   return /^(?:what|which)\s+(?:are\s+you\s+)?(?:monitoring|watching|tracking)(?:\s+for\s+me)?\??$/.test(raw)
-    || /^(?:show|list)\s+(?:my\s+)?(?:monitors?|watchers?|watches)\??$/.test(raw)
+    || /^(?:show|list)\s+(?:my\s+)?(?:active\s+)?(?:monitors?|watchers?|watches)\??$/.test(raw)
     || /^what\s+(?:monitors?|watchers?|watches)\s+(?:do\s+i\s+have|are\s+active)\??$/.test(raw)
 }
 
@@ -86,6 +86,7 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
 
 function stopWatcherIntent(text:string) {
   const raw=clean(text,400).toLowerCase()
+  if(/^(?:stop|cancel|remove|disable)\s+.+?\s+(?:watcher|watch|monitor)\b/.test(raw))return 'named'
   if(/^(?:stop|cancel|remove|disable)\s+(?:all\s+)?(?:monitoring|watching|tracking|monitors?|watchers?|watches)\b/.test(raw))return raw.includes('all')?'all':'latest'
   if(/^(?:stop|cancel|remove|disable)\s+(?:monitoring|watching|tracking)\s+(?:that|it|this)\b/.test(raw))return 'latest'
   if(/^(?:stop|cancel)\s+(?:that|this)\s+(?:watch|monitor)\b/.test(raw))return 'latest'
@@ -122,6 +123,21 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
   const intent=stopWatcherIntent(params.text)
   if(!intent)return null
   const tg=String(params.actor.legacyTelegramId)
+  if(intent==='named'){
+    const target=clean(params.text,400).toLowerCase().replace(/^(?:stop|cancel|remove|disable)\s+/,'').replace(/\s+(?:watcher|watch|monitor).*$/,'').trim()
+    const {data:rows,error:readError}=await supabaseAdmin.from('agent_watchers')
+      .select('id,type,condition_json,created_at').eq('telegram_id',tg).eq('active',true).order('created_at',{ascending:false}).limit(30)
+    if(readError)throw new Error(`watcher_stop_read_failed:${readError.message}`)
+    const norm=(v:unknown)=>clean(v,300).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
+    const q=norm(target)
+    const matches=(rows||[]).filter((row:any)=>norm((row.condition_json as any)?.title||row.type).includes(q)||q.includes(norm((row.condition_json as any)?.title||row.type)))
+    if(matches.length!==1)return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:matches.length?'I found more than one matching active watcher. Please be more specific.':'I could not find that active watcher.',handledBy:'watcher-stop'}
+    const chosen:any=matches[0]
+    const {error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()}).eq('id',chosen.id).eq('telegram_id',tg)
+    if(error)throw new Error(`watcher_stop_failed:${error.message}`)
+    await dismissIdeasForWatcherIds(tg,[String(chosen.id)])
+    return {runId:`watcher-stop-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${String((chosen.condition_json as any)?.title||'that monitor')}.`,handledBy:'watcher-stop'}
+  }
   if(intent==='all'){
     const {data,error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
       .eq('telegram_id',tg).eq('active',true).select('id')
