@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { supabaseAdmin } from '../lib/supabase-admin'
+import { getLearningReport } from '../lib/agent/learning-report'
 import { verifiedReadEvidence } from '../lib/agent/read-evidence'
 import { estimatedCost, measureModelCall, summarizeTaskMeasurements } from '../lib/agent/model-usage'
 async function main(){
@@ -21,6 +23,28 @@ async function main(){
  assert.equal(report.jevCallsPerLinkedCompletedTask,null,'missing observations are not zero calls')
  assert.equal(summarizeTaskMeasurements(runs,activities.map(a=>({...a,telegram_id:'another-user'}))).measuredPlannerTasks,0)
  assert.doesNotMatch(JSON.stringify(report),/"user"|"task"/)
+ const oldFrom=supabaseAdmin.from
+ let loadedHistoricalUsage=false
+ ;(supabaseAdmin as any).from=(table:string)=>{
+  const filters:any[]=[]
+  const result=()=>{
+   if(table==='agent_runs')return {data:runs,error:null}
+   if(filters.some(f=>f[0]==='in'&&f[1]==='run_id')){
+    loadedHistoricalUsage=true
+    assert.ok(!filters.some(f=>f[0]==='gte'),'task history must not be restricted to activity window')
+    return {data:[{...activities[0],created_at:'2026-09-01T00:00:00Z'}],error:null}
+   }
+   return {data:[],error:null}
+  }
+  const chain:any={then:(ok:any)=>Promise.resolve(result()).then(ok)}
+  for(const key of ['select','in','eq','gte','order','limit','range'])chain[key]=(...args:any[])=>{filters.push([key,...args]);return chain}
+  return chain
+ }
+ try{
+  const historical=await getLearningReport({hours:1,limit:20})
+  assert.equal(loadedHistoricalUsage,true)
+  assert.equal(historical.taskMeasurements?.plannerInputTokensPerMeasuredCompletedTask,100)
+ }finally{supabaseAdmin.from=oldFrom}
  console.log('Task metrics: SDK fallback accounting, missing usage, unpriced costs, tenant linkage and privacy passed')
 }
 main().catch(e=>{console.error(e);process.exitCode=1})

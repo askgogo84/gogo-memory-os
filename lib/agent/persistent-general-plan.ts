@@ -179,6 +179,7 @@ export async function tryRunPersistentGeneralPlan(params: {
 
   const duplicate=await findRecentDuplicate(params.actor,params.text)
   if(duplicate?.id){
+    await recordTaskModelUsage(params.actor.legacyTelegramId,String(duplicate.id),modelUsage).catch(()=>{})
     return {
       runId:String(duplicate.id),status:String(duplicate.status||'running'),capability:'orchestrator',risk:'low' as const,
       text:safe(duplicate.summary||'Gogo is already working on this same request.'),handledBy:'persistent-general-plan' as const,
