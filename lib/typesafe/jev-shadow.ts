@@ -1,5 +1,6 @@
 import { isSecretShapedMemory, redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { buildJevShadowQuestions, JEV_SHADOW_MODEL, JEV_SHADOW_VERSION } from './questions'
+import type { GuardedRoutingDecision } from '@/lib/agent/decision-learning'
 
 export type JevShadowChoice = {
   choice: string | null
@@ -44,6 +45,7 @@ export function buildJevShadowRequest(params: {
   focusKind: string
   focusSummary?: string | null
   recentContext?: string | null
+  learnedRouting?: GuardedRoutingDecision | null
 }) {
   const rawText = String(params.text || '').slice(0, 1200)
   const rawSummary = String(params.focusSummary || '').slice(0, 320)
@@ -51,10 +53,19 @@ export function buildJevShadowRequest(params: {
   const safeText = isSecretShapedMemory(rawText) ? '[sensitive turn withheld from TypeSafe]' : redactSecretShapedText(rawText)
   const safeSummary = isSecretShapedMemory(rawSummary) ? '[sensitive context withheld from TypeSafe]' : redactSecretShapedText(rawSummary)
   const safeRecent = isSecretShapedMemory(rawRecent) ? '[sensitive recent context withheld from TypeSafe]' : redactSecretShapedText(rawRecent)
+  // Only approved evidence crosses the model boundary. A rejected preference
+  // must never be included, even with a label asking the model to ignore it.
+  const learned = params.learnedRouting
+  const safeLearned = learned?.useLearned && learned.handler &&
+    /^[a-z][a-z0-9_-]{0,99}$/.test(learned.handler) &&
+    Number.isFinite(learned.confidence) && learned.confidence >= 0.82 && learned.confidence <= 1
+    ? { preferred_handler: learned.handler, confidence: learned.confidence, authority: 'first_refusal_only' }
+    : null
   return {
     model: JEV_SHADOW_MODEL,
     state: {
       user_message: safeText,
+      ...(safeLearned ? { learned_routing: safeLearned } : {}),
       current_router: {
         capability: String(params.currentCapability || 'unknown').slice(0, 80),
         action_family: String(params.currentActionFamily || 'unknown').slice(0, 80),
@@ -122,6 +133,7 @@ export async function runJevShadow(params: {
   focusKind: string
   focusSummary?: string | null
   recentContext?: string | null
+  learnedRouting?: GuardedRoutingDecision | null
   timeoutMs?: number
 }): Promise<JevShadowResult | null> {
   const apiKey = String(process.env.TYPESAFE_API_KEY || '').trim()
