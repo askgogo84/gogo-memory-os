@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { syncOpenLoopsForUser } from './open-loops'
-import { partitionAttentionRuns, ideaWatcherIds, currentWatcherIdeas } from './attention-state'
+import { partitionAttentionRuns, ideaWatcherIds, currentWatcherIdeas, watcherSupportsCurrentIdea } from './attention-state'
 
 function clean(value:unknown,max=300){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
 function fmt(iso:string|null|undefined,timezone='Asia/Kolkata'){
@@ -80,10 +80,10 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
   const ideaIds=[...new Set(ideas.flatMap(ideaWatcherIds))] as string[]
   let currentIdeas=ideas
   if(ideaIds.length){
-    const {data:activeIdeaWatchers,error:ideaError}=await supabaseAdmin.from('agent_watchers').select('id')
-      .eq('telegram_id',tg).eq('active',true).in('id',ideaIds)
+    const {data:activeIdeaWatchers,error:ideaError}=await supabaseAdmin.from('agent_watchers').select('id,active,last_state_json')
+      .eq('telegram_id',tg).in('id',ideaIds)
     if(ideaError)throw new Error('attention_watcher_evidence_read_failed')
-    currentIdeas=currentWatcherIdeas(ideas,new Set((activeIdeaWatchers||[]).map((w:any)=>String(w.id))))
+    currentIdeas=currentWatcherIdeas(ideas,new Set((activeIdeaWatchers||[]).filter(watcherSupportsCurrentIdea).map((w:any)=>String(w.id))))
   }
   const runLines=(items:any[])=>items.slice(0,6).map(r=>`• ${clean(r.title,150)} — ${String(r.status).replaceAll('_',' ')}`).join('\n')
 

@@ -19,3 +19,8 @@ export function ideaWatcherIds(idea:any):string[]{
 export function currentWatcherIdeas(ideas:any[],activeIds:Set<string>){
   return ideas.filter(idea=>ideaWatcherIds(idea).every(id=>activeIds.has(id)))
 }
+
+export function watcherSupportsCurrentIdea(watcher:any){
+  const state=watcher.last_state_json||{}
+  return watcher.active===true||(state.triggered===true&&!state.stoppedAt&&!state.stopped_at)
+}

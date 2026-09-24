@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { isGmailVerificationQuery, readGmailSendVerification } from '../lib/agent/gmail-verification'
-import { partitionAttentionRuns, currentWatcherIdeas } from '../lib/agent/attention-state'
+import { partitionAttentionRuns, currentWatcherIdeas, watcherSupportsCurrentIdea } from '../lib/agent/attention-state'
 import { supabaseAdmin } from '../lib/supabase-admin'
 
 for(const t of ['Did Gmail actually send that message? Give me provider verification.', 'Verify that Gmail sent it', 'Show proof that the email was sent'])assert.equal(isGmailVerificationQuery(t),true)
-for(const t of ['Send it','Draft an email saying I sent it','Stop the watcher'])assert.equal(isGmailVerificationQuery(t),false)
+for(const t of ['Send it','Draft an email saying I sent it','Stop the watcher','check my Gmail send connection','Check if Gmail send is authorized'])assert.equal(isGmailVerificationQuery(t),false)
 const grouped=partitionAttentionRuns([
  {id:'1',title:'Same title',status:'running'}, {id:'2',title:'Same title',status:'paused'},
  {id:'3',status:'queued'}, {id:'4',status:'waiting_approval'}, {id:'5',status:'outcome_unknown'},
@@ -16,6 +16,10 @@ assert.deepEqual(grouped.incomplete.map(r=>r.id),['3'])
 assert.deepEqual(grouped.pendingDecisions.map(r=>r.id),['4'])
 const ideas=[{id:'stopped',source_refs:[{type:'watcher',id:'w1'}]},{id:'live',source_refs:[{type:'watcher',id:'w2'}]},{id:'other'}]
 assert.deepEqual(currentWatcherIdeas(ideas,new Set(['w2'])).map(r=>r.id),['live','other'])
+
+assert.equal(watcherSupportsCurrentIdea({active:false,last_state_json:{triggered:true}}),true)
+assert.equal(watcherSupportsCurrentIdea({active:false,last_state_json:{triggered:true,stoppedAt:'now'}}),false)
+assert.equal(watcherSupportsCurrentIdea({active:false}),false)
 
 async function main(){
  const original=supabaseAdmin.from

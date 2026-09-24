@@ -3,6 +3,7 @@ import type { AgentActor } from './actor'
 
 export function isGmailVerificationQuery(text:string){
   const t=text.trim()
+  if(/\b(?:connection|connected|connect|authorization|authorised|authorized|scope)\b/i.test(t))return false
   return /^(?:did|has|was|verify|check|confirm|show|give me)\b/i.test(t)
     && /\b(?:gmail|email|message)\b/i.test(t)
     && /\b(?:sent|send|verification|verify|proof|evidence)\b/i.test(t)
