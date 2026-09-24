@@ -1084,7 +1084,7 @@ _"${originalText}"_
     if(isDeterministicWatcherCommand){
       const watcherAgent=await tryRunWhatsAppAgent({user:resolvedUser,text,messageId:inboundMessageSid||null})
       if(watcherAgent){
-        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:watcherAgent.handledBy||'watcher',actualCapability:'browser',status:watcherAgent.status||null,runId:watcherAgent.runId||null}).catch(()=>{})
+        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:watcherAgent.handledBy||'watcher',verification:watcherAgent.verification,actualCapability:'browser',status:watcherAgent.status||null,runId:watcherAgent.runId||null}).catch(()=>{})
         await saveConversation(resolvedUser.telegramId,'user',text)
         await saveConversation(resolvedUser.telegramId,'assistant',watcherAgent.text)
         await sendWhatsAppMessage(from,watcherAgent.text)
@@ -1142,7 +1142,7 @@ _"${originalText}"_
     if(isDeterministicGmailCommand){
       const gmailAgent=await tryRunWhatsAppAgent({user:resolvedUser,text,messageId:inboundMessageSid||null})
       if(gmailAgent){
-        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:gmailAgent.handledBy||'gmail-send',actualCapability:'email',status:gmailAgent.status||null,runId:gmailAgent.runId||null}).catch(()=>{})
+        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:gmailAgent.handledBy||'gmail-send',verification:gmailAgent.verification,actualCapability:'email',status:gmailAgent.status||null,runId:gmailAgent.runId||null}).catch(()=>{})
         await saveConversation(resolvedUser.telegramId,'user',text)
         await saveConversation(resolvedUser.telegramId,'assistant',gmailAgent.text)
         await sendWhatsAppMessage(from,gmailAgent.text)

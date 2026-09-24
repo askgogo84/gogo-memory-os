@@ -24,3 +24,10 @@ export function watcherSupportsCurrentIdea(watcher:any){
   const state=watcher.last_state_json||{}
   return watcher.active===true||(state.triggered===true&&!state.stoppedAt&&!state.stopped_at)
 }
+
+export function isAutonomyStatus(text:string){
+  const t=String(text||'').replace(/\s+/g,' ').trim().slice(0,500).toLowerCase()
+  return /^(?:what(?:'s| is)?|show me|give me)\s+(?:are\s+you\s+)?(?:working on|doing|handling|tracking)(?:\s+(?:for\s+me|in the background|right now|now))*\??$/.test(t)
+    || /^(?:what(?:'s| is)?|show me)\s+(?:my\s+)?(?:agent|gogo|background)\s+(?:status|activity|work)\??$/.test(t)
+}
+

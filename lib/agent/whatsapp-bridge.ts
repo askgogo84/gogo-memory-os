@@ -1,3 +1,4 @@
+import { verifiedReadEvidence } from './read-evidence'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
@@ -34,6 +35,7 @@ export type WhatsAppAgentResult = {
   runId?: string
   status?: string
   handledBy: string
+  verification?: {verified:boolean;source:string;kind:string;objectKind:string;objectRef:string|null}
   conversationPersisted?: boolean
 }
 
@@ -314,8 +316,9 @@ export async function tryRunWhatsAppAttentionCommand(params:{
 async function learnedReturn(actor:AgentActor,text:string,result:any,fallbackHandler:string,messageId?:string|number|null){
   if(!result)return null
   const handler=String(result.handledBy||fallbackHandler)
-  const outcome=observedOutcome(result.status)
-  await recordDecisionLearning({actor,text,decisionId:learningDecisionId(messageId,result.runId),domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified:false,objectRef:result.runId||null}).catch(()=>{})
+  const verified=verifiedReadEvidence(handler,result.status,result.verification)
+  const outcome=verified?'verified_success':observedOutcome(result.status)
+  await recordDecisionLearning({actor,text,decisionId:learningDecisionId(messageId,result.runId),domain:decisionDomain(String(result.capability||''),handler),handler,outcome,verified,objectKind:result.verification?.objectKind||null,objectRef:result.verification?.objectRef||result.runId||null}).catch(()=>{})
   return {...result,handledBy:handler}
 }
 

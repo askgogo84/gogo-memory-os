@@ -37,6 +37,9 @@ assert.equal(report.taskMetrics.estimatedModelCostPerCompletedTask,null)
 assert.doesNotMatch(JSON.stringify(report),/private-user|private secret text|private-provider-id/)
 assert.equal(summarizeLearningActivity([...rows,{...rows[0],telegram_id:'other-user'}]).summary.decisions,31,'tenant-local IDs never collapse across users')
 
+assert.equal(summarizeEvidence([{...wins[0],outcome:'success',verified:false},wins[0]]).verifiedCompletions,1,'generic completion cannot erase provider proof')
+assert.equal(summarizeEvidence([{...wins[0],outcome:'unknown',verified:false},wins[0]]).verifiedCompletions,0,'new unknown evidence supersedes old provider proof')
+
 async function main(){
  const original=supabaseAdmin.from
  const inserts:any[]=[]

@@ -1,3 +1,4 @@
+import { summarizeTaskMeasurements } from './model-usage'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { calibrationBuckets, summarizeEvidence, type LearningEvidence } from './decision-evidence'
 
@@ -12,7 +13,7 @@ export function summarizeLearningActivity(rows:any[]){
       decision_id:m.decision_id?`${r.telegram_id}:${m.decision_id}`:null}
   })
   const observed=rows.filter(r=>r.event_type==='shadow_brain_observation')
-  const jev=observed.map(r=>r.metadata_json?.jev_shadow).filter(Boolean)
+  const jev=observed.map(r=>r.metadata_json?.jev_shadow).filter(j=>j?.attempted===true)
   const patterns=new Map<string,LearningEvidence[]>()
   for(const r of decisions){const key=r.domain+':'+r.handler;patterns.set(key,[...(patterns.get(key)||[]),r])}
   const sumMeasured=(key:string)=>{
@@ -27,13 +28,13 @@ export function summarizeLearningActivity(rows:any[]){
     routing:{observedTurns:observed.length,allowedHints:observed.filter(r=>r.metadata_json?.learned_routing?.useLearned===true).length,
       shadowOnlyHints:observed.filter(r=>r.metadata_json?.learned_routing?.useLearned===false).length,
       authority:'first_refusal_only'},
-    jev:{calls:jev.length,failedCalls:jev.filter(j=>j.ok===false).length,inputTokens:sumMeasured('inputTokens'),outputTokens:sumMeasured('outputTokens'),
+    jev:{calls:jev.length,deterministicSkips:observed.filter(r=>r.metadata_json?.jev_skip_reason==='deterministic_read').length,failedCalls:jev.filter(j=>j.ok===false).length,inputTokens:sumMeasured('inputTokens'),outputTokens:sumMeasured('outputTokens'),
       meanLatencyMs:latency.length?latency.reduce((a,b)=>a+b,0)/latency.length:null},
     // These need linked task lifecycle/cost data. Null is deliberate: per-turn
     // observations cannot prove per-completed-task cost or first-route accuracy.
     taskMetrics:{jevCallsPerCompletedTask:null,llmCallsPerCompletedTask:null,inputTokensPerCompletedTask:null,
       outputTokensPerCompletedTask:null,estimatedModelCostPerCompletedTask:null,latencyPerCompletedTask:null,
-      reason:'task_cost_linkage_not_yet_available'},
+      reason:'whole_task_model_coverage_incomplete'},
     recentEvents:rows.filter(r=>r.event_type==='decision_learning').slice(0,25).map(r=>({at:r.created_at,
       domain:safeLabel(r.metadata_json?.domain),handler:safeLabel(r.metadata_json?.handler),outcome:safeLabel(r.metadata_json?.outcome),
       verified:r.metadata_json?.outcome==='verified_success'&&r.metadata_json?.verified===true})),
@@ -43,11 +44,13 @@ export function summarizeLearningActivity(rows:any[]){
 // Called only by the existing administrator-authenticated report endpoint.
 export async function getLearningReport(params:{hours:number;limit:number}){
   const {data,error}=await supabaseAdmin.from('agent_activity')
-    .select('event_type,created_at,telegram_id,metadata_json')
-    .in('event_type',['decision_learning','shadow_brain_observation'])
+    .select('event_type,created_at,telegram_id,run_id,metadata_json')
+    .in('event_type',['decision_learning','shadow_brain_observation','shadow_router_outcome','model_usage'])
     .gte('created_at',new Date(Date.now()-params.hours*3600000).toISOString())
     .order('created_at',{ascending:false}).limit(params.limit)
   if(error)throw new Error('learning_report_read_failed')
-  return {windowHours:params.hours,sampleLimit:params.limit,truncated:(data||[]).length===params.limit,
+  const {data:runs,error:runError}=await supabaseAdmin.from('agent_runs').select('id,telegram_id,status,started_at,completed_at').eq('status','completed').gte('completed_at',new Date(Date.now()-params.hours*3600000).toISOString()).order('completed_at',{ascending:false}).limit(params.limit)
+  if(runError)throw new Error('task_metrics_read_failed')
+  return {taskMeasurements:summarizeTaskMeasurements(runs||[],data||[]),taskSampleTruncated:(runs||[]).length===params.limit,windowHours:params.hours,sampleLimit:params.limit,truncated:(data||[]).length===params.limit,
     ...summarizeLearningActivity(data||[])}
 }

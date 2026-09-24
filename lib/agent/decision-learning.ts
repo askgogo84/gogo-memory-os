@@ -29,11 +29,13 @@ export async function recordDecisionClarification(p:{actor:AgentActor;text:strin
 }
 
 export type GuardedRoutingDecision={useLearned:boolean;handler:string|null;confidence:number;reason:string}
+const SAFE_LEARNED_HANDLERS=new Set(['gmail-context','gmail-verification','calendar-named-read','read-only-schedule','reminder-query','watcher-status','autonomy-status','connection-status'])
 const CONSEQUENTIAL=/gmail-send|calendar-create|book|checkout|purchase|payment|send-email|delete|submit/i
 export function calibrateGuardedRouting(p:{preferredHandler:string|null;confidence:number;avoidHandlers:string[];typedContextHandler?:string|null;conflictingTypedContext?:boolean;actionRequiresApproval?:boolean}):GuardedRoutingDecision{
   if(!p.preferredHandler)return{useLearned:false,handler:null,confidence:0,reason:'no_learned_preference'}
   if(!Number.isFinite(p.confidence)||p.confidence<0||p.confidence>1)return{useLearned:false,handler:null,confidence:0,reason:'invalid_confidence'}
   if(p.actionRequiresApproval||CONSEQUENTIAL.test(p.preferredHandler))return{useLearned:false,handler:null,confidence:p.confidence,reason:'safety_kernel'}
+  if(!SAFE_LEARNED_HANDLERS.has(p.preferredHandler))return{useLearned:false,handler:null,confidence:p.confidence,reason:'handler_not_approved_for_live_learning'}
   if(p.conflictingTypedContext)return{useLearned:false,handler:null,confidence:p.confidence,reason:'typed_context_conflict'}
   if(p.typedContextHandler&&p.typedContextHandler!==p.preferredHandler)return{useLearned:false,handler:null,confidence:p.confidence,reason:'typed_context_wins'}
   if(p.avoidHandlers.includes(p.preferredHandler))return{useLearned:false,handler:null,confidence:p.confidence,reason:'negative_evidence'}

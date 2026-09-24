@@ -10,6 +10,7 @@ export type JevShadowChoice = {
 
 export type JevShadowResult = {
   ok: boolean
+  attempted?: boolean
   version: string
   model: string
   latencyMs: number
@@ -91,12 +92,13 @@ export function parseJevShadowResponse(raw: any, latencyMs = 0, contextual = fal
   const contextualValid = !contextual || validChoiceAnswer(answers.referent_kind)
   const valid = coreValid && contextualValid
   const usage = {
-    inputTokens: Number.isFinite(Number(raw?.usage?.input_tokens)) ? Number(raw.usage.input_tokens) : null,
-    outputTokens: Number.isFinite(Number(raw?.usage?.output_tokens)) ? Number(raw.usage.output_tokens) : null,
+    inputTokens: typeof raw?.usage?.input_tokens==='number' && Number.isFinite(raw.usage.input_tokens) && raw.usage.input_tokens>=0 ? raw.usage.input_tokens : null,
+    outputTokens: typeof raw?.usage?.output_tokens==='number' && Number.isFinite(raw.usage.output_tokens) && raw.usage.output_tokens>=0 ? raw.usage.output_tokens : null,
   }
   if (!valid) {
     return {
       ok: false,
+      attempted: true,
       version: JEV_SHADOW_VERSION,
       model: String(raw?.model || JEV_SHADOW_MODEL),
       latencyMs,
@@ -112,6 +114,7 @@ export function parseJevShadowResponse(raw: any, latencyMs = 0, contextual = fal
   }
   return {
     ok: true,
+    attempted: true,
     version: JEV_SHADOW_VERSION,
     model: String(raw?.model || JEV_SHADOW_MODEL),
     latencyMs,
@@ -142,6 +145,7 @@ export async function runJevShadow(params: {
   if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || '')) || (params.needsContext && isSecretShapedMemory(String(params.recentContext || '')))) {
     return {
       ok: false,
+      attempted: false,
       version: JEV_SHADOW_VERSION,
       model: JEV_SHADOW_MODEL,
       latencyMs: 0,
@@ -175,6 +179,7 @@ export async function runJevShadow(params: {
     if (!response.ok) {
       return {
         ok: false,
+      attempted: true,
         version: JEV_SHADOW_VERSION,
         model: JEV_SHADOW_MODEL,
         latencyMs: Date.now() - started,
@@ -192,6 +197,7 @@ export async function runJevShadow(params: {
   } catch (err: any) {
     return {
       ok: false,
+      attempted: true,
       version: JEV_SHADOW_VERSION,
       model: JEV_SHADOW_MODEL,
       latencyMs: Date.now() - started,

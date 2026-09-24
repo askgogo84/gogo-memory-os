@@ -31,16 +31,22 @@ export function observedOutcome(status:unknown):'success'|'failed'|'blocked'|'un
   return 'unknown'
 }
 
-export function uniqueEvidence(rows:LearningEvidence[]){
+export function uniqueEvidence(inputRows:LearningEvidence[]){
   // Input is newest first. Prefer the latest outcome of a decision, so a later
   // correction/unknown reconciliation supersedes its earlier success.
-  const seen=new Set<string>()
-  return rows.filter(row=>{
-    if(!row.decision_id)return true // legacy events cannot be reliably joined
-    const key=`${row.domain}:${row.handler}:${row.decision_id}`
-    if(seen.has(key))return false
-    seen.add(key);return true
-  })
+  const rows:LearningEvidence[]=[],indexes=new Map<string,number>()
+  for(const row of inputRows){
+    if(!row.decision_id){rows.push(row);continue}
+    const key=`${row.domain}:${row.handler}:${row.decision_id}`,index=indexes.get(key)
+    if(index===undefined){indexes.set(key,rows.length);rows.push(row);continue}
+    const latest=rows[index]
+    // A generic router completion after provider verification carries no new
+    // provider state. Preserve that proof, but never override later negative,
+    // blocked, or unknown evidence with an older success.
+    if(latest.outcome==='success'&&row.outcome==='verified_success'&&row.verified===true)
+      rows[index]={...latest,verified:true,outcome:'verified_success'}
+  }
+  return rows
 }
 
 export function summarizeEvidence(input:LearningEvidence[]){

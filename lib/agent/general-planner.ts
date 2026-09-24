@@ -1,3 +1,4 @@
+import { recordTaskModelUsage, type ModelUsage } from './model-usage'
 import { completeAgentPlanPrompt } from './planner-provider'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -156,11 +157,11 @@ export function shouldUseGeneralPlanner(text: string) {
   return false
 }
 
-export async function planGeneralAgentRequest(text: string): Promise<GeneralPlan | null> {
+export async function planGeneralAgentRequest(text: string, onUsage?:(usage:ModelUsage)=>void): Promise<GeneralPlan | null> {
   if (!shouldUseGeneralPlanner(text)) return null
   const prompt = `You are the planning layer for AskGogo, a private personal agent. Turn the user's OUTCOME into 2-${MAX_STEPS} concrete executable steps using ONLY these tools:\n\nmemory, files, reminders, lists, tasks, email, calendar, web_search, travel, artifact\n\nMission rules:\n- Cover every explicit deliverable in the user's request. Do not collapse a multi-part mission into one search or one prose answer.\n- Prefer safe, reversible work first. Put consequential actions such as calendar changes, sends, bookings or external submissions after safe preparation so useful work can finish before an approval pause.\n- If the user says to use what AskGogo already knows, include a memory step near the beginning. Never reveal sensitive identifiers in the plan.\n- If the user explicitly names multiple tasks, use separate task steps when needed so every named task is represented. Each task instruction must literally include the task text; do not rely on hidden context from another step.\n- If the user requests a packing/list deliverable, include a lists step.\n- If the user requests a reminder, include a reminders step. If its exact trigger depends on a future choice that is not known yet, do not invent a date or flight; make the dependency explicit so execution pauses for the missing input.\n- For flight research, phrase the executable instruction as “Search flights from ORIGIN to DESTINATION on DATE” so route direction and date can be verified deterministically.\n- If the user requests a brief/report/artifact, place the artifact after the safe preparatory work but BEFORE a later approval-required or unresolved-dependency step when the artifact can summarize the prepared plan. Do not block a useful draft artifact behind an approval unless it explicitly requires post-execution results.\n- For calendar writes, include exact dates in the instruction. Calendar writes always wait for deterministic approval before execution.\n- The plan sees ONLY this user request. Never assume hidden values, credentials, document numbers or account data.\n- Each instruction must be self-contained and executable by that tool.\n- Use web_search only for public-web research; it can read/search but cannot submit forms.\n- email can read/draft/send, but sending will be stopped by a deterministic approval gate.\n- calendar can read/create/change; writes will be stopped by approval.\n- travel can read/organize; bookings will be stopped by approval.\n- payments/purchases are NOT an available planner tool; if the user asks to spend money, prepare only and let deterministic browser/travel execution stop before purchase.\n- artifact creates a private structured output from the results of previous steps.\n- Do not put secrets or guessed private values into instructions.\n- Return JSON only.\n\nShape:\n{"title":"short outcome","reason":"why multiple tools are needed","steps":[{"tool":"memory","title":"Review relevant context","instruction":"Find relevant saved context for this trip without revealing sensitive identifiers."},{"tool":"web_search","title":"Research flight options","instruction":"Search flights from Bengaluru to Mumbai on 15 September 2026"},{"tool":"tasks","title":"Create check-in task","instruction":"Create task: Complete web check-in"},{"tool":"artifact","title":"Create trip brief","instruction":"Create a concise private brief from this run","artifactType":"trip","artifactTitle":"Mumbai work trip brief"}]}\n\nUser request: ${JSON.stringify(String(text || '').slice(0, 1800))}`
   try {
-    const out = await completeAgentPlanPrompt(prompt)
+    const out = await completeAgentPlanPrompt(prompt,onUsage)
     return normalizePlan(parseJsonLoose(out))
   } catch (err: any) {
     console.error('GENERAL_AGENT_PLAN_FAILED:', err?.message || err)
@@ -403,7 +404,8 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
 }
 
 export async function tryRunGeneralPlan(params:{actor:AgentActor;surface:AgentSurface;text:string;messageId?:string|number|null}):Promise<GeneralPlanResult|null>{
-  const plan=await planGeneralAgentRequest(params.text)
+  const modelUsage:ModelUsage[]=[]
+  const plan=await planGeneralAgentRequest(params.text,usage=>modelUsage.push(usage))
   if(!plan)return null
   const tg=params.actor.legacyTelegramId
   const now=new Date().toISOString()
@@ -415,6 +417,7 @@ export async function tryRunGeneralPlan(params:{actor:AgentActor;surface:AgentSu
   }).select('id').single()
   if(error||!run?.id)throw new Error(`general_plan_run_create_failed:${error?.message||'unknown'}`)
   const runId=String(run.id)
+  await recordTaskModelUsage(tg,runId,modelUsage).catch(()=>{})
   const stepIds:string[]=[]
   for(let i=0;i<plan.steps.length;i++)stepIds.push(await addStep(tg,runId,i+1,plan.steps[i]))
   await supabaseAdmin.from('agent_runs').update({metadata_json:{input_text:String(params.text).slice(0,2000),plan_type:'general_multi_tool',plan,stepIds}}).eq('id',runId).eq('telegram_id',String(tg))
@@ -452,3 +455,4 @@ export async function resumeApprovedGeneralPlan(params:{actor:AgentActor;runId:s
   if(result.status!=='waiting_approval')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approval.id).eq('telegram_id',String(tg))
   return result
 }
+

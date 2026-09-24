@@ -1,3 +1,4 @@
+import { verifiedReadEvidence } from './read-evidence'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { decisionDomain, recordDecisionLearning } from './decision-learning'
 import { observedOutcome, learningDecisionId } from './decision-evidence'
@@ -10,6 +11,7 @@ export async function recordShadowRouterOutcome(params:{
   actualHandler:string
   actualCapability?:string|null
   status?:string|null
+  verification?:unknown
   runId?:string|null
 }){
   const eventId=String(params.eventId||'').trim()
@@ -40,11 +42,12 @@ export async function recordShadowRouterOutcome(params:{
   const actor={legacyTelegramId:Number(params.telegramId)} as AgentActor
   if(!Number.isFinite(actor.legacyTelegramId))return
   const domain=decisionDomain(String(params.actualCapability||m.capability||''),params.actualHandler)
-  const outcome=params.actualHandler==='jev-clarification-guard'?'clarified':observedOutcome(params.status)
+  const verified=verifiedReadEvidence(params.actualHandler,params.status,params.verification)
+  const outcome=verified?'verified_success':params.actualHandler==='jev-clarification-guard'?'clarified':observedOutcome(params.status)
   await recordDecisionLearning({actor,text:m.user_text,domain,handler:params.actualHandler,decisionId:learningDecisionId(eventId,params.runId),
     objectKind:learningDecisionId(null,params.runId)?'agent_run':null,objectRef:learningDecisionId(null,params.runId),
     confidence:m.learned_routing?.useLearned?m.learned_routing.confidence:m.jev_shadow?.intent?.confidence,
-    outcome,verified:false}).catch(()=>{})
+    outcome,verified}).catch(()=>{})
   const target=m.correction_target
   if(target?.decisionId&&target.handler!==params.actualHandler&&params.status==='completed'){
     await recordDecisionLearning({actor,text:target.text,domain:target.domain,handler:target.handler,

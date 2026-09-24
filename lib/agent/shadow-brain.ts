@@ -1,3 +1,5 @@
+import { isGmailVerificationQuery } from './gmail-verification'
+import { isAutonomyStatus } from './attention-state'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { classifyAgentRequest } from './classifier'
 import type { AgentActor } from './actor'
@@ -206,7 +208,8 @@ export async function observeShadowBrainTurn(params:{
   // learning shadow-only until the authoritative specialist resolves the object.
   const guarded=calibrateGuardedRouting({preferredHandler:learned.preferredHandler,confidence:learned.confidence,avoidHandlers:learned.avoidHandlers,conflictingTypedContext:observation.ambiguous||contextual,actionRequiresApproval:Boolean(classified.approvalAction)||classified.irreversible||classified.risk==='high'||['buy','book','send'].includes(observation.actionFamily)})
 
-  const jev=await runJevShadow({
+  const deterministicRead=isGmailVerificationQuery(params.text)||isAutonomyStatus(params.text)||/^(?:show|list)\s+(?:my\s+)?(?:active\s+)?(?:monitors?|watchers?|watches)\??$/i.test(params.text.trim())
+  const jev=deterministicRead?null:await runJevShadow({
     text:params.text,
     currentCapability:observation.capability,
     currentActionFamily:observation.actionFamily,
@@ -219,7 +222,7 @@ export async function observeShadowBrainTurn(params:{
     learnedRouting:guarded,
     timeoutMs:900,
   }).catch((err:any)=>({
-    ok:false,version:'jev-shadow-v1',model:'jev-latest',latencyMs:0,contextual,
+    ok:false,attempted:false,version:'jev-shadow-v1',model:'jev-latest',latencyMs:0,contextual,
     intent:{choice:null,confidence:null,probabilities:{}},
     actionMode:{choice:null,confidence:null,probabilities:{}},
     referentKind:{choice:null,confidence:null,probabilities:{}},
@@ -248,8 +251,11 @@ export async function observeShadowBrainTurn(params:{
       ambiguous:observation.ambiguous,
       learned_routing:guarded,
       shadow_version:'shadow-brain-v1',
+      jev_attempted:jev?.attempted===true,
+      jev_skip_reason:deterministicRead?'deterministic_read':jev?null:'not_configured',
       jev_shadow:jev?{
         ok:Boolean(jev.ok),
+        attempted:jev.attempted===true,
         version:jev.version,
         model:jev.model,
         latency_ms:jev.latencyMs,

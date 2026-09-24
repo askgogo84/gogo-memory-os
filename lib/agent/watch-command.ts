@@ -65,6 +65,7 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
       runId:'watcher-status-none',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
       text:'You do not have any active background monitors right now.',
       handledBy:'watcher-status',
+      verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
     }
   }
   const lines=data.map((row:any,index:number)=>{
@@ -78,9 +79,10 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     return `${index+1}. ${label} — active, checking about every ${cadence} min`
   })
   return {
-    runId:'watcher-status-active',status:'watching' as const,capability:'browser' as const,risk:'low' as const,
+    runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
     text:`🔎 *Active background monitors*\n\n${lines.join('\n')}\n\nSay *stop monitoring that* to stop the most recent one.`,
     handledBy:'watcher-status',
+      verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
   }
 }
 
@@ -1047,3 +1049,4 @@ export async function tryCreateFlightWatchFromCommand(params: {
     handledBy: 'flight-watch-followup',
   }
 }
+
