@@ -1104,6 +1104,19 @@ _"${originalText}"_
       }
     }
 
+    // Connected-account questions are private state reads, never public web search.
+    const isConnectedAccountQuery=/^(?:which|what)\s+.*(?:gmail|google|email|calendar).*\bconnected\b.*(?:askgogo|gogo|me)?\??$/i.test(text.trim())
+    if(isConnectedAccountQuery){
+      const accountAgent=await tryRunWhatsAppAgent({user:resolvedUser,text,messageId:inboundMessageSid||null})
+      if(accountAgent){
+        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:accountAgent.handledBy||'connection-status',actualCapability:'memory',status:accountAgent.status||null,runId:accountAgent.runId||null}).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',accountAgent.text)
+        await sendWhatsAppMessage(from,accountAgent.text)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
     // Gmail draft/send/status commands are deterministic provider workflows.
     // Give them first refusal before Jev/read-only semantic routing so a draft cannot
     // be downgraded to Gmail read and a Send-status query cannot hallucinate scopes.
