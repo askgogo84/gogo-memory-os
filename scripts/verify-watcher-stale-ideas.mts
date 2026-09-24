@@ -15,6 +15,6 @@ assert.match(pulse,/surfacableIdeaWatchers/)
 assert.match(pulse,/fetchPulseIdeas/)
 assert.match(pulse,/\.range\(from,from\+pageSize-1\)/)
 assert.match(pulse,/watcherRefs\.length&&!watcherRefs\.some/)
-assert.match(pulse,/\.eq\('active',true\)/)
+assert.match(pulse,/row\.active===true \|\| state\.triggered===true/)
 
 console.log('watcher stale-idea lifecycle contract passed')
