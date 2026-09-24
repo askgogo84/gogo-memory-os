@@ -17,13 +17,20 @@ function norm(value:unknown){return clean(value,300).toLowerCase().replace(/[^a-
 export function isGmailReplyCommand(text:string){
   const raw=clean(text,1200)
   return /^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\s+(?:the\s+)?(?:latest\s+)?(?:email|mail|message)(?:\s+from)?\s+.+?\s+(?:saying|with|:)/i.test(raw)
+    || /^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\s+(?:the\s+)?(.+?)\s+(?:email|mail|message)\s+(?:saying|with|:)/i.test(raw)
     || /^(?:send\s+it|send\s+this\s+reply)$/i.test(raw)
+}
+
+export function isGmailSendStatusQuery(text:string){
+  const raw=clean(text,900)
+  return /^(?:is\s+gmail\s+send\s+(?:connected|authori[sz]ed)(?:\s+and\s+(?:connected|authori[sz]ed))?\s+for\s+me|can\s+you\s+actually\s+send\s+gmail\s+from\s+my\s+account\s+right\s+now.*|check\s+my\s+gmail\s+send\s+connection(?:\s+again)?)\??$/i.test(raw)
 }
 
 export function parseGmailReplyCommand(text:string){
   const raw=clean(text,2000)
   const draftOnly=/^draft\b/i.test(raw)
   const m=raw.match(/^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\s+(?:the\s+)?(?:latest\s+)?(?:email|mail|message)(?:\s+from)?\s+(.+?)\s+(?:saying|with|:)\s*(.+)$/i)
+    || raw.match(/^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\s+(?:the\s+)?(.+?)\s+(?:email|mail|message)\s+(?:saying|with|:)\s*(.+)$/i)
   if(!m)return null
   const target=clean(m[1],180)
   const body=String(m[2]||'').trim().slice(0,6000)
@@ -101,6 +108,21 @@ async function stageApproval(actor:AgentActor,draft:any){
 
 export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:string}){
   const raw=clean(params.text,2200)
+
+  if(isGmailSendStatusQuery(raw)){
+    const {data:user,error}=await supabaseAdmin.from('users')
+      .select('gmail_connected,gmail_send_connected,gmail_email')
+      .eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
+    if(error)throw new Error(`gmail_send_status_read_failed:${error.message}`)
+    if(!user?.gmail_connected){
+      return {runId:'gmail-send-status',status:'completed' as const,capability:'email' as const,risk:'low' as const,text:'Gmail is not connected for this account yet. Connect Gmail first; Send cannot be enabled until the base Gmail connection exists.',handledBy:'gmail-send'}
+    }
+    if(user.gmail_send_connected){
+      return {runId:'gmail-send-status',status:'completed' as const,capability:'email' as const,risk:'low' as const,text:`✅ Gmail Send is connected and authorised${user.gmail_email?` for ${user.gmail_email}`:''}. Sending is still approval-gated; I will not send an email without the required explicit approval.`,handledBy:'gmail-send'}
+    }
+    const url=buildGmailSendConnectUrl(params.actor.legacyTelegramId)
+    return {runId:'gmail-send-status',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:url?`Gmail read access is connected, but Gmail Send is not authorised yet. Use this one-time upgrade:\n${url}\n\nThis only grants the Send scope; individual sends still require approval.`:'Gmail read access is connected, but Gmail Send is not authorised yet.',handledBy:'gmail-send'}
+  }
 
   if(/^(?:send\s+it|send\s+this\s+reply)$/i.test(raw)){
     const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
