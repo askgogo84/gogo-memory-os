@@ -11,6 +11,8 @@ import { executeApprovedWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeti
 import { executeApprovedLifeEventCheckin } from '@/lib/agent/life-event-execution'
 import { executeApprovedBookingCalendar } from '@/lib/agent/booking-calendar-execution'
 
+import { executeApprovedGmailSend } from '@/lib/agent/gmail-send'
+
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
@@ -52,6 +54,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       result = await executeApprovedLifeEventCheckin({ actor, runId: id })
     } else if (planType === 'booking_event_calendar') {
       result = await executeApprovedBookingCalendar({ actor, runId: id })
+    } else if (planType === 'gmail_send') {
+      result = await executeApprovedGmailSend({ actor, runId: id })
     } else {
       result = await executeApprovedAgentRun({ actor, runId: id })
     }
@@ -61,7 +65,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     console.error('AGENT_APPROVED_EXECUTION_FAILED:', message || error)
     if (message === 'agent_run_not_found') return NextResponse.json({ error: message }, { status: 404 })
     if (message === 'agent_run_already_claimed') return NextResponse.json({ error: message }, { status: 409 })
-    if (message === 'approval_required' || message === 'general_plan_approval_missing') return NextResponse.json({ error: message }, { status: 409 })
+    if (message === 'approval_required' || message === 'general_plan_approval_missing' || message === 'gmail_send_approval_missing') return NextResponse.json({ error: message }, { status: 409 })
     if (message === 'permission_off' || message === 'permission_insufficient') return NextResponse.json({ error: message }, { status: 403 })
     return NextResponse.json({ error: 'agent_execution_failed' }, { status: 500 })
   }

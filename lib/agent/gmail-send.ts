@@ -227,6 +227,7 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   ])
   if(runError||!run)throw new Error(`gmail_send_run_missing:${runError?.message||'not_found'}`)
   if(approvalError||!approval||approval.status!=='approved')throw new Error('gmail_send_approval_missing')
+  if(!['queued','waiting_approval'].includes(String(run.status)))throw new Error('agent_run_already_claimed')
   const draft:any=(run.metadata_json as any)?.draft
   if(!draft?.threadId||!draft?.to||!draft?.subject||!draft?.body)throw new Error('gmail_send_draft_missing')
   assertApprovalBinding({
@@ -238,14 +239,19 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   const access=await gmailAccess(params.actor,{requireSend:true})
   if(!access.ok)throw new Error(access.reason||'gmail_send_unavailable')
 
-  await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Sending approved Gmail reply.',progress:60,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',tg)
+  // Claim exactly once, after bound approval and credentials are validated. A
+  // running/unknown/completed run is never eligible for an automatic retry.
+  const {data:claimed,error:claimError}=await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Sending approved Gmail reply.',progress:60,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',tg).in('status',['queued','waiting_approval']).select('id').maybeSingle()
+  if(claimError)throw new Error('gmail_send_claim_failed')
+  if(!claimed?.id)throw new Error('agent_run_already_claimed')
   let mutationStarted=false
   try{
     mutationStarted=true
     const sent=await sendGmailReply(access.accessToken,draft)
     // Preserve the exact provider receipt even if the subsequent readback fails.
     // This enables later read-only reconciliation without retrying the mutation.
-    await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_submitted',message:'Gmail returned a send receipt; verification is pending.',metadata_json:{gmail_message_id:sent.id,thread_id:sent.threadId}})
+    const {error:receiptError}=await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_submitted',message:'Gmail returned a send receipt; verification is pending.',metadata_json:{gmail_message_id:sent.id,thread_id:draft.threadId}})
+    if(receiptError)throw new Error('gmail_send_receipt_write_failed')
     const evidence=await verifyGmailSentMessage(access.accessToken,sent.id,draft.threadId)
     if(!evidence.verified){
       const now=new Date().toISOString()
@@ -258,8 +264,8 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
     const now=new Date().toISOString()
     await supabaseAdmin.from('agent_runs').update({status:'completed',summary:`Sent and verified Gmail reply to ${draft.to}.`,progress:100,completed_at:now,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
     await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)
-    await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_verified',message:`Gmail reply sent and provider-verified: ${clean(draft.subject,180)}`,metadata_json:{gmail_message_id:sent.id,thread_id:sent.threadId,to:draft.to}})
-    await recordDecisionLearning({actor:params.actor,decisionId:params.runId,text:String((run.metadata_json as any)?.learning_text||'approved gmail send'),domain:'email',handler:'gmail-send',objectKind:'gmail_thread',objectRef:String(sent.threadId||draft.threadId),outcome:'verified_success',verified:true}).catch(()=>{})
+    await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_verified',message:`Gmail reply sent and provider-verified: ${clean(draft.subject,180)}`,metadata_json:{gmail_message_id:sent.id,thread_id:draft.threadId,to:draft.to}})
+    await recordDecisionLearning({actor:params.actor,decisionId:params.runId,text:String((run.metadata_json as any)?.learning_text||'approved gmail send'),domain:'email',handler:'gmail-send',objectKind:'gmail_thread',objectRef:draft.threadId,outcome:'verified_success',verified:true}).catch(()=>{})
     await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     return {runId:params.runId,status:'completed' as const,capability:'email' as const,risk:'high' as const,text:`✅ Sent and verified\n\nTo: ${draft.to}\nSubject: ${/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`}`,handledBy:'gmail-send'}
   }catch(err:any){
