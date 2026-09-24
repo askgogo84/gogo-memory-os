@@ -19,9 +19,9 @@ assert.match(planner, /payments\/purchases are NOT an available planner tool/i)
 
 assert.match(planner, /The plan sees ONLY this user request/i)
 assert.match(planner, /User request: \$\{JSON\.stringify\(String\(text \|\| ''\)\.slice\(0, 1800\)\)\}/)
-assert.match(planner, /completeAgentPlanPrompt\(prompt\)/)
+assert.match(planner, /completeAgentPlanPrompt\(prompt,onUsage\)/)
 assert.match(plannerProvider, /messages:\[\{role:'user',content:prompt\}\]/)
-assert.match(plannerProvider, /completePlannerPromptWithFallback\(prompt,anthropicComplete,openAiComplete\)/)
+assert.match(plannerProvider, /completePlannerPromptWithFallback\(prompt,p=>anthropicComplete\(p,onUsage\),p=>openAiComplete\(p,onUsage\)\)/)
 
 assert.match(planner, /classifyAgentRequest\(step\.instruction\)/)
 assert.match(planner, /evaluateAgentExecutionPolicy/)
@@ -137,3 +137,5 @@ assert.match(executeRoute, /planType === 'general_multi_tool'/)
 assert.match(executeRoute, /resumeApprovedGeneralPlan/)
 
 console.log('agent general planner + read-only calendar availability verification passed')
+
+assert.match(planner,/recordTaskModelUsage\(tg,runId,modelUsage\)/)
