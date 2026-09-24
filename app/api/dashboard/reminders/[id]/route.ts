@@ -42,7 +42,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
 
   const { id } = await params
   const res = await deleteReminderById(tgNum, id)
-  if (!res.ok) {
+  if (res.ok === false) {
     return NextResponse.json({ ok: false }, { status: res.reason === 'not_found' ? 404 : 500 })
   }
   return NextResponse.json({ ok: true })
@@ -78,7 +78,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     ? await stopReminderSeriesById(tgNum, id)
     : await skipReminderOccurrenceById(tgNum, id)
 
-  if (!res.ok) {
+  if (res.ok === false) {
     const status = res.reason === 'not_found' ? 404 : res.reason === 'not_recurring' ? 409 : 500
     const error = res.reason === 'not_recurring' ? 'That reminder doesn’t repeat.' : undefined
     return NextResponse.json({ ok: false, error }, { status })
@@ -128,7 +128,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   const res = await updateReminderById(tgNum, id, { message, remindAt })
-  if (!res.ok) {
+  if (res.ok === false) {
     const status = res.reason === 'not_found' ? 404 : res.reason === 'recurring' ? 409 : 500
     const error =
       res.reason === 'recurring' ? 'Repeating reminders can’t be edited here — delete it instead.' : undefined
@@ -136,3 +136,4 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
   return NextResponse.json({ ok: true })
 }
+

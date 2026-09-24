@@ -427,7 +427,7 @@ async function fetchAttentionThread(accessToken:string,threadId:string):Promise<
  */
 export async function fetchGmailAttentionThreads(accessToken:string,maxThreads=12):Promise<GmailAttentionThread[]>{
   const refs=await listAttentionMessageRefs(accessToken,Math.max(20,maxThreads*3))
-  const threadIds=[...new Set((refs||[]).map((row:any)=>String(row.threadId||'')).filter(Boolean))].slice(0,Math.max(1,Math.min(20,maxThreads)))
+  const threadIds=[...new Set<string>((refs||[]).map((row:any)=>String(row.threadId||'')).filter(Boolean))].slice(0,Math.max(1,Math.min(20,maxThreads)))
   const settled=await Promise.allSettled(threadIds.map(id=>fetchAttentionThread(accessToken,id)))
   return settled
     .filter((x):x is PromiseFulfilledResult<GmailAttentionThread|null>=>x.status==='fulfilled')
@@ -449,7 +449,7 @@ export async function searchGmailThreads(accessToken:string,searchText:string,ma
     if(res.status===403)throw new Error('gmail_scope_required')
     throw new Error(`gmail_search_failed_${res.status}`)
   }
-  const threadIds=[...new Set((res.data.messages||[]).map((row:any)=>String(row.threadId||'')).filter(Boolean))]
+  const threadIds=[...new Set<string>((res.data.messages||[]).map((row:any)=>String(row.threadId||'')).filter(Boolean))]
     .slice(0,Math.max(1,Math.min(40,maxThreads)))
   const settled=await Promise.allSettled(threadIds.map(id=>fetchAttentionThread(accessToken,id)))
   return settled
@@ -514,3 +514,4 @@ export async function verifyGmailSentMessage(accessToken:string,messageId:string
   const sent=labels.includes('SENT')
   return {verified:Boolean(sent&&threadMatches),reason:sent&&threadMatches?null:'gmail_provider_evidence_missing'}
 }
+

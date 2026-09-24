@@ -11,6 +11,11 @@ export const maxDuration = 60
 const MIN_GAP_MS = 20 * 60 * 60 * 1000
 const MAX_SENDS_PER_RUN = 50
 
+function daysSince(value:unknown){
+  const started=Date.parse(String(value||''))
+  return Number.isFinite(started)?Math.floor((Date.now()-started)/86400000):-1
+}
+
 function firstName(name: string | null | undefined) {
   return (name || 'there').trim().split(/\s+/)[0] || 'there'
 }
@@ -88,7 +93,7 @@ export async function GET(req: NextRequest) {
       idempotencyKey: `lifecycle/${telegramId}/${next.key}`,
     })
 
-    if (!send.ok) {
+    if (send.ok === false) {
       failures.push({ telegramId, key: next.key, error: send.error })
       continue
     }
@@ -122,3 +127,4 @@ export async function GET(req: NextRequest) {
     failures,
   })
 }
+

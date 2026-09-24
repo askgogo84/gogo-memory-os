@@ -225,8 +225,8 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
   }catch(err:any){
     const message=String(err?.message||'secure_browser_failed');const at=new Date().toISOString()
-    await supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),completed_at:at}).eq('id',params.stepId).catch(()=>{})
-    await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the secure browser session.',error:safe(message,500),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg)).catch(()=>{})
+    await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),completed_at:at}).eq('id',params.stepId)).catch(()=>{})
+    await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the secure browser session.',error:safe(message,500),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
     await activity(tg,params.runId,'run_failed','Secure browser session failed.',{error:safe(message,250)})
     throw err
   }
@@ -364,3 +364,4 @@ export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:stri
     approved:false,
   })
 }
+

@@ -153,7 +153,7 @@ async function adoptOne(row: any) {
       metadata:{ travelTicketId:String(row.id), travel_ticket_id:row.id, ...enrichment },
       sourceRefs:[{ type:'travel_ticket', id:String(row.id), source:safe(row.source || 'saved',80) }],
     })
-    event = { id:registered.id, metadata_json:{}, source_refs:[] }
+    event = { id:registered.id, metadata_json:{}, source_refs:[], lifecycle_state:registered.lifecycleState }
   } else {
     await enrichExistingLifeEvent(event, row, enrichment)
   }
@@ -220,3 +220,4 @@ export async function syncUpcomingFlightTicketsToLifeEvents(maxRows = 1000) {
 
   return { checked, synced, failed, unavailable:false, results }
 }
+

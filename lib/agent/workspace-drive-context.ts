@@ -159,6 +159,7 @@ export async function tryRunWorkspaceDriveContext(params:{actor:AgentActor;surfa
       return {runId,status:'paused',capability:'files',risk:'low',text:`${summary}\n\n${options}\n\nAsk for the file by name to continue.`,handledBy:'workspace-drive-context'}
     }
 
+    if(choice.status!=='selected')throw new Error('workspace_drive_selection_invalid')
     const file=choice.file
     const nativeRead=await readWorkspaceDriveText(actor,file)
     const read:any=nativeRead.supported?nativeRead:await readWorkspaceDriveBinaryText(actor,file)
@@ -189,3 +190,4 @@ export async function tryRunWorkspaceDriveContext(params:{actor:AgentActor;surfa
     return {runId,status:'failed',capability:'files',risk:'low',text:summary,handledBy:'workspace-drive-context'}
   }
 }
+

@@ -153,11 +153,11 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
       supabaseAdmin.from('life_events').update({ lifecycle_state: 'needs_attention', updated_at: at })
         .eq('id', lifeEventId).eq('telegram_id', tg),
     ])
-    await supabaseAdmin.from('agent_activity').insert({
+    await Promise.resolve(supabaseAdmin.from('agent_activity').insert({
       telegram_id: tg, run_id: params.runId, event_type: 'life_event_checkin_uncertain',
       message: 'Gogo stopped after losing reliable execution evidence during airline check-in and will not retry automatically.',
       metadata_json: { life_event_id: lifeEventId, action_id: lifeEventActionId },
-    }).catch(() => {})
+    })).catch(() => {})
     return {
       runId: params.runId,
       status: 'outcome_unknown' as const,

@@ -8,7 +8,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 function videoResponse(bytes: Uint8Array, source: 'storage' | 'seeded') {
-  return new Response(bytes, {
+  return new Response(Uint8Array.from(bytes).buffer, {
     status: 200,
     headers: {
       'Content-Type': 'video/mp4',
@@ -78,3 +78,4 @@ export async function GET(request: Request) {
       : new Response('Presenter unavailable', { status: 502 })
   }
 }
+

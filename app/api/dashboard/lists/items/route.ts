@@ -37,7 +37,7 @@ export async function PATCH(request: Request) {
   }
 
   const res = await setListItemDone(tgNum, b.listName, b.text, b.addedAt, b.done)
-  if (!res.ok) {
+  if (res.ok === false) {
     const status = res.reason === 'not_found' ? 404 : res.reason === 'conflict' ? 409 : 500
     const error =
       res.reason === 'conflict' ? 'That list just changed — pull to refresh and try again.' : undefined
@@ -45,3 +45,4 @@ export async function PATCH(request: Request) {
   }
   return NextResponse.json({ ok: true })
 }
+

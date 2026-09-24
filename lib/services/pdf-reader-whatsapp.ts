@@ -9,7 +9,7 @@ import {
 } from './pdf-reader'
 
 export { parseImageTicket, classifyPdfDocument, readAndSummarizePdfDocument }
-export type { PdfClass }
+export type { PdfClass, TicketInfo, FlightInfo, TrainInfo, EventInfo } from './pdf-reader'
 
 const AIRPORT_CITY: Record<string, string> = {
   BLR: 'Bengaluru',
@@ -158,3 +158,4 @@ export async function parsePdfTicket(
   }
   return parsePdfTicketWithProviderFallback(mediaUrl, accountSid, authToken)
 }
+

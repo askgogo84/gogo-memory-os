@@ -158,9 +158,10 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
   } catch (error:any) {
     const message = safe(error?.message || 'appointment_research_failed',500)
     const completedAt = new Date().toISOString()
-    await supabaseAdmin.from('agent_steps').update({status:'failed',error:message,completed_at:completedAt}).eq('id',String(step.id)).catch(()=>{})
-    await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete appointment discovery.',error:message,completed_at:completedAt,updated_at:completedAt}).eq('id',runId).eq('telegram_id',String(tg)).catch(()=>{})
+    await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:message,completed_at:completedAt}).eq('id',String(step.id))).catch(()=>{})
+    await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete appointment discovery.',error:message,completed_at:completedAt,updated_at:completedAt}).eq('id',runId).eq('telegram_id',String(tg))).catch(()=>{})
     await activity(tg,runId,'run_failed','Appointment discovery failed.',{error:message})
     throw error
   }
 }
+
