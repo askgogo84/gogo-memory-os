@@ -46,7 +46,7 @@ export function parseWebPageWatchCommand(text:string) {
 function isWatcherStatusQuery(text:string) {
   const raw=clean(text,400).toLowerCase()
   return /^(?:what|which)\s+(?:are\s+you\s+)?(?:monitoring|watching|tracking)(?:\s+for\s+me)?\??$/.test(raw)
-    || /^(?:show|list)\s+(?:my\s+)?(?:monitors?|watchers?|watches)\??$/.test(raw)
+    || /^(?:show|list)\s+(?:my\s+)?(?:active\s+)?(?:monitors?|watchers?|watches)\??$/.test(raw)
     || /^what\s+(?:monitors?|watchers?|watches)\s+(?:do\s+i\s+have|are\s+active)\??$/.test(raw)
 }
 
@@ -137,6 +137,15 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
   if(error)throw new Error(`watcher_stop_failed:${error.message}`)
   await dismissIdeasForWatcherIds(tg,[String(latest.id)])
   return {runId:`watcher-stop-${latest.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${String((latest.condition_json as any)?.title||'that monitor')}.`,handledBy:'watcher-stop'}
+}
+
+export function parsePriceWatchCommand(text:string){
+  const raw=clean(text,1200)
+  const m=raw.match(/^(?:please\s+)?(?:watch|monitor|track)\s+(?:the\s+)?price\s+of\s+(.+?)\s+(?:and\s+)?(?:tell|notify|alert|let)\s+me\s+(?:know\s+)?if\s+(?:it|the\s+price)\s+(?:drops?|falls?|goes?)\s+below\s+(.+)$/i)
+  if(!m?.[1]||!m?.[2])return null
+  const product=clean(m[1],160)
+  const threshold=clean(m[2],80)
+  return {product,threshold}
 }
 
 export function parseWebWatchCommand(text: string) {
