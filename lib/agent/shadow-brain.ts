@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { classifyAgentRequest } from './classifier'
 import type { AgentActor } from './actor'
 import { runJevShadow, type JevShadowResult } from '@/lib/typesafe/jev-shadow'
-import { decisionDomain, decisionHints } from './decision-learning'
+import { decisionDomain, decisionHints, calibrateGuardedRouting } from './decision-learning'
 
 export type ShadowBrainObservation = {
   actionFamily:string
@@ -199,7 +199,9 @@ export async function observeShadowBrainTurn(params:{
   }
 
   const learned=await decisionHints({actor:params.actor,text:params.text,domain:decisionDomain(observation.capability,observation.actionFamily)}).catch(()=>({preferredHandler:null,avoidHandlers:[],examples:[],confidence:0}))
-  const learnedContext=learned.preferredHandler?`Learned routing evidence: prefer ${learned.preferredHandler} at confidence ${learned.confidence.toFixed(2)}. Avoid: ${learned.avoidHandlers.join(', ')||'none'}.`:''
+  // Mission/trip salience is not exact typed-object resolution. Keep contextual
+  // learning shadow-only until the authoritative specialist resolves the object.
+  const guarded=calibrateGuardedRouting({preferredHandler:learned.preferredHandler,confidence:learned.confidence,avoidHandlers:learned.avoidHandlers,conflictingTypedContext:observation.ambiguous||contextual,actionRequiresApproval:Boolean(classified.approvalAction)||classified.irreversible||classified.risk==='high'||['buy','book','send'].includes(observation.actionFamily)})
 
   const jev=await runJevShadow({
     text:params.text,
@@ -210,7 +212,8 @@ export async function observeShadowBrainTurn(params:{
     // feed an unrelated stale mission to Jev unless this turn actually needs context.
     focusKind:observation.needsContext?observation.focusKind:'none',
     focusSummary:observation.needsContext?observation.focusSummary:null,
-    recentContext:[recentContext,learnedContext].filter(Boolean).join('\n').slice(0,1200),
+    recentContext,
+    learnedRouting:guarded,
     timeoutMs:900,
   }).catch((err:any)=>({
     ok:false,version:'jev-shadow-v1',model:'jev-latest',latencyMs:0,
@@ -238,6 +241,7 @@ export async function observeShadowBrainTurn(params:{
       focus_summary:observation.focusSummary,
       confidence:observation.confidence,
       ambiguous:observation.ambiguous,
+      learned_routing:guarded,
       shadow_version:'shadow-brain-v1',
       jev_shadow:jev?{
         ok:Boolean(jev.ok),
