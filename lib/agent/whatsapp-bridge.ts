@@ -396,6 +396,16 @@ export async function tryRunWhatsAppAgent(params: {
   const trainResearch = await withWhatsAppBrowserBudget(actor, tryRunTrainResearch({ actor, surface:'whatsapp', text:params.text }))
   if (trainResearch) return { ...(trainResearch as any), handledBy:String((trainResearch as any).handledBy || 'train-research') }
 
+  // A terse continuation must recover the last persisted travel task before generic
+  // planners can reinterpret it as a fresh search.
+  if(/^(?:continue|resume|carry on|keep going)\b/i.test(params.text.trim())){
+    const continuedTravel=await tryRunTravelResearch({actor,surface:'whatsapp',text:params.text})
+    if(continuedTravel){
+      const hardened=await hardenTravelResearchResult(continuedTravel,params.text)
+      return {...hardened,handledBy:String(hardened.handledBy||'travel-research')}
+    }
+  }
+
   if (shouldPreferSpecialistTravel(params.text)) {
     const specialistTravel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
     if (specialistTravel) {
