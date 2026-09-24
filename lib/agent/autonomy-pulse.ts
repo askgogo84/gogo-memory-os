@@ -98,12 +98,17 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     const refs=Array.isArray(idea.source_refs)?idea.source_refs:[]
     return refs.filter((ref:any)=>String(ref?.type||'')==='watcher').map((ref:any)=>String(ref?.id||'')).filter(Boolean)
   }))]
-  const activeIdeaWatchers=new Set<string>()
+  const surfacableIdeaWatchers=new Set<string>()
   if(ideaWatcherIds.length){
-    const {data:activeWatcherRows,error:activeWatcherError}=await supabaseAdmin.from('agent_watchers')
-      .select('id').in('id',ideaWatcherIds).eq('telegram_id',telegramId).eq('active',true)
-    if(activeWatcherError)console.error('AUTONOMY_PULSE_IDEA_WATCHER_READ_FAILED:',activeWatcherError.message)
-    for(const row of activeWatcherRows||[])activeIdeaWatchers.add(String(row.id))
+    const {data:watcherRows,error:watcherError}=await supabaseAdmin.from('agent_watchers')
+      .select('id,active,last_state_json').in('id',ideaWatcherIds).eq('telegram_id',telegramId)
+    if(watcherError)console.error('AUTONOMY_PULSE_IDEA_WATCHER_READ_FAILED:',watcherError.message)
+    for(const row of watcherRows||[]){
+      const state:any=row.last_state_json||{}
+      // Active watchers are current. Inactive one-shot watchers remain surfacable only
+      // when they actually triggered successfully; manually stopped/stale watchers are not.
+      if(row.active===true || state.triggered===true)surfacableIdeaWatchers.add(String(row.id))
+    }
   }
 
   for(const a of approvals||[]){
@@ -145,7 +150,7 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     const score=Math.round(Math.max(0,Math.min(1,Number(idea.value_score||0.75)))*100)
     const refs=Array.isArray(idea.source_refs)?idea.source_refs:[]
     const watcherRefs=refs.filter((ref:any)=>String(ref?.type||'')==='watcher').map((ref:any)=>String(ref?.id||'')).filter(Boolean)
-    if(watcherRefs.length&&!watcherRefs.some((id:string)=>activeIdeaWatchers.has(id)))continue
+    if(watcherRefs.length&&!watcherRefs.some((id:string)=>surfacableIdeaWatchers.has(id)))continue
     const fromMemoryTwin=refs.some((ref:any)=>String(ref?.type||'')==='memory_twin')
     // Memory Twin suggestions are useful in the dashboard, but only exceptionally
     // strong ones should interrupt the user proactively.
