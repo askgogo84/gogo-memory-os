@@ -1075,6 +1075,24 @@ _"${originalText}"_
       }
     }
 
+    // Gmail draft/send/status commands are deterministic provider workflows.
+    // Give them first refusal before Jev/read-only semantic routing so a draft cannot
+    // be downgraded to Gmail read and a Send-status query cannot hallucinate scopes.
+    const isDeterministicGmailCommand =
+      /^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\b/i.test(text.trim()) ||
+      /^(?:send\s+it|send\s+this\s+reply)$/i.test(text.trim()) ||
+      /^(?:is\s+gmail\s+send\b|can\s+you\s+actually\s+send\s+gmail\b|check\s+my\s+gmail\s+send\s+connection)/i.test(text.trim())
+    if(isDeterministicGmailCommand){
+      const gmailAgent=await tryRunWhatsAppAgent({user:resolvedUser,text,messageId:inboundMessageSid||null})
+      if(gmailAgent){
+        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:gmailAgent.handledBy||'gmail-send',actualCapability:'email',status:gmailAgent.status||null,runId:gmailAgent.runId||null}).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',gmailAgent.text)
+        await sendWhatsAppMessage(from,gmailAgent.text)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
     // Named calendar time reads are provider-backed reads, not reminder creation.
     // Route them before Jev/reminder fallbacks so a question like "What time is
     // <event> tomorrow?" can never create unrelated reminder state.
