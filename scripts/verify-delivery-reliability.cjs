@@ -15,7 +15,7 @@ function load(file, mocks, env = {}) {
     if (id === 'node:crypto') return crypto
     if (Object.hasOwn(mocks, id)) return mocks[id]
     throw Error('Unmocked import: ' + id)
-  }, process: { env }, console, URL, Date, Intl, Request, Response, Buffer, AbortSignal,
+  }, process: { env }, console, URL, Date: mocks.Clock || Date, Intl, Request, Response, Buffer, AbortSignal,
     fetch: mocks.fetch || (()=>{throw Error('Unexpected network call in fixture')}) })
   return module.exports
 }
@@ -35,6 +35,7 @@ async function main() {
   await db.exec(fs.readFileSync('supabase/migrations/20260925112633_notification_delivery_jobs.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925114402_followup_delivery_owner.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925115445_delivery_monitoring.sql','utf8'))
+  await db.exec(fs.readFileSync('supabase/migrations/20260925172132_delivery_retry_boundaries.sql','utf8'))
   const query = async (sql, params = []) => (await db.query(sql, params)).rows
   const rpc = async (name,args) => {
     const rows = await query(`select * from ${name}(${Object.keys(args).map((k,i)=>k+' => $'+(i+1)).join(',')})`,Object.values(args))
@@ -298,6 +299,34 @@ async function main() {
   const before=(await query('select count(*) from delivery_worker_runs'))[0].count
   assert.equal((await handler.GET(new Request('https://fixture.invalid/'))).status,401)
   assert.equal((await query('select count(*) from delivery_worker_runs'))[0].count,before,'unauthorized calls create no heartbeat')
+  // A final eligibility lookup can consume the remaining invocation budget.
+  let clock=Date.now(),lateSends=0
+  class Clock extends Date { static now(){return clock} }
+  const timedNotifications=load('lib/services/notification-delivery.ts',{
+    Clock,'./reminder-delivery':{deliveryRpc:rpc},'./delivery-state':states,'@/lib/supabase-admin':{supabaseAdmin:adapter}})
+  const late=await timedNotifications.deliverNotification({key:'late-ready',source:'briefing',owner:1,channel:'whatsapp',due:new Date().toISOString(),
+    deadline:clock+10,prepare:async()=>{},ready:async()=>{clock+=100;return true},send:async()=>{lateSends++;return 'SM-late'}})
+  assert.equal(lateSends,0,'deadline crossed during final eligibility must not start a provider call')
+  assert.equal(late,'deferred')
+  // Preflight failures must eventually leave the hot queue without an external attempt.
+  r=await add()
+  for(let i=0;i<3;i++){
+    t=crypto.randomUUID();await claim(r,t)
+    await rpc('retry_reminder_delivery',{p_id:r.id,p_token:t,p_definite_rejection:false})
+    await query("update reminders set retry_at=now()-interval '1 second' where id=$1",[r.id])
+  }
+  assert.equal((await row(r.id)).delivery_state,'failed','preflight retry exhaustion becomes a dead letter')
+  const exhaustedKey='preflight-exhausted'
+  for(let i=0;i<3;i++){
+    assert.equal(await notify(exhaustedKey,{prepare:async()=>{throw Error('fixture content unavailable')}}),'failed')
+    await query("update notification_deliveries set retry_at=now()-interval '1 second' where delivery_key=$1",[exhaustedKey])
+  }
+  assert.equal((await query('select state from notification_deliveries where delivery_key=$1',[exhaustedKey]))[0].state,'failed')
+  assert.equal(await notify(exhaustedKey),'skipped','dead letter never re-enters send queue')
+  const cancelled=await addFollowup(),ct=crypto.randomUUID(),ck='followup/'+cancelled.id
+  await rpc('claim_notification_delivery',{p_key:ck,p_source:'followup',p_owner:1,p_channel:'whatsapp',p_due:cancelled.check_at,p_token:ct})
+  await query("update followups set status='cancelled' where id=$1",[cancelled.id])
+  assert.equal(await rpc('begin_notification_delivery',{p_key:ck,p_token:ct}),false,'cancellation during claim fences send intent')
   await db.close()
   console.log('Delivery reliability: SQL leases, recurrence rollback, stale fencing, concurrency, cancellation, consent, crash/DB failure, unknown no-retry passed')
 }
