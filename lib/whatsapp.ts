@@ -1,4 +1,5 @@
 import twilio from 'twilio'
+import { deliveryCallbackUrl, persistAcceptedChunk } from '@/lib/services/delivery-callback'
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID
 const authToken = process.env.TWILIO_AUTH_TOKEN
@@ -83,7 +84,7 @@ function splitIntoChunks(text: string): string[] {
 
 const statusCallbackUrl = (process.env.TWILIO_STATUS_CALLBACK_URL || '').trim()
 
-export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: string | null) {
+export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: string | null, deliveryToken?: string) {
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
 
@@ -92,6 +93,7 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
 
   for (let i = 0; i < chunks.length; i++) {
     const payload: any = { body: chunks[i], from, to }
+    if (statusCallbackUrl || deliveryToken) payload.statusCallback = deliveryCallbackUrl(statusCallbackUrl, deliveryToken, i + 1, chunks.length)
     if (i === 0 && mediaUrl && mediaUrl.trim()) payload.mediaUrl = [mediaUrl.trim()]
 
     let message
@@ -102,6 +104,7 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
       throw error
     }
     lastMessage = message
+    await persistAcceptedChunk(message.sid, deliveryToken, i + 1, chunks.length)
 
     console.log('WHATSAPP_SENT:', {
       sid: message.sid,
@@ -118,7 +121,7 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
   return lastMessage
 }
 
-export async function sendWhatsAppReminderTemplate(toNumber: string, label: string) {
+export async function sendWhatsAppReminderTemplate(toNumber: string, label: string, deliveryToken?: string) {
   const contentSid = process.env.TWILIO_REMINDER_CONTENT_SID
   if (!contentSid) throw new Error('Missing TWILIO_REMINDER_CONTENT_SID')
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
@@ -129,13 +132,14 @@ export async function sendWhatsAppReminderTemplate(toNumber: string, label: stri
     contentSid,
     contentVariables: JSON.stringify({ '1': String(label || 'your task').slice(0, 400) }),
   }
-  if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
+  if (statusCallbackUrl || deliveryToken) payload.statusCallback = deliveryCallbackUrl(statusCallbackUrl, deliveryToken)
   const message = await client.messages.create(payload)
+  await persistAcceptedChunk(message.sid, deliveryToken, 1, 1)
   console.log('WHATSAPP_TEMPLATE_SENT:', { sid: message.sid, to, status: message.status })
   return message
 }
 
-export async function sendWhatsAppReminderButtons(toNumber: string, label: string) {
+export async function sendWhatsAppReminderButtons(toNumber: string, label: string, deliveryToken?: string) {
   const contentSid = process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID
   if (!contentSid) throw new Error('Missing TWILIO_REMINDER_BUTTONS_CONTENT_SID')
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
@@ -146,8 +150,9 @@ export async function sendWhatsAppReminderButtons(toNumber: string, label: strin
     contentSid,
     contentVariables: JSON.stringify({ '1': String(label || 'your task').slice(0, 400) }),
   }
-  if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
+  if (statusCallbackUrl || deliveryToken) payload.statusCallback = deliveryCallbackUrl(statusCallbackUrl, deliveryToken)
   const message = await client.messages.create(payload)
+  await persistAcceptedChunk(message.sid, deliveryToken, 1, 1)
   console.log('WHATSAPP_BUTTONS_TEMPLATE_SENT:', { sid: message.sid, to, status: message.status })
   return message
 }

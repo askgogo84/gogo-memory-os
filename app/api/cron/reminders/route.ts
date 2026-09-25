@@ -136,6 +136,8 @@ export async function GET(req: Request) {
   if (!isAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
   const started = Date.now()
   const now = new Date().toISOString()
+  try { await deliveryRpc('reconcile_delivery_callbacks', { p_limit: 100 }) }
+  catch { return NextResponse.json({ ok: false, error: 'callback_reconciliation_failed' }, { status: 503 }) }
   const results: { id: string; status: string }[] = []
   const { data: due, error } = await supabaseAdmin.from('reminders').select('*')
     .eq('sent', false).in('delivery_state', ['pending', 'claimed'])
@@ -209,10 +211,10 @@ export async function GET(req: Request) {
       if (whatsappTo) {
         if (!topic && !isBriefing && (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID || process.env.TWILIO_REMINDER_CONTENT_SID)) {
           message = process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID && owner
-            ? await sendWhatsAppReminderButtons(whatsappTo, label)
-            : await sendWhatsAppReminderTemplate(whatsappTo, label)
+            ? await sendWhatsAppReminderButtons(whatsappTo, label, token)
+            : await sendWhatsAppReminderTemplate(whatsappTo, label, token)
         } else {
-          message = await sendWhatsApp(whatsappTo, text)
+          message = await sendWhatsApp(whatsappTo, text, null, token)
         }
       } else await sendTelegram(Number(reminder.chat_id), text)
       providerReturned = true

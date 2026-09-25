@@ -28,6 +28,7 @@ async function main() {
     fail_attempts integer default 0,last_failed_at timestamptz,sent_at timestamptz,twilio_sid text,delivery_status text);`)
   await db.exec(fs.readFileSync('supabase/reminder-insert-idempotency-20260915.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925110046_reminder_delivery_leases.sql','utf8'))
+  await db.exec(fs.readFileSync('supabase/migrations/20260925111441_delivery_callback_inbox.sql','utf8'))
   const query = async (sql, params = []) => (await db.query(sql, params)).rows
   const rpc = async (name,args) => {
     const rows = await query(`select * from ${name}(${Object.keys(args).map((k,i)=>k+' => $'+(i+1)).join(',')})`,Object.values(args))
@@ -113,6 +114,50 @@ async function main() {
   await query('delete from reminders');r=await add();cancelDuringConsent=false;consent=true
   await handler.GET(req());assert.equal(sends,0);assert.equal((await row(r.id)).delivery_state,'suppressed')
   assert.equal((await handler.GET(new Request('https://fixture.invalid'))).status,401)
+  // Signed callback boundary: durable before ACK, matching before SID persistence,
+  // chunk completeness and monotonic evidence under delayed/out-of-order events.
+  const twilio=require('twilio')
+  const callbackHelpers=load('lib/services/delivery-callback.ts',{'./reminder-delivery':{deliveryRpc:rpc}})
+  let inboxFail=false,reconcileFail=false
+  const callback=load('app/api/webhooks/twilio-status/route.ts',{
+    twilio:{default:twilio},'@/lib/services/delivery-callback':callbackHelpers,
+    '@/lib/services/reminder-delivery':{deliveryRpc:(name,args)=>{
+      if(inboxFail&&name==='ingest_delivery_callback')throw Error('fixture inbox outage')
+      if(reconcileFail&&name==='reconcile_reminder_receipt')throw Error('fixture processing outage')
+      return rpc(name,args)
+    }}
+  },{TWILIO_AUTH_TOKEN:'fixture-token',TWILIO_STATUS_CALLBACK_URL:'https://fixture.invalid/callback'})
+  const post=async(sid,status,token,chunk=1,chunks=1,bad=false)=>{
+    const url=callbackHelpers.deliveryCallbackUrl('https://fixture.invalid/callback',token,chunk,chunks)
+    const params={MessageSid:sid,MessageStatus:status}
+    const signature=bad?'bad':twilio.getExpectedTwilioSignature('fixture-token',url,params)
+    return callback.POST(new Request(url,{method:'POST',headers:{'x-twilio-signature':signature},body:new URLSearchParams(params)}))
+  }
+  await query('delete from reminders');r=await add();t=crypto.randomUUID();await claim(r,t);await begin(r,t)
+  assert.equal((await post('SMfirst','delivered',t,1,2,true)).status,403)
+  assert.equal((await query('select * from delivery_callback_inbox')).length,0)
+  inboxFail=true;assert.equal((await post('SMfirst','delivered',t,1,2)).status,503);inboxFail=false
+  reconcileFail=true;assert.equal((await post('SMfirst','delivered',t,1,2)).status,200);reconcileFail=false
+  assert.equal((await query('select * from delivery_callback_inbox')).length,1)
+  await rpc('reconcile_delivery_callbacks',{})
+  assert.equal((await row(r.id)).delivery_state,'outcome_unknown','one delivered chunk does not verify two')
+  assert.equal((await post('SMsecond','read',t,2,2)).status,200)
+  assert.equal((await row(r.id)).delivery_state,'delivered')
+  await post('SMfirst','read',t,1,2);assert.equal((await row(r.id)).delivery_state,'read')
+  await post('SMfirst','queued',t,1,2);await post('SMsecond','failed',t,2,2)
+  assert.equal((await row(r.id)).delivery_state,'read','late failures/acceptance cannot regress read')
+  await rpc('finish_reminder_delivery',{p_id:r.id,p_token:t,p_state:'provider_accepted',p_sid:'SMsecond'})
+  assert.equal((await row(r.id)).delivery_state,'read','late acceptance write cannot regress callback')
+  const count=(await query('select * from delivery_callback_inbox')).length
+  await post('SMfirst','read',t,1,2)
+  assert.equal((await query('select * from delivery_callback_inbox')).length,count,'callback replay deduplicated')
+  await post('SMearly','delivered')
+  await rpc('reconcile_delivery_callbacks',{})
+  r=await add();await query("update reminders set twilio_sid='SMearly',sent=true,delivery_state='provider_accepted' where id=$1",[r.id])
+  await query("update delivery_callback_inbox set retry_at=now() where provider_sid='SMearly'")
+  await rpc('reconcile_delivery_callbacks',{})
+  assert.equal((await row(r.id)).delivery_state,'delivered','unmatched early legacy callback survives until SID write')
+  await assert.rejects(rpc('record_delivery_receipt',{p_sid:'fake',p_status:'delivered',p_verified:false}),/acceptance_cannot/)
   await db.close()
   console.log('Delivery reliability: SQL leases, recurrence rollback, stale fencing, concurrency, cancellation, consent, crash/DB failure, unknown no-retry passed')
 }

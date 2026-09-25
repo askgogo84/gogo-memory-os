@@ -55,3 +55,22 @@ not a multi-connection PostgreSQL stress test.
 Production tests require a human-approved recipient and exact message: one one-off,
 one recurring reminder, and a receipt check by SID. Never invoke a production cron
 manually as a test. Provider acceptance alone does not pass acceptance.
+
+## Signed callback inbox and reconciliation
+
+Apply `20260925111441_delivery_callback_inbox.sql` before deploying the callback
+receiver. The Twilio SDK validates the configured public URL, complete form body,
+and optional attempt/chunk query parameters. Missing/invalid signatures write nothing.
+Valid events are deduplicated and committed to a private inbox before HTTP 200;
+persistence failure returns 503. Processing failure after persistence is safe to
+acknowledge because the existing reminder cron reconciles at most 100 events per
+run. Unmatched legacy SIDs are retained and retried every 15 minutes; newer signed
+callbacks carry the attempt token so even a lost SID-write response can be matched.
+
+Every correlated chunk's SID and acceptance are persisted. All expected chunks
+need signed delivered/read evidence before the occurrence qualifies as delivered;
+all must be read before read is recorded. Late queued/sent/failed events cannot
+regress delivered/read. A partial send or post-acceptance storage error stays
+ambiguous and cannot trigger a blind resend. Reconciliation never queues or sends.
+The receipts table contains no message bodies or recipient addresses. Both new
+tables enable RLS and revoke anonymous/authenticated access.

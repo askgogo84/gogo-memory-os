@@ -1,81 +1,43 @@
+import { createHash } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import twilio from 'twilio'
-import { supabaseAdmin } from '@/lib/supabase-admin'
+import { deliveryRpc } from '@/lib/services/reminder-delivery'
+import { deliveryCallbackUrl } from '@/lib/services/delivery-callback'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-// Twilio message status-callback receiver for reminder delivery-truth.
-// This endpoint ONLY annotates reminders.delivery_status. It never writes
-// sent, sent_at, or remind_at — a callback can never send, un-send, or drop a
-// reminder. It is inert until the reminders send path attaches a statusCallback
-// (gated by TWILIO_STATUS_CALLBACK_URL), so its mere existence is behaviourless.
 export async function POST(req: NextRequest) {
   const authToken = process.env.TWILIO_AUTH_TOKEN || ''
-  // Validate against the EXACT url we configured Twilio to call — the same value
-  // used as the statusCallback on send — so there is no host/proto reconstruction
-  // to get wrong behind Vercel's proxy.
-  const callbackUrl = (process.env.TWILIO_STATUS_CALLBACK_URL || '').trim()
+  const base = (process.env.TWILIO_STATUS_CALLBACK_URL || '').trim()
   const signature = req.headers.get('x-twilio-signature') || ''
-
-  // Parse the form body once; needed both for signature validation and lookup.
   const params: Record<string, string> = {}
   try {
-    const form = await req.formData()
-    for (const [k, v] of form.entries()) params[k] = typeof v === 'string' ? v : ''
-  } catch {
+    for (const [k, v] of (await req.formData()).entries()) params[k] = typeof v === 'string' ? v : ''
+  } catch { return new NextResponse('Bad Request', { status: 400 }) }
+  const url = new URL(req.url)
+  const token = url.searchParams.get('delivery_token') || undefined
+  const chunk = Number(url.searchParams.get('chunk') || 1)
+  const chunks = Number(url.searchParams.get('chunks') || 1)
+  if (token && (!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(token) ||
+    !Number.isInteger(chunk) || !Number.isInteger(chunks) || chunk < 1 || chunks < chunk || chunks > 1000)) {
     return new NextResponse('Bad Request', { status: 400 })
   }
-
-  // Twilio signature validation. Missing/invalid signature → 403, write nothing.
-  const valid =
-    !!authToken &&
-    !!signature &&
-    !!callbackUrl &&
-    twilio.validateRequest(authToken, signature, callbackUrl, params)
-  if (!valid) {
+  // Only configured public URL plus validated correlation fields. SDK validation
+  // includes every form parameter; no proxy-host reconstruction is trusted.
+  const callbackUrl = base ? deliveryCallbackUrl(base, token, chunk, chunks) : ''
+  if (!authToken || !signature || !callbackUrl || !twilio.validateRequest(authToken, signature, callbackUrl, params)) {
     return new NextResponse('Forbidden', { status: 403 })
   }
-
-  const messageSid = (params.MessageSid || params.SmsSid || '').trim()
-  const messageStatus = (params.MessageStatus || params.SmsStatus || '').trim()
-  if (!messageSid || !messageStatus) {
-    return new NextResponse('', { status: 200 })
-  }
-
-  // Terminal delivery failures are the 63016-class silent drop made visible.
-  if (messageStatus === 'undelivered' || messageStatus === 'failed') {
-    console.error('REMINDER_DELIVERY_FAILURE:', {
-      messageSid,
-      messageStatus,
-      errorCode: params.ErrorCode || '',
-      to: params.To || '',
-    })
-  }
-
+  const sid = (params.MessageSid || params.SmsSid || '').trim()
+  const status = (params.MessageStatus || params.SmsStatus || '').trim()
+  if (!sid || !status) return new NextResponse('Bad Request', { status: 400 })
+  const key = createHash('sha256').update(JSON.stringify([sid, status, params.ErrorCode || '', token || '', chunk, chunks])).digest('hex')
   try {
-    // Map SID -> reminder row; record the status verbatim. Never touch sent/sent_at/remind_at.
-    const { data, error } = await supabaseAdmin
-      .from('reminders')
-      .update({ delivery_status: messageStatus })
-      .eq('twilio_sid', messageSid)
-      .select('id')
-
-    if (error) {
-      console.error('TWILIO_STATUS_UPDATE_FAILED:', messageSid, error.message)
-      return new NextResponse('', { status: 200 })
-    }
-
-    // No matching row is legitimate and must be silent: callbacks arrive for
-    // non-reminder messages, and a queued/sent callback can beat markReminderSent
-    // writing the SID (delivered/failed arrive later and will match).
-    if (!data || !data.length) {
-      return new NextResponse('', { status: 200 })
-    }
-  } catch (e: any) {
-    console.error('TWILIO_STATUS_UPDATE_THREW:', messageSid, e?.message || e)
-    return new NextResponse('', { status: 200 })
-  }
-
+    await deliveryRpc('ingest_delivery_callback', { p_key: key, p_sid: sid, p_status: status, p_error: params.ErrorCode || null,
+      p_token: token || null, p_chunk: token ? chunk : null, p_chunks: token ? chunks : null })
+  } catch { return new NextResponse('Persistence unavailable', { status: 503 }) }
+  try { await deliveryRpc('reconcile_reminder_receipt', { p_sid: sid }) }
+  catch { /* Durable event remains for the existing minute worker to reconcile. */ }
   return new NextResponse('', { status: 200 })
 }
