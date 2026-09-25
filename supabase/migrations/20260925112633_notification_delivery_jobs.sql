@@ -1,5 +1,25 @@
 begin;
 set local lock_timeout='5s';
+-- Legacy snooze/move reuses a consumed row. Explicit rescheduling creates a new
+-- attempt, and must not retain an old SID which a delayed callback could match.
+create or replace function public.reminder_delivery_compat() returns trigger
+language plpgsql security invoker set search_path='' as $$
+declare changed boolean;
+begin
+  changed := new.remind_at is distinct from old.remind_at or (old.sent and not new.sent);
+  if changed and old.send_started_at is not null and old.delivery_state='outcome_unknown' then
+    raise exception 'unknown_delivery_requires_reconciliation';
+  end if;
+  if new.sent and not old.sent and new.delivery_state=old.delivery_state and old.send_started_at is null then
+    new.delivery_state:='cancelled';new.claim_token:=null;new.lease_until:=null;
+  elsif new.delivery_state=old.delivery_state and (changed or (old.send_started_at is null and
+    (new.message is distinct from old.message or new.whatsapp_to is distinct from old.whatsapp_to
+      or new.telegram_id is distinct from old.telegram_id or new.recurring_pattern is distinct from old.recurring_pattern))) then
+    new.delivery_state:='pending';new.claim_token:=null;new.lease_until:=null;new.send_started_at:=null;
+    new.retry_at:=null;new.twilio_sid:=null;new.delivery_status:=null;new.sent_at:=null;
+  end if;
+  return new;
+end $$;
 create table public.notification_deliveries (
   delivery_key text primary key, source text not null check(source in ('briefing','followup')),
   owner_id bigint not null, channel text not null check(channel in ('whatsapp','email')),

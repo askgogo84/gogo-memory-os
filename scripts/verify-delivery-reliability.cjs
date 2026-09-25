@@ -160,6 +160,13 @@ async function main() {
   await rpc('reconcile_delivery_callbacks',{})
   assert.equal((await row(r.id)).delivery_state,'delivered','unmatched early legacy callback survives until SID write')
   await assert.rejects(rpc('record_delivery_receipt',{p_sid:'fake',p_status:'delivered',p_verified:false}),/acceptance_cannot/)
+  r=await add();t=crypto.randomUUID();await claim(r,t);await begin(r,t)
+  await rpc('finish_reminder_delivery',{p_id:r.id,p_token:t,p_state:'provider_accepted',p_sid:'SMold-snooze'})
+  await query("update reminders set sent=false,remind_at=now()+interval '10 minutes' where id=$1",[r.id])
+  assert.equal((await row(r.id)).delivery_state,'pending','legacy snooze re-arms a consumed reminder')
+  assert.equal((await row(r.id)).twilio_sid,null)
+  await post('SMold-snooze','delivered',t)
+  assert.equal((await row(r.id)).delivery_state,'pending','old callback cannot complete rescheduled occurrence')
   // Shared notification protocol is exercised with actual PostgreSQL RPCs.
   const notifications=load('lib/services/notification-delivery.ts',{
     './reminder-delivery':{deliveryRpc:rpc},'./delivery-state':states,'@/lib/supabase-admin':{supabaseAdmin:adapter}
