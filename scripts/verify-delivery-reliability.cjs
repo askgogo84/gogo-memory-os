@@ -26,15 +26,18 @@ async function main() {
     create table reminders(id uuid primary key default gen_random_uuid(),telegram_id bigint,chat_id bigint,
     whatsapp_to text,message text,remind_at timestamptz,sent boolean default false,created_at timestamptz default now(),
     is_recurring boolean,recurring_pattern text,timezone text,nudge_count integer,followup_started_at timestamptz,
-    fail_attempts integer default 0,last_failed_at timestamptz,sent_at timestamptz,twilio_sid text,delivery_status text);`)
+    fail_attempts integer default 0,last_failed_at timestamptz,sent_at timestamptz,twilio_sid text,delivery_status text);
+    create table followups(id uuid primary key default gen_random_uuid(),whatsapp_id text,contact_name text,context text,
+      check_at timestamptz,status text default 'pending',created_at timestamptz default now());`)
   await db.exec(fs.readFileSync('supabase/reminder-insert-idempotency-20260915.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925110046_reminder_delivery_leases.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925111441_delivery_callback_inbox.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925112633_notification_delivery_jobs.sql','utf8'))
+  await db.exec(fs.readFileSync('supabase/migrations/20260925114402_followup_delivery_owner.sql','utf8'))
   const query = async (sql, params = []) => (await db.query(sql, params)).rows
   const rpc = async (name,args) => {
     const rows = await query(`select * from ${name}(${Object.keys(args).map((k,i)=>k+' => $'+(i+1)).join(',')})`,Object.values(args))
-    return name === 'claim_reminder_delivery' ? rows : rows[0]?.[name]
+    return ['claim_reminder_delivery','due_followup_deliveries'].includes(name) ? rows : rows[0]?.[name]
   }
   const add = async (recurring = false) => (await query(`insert into reminders(telegram_id,whatsapp_to,message,remind_at,is_recurring,recurring_pattern)
     values(1,'+15555550100',$1,now()-interval '2 days',$2,$3) returning *`,[crypto.randomUUID(),recurring,recurring?'every_2_hours':null]))[0]
@@ -221,6 +224,34 @@ async function main() {
   assert.equal((await query('select state from notification_deliveries where delivery_key=$1',[mailKey]))[0].state,'provider_accepted')
   mailId='fixture-email';await mailWorker.reconcileBriefingEmailReceipts(Date.now()+10000)
   assert.equal((await query('select state from notification_deliveries where delivery_key=$1',[mailKey]))[0].state,'delivered')
+  // Real follow-up route + actual SQL job protocol: independent failures and no
+  // fired success on a failed source-table update; protected owner binding.
+  let firedWriteFail=false,followupSends=0,followupReject=false,ownerChanged=false
+  const fdb={from(table){let filters=[],patch=null,single=false;const q={select:()=>q,
+    eq:(k,v)=>{filters.push([k,v]);return q},maybeSingle:()=>{single=true;return q},update:p=>{patch=p;return q},
+    then(resolve,reject){return (async()=>{
+      if(table==='users')return {data:{whatsapp_id:ownerChanged?'+15555559999':'+15555550100'}}
+      if(firedWriteFail&&patch?.status==='fired')return {error:{message:'fixture DB failure'}}
+      const vals=filters.map(f=>f[1]),where=filters.map((f,i)=>f[0]+'=$'+(i+1)).join(' and ')
+      let rows
+      if(patch){const keys=Object.keys(patch);rows=await query('update followups set '+keys.map((k,i)=>k+'=$'+(vals.length+i+1)).join(',')+' where '+where+' returning *',[...vals,...Object.values(patch)])}
+      else rows=await query('select * from followups where '+where,vals)
+      rows=JSON.parse(JSON.stringify(rows));return {data:single?rows[0]||null:rows}
+    })().then(resolve,reject)}};return q}}
+  const followups=load('app/api/followups/route.ts',{
+    '@supabase/supabase-js':{createClient:()=>fdb},'@/lib/services/notification-delivery':notifications,
+    '@/lib/services/reminder-delivery':{deliveryRpc:async(name,args)=>JSON.parse(JSON.stringify(await rpc(name,args)))},
+    '@/lib/whatsapp':{sendWhatsAppReminderTemplate:async()=>{followupSends++;if(followupReject&&followupSends===1)throw {status:400};return {sid:'SMfollowup'+followupSends}}},
+    '@/lib/bot/handlers/reminder-optout':{isSuppressed:async()=>false},'@/lib/security/cron-auth':{isCronAuthorized:()=>true},'@/lib/agent/session':{}
+  },{TWILIO_REMINDER_CONTENT_SID:'fixture'})
+  const addFollowup=async(owner=1)=>(await query("insert into followups(owner_id,whatsapp_id,contact_name,check_at) values($1,'+15555550100','Fixture',now()-interval '1 day') returning *",[owner]))[0]
+  let f=await addFollowup();firedWriteFail=true
+  let fr=await (await followups.GET(req())).json();assert.equal(fr.fired,0);assert.equal(fr.ok,false);assert.equal(followupSends,1)
+  await followups.GET(req());assert.equal(followupSends,1,'failed fired update cannot resend accepted job')
+  firedWriteFail=false;followupReject=true;followupSends=0;await addFollowup();await addFollowup()
+  fr=await (await followups.GET(req())).json();assert.equal(fr.fired,1);assert.equal(followupSends,2,'later item still runs after known rejection')
+  ownerChanged=true;followupReject=false;await addFollowup();await followups.GET(req());assert.equal(followupSends,2,'changed owner destination fails closed')
+  await addFollowup(null);assert.equal((await rpc('due_followup_deliveries',{})).length,0,'ownerless legacy rows cannot send')
   await db.close()
   console.log('Delivery reliability: SQL leases, recurrence rollback, stale fencing, concurrency, cancellation, consent, crash/DB failure, unknown no-retry passed')
 }
