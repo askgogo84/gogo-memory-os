@@ -1,3 +1,4 @@
+import { withDeliveryHeartbeat } from '@/lib/services/delivery-monitoring'
 import { randomUUID } from 'node:crypto'
 import { deliveryRpc, nextFutureOccurrence } from '@/lib/services/reminder-delivery'
 import { isDefiniteProviderRejection } from '@/lib/services/delivery-state'
@@ -134,6 +135,10 @@ async function reminderGoesToOwner(reminder: any, whatsappTo: string): Promise<b
 
 export async function GET(req: Request) {
   if (!isAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  return withDeliveryHeartbeat('reminders', () => runDelivery(req))
+}
+
+async function runDelivery(req: Request) {
   const started = Date.now()
   const now = new Date().toISOString()
   try { await deliveryRpc('reconcile_delivery_callbacks', { p_limit: 100 }) }

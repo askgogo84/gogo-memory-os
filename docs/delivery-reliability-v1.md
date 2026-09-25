@@ -117,6 +117,27 @@ the durable job prevents a repeat. Signed callbacks synchronize delivery_status.
 Backoff makes a job eligible later, but dispatch still follows the unchanged daily
 follow-up schedule. No second scheduler was added.
 
+## Monitoring and learning evidence
+
+Every authorized existing scheduler invocation writes its own start/completion
+heartbeat. Crashes leave an unfinished run; DB failures return 503. No monitoring
+scheduler or outbound alert sender is added. Runs retain 30 days with bounded
+cleanup. `/api/admin/delivery` requires the existing admin session and returns
+no-store aggregate JSON without recipients, messages or provider IDs. It reports
+queue depth/oldest overdue age, scheduler success age, accepted-without-receipt
+age, failures, new ambiguous outcomes, historical unconfirmed rows, unmatched
+callbacks and duplicate attempt/chunk provider-ID groups. Missing heartbeats are
+`not_observed`; stale thresholds are 3 minutes, 30 minutes and 25 hours for
+reminders, briefings and follow-ups respectively. These are diagnostic thresholds,
+not new schedules. Unstarted briefings from older IST days expire rather than
+accumulate or replay; accepted/unknown attempts are never changed by cleanup.
+
+Same Brain delivery learning requires an explicit occurrence/job reference,
+owner-bound lookup and durable delivered/read state. A caller's verified boolean,
+HTTP 200 or SID alone produces `unknown`, including DB lookup failures. Canonical
+CRUD/read-back learning remains distinct from recipient-delivery evidence. These
+cron workers do not fabricate learning events for provider acceptance.
+
 ## Controlled production acceptance (human authorization required)
 
 Specify one authenticated owner, their verified WhatsApp destination, an exact
