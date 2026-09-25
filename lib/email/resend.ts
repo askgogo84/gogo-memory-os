@@ -10,7 +10,7 @@ type SendEmailInput = {
 
 export type SendEmailResult =
   | { ok: true; id: string | null }
-  | { ok: false; error: string }
+  | { ok: false; error: string; status?: number }
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails'
 
@@ -50,7 +50,7 @@ export async function sendAskGogoEmail(input: SendEmailInput): Promise<SendEmail
     const payload: any = await response.json().catch(() => null)
     if (!response.ok) {
       const message = payload?.message || payload?.error || `HTTP_${response.status}`
-      return { ok: false, error: String(message) }
+      return { ok: false, error: String(message), status: response.status }
     }
 
     return { ok: true, id: payload?.id ? String(payload.id) : null }

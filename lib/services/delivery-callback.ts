@@ -15,7 +15,7 @@ export async function persistAcceptedChunk(sid: string, token: string | undefine
   try {
     await deliveryRpc('record_delivery_receipt', { p_sid: sid, p_status: 'accepted', p_verified: false,
       p_token: token, p_chunk: chunk, p_chunks: chunks })
-    await deliveryRpc('reconcile_reminder_receipt', { p_sid: sid })
+    await deliveryRpc('reconcile_delivery_receipt', { p_sid: sid })
   } catch (cause) {
     // Provider already accepted: never classify a persistence exception as rejection.
     throw Object.assign(new Error('accepted_chunk_persistence_failed', { cause }), { partialSend: true })

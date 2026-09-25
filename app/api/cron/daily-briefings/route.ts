@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isCronAuthorized } from '@/lib/security/cron-auth'
-import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
+import { sendWhatsApp } from '@/lib/whatsapp'
+import { deliverNotification, reconcileBriefingEmailReceipts } from '@/lib/services/notification-delivery'
+import { isSuppressed } from '@/lib/bot/handlers/reminder-optout'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildMorningBriefing } from '@/lib/bot/handlers/morning-briefing'
 import { buildThrowbackLine } from '@/lib/bot/handlers/throwback'
@@ -38,7 +40,7 @@ function minutesSinceMidnight(timeValue: string | null | undefined) {
 
 function shouldRunForTime(timeValue: string | null | undefined, nowMinutes: number) {
   const target = minutesSinceMidnight(timeValue)
-  return nowMinutes >= target && nowMinutes <= target + 14
+  return nowMinutes >= target
 }
 
 function normalizePhone(value: string | null | undefined) {
@@ -48,21 +50,23 @@ function normalizePhone(value: string | null | undefined) {
 async function alreadyWhatsappSentToday(telegramId: number, today: string) {
   const marker = `ASKGOGO_DAILY_BRIEFING_SENT:${today}`
 
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('memories')
     .select('id')
     .eq('telegram_id', telegramId)
     .eq('content', marker)
     .limit(1)
 
+  if (error) throw new Error('legacy_briefing_marker_read_failed')
   return Boolean(data?.length)
 }
 
 async function markWhatsappSentToday(telegramId: number, today: string) {
-  await supabaseAdmin.from('memories').insert({
+  const { error } = await supabaseAdmin.from('memories').insert({
     telegram_id: telegramId,
     content: `ASKGOGO_DAILY_BRIEFING_SENT:${today}`,
   })
+  if (error) throw new Error('legacy_briefing_marker_write_failed')
 }
 
 async function alreadyEmailSentToday(telegramId: number, today: string) {
@@ -101,130 +105,93 @@ function firstName(value: string | null | undefined) {
 }
 
 export async function GET(req: NextRequest) {
-  if (!isCronAuthorized(req)) {
-    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
-  }
-
+  if (!isCronAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  const deadline = Date.now() + 45000
   const now = nowIstParts()
   const nowMinutes = now.hour * 60 + now.minute
-
-  const { data: users, error } = await supabaseAdmin
-    .from('users')
-    .select('telegram_id, name, whatsapp_id, email, briefing_enabled, briefing_time, weekly_brief, daily_brief_email_enabled')
-    .or('briefing_enabled.eq.true,daily_brief_email_enabled.eq.true')
-    .limit(150)
-
-  if (error) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-  }
-
-  let sentWhatsapp = 0
-  let sentEmail = 0
-  let skipped = 0
-  const failures: any[] = []
-
-  for (const user of users || []) {
-    const telegramId = Number(user.telegram_id)
-    try {
-      if (!shouldRunForTime(user.briefing_time, nowMinutes)) {
-        skipped++
-        continue
-      }
-
-      const phone = normalizePhone(user.whatsapp_id)
-      const recipient = String(user.email || '').trim().toLowerCase()
-
-      const whatsappEligible = user.briefing_enabled === true && Boolean(phone)
-      const emailEligible = user.daily_brief_email_enabled === true && Boolean(recipient)
-
-      const sendWhatsapp = whatsappEligible && !(await alreadyWhatsappSentToday(telegramId, now.date))
-      const sendEmail = emailEligible && !(await alreadyEmailSentToday(telegramId, now.date))
-
-      if (!sendWhatsapp && !sendEmail) {
-        skipped++
-        continue
-      }
-
-      const briefing = await buildMorningBriefing(telegramId, user.name || 'there')
-      const extraBlocks: string[] = []
-
-      // Sunday extras (Throwback + optional week-ahead) are shared by WhatsApp and email.
-      const istWeekday = new Date(`${now.date}T12:00:00+05:30`).getUTCDay()
-      if (istWeekday === 0) {
-        if (user.weekly_brief) {
-          const wk = await weekAheadSummary(telegramId)
-          if (wk) extraBlocks.push(wk)
-        }
-        const tb = await buildThrowbackLine(telegramId)
-        if (tb) extraBlocks.push(tb)
-      }
-
-      const fullBriefing = [briefing, ...extraBlocks].filter(Boolean).join('\n\n')
-
-      if (sendWhatsapp) {
-        try {
-          const reply = `☀️ *Good morning*\n\n${fullBriefing}\n\nReply *plan my day* to turn this into reminders.`
-          await sendWhatsAppMessage(phone, reply)
-          await markWhatsappSentToday(telegramId, now.date)
-          sentWhatsapp++
-        } catch (err: any) {
-          failures.push({ telegram_id: telegramId, channel: 'whatsapp', error: err?.message || String(err) })
-        }
-      }
-
-      if (sendEmail) {
-        try {
-          const unsubscribeUrl = buildDailyBriefUnsubscribeUrl(telegramId, recipient)
-          const rendered = renderDailyBriefEmail({
-            firstName: firstName(user.name),
-            briefing: fullBriefing,
-            localDate: now.date,
-            unsubscribeUrl,
-          })
-
-          const send = await sendAskGogoEmail({
-            to: recipient,
-            subject: rendered.subject,
-            html: rendered.html,
-            text: rendered.text,
-            unsubscribeUrl,
-            idempotencyKey: `daily-brief/${telegramId}/${now.date}`,
-            stream: 'daily-brief',
-          })
-
-          if (send.ok === false) throw new Error(send.error)
-
-          const { error: logError } = await supabaseAdmin.from('daily_brief_email_log').insert({
-            telegram_id: telegramId,
-            local_date: now.date,
-            email: recipient,
-            subject: rendered.subject,
-            provider_message_id: send.id,
-          })
-
-          if (logError && logError.code !== '23505') {
-            throw new Error(`daily brief log insert failed: ${logError.message}`)
+  const failures: { owner?: number; channel: string; status: string }[] = []
+  let sentWhatsapp = 0, sentEmail = 0, checked = 0
+  try {
+    const receiptFailures = await reconcileBriefingEmailReceipts(Math.min(deadline, Date.now() + 8000))
+    if (receiptFailures) failures.push({ channel: 'email_receipt', status: 'reconciliation_failed' })
+    const { data: saved, error: cursorError } = await supabaseAdmin.from('delivery_scan_cursors').select('cursor_value').eq('source', 'briefing').maybeSingle()
+    if (cursorError) throw new Error('briefing_cursor_read_failed')
+    let cursor = Number(saved?.cursor_value ?? Number.MIN_SAFE_INTEGER)
+    let exhausted = false
+    while (Date.now() < deadline && checked < 500) {
+      const { data: users, error } = await supabaseAdmin.from('users')
+        .select('telegram_id, name, whatsapp_id, email, briefing_enabled, briefing_time, weekly_brief, daily_brief_email_enabled')
+        .or('briefing_enabled.eq.true,daily_brief_email_enabled.eq.true').gt('telegram_id', cursor)
+        .order('telegram_id', { ascending: true }).limit(50)
+      if (error) throw new Error('briefing_users_read_failed')
+      if (!users?.length) { exhausted = true; break }
+      for (const user of users) {
+        if (Date.now() >= deadline) break
+        const owner = Number(user.telegram_id)
+        let fullBriefing: string | null = null
+        const prepare = async () => {
+          if (fullBriefing !== null) return
+          const briefing = await buildMorningBriefing(owner, user.name || 'there')
+          const extras: string[] = []
+          if (new Date(now.date + 'T12:00:00+05:30').getUTCDay() === 0) {
+            if (user.weekly_brief) { const week = await weekAheadSummary(owner); if (week) extras.push(week) }
+            const throwback = await buildThrowbackLine(owner); if (throwback) extras.push(throwback)
           }
-
-          sentEmail++
-        } catch (err: any) {
-          failures.push({ telegram_id: telegramId, channel: 'email', error: err?.message || String(err) })
+          fullBriefing = [briefing, ...extras].filter(Boolean).join('\n\n')
         }
+        const ready = async (channel: 'email' | 'whatsapp', target: string) => {
+          const { data: fresh, error } = await supabaseAdmin.from('users')
+            .select('whatsapp_id, email, briefing_enabled, briefing_time, daily_brief_email_enabled').eq('telegram_id', owner).maybeSingle()
+          if (error) throw new Error('briefing_consent_read_failed')
+          if (!fresh || nowIstParts().date !== now.date || !shouldRunForTime(fresh.briefing_time, nowMinutes)) return false
+          return channel === 'email' ? fresh.daily_brief_email_enabled === true && String(fresh.email || '').trim().toLowerCase() === target
+            : fresh.briefing_enabled === true && normalizePhone(fresh.whatsapp_id) === target && !await isSuppressed(owner, target)
+        }
+        try {
+          if (shouldRunForTime(user.briefing_time, nowMinutes)) {
+            const phone = normalizePhone(user.whatsapp_id)
+            const email = String(user.email || '').trim().toLowerCase()
+            // Legacy logs protect the rollout day; all new sends also use atomic jobs.
+            if (user.briefing_enabled && phone && !await alreadyWhatsappSentToday(owner, now.date)) {
+              const status = await deliverNotification({ key: 'briefing/' + owner + '/' + now.date + '/whatsapp', source: 'briefing', owner,
+                channel: 'whatsapp', due: new Date().toISOString(), deadline, prepare, ready: () => ready('whatsapp', phone),
+                send: async token => (await sendWhatsApp(phone, '☀️ *Good morning*\n\n' + fullBriefing + '\n\nReply *plan my day* to turn this into reminders.', null, token))?.sid || '',
+                accepted: () => markWhatsappSentToday(owner, now.date) })
+              if (status === 'provider_accepted') sentWhatsapp++
+              if (['failed','outcome_unknown','persistence_failed'].includes(status)) failures.push({ owner, channel: 'whatsapp', status })
+            }
+            if (Date.now() < deadline && user.daily_brief_email_enabled && email && !await alreadyEmailSentToday(owner, now.date)) {
+              let rendered: ReturnType<typeof renderDailyBriefEmail>
+              let unsubscribeUrl: string
+              const status = await deliverNotification({ key: 'briefing/' + owner + '/' + now.date + '/email', source: 'briefing', owner,
+                channel: 'email', due: new Date().toISOString(), deadline,
+                prepare: async () => { await prepare(); if (!process.env.RESEND_API_KEY) throw new Error('email_key_missing')
+                  unsubscribeUrl = buildDailyBriefUnsubscribeUrl(owner, email)
+                  rendered = renderDailyBriefEmail({ firstName: firstName(user.name), briefing: fullBriefing!, localDate: now.date, unsubscribeUrl }) },
+                ready: () => ready('email', email),
+                send: async token => {
+                  const response = await sendAskGogoEmail({ to: email, ...rendered, unsubscribeUrl,
+                    idempotencyKey: 'daily-brief/' + owner + '/' + now.date, stream: 'daily-brief' })
+                  if (response.ok === false) throw Object.assign(new Error(response.error), { status: response.status })
+                  if (!response.id) throw new Error('email_acceptance_id_missing')
+                  return 'resend:' + response.id
+                },
+                accepted: async id => {
+                  const { error } = await supabaseAdmin.from('daily_brief_email_log').insert({ telegram_id: owner,
+                    local_date: now.date, email, subject: rendered.subject, provider_message_id: id.replace(/^resend:/, '') })
+                  if (error && error.code !== '23505') throw new Error('email_log_write_failed')
+                } })
+              if (status === 'provider_accepted') sentEmail++
+              if (['failed','outcome_unknown','persistence_failed'].includes(status)) failures.push({ owner, channel: 'email', status })
+            }
+          }
+        } catch { failures.push({ owner, channel: 'prepare', status: 'failed' }) }
+        cursor = owner; checked++
       }
-    } catch (err: any) {
-      failures.push({ telegram_id: user.telegram_id, channel: 'prepare', error: err?.message || String(err) })
     }
-  }
-
-  return NextResponse.json({
-    ok: true,
-    date: now.date,
-    istTime: `${String(now.hour).padStart(2, '0')}:${String(now.minute).padStart(2, '0')}`,
-    sent: sentWhatsapp,
-    sentWhatsapp,
-    sentEmail,
-    skipped,
-    failures,
-  })
+    const { error: saveError } = await supabaseAdmin.from('delivery_scan_cursors').upsert({ source: 'briefing', cursor_value: exhausted ? Number.MIN_SAFE_INTEGER : cursor })
+    if (saveError) throw new Error('briefing_cursor_write_failed')
+  } catch { failures.push({ channel: 'queue', status: 'failed' }) }
+  return NextResponse.json({ ok: failures.length === 0, date: now.date, checked, acceptedWhatsapp: sentWhatsapp,
+    acceptedEmail: sentEmail, sent: sentWhatsapp, sentWhatsapp, sentEmail, failures }, { status: failures.length ? 503 : 200 })
 }
-

@@ -15,7 +15,8 @@ function load(file, mocks, env = {}) {
     if (id === 'node:crypto') return crypto
     if (Object.hasOwn(mocks, id)) return mocks[id]
     throw Error('Unmocked import: ' + id)
-  }, process: { env }, console, URL, Date, Intl, Request, Response, Buffer, AbortSignal })
+  }, process: { env }, console, URL, Date, Intl, Request, Response, Buffer, AbortSignal,
+    fetch: mocks.fetch || (()=>{throw Error('Unexpected network call in fixture')}) })
   return module.exports
 }
 
@@ -29,6 +30,7 @@ async function main() {
   await db.exec(fs.readFileSync('supabase/reminder-insert-idempotency-20260915.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925110046_reminder_delivery_leases.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925111441_delivery_callback_inbox.sql','utf8'))
+  await db.exec(fs.readFileSync('supabase/migrations/20260925112633_notification_delivery_jobs.sql','utf8'))
   const query = async (sql, params = []) => (await db.query(sql, params)).rows
   const rpc = async (name,args) => {
     const rows = await query(`select * from ${name}(${Object.keys(args).map((k,i)=>k+' => $'+(i+1)).join(',')})`,Object.values(args))
@@ -123,7 +125,7 @@ async function main() {
     twilio:{default:twilio},'@/lib/services/delivery-callback':callbackHelpers,
     '@/lib/services/reminder-delivery':{deliveryRpc:(name,args)=>{
       if(inboxFail&&name==='ingest_delivery_callback')throw Error('fixture inbox outage')
-      if(reconcileFail&&name==='reconcile_reminder_receipt')throw Error('fixture processing outage')
+      if(reconcileFail&&name==='reconcile_delivery_receipt')throw Error('fixture processing outage')
       return rpc(name,args)
     }}
   },{TWILIO_AUTH_TOKEN:'fixture-token',TWILIO_STATUS_CALLBACK_URL:'https://fixture.invalid/callback'})
@@ -158,6 +160,67 @@ async function main() {
   await rpc('reconcile_delivery_callbacks',{})
   assert.equal((await row(r.id)).delivery_state,'delivered','unmatched early legacy callback survives until SID write')
   await assert.rejects(rpc('record_delivery_receipt',{p_sid:'fake',p_status:'delivered',p_verified:false}),/acceptance_cannot/)
+  r=await add();t=crypto.randomUUID();await claim(r,t);await begin(r,t)
+  await rpc('finish_reminder_delivery',{p_id:r.id,p_token:t,p_state:'provider_accepted',p_sid:'SMold-snooze'})
+  await query("update reminders set sent=false,remind_at=now()+interval '10 minutes' where id=$1",[r.id])
+  assert.equal((await row(r.id)).delivery_state,'pending','legacy snooze re-arms a consumed reminder')
+  assert.equal((await row(r.id)).twilio_sid,null)
+  await post('SMold-snooze','delivered',t)
+  assert.equal((await row(r.id)).delivery_state,'pending','old callback cannot complete rescheduled occurrence')
+  // Shared notification protocol is exercised with actual PostgreSQL RPCs.
+  const notifications=load('lib/services/notification-delivery.ts',{
+    './reminder-delivery':{deliveryRpc:rpc},'./delivery-state':states,'@/lib/supabase-admin':{supabaseAdmin:adapter}
+  })
+  let notifySends=0
+  const notify=(key,overrides={})=>notifications.deliverNotification({key,source:'briefing',owner:1,channel:'whatsapp',due:new Date().toISOString(),
+    prepare:async()=>{},ready:async()=>true,send:async()=>{notifySends++;return 'SM-'+key},deadline:Date.now()+10000,...overrides})
+  const notificationsRace=await Promise.all([notify('race'),notify('race')])
+  assert.equal(notifySends,1);assert.ok(notificationsRace.includes('provider_accepted'))
+  await notify('cancel',{ready:async()=>false});assert.equal(notifySends,1)
+  await notify('timeout',{send:async()=>{notifySends++;throw Error('ambiguous')}})
+  await notify('timeout');assert.equal(notifySends,2,'notification ambiguous outcome cannot retry')
+  const failedLegacy=await notify('legacy-log-failure',{accepted:async()=>{throw Error('legacy persistence failed')}})
+  assert.notEqual(failedLegacy,'provider_accepted');await notify('legacy-log-failure');assert.equal(notifySends,3)
+  const job=(await query("select * from notification_deliveries where delivery_key='race'"))[0]
+  await post('SM-race','delivered',job.claim_token)
+  assert.equal((await query("select state from notification_deliveries where delivery_key='race'"))[0].state,'delivered')
+  // Actual briefing route paginates beyond the old 150-user cap, including negative
+  // legacy IDs, catches up later today, and propagates final preferences into ready.
+  let scanCursor=null,seen=[],disabled=false
+  const users=Array.from({length:161},(_,i)=>({telegram_id:i-80,name:'Fixture',whatsapp_id:'+15555550100',briefing_enabled:true,briefing_time:'00:00'}))
+  const briefingDb={from(table){let after=-Infinity,id=null,payload,write=false;const q={
+    select:()=>q,or:()=>q,order:()=>q,limit:()=>q,gt:(k,v)=>{after=v;return q},eq:(k,v)=>{if(k==='telegram_id')id=v;return q},maybeSingle:()=>q,
+    upsert:p=>{write=true;payload=p;return q},then(resolve,reject){
+      if(table==='delivery_scan_cursors'){if(write)scanCursor=payload.cursor_value;return Promise.resolve({data:scanCursor===null?null:{cursor_value:scanCursor}}).then(resolve,reject)}
+      if(table==='memories')return Promise.resolve({data:[]}).then(resolve,reject)
+      const data=id!==null?{...users.find(u=>u.telegram_id===id),briefing_enabled:!disabled}:users.filter(u=>u.telegram_id>after).slice(0,50)
+      return Promise.resolve({data}).then(resolve,reject)
+    }};return q}}
+  const briefing=load('app/api/cron/daily-briefings/route.ts',{
+    '@/lib/security/cron-auth':{isCronAuthorized:()=>true},'@/lib/whatsapp':{},
+    '@/lib/services/notification-delivery':{reconcileBriefingEmailReceipts:async()=>0,deliverNotification:async p=>{seen.push(p.owner);assert.equal(await p.ready(),!disabled);return 'skipped'}},
+    '@/lib/bot/handlers/reminder-optout':{isSuppressed:async()=>false},'@/lib/supabase-admin':{supabaseAdmin:briefingDb},
+    '@/lib/bot/handlers/morning-briefing':{},'@/lib/bot/handlers/throwback':{},'@/lib/email/resend':{},'@/lib/email/daily-brief':{},'@/lib/email/daily-brief-unsubscribe':{}
+  })
+  assert.equal((await briefing.GET(req())).status,200);assert.equal(seen.length,161);assert.ok(seen.includes(-80))
+  seen=[];disabled=true;await briefing.GET(req());assert.equal(seen.length,161)
+  const mailKey='email-receipt',mailToken=crypto.randomUUID()
+  await rpc('claim_notification_delivery',{p_key:mailKey,p_source:'briefing',p_owner:1,p_channel:'email',p_due:new Date().toISOString(),p_token:mailToken})
+  await rpc('begin_notification_delivery',{p_key:mailKey,p_token:mailToken})
+  await rpc('finish_notification_delivery',{p_key:mailKey,p_token:mailToken,p_state:'provider_accepted',p_provider_id:'resend:fixture-email'})
+  let mailEvent='sent',mailId='fixture-email'
+  const mailDb={from(){let update=false;const q={select:()=>q,eq:()=>q,order:()=>q,limit:()=>q,
+    update:()=>{update=true;return q},then(resolve,reject){return Promise.resolve({data:update?null:[{delivery_key:mailKey,provider_id:'resend:fixture-email',claim_token:mailToken}]}).then(resolve,reject)}};return q}}
+  const mailWorker=load('lib/services/notification-delivery.ts',{
+    './reminder-delivery':{deliveryRpc:rpc},'./delivery-state':states,'@/lib/supabase-admin':{supabaseAdmin:mailDb},
+    fetch:async()=>new Response(JSON.stringify({id:mailId,last_event:mailEvent}))
+  })
+  await mailWorker.reconcileBriefingEmailReceipts(Date.now()+10000)
+  assert.equal((await query('select state from notification_deliveries where delivery_key=$1',[mailKey]))[0].state,'provider_accepted')
+  mailEvent='delivered';mailId='wrong-id';assert.equal(await mailWorker.reconcileBriefingEmailReceipts(Date.now()+10000),1)
+  assert.equal((await query('select state from notification_deliveries where delivery_key=$1',[mailKey]))[0].state,'provider_accepted')
+  mailId='fixture-email';await mailWorker.reconcileBriefingEmailReceipts(Date.now()+10000)
+  assert.equal((await query('select state from notification_deliveries where delivery_key=$1',[mailKey]))[0].state,'delivered')
   await db.close()
   console.log('Delivery reliability: SQL leases, recurrence rollback, stale fencing, concurrency, cancellation, consent, crash/DB failure, unknown no-retry passed')
 }

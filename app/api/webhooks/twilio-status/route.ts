@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     await deliveryRpc('ingest_delivery_callback', { p_key: key, p_sid: sid, p_status: status, p_error: params.ErrorCode || null,
       p_token: token || null, p_chunk: token ? chunk : null, p_chunks: token ? chunks : null })
   } catch { return new NextResponse('Persistence unavailable', { status: 503 }) }
-  try { await deliveryRpc('reconcile_reminder_receipt', { p_sid: sid }) }
+  try { await deliveryRpc('reconcile_delivery_receipt', { p_sid: sid }) }
   catch { /* Durable event remains for the existing minute worker to reconcile. */ }
   return new NextResponse('', { status: 200 })
 }
