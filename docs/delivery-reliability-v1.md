@@ -74,3 +74,26 @@ regress delivered/read. A partial send or post-acceptance storage error stays
 ambiguous and cannot trigger a blind resend. Reconciliation never queues or sends.
 The receipts table contains no message bodies or recipient addresses. Both new
 tables enable RLS and revoke anonymous/authenticated access.
+
+## Briefings
+
+`notification_deliveries` holds a unique `(source/owner/local-date/channel)` key.
+Claims, lease recovery, pre-send intent, bounded known-rejection backoff and unknown
+no-retry mirror reminders. Legacy markers/logs protect the transition day. An error
+reading those markers fails closed. Legacy-log failures after acceptance do not
+report successful sends and do not permit duplicate retry.
+
+Briefings retain the existing Asia/Kolkata interpretation and 15-minute schedule.
+They catch up any time after the requested time on the same day; yesterday's brief
+is never replayed. Keyset pages of 50 users and a saved scan cursor (including
+negative legacy owner IDs) continue beyond the old 150-user cap, bounded by 500
+users and a 45-second deadline. The final destination and channel preference are
+re-read immediately before beginning the send.
+
+WhatsApp uses correlated chunk receipts. Email saves the Resend ID and keeps the
+stable owner/day idempotency key. Up to 10 oldest-checked accepted emails are read
+back from Resend within an eight-second reconciliation budget on each existing
+briefing run. Only matching provider IDs with delivered/opened/clicked evidence
+qualify as delivered. Sent/queued/HTTP 200 are not delivery evidence. API failures
+stay visible and never trigger resend. A sending-only Resend key needs read access
+before receipt reconciliation can succeed; do not assume key presence proves it.
