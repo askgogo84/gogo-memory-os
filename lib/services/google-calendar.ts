@@ -149,8 +149,12 @@ export async function createCalendarEvent(
       { headers: { 'Authorization': `Bearer ${accessToken}` }, cache: 'no-store' }
     )
     const verified = await verify.json().catch(() => ({}))
-    if (verify.ok && verified?.id === body.id) return verified
-    console.error('GCAL_EVENT_CREATE_VERIFY_UNKNOWN:', verify.status, JSON.stringify(verified).slice(0, 500))
+    if (verify.ok && verified?.id === body.id && verified?.status !== 'cancelled'
+      && verified?.summary === summary
+      && Date.parse(verified?.start?.dateTime) === Date.parse(startTime)
+      && Date.parse(verified?.end?.dateTime) === Date.parse(endTime)
+      && (!location || verified?.location === location)) return { ...verified, verification: 'verified' }
+    console.error('GCAL_EVENT_CREATE_VERIFY_UNKNOWN:', verify.status)
   } catch (err: any) {
     console.error('GCAL_EVENT_CREATE_VERIFY_UNKNOWN:', String(err?.message || err).slice(0, 300))
   }

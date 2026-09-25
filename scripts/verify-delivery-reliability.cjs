@@ -285,7 +285,7 @@ async function main() {
   const learningDb={from(table){if(table==='agent_activity')return {insert:async r=>{learningRow=r;return {}}}
     let owner;const q={select:()=>q,eq:(k,v)=>{if(k==='telegram_id'||k==='owner_id')owner=v;return q},maybeSingle:async()=>({data:owner===evidenceOwner?{state:evidenceState,delivery_state:evidenceState}:null,error:evidenceError})};return q}}
   const deliveryLearning=load('lib/agent/delivery-learning.ts',{'@/lib/supabase-admin':{supabaseAdmin:learningDb}})
-  const learning=load('lib/agent/decision-learning.ts',{'./delivery-learning':deliveryLearning,'@/lib/supabase-admin':{supabaseAdmin:learningDb},
+  const learning=load('lib/agent/decision-learning.ts',{'./delivery-learning':deliveryLearning,'./execution-evidence':load('lib/agent/execution-evidence.ts',{}),'@/lib/supabase-admin':{supabaseAdmin:learningDb},
     './decision-evidence':{finiteConfidence:()=>1},'@/lib/bot/memory-redaction':{isSecretShapedMemory:()=>false,redactSecretShapedText:s=>s},'./brain-introspection':{}})
   const learn={actor:{legacyTelegramId:'1'},text:'fixture',domain:'reminders',handler:'reminder-delivery',outcome:'verified_success',verified:true}
   await learning.recordDecisionLearning(learn);assert.equal(learningRow.metadata_json.outcome,'unknown','boolean/SID/HTTP200 are not proof')
