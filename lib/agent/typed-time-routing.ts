@@ -59,6 +59,10 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
   const selection=/^(?:select|open|show)\s+(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+(?:one|event|meeting|reminder)[?.!]*$/i.test(text)
   const approval=/^(?:approve|approved|yes|confirm|reject|no|cancel)$/i.test(text)
   if(!request&&!read&&!selection&&!approval)return null
+  const clarify=async(message:string)=>{
+    await recordDecisionLearning({actor:p.actor,text:original,domain:'other',handler:'typed-object-routing',decisionId:p.messageId||randomUUID(),outcome:'clarified',verified:false}).catch(()=>{})
+    return response(message)
+  }
   try{
     if(approval)return await approvalTurn(p.actor,text)
     const sentinel=evaluateAgentSentinel({capability:'calendar',mode:'read',risk:'low',irreversible:false,approved:false,instruction:original,actionCount:1})
@@ -78,7 +82,7 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
     if(owner&&!['calendar','reminders'].includes(owner))return response(`The selected object belongs to ${owner}. I won't reinterpret it as a Calendar event or reminder. Please name the intended object or use its ${owner} action.`)
     if(owner&&((explicitCalendar&&owner!=='calendar')||(explicitReminder&&owner!=='reminders')))return response('The requested object type conflicts with the active selection. Please select or name the intended object.')
     const selected=referential?selectedTypedObject(context,target):null
-    if(referential&&!selected)return response('Which Calendar event or reminder do you mean? Please name it or select it from a current list.')
+    if(referential&&!selected)return clarify('Which Calendar event or reminder do you mean? Please name it or select it from a current list.')
     const title=normalizedObjectTitle(target.replace(/^(?:the|my)\s+/i,'').replace(/\s+(?:reminder|event|meeting)$/i,''))
     let calendar:any=null,reminder:any=null
     let access:Awaited<ReturnType<typeof calendarAccessForUpdate>>|null=null
@@ -89,7 +93,7 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
       if(access){
         const events=selected?[await readExactCalendarEvent(access.token,selected.id)]:await fetchPrimaryCalendarEvents(access.token,new Date(Date.now()-86400000).toISOString(),new Date(Date.now()+31*86400000).toISOString(),'TYPED_CALENDAR_READ_FAILED')
         const matches=selected?events:events.filter((e:any)=>normalizedObjectTitle(e.summary)===title)
-        if(matches.length>1)return response('Multiple Calendar events have that exact title. Show your calendar and select the intended event.')
+        if(matches.length>1)return clarify('Multiple Calendar events have that exact title. Show your calendar and select the intended event.')
         calendar=matches[0]||null
       }
     }
@@ -97,15 +101,15 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
       const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone,sent').eq('telegram_id',p.actor.legacyTelegramId).eq('sent',false).order('remind_at',{ascending:true}).limit(100)
       if(error)throw new Error('typed_reminders_read_failed')
       const matches=selected?(data||[]).filter(r=>String(r.id)===selected.id):(data||[]).filter(r=>normalizedObjectTitle(r.message)===title)
-      if(matches.length>1)return response('Multiple reminders have that exact title. List your reminders and select the intended one.')
+      if(matches.length>1)return clarify('Multiple reminders have that exact title. List your reminders and select the intended one.')
       reminder=matches[0]||null
     }
     if(calendar&&reminder){
       if(context?.selectedId===String(calendar.id)&&context.domain==='calendar')reminder=null
       else if(context?.selectedId===String(reminder.id)&&context.domain==='reminders')calendar=null
-      else return response('Both a Calendar event and a reminder match that title. Do you mean the Calendar event or the reminder? Name it with the object type; nothing has changed.')
+      else return clarify('Both a Calendar event and a reminder match that title. Do you mean the Calendar event or the reminder? Name it with the object type; nothing has changed.')
     }
-    if(!calendar&&!reminder)return request?response('I could not resolve an exact Calendar event or reminder. Please name or select the intended object; nothing has changed.'):null
+    if(!calendar&&!reminder)return request?clarify('I could not resolve an exact Calendar event or reminder. Please name or select the intended object; nothing has changed.'):null
     const domain=calendar?'calendar':'reminders',object=calendar?{id:String(calendar.id),title:String(calendar.summary)}:{id:String(reminder.id),title:String(reminder.message)}
     await rememberTypedObjects(p.actor.legacyTelegramId,domain,[object])
     if(read){

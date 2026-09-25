@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { rememberTypedObjects } from './typed-object-context'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { searchCreditIQLiveFlights } from '@/lib/integrations/creditiq-travel'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
@@ -101,6 +102,7 @@ export async function tryRunTravelResearch(params:{actor:AgentActor;surface:Agen
   const{data:run,error:runError}=await supabaseAdmin.from('agent_runs').insert({telegram_id:String(tg),type:'travel_research',capability:'travel',status:'running',title:`Travel task · ${context.routeLabel}`,summary:'Gogo is working on this travel task.',progress:10,why:'This is a task to obtain usable current travel options.',source:params.surface,metadata_json:{plan_type:'travel_research',input_text:safe(effectiveText,1800),continuation_requested:continuation,queries,context,task_based:true},started_at:now,updated_at:now}).select('id').single();if(runError||!run?.id)throw new Error(`travel_research_run_create_failed:${runError?.message||'unknown'}`)
   const runId=String(run.id);const{data:step,error:stepError}=await supabaseAdmin.from('agent_steps').insert({telegram_id:String(tg),run_id:runId,ordinal:1,tool_name:'travel',title:'Obtain actual travel results',status:'running',input_json:{queries,context},output_json:{},started_at:now}).select('id').single();if(stepError||!step?.id)throw new Error(`travel_research_step_create_failed:${stepError?.message||'unknown'}`)
   await addActivity(tg,runId,'run_started',`Gogo started the travel task for ${context.routeLabel}.`,{queries,task_based:true})
+  await rememberTypedObjects(tg,'travel',[{id:runId,title:context.routeLabel}]).catch(()=>{})
   try{
     await supabaseAdmin.from('agent_runs').update({summary:'Checking live provider inventory.',progress:25,updated_at:new Date().toISOString()}).eq('id',runId)
     const live=await tryCreditIQLive(context,params.actor)

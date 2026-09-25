@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { rememberTypedObjects } from './typed-object-context'
 import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
@@ -83,6 +84,7 @@ async function tryWorkspaceRead(actor:AgentActor,text:string):Promise<string|nul
     if(isWorkspaceDisconnect(text)) return await disconnectWorkspace(actor)
     if(isEmailRead(text)) {
       const result=await searchWorkspaceEmails(actor,text)
+      await rememberTypedObjects(actor.legacyTelegramId,'email',result.messages.slice(0,5).map((m:any)=>({id:String(m.id),title:String(m.subject||'Email')}))).catch(()=>{})
       if(!result.messages.length)return 'I searched your connected Gmail and did not find a matching recent message. I did not invent one.'
 
       if(wantsEmailAttachment(text)) {

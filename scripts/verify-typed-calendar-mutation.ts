@@ -87,6 +87,16 @@ async function main(){try{
  // F: collision with no active typed selection asks, never guesses.
  reset();db.reminders=[{id:'r',telegram_id:123,message:'Same Brain Learning Test',sent:false,remind_at:'2026-10-01T10:00:00Z'}]
  assert.match((await run('Move Same Brain Learning Test to 5 PM'))!.text,/Both a Calendar event and a reminder/);assert.equal(db.agent_approvals.length,0);assert.equal(patches,0)
+ assert.equal(db.agent_activity.filter(r=>r.metadata_json?.outcome==='clarified').length,1)
+ // A fresh active type resolves a real cross-domain title collision.
+ await rememberTypedObjects(123,'calendar',[{id:event.id,title:event.summary}]);await stage('Move Same Brain Learning Test to 5 PM')
+ // Expired context cannot supply a pronoun; explicit selection keeps the exact ID.
+ reset();await rememberTypedObjects(123,'calendar',[{id:event.id,title:event.summary}]);db.agent_activity[0].metadata_json.at=new Date(Date.now()-31*60000).toISOString()
+ assert.match((await run('Move it to 5 PM'))!.text,/Which Calendar event or reminder/);assert.equal(db.agent_runs.length,0)
+ reset();await rememberTypedObjects(123,'calendar',[{id:'other',title:'Other'},{id:event.id,title:event.summary}],null)
+ assert.equal((await run('Open the second one'))?.status,'completed');await stage('Move it to 5 PM');assert.equal(db.agent_runs[0].metadata_json.draft.eventId,event.id)
+ // Foreign lists do not allow this resolver to steal the owner's ordinal opener.
+ reset();await rememberTypedObjects(123,'email',[{id:'mail',title:'Email'}]);assert.equal(await run('Open the first one'),null)
  // Genuine correction feedback binds to a previous real decision; no historic backfill.
  reset();const previousText='Move Same Brain Learning Test to 4:30 PM'
  db.agent_activity.push({telegram_id:'123',event_type:'decision_learning',created_at:new Date(Date.now()-1000).toISOString(),metadata_json:{schema:'same-brain-v2',decision_id:'wrong-route',handler:'compound-plan',domain:'reminders',user_text:previousText,outcome:'unknown'}})

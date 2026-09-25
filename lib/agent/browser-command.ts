@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { rememberTypedObjects } from './typed-object-context'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
@@ -240,6 +241,7 @@ export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:Agen
   }
 
   const tg=params.actor.legacyTelegramId;const {runId,stepId}=await makeRun({actor:params.actor,surface:params.surface,command})
+  await rememberTypedObjects(tg,'browser',[{id:runId,title:'Browser task'}]).catch(()=>{})
   const level=await permission(tg)
   const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:level,mode:command.mode,risk:command.risk,irreversible:command.mode==='execute',approvalStatus:null})
   if(!policy.allowed){
