@@ -52,7 +52,7 @@ export function summarizeLearningActivity(rows:any[]){
 
 // All queries, including histories reached through run/event IDs, inherit tenant scope.
 async function readLearningReport(params:{hours:number;limit:number},telegramId?:string){
-  const scoped=(table:string,columns:string)=>{
+  const scoped=<Columns extends string>(table:string,columns:Columns)=>{
     const query=supabaseAdmin.from(table).select(columns)
     return telegramId===undefined?query:query.eq('telegram_id',telegramId)
   }
