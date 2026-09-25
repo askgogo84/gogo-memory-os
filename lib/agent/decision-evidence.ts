@@ -9,7 +9,7 @@ export function learningDecisionId(messageId:unknown,runId?:unknown){
 export type LearningEvidence = {
   handler:string; domain:string; outcome:string; verified?:boolean
   confidence?:number|null; similarity?:number; decision_id?:string|null
-  first_route_correct?:boolean|null; correction?:string|null
+  first_route_correct?:boolean|null; correction?:string|null; verification_source?:string|null
 }
 
 export function finiteConfidence(value:unknown):number|null {
@@ -44,7 +44,7 @@ export function uniqueEvidence(inputRows:LearningEvidence[]){
     // provider state. Preserve that proof, but never override later negative,
     // blocked, or unknown evidence with an older success.
     if(latest.outcome==='success'&&row.outcome==='verified_success'&&row.verified===true)
-      rows[index]={...latest,verified:true,outcome:'verified_success'}
+      rows[index]={...latest,verified:true,outcome:'verified_success',verification_source:row.verification_source}
   }
   return rows
 }

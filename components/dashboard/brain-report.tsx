@@ -12,21 +12,24 @@ function Table({labels,rows}:{labels:string[];rows:ReactNode[][]}){
 }
 export function BrainReport({report:r}:{report:UserLearningReport}){
   const s=r.summary,t=r.taskMeasurements
-  const cards=[['Learning outcomes',number(s.decisions)],['Provider-verified',number(s.verifiedCompletions)],['Positive evidence',number(r.positiveEvidence)],['Corrections / failures',`${s.corrections} / ${s.failures}`],['Guarded-live hints',number(r.routing.allowedHints)],['Shadow-only hints',number(r.routing.shadowOnlyHints)]]
+  const cards=[['Learning outcomes',number(s.decisions)],['Verified outcomes',number(s.verifiedCompletions)],['Positive evidence',number(r.positiveEvidence)],['Corrections / failures',`${s.corrections} / ${s.failures}`],['Guarded-live hints',number(r.routing.allowedHints)],['Shadow-only hints',number(r.routing.shadowOnlyHints)]]
   return <>
     <div className="rounded-xl border border-[#24433e] bg-[#10201d] p-4 text-sm leading-6 text-[#c3dcd6]">Learning stays within your permissions. Typed state takes precedence over learned hints and semantic guesses. Approvals and provider verification remain required; unknown mutations are never automatically retried.</div>
     <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">{cards.map(([label,value])=><div key={label} className="rounded-xl border border-[#292929] bg-[#111] p-4"><p className="text-xs text-[#aaa]">{label}</p><p className="mt-3 text-3xl font-semibold tabular-nums">{value}</p></div>)}</div>
     <p className="text-xs leading-5 text-[#aaa]">Updated {time(r.generatedAt)} · {r.windowHours} hours · up to {r.sampleLimit} activity rows. {r.truncated?'Sample limit reached; figures describe only the newest rows.':'Activity sample limit not reached.'} {r.learningEvents} learning events; {r.legacyUnidentifiedEvents} legacy events lack decision IDs and cannot be deduplicated. Replacement-route evidence: {r.replacementEvidence}; this is not a verified completion. <a className="underline text-[#2fb8a6]" href={`/api/dashboard/brain?hours=${r.windowHours}`}>Open sanitized JSON</a></p>
+    <Section title="Verification evidence" note="Verified outcomes include different evidence types. Provider acceptance is insufficient for delivery. Older events without a recorded source remain unattributed; they are not counted as provider proof.">
+      <Table labels={['Evidence source','Verified outcomes']} rows={[['Provider read-back / delivery receipt',r.verificationEvidence.provider],['Canonical application state',r.verificationEvidence.canonical],['Specialist verification (source not classified)',r.verificationEvidence.specialist],['Unattributed legacy evidence',r.verificationEvidence.unattributed]]}/>
+    </Section>
     <Section title="Outcome quality" note="Rates describe observed decision/handler outcomes in this sample. First-route accuracy uses only explicitly judged routes; completion alone does not establish correct first routing.">
       <Table labels={['Metric','Measured rate','Evidence']} rows={[
-        ['Provider-verified completion',rate(s.verifiedCompletionRate),`${s.verifiedCompletions} / ${s.decisions}`],
+        ['Verified completion',rate(s.verifiedCompletionRate),`${s.verifiedCompletions} / ${s.decisions}`],
         ['Clarification',rate(s.clarificationRate),`${s.clarifications} / ${s.decisions}`],
         ['Correction',rate(s.correctionRate),`${s.corrections} / ${s.decisions}`],
         ['Outcome unknown',rate(s.unknownRate),`${s.unknown} / ${s.decisions}`],
         ['First-route accuracy',rate(s.firstRouteAccuracy),`${s.firstRouteJudgments} judged routes`],
       ]}/>
     </Section>
-    <Section title="Learned routing patterns" note="Calibrated confidence is the 95% Wilson lower bound of provider-verified completion, with at least 20 identified samples. Pattern totals summarize evidence; they do not grant live eligibility. Conflicts, corrections, typed context and action safety still control each decision.">
+    <Section title="Learned routing patterns" note="Calibrated confidence is the 95% Wilson lower bound of verified completion, with at least 20 identified samples. Pattern totals summarize evidence; they do not grant live eligibility. Conflicts, corrections, typed context and action safety still control each decision.">
       <Table labels={['Domain / handler','Outcomes','Verified','Negative','Calibration samples','Calibrated confidence']} rows={r.patterns.map(p=>[`${p.domain} / ${p.handler}`,p.decisions,p.verifiedCompletions,p.corrections+p.failures,p.calibrationSamples,p.calibrationSamples<p.minimumSamples?'Insufficient evidence':rate(p.confidence)])}/>
     </Section>
     <Section title="Recent routing decisions" note="Guarded-live means an allowed first-refusal hint, not proof of execution. Rejected candidates may have no handler. No permission changes are made here.">
@@ -53,7 +56,7 @@ export function BrainReport({report:r}:{report:UserLearningReport}){
       <Table labels={['UTC date','Outcomes','Verified','Corrections','Clarifications','Unknown']} rows={r.dailyEvidence.map(d=>[d.day,d.decisions,d.verifiedCompletions,d.corrections,d.clarifications,d.unknown])}/>
     </Section>
     <Section title="Recent learning events" note="Only time, routing labels and evidence state are shown. Messages, email bodies, provider IDs, credentials and private payloads are omitted.">
-      <Table labels={['Time','Domain','Handler','Outcome','Provider verified']} rows={r.recentEvents.map(e=>[time(e.at),e.domain,e.handler,e.outcome,e.verified?'Yes':'No'])}/>
+      <Table labels={['Time','Domain','Handler','Outcome','Verified outcome']} rows={r.recentEvents.map(e=>[time(e.at),e.domain,e.handler,e.outcome,e.verified?'Yes':'No'])}/>
     </Section>
   </>
 }
