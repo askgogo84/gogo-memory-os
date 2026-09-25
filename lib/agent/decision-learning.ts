@@ -47,45 +47,4 @@ export async function guardedRoutingHint(p:{actor:AgentActor;text:string;domain:
   return {...hints,decision:calibrateGuardedRouting({...hints,typedContextHandler:p.typedContextHandler,conflictingTypedContext:p.conflictingTypedContext,actionRequiresApproval:p.actionRequiresApproval})}
 }
 
-export function isSameBrainIntrospection(text:string){
-  const t=String(text||'').toLowerCase()
-  return /(?:same brain|decision making|decision-making|shadow[- ]only|route automatically|routing confidence|learned from my|learning system)/.test(t)
-}
-export async function sameBrainIntrospection(p:{actor:AgentActor;text:string}){
-  const {data,error}=await supabaseAdmin.from('agent_activity').select('metadata_json,created_at,event_type')
-    .eq('telegram_id',String(p.actor.legacyTelegramId)).in('event_type',['decision_learning','shadow_brain_observation'])
-    .order('created_at',{ascending:false}).limit(250)
-  if(error)throw new Error('same_brain_introspection_read_failed')
-  const learning=(data||[]).filter((r:any)=>r.event_type==='decision_learning').map((r:any)=>r.metadata_json).filter((m:any)=>m?.schema==='same-brain-v2')
-  const shadow=(data||[]).filter((r:any)=>r.event_type==='shadow_brain_observation').map((r:any)=>r.metadata_json)
-  const byHandler=new Map<string,{n:number;verified:number;corrected:number;success:number}>()
-  for(const m of learning){const h=String(m.handler||'unknown'),v=byHandler.get(h)||{n:0,verified:0,corrected:0,success:0};v.n++;if(m.verified)v.verified++;if(m.outcome==='corrected'||m.outcome==='failed')v.corrected++;if(m.outcome==='success'||m.outcome==='verified_success'||m.outcome==='replacement')v.success++;byHandler.set(h,v)}
-  const ranked=[...byHandler.entries()].sort((a,b)=>(b[1].verified*3+b[1].success-b[1].corrected*2)-(a[1].verified*3+a[1].success-a[1].corrected*2)).slice(0,8)
-  const live=new Map<string,{confidence:number;reason:string}>(),shadowOnly=new Map<string,{confidence:number;reason:string}>()
-  for(const m of shadow){const g=m?.learned_routing;if(!g?.handler)continue;const row={confidence:finiteConfidence(g.confidence)||0,reason:String(g.reason||'')};(g.useLearned?live:shadowOnly).set(String(g.handler),row)}
-  const corrections=learning.filter((m:any)=>m.outcome==='corrected').length
-  const verified=learning.filter((m:any)=>m.verified===true&&m.outcome==='verified_success').length
-  const successes=learning.filter((m:any)=>['success','verified_success','replacement'].includes(m.outcome)).length
-  const liveLines=[...live.entries()].slice(0,6).map(([h,v])=>`• ${h} — ${Math.round(v.confidence*100)}% confidence`)
-  const shadowLines=[...shadowOnly.entries()].slice(0,6).map(([h,v])=>`• ${h} — ${Math.round(v.confidence*100)}% — ${v.reason.replace(/_/g,' ')}`)
-  const learnedLines=ranked.map(([h,v])=>`• ${h}: ${v.success} positive, ${v.verified} provider-verified, ${v.corrected} negative/corrected`)
-  return [
-    '🧠 *Same Brain v2 — measured state*',
-    '',
-    `Learning samples: ${learning.length}`,
-    `Successful/replacement outcomes: ${successes}`,
-    `Provider-verified successes: ${verified}`,
-    `Corrections/failures recorded: ${corrections}`,
-    '',
-    '*What I have learned:*',
-    learnedLines.length?learnedLines.join('\n'):'Not enough clean learning evidence yet.',
-    '',
-    '*Guarded live routing:*',
-    liveLines.length?liveLines.join('\n'):'No learned route has enough safe evidence for live promotion yet.',
-    '',
-    '*Still shadow-only:*',
-    shadowLines.length?shadowLines.join('\n'):'No recent shadow-only learned routes recorded.',
-    '',
-    'Learning can improve interpretation and routing, but it cannot bypass approvals, permissions, provider verification, payments, bookings, sends, or other consequential-action gates.'
-  ].join('\n')
-}
+export { isSameBrainIntrospection, sameBrainIntrospection } from './brain-introspection'

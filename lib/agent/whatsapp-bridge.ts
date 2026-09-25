@@ -353,7 +353,7 @@ export async function tryRunWhatsAppAgent(params: {
 
   if(isSameBrainIntrospection(params.text)){
     const report=await sameBrainIntrospection({actor,text:params.text})
-    return {runId:'same-brain-introspection',status:'completed' as const,capability:'memory' as const,risk:'low' as const,text:report,handledBy:'same-brain-introspection'}
+    return {runId:'same-brain-introspection',status:'completed' as const,text:report,handledBy:'same-brain-introspection'}
   }
 
     const gmailContext=await tryRunGmailContextCommand({actor,text:params.text})
@@ -475,3 +475,4 @@ export async function tryRunWhatsAppAgent(params: {
 
   return null
 }
+

@@ -1,3 +1,4 @@
+import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { auditInboundTwilioSignature } from '@/lib/security/webhook-signature'
@@ -840,6 +841,14 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    const brainReply = await trySameBrainIntrospection({ actor: { legacyTelegramId: Number(resolvedUser.telegramId) }, text })
+    if (brainReply) {
+      await saveConversation(resolvedUser.telegramId, 'user', text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', brainReply.text)
+      await sendWhatsAppMessage(from, brainReply.text)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     let brainObservation:ShadowBrainObservation|null=null
     try {
       const shadowActor = await resolveAgentActor({ telegramId:String(resolvedUser.telegramId), surface:'whatsapp' })
@@ -1662,4 +1671,5 @@ _Reminder cancelled._`
     }
   }
 }
+
 
