@@ -71,13 +71,14 @@ export async function executeApprovedCalendarUpdate({actor,runId}:{actor:AgentAc
   }
   const {data:claim,error:ce}=await supabaseAdmin.from('agent_runs').update({status:'running',updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',tg).in('status',['queued','waiting_approval']).select('id').maybeSingle()
   if(ce||!claim)throw new Error('agent_run_already_claimed')
-  let verified=false
-  try{const result=await updateCalendarEvent(token,draft.eventId,{startTime:draft.startIso,endTime:draft.endIso,ifMatch:draft.etag,timezone:draft.timezone});verified=result.ok&&result.verification==='verified'}catch{}
-  const now=new Date().toISOString(),status=verified?'completed':'outcome_unknown'
+  let verified=false,rejected=false
+  try{const result=await updateCalendarEvent(token,draft.eventId,{startTime:draft.startIso,endTime:draft.endIso,ifMatch:draft.etag,timezone:draft.timezone});verified=result.ok&&result.verification==='verified';rejected=result.verification==='rejected'}catch{}
+  const now=new Date().toISOString(),status=verified?'completed':rejected?'failed':'outcome_unknown'
   // A claimed request stays non-retriable even if these bookkeeping writes fail.
-  await supabaseAdmin.from('agent_runs').update({status,completed_at:verified?now:null,updated_at:now,summary:verified?'Calendar update verified by exact provider read-back.':'Calendar update outcome unknown; do not retry.'}).eq('id',runId).eq('telegram_id',tg)
-  await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)
-  await recordDecisionLearning({actor,text:String(run.metadata_json.learning_text||''),domain:'calendar',handler:'calendar-update',decisionId:runId,objectKind:'calendar_event',objectRef:draft.eventId,outcome:verified?'verified_success':'unknown',verified}).catch(()=>{})
+  await supabaseAdmin.from('agent_runs').update({status,completed_at:verified||rejected?now:null,updated_at:now,summary:verified?'Calendar update verified by exact provider read-back.':rejected?'Google rejected the update; a new request requires a fresh approval.':'Calendar update outcome unknown; do not retry.'}).eq('id',runId).eq('telegram_id',tg)
+  await supabaseAdmin.from('agent_approvals').update({status:rejected?'failed':'executed',executed_at:now}).eq('id',approval.id).eq('telegram_id',tg)
+  await recordDecisionLearning({actor,text:String(run.metadata_json.learning_text||''),domain:'calendar',handler:'calendar-update',decisionId:runId,objectKind:'calendar_event',objectRef:draft.eventId,outcome:verified?'verified_success':rejected?'failed':'unknown',verified}).catch(()=>{})
+  if(rejected)return reply('Google rejected this Calendar update. It was not applied and will not be retried automatically. Ask again to review the current event and give a fresh approval.','failed',runId)
   if(!verified)return reply('The Calendar update was attempted, but I could not verify the exact event and time from Google. Its outcome is unknown. I will not retry automatically. Check Google Calendar before any further change.','outcome_unknown',runId)
   await rememberTypedObjects(actor.legacyTelegramId,'calendar',[{id:draft.eventId,title:draft.title}]).catch(()=>{})
   return reply(`Moved “${draft.title}” and verified the exact event and time with Google Calendar. New time: ${new Intl.DateTimeFormat('en-IN',{timeZone:draft.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(draft.startIso))} (${draft.timezone}).`,'completed',runId)

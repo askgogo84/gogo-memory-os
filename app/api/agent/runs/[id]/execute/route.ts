@@ -1,4 +1,5 @@
 import { executeApprovedCalendarUpdate } from '@/lib/agent/calendar-update'
+import { executeApprovedReminderUpdate } from '@/lib/agent/reminder-update'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
@@ -41,6 +42,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     let result: any
     if (planType === 'calendar_update') {
       result = await executeApprovedCalendarUpdate({actor,runId:id})
+    } else if (planType === 'reminder_update') {
+      result = await executeApprovedReminderUpdate({actor,runId:id})
     } else if (planType === 'memory_ticket_to_calendar') {
       result = await executeApprovedTravelCalendarPlan({ actor, runId: id })
     } else if (planType === 'secure_browser') {
@@ -73,4 +76,3 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({ error: 'agent_execution_failed' }, { status: 500 })
   }
 }
-

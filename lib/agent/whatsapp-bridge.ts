@@ -1,5 +1,6 @@
 import { tryTypedTimeRouting } from './typed-time-routing'
 import { executeApprovedCalendarUpdate } from './calendar-update'
+import { executeApprovedReminderUpdate } from './reminder-update'
 import { verifiedReadEvidence } from './read-evidence'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
@@ -157,6 +158,8 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
   const planType = String((run.metadata_json as any)?.plan_type || '')
   const result = planType === 'calendar_update'
     ? await executeApprovedCalendarUpdate({actor,runId:String(data.run_id)})
+    : planType === 'reminder_update'
+    ? await executeApprovedReminderUpdate({actor,runId:String(data.run_id)})
     : planType === 'memory_ticket_to_calendar'
     ? await executeApprovedTravelCalendarPlan({ actor, runId:String(data.run_id) })
     : planType === 'secure_browser'
@@ -482,4 +485,3 @@ export async function tryRunWhatsAppAgent(params: {
 
   return null
 }
-

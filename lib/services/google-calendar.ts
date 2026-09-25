@@ -226,7 +226,7 @@ export async function updateCalendarEvent(
   accessToken: string,
   eventId: string,
   patch: { summary?: string; startTime?: string; endTime?: string; location?: string; ifMatch?: string; timezone?: string }
-): Promise<{ ok: boolean; event?: any; error?: string; verification?: 'verified' | 'unknown' }> {
+): Promise<{ ok: boolean; event?: any; error?: string; verification?: 'verified' | 'unknown' | 'rejected' }> {
   const body: any = {}
   if (patch.summary) body.summary = patch.summary
   if (patch.startTime) body.start = { dateTime: patch.startTime, timeZone: patch.timezone || 'Asia/Kolkata' }
@@ -242,7 +242,7 @@ export async function updateCalendarEvent(
     }
   )
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) return { ok: false, error: data?.error?.message || `HTTP ${response.status}` }
+  if (!response.ok) return { ok: false, verification: [400,401,403,404,409,410,412,422,429].includes(response.status) ? 'rejected' : 'unknown', error: data?.error?.message || `HTTP ${response.status}` }
   const readback = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' })
   const actual = await readback.json().catch(() => null)
   const matches = readback.ok && actual?.id === eventId && actual?.status !== 'cancelled'

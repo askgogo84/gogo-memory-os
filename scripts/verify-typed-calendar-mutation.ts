@@ -8,10 +8,10 @@ import { isSameBrainIntrospection } from '../lib/agent/brain-introspection'
 
 const actor={legacyTelegramId:123,userId:'test-user',whatsappId:'fixture',name:'Fixture'}
 const baseEvent={id:'calendar-exact',summary:'A event called Same Brain Learning Test',etag:'"v1"',start:{dateTime:'2026-10-01T16:00:00+05:30'},end:{dateTime:'2026-10-01T16:30:00+05:30'}}
-let db:Record<string,any[]>,event:any,patches=0,unknown=false,mismatch=false,wrongTime=false,permission:string|null=null,seq=0
+let db:Record<string,any[]>,event:any,patches=0,unknown=false,mismatch=false,wrongTime=false,rejectPatch=0,reminderWriteUnknown=false,reminderWrites=0,permission:string|null=null,seq=0
 const oldFrom=supabaseAdmin.from,oldFetch=globalThis.fetch
 const copy=(v:any)=>JSON.parse(JSON.stringify(v))
-function reset(){db={agent_activity:[],agent_runs:[],agent_approvals:[],reminders:[],conversations:[],agent_permissions:[],users:[{telegram_id:123,timezone:'Asia/Kolkata',google_calendar_connected:true,google_refresh_token:'fixture'}]};event=copy(baseEvent);patches=0;unknown=false;mismatch=false;wrongTime=false;permission=null;seq=0}
+function reset(){db={agent_activity:[],agent_runs:[],agent_approvals:[],reminders:[],conversations:[],agent_permissions:[],users:[{telegram_id:123,timezone:'Asia/Kolkata',google_calendar_connected:true,google_refresh_token:'fixture'}]};event=copy(baseEvent);patches=0;unknown=false;mismatch=false;wrongTime=false;rejectPatch=0;reminderWriteUnknown=false;reminderWrites=0;permission=null;seq=0}
 function value(row:any,key:string){return key.split(/->>?/).reduce((v,k)=>v?.[k],row)}
 ;(supabaseAdmin as any).from=(table:string)=>{
  const filters:any[]=[],order:any[]=[];let mode='read',payload:any,lim=Infinity,single=false,selected=false
@@ -22,6 +22,7 @@ function value(row:any,key:string){return key.split(/->>?/).reduce((v,k)=>v?.[k]
    let rows=db[table].filter(r=>filters.every(f=>f(r)))
    if(mode==='insert'){rows=(Array.isArray(payload)?payload:[payload]).map(p=>({...copy(p),id:p.id||`00000000-0000-4000-8000-${String(++seq).padStart(12,'0')}`,created_at:new Date(Date.now()+seq).toISOString(),requested_at:new Date(Date.now()+seq).toISOString()}));db[table].push(...rows)}
    else if(mode==='update')for(const r of rows)Object.assign(r,copy(payload))
+   if(mode==='update'&&table==='reminders'){reminderWrites++;if(reminderWriteUnknown)throw new Error('reminder_write_response_lost')}
    for(const [k,o] of order)rows.sort((a,b)=>String(value(a,k)||'').localeCompare(String(value(b,k)||''))*(o?.ascending===false?-1:1))
    rows=rows.slice(0,lim)
    return Promise.resolve({data:mode==='update'&&!selected?null:copy(single?(rows[0]||null):rows),error:null}).then(resolve,reject)
@@ -35,6 +36,7 @@ globalThis.fetch=(async(url:any,opts:any={})=>{
  assert.match(u,/googleapis.com\/calendar\/v3\/calendars\/primary\/events/)
  if(opts.method==='PATCH'){
   patches++;assert.equal(u.split('/').at(-1),'calendar-exact');assert.equal(opts.headers['If-Match'],'"v1"')
+  if(rejectPatch)return new Response(JSON.stringify({error:{message:'Rejected'}}),{status:rejectPatch})
   const body=JSON.parse(opts.body);event={...event,...body,etag:'"v2"'}
   if(unknown)throw new Error('fixture_timeout_after_mutation')
   return new Response(JSON.stringify(event))
@@ -56,11 +58,16 @@ async function main(){try{
  }
  // G/H: approval is required, exact bound time is verified and only then success is learned.
  reset();const pending=await stage('Move Same Brain Learning Test to 4:30 PM')
+ for(const text of ['yes','confirm','no','cancel']){assert.equal(await run(text),null);assert.equal(db.agent_approvals[0].status,'pending');assert.equal(patches,0)}
  await assert.rejects(()=>executeApprovedCalendarUpdate({actor,runId:pending.runId}),/approval_required/);assert.equal(patches,0)
  const approved=await run('APPROVE');assert.equal(approved?.status,'completed',approved?.text);assert.equal(patches,1)
  assert.equal(Date.parse(event.start.dateTime),Date.parse('2026-10-01T11:00:00Z'))
  assert.ok(db.agent_activity.some(r=>r.metadata_json?.outcome==='verified_success'&&r.metadata_json?.handler==='calendar-update'))
  await assert.rejects(()=>executeApprovedCalendarUpdate({actor,runId:pending.runId}));assert.equal(patches,1)
+ // Definitive provider rejection is failure, not unknown, and needs a new approval.
+ for(const status of [400,403,412]){reset();await stage('Move Same Brain Learning Test to 5 PM');rejectPatch=status;assert.equal((await run('APPROVE'))?.status,'failed');assert.equal(db.agent_runs[0].status,'failed');assert.equal(event.start.dateTime,baseEvent.start.dateTime);assert.equal(db.agent_activity.filter(r=>r.metadata_json?.outcome==='verified_success').length,0);assert.equal((await run('Move Same Brain Learning Test to 6 PM'))?.status,'waiting_approval');assert.equal(patches,1)}
+ reset();await stage('Move my 4pm meeting to 5pm')
+ reset();event={...event,start:{date:'2026-10-01'},end:{date:'2026-10-02'}};assert.match((await run('Move Same Brain Learning Test to 5 PM'))!.text,/All-day/);assert.equal(db.agent_runs.length,0);assert.equal(patches,0)
  // H/I: neither a PATCH receipt nor a mismatched/unknown readback is success or retriable.
  for(const failure of ['timeout','identity','time']){
   reset();const p=await stage('Move Same Brain Learning Test to 4:30 PM');unknown=failure==='timeout';mismatch=failure==='identity';wrongTime=failure==='time'
@@ -84,6 +91,18 @@ async function main(){try{
  assert.equal((await run('Move the second one to 9 PM'))?.status,'completed')
  assert.equal((await run('Move that one to 10 PM'))?.status,'completed')
  assert.equal(db.reminders[1].remind_at,'2026-10-01T16:30:00.000Z');assert.equal(db.reminders[0].remind_at,'2026-10-01T12:30:00.000Z');assert.equal(patches,0)
+ // Ask-level reminders retain a concrete, exact-ID approval path.
+ reset();permission='ask';db.reminders=[{id:'r',telegram_id:123,message:'Call Praveen',remind_at:'2026-10-01T10:30:00Z',timezone:'Asia/Kolkata',sent:false}]
+ await rememberTypedObjects(123,'reminders',[{id:'r',title:'Call Praveen'}])
+ assert.equal((await run('Move it to 6 PM'))?.status,'waiting_approval');assert.equal(db.reminders[0].remind_at,'2026-10-01T10:30:00Z');assert.equal(db.agent_approvals[0].action_type,'reminder_change')
+ assert.equal(await run('yes'),null);assert.equal((await run('APPROVE'))?.status,'completed');assert.equal(db.reminders[0].remind_at,'2026-10-01T12:30:00.000Z');assert.equal(patches,0)
+ // Approval does not survive a permission downgrade.
+ reset();permission='ask';db.reminders=[{id:'r',telegram_id:123,message:'Call Praveen',remind_at:'2026-10-01T10:30:00Z',timezone:'Asia/Kolkata',sent:false}]
+ await rememberTypedObjects(123,'reminders',[{id:'r',title:'Call Praveen'}]);await run('Move it to 6 PM');permission='read'
+ assert.equal((await run('APPROVE'))?.status,'paused');assert.equal(db.reminders[0].remind_at,'2026-10-01T10:30:00Z')
+ reset();permission='ask';db.reminders=[{id:'r',telegram_id:123,message:'Call Praveen',remind_at:'2026-10-01T10:30:00Z',timezone:'Asia/Kolkata',sent:false}]
+ await rememberTypedObjects(123,'reminders',[{id:'r',title:'Call Praveen'}]);await run('Move it to 6 PM');reminderWriteUnknown=true
+ assert.equal((await run('APPROVE'))?.status,'outcome_unknown');assert.equal(reminderWrites,1);assert.equal((await run('Move it to 7 PM'))?.status,'outcome_unknown');assert.equal(reminderWrites,1);assert.equal(db.agent_activity.filter(r=>r.metadata_json?.outcome==='verified_success').length,0)
  // F: collision with no active typed selection asks, never guesses.
  // Domain words inside a real title do not override its actual object type.
  reset();event.summary='Team Reminder';await stage('Move Team Reminder to 5 PM')

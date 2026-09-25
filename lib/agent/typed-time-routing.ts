@@ -8,6 +8,7 @@ import { calendarAccessForUpdate, readExactCalendarEvent, stageCalendarUpdate, e
 import { recordDecisionLearning } from './decision-learning'
 import { captureExplicitRoutingCorrection } from './decision-feedback'
 import { evaluateAgentSentinel } from './sentinel'
+import { pendingReminderUpdate, stageReminderUpdate, executeApprovedReminderUpdate } from './reminder-update'
 import type { AgentActor } from './actor'
 
 export function parseTypedTimeRequest(raw:string){
@@ -37,17 +38,19 @@ export function movedTime(clock:string,start:string,end:string|undefined,timezon
 const response=(text:string,status='paused',domain='other')=>({text,status,handledBy:'typed-object-routing',capability:domain,runId:''})
 
 async function approvalTurn(actor:AgentActor,text:string){
-  if(!/^(?:approve|approved|yes|confirm|reject|no|cancel)$/i.test(text.trim()))return null
+  if(!/^(?:approve|reject)$/i.test(text.trim()))return null
   const {data,error}=await supabaseAdmin.from('agent_approvals').select('id,run_id,status,execution_payload').eq('telegram_id',String(actor.legacyTelegramId)).eq('status','pending').order('requested_at',{ascending:false}).limit(2)
   if(error)throw new Error('approval_read_failed')
   const pending=data?.[0]
-  if(pending?.execution_payload?.plan_type!=='calendar_update')return null
-  if(data.length!==1)return response('More than one approval is pending. Open Gogo Agent and approve the exact Calendar update.')
-  const reject=/^(reject|no|cancel)$/i.test(text.trim())
+  const planType=pending?.execution_payload?.plan_type
+  if(!['calendar_update','reminder_update'].includes(planType))return null
+  const label=planType==='calendar_update'?'Calendar event':'reminder'
+  if(data.length!==1)return response('More than one approval is pending. Open Gogo Agent and approve the exact update.')
+  const reject=/^reject$/i.test(text.trim())
   const {data:claimed,error:ce}=await supabaseAdmin.from('agent_approvals').update({status:reject?'rejected':'approved',resolved_at:new Date().toISOString()}).eq('id',pending.id).eq('telegram_id',String(actor.legacyTelegramId)).eq('status','pending').select('id').maybeSingle()
   if(ce||!claimed)return response('That approval has already been handled. Nothing was retried.')
-  if(reject){await supabaseAdmin.from('agent_runs').update({status:'paused'}).eq('id',pending.run_id).eq('telegram_id',String(actor.legacyTelegramId));return response('Calendar update rejected. The event is unchanged.','paused','calendar')}
-  return executeApprovedCalendarUpdate({actor,runId:pending.run_id})
+  if(reject){await supabaseAdmin.from('agent_runs').update({status:'paused'}).eq('id',pending.run_id).eq('telegram_id',String(actor.legacyTelegramId));return response(`Update rejected. The ${label} is unchanged.`,'paused',planType==='calendar_update'?'calendar':'reminders')}
+  return planType==='calendar_update'?executeApprovedCalendarUpdate({actor,runId:pending.run_id}):executeApprovedReminderUpdate({actor,runId:pending.run_id})
 }
 
 export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surface:string;messageId?:string|null}){
@@ -57,7 +60,7 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
   const request=parseTypedTimeRequest(text)
   const read=text.match(/^(?:what time is|when is|when does)\s+(.+?)(?:\s+(?:today|tomorrow))?[?.!]*$/i)
   const selection=/^(?:select|open|show)\s+(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+(?:one|event|meeting|reminder)[?.!]*$/i.test(text)
-  const approval=/^(?:approve|approved|yes|confirm|reject|no|cancel)$/i.test(text)
+  const approval=/^(?:approve|reject)$/i.test(text)
   if(!request&&!read&&!selection&&!approval)return null
   const clarify=async(message:string)=>{
     await recordDecisionLearning({actor:p.actor,text:original,domain:'other',handler:'typed-object-routing',decisionId:p.messageId||randomUUID(),outcome:'clarified',verified:false}).catch(()=>{})
@@ -98,6 +101,17 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
       if(access){
         const events=selected?[await readExactCalendarEvent(access.token,selected.id)]:await fetchPrimaryCalendarEvents(access.token,new Date(Date.now()-86400000).toISOString(),new Date(Date.now()+31*86400000).toISOString(),'TYPED_CALENDAR_READ_FAILED')
         let matches=selected?events:namedMatches(events,e=>e.summary)
+        // Preserve deterministic current-time selectors without reviving fuzzy
+        // mutation routing. More than one matching event still requires a choice.
+        const currentClock=target.match(/^(?:my\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s+(?:meeting|event|appointment)$/i)
+        if(!matches.length&&currentClock&&Number(currentClock[1])>=1&&Number(currentClock[1])<=12&&Number(currentClock[2]||0)<60){
+          const hour=Number(currentClock[1])%12+(currentClock[3].toLowerCase()==='pm'?12:0),minute=Number(currentClock[2]||0)
+          matches=events.filter((event:any)=>{
+            if(!event.start?.dateTime)return false
+            const parts=new Intl.DateTimeFormat('en-GB',{timeZone:normalizeTimezone(access!.timezone),hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(event.start.dateTime))
+            return Number(parts.find(p=>p.type==='hour')?.value)===hour&&Number(parts.find(p=>p.type==='minute')?.value)===minute
+          })
+        }
         if(matches.length>1&&context?.domain==='calendar'&&matches.some(e=>String(e.id)===context.selectedId))matches=matches.filter(e=>String(e.id)===context.selectedId)
         if(matches.length>1)return clarify('Multiple Calendar events have that exact title. Show your calendar and select the intended event.')
         calendar=matches[0]||null
@@ -130,6 +144,7 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
       return response(`${object.title}: ${start}`,'completed',domain)
     }
     const timezone=normalizeTimezone(calendar?access!.timezone:reminder.timezone)
+    if(calendar&&(!calendar.start?.dateTime||!calendar.end?.dateTime))return clarify('All-day events need an explicit date and duration before they can become timed events. Nothing has changed.')
     const times=movedTime(request!.clock,calendar?.start?.dateTime||reminder?.remind_at,calendar?.end?.dateTime,timezone,request!.day)
     if(!times)return response('Please give a valid time for the selected object. All-day events need an explicit date and duration.')
     let result:any
@@ -138,11 +153,15 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
       result=await stageCalendarUpdate(p.actor,{eventId:object.id,title:object.title,oldStart:calendar.start.dateTime,oldEnd:calendar.end.dateTime,startIso:times.startIso,endIso:times.endIso,etag:calendar.etag,timezone},original,p.surface)
     }else{
       const level=await capabilityPermissionLevel(p.actor.legacyTelegramId,'reminders')
-      if(level!=='auto')return response('Your reminder permission requires review before a change. No reminder was moved.','paused','reminders')
+      if(level!=='auto'&&level!=='ask')return response('Your reminder permission does not allow changes. No reminder was moved.','paused','reminders')
+      const prior=await pendingReminderUpdate(p.actor,object.id);if(prior)return prior
+      if(level==='ask')result=await stageReminderUpdate(p.actor,{reminderId:object.id,title:object.title,oldTime:reminder.remind_at,newTime:times.startIso,timezone},original,p.surface)
+      else{
       const {data,error}=await supabaseAdmin.from('reminders').update({remind_at:times.startIso}).eq('telegram_id',p.actor.legacyTelegramId).eq('id',reminder.id).eq('remind_at',reminder.remind_at).eq('sent',false).select('id,remind_at').maybeSingle()
       if(error||!data||Date.parse(data.remind_at)!==Date.parse(times.startIso))return response('The reminder changed or its update could not be verified. Nothing will be retried automatically.')
       await recordDecisionLearning({actor:p.actor,text:original,domain:'reminders',handler:'reminder-update',decisionId:p.messageId||randomUUID(),outcome:'verified_success',verified:true,objectKind:'reminder',objectRef:object.id}).catch(()=>{})
       result=response(`Reminder updated: ${object.title}. New time: ${new Intl.DateTimeFormat('en-IN',{timeZone:timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(times.startIso))}.`,'completed','reminders')
+      }
     }
     if(correction&&['waiting_approval','completed'].includes(result.status)&&correction.handler!==(calendar?'calendar-update':'reminder-update')){
       await recordDecisionLearning({actor:p.actor,text:correction.text,domain:correction.domain,handler:correction.handler,decisionId:correction.decisionId,outcome:'corrected',firstRouteCorrect:false,correction:'explicit correction resolved by typed object'}).catch(()=>{})
