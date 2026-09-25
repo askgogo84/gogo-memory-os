@@ -2,7 +2,7 @@ import { verifiedReadEvidence } from './read-evidence'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
-import { decisionDomain, recordDecisionLearning } from './decision-learning'
+import { decisionDomain, recordDecisionLearning, isSameBrainIntrospection, sameBrainIntrospection } from './decision-learning'
 import { observedOutcome, learningDecisionId } from './decision-evidence'
 import { isGmailVerificationQuery } from './gmail-verification'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand } from './watch-command'
@@ -351,7 +351,12 @@ export async function tryRunWhatsAppAgent(params: {
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
 
-  const gmailContext=await tryRunGmailContextCommand({actor,text:params.text})
+  if(isSameBrainIntrospection(params.text)){
+    const report=await sameBrainIntrospection({actor,text:params.text})
+    return {runId:'same-brain-introspection',status:'completed' as const,text:report,handledBy:'same-brain-introspection'}
+  }
+
+    const gmailContext=await tryRunGmailContextCommand({actor,text:params.text})
   if(gmailContext)return await learnedReturn(actor,params.text,gmailContext,'gmail-context',params.messageId)
 
     const gmailSend=await tryRunGmailSendCommand({actor,text:params.text})
@@ -470,3 +475,4 @@ export async function tryRunWhatsAppAgent(params: {
 
   return null
 }
+

@@ -46,3 +46,5 @@ export async function guardedRoutingHint(p:{actor:AgentActor;text:string;domain:
   const hints=await decisionHints({actor:p.actor,text:p.text,domain:p.domain})
   return {...hints,decision:calibrateGuardedRouting({...hints,typedContextHandler:p.typedContextHandler,conflictingTypedContext:p.conflictingTypedContext,actionRequiresApproval:p.actionRequiresApproval})}
 }
+
+export { isSameBrainIntrospection, sameBrainIntrospection } from './brain-introspection'

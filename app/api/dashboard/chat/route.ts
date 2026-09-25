@@ -1,3 +1,4 @@
+import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
@@ -96,6 +97,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+    const brainReply = await trySameBrainIntrospection({ actor, text })
+    if (brainReply) {
+      await saveConversation(user.telegram_id, text, brainReply.text)
+      return NextResponse.json(brainReply)
+    }
     const shadowEventId = `web-${randomUUID()}`
 
     try {
@@ -241,3 +247,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'chat_failed', message: 'Gogo had trouble with that. Try once more.' }, { status: 500 })
   }
 }
+

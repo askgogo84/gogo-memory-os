@@ -1,3 +1,4 @@
+import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
@@ -38,6 +39,8 @@ export async function POST(request: Request) {
 
   try {
     const actor = await resolveAgentActor(session)
+    const brainReply = await trySameBrainIntrospection({ actor, text })
+    if (brainReply) return NextResponse.json(brainReply)
     const thread = await resolveThreadForUser(session.telegramId, body?.context?.threadId)
     const respond = async (result:any, status:number) => {
       await attachRunToThread(session.telegramId, result?.runId, thread?.id || null)
@@ -155,4 +158,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'agent_run_failed' }, { status: 500 })
   }
 }
+
 
