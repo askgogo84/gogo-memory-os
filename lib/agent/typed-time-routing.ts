@@ -58,7 +58,7 @@ async function approvalTurn(actor:AgentActor,text:string){
 export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surface:string;messageId?:string|null}){
   const original=p.text
   // A real explicit correction is bound to the previous identified production decision.
-  const text=original.replace(/^no[,!]\s*(?:i meant\s+)?/i,'').trim()
+  const text=original.replace(/^no[,!]\s*(?:i meant\s+)?/i,'').trim().replace(/^please\s+/i,'')
   const request=parseTypedTimeRequest(text)
   const read=text.match(/^(?:what time is|when is|when does)\s+(.+?)(?:\s+(?:today|tomorrow))?[?.!]*$/i)
   const selection=/^(?:select|open|show)\s+(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+(?:one|event|meeting|reminder)[?.!]*$/i.test(text)
