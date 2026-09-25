@@ -3,6 +3,7 @@ import { summarizeLearningActivity } from './learning-report'
 
 export function isSameBrainIntrospection(raw:string){
   const text=String(raw||'').trim().toLowerCase().replace(/[’]/g,"'")
+  if(/^(?:what time|when)\b/.test(text)||/\b(?:event|meeting|appointment)\b/.test(text))return false
   const topic=/\b(?:same brain|decision[- ]making|shadow[- ]only|guarded[- ]live|route automatically|routing confidence|learned from my|learning system|learning metrics)\b/.test(text)
   const read=/^(?:(?:please|gogo)[, ]+)?(?:what|how|which|why|are you|do you|have you|can you (?:show|tell|explain)|show|tell|explain|describe|report)\b/.test(text)
   return topic&&(read||/^(?:same brain(?: v2)?|learning metrics|routing confidence)[?.!]*$/.test(text))

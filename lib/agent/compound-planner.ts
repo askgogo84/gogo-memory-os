@@ -1,3 +1,4 @@
+import { rememberTypedObjects } from './typed-object-context'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToListDetailed, getList } from '@/lib/data/lists'
 import { dispatchThroughSameBrain } from './same-brain'
@@ -149,6 +150,7 @@ async function readReminderQuery(actor: AgentActor, text: string) {
     if(targeted.countOnly)return `You have ${rows.length} active reminder${rows.length===1?'':'s'} matching “${targeted.query}”.`
   }
   rows=rows.slice(0,20)
+  await rememberTypedObjects(actor.legacyTelegramId,'reminders',rows.map((r:any)=>({id:String(r.id),title:r.message}))).catch(()=>{})
 
   if (!rows.length) return targeted ? `I could not find an active reminder matching “${targeted.query}”.` : targetDate ? 'You have no reminders for that day.' : 'You have no active reminders.'
 
@@ -163,6 +165,7 @@ async function readReminderQuery(actor: AgentActor, text: string) {
 
 function parseReminderMutation(text: string): { target: string | null; timeText: string } | null {
   const raw = String(text || '').trim().replace(/\s+/g, ' ')
+  if (!/\breminder\b/i.test(raw)) return null // Generic verbs cannot establish a reminder identity.
   if (!/\b(move|reschedule|change|update|make)\b/i.test(raw)) return null
   const time = raw.match(/\b(?:to|for|at)\s+((?:\d{1,2}(?::\d{2})?\s*(?:am|pm)))(?:\s+(today|tomorrow))?/i)
   if (!time) return null
@@ -555,3 +558,4 @@ export async function tryRunExpiryReminderPlan(params: {
     throw err
   }
 }
+

@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { rememberTypedObjects } from './typed-object-context'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { tryRunBrowserCommand } from './browser-command'
@@ -309,6 +310,7 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
   const result = await tryRunBrowserCommand({ actor: params.actor, surface: params.surface, text: objective })
   if (!result) throw new Error('appointment_prepare_browser_not_routed')
   if (result.runId) {
+    await rememberTypedObjects(tg,'browser',[{id:String(result.runId),title:safe(selected.title||'Appointment option',220)}])
     await markPrepared(result.runId, tg, {
       option: number,
       researchRunId: String(research.id),

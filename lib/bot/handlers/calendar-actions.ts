@@ -1,3 +1,4 @@
+import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { saveFollowupState } from './followup-state'
@@ -463,6 +464,7 @@ async function createEventFromPayload(
     )
   }
 
+  await rememberTypedObjects(telegramId,'calendar',[{id:String(created.id),title:payload.title}]).catch(()=>{})
   await logUsage(telegramId, 'calendar_event', {
     title: payload.title,
     startIso: payload.startIso,
@@ -630,6 +632,7 @@ export async function buildCalendarActionReply(
       }
     }
 
+    await rememberTypedObjects(telegramId,'calendar',events.slice(0,7).map((e:any)=>({id:String(e.id),title:String(e.summary||'Untitled event')}))).catch(()=>{})
     if (!events.length) {
       return {
         handled: true,
@@ -775,4 +778,5 @@ export async function buildCalendarActionReply(
     reply: '',
   }
 }
+
 

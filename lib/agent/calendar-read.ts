@@ -1,3 +1,4 @@
+import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchPrimaryCalendarEvents, refreshAccessToken } from '@/lib/google-calendar'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
@@ -86,7 +87,7 @@ async function calendarAccess(actor:AgentActor){
   return {accessToken,timezone}
 }
 
-export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instruction:string;missionText:string}){
+export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instruction:string;missionText:string;rememberSelection?:boolean}){
   const {accessToken,timezone}=await calendarAccess(params.actor)
   const text=`${params.instruction} ${params.missionText}`
   const window=calendarReadWindow(text,new Date(),timezone)
@@ -99,6 +100,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
     const items=events.slice(0,12).map((event:any)=>({
       id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),start:String(event?.start?.dateTime||event?.start?.date||''),end:String(event?.end?.dateTime||event?.end?.date||''),
     }))
+    if(params.rememberSelection)await rememberTypedObjects(params.actor.legacyTelegramId,'calendar',items.map(e=>({id:e.id,title:e.summary}))).catch(()=>{})
     const display=items.length?items.map((e:any,i:number)=>`${i+1}. ${e.summary} — ${e.start}`).join('\n'):`No calendar events found for ${window.label}.`
     return {text:display,output:{mode:'read',window,timezone,events:items,verifiedStore:'google-calendar',mutated:false}}
   }

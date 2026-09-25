@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { rememberTypedObjects } from './typed-object-context'
 import { getCostBudget } from '@/lib/services/cost-guard'
 import { buildGmailConnectUrl } from '@/lib/services/google-gmail'
 import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
@@ -60,6 +61,7 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     .order('created_at',{ascending:false})
     .limit(12)
   if(error)throw new Error(`watcher_status_read_failed:${error.message}`)
+  await rememberTypedObjects(params.actor.legacyTelegramId,'watchers',(data||[]).map((row:any)=>({id:String(row.id),title:String(row.condition_json?.title||row.type||'Watch')})))
   if(!data?.length) {
     return {
       runId:'watcher-status-none',status:'completed' as const,capability:'browser' as const,risk:'low' as const,

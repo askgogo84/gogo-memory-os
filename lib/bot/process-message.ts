@@ -1,3 +1,5 @@
+import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
+import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { askClaude, askClaudeWithContext, type Message } from '@/lib/claude'
 import { addToListDetailed, formatAddResult, clearList, formatList, getAllLists, getList, setItemDoneByText, resolveAndSetDoneAcrossLists, normalizeListName } from '@/lib/lists'
 import { checkAndIncrementLimit, getUsageStatusReply, getFriendReminderCap } from '@/lib/limits'
@@ -290,6 +292,7 @@ async function createReminder(
         throw new Error(`Reminder update failed: ${updateError.message}`)
       }
 
+      await rememberTypedObjects(telegramId,'reminders',[{id:String(duplicate.id),title:message}]).catch(()=>{})
       console.log('REMINDER DUPLICATE SKIPPED:', { telegramId, pattern, existingId: duplicate.id })
       return
     }
@@ -302,11 +305,12 @@ async function createReminder(
     payload.is_recurring = true
   }
 
-  const { error } = await supabaseAdmin.from('reminders').insert(payload)
+  const { data:createdReminder,error } = await supabaseAdmin.from('reminders').insert(payload).select('id').single()
   if (error) {
     console.error('REMINDER INSERT FAILED:', error, payload)
     throw new Error(`Reminder insert failed: ${error.message}`)
   }
+  if(createdReminder?.id)await rememberTypedObjects(telegramId,'reminders',[{id:String(createdReminder.id),title:message}]).catch(()=>{})
 }
 
 // SHOW-path name resolver. Strips the show/open/view verb (+ optional my/the) then runs
@@ -358,6 +362,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const resolvedUser = await resolveUser({ channel: params.channel, externalUserId: params.externalUserId, userName: params.userName })
 
   const incomingText = (params.text || '').trim()
+  const typedReply=await tryTypedTimeRouting({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'},text:incomingText,surface:params.channel,messageId:params.messageId?String(params.messageId):null})
+  if(typedReply){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',typedReply.text)
+    return {text:formatOutgoingText(params.channel,typedReply.text),resolvedUser}
+  }
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
 
@@ -1255,5 +1265,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   await saveConversation(resolvedUser.telegramId, 'assistant', formatted)
   return { text: formatted, resolvedUser }
 }
+
 
 

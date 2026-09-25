@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { executeReadOnlyCalendarStep } from './calendar-read'
 import { normalizeTimezone } from '@/lib/timezone'
+import { rememberTypedObjects } from './typed-object-context'
 
 function safe(value: unknown, max = 500) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -79,6 +80,7 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
       actor: params.actor,
       instruction: 'Show my calendar tomorrow',
       missionText: 'Read tomorrow schedule without changing anything.',
+      rememberSelection: true,
     })
     const output: any = calendar.output || {}
     timeZone = safe(output.timezone || requestedTimeZone, 100)
@@ -115,6 +117,9 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
     const due = new Date(row.remind_at)
     return !row.sent && Number.isFinite(due.getTime()) && localDateKey(due, timeZone) === localTomorrowKey
   })
+  // A mixed agenda is not a single typed selection. A later bare pronoun must
+  // clarify rather than inherit the Calendar reader's intermediate selection.
+  await rememberTypedObjects(telegramId,'calendar',[],null).catch(()=>{})
 
   const lines: string[] = ['Tomorrow:']
   if (calendarConnected) {
@@ -138,4 +143,3 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
 
   return { text: lines.join('\n'), calendarEvents, reminders, timeZone, tomorrowKey: localTomorrowKey || tomorrowKey, calendarReadVerified: calendarConnected }
 }
-
