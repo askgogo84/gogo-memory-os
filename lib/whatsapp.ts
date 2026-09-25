@@ -94,7 +94,13 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
     const payload: any = { body: chunks[i], from, to }
     if (i === 0 && mediaUrl && mediaUrl.trim()) payload.mediaUrl = [mediaUrl.trim()]
 
-    const message = await client.messages.create(payload)
+    let message
+    try { message = await client.messages.create(payload) }
+    catch (error) {
+      // A later chunk's rejection cannot make earlier accepted chunks safe to retry.
+      if (i > 0 && error && typeof error === 'object') Object.assign(error, { partialSend: true })
+      throw error
+    }
     lastMessage = message
 
     console.log('WHATSAPP_SENT:', {
