@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -50,6 +52,7 @@ export async function POST(request: Request) {
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
     if (readOnlySchedule?.horizon === 'tomorrow') {
       const summary = await readTomorrowSchedule({ actor, scope: readOnlySchedule.scope })
+      await recordDecisionLearning({ actor, text, domain:'calendar', handler:'read-only-schedule', decisionId:`agent-${randomUUID()}`, outcome:summary.calendarReadVerified?'verified_success':'unknown', verified:summary.calendarReadVerified }).catch(()=>{})
       return NextResponse.json({
         status: 'completed', capability: 'calendar', risk: 'low', text: summary.text,
         handledBy: 'read-only-schedule', readOnly: true, mutated: false,

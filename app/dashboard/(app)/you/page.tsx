@@ -56,6 +56,7 @@ export default async function YouPage(){
     <section className="mt-5 final-dark-panel overflow-hidden px-4">
       <Setting title="Safe mode" detail="Gogo asks before anything that sends, spends, books or submits."><span className="inline-flex items-center gap-2 text-[11px] text-[#7fb069]"><span className="h-2 w-2 rounded-full bg-[#7fb069]"/>On</span></Setting>
       <Setting title="Background checks" detail="Let watchers keep checking while you’re away."><Link href="/dashboard/agent?section=background" className="text-[11px] text-[#2fb8a6]">Manage →</Link></Setting>
+      <Setting title="Brain & Autonomy" detail="Measured learning, routing confidence and model usage from your outcomes."><Link href="/dashboard/brain" className="text-[11px] text-[#2fb8a6]">Open Brain →</Link></Setting>
       <Setting title="Memory" detail="Review what Gogo knows and what it may reuse later."><Link href="/dashboard/memory" className="text-[11px] text-[#2fb8a6]">Review memory →</Link></Setting>
       <Setting title="Personality" detail="Choose how direct, calm or playful Gogo feels."><Link href="/dashboard/personalize" className="text-[11px] text-[#2fb8a6]">Personalize →</Link></Setting>
       <Setting title="Vault" detail="Saved logins are sealed, domain-bound and never shown to the model."><Link href="/dashboard/you/vault" className="text-[11px] text-[#2fb8a6]">Manage Vault →</Link></Setting>
@@ -91,3 +92,4 @@ export default async function YouPage(){
     </section>
   </div>
 }
+

@@ -15,6 +15,7 @@ export function formatBrainIntrospection(rows:any[],limit=250){
     '🧠 *Same Brain v2 — measured state*',
     `Last 7 days; newest ${limit} activity rows at most${rows.length>=limit?' (sample limit reached)':''}.`,
     `Learning samples: ${s.decisions} decision/handler outcomes (legacy events without IDs cannot be deduplicated).`,
+    `Positive evidence: ${report.positiveEvidence}; replacement-route evidence: ${report.replacementEvidence} (not completion).`,
     `Provider-verified successes: ${s.verifiedCompletions}`,
     `Corrections: ${s.corrections}; failures: ${s.failures}; clarifications: ${s.clarifications}; outcome unknown: ${s.unknown}.`,
     '',
@@ -24,6 +25,7 @@ export function formatBrainIntrospection(rows:any[],limit=250){
     '',
     `Guarded-live decisions observed: ${report.routing.allowedHints}`,
     `Shadow-only decisions observed: ${report.routing.shadowOnlyHints}`,
+    ...report.routeDecisions.slice(0,6).map(d=>`• ${d.guardedLive?'guarded-live':'shadow-only'}: ${d.handler||'no candidate'} — ${d.confidence===null?'confidence unavailable':percent(d.confidence)} — ${d.reason.replace(/_/g,' ')}`),
     'These are observed routing hints, not proof that a route executed. Confidence uses the 95% Wilson lower bound of provider-verified completion; at least 20 identified samples are required.',
     'Typed state takes precedence over learned hints. Learning cannot increase permissions, bypass approvals or provider verification, weaken safety gates, or retry unknown mutations. Consequential sends, payments and bookings remain gated.',
   ].join('\n')

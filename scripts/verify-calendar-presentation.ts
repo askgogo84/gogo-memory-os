@@ -4,8 +4,8 @@ import { detectReadOnlyScheduleRequest, readTomorrowSchedule, nextLocalDateKey }
 import { supabaseAdmin } from '../lib/supabase-admin'
 
 for(const text of ['What do I have on my calendar tomorrow?','Show my calendar tomorrow','What meetings do I have tomorrow?'])assert.equal(detectReadOnlyScheduleRequest(text)?.scope,'calendar',text)
-for(const text of ['What do I have tomorrow?','What is my day tomorrow?','Plan my day tomorrow','Show my calendar and reminders tomorrow',"Tell me what's on tomorrow. Don't change my calendar."])assert.equal(detectReadOnlyScheduleRequest(text)?.scope,'agenda',text)
-for(const text of ['Remind me to check my calendar tomorrow','Create a calendar event tomorrow','Move my meeting tomorrow'])assert.equal(detectReadOnlyScheduleRequest(text),null,text)
+for(const text of ['Check what I have tomorrow and tell me what needs my attention. Do not change anything.','What do I have tomorrow?','What is my day tomorrow?','Plan my day tomorrow','Show my calendar and reminders tomorrow',"Tell me what's on tomorrow. Don't change my calendar."])assert.equal(detectReadOnlyScheduleRequest(text)?.scope,'agenda',text)
+for(const text of ['Remind me to check my calendar tomorrow','Create a calendar event tomorrow','Move my meeting tomorrow','Check the weather tomorrow','Tell me the flight prices tomorrow','Show my reminders tomorrow','Check sunrise tomorrow','Review the news tomorrow'])assert.equal(detectReadOnlyScheduleRequest(text),null,text)
 
 async function main(){
  const original=supabaseAdmin.from,originalFetch=globalThis.fetch
@@ -42,7 +42,12 @@ async function main(){
   assert.doesNotMatch(failed.text,/clear|No calendar events|Travel reminder/)
   assert.ok(!tables.includes('reminders'))
  }finally{supabaseAdmin.from=original;globalThis.fetch=originalFetch}
- for(const path of ['app/api/dashboard/chat/route.ts','app/api/agent/run/route.ts','app/api/webhooks/whatsapp/route.ts'])assert.match(readFileSync(path,'utf8'),/readTomorrowSchedule\(\{ actor, scope:/,path)
+ for(const path of ['app/api/dashboard/chat/route.ts','app/api/agent/run/route.ts','app/api/webhooks/whatsapp/route.ts']){
+  const source=readFileSync(path,'utf8')
+  assert.match(source,/readTomorrowSchedule\(\{ actor, scope:/,path)
+  assert.match(source,/await recordDecisionLearning\(\{ actor, text,/,'production reads keep learning automatically: '+path)
+  assert.match(source,/verified:\s*summary.calendarReadVerified/,'provider verification controls evidence: '+path)
+ }
  console.log('Calendar presentation: real provider reader, calendar-only/combined scopes, no reminder writes, empty and failed reads passed')
 }
 main().catch(e=>{console.error(e);process.exitCode=1})
