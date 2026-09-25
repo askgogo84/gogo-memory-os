@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { supabaseAdmin } from '../lib/supabase-admin'
 import { tryTypedTimeRouting, parseTypedTimeRequest, movedTime } from '../lib/agent/typed-time-routing'
 import { executeApprovedCalendarUpdate } from '../lib/agent/calendar-update'
-import { rememberTypedObjects, typedMutationOwner } from '../lib/agent/typed-object-context'
+import { rememberTypedObjects, typedMutationOwner, latestTypedContext } from '../lib/agent/typed-object-context'
 import { isSameBrainIntrospection } from '../lib/agent/brain-introspection'
 import { tryRunGmailContextCommand, tryRunGmailSendCommand } from '../lib/agent/gmail-send'
 
@@ -12,7 +12,7 @@ const baseEvent={id:'calendar-exact',summary:'A event called Same Brain Learning
 let db:Record<string,any[]>,event:any,patches=0,unknown=false,mismatch=false,wrongTime=false,rejectPatch=0,reminderWriteUnknown=false,reminderWrites=0,permission:string|null=null,seq=0
 const oldFrom=supabaseAdmin.from,oldFetch=globalThis.fetch
 const copy=(v:any)=>JSON.parse(JSON.stringify(v))
-function reset(){db={agent_activity:[],agent_runs:[],agent_approvals:[],reminders:[],conversations:[],memories:[],agent_permissions:[],users:[{telegram_id:123,timezone:'Asia/Kolkata',google_calendar_connected:true,google_refresh_token:'fixture'}]};event=copy(baseEvent);patches=0;unknown=false;mismatch=false;wrongTime=false;rejectPatch=0;reminderWriteUnknown=false;reminderWrites=0;permission=null;seq=0}
+function reset(){db={agent_activity:[],agent_runs:[],agent_approvals:[],reminders:[],conversations:[],memories:[],agent_permissions:[],agent_watchers:[],agent_ideas:[],users:[{telegram_id:123,timezone:'Asia/Kolkata',google_calendar_connected:true,google_refresh_token:'fixture'}]};event=copy(baseEvent);patches=0;unknown=false;mismatch=false;wrongTime=false;rejectPatch=0;reminderWriteUnknown=false;reminderWrites=0;permission=null;seq=0}
 function value(row:any,key:string){return key.split(/->>?/).reduce((v,k)=>v?.[k],row)}
 ;(supabaseAdmin as any).from=(table:string)=>{
  const filters:any[]=[],order:any[]=[];let mode='read',payload:any,lim=Infinity,single=false,selected=false
@@ -30,6 +30,7 @@ function value(row:any,key:string){return key.split(/->>?/).reduce((v,k)=>v?.[k]
    return Promise.resolve({data:mode==='update'&&!selected?null:copy(single?(rows[0]||null):rows),error:null}).then(resolve,reject)
   }catch(e){return Promise.reject(e).then(resolve,reject)}
  }}
+ q.contains=()=>q; q.range=()=>q
  q.delete=()=>{mode='delete';return q}
  return q
 }
@@ -122,7 +123,7 @@ async function main(){try{
  reset();await rememberTypedObjects(123,'calendar',[{id:'other',title:'Other'},{id:event.id,title:event.summary}],null)
  assert.equal((await run('Open the second one'))?.status,'completed');await stage('Move it to 5 PM');assert.equal(db.agent_runs[0].metadata_json.draft.eventId,event.id)
  // Foreign lists do not allow this resolver to steal the owner's ordinal opener.
- reset();await rememberTypedObjects(123,'email',[{id:'mail',title:'Email'}]);assert.equal(await run('Open the first one'),null)
+ reset();await rememberTypedObjects(123,'email',[{id:'mail',title:'Email'}]);assert.equal((await run('Open the first one'))?.status,'paused');assert.equal(db.agent_runs.length,0)
  // Genuine correction feedback binds to a previous real decision; no historic backfill.
  reset();const previousText='Move Same Brain Learning Test to 4:30 PM'
  db.agent_activity.push({telegram_id:'123',event_type:'decision_learning',created_at:new Date(Date.now()-1000).toISOString(),metadata_json:{schema:'same-brain-v2',decision_id:'wrong-route',handler:'compound-plan',domain:'reminders',user_text:previousText,outcome:'unknown'}})
@@ -132,18 +133,27 @@ async function main(){try{
  assert.equal(db.agent_activity.filter(r=>r.metadata_json?.outcome==='replacement').length,1)
  assert.equal(db.agent_activity.filter(r=>r.metadata_json?.outcome==='verified_success').length,0)
  // Foreign typed identity remains a hard boundary, never a reminder mutation.
- for(const domain of ['email','watchers','travel','browser'] as const){reset();await rememberTypedObjects(123,domain,[{id:'foreign',title:'Object'}]);assert.match((await run('Move it to 6 PM'))!.text,/won't reinterpret/);assert.equal(patches,0)}
+ for(const domain of ['email','watchers','travel','browser','files'] as const){reset();await rememberTypedObjects(123,domain,[{id:'foreign',title:'Object'}]);assert.match((await run('Move it to 6 PM'))!.text,/won't reinterpret/);assert.equal(patches,0)}
  // Cross-domain audit: an older Gmail search/selection/draft cannot reclaim a
  // pronoun or ordinal after Calendar, reminders, watchers, travel or browser.
  const email={id:'mail-exact',threadId:'thread-exact',subject:'Fixture subject',from:'fixture@example.test',snippet:'Fixture preview'}
  const saveMailState=(kind:string,payload:any,at:string)=>db.memories.push({id:kind,telegram_id:123,created_at:at,content:JSON.stringify({type:'followup_state',kind,payload,created_at:at})})
- for(const domain of ['calendar','reminders','watchers','travel','browser'] as const){
+ for(const domain of ['calendar','reminders','watchers','travel','browser','files'] as const){
    reset();const old=new Date(Date.now()-1000).toISOString();saveMailState('gmail_search_results',{messages:[email]},old);saveMailState('gmail_selected_message',{message:email},old);saveMailState('gmail_reply_draft',{draft:{threadId:'thread-exact',to:'fixture@example.test',subject:'Fixture subject',body:'Fixture reply'}},old)
    await rememberTypedObjects(123,domain,[{id:'foreign',title:'Object'}])
    for(const text of ['Open the first one','Who sent that'])assert.match((await tryRunGmailContextCommand({actor,text}))!.text,/older email selection or draft/)
    for(const text of ['Reply to that exact email saying received','Send it'])assert.match((await tryRunGmailSendCommand({actor,text}))!.text,/older email selection or draft/)
    assert.equal(db.agent_approvals.length,0);assert.equal(patches,0)
  }
+ // A same-domain selection cannot send an older draft for another email.
+ for(const sourceMessageId of ['mail-old',undefined]){
+  reset();saveMailState('gmail_reply_draft',{draft:{sourceMessageId,threadId:'old-thread',to:'fixture@example.test',subject:'Old',body:'Reply'}},new Date(Date.now()-1000).toISOString())
+  await rememberTypedObjects(123,'email',[{id:'mail-new',title:'New email'}])
+  assert.equal((await run('send it'))?.status,'paused');assert.equal(db.agent_approvals.length,0);assert.equal(patches,0)
+ }
+ reset();saveMailState('gmail_reply_draft',{draft:{sourceMessageId:'mail-same',threadId:'same-thread',to:'fixture@example.test',subject:'Same',body:'Reply'}},new Date(Date.now()-1000).toISOString())
+ await rememberTypedObjects(123,'email',[{id:'mail-same',title:'Same email'}])
+ assert.equal((await run('send it'))?.handledBy,'gmail-send','matching source reaches the existing connection/approval gate')
  // A newer Gmail search intentionally switches domains and keeps its exact ID.
  reset();await rememberTypedObjects(123,'calendar',[{id:event.id,title:event.summary}]);db.agent_activity[0].metadata_json.at=new Date(Date.now()-2000).toISOString()
  saveMailState('gmail_search_results',{messages:[email]},new Date(Date.now()-1000).toISOString())
@@ -157,6 +167,43 @@ async function main(){try{
  reset();assert.match((await run('What time is Same Brain Learning Test tomorrow?'))!.text,/16:00:00/)
  assert.equal(movedTime('25 PM',baseEvent.start.dateTime,baseEvent.end.dateTime,'Asia/Kolkata',null),null)
  for(const path of ['app/api/dashboard/chat/route.ts','app/api/webhooks/whatsapp/route.ts','app/api/agent/run/route.ts']){const source=readFileSync(path,'utf8');assert.ok(source.indexOf('await tryTypedTimeRouting(')<source.indexOf('await trySameBrainIntrospection('),path)}
+ // Repeatable offline routing matrix. Scores describe these fixtures, not users.
+ const evalRows:any[]=[]
+ const phrases=['open the first one','move it','move that one','reschedule that','continue that','stop it','restart it','send it','book it','check that','what time is that?','show me that','do the second one']
+ for(const domain of ['email','calendar','reminders','watchers','travel','browser','files'] as const)for(const phrase of phrases)for(const surface of ['web','whatsapp','agent'])for(const variant of [phrase,'Please '+phrase,phrase.toUpperCase()]){
+  reset()
+  const id=domain==='calendar'?event.id:`${domain}-second`,title=domain==='calendar'?event.summary:`Selected ${domain}`
+  db.reminders=[{id,telegram_id:123,message:title,sent:false,remind_at:'2026-10-01T10:00:00Z'}]
+  db.agent_watchers=[{id:'watchers-first',telegram_id:'123',active:true,created_at:'2026-10-02'}, {id,telegram_id:'123',active:true,created_at:'2026-10-01'}]
+  const mail={id:'email-first',threadId:'thread-first',subject:'First email',from:'fixture@example.test',snippet:'Preview'}
+  if(domain==='email')saveMailState('gmail_search_results',{messages:[mail,{...mail,id,subject:title}]},new Date().toISOString())
+  await rememberTypedObjects(123,domain,[{id:`${domain}-first`,title:`First ${domain}`},{id,title}],id)
+  const result=await run(variant,surface)
+  const opener=phrase==='open the first one',shown=phrase==='show me that'
+  const stop=domain==='watchers'&&phrase==='stop it',timeRead=['calendar','reminders'].includes(domain)&&phrase==='what time is that?'
+  const expectedStatus=opener||shown||stop||timeRead?'completed':'paused'
+  const expectedHandler=domain==='email'&&opener?'gmail-context':stop?'watcher-stop':'typed-object-routing'
+  const routeCorrect=result?.handledBy===expectedHandler&&result?.status===expectedStatus
+  let referentCorrect=true
+  if(opener||shown){const current=await latestTypedContext(123);referentCorrect=current?.selectedId===(opener?`${domain}-first`:id)}
+  if(stop)referentCorrect=db.agent_watchers.find(w=>w.id===id)?.active===false&&db.agent_watchers.find(w=>w.id==='watchers-first')?.active===true
+  const unsafe=Number(patches)!==0||Number(reminderWrites)!==0||db.agent_approvals.length!==0
+  const verified=db.agent_activity.filter(r=>r.metadata_json?.outcome==='verified_success').length
+  const proofCorrect=verified===(timeRead?1:0)
+  evalRows.push({domain,phrase,variant,surface,routeCorrect,referentCorrect,clarified:expectedStatus==='paused',unsafe,proofCorrect,hallucinatedSuccess:result?.status==='completed'&&expectedStatus!=='completed'})
+  assert.ok(routeCorrect,JSON.stringify({domain,phrase,surface,result}));assert.ok(referentCorrect);assert.equal(unsafe,false);assert.ok(proofCorrect)
+ }
+ for(const malformed of [{items:[null]},{items:[{id:'x',title:'X'},{id:'x',title:'Again'}]},{selectedId:'missing'},{at:new Date(Date.now()-31*60000).toISOString()}]){
+  reset();await rememberTypedObjects(123,'calendar',[{id:event.id,title:event.summary}]);Object.assign(db.agent_activity[0].metadata_json,malformed)
+  assert.equal(await latestTypedContext(123),null);assert.equal((await run('continue that'))?.status,'paused');assert.equal(db.agent_runs.length,0)
+ }
+ // No current selection can silently stop the newest watcher or another tenant.
+ reset();db.agent_watchers=[{id:'other-owner',telegram_id:'456',active:true}]
+ await rememberTypedObjects(123,'watchers',[{id:'other-owner',title:'Foreign'}])
+ assert.equal((await run('stop it'))?.status,'paused');assert.equal(db.agent_watchers[0].active,true)
+ const n=evalRows.length,count=(key:string)=>evalRows.filter(r=>r[key]).length
+ console.log('TYPED_OFFLINE_EVAL '+JSON.stringify({scope:'mocked typed boundary, selection and approval safety; not production task completion',cases:n,domains:7,surfaces:3,phraseSeeds:13,variantsPerSeed:3,firstRouteCorrect:count('routeCorrect')/n,referentCorrect:count('referentCorrect')/n,clarificationRate:count('clarified')/n,correctionRequiredRate:1-count('routeCorrect')/n,providerVerificationCorrect:count('proofCorrect')/n,unsafeActionRate:count('unsafe')/n,hallucinatedSuccessRate:count('hallucinatedSuccess')/n}))
  console.log('Typed identity A-J: named/selected Calendar, reschedule, reminder/ordinal continuation, ambiguity, approval, exact readback, unknown no-retry and web/WhatsApp parity passed; hash, version, concurrency and foreign-domain barriers passed')
  }finally{supabaseAdmin.from=oldFrom;globalThis.fetch=oldFetch}}
 main().catch(e=>{console.error(e);process.exitCode=1})
+
