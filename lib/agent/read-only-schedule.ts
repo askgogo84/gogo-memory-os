@@ -45,11 +45,11 @@ export function detectReadOnlyScheduleRequest(raw: string) {
   if (/^(?:please\s+)?(?:remind|create|add|move|cancel|delete|book)\b/.test(text)) return null
   const readVerb = /\b(check|tell me|show(?: me)?|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(text)
   const scheduleContext = /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(text) ||
-    /\b(?:what do i have tomorrow|what(?:'s| is) on tomorrow|what needs my attention tomorrow|(?:summari[sz]e|review|brief me(?: on)?) tomorrow)\b/.test(text)
+    /\b(?:what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|what needs my attention tomorrow|(?:summari[sz]e|review|brief me(?: on)?) tomorrow)\b/.test(text)
   const tomorrow = /\btomorrow\b/.test(text)
   if ((explicitNoMutation || readVerb) && scheduleContext && tomorrow) {
     const request = text.replace(/(?:do not|don't|dont|without)\s+(?:change|changing|modify|modifying|create|creating|add|adding|edit|editing|move|moving|cancel|cancelling|canceling).*$/, '')
-    const combined = /\b(?:reminders?|agenda|plan my day|what is my day|what do i have tomorrow|what(?:'s| is) on tomorrow|my day|my schedule)\b/.test(request)
+    const combined = /\b(?:reminders?|agenda|plan my day|what is my day|what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|my day|my schedule)\b/.test(request)
     const calendarOnly = /\b(?:calendar|meetings?|appointments?|events?)\b/.test(request) && !combined
     return { horizon: 'tomorrow' as const, scope: calendarOnly ? 'calendar' as const : 'agenda' as const }
   }
