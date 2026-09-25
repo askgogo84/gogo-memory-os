@@ -1,9 +1,9 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
-export type ObjectDomain='calendar'|'reminders'|'email'|'watchers'|'travel'|'browser'
+export type ObjectDomain='calendar'|'reminders'|'email'|'watchers'|'travel'|'browser'|'files'
 export type TypedObject={id:string;title:string}
 export type TypedContext={domain:ObjectDomain;items:TypedObject[];selectedId:string|null;at:string}
-const domains=['calendar','reminders','email','watchers','travel','browser']
+const domains=['calendar','reminders','email','watchers','travel','browser','files']
 export async function rememberTypedObjects(telegramId:number,domain:ObjectDomain,items:TypedObject[],selectedId?:string|null){
   const objects=items.filter(o=>o.id).slice(0,50).map(o=>({id:String(o.id),title:String(o.title||'').slice(0,240)}))
   const {error}=await supabaseAdmin.from('agent_activity').insert({telegram_id:String(telegramId),event_type:'typed_object_context',message:'Typed object selection updated.',metadata_json:{domain,items:objects,selectedId:selectedId===undefined?(objects.length===1?objects[0].id:null):selectedId,at:new Date().toISOString()}})
@@ -14,6 +14,8 @@ export async function latestTypedContext(telegramId:number):Promise<TypedContext
   if(error)throw new Error('typed_context_read_failed')
   const m=data?.metadata_json,age=Date.now()-Date.parse(String(m?.at||''))
   if(!m||!domains.includes(m.domain)||!Array.isArray(m.items)||!Number.isFinite(age)||age<0||age>30*60000)return null
+  if(m.items.length>50||m.items.some((o:any)=>!o||typeof o.id!=='string'||!o.id||typeof o.title!=='string')||new Set(m.items.map((o:any)=>o.id)).size!==m.items.length)return null
+  if(m.selectedId!==null&&(typeof m.selectedId!=='string'||!m.items.some((o:any)=>o.id===m.selectedId)))return null
   return m as TypedContext
 }
 export function normalizedObjectTitle(value:string){return String(value||'').normalize('NFKC').toLowerCase().replace(/^(?:the |my )?(?:an? )?(?:calendar )?(?:event|meeting|reminder) (?:called |named )?/,'').replace(/[^\p{L}\p{N}]+/gu,' ').trim()}

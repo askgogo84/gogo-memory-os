@@ -1,3 +1,5 @@
+import { tryRunGmailContextCommand, tryRunGmailSendCommand } from './gmail-send'
+import { tryStopWatcherFromCommand } from './watch-command'
 import { randomUUID } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchPrimaryCalendarEvents } from '@/lib/google-calendar'
@@ -61,7 +63,8 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
   const read=text.match(/^(?:what time is|when is|when does)\s+(.+?)(?:\s+(?:today|tomorrow))?[?.!]*$/i)
   const selection=/^(?:select|open|show)\s+(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+(?:one|event|meeting|reminder)[?.!]*$/i.test(text)
   const approval=/^(?:approve|reject)$/i.test(text)
-  if(!request&&!read&&!selection&&!approval)return null
+  const reference=text.match(/^(open|show(?: me)?|read|summari[sz]e|select|move|reschedule|resched|shift|postpone|continue|resume|stop|cancel|restart|send|book|check|do)\s+((?:(?:the|that|this)\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+one|(?:it|that|this)(?:\s+one)?)[.!?]*$/i)
+  if(!request&&!read&&!selection&&!approval&&!reference)return null
   const clarify=async(message:string)=>{
     await recordDecisionLearning({actor:p.actor,text:original,domain:'other',handler:'typed-object-routing',decisionId:p.messageId||randomUUID(),outcome:'clarified',verified:false}).catch(()=>{})
     return response(message)
@@ -72,6 +75,22 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
     if(!sentinel.allowed)return response(`Gogo Sentinel blocked this request: ${sentinel.reason}`)
     const correction=await captureExplicitRoutingCorrection(p.actor,original)
     const context=await latestTypedContext(p.actor.legacyTelegramId)
+    if(reference&&!request&&!read){
+      const action=reference[1].toLowerCase(),selected=selectedTypedObject(context,text)
+      // The email specialist binds its own durable search/draft; no null result
+      // may escape this boundary into a generic executor or semantic guess.
+      if(context?.domain==='email'&&(/^(?:open|show|read|summari[sz]e)$/.test(action)||/^send it[.!?]*$/i.test(text))){
+        const owned=/^send/i.test(text)?await tryRunGmailSendCommand({actor:p.actor,text:text.replace(/[.!?]+$/,'')}):await tryRunGmailContextCommand({actor:p.actor,text})
+        return owned||await clarify('Please select the Gmail message or draft again. This reference could not be bound to a current email object.')
+      }
+      if(!context||!selected)return clarify('Please select the exact object from a current list. This reference is missing, stale or ambiguous; nothing has changed.')
+      if(/^(?:open|show|show me|read|select)$/.test(action)){
+        await rememberTypedObjects(p.actor.legacyTelegramId,context.domain,context.items,selected.id)
+        return response(`Selected ${context.domain} object: ${selected.title}. Ask for its specific details or action. This confirms selection only.`,'completed',context.domain)
+      }
+      if(context.domain==='watchers'&&/^(?:stop|cancel)$/.test(action))return await tryStopWatcherFromCommand({actor:p.actor,text:'stop monitoring that'})
+      return clarify(`The selected object is ${selected.title} (${context.domain}). Please specify the ${context.domain} action and any required details. I have not executed or reinterpreted this reference.`)
+    }
     if(selection){
       if(!context||!['calendar','reminders'].includes(context.domain))return null
       const selected=selectedTypedObject(context,text)
