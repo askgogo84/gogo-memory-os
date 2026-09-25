@@ -42,7 +42,12 @@ async function main(){
   assert.doesNotMatch(failed.text,/clear|No calendar events|Travel reminder/)
   assert.ok(!tables.includes('reminders'))
  }finally{supabaseAdmin.from=original;globalThis.fetch=originalFetch}
- for(const path of ['app/api/dashboard/chat/route.ts','app/api/agent/run/route.ts','app/api/webhooks/whatsapp/route.ts'])assert.match(readFileSync(path,'utf8'),/readTomorrowSchedule\(\{ actor, scope:/,path)
+ for(const path of ['app/api/dashboard/chat/route.ts','app/api/agent/run/route.ts','app/api/webhooks/whatsapp/route.ts']){
+  const source=readFileSync(path,'utf8')
+  assert.match(source,/readTomorrowSchedule\(\{ actor, scope:/,path)
+  assert.match(source,/await recordDecisionLearning\(\{ actor, text,/,'production reads keep learning automatically: '+path)
+  assert.match(source,/verified:\s*summary.calendarReadVerified/,'provider verification controls evidence: '+path)
+ }
  console.log('Calendar presentation: real provider reader, calendar-only/combined scopes, no reminder writes, empty and failed reads passed')
 }
 main().catch(e=>{console.error(e);process.exitCode=1})

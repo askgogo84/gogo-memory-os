@@ -1,3 +1,4 @@
+import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
@@ -114,6 +115,7 @@ export async function POST(req: NextRequest) {
     if (readOnlySchedule?.horizon === 'tomorrow') {
       const summary = await readTomorrowSchedule({ actor, scope: readOnlySchedule.scope })
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'read-only-schedule',actualCapability:'calendar',status:'completed'}).catch(()=>{})
+      await recordDecisionLearning({ actor, text, domain:'calendar', handler:'read-only-schedule', decisionId:shadowEventId, outcome:summary.calendarReadVerified?'verified_success':'unknown', verified:summary.calendarReadVerified }).catch(()=>{})
       await saveConversation(user.telegram_id, text, summary.text)
       return NextResponse.json({ text: summary.text, handledBy: 'read-only-schedule', status:'completed', readOnly:true, mutated:false })
     }
