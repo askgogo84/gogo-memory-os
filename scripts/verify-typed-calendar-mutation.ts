@@ -145,6 +145,15 @@ async function main(){try{
    for(const text of ['Reply to that exact email saying received','Send it'])assert.match((await tryRunGmailSendCommand({actor,text}))!.text,/older email selection or draft/)
    assert.equal(db.agent_approvals.length,0);assert.equal(patches,0)
  }
+ // A same-domain selection cannot send an older draft for another email.
+ for(const sourceMessageId of ['mail-old',undefined]){
+  reset();saveMailState('gmail_reply_draft',{draft:{sourceMessageId,threadId:'old-thread',to:'fixture@example.test',subject:'Old',body:'Reply'}},new Date(Date.now()-1000).toISOString())
+  await rememberTypedObjects(123,'email',[{id:'mail-new',title:'New email'}])
+  assert.equal((await run('send it'))?.status,'paused');assert.equal(db.agent_approvals.length,0);assert.equal(patches,0)
+ }
+ reset();saveMailState('gmail_reply_draft',{draft:{sourceMessageId:'mail-same',threadId:'same-thread',to:'fixture@example.test',subject:'Same',body:'Reply'}},new Date(Date.now()-1000).toISOString())
+ await rememberTypedObjects(123,'email',[{id:'mail-same',title:'Same email'}])
+ assert.equal((await run('send it'))?.handledBy,'gmail-send','matching source reaches the existing connection/approval gate')
  // A newer Gmail search intentionally switches domains and keeps its exact ID.
  reset();await rememberTypedObjects(123,'calendar',[{id:event.id,title:event.summary}]);db.agent_activity[0].metadata_json.at=new Date(Date.now()-2000).toISOString()
  saveMailState('gmail_search_results',{messages:[email]},new Date(Date.now()-1000).toISOString())

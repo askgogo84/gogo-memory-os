@@ -112,7 +112,12 @@ async function stageApproval(actor:AgentActor,draft:any,learningText:string){
 async function newerForeignSelection(actor:AgentActor,state:any){
   const context=await latestTypedContext(actor.legacyTelegramId)
   const at=Date.parse(String(state?.created_at||state?.payload?.created_at||''))
-  return context&&context.domain!=='email'&&(!Number.isFinite(at)||Date.parse(context.at)>=at)?context.domain:null
+  if(!context||(Number.isFinite(at)&&Date.parse(context.at)<at))return null
+  if(context.domain!=='email')return context.domain
+  // A newer selection in the same connector must not revive an older draft.
+  const boundId=state?.payload?.message?.id||state?.payload?.draft?.sourceMessageId
+  if((state?.payload?.message||state?.payload?.draft)&&(!boundId||context.selectedId!==String(boundId)))return 'email'
+  return null
 }
 const gmailReferentClarification=()=>({runId:'gmail-context-conflict',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'Please search for or select the Gmail message you mean. I cannot bind that reference to an older email selection or draft after another object became active.',handledBy:'gmail-context'})
 
@@ -209,6 +214,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
   await rememberTypedObjects(params.actor.legacyTelegramId,'email',[{id:String(message.id||resolved.match.thread.id),title:String(message.subject||'Email')}]).catch(()=>{})
   const draft={
     threadId:String(resolved.match.thread.id),
+    sourceMessageId:String(message.id||resolved.match.thread.id),
     to:emailFromHeader(message.from),
     subject:String(message.subject||resolved.match.thread.subject||'(No subject)'),
     body:parsed.body,
