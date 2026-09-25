@@ -10,9 +10,16 @@ export function summarizeLearningActivity(rows:any[]){
   const decisions:LearningEvidence[]=rows.filter(r=>r.event_type==='decision_learning'&&r.metadata_json?.schema==='same-brain-v2').map(r=>{
     const m=r.metadata_json
     return {handler:safeLabel(m.handler),domain:safeLabel(m.domain),outcome:safeLabel(m.outcome),verified:m.verified===true,
-      confidence:m.confidence,first_route_correct:m.first_route_correct,
+      confidence:m.confidence,first_route_correct:m.first_route_correct,verification_source:safeLabel(m.verification_source),
       decision_id:m.decision_id?`${r.telegram_id}:${m.decision_id}`:null}
   })
+  const verified=uniqueEvidence(decisions).filter(r=>r.outcome==='verified_success'&&r.verified===true)
+  const verificationEvidence={
+    provider:verified.filter(r=>['gmail','google_calendar','browser','travel','delivery_receipt'].includes(r.verification_source||'')).length,
+    canonical:verified.filter(r=>r.verification_source==='canonical_state').length,
+    specialist:verified.filter(r=>r.verification_source==='specialist_verified').length,
+    unattributed:verified.filter(r=>!['gmail','google_calendar','browser','travel','delivery_receipt','canonical_state','specialist_verified'].includes(r.verification_source||'')).length,
+  }
   const observed=rows.filter(r=>r.event_type==='shadow_brain_observation')
   const jev=observed.map(r=>r.metadata_json?.jev_shadow).filter(j=>j?.attempted===true)
   const patterns=new Map<string,LearningEvidence[]>()
@@ -23,7 +30,7 @@ export function summarizeLearningActivity(rows:any[]){
   }
   const latency=jev.map(j=>nonnegative(j.latency_ms)).filter(v=>v!==null) as number[]
   return {
-    summary:summarizeEvidence(decisions),
+    summary:summarizeEvidence(decisions),verificationEvidence,
     learningEvents:decisions.length,
     positiveEvidence:uniqueEvidence(decisions).filter(r=>r.outcome==='success'||(r.outcome==='verified_success'&&r.verified)).length,
     replacementEvidence:uniqueEvidence(decisions).filter(r=>r.outcome==='replacement').length,

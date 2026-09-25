@@ -15,6 +15,18 @@ assert.equal(s.summary.correctionRate,.25);assert.equal(s.summary.clarificationR
 assert.equal(s.summary.unknownRate,.25);assert.equal(s.summary.firstRouteAccuracy,0)
 assert.equal(s.replacementEvidence,1);assert.equal(s.positiveEvidence,1)
 assert.equal(summarizeLearningActivity([]).summary.firstRouteAccuracy,null)
+const classified=summarizeLearningActivity([
+ decision('success','provider'),decision('verified_success','provider',{verification_source:'gmail'}),
+ decision('verified_success','canonical',{verification_source:'canonical_state'}),
+ decision('verified_success','specialist',{verification_source:'specialist_verified'}),
+ decision('verified_success','legacy'),decision('verified_success','private',{verification_source:'PRIVATE_SOURCE'}),
+ decision('corrected','corrected'),decision('verified_success','corrected',{verification_source:'delivery_receipt'}),
+ decision('success','accepted',{verification_source:'delivery_receipt'}),
+])
+assert.deepEqual(classified.verificationEvidence,{provider:1,canonical:1,specialist:1,unattributed:2})
+assert.equal(Object.values(classified.verificationEvidence).reduce((a,b)=>a+b,0),classified.summary.verifiedCompletions)
+assert.deepEqual(s.verificationEvidence,{provider:0,canonical:0,specialist:0,unattributed:1})
+assert.doesNotMatch(JSON.stringify(classified),/PRIVATE_SOURCE/)
 const usage={event_type:'model_usage',telegram_id:'-123',run_id:'run-1',created_at:at,metadata_json:{schema:'model-usage-v1',provider:'openai',model:'gpt-fixture',inputTokens:100,outputTokens:null,estimatedCostUsd:null,ok:true,secret:'PRIVATE_KEY'}}
 assert.equal(summarizeModelUsage([usage])[0].inputTokens.total,100)
 assert.equal(summarizeModelUsage([usage])[0].estimatedCostUsd.total,null)
@@ -44,6 +56,9 @@ async function main(){
   const html=renderToStaticMarkup(createElement(BrainReport,{report}))
   for(const label of ['Learned routing patterns','Shadow-only','Jev usage','Model usage','Recent learning events','Unavailable'])assert.ok(html.includes(label),label)
   assert.doesNotMatch(html,/PRIVATE_/)
+  assert.match(html,/Canonical application state/)
+  assert.match(html,/Unattributed legacy evidence/)
+  assert.doesNotMatch(html,/Provider-verified completion/)
   empty=true
   const noData=await getUserLearningReport('-123',{hours:Infinity,limit:Infinity})
   assert.equal(noData.windowHours,168);assert.equal(noData.summary.verifiedCompletionRate,null)
