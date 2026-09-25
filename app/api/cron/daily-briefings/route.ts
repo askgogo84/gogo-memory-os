@@ -1,3 +1,4 @@
+import { withDeliveryHeartbeat } from '@/lib/services/delivery-monitoring'
 import { NextRequest, NextResponse } from 'next/server'
 import { isCronAuthorized } from '@/lib/security/cron-auth'
 import { sendWhatsApp } from '@/lib/whatsapp'
@@ -106,6 +107,10 @@ function firstName(value: string | null | undefined) {
 
 export async function GET(req: NextRequest) {
   if (!isCronAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  return withDeliveryHeartbeat('briefing', () => runDelivery(req))
+}
+
+async function runDelivery(req: NextRequest) {
   const deadline = Date.now() + 45000
   const now = nowIstParts()
   const nowMinutes = now.hour * 60 + now.minute

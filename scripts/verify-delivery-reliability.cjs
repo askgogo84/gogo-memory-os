@@ -34,11 +34,13 @@ async function main() {
   await db.exec(fs.readFileSync('supabase/migrations/20260925111441_delivery_callback_inbox.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925112633_notification_delivery_jobs.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925114402_followup_delivery_owner.sql','utf8'))
+  await db.exec(fs.readFileSync('supabase/migrations/20260925115445_delivery_monitoring.sql','utf8'))
   const query = async (sql, params = []) => (await db.query(sql, params)).rows
   const rpc = async (name,args) => {
     const rows = await query(`select * from ${name}(${Object.keys(args).map((k,i)=>k+' => $'+(i+1)).join(',')})`,Object.values(args))
     return ['claim_reminder_delivery','due_followup_deliveries'].includes(name) ? rows : rows[0]?.[name]
   }
+  const monitoring=load('lib/services/delivery-monitoring.ts',{'./reminder-delivery':{deliveryRpc:rpc}})
   const add = async (recurring = false) => (await query(`insert into reminders(telegram_id,whatsapp_to,message,remind_at,is_recurring,recurring_pattern)
     values(1,'+15555550100',$1,now()-interval '2 days',$2,$3) returning *`,[crypto.randomUUID(),recurring,recurring?'every_2_hours':null]))[0]
   const row = async id => (await query('select * from reminders where id=$1',[id]))[0]
@@ -95,6 +97,7 @@ async function main() {
   }}
   const send=async()=>{sends++;if(outcome==='unknown')throw Error('socket closed after accepted');return {sid:'SMfixture',status:'queued'}}
   const handler=load('app/api/cron/reminders/route.ts',{
+    '@/lib/services/delivery-monitoring':monitoring,
     '@/lib/supabase-admin':{supabaseAdmin:adapter},
     '@/lib/services/reminder-delivery':{...delivery,deliveryRpc:async(name,args)=>{if(failFinish&&name==='finish_reminder_delivery')throw Error('fixture write outage');return rpc(name,args)}},
     '@/lib/services/delivery-state':states,
@@ -200,6 +203,7 @@ async function main() {
       return Promise.resolve({data}).then(resolve,reject)
     }};return q}}
   const briefing=load('app/api/cron/daily-briefings/route.ts',{
+    '@/lib/services/delivery-monitoring':monitoring,
     '@/lib/security/cron-auth':{isCronAuthorized:()=>true},'@/lib/whatsapp':{},
     '@/lib/services/notification-delivery':{reconcileBriefingEmailReceipts:async()=>0,deliverNotification:async p=>{seen.push(p.owner);assert.equal(await p.ready(),!disabled);return 'skipped'}},
     '@/lib/bot/handlers/reminder-optout':{isSuppressed:async()=>false},'@/lib/supabase-admin':{supabaseAdmin:briefingDb},
@@ -239,6 +243,7 @@ async function main() {
       rows=JSON.parse(JSON.stringify(rows));return {data:single?rows[0]||null:rows}
     })().then(resolve,reject)}};return q}}
   const followups=load('app/api/followups/route.ts',{
+    '@/lib/services/delivery-monitoring':monitoring,
     '@supabase/supabase-js':{createClient:()=>fdb},'@/lib/services/notification-delivery':notifications,
     '@/lib/services/reminder-delivery':{deliveryRpc:async(name,args)=>JSON.parse(JSON.stringify(await rpc(name,args)))},
     '@/lib/whatsapp':{sendWhatsAppReminderTemplate:async()=>{followupSends++;if(followupReject&&followupSends===1)throw {status:400};return {sid:'SMfollowup'+followupSends}}},
@@ -252,6 +257,47 @@ async function main() {
   fr=await (await followups.GET(req())).json();assert.equal(fr.fired,1);assert.equal(followupSends,2,'later item still runs after known rejection')
   ownerChanged=true;followupReject=false;await addFollowup();await followups.GET(req());assert.equal(followupSends,2,'changed owner destination fails closed')
   await addFollowup(null);assert.equal((await rpc('due_followup_deliveries',{})).length,0,'ownerless legacy rows cannot send')
+  let health=await rpc('delivery_health_report',{})
+  assert.equal(health.scheduler.length,3)
+  assert.ok(health.scheduler.every(b=>b.last_started),'all actual worker wrappers persist runs')
+  assert.ok(health.scheduler.some(b=>b.failed_runs_24h>0),'DB/provider failures cannot report successful heartbeat')
+  assert.ok(health.historical_unconfirmed>=0);assert.ok(health.new_outcome_unknown>=0)
+  assert.equal(JSON.stringify(health).includes('+155555'),false,'metrics have no recipient PII')
+  const oldKey='stale-briefing',oldToken=crypto.randomUUID()
+  await rpc('claim_notification_delivery',{p_key:oldKey,p_source:'briefing',p_owner:1,p_channel:'email',p_due:'2020-01-01',p_token:oldToken})
+  const beat=await rpc('start_delivery_worker',{p_source:'briefing'})
+  assert.equal((await query('select state from notification_deliveries where delivery_key=$1',[oldKey]))[0].state,'cancelled')
+  assert.equal(await rpc('finish_delivery_worker',{p_id:beat,p_ok:true,p_status:200}),true)
+  assert.equal(await rpc('finish_delivery_worker',{p_id:beat,p_ok:false,p_status:503}),false,'completed beats immutable')
+  let called=0
+  const startFail=load('lib/services/delivery-monitoring.ts',{'./reminder-delivery':{deliveryRpc:async()=>{throw Error('DB down')}}})
+  assert.equal((await startFail.withDeliveryHeartbeat('reminders',async()=>{called++;return new Response()})).status,503)
+  assert.equal(called,0,'no provider work when heartbeat start fails')
+  const finishFail=load('lib/services/delivery-monitoring.ts',{'./reminder-delivery':{deliveryRpc:async n=>{if(n.startsWith('finish'))throw Error('DB down');return 'fixture'}}})
+  assert.equal((await finishFail.withDeliveryHeartbeat('reminders',async()=>new Response())).status,503)
+  let adminAllowed=false,reportReads=0
+  const adminRoute=load('app/api/admin/delivery/route.ts',{'@/lib/admin/auth':{requireAdminSession:async()=>adminAllowed?{ok:true}:{ok:false,status:403,reason:'not_admin'}},
+    '@/lib/services/reminder-delivery':{deliveryRpc:async()=>{reportReads++;return health}}})
+  assert.equal((await adminRoute.GET()).status,403);assert.equal(reportReads,0)
+  adminAllowed=true;assert.equal((await adminRoute.GET()).headers.get('cache-control'),'no-store')
+  let evidenceState='provider_accepted',evidenceOwner='1',evidenceError=false,learningRow
+  const learningDb={from(table){if(table==='agent_activity')return {insert:async r=>{learningRow=r;return {}}}
+    let owner;const q={select:()=>q,eq:(k,v)=>{if(k==='telegram_id'||k==='owner_id')owner=v;return q},maybeSingle:async()=>({data:owner===evidenceOwner?{state:evidenceState,delivery_state:evidenceState}:null,error:evidenceError})};return q}}
+  const deliveryLearning=load('lib/agent/delivery-learning.ts',{'@/lib/supabase-admin':{supabaseAdmin:learningDb}})
+  const learning=load('lib/agent/decision-learning.ts',{'./delivery-learning':deliveryLearning,'@/lib/supabase-admin':{supabaseAdmin:learningDb},
+    './decision-evidence':{finiteConfidence:()=>1},'@/lib/bot/memory-redaction':{isSecretShapedMemory:()=>false,redactSecretShapedText:s=>s},'./brain-introspection':{}})
+  const learn={actor:{legacyTelegramId:'1'},text:'fixture',domain:'reminders',handler:'reminder-delivery',outcome:'verified_success',verified:true}
+  await learning.recordDecisionLearning(learn);assert.equal(learningRow.metadata_json.outcome,'unknown','boolean/SID/HTTP200 are not proof')
+  for(const state of ['pending','claimed','provider_accepted','failed','outcome_unknown','delivered','read']){
+    evidenceState=state;await learning.recordDecisionLearning({...learn,deliveryRef:{kind:'reminder',id:'fixture'}})
+    assert.equal(learningRow.metadata_json.verified,['delivered','read'].includes(state))
+  }
+  evidenceOwner='2';await learning.recordDecisionLearning({...learn,deliveryRef:{kind:'notification',id:'fixture'}});assert.equal(learningRow.metadata_json.verified,false)
+  evidenceOwner='1';evidenceError=true;await learning.recordDecisionLearning({...learn,deliveryRef:{kind:'notification',id:'fixture'}});assert.equal(learningRow.metadata_json.verified,false)
+  await learning.recordDecisionLearning({...learn,handler:'reminder-update'});assert.equal(learningRow.metadata_json.verified,true,'canonical CRUD remains distinct')
+  const before=(await query('select count(*) from delivery_worker_runs'))[0].count
+  assert.equal((await handler.GET(new Request('https://fixture.invalid/'))).status,401)
+  assert.equal((await query('select count(*) from delivery_worker_runs'))[0].count,before,'unauthorized calls create no heartbeat')
   await db.close()
   console.log('Delivery reliability: SQL leases, recurrence rollback, stale fencing, concurrency, cancellation, consent, crash/DB failure, unknown no-retry passed')
 }

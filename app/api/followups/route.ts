@@ -1,3 +1,4 @@
+import { withDeliveryHeartbeat } from '@/lib/services/delivery-monitoring'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
@@ -58,6 +59,10 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   if(!isCronAuthorized(req))return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  return withDeliveryHeartbeat('followup', () => runDelivery(req))
+}
+
+async function runDelivery(req: NextRequest) {
 
   const deadline = Date.now() + 45000
   let due: any[]
