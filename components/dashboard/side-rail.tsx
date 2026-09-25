@@ -20,6 +20,7 @@ const nav: NavItem[] = [
   { href:'/dashboard/agent?section=approvals', label:'Needs you', glyph:'!', badgeKey:'approvals', match:(p,s)=>p==='/dashboard/agent'&&s==='approvals' },
   { href:'/dashboard/agent?section=background', label:'Background', glyph:'◎', badgeKey:'watchers', match:(p,s)=>p==='/dashboard/agent'&&s==='background' },
   { href:'/dashboard/agent?section=goals', label:'Goals', glyph:'○', match:(p,s)=>p==='/dashboard/agent'&&s==='goals' },
+  { href:'/dashboard/brain', label:'Brain', glyph:'◈' },
   { href:'/dashboard/memory', label:'Memory', glyph:'◇' },
   { href:'/dashboard/library', label:'Library', glyph:'▣' },
   { href:'/dashboard/connections', label:'Connections', glyph:'⌁' },
@@ -94,3 +95,4 @@ export function SideRail() {
     </aside>
   )
 }
+
