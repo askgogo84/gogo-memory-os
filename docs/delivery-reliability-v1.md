@@ -28,8 +28,9 @@ Other outcomes are `failed`, `suppressed`, and `cancelled`. `outcome_unknown` is
 deliberately written before contacting the provider: crash-after-send, lost response,
 5xx, timeout, and failed acceptance persistence must not lead to blind resends.
 A definite 4xx rejection (except timeout), with no earlier accepted chunk, permits
-bounded retry with backoff. Pre-send infrastructure failures back off without
-silently terminating the series. Only delivered/read are recipient-delivery proof.
+bounded retry with backoff. Pre-send infrastructure failures back off, then become visible failed/dead-letter
+items after three failures. Exhausted preflight preparation needs operator review
+because no successor is invented when preparation never completes. Only delivered/read are recipient-delivery proof.
 
 Legacy `sent` means consumed, not delivered. It stays false during a claim and may
 stay false for unknown outcomes; queue readers must also filter delivery_state.
@@ -167,3 +168,24 @@ For briefings, authorize an enabled owner and their chosen time/channel. Let the
 chunk's receipt or the exact Resend ID's delivery read-back. Opt-out, failures,
 timeouts, competing workers and outage simulations remain isolated fixture tests;
 do not inject these into production without separate approval.
+
+
+## Aggregate delivery health details
+
+The existing administrator-only delivery endpoint now reports per-source state
+counts, active and expired unstarted leases, and failed jobs exhausted after three
+attempts (dead letters). State totals include historical rows and must not be read
+as a new-release conversion rate. Unknown sends remain excluded from retries.
+
+Observed acceptance-to-delivery latency covers WhatsApp occurrences with persisted
+acceptance in the last seven days and signed delivered/read arrivals for every
+expected chunk. It measures acceptance persistence to the last first-confirmed
+chunk arrival, not a handset timestamp. Later read callbacks cannot inflate the
+original delivery observation. Early callbacks preceding acceptance persistence
+are counted separately and excluded from latency percentiles. Missing or partial
+receipts produce no sample; empty samples have null percentiles. Email delivery
+read-back remains supported but is excluded from this callback-based latency metric.
+
+All fields are aggregates. No owner IDs, phone numbers, message bodies, provider
+IDs or credentials are returned. Both health RPCs remain security-invoker functions
+with execution restricted to service_role; the HTTP endpoint retains admin auth.
