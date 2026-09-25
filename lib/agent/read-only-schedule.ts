@@ -80,6 +80,7 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
       actor: params.actor,
       instruction: 'Show my calendar tomorrow',
       missionText: 'Read tomorrow schedule without changing anything.',
+      rememberSelection: true,
     })
     const output: any = calendar.output || {}
     timeZone = safe(output.timezone || requestedTimeZone, 100)

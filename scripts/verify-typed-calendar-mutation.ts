@@ -85,6 +85,10 @@ async function main(){try{
  assert.equal((await run('Move that one to 10 PM'))?.status,'completed')
  assert.equal(db.reminders[1].remind_at,'2026-10-01T16:30:00.000Z');assert.equal(db.reminders[0].remind_at,'2026-10-01T12:30:00.000Z');assert.equal(patches,0)
  // F: collision with no active typed selection asks, never guesses.
+ // Domain words inside a real title do not override its actual object type.
+ reset();event.summary='Team Reminder';await stage('Move Team Reminder to 5 PM')
+ reset();event.summary='Team Meeting';db.reminders=[{id:'r',telegram_id:123,message:'Team Meeting',sent:false,remind_at:'2026-10-01T10:00:00Z'}]
+ assert.match((await run('Move Team Meeting to 5 PM'))!.text,/Both a Calendar event and a reminder/);assert.equal(db.agent_approvals.length,0)
  reset();db.reminders=[{id:'r',telegram_id:123,message:'Same Brain Learning Test',sent:false,remind_at:'2026-10-01T10:00:00Z'}]
  assert.match((await run('Move Same Brain Learning Test to 5 PM'))!.text,/Both a Calendar event and a reminder/);assert.equal(db.agent_approvals.length,0);assert.equal(patches,0)
  assert.equal(db.agent_activity.filter(r=>r.metadata_json?.outcome==='clarified').length,1)

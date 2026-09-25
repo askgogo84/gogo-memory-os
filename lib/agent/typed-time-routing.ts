@@ -83,31 +83,43 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
     if(owner&&((explicitCalendar&&owner!=='calendar')||(explicitReminder&&owner!=='reminders')))return response('The requested object type conflicts with the active selection. Please select or name the intended object.')
     const selected=referential?selectedTypedObject(context,target):null
     if(referential&&!selected)return clarify('Which Calendar event or reminder do you mean? Please name it or select it from a current list.')
-    const title=normalizedObjectTitle(target.replace(/^(?:the|my)\s+/i,'').replace(/\s+(?:reminder|event|meeting)$/i,''))
+    const literalTitle=(value:string)=>String(value||'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim()
+    const titles=new Set([normalizedObjectTitle(target),normalizedObjectTitle(target.replace(/^(?:the|my)\s+/i,'').replace(/\s+(?:reminder|event|meeting)$/i,''))])
+    const namedMatches=(items:any[],label:(item:any)=>string)=>{
+      const exact=items.filter(item=>literalTitle(label(item))===literalTitle(target))
+      return exact.length?exact:items.filter(item=>titles.has(normalizedObjectTitle(label(item))))
+    }
     let calendar:any=null,reminder:any=null
     let access:Awaited<ReturnType<typeof calendarAccessForUpdate>>|null=null
-    if(owner!=='reminders'&&!explicitReminder){
+    if(owner!=='reminders'){
       // Reads used to resolve identity do not authorize a mutation. Permissions are
       // checked again before staging and immediately before provider execution.
       try{access=await calendarAccessForUpdate(p.actor,true)}catch(e:any){if(explicitCalendar||owner==='calendar'||e?.message!=='calendar_not_connected')throw e}
       if(access){
         const events=selected?[await readExactCalendarEvent(access.token,selected.id)]:await fetchPrimaryCalendarEvents(access.token,new Date(Date.now()-86400000).toISOString(),new Date(Date.now()+31*86400000).toISOString(),'TYPED_CALENDAR_READ_FAILED')
-        const matches=selected?events:events.filter((e:any)=>normalizedObjectTitle(e.summary)===title)
+        let matches=selected?events:namedMatches(events,e=>e.summary)
+        if(matches.length>1&&context?.domain==='calendar'&&matches.some(e=>String(e.id)===context.selectedId))matches=matches.filter(e=>String(e.id)===context.selectedId)
         if(matches.length>1)return clarify('Multiple Calendar events have that exact title. Show your calendar and select the intended event.')
         calendar=matches[0]||null
       }
     }
-    if(owner!=='calendar'&&!explicitCalendar){
+    if(owner!=='calendar'){
       const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone,sent').eq('telegram_id',p.actor.legacyTelegramId).eq('sent',false).order('remind_at',{ascending:true}).limit(100)
       if(error)throw new Error('typed_reminders_read_failed')
-      const matches=selected?(data||[]).filter(r=>String(r.id)===selected.id):(data||[]).filter(r=>normalizedObjectTitle(r.message)===title)
+      let matches=selected?(data||[]).filter(r=>String(r.id)===selected.id):namedMatches(data||[],r=>r.message)
+      if(matches.length>1&&context?.domain==='reminders'&&matches.some(r=>String(r.id)===context.selectedId))matches=matches.filter(r=>String(r.id)===context.selectedId)
       if(matches.length>1)return clarify('Multiple reminders have that exact title. List your reminders and select the intended one.')
       reminder=matches[0]||null
     }
     if(calendar&&reminder){
       if(context?.selectedId===String(calendar.id)&&context.domain==='calendar')reminder=null
       else if(context?.selectedId===String(reminder.id)&&context.domain==='reminders')calendar=null
-      else return clarify('Both a Calendar event and a reminder match that title. Do you mean the Calendar event or the reminder? Name it with the object type; nothing has changed.')
+      else{
+        const exactCalendar=literalTitle(calendar.summary)===literalTitle(target),exactReminder=literalTitle(reminder.message)===literalTitle(target)
+        if(!exactCalendar&&!exactReminder&&explicitCalendar&&!explicitReminder)reminder=null
+        else if(!exactCalendar&&!exactReminder&&explicitReminder&&!explicitCalendar)calendar=null
+        else return clarify('Both a Calendar event and a reminder match that title. Do you mean the Calendar event or the reminder? Name it with the object type; nothing has changed.')
+      }
     }
     if(!calendar&&!reminder)return request?clarify('I could not resolve an exact Calendar event or reminder. Please name or select the intended object; nothing has changed.'):null
     const domain=calendar?'calendar':'reminders',object=calendar?{id:String(calendar.id),title:String(calendar.summary)}:{id:String(reminder.id),title:String(reminder.message)}
