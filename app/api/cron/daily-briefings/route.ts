@@ -172,7 +172,7 @@ export async function GET(req: NextRequest) {
                 send: async token => {
                   const response = await sendAskGogoEmail({ to: email, ...rendered, unsubscribeUrl,
                     idempotencyKey: 'daily-brief/' + owner + '/' + now.date, stream: 'daily-brief' })
-                  if (!response.ok) throw Object.assign(new Error(response.error), { status: response.status })
+                  if (response.ok === false) throw Object.assign(new Error(response.error), { status: response.status })
                   if (!response.id) throw new Error('email_acceptance_id_missing')
                   return 'resend:' + response.id
                 },
