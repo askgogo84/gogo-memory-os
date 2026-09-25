@@ -49,7 +49,7 @@ export async function POST(request: Request) {
 
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
     if (readOnlySchedule?.horizon === 'tomorrow') {
-      const summary = await readTomorrowSchedule({ actor })
+      const summary = await readTomorrowSchedule({ actor, scope: readOnlySchedule.scope })
       return NextResponse.json({
         status: 'completed', capability: 'calendar', risk: 'low', text: summary.text,
         handledBy: 'read-only-schedule', readOnly: true, mutated: false,

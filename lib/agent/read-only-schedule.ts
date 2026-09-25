@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { executeReadOnlyCalendarStep } from './calendar-read'
+import { normalizeTimezone } from '@/lib/timezone'
 
 function safe(value: unknown, max = 500) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -41,14 +42,20 @@ export function detectReadOnlyScheduleRequest(raw: string) {
   const text = safe(raw, 2000).toLowerCase().replace(/[’]/g, "'")
   if (!text) return null
   const explicitNoMutation = /\b(do not|don't|dont|without)\s+(?:change|changing|modify|modifying|create|creating|add|adding|edit|editing|move|moving|schedule|scheduling|cancel|cancelling|canceling)\b/.test(text) || /\bread[- ]only\b/.test(text)
-  const readVerb = /\b(check|tell me|show me|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(text)
+  if (/^(?:please\s+)?(?:remind|create|add|move|cancel|delete|book)\b/.test(text)) return null
+  const readVerb = /\b(check|tell me|show(?: me)?|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(text)
   const scheduleContext = /\b(tomorrow|calendar|schedule|meetings?|appointments?|events?|day)\b/.test(text)
   const tomorrow = /\btomorrow\b/.test(text)
-  if ((explicitNoMutation || readVerb) && scheduleContext && tomorrow) return { horizon: 'tomorrow' as const }
+  if ((explicitNoMutation || readVerb) && scheduleContext && tomorrow) {
+    const request = text.replace(/(?:do not|don't|dont|without)\s+(?:change|changing|modify|modifying|create|creating|add|adding|edit|editing|move|moving|cancel|cancelling|canceling).*$/, '')
+    const combined = /\b(?:reminders?|agenda|plan my day|what is my day|what do i have tomorrow|what(?:'s| is) on tomorrow|my day|my schedule)\b/.test(request)
+    const calendarOnly = /\b(?:calendar|meetings?|appointments?|events?)\b/.test(request) && !combined
+    return { horizon: 'tomorrow' as const, scope: calendarOnly ? 'calendar' as const : 'agenda' as const }
+  }
   return null
 }
 
-export async function readTomorrowSchedule(params: { actor: AgentActor }) {
+export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 'calendar' | 'agenda' }) {
   const telegramId = Number(params.actor.legacyTelegramId)
   const { data: user, error: userError } = await supabaseAdmin.from('users')
     .select('timezone')
@@ -56,7 +63,7 @@ export async function readTomorrowSchedule(params: { actor: AgentActor }) {
     .maybeSingle()
   if (userError) throw new Error(`read_only_schedule_user_failed:${userError.message}`)
 
-  const requestedTimeZone = safe(user?.timezone || 'Asia/Kolkata', 100)
+  const requestedTimeZone = normalizeTimezone(user?.timezone)
   const now = new Date()
   const tomorrowKey = nextLocalDateKey(now, requestedTimeZone)
 
@@ -86,6 +93,14 @@ export async function readTomorrowSchedule(params: { actor: AgentActor }) {
   }
 
   const localTomorrowKey = nextLocalDateKey(now, timeZone)
+  // Calendar-only requests never read reminders, Attention or background monitors.
+  if (params.scope === 'calendar') {
+    const lines = ['Calendar tomorrow:']
+    if (!calendarConnected) lines.push('I could not read your connected calendar just now.')
+    else if (!calendarEvents.length) lines.push('No calendar events found.')
+    else for (const event of calendarEvents) lines.push(`• ${localClock(event.start, timeZone)} — ${event.title}`)
+    return { text: lines.join('\n'), calendarEvents, reminders: [], timeZone, tomorrowKey: localTomorrowKey, calendarReadVerified: calendarConnected }
+  }
   const tomorrowStart = new Date(now.getTime() - 2 * 60 * 60 * 1000)
   const tomorrowEnd = new Date(now.getTime() + 60 * 60 * 60 * 1000)
   const { data: reminderRows, error: reminderError } = await supabaseAdmin.from('reminders')
@@ -120,5 +135,6 @@ export async function readTomorrowSchedule(params: { actor: AgentActor }) {
   else lines.push('Nothing currently needs your attention tomorrow.')
   lines.push('I did not change, create, move or delete anything.')
 
-  return { text: lines.join('\n'), calendarEvents, reminders, timeZone, tomorrowKey: localTomorrowKey || tomorrowKey }
+  return { text: lines.join('\n'), calendarEvents, reminders, timeZone, tomorrowKey: localTomorrowKey || tomorrowKey, calendarReadVerified: calendarConnected }
 }
+

@@ -1,3 +1,5 @@
+import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
+import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
@@ -846,6 +848,17 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       await saveConversation(resolvedUser.telegramId, 'user', text)
       await saveConversation(resolvedUser.telegramId, 'assistant', brainReply.text)
       await sendWhatsAppMessage(from, brainReply.text)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    const scheduleRequest = detectReadOnlyScheduleRequest(text)
+    if (scheduleRequest) {
+      const actor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })
+      const summary = await readTomorrowSchedule({ actor, scope: scheduleRequest.scope })
+      await recordDecisionLearning({ actor, text, domain: 'calendar', handler: 'read-only-schedule', decisionId: inboundMessageSid || null, outcome: summary.calendarReadVerified ? 'verified_success' : 'unknown', verified: summary.calendarReadVerified }).catch(() => {})
+      await saveConversation(resolvedUser.telegramId, 'user', text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', summary.text)
+      await sendWhatsAppMessage(from, summary.text)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
