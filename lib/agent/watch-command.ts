@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { rememberTypedObjects } from './typed-object-context'
+import { latestTypedContext, selectedTypedObject, rememberTypedObjects } from './typed-object-context'
 import { getCostBudget } from '@/lib/services/cost-guard'
 import { buildGmailConnectUrl } from '@/lib/services/google-gmail'
 import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
@@ -82,7 +82,7 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
   })
   return {
     runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-    text:`🔎 *Active background monitors*\n\n${lines.join('\n')}\n\nSay *stop monitoring that* to stop the most recent one.`,
+    text:`🔎 *Active background monitors*\n\n${lines.join('\n')}\n\nSelect a watcher from this list before saying *stop it*, or stop a watcher by name.`,
     handledBy:'watcher-status',
       verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
   }
@@ -218,14 +218,16 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
     await dismissIdeasForWatcherIds(tg,(data||[]).map((row:any)=>String(row.id)))
     return {runId:'watcher-stop-all',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${data?.length||0} active background monitor${data?.length===1?'':'s'}.`,handledBy:'watcher-stop'}
   }
-  const {data:latest,error:readError}=await supabaseAdmin.from('agent_watchers')
-    .select('id,type,condition_json,created_at').eq('telegram_id',tg).eq('active',true).order('created_at',{ascending:false}).limit(1).maybeSingle()
-  if(readError)throw new Error(`watcher_stop_read_failed:${readError.message}`)
-  if(!latest?.id)return {runId:'watcher-stop-none',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:'There is no active background monitor to stop.',handledBy:'watcher-stop'}
-  const {error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()}).eq('id',latest.id).eq('telegram_id',tg)
-  if(error)throw new Error(`watcher_stop_failed:${error.message}`)
-  await dismissIdeasForWatcherIds(tg,[String(latest.id)])
-  return {runId:`watcher-stop-${latest.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${String((latest.condition_json as any)?.title||'that monitor')}.`,handledBy:'watcher-stop'}
+  const context=await latestTypedContext(params.actor.legacyTelegramId)
+  const selected=context?.domain==='watchers'?selectedTypedObject(context,params.text):null
+  if(!selected)return {runId:'watcher-stop-selection',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:'Select the exact watcher from a current list or stop it by name. I will not choose the most recent watcher for this reference.',handledBy:'watcher-stop'}
+  const {data:updated,error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
+    .eq('id',selected.id).eq('telegram_id',tg).eq('active',true).select('id,active,next_check_at').maybeSingle()
+  if(error||!updated||updated.active!==false)throw new Error('watcher_stop_update_unverified')
+  const {data:verified,error:verifyError}=await supabaseAdmin.from('agent_watchers').select('id,active,next_check_at').eq('id',selected.id).eq('telegram_id',tg).maybeSingle()
+  if(verifyError||!verified||verified.active!==false||verified.next_check_at!==null)throw new Error('watcher_stop_read_after_write_failed')
+  await dismissIdeasForWatcherIds(tg,[selected.id])
+  return {runId:`watcher-stop-${selected.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${selected.title}.`,handledBy:'watcher-stop'}
 }
 
 export function parsePriceWatchCommand(text:string){

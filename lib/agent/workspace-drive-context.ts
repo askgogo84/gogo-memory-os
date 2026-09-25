@@ -1,3 +1,4 @@
+import { rememberTypedObjects } from './typed-object-context'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
@@ -147,6 +148,7 @@ export async function tryRunWorkspaceDriveContext(params:{actor:AgentActor;surfa
     }
 
     const choice=selectWorkspaceDriveFile(search?.files||[],text)
+    await rememberTypedObjects(actor.legacyTelegramId,'files',choice.status==='selected'?[{id:choice.file.id,title:choice.file.name}]:choice.files.map(f=>({id:f.id,title:f.name})),choice.status==='selected'?choice.file.id:null)
     if(choice.status==='not_found'){
       const summary='I could not find a matching file in your connected Google Drive. I did not substitute a web result or guess another document.'
       await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_drive_context',input_text:text,mutationsAllowed:false,queryTerms:search?.queryTerms||[]}})
