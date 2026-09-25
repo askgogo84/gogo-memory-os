@@ -97,3 +97,43 @@ briefing run. Only matching provider IDs with delivered/opened/clicked evidence
 qualify as delivered. Sent/queued/HTTP 200 are not delivery evidence. API failures
 stay visible and never trigger resend. A sending-only Resend key needs read access
 before receipt reconciliation can succeed; do not assume key presence proves it.
+
+## Follow-ups
+
+Creation stores the authenticated owner's ID as well as their bound WhatsApp
+destination. Legacy rows without an owner are not guessed from phone numbers and
+cannot send. The production table was empty before this migration.
+
+The existing daily endpoint selects at most 50 due, retry-eligible jobs and stops
+starting work at 45 seconds. Each item independently uses the notification claim
+protocol. It rechecks source status/content/due time, current owner's destination,
+and consent immediately before send. An approved plain reminder template is
+required; owner-reminder action buttons do not apply to this separate table.
+The message asks the owner to follow up without asserting that no reply exists.
+
+`fired` and `accepted` count only provider acceptance with successful source-table
+persistence, never recipient delivery. A failed update returns an item failure;
+the durable job prevents a repeat. Signed callbacks synchronize delivery_status.
+Backoff makes a job eligible later, but dispatch still follows the unchanged daily
+follow-up schedule. No second scheduler was added.
+
+## Controlled production acceptance (human authorization required)
+
+Specify one authenticated owner, their verified WhatsApp destination, an exact
+test message, and the approved execution window. Create a one-off reminder and
+one recurring reminder through the normal owner UI. Let the existing minute cron
+dispatch them; inspect the attempt, SID, signed inbox events, and delivered/read
+state. Confirm only one send per occurrence and exactly one future successor.
+
+For a follow-up, create a uniquely labelled record through authenticated POST
+`/api/followups` (contact and context only; never a supplied destination). Confirm
+the saved owner/destination. Schedule its check_at for the next existing daily
+run, or separately authorize an exact row's test-time adjustment. Let the scheduler
+run, then verify fired/accepted persistence and the SID-backed delivered/read
+receipt. No bulk cron invocation is part of this test.
+
+For briefings, authorize an enabled owner and their chosen time/channel. Let the
+15-minute schedule run, then verify one owner/day/channel job and every WhatsApp
+chunk's receipt or the exact Resend ID's delivery read-back. Opt-out, failures,
+timeouts, competing workers and outage simulations remain isolated fixture tests;
+do not inject these into production without separate approval.
