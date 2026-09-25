@@ -11,6 +11,7 @@ export async function deliverNotification(p: {
   const token = randomUUID()
   let claimed = false, started = false, returned = false
   try {
+    if (Date.now() >= p.deadline) return 'deferred'
     claimed = await deliveryRpc('claim_notification_delivery', { p_key: p.key, p_source: p.source, p_owner: p.owner,
       p_channel: p.channel, p_due: p.due, p_token: token })
     if (!claimed) return 'skipped'
@@ -20,6 +21,7 @@ export async function deliverNotification(p: {
       if (!await deliveryRpc('finish_notification_delivery', { p_key: p.key, p_token: token, p_state: 'suppressed' })) throw new Error('suppression_write_failed')
       return 'suppressed'
     }
+    if (Date.now() >= p.deadline) return 'deferred'
     if (!await deliveryRpc('begin_notification_delivery', { p_key: p.key, p_token: token })) return 'skipped'
     started = true
     const id = await p.send(token)

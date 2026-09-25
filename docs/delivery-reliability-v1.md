@@ -119,6 +119,15 @@ follow-up schedule. No second scheduler was added.
 
 ## Monitoring and learning evidence
 
+Overnight boundary audit: workers now check their deadline again after the final
+asynchronous eligibility lookup. Both preflight errors and definite provider
+rejections exhaust after three attempts into explicit failed records, removing
+permanently broken work from the hot queue. Ambiguous sends remain non-retriable.
+An exhausted preflight recurrence is visible as failed and needs an operator's
+review; no successor or delivery is fabricated when preparation cannot complete.
+The follow-up send-intent transaction locks and rechecks the source row's owner,
+pending status and due time so cancellation during the claim cannot send.
+
 Every authorized existing scheduler invocation writes its own start/completion
 heartbeat. Crashes leave an unfinished run; DB failures return 503. No monitoring
 scheduler or outbound alert sender is added. Runs retain 30 days with bounded
