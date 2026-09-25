@@ -455,7 +455,7 @@ async function createEventFromPayload(
 
   // A POST can return an id while the mandatory provider read-back is unknown.
   // That is not verified success and must never produce success-shaped copy.
-  if (!created?.id || created?.verification === 'unknown') {
+  if (!created?.id || created?.verification !== 'verified') {
     console.error('GCAL_CREATE_NOT_VERIFIED:', { id: created?.id || null, verification: created?.verification || null })
     return (
       `⚠️ *Calendar write not verified*\n\n` +
@@ -470,7 +470,7 @@ async function createEventFromPayload(
     startIso: payload.startIso,
     endIso: payload.endIso,
   })
-  recordDecisionLearning({actor:{userId:String(telegramId),legacyTelegramId:telegramId,name:'Gogo'} as AgentActor,text:`create calendar event ${payload.title}`,domain:'calendar',handler:'calendar-create',objectKind:'calendar_event',objectRef:String(created.id),outcome:'verified_success',verified:true}).catch(()=>{})
+  recordDecisionLearning({actor:{userId:String(telegramId),legacyTelegramId:telegramId,name:'Gogo'} as AgentActor,text:`create calendar event ${payload.title}`,domain:'calendar',handler:'calendar-create',objectKind:'calendar_event',objectRef:String(created.id),outcome:'verified_success',verified:true,executionEvidence:{source:'google_calendar',kind:'provider_readback',objectRef:String(created.id),providerRef:String(created.id),verified:created.verification==='verified'}}).catch(()=>{})
 
   return (
     `✅ *Calendar event added*\n\n` +
