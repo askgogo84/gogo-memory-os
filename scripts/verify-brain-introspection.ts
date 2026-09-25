@@ -7,7 +7,7 @@ for(const text of ['How is Same Brain learning from my outcomes?','What have you
 for(const text of ['Send an email about Same Brain','Remind me to review the learning system','Book a Same Brain meeting','Search Gmail for Same Brain','What do I have on my calendar tomorrow?'])assert.equal(isSameBrainIntrospection(text),false,text)
 const row=(outcome:string,verified=false)=>({event_type:'decision_learning',created_at:'2026-09-25T00:00:00Z',metadata_json:{schema:'same-brain-v2',decision_id:'one',domain:'email',handler:'gmail-context',outcome,verified,user_text:'PRIVATE_BODY',object_ref:'PRIVATE_PROVIDER_ID'}})
 const report=formatBrainIntrospection([row('corrected'),row('verified_success',true),row('verified_success',true),{event_type:'shadow_brain_observation',metadata_json:{learned_routing:{useLearned:false,handler:null,reason:'PRIVATE_REASON'}}}])
-assert.match(report,/Provider-verified successes: 0/)
+assert.match(report,/Verified successes: 0/)
 assert.match(report,/Corrections: 1; failures: 0/)
 assert.match(report,/Shadow-only decisions observed: 1/)
 assert.match(report,/insufficient evidence/)
@@ -26,7 +26,7 @@ async function main(){
     const p={actor:{legacyTelegramId:123},text:'How is Same Brain learning?'}
     const reply=await trySameBrainIntrospection(p)
     assert.equal(reply?.handledBy,'same-brain-introspection');assert.equal(reply?.mutated,false)
-    assert.match(reply!.text,/Provider-verified successes: 1/)
+    assert.match(reply!.text,/Verified successes: 1/)
     assert.ok(calls.some(c=>c[0]==='eq'&&c[1]==='telegram_id'&&c[2]==='123'))
     failed=true
     assert.equal((await trySameBrainIntrospection(p))?.status,'unavailable')
