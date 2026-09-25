@@ -225,25 +225,33 @@ export async function listUpcomingEvents(accessToken: string, days = 7): Promise
 export async function updateCalendarEvent(
   accessToken: string,
   eventId: string,
-  patch: { summary?: string; startTime?: string; endTime?: string; location?: string }
-): Promise<{ ok: boolean; event?: any; error?: string }> {
+  patch: { summary?: string; startTime?: string; endTime?: string; location?: string; ifMatch?: string; timezone?: string }
+): Promise<{ ok: boolean; event?: any; error?: string; verification?: 'verified' | 'unknown' }> {
   const body: any = {}
   if (patch.summary) body.summary = patch.summary
-  if (patch.startTime) body.start = { dateTime: patch.startTime, timeZone: 'Asia/Kolkata' }
-  if (patch.endTime) body.end = { dateTime: patch.endTime, timeZone: 'Asia/Kolkata' }
+  if (patch.startTime) body.start = { dateTime: patch.startTime, timeZone: patch.timezone || 'Asia/Kolkata' }
+  if (patch.endTime) body.end = { dateTime: patch.endTime, timeZone: patch.timezone || 'Asia/Kolkata' }
   if (patch.location) body.location = patch.location
 
   const response = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
     {
       method: 'PATCH',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...(patch.ifMatch ? { 'If-Match': patch.ifMatch } : {}) },
       body: JSON.stringify(body),
     }
   )
   const data = await response.json().catch(() => ({}))
   if (!response.ok) return { ok: false, error: data?.error?.message || `HTTP ${response.status}` }
-  return { ok: true, event: data }
+  const readback = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' })
+  const actual = await readback.json().catch(() => null)
+  const matches = readback.ok && actual?.id === eventId && actual?.status !== 'cancelled'
+    && (!patch.startTime || Date.parse(actual?.start?.dateTime) === Date.parse(patch.startTime))
+    && (!patch.endTime || Date.parse(actual?.end?.dateTime) === Date.parse(patch.endTime))
+    && (!patch.summary || actual?.summary === patch.summary)
+    && (!patch.location || actual?.location === patch.location)
+  if (!matches) return { ok: false, verification: 'unknown', error: 'Calendar update read-back did not verify the exact event and expected fields.' }
+  return { ok: true, event: actual, verification: 'verified' }
 }
 
 export async function deleteCalendarEvent(accessToken: string, eventId: string): Promise<{ ok: boolean; error?: string }> {

@@ -1,3 +1,4 @@
+import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { recordDecisionLearning } from './decision-learning'
@@ -117,6 +118,7 @@ export async function tryRunGmailContextCommand(params:{actor:AgentActor;text:st
     const map:any={first:0,'1st':0,second:1,'2nd':1,third:2,'3rd':2}
     const message=state.payload.messages[map[String(ordinal[1]).toLowerCase()]]
     if(!message)return {runId:'gmail-context-ordinal-missing',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'That Gmail result number is not in the current search set.',handledBy:'gmail-context'}
+    await rememberTypedObjects(params.actor.legacyTelegramId,'email',[{id:String(message.id),title:String(message.subject||'Email')}]).catch(()=>{})
     await clearFollowupState(params.actor.legacyTelegramId,'gmail_selected_message')
     await saveFollowupState(params.actor.legacyTelegramId,'gmail_selected_message',{message,created_at:new Date().toISOString()})
     return {runId:'gmail-context-selected',status:'completed' as const,capability:'email' as const,risk:'low' as const,
@@ -285,3 +287,4 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
     return {runId:params.runId,status:'failed' as const,capability:'email' as const,risk:'high' as const,text:'Gmail rejected the send before acceptance. Nothing is marked sent. Please review the Gmail Send connection before trying again.',handledBy:'gmail-send'}
   }
 }
+

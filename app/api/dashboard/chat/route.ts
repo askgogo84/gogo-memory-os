@@ -1,3 +1,4 @@
+import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { randomUUID } from 'crypto'
@@ -98,6 +99,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+    const typedReply = await tryTypedTimeRouting({actor,text,surface:'web',messageId:`web-${randomUUID()}`})
+    if(typedReply){
+      await saveConversation(user.telegram_id,text,typedReply.text)
+      return NextResponse.json(typedReply)
+    }
     const brainReply = await trySameBrainIntrospection({ actor, text })
     if (brainReply) {
       await saveConversation(user.telegram_id, text, brainReply.text)

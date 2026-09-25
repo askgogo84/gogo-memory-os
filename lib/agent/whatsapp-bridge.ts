@@ -1,3 +1,5 @@
+import { tryTypedTimeRouting } from './typed-time-routing'
+import { executeApprovedCalendarUpdate } from './calendar-update'
 import { verifiedReadEvidence } from './read-evidence'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
@@ -153,7 +155,9 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
   if (runError) throw new Error(`whatsapp_agent_run_read_failed:${runError.message}`)
   if (!run) throw new Error('whatsapp_agent_run_not_found')
   const planType = String((run.metadata_json as any)?.plan_type || '')
-  const result = planType === 'memory_ticket_to_calendar'
+  const result = planType === 'calendar_update'
+    ? await executeApprovedCalendarUpdate({actor,runId:String(data.run_id)})
+    : planType === 'memory_ticket_to_calendar'
     ? await executeApprovedTravelCalendarPlan({ actor, runId:String(data.run_id) })
     : planType === 'secure_browser'
       ? await executeApprovedBrowserCommand({ actor, runId:String(data.run_id) })
@@ -329,6 +333,9 @@ export async function tryRunWhatsAppAgent(params: {
 }): Promise<WhatsAppAgentResult | null> {
   const actor = actorFromResolvedUser(params.user)
   if (!actor) return null
+
+  const typedReply=await tryTypedTimeRouting({actor,text:params.text,surface:'whatsapp',messageId:params.messageId?String(params.messageId):null})
+  if(typedReply)return typedReply
 
   // A disabled capability is a hard user preference. Stop any reminder-bearing
   // command before compound/persistent/general planners can recreate a reminder

@@ -1,3 +1,4 @@
+import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { parseReminderIntent, buildReminderConfirmation, getAmbiguousReminderTime, buildAmPmClarificationReply } from './reminders'
 import { pickRecurringDuplicate } from '@/lib/bot/reminder-dedup'
 import { formatReminderWhen } from '@/lib/services/reminder-series'
@@ -147,6 +148,7 @@ async function showReminderReadQuery(telegramId: number, text: string): Promise<
     return true
   }).slice(0, 10)
 
+  await rememberTypedObjects(telegramId,'reminders',rows.map((r:any)=>({id:String(r.id),title:r.message}))).catch(()=>{})
   const scope = targetKey ? (/\btomorrow\b/i.test(text) ? 'tomorrow' : 'today') : 'active'
   if (!rows.length) return scope === 'active' ? `⏰ You have no active reminders right now.` : `⏰ You have no reminders for ${scope}.`
 
@@ -265,10 +267,12 @@ export async function saveNaturalReminder(params: {
     const { error } = await supabaseAdmin.from('reminders').update(payload).eq('id', duplicateId)
     if (error) throw new Error(`natural_reminder_update_failed:${error.message}`)
   } else {
-    const { error } = await supabaseAdmin.from('reminders').insert(payload)
+    const { data:created,error } = await supabaseAdmin.from('reminders').insert(payload).select('id').single()
     if (error) throw new Error(`natural_reminder_insert_failed:${error.message}`)
+    duplicateId=created?.id?String(created.id):null
   }
 
+  if(duplicateId)await rememberTypedObjects(params.telegramId,'reminders',[{id:duplicateId,title:parsed.message}]).catch(()=>{})
   const reminderReply = buildReminderConfirmation(parsed)
   return compoundListReply ? `${compoundListReply}\n\n${reminderReply}` : reminderReply
 }

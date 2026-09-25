@@ -1,3 +1,4 @@
+import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
@@ -843,6 +844,13 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    const typedReply=await tryTypedTimeRouting({actor:{userId:String(resolvedUser.id),legacyTelegramId:Number(resolvedUser.telegramId),whatsappId:String(resolvedUser.whatsappId||from),name:resolvedUser.name||'Gogo'},text,surface:'whatsapp',messageId:inboundMessageSid||null})
+    if(typedReply){
+      await saveConversation(resolvedUser.telegramId,'user',text)
+      await saveConversation(resolvedUser.telegramId,'assistant',typedReply.text)
+      await sendWhatsAppMessage(from,typedReply.text)
+      return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+    }
     const brainReply = await trySameBrainIntrospection({ actor: { legacyTelegramId: Number(resolvedUser.telegramId) }, text })
     if (brainReply) {
       await saveConversation(resolvedUser.telegramId, 'user', text)
