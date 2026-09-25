@@ -1,4 +1,4 @@
-import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
+import { latestTypedContext, rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { recordDecisionLearning } from './decision-learning'
@@ -109,12 +109,20 @@ async function stageApproval(actor:AgentActor,draft:any,learningText:string){
   return {runId,approvalId:String(approval.id)}
 }
 
+async function newerForeignSelection(actor:AgentActor,state:any){
+  const context=await latestTypedContext(actor.legacyTelegramId)
+  const at=Date.parse(String(state?.created_at||state?.payload?.created_at||''))
+  return context&&context.domain!=='email'&&(!Number.isFinite(at)||Date.parse(context.at)>=at)?context.domain:null
+}
+const gmailReferentClarification=()=>({runId:'gmail-context-conflict',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'Please search for or select the Gmail message you mean. I cannot bind that reference to an older email selection or draft after another object became active.',handledBy:'gmail-context'})
+
 export async function tryRunGmailContextCommand(params:{actor:AgentActor;text:string}){
   const raw=clean(params.text,1400)
   const ordinal=raw.match(/^(?:open|show|read|summari[sz]e)\s+(?:the\s+)?(first|second|third|1st|2nd|3rd)\s+one\b/i)
   if(ordinal){
     const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_search_results')
     if(!state||!isStrictlyFreshFollowupState(state,30)||!Array.isArray(state.payload?.messages))return null
+    if(await newerForeignSelection(params.actor,state))return gmailReferentClarification()
     const map:any={first:0,'1st':0,second:1,'2nd':1,third:2,'3rd':2}
     const message=state.payload.messages[map[String(ordinal[1]).toLowerCase()]]
     if(!message)return {runId:'gmail-context-ordinal-missing',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'That Gmail result number is not in the current search set.',handledBy:'gmail-context'}
@@ -127,6 +135,7 @@ export async function tryRunGmailContextCommand(params:{actor:AgentActor;text:st
   if(/^(?:who sent (?:that|it)|when did i receive (?:that|it)|what does (?:that|it) say|tell me about (?:that|it))\b/i.test(raw)){
     const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_selected_message')
     if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload?.message)return null
+    if(await newerForeignSelection(params.actor,state))return gmailReferentClarification()
     const m=state.payload.message
     return {runId:'gmail-context-read',status:'completed' as const,capability:'email' as const,risk:'low' as const,
       text:`From: ${m.from||'Unknown sender'}\nDate: ${m.date||'Unknown date'}\nSubject: ${m.subject||'(No subject)'}\n\n${clean(m.snippet||'No preview available.',900)}`,handledBy:'gmail-context'}
@@ -160,6 +169,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
   if(/^(?:send\s+it|send\s+this\s+reply)$/i.test(raw)){
     const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload?.draft)return null
+    if(await newerForeignSelection(params.actor,state))return gmailReferentClarification()
     const sendAccess=await gmailAccess(params.actor,{requireSend:true})
     if(!sendAccess.ok){
       if(sendAccess.reason==='gmail_send_not_connected'){
@@ -182,7 +192,8 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
   let selected:any=null
   if(contextual){
     const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_selected_message')
-    if(state&&isStrictlyFreshFollowupState(state,30)&&state.payload?.message)selected=state.payload.message
+    if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload?.message||await newerForeignSelection(params.actor,state))return gmailReferentClarification()
+    selected=state.payload.message
   }
   const resolved=selected?{access:await gmailAccess(params.actor),match:{thread:{id:selected.threadId,subject:selected.subject},incoming:selected},ambiguous:false}:await resolveThread(params.actor,parsed.target)
   if(!resolved.access.ok){
@@ -195,6 +206,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     return {runId:'gmail-reply-not-found',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:`I couldn't find a recent Gmail thread matching “${clean(parsed.target,120)}”. Give me the sender email or subject.`,handledBy:'gmail-send'}
   }
   const message=resolved.match.incoming
+  await rememberTypedObjects(params.actor.legacyTelegramId,'email',[{id:String(message.id||resolved.match.thread.id),title:String(message.subject||'Email')}]).catch(()=>{})
   const draft={
     threadId:String(resolved.match.thread.id),
     to:emailFromHeader(message.from),
@@ -287,4 +299,3 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
     return {runId:params.runId,status:'failed' as const,capability:'email' as const,risk:'high' as const,text:'Gmail rejected the send before acceptance. Nothing is marked sent. Please review the Gmail Send connection before trying again.',handledBy:'gmail-send'}
   }
 }
-

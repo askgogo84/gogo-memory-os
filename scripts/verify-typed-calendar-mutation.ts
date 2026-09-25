@@ -5,13 +5,14 @@ import { tryTypedTimeRouting, parseTypedTimeRequest, movedTime } from '../lib/ag
 import { executeApprovedCalendarUpdate } from '../lib/agent/calendar-update'
 import { rememberTypedObjects, typedMutationOwner } from '../lib/agent/typed-object-context'
 import { isSameBrainIntrospection } from '../lib/agent/brain-introspection'
+import { tryRunGmailContextCommand, tryRunGmailSendCommand } from '../lib/agent/gmail-send'
 
 const actor={legacyTelegramId:123,userId:'test-user',whatsappId:'fixture',name:'Fixture'}
 const baseEvent={id:'calendar-exact',summary:'A event called Same Brain Learning Test',etag:'"v1"',start:{dateTime:'2026-10-01T16:00:00+05:30'},end:{dateTime:'2026-10-01T16:30:00+05:30'}}
 let db:Record<string,any[]>,event:any,patches=0,unknown=false,mismatch=false,wrongTime=false,rejectPatch=0,reminderWriteUnknown=false,reminderWrites=0,permission:string|null=null,seq=0
 const oldFrom=supabaseAdmin.from,oldFetch=globalThis.fetch
 const copy=(v:any)=>JSON.parse(JSON.stringify(v))
-function reset(){db={agent_activity:[],agent_runs:[],agent_approvals:[],reminders:[],conversations:[],agent_permissions:[],users:[{telegram_id:123,timezone:'Asia/Kolkata',google_calendar_connected:true,google_refresh_token:'fixture'}]};event=copy(baseEvent);patches=0;unknown=false;mismatch=false;wrongTime=false;rejectPatch=0;reminderWriteUnknown=false;reminderWrites=0;permission=null;seq=0}
+function reset(){db={agent_activity:[],agent_runs:[],agent_approvals:[],reminders:[],conversations:[],memories:[],agent_permissions:[],users:[{telegram_id:123,timezone:'Asia/Kolkata',google_calendar_connected:true,google_refresh_token:'fixture'}]};event=copy(baseEvent);patches=0;unknown=false;mismatch=false;wrongTime=false;rejectPatch=0;reminderWriteUnknown=false;reminderWrites=0;permission=null;seq=0}
 function value(row:any,key:string){return key.split(/->>?/).reduce((v,k)=>v?.[k],row)}
 ;(supabaseAdmin as any).from=(table:string)=>{
  const filters:any[]=[],order:any[]=[];let mode='read',payload:any,lim=Infinity,single=false,selected=false
@@ -22,12 +23,14 @@ function value(row:any,key:string){return key.split(/->>?/).reduce((v,k)=>v?.[k]
    let rows=db[table].filter(r=>filters.every(f=>f(r)))
    if(mode==='insert'){rows=(Array.isArray(payload)?payload:[payload]).map(p=>({...copy(p),id:p.id||`00000000-0000-4000-8000-${String(++seq).padStart(12,'0')}`,created_at:new Date(Date.now()+seq).toISOString(),requested_at:new Date(Date.now()+seq).toISOString()}));db[table].push(...rows)}
    else if(mode==='update')for(const r of rows)Object.assign(r,copy(payload))
+   else if(mode==='delete')db[table]=db[table].filter(r=>!rows.includes(r))
    if(mode==='update'&&table==='reminders'){reminderWrites++;if(reminderWriteUnknown)throw new Error('reminder_write_response_lost')}
    for(const [k,o] of order)rows.sort((a,b)=>String(value(a,k)||'').localeCompare(String(value(b,k)||''))*(o?.ascending===false?-1:1))
    rows=rows.slice(0,lim)
    return Promise.resolve({data:mode==='update'&&!selected?null:copy(single?(rows[0]||null):rows),error:null}).then(resolve,reject)
   }catch(e){return Promise.reject(e).then(resolve,reject)}
  }}
+ q.delete=()=>{mode='delete';return q}
  return q
 }
 globalThis.fetch=(async(url:any,opts:any={})=>{
@@ -130,6 +133,24 @@ async function main(){try{
  assert.equal(db.agent_activity.filter(r=>r.metadata_json?.outcome==='verified_success').length,0)
  // Foreign typed identity remains a hard boundary, never a reminder mutation.
  for(const domain of ['email','watchers','travel','browser'] as const){reset();await rememberTypedObjects(123,domain,[{id:'foreign',title:'Object'}]);assert.match((await run('Move it to 6 PM'))!.text,/won't reinterpret/);assert.equal(patches,0)}
+ // Cross-domain audit: an older Gmail search/selection/draft cannot reclaim a
+ // pronoun or ordinal after Calendar, reminders, watchers, travel or browser.
+ const email={id:'mail-exact',threadId:'thread-exact',subject:'Fixture subject',from:'fixture@example.test',snippet:'Fixture preview'}
+ const saveMailState=(kind:string,payload:any,at:string)=>db.memories.push({id:kind,telegram_id:123,created_at:at,content:JSON.stringify({type:'followup_state',kind,payload,created_at:at})})
+ for(const domain of ['calendar','reminders','watchers','travel','browser'] as const){
+   reset();const old=new Date(Date.now()-1000).toISOString();saveMailState('gmail_search_results',{messages:[email]},old);saveMailState('gmail_selected_message',{message:email},old);saveMailState('gmail_reply_draft',{draft:{threadId:'thread-exact',to:'fixture@example.test',subject:'Fixture subject',body:'Fixture reply'}},old)
+   await rememberTypedObjects(123,domain,[{id:'foreign',title:'Object'}])
+   for(const text of ['Open the first one','Who sent that'])assert.match((await tryRunGmailContextCommand({actor,text}))!.text,/older email selection or draft/)
+   for(const text of ['Reply to that exact email saying received','Send it'])assert.match((await tryRunGmailSendCommand({actor,text}))!.text,/older email selection or draft/)
+   assert.equal(db.agent_approvals.length,0);assert.equal(patches,0)
+ }
+ // A newer Gmail search intentionally switches domains and keeps its exact ID.
+ reset();await rememberTypedObjects(123,'calendar',[{id:event.id,title:event.summary}]);db.agent_activity[0].metadata_json.at=new Date(Date.now()-2000).toISOString()
+ saveMailState('gmail_search_results',{messages:[email]},new Date(Date.now()-1000).toISOString())
+ assert.match((await tryRunGmailContextCommand({actor,text:'Open the first one'}))!.text,/Fixture subject/)
+ assert.match((await tryRunGmailContextCommand({actor,text:'Who sent that'}))!.text,/fixture@example.test/)
+ assert.ok(db.agent_activity.some(r=>r.metadata_json?.domain==='email'&&r.metadata_json?.selectedId==='mail-exact'))
+ reset();assert.match((await tryRunGmailSendCommand({actor,text:'Reply to that exact email saying received'}))!.text,/older email selection or draft/);assert.equal(db.agent_approvals.length,0)
  reset();permission='off';assert.equal((await run('Move Same Brain Learning Test to 5 PM'))?.status,'paused');assert.equal(db.agent_approvals.length,0)
  assert.equal(parseTypedTimeRequest('Remind me tomorrow at 4 PM to call Praveen'),null)
  assert.equal(isSameBrainIntrospection('What time is Same Brain Learning Test tomorrow?'),false)
