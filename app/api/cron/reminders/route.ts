@@ -1,25 +1,18 @@
+import { randomUUID } from 'node:crypto'
+import { deliveryRpc, nextFutureOccurrence } from '@/lib/services/reminder-delivery'
+import { isDefiniteProviderRejection } from '@/lib/services/delivery-state'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp, sendWhatsAppReminderTemplate, sendWhatsAppReminderButtons } from '@/lib/whatsapp'
 import { isSuppressed } from '@/lib/bot/handlers/reminder-optout'
 // getNextOccurrence now lives in the shared reminder-series module so skip-occurrence
 // advances a series exactly the way this cron does — one implementation, no drift.
-import { getNextOccurrence, describeCadence } from '@/lib/services/reminder-series'
+import { describeCadence } from '@/lib/services/reminder-series'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const MAX_FAIL_ATTEMPTS = 3
-// Recurring dedupe: skip inserting a next-occurrence row if an identical pending
-// reminder already exists within ±this window of the computed nextDate, so
-// recurring + snooze/move copies don't stack. Fail-open (never drop on error).
-const DEDUPE_WINDOW_MIN = 30
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
-// Delivery-truth gate. When unset, markReminderSent writes exactly {sent, sent_at}
-// as before — the twilio_sid/delivery_status columns stay untouched, so unsetting
-// the env var reverts behaviour to HEAD instantly. Fail-open: never drops a reminder.
-const REMINDER_DELIVERY_TRACKING =
-  process.env.REMINDER_DELIVERY_TRACKING === '1' || process.env.REMINDER_DELIVERY_TRACKING === 'true'
 // Friend-to-friend delivery gate. Default OFF (unset): a reminder bound for a
 // friend (recipient ≠ owner) is still created and the sender was already told it
 // was saved, but this cron does NOT deliver it to the recipient — the row is
@@ -87,7 +80,7 @@ async function sendTelegram(chatId: number, text: string) {
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
   })
   const body = await res.text()
-  if (!res.ok) throw new Error(`Telegram send failed: ${res.status} ${body}`)
+  if (!res.ok) throw Object.assign(new Error('Telegram send rejected'), { status: res.status })
   return body
 }
 
@@ -138,327 +131,107 @@ async function reminderGoesToOwner(reminder: any, whatsappTo: string): Promise<b
   return !!ownDigits && ownDigits === toDigits
 }
 
-// sid/status are the values returned by the Twilio send at the call site; abandoned
-// marks a reminder given up after MAX_FAIL_ATTEMPTS. When REMINDER_DELIVERY_TRACKING
-// is unset the update object is byte-identical to HEAD ({sent, sent_at} only).
-async function markReminderSent(
-  id: string,
-  sid?: string | null,
-  status?: string | null,
-  abandoned?: boolean,
-  suppressed?: boolean,
-) {
-  const update: any = { sent: true, sent_at: new Date().toISOString() }
-  if (REMINDER_DELIVERY_TRACKING) {
-    if (sid) {
-      update.twilio_sid = sid
-      update.delivery_status = 'accepted'
-      console.log('REMINDER_TRACKED:', { id, sid, acceptStatus: status || 'accepted' })
-    } else if (abandoned) {
-      update.delivery_status = 'abandoned'
-    } else if (suppressed) {
-      // Consumed by the opt-out gate, not a real delivery. Tag it so the audit
-      // doesn't conflate it with untracked (Telegram/freeform) sends — same reason
-      // the abandon path tags 'abandoned'. Gated: unset ⇒ {sent, sent_at} only.
-      update.delivery_status = 'suppressed'
-    }
-  }
-  const { error } = await supabaseAdmin
-    .from('reminders')
-    .update(update)
-    .eq('id', id)
-  if (error) console.error('Failed to mark reminder sent:', error.message)
-}
-
-async function incrementFailAttempts(id: string, current: number): Promise<number> {
-  const next = (current || 0) + 1
-  const { error } = await supabaseAdmin
-    .from('reminders')
-    .update({ fail_attempts: next, last_failed_at: new Date().toISOString() })
-    .eq('id', id)
-  if (error) console.error('Failed to increment fail_attempts:', id, error.message)
-  return next
-}
-
-// Fire the actual morning briefing for a user's WhatsApp number
-async function triggerMorningBriefing(whatsappTo: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${APP_URL}/api/briefing`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: whatsappTo }),
-    })
-    if (!res.ok) return false
-    // POST returns { ok: true, reply } — we must send it to WhatsApp ourselves
-    const data = await res.json()
-    const briefingText = data?.reply
-    if (briefingText) {
-      await sendWhatsApp(whatsappTo, briefingText)
-      console.log(`BRIEFING_SENT: ${whatsappTo}`)
-    } else {
-      console.error('BRIEFING_EMPTY_REPLY:', data)
-      await sendWhatsApp(whatsappTo, '🌅 Good morning! Type *morning* to get your daily briefing.')
-    }
-    return true
-  } catch (e) {
-    console.error('BRIEFING_TRIGGER_FAILED:', e)
-    return false
-  }
-}
 
 export async function GET(req: Request) {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
-  }
-
+  if (!isAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  const started = Date.now()
   const now = new Date().toISOString()
+  const results: { id: string; status: string }[] = []
+  const { data: due, error } = await supabaseAdmin.from('reminders').select('*')
+    .eq('sent', false).in('delivery_state', ['pending', 'claimed'])
+    .lte('remind_at', now).or('retry_at.is.null,retry_at.lte.' + now)
+    .order('remind_at', { ascending: true }).limit(50)
+  if (error) return NextResponse.json({ ok: false, error: 'reminder_queue_read_failed' }, { status: 500 })
 
-  // Returns null when the bucket is empty so the caller can skip the send
-  // entirely instead of messaging the user "Nothing saved in this bucket yet."
-  async function buildTopicDigest(telegramId: number, topic: string): Promise<string | null> {
-    const { data } = await supabaseAdmin
-      .from('memory_embeddings')
-      .select('content, created_at')
-      .eq('telegram_id', telegramId)
-      .ilike('topic', topic)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
-      .limit(10)
-    const rows = data || []
-    if (!rows.length) return null
-    return `📂 *${topic} digest*\n\n${rows.map((r: any) => `• ${r.content}`).join('\n')}`
-  }
-
-  const { data: due, error: dueError } = await supabaseAdmin
-    .from('reminders')
-    .select('*')
-    .eq('sent', false)
-    .lte('remind_at', now)
-    .order('remind_at', { ascending: true })
-    .limit(50)
-
-  if (dueError) {
-    console.error('CRON_REMINDERS_SELECT_FAILED:', dueError)
-    return NextResponse.json({ ok: false, error: dueError.message }, { status: 500 })
-  }
-
-  const results: any[] = []
-
-  for (const reminder of due || []) {
-    // ── Consent gate (FAIL CLOSED) ──────────────────────────────────────────────
-    // A recipient who replied STOP must never receive a reminder from this owner.
-    // Only reminders with whatsapp_to can be third-party friend reminders; the check
-    // is harmless for the owner's own number (never suppressed against themselves).
-    // This is the ONE guard in this cron that fails CLOSED: if the opt-out lookup
-    // throws we DO NOT SEND and leave the row pending to retry next run — every other
-    // guard here fails open. If suppressed, consume the row (mark sent) so it doesn't
-    // retry forever.
-    if (reminder.whatsapp_to) {
-      let suppressed: boolean
-      try {
-        suppressed = await isSuppressed(reminder.telegram_id, reminder.whatsapp_to)
-      } catch (e: any) {
-        console.error('OPTOUT_CHECK_FAILED (fail-closed, not sending):', reminder.id, e?.message || e)
-        results.push({ id: reminder.id, channel: 'whatsapp', to: reminder.whatsapp_to, message: String(reminder.message || ''), status: 'optout_check_failed' })
-        continue
-      }
-      if (suppressed) {
-        await markReminderSent(reminder.id, null, null, false, true)
-        console.log('OPTOUT_SUPPRESSED:', { id: reminder.id, to: reminder.whatsapp_to, owner: reminder.telegram_id })
-        results.push({ id: reminder.id, channel: 'whatsapp', to: reminder.whatsapp_to, message: String(reminder.message || ''), status: 'suppressed_optout' })
-        continue
-      }
-    }
-
-    const msgRaw = String(reminder.message || '').trim()
-    const isBriefing = BRIEFING_KEYWORDS.test(msgRaw)
-    const isFollowup = String(reminder.recurring_pattern || '').startsWith('followup:')
-
-    // Topic digest (1.5/#18): message is "[topic_digest] <topic>"
-    const digestTopic = msgRaw.startsWith('[topic_digest]') ? msgRaw.replace(/^\[topic_digest\]\s*/i, '').trim() : null
-
-    // Build the reminder text
-    let reminderText = isFollowup
-      ? `🔔 *Follow-up reminder*\n\n📋 ${msgRaw}\n\nDid you hear back?\n• Reply *done* — mark as resolved\n• Reply *snooze 2 days* — remind again later\n• Reply *snooze friday* — remind on Friday`
-      : (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); const emo = pickReminderEmoji(lbl); return `${emo} *Reminder*\n\n${emo} ${lbl}\n\nQuick actions:\n• snooze 10 mins\n• move it to 8 pm\n• done${reminder.is_recurring ? `\n\nRepeats: ${describeCadence(reminder.recurring_pattern)}` : ''}` })()
-    // An empty topic-digest bucket has nothing worth sending. Skip the send
-    // (but still consume/reschedule the reminder below) rather than messaging
-    // the user "Nothing saved in this bucket yet."
-    let skipEmptyDigest = false
-    if (digestTopic) {
-      const digest = await buildTopicDigest(Number(reminder.telegram_id), digestTopic)
-      if (digest === null) {
-        skipEmptyDigest = true
-      } else {
-        reminderText = digest
-      }
-    }
-
+  for (const candidate of due || []) {
+    if (Date.now() - started > 45000) break
+    const token = randomUUID()
+    let reminder: any = null
+    let sendStarted = false
+    let providerReturned = false
     try {
-      // Holds the Twilio message returned by whichever send branch fired, so its
-      // sid/status can be recorded by markReminderSent below. Null for branches
-      // with no direct Twilio return (briefing, telegram) — those stay untracked.
-      let sentMsg: any = null
-      // Resolve once up front so the recurrence reschedule (below) can carry a
-      // real WhatsApp number forward even when the parent row's whatsapp_to is
-      // null — e.g. legacy topic-digest rows created without it.
+      const claimed = await deliveryRpc('claim_reminder_delivery', { p_id: candidate.id, p_token: token })
+      reminder = claimed?.[0]
+      if (!reminder) continue
+      const finish = async (state: string, sid: string | null = null) => {
+        if (!await deliveryRpc('finish_reminder_delivery', { p_id: reminder.id, p_token: token, p_state: state, p_sid: sid })) {
+          throw new Error('reminder_finish_not_persisted')
+        }
+      }
       const whatsappTo = await findWhatsAppForReminder(reminder)
-
-      if (skipEmptyDigest) {
-        console.log(`TOPIC_DIGEST_EMPTY: nothing to send, skipping. telegram_id=${reminder.telegram_id} topic="${digestTopic}"`)
-        results.push({ id: reminder.id, channel: 'none', to: null, message: msgRaw, status: 'skipped_empty' })
-      } else {
-        if (whatsappTo) {
-          if (!F2F_REMINDERS_ENABLED && !(await reminderGoesToOwner(reminder, whatsappTo))) {
-            // F2F gate OFF: recipient is not the owner → do not deliver. The row is
-            // consumed by markReminderSent at the end of this iteration so it won't
-            // retry forever. No routing/parsing/schema change; delivery only.
-            console.log('F2F_DISABLED_SUPPRESSED:', { id: reminder.id, to: whatsappTo, owner: reminder.telegram_id })
-            results.push({ id: reminder.id, channel: 'none', to: whatsappTo, message: msgRaw, status: 'f2f_disabled' })
-          } else {
-            if (isBriefing) {
-              // Trigger the actual briefing instead of a dumb notification
-              console.log(`BRIEFING_REMINDER: triggering actual briefing for ${whatsappTo}`)
-              const ok = await triggerMorningBriefing(whatsappTo)
-              if (!ok) {
-                // Fallback: send a nudge if briefing API fails
-                await sendWhatsApp(whatsappTo, '🌅 Good morning! Type *morning* to get your daily briefing.')
-              }
-            } else if (digestTopic) {
-              // Topic digests are rich dynamic content - freeform (in-session only for now).
-              sentMsg = await sendWhatsApp(whatsappTo, reminderText)
-            } else if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID || process.env.TWILIO_REMINDER_CONTENT_SID) {
-              // Reminders are business-initiated: ALWAYS use an approved Utility
-              // template. Freeform outside the 24h window is accepted then dropped
-              // async with 63016 (uncatchable) - the Jul 19 outage.
-              // Prefer the Quick-Reply buttons template when its SID is set (both are
-              // Utility, so the out-of-24h-window guarantee is unchanged); fall back to
-              // the text template otherwise — reversible rollout via the env var alone.
-              const reminderLabel = (() => { const lbl = msgRaw.replace(/^to\s+/i, ''); return `${pickReminderEmoji(lbl)} ${lbl}` })()
-              // Buttons only for the owner's OWN reminders — a friend recipient can't act
-              // on buttons that mutate a row they don't own (they'd get "couldn't find a
-              // recent reminder"). Friend reminders get the plain text template instead.
-              if (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID && await reminderGoesToOwner(reminder, whatsappTo)) {
-                sentMsg = await sendWhatsAppReminderButtons(whatsappTo, reminderLabel)
-              } else {
-                sentMsg = await sendWhatsAppReminderTemplate(whatsappTo, reminderLabel)
-              }
-            } else {
-              console.warn('NO_REMINDER_TEMPLATE_SID: freeform send - will NOT deliver outside the 24h window')
-              sentMsg = await sendWhatsApp(whatsappTo, reminderText)
-            }
-            results.push({ id: reminder.id, channel: 'whatsapp', to: whatsappTo, message: msgRaw, status: 'sent', isBriefing })
-          }
-        } else if (reminder.chat_id && Number(reminder.chat_id) > 0) {
-          await sendTelegram(Number(reminder.chat_id), reminderText)
-          results.push({ id: reminder.id, channel: 'telegram', to: reminder.chat_id, message: msgRaw, status: 'sent' })
+      const owner = whatsappTo ? await reminderGoesToOwner(reminder, whatsappTo) : false
+      if (whatsappTo && ((!F2F_REMINDERS_ENABLED && !owner) || await isSuppressed(reminder.telegram_id, whatsappTo))) {
+        await finish('suppressed'); results.push({ id: reminder.id, status: 'suppressed' }); continue
+      }
+      const raw = String(reminder.message || '').trim()
+      const isBriefing = BRIEFING_KEYWORDS.test(raw)
+      const followup = String(reminder.recurring_pattern || '').startsWith('followup:')
+      const topic = raw.startsWith('[topic_digest]') ? raw.replace(/^\[topic_digest\]\s*/i, '').trim() : null
+      const label = pickReminderEmoji(raw) + ' ' + raw.replace(/^to\s+/i, '')
+      let text = followup ? '🔔 *Follow-up reminder*\n\n' + raw + '\n\nDid you hear back? Reply *done* or *snooze 2 days*.'
+        : label + '\n\nQuick actions: snooze 10 mins · move it to 8 pm · done' + (reminder.is_recurring ? '\nRepeats: ' + describeCadence(reminder.recurring_pattern) : '')
+      let empty = false
+      if (topic) {
+        const { data, error: digestError } = await supabaseAdmin.from('memory_embeddings').select('content, created_at')
+          .eq('telegram_id', reminder.telegram_id).ilike('topic', topic).is('deleted_at', null)
+          .order('created_at', { ascending: false }).limit(10)
+        if (digestError) throw new Error('digest_read_failed')
+        empty = !data?.length
+        text = '📂 *' + topic + ' digest*\n\n' + (data || []).map((r: any) => '• ' + r.content).join('\n')
+      }
+      if (isBriefing && whatsappTo) {
+        const response = await fetch(APP_URL + '/api/briefing', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: whatsappTo }), signal: AbortSignal.timeout(15000) })
+        if (!response.ok) throw new Error('briefing_prepare_failed')
+        const body = await response.json()
+        text = body?.reply || '🌅 Good morning! Type *morning* to get your daily briefing.'
+      }
+      if (!whatsappTo && !(Number(reminder.chat_id) > 0)) throw new Error('no_delivery_target')
+      let next: string | null = null
+      const capped = followup && ((reminder.nudge_count || 0) + 1 >= 20 ||
+        (reminder.followup_started_at && Date.now() - Date.parse(reminder.followup_started_at) >= 7 * 86400000))
+      if (reminder.is_recurring && reminder.recurring_pattern && !capped) {
+        next = nextFutureOccurrence(reminder.recurring_pattern, new Date(reminder.remind_at), new Date()).toISOString()
+      }
+      const timezone = reminder.timezone || await resolveUserTimezone(reminder.telegram_id)
+      // Final consent check follows all content preparation. begin RPC fences
+      // cancellation/move and commits recurrence + intent before the network boundary.
+      if (whatsappTo && await isSuppressed(reminder.telegram_id, whatsappTo)) {
+        await finish('suppressed'); results.push({ id: reminder.id, status: 'suppressed' }); continue
+      }
+      if (Date.now() - started > 45000) break // lease is safely recoverable: no send intent yet
+      const ready = await deliveryRpc('begin_reminder_delivery', { p_id: reminder.id, p_token: token,
+        p_due: reminder.remind_at, p_next: next, p_timezone: timezone, p_target: whatsappTo })
+      if (!ready) { results.push({ id: reminder.id, status: 'cancelled_or_changed' }); continue }
+      sendStarted = true
+      if (empty) { await finish('suppressed'); results.push({ id: reminder.id, status: 'suppressed' }); continue }
+      let message: any = null
+      if (whatsappTo) {
+        if (!topic && !isBriefing && (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID || process.env.TWILIO_REMINDER_CONTENT_SID)) {
+          message = process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID && owner
+            ? await sendWhatsAppReminderButtons(whatsappTo, label)
+            : await sendWhatsAppReminderTemplate(whatsappTo, label)
         } else {
-          throw new Error(`No delivery target. whatsapp_to=${reminder.whatsapp_to || ''}, telegram_id=${reminder.telegram_id || ''}, chat_id=${reminder.chat_id || ''}`)
+          message = await sendWhatsApp(whatsappTo, text)
         }
+      } else await sendTelegram(Number(reminder.chat_id), text)
+      providerReturned = true
+      await finish('provider_accepted', message?.sid || null)
+      results.push({ id: reminder.id, status: 'provider_accepted' })
+    } catch (e) {
+      console.error('REMINDER_DELIVERY_ERROR:', candidate.id, e instanceof Error ? e.message : 'unknown')
+      let status = sendStarted ? 'outcome_unknown' : 'failed'
+      if (reminder && !providerReturned && (!sendStarted || isDefiniteProviderRejection(e))) {
+        try {
+          await deliveryRpc('retry_reminder_delivery', { p_id: reminder.id, p_token: token, p_definite_rejection: sendStarted })
+          status = 'failed'
+        } catch { status = sendStarted ? 'outcome_unknown' : 'persistence_failed' }
       }
-
-      if (reminder.is_recurring && reminder.recurring_pattern) {
-        const isFu = String(reminder.recurring_pattern).startsWith('followup:')
-        const nextDate = getNextOccurrence(reminder.recurring_pattern, new Date(reminder.remind_at))
-        const baseInsert: any = {
-          telegram_id: reminder.telegram_id,
-          chat_id: reminder.chat_id,
-          whatsapp_to: reminder.whatsapp_to || whatsappTo || null,
-          message: reminder.message,
-          remind_at: nextDate.toISOString(),
-          sent: false,
-          is_recurring: true,
-          recurring_pattern: reminder.recurring_pattern,
-          timezone: reminder.timezone || (await resolveUserTimezone(reminder.telegram_id)),
-        }
-        if (isFu) {
-          // Safety cap: stop after ~7 days or 20 nudges so we never spam.
-          const startedAt = reminder.followup_started_at ? new Date(reminder.followup_started_at) : new Date()
-          const nudgeCount = (reminder.nudge_count || 0) + 1
-          const daysElapsed = (Date.now() - startedAt.getTime()) / 86400000
-          if (nudgeCount >= 20 || daysElapsed >= 7) {
-            const label = String(reminder.message || 'that').replace(/^follow up (with|about)\s*/i, '').trim()
-            if (whatsappTo) {
-              try { await sendWhatsApp(whatsappTo, `\ud83d\udd15 I've reminded you several times about *${label}* \u2014 I'll stop nagging now so I don't spam you. Just ask me to set it again anytime.`) } catch (e) { console.error('FOLLOWUP_STOP_MSG_FAILED:', e) }
-            }
-          } else {
-            baseInsert.nudge_count = nudgeCount
-            baseInsert.followup_started_at = startedAt.toISOString()
-            const { error: recurError } = await supabaseAdmin.from('reminders').insert(baseInsert)
-            if (recurError) console.error('FOLLOWUP_REMINDER_INSERT_FAILED:', reminder.id, recurError.message)
-          }
-        } else {
-          // Dedupe guard (plain recurring only): skip if the SAME user already has a
-          // pending, identical-label reminder near nextDate — stops recurring +
-          // snooze/move copies from stacking. Fail-open: any query error → insert.
-          let alreadyPending = false
-          try {
-            const winMs = DEDUPE_WINDOW_MIN * 60 * 1000
-            const lo = new Date(nextDate.getTime() - winMs).toISOString()
-            const hi = new Date(nextDate.getTime() + winMs).toISOString()
-            let dupeQuery = supabaseAdmin
-              .from('reminders')
-              .select('id')
-              .eq('telegram_id', reminder.telegram_id)
-              .eq('message', reminder.message)
-              .eq('sent', false)
-              .gte('remind_at', lo)
-              .lte('remind_at', hi)
-              .limit(1)
-            if (reminder.whatsapp_to) dupeQuery = dupeQuery.eq('whatsapp_to', reminder.whatsapp_to)
-            const { data: existingDupe, error: dupeErr } = await dupeQuery
-            if (dupeErr) console.error('RECURRING_DEDUPE_QUERY_FAILED:', reminder.id, dupeErr.message)
-            else alreadyPending = !!(existingDupe && existingDupe.length)
-          } catch (e: any) {
-            console.error('RECURRING_DEDUPE_QUERY_FAILED:', reminder.id, e?.message || e)
-          }
-          if (alreadyPending) {
-            console.log('RECURRING_DEDUPE_SKIP:', reminder.id)
-          } else {
-            const { error: recurError } = await supabaseAdmin.from('reminders').insert(baseInsert)
-            if (recurError) console.error('RECURRING_REMINDER_INSERT_FAILED:', reminder.id, recurError.message)
-          }
-        }
-      }
-
-      await markReminderSent(reminder.id, sentMsg?.sid, sentMsg?.status)
-    } catch (error: any) {
-      const message = error?.message || String(error)
-      const currentAttempts = reminder.fail_attempts || 0
-      const newAttempts = await incrementFailAttempts(reminder.id, currentAttempts)
-
-      console.error('REMINDER_SEND_FAILED:', {
-        id: reminder.id, message: msgRaw,
-        whatsapp_to: reminder.whatsapp_to, telegram_id: reminder.telegram_id,
-        fail_attempts: newAttempts, error: message,
-      })
-
-      if (newAttempts >= MAX_FAIL_ATTEMPTS) {
-        console.error(`REMINDER_ABANDONED id=${reminder.id} after ${newAttempts} attempts`)
-        await markReminderSent(reminder.id, null, null, true)
-      }
-
-      results.push({
-        id: reminder.id,
-        channel: reminder.whatsapp_to ? 'whatsapp' : 'unknown',
-        to: reminder.whatsapp_to || reminder.chat_id || null,
-        message: msgRaw,
-        status: newAttempts >= MAX_FAIL_ATTEMPTS ? 'abandoned' : 'failed',
-        fail_attempts: newAttempts,
-        error: message,
-      })
+      results.push({ id: candidate.id, status })
     }
   }
-
-  return NextResponse.json({
-    ok: true,
-    checked_at: now,
-    due_count: due?.length || 0,
-    sent_count: results.filter((r) => r.status === 'sent').length,
-    skipped_count: results.filter((r) => r.status === 'skipped_empty').length,
-    failed_count: results.filter((r) => r.status === 'failed').length,
-    abandoned_count: results.filter((r) => r.status === 'abandoned').length,
-    results,
-  })
+  const failed = results.filter(r => ['failed', 'outcome_unknown', 'persistence_failed'].includes(r.status)).length
+  const accepted = results.filter(r => r.status === 'provider_accepted').length
+  return NextResponse.json({ ok: failed === 0, checked_at: now, due_count: due?.length || 0,
+    accepted_count: accepted, sent_count: accepted, failed_count: failed, results }, { status: failed ? 503 : 200 })
 }
-
