@@ -36,6 +36,7 @@ async function main() {
   await db.exec(fs.readFileSync('supabase/migrations/20260925114402_followup_delivery_owner.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925115445_delivery_monitoring.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925172132_delivery_retry_boundaries.sql','utf8'))
+  await db.exec(fs.readFileSync('supabase/migrations/20260925180012_delivery_health_details.sql','utf8'))
   const query = async (sql, params = []) => (await db.query(sql, params)).rows
   const rpc = async (name,args) => {
     const rows = await query(`select * from ${name}(${Object.keys(args).map((k,i)=>k+' => $'+(i+1)).join(',')})`,Object.values(args))
@@ -327,6 +328,40 @@ async function main() {
   await rpc('claim_notification_delivery',{p_key:ck,p_source:'followup',p_owner:1,p_channel:'whatsapp',p_due:cancelled.check_at,p_token:ct})
   await query("update followups set status='cancelled' where id=$1",[cancelled.id])
   assert.equal(await rpc('begin_notification_delivery',{p_key:ck,p_token:ct}),false,'cancellation during claim fences send intent')
+
+  // Read-only aggregate metrics: active/expired claims, dead letters, all-chunk latency.
+  await query("update reminders set sent_at=now()-interval '8 days' where sent_at is not null")
+  await query("update notification_deliveries set accepted_at=now()-interval '8 days' where accepted_at is not null")
+  const metricsBefore=await rpc('delivery_health_details',{})
+  const activeMetric=await add(),expiredMetric=await add()
+  await claim(activeMetric,crypto.randomUUID());await claim(expiredMetric,crypto.randomUUID())
+  await query("update reminders set lease_until=now()-interval '1 minute' where id=$1",[expiredMetric.id])
+  await query("insert into notification_deliveries(delivery_key,source,owner_id,channel,due_at,state,attempts) values('metric-dead','followup',1,'whatsapp',now(),'failed',3)")
+  const latencyRow=await add(),latencyToken=crypto.randomUUID()
+  await query("update reminders set sent=true,delivery_state='read',claim_token=$2,sent_at=now()-interval '60 seconds',send_started_at=now()-interval '70 seconds' where id=$1",[latencyRow.id,latencyToken])
+  for(const [sid,chunk,seconds] of [['SM-metric-one',1,50],['SM-metric-two',2,30]]){
+    await rpc('record_delivery_receipt',{p_sid:sid,p_status:'delivered',p_verified:true,p_token:latencyToken,p_chunk:chunk,p_chunks:2})
+    await query("insert into delivery_callback_inbox(event_key,provider_sid,status,attempt_token,chunk,chunks,received_at) values($1,$1,'delivered',$2,$3,2,now()-make_interval(secs=>$4))",[sid,latencyToken,chunk,seconds])
+    if(chunk===1)assert.equal((await rpc('delivery_health_details',{})).acceptance_to_delivery_observed.samples,0,'partial chunks cannot produce measured delivered latency')
+  }
+  await query("insert into delivery_callback_inbox(event_key,provider_sid,status,received_at) values('metric-late-read','SM-metric-one','read',now())")
+  const earlyMetric=await add(),earlyMetricToken=crypto.randomUUID()
+  await query("update reminders set sent=true,delivery_state='delivered',claim_token=$2,sent_at=now(),send_started_at=now()-interval '40 seconds' where id=$1",[earlyMetric.id,earlyMetricToken])
+  await rpc('record_delivery_receipt',{p_sid:'SM-metric-early',p_status:'delivered',p_verified:true,p_token:earlyMetricToken,p_chunk:1,p_chunks:1})
+  await query("insert into delivery_callback_inbox(event_key,provider_sid,status,received_at) values('metric-early','SM-metric-early','delivered',now()-interval '30 seconds')")
+  const metrics=await rpc('delivery_health_report',{})
+  const beforeClaims=metricsBefore.claims.find(x=>x.source==='reminders'),afterClaims=metrics.claims.find(x=>x.source==='reminders')
+  assert.equal(afterClaims.active,beforeClaims.active+1);assert.equal(afterClaims.expired,beforeClaims.expired+1)
+  assert.equal(metrics.claims.find(x=>x.source==='followup').dead_letters,metricsBefore.claims.find(x=>x.source==='followup').dead_letters+1)
+  assert.equal(metrics.acceptance_to_delivery_observed.samples,metricsBefore.acceptance_to_delivery_observed.samples+1)
+  assert.equal(metrics.acceptance_to_delivery_observed.excluded_early_receipts,1,'negative observed latency is excluded, not clamped into a fake zero')
+  assert.ok(Math.abs(metrics.acceptance_to_delivery_observed.median_seconds-30)<1,'latency uses the last first-delivered chunk, not the later read callback')
+  assert.equal(metrics.acceptance_to_delivery_observed.p95_seconds,metrics.acceptance_to_delivery_observed.median_seconds)
+  assert.ok(metrics.state_counts.find(x=>x.source==='reminders').states.read>=1)
+  assert.doesNotMatch(JSON.stringify(metrics),/SM-metric|metric-dead|155555|owner_id/)
+  const grants=await query("select has_function_privilege('anon','public.delivery_health_details()','execute') as anon,has_function_privilege('authenticated','public.delivery_health_report()','execute') as authenticated,has_function_privilege('service_role','public.delivery_health_details()','execute') as service")
+  assert.deepEqual(grants[0],{anon:false,authenticated:false,service:true})
+
   await db.close()
   console.log('Delivery reliability: SQL leases, recurrence rollback, stale fencing, concurrency, cancellation, consent, crash/DB failure, unknown no-retry passed')
 }
