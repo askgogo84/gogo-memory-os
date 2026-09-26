@@ -32,6 +32,14 @@ function providerErrorSummary(error:any){
   return {name:String(error?.name||'Error'),status:error?.status||null,type:error?.type||error?.error?.type||null,message:String(error?.message||error||'').slice(0,240)}
 }
 
+function isContextSynthesisTurn(text:string){
+  const t=String(text||'').trim()
+  return /\b(?:based on|using|considering)\s+(?:everything|what|all)\s+(?:you\s+)?(?:already\s+)?know\b/i.test(t)
+    || /\bwhat\s+(?:existing\s+)?context\s+matters\b/i.test(t)
+    || /\buse\s+(?:my\s+)?(?:saved|existing|known)\s+context\b/i.test(t)
+    || /\bconsider\s+(?:my\s+)?(?:travel|calendar|life|saved)\s+context\b/i.test(t)
+}
+
 export async function askClaude(
   userMessage: string,
   history: Message[],
@@ -110,10 +118,21 @@ RULES:
 
 7. FINANCIAL DATA: Card point and cashback balances mentioned in this chat are SELF-REPORTED by the user unless explicitly marked bank-verified via Account Aggregator. When a points or balance figure is used to make or justify a REDEMPTION or SPENDING decision (e.g. "how do I use my points for X", "can I afford Y with my points", "what can I book"), you MUST (a) treat it as approximate and user-entered, not confirmed - e.g. "based on the ~X points you've entered (not yet bank-verified)", and (b) suggest linking cards via Account Aggregator in the CreditIQ app for exact, bank-confirmed balances before deciding. Never present a self-reported balance as a confirmed, spendable fact when advising on a redemption or purchase - this holds even if the "(unverified)" label is not visible in recent context. For a casual balance mention with no spending decision, a light one-time "(self-reported)" note is enough - do not force the full caveat and Account Aggregator suggestion on every figure.
 
+8. CONTEXT SYNTHESIS / CURRENT-TURN RELEVANCE:
+   - When the user asks what you already know, what context matters, or asks you to reason from saved context, answer the CURRENT request from the owner-bound context and memories. Do not continue an unrelated earlier conversation branch just because it appears in recent chat history.
+   - Do not introduce a named restaurant, vendor, person, product, project, or prior task that is absent from the current user message unless that exact entity is necessary to explain a directly relevant recorded fact.
+   - A prior assistant suggestion is never evidence. Do not repeat it as fact.
+   - If a location window is marked INFERRED, say it is inferred from recorded itinerary evidence. Do not promote it to a recorded booking/fact.
+   - Never say "when you're back", "after you return", or equivalent about a location unless the owner-bound context contains RECORDED evidence of a return leg/event to that location after the date in question. If that evidence is absent, simply avoid the return claim.
+
 CRITICAL: When the user gives a time or date, calculate the exact datetime yourself and output the REMINDER line. If the user gives NO time or date (e.g. "remind me about the thing"), do NOT guess a time and do NOT output a REMINDER line - instead reply in one short sentence asking when. The [message] field must be a short clean task label only (e.g. "Call the bank") - never include words like "today", "tomorrow", "at 1pm", or "day after".`
 
   const safeHistory = history.map((m) => ({ ...m, content: redactSecretShapedText(m.content) }))
-  const messages:Message[]=[...safeHistory.slice(-10),{ role: 'user', content: userMessage }]
+  // Context-synthesis turns deliberately rely on the durable owner-bound context pack
+  // and memories, not unrelated recent chat branches. This prevents stale entities from
+  // being dragged into "what do you already know / what context matters?" answers.
+  const historyForTurn = isContextSynthesisTurn(userMessage) ? [] : safeHistory.slice(-10)
+  const messages:Message[]=[...historyForTurn,{ role: 'user', content: userMessage }]
 
   try{
     const response = await client.messages.create({
