@@ -42,7 +42,7 @@ const worker=fs.readFileSync('lib/agent/restaurant-reservation-worker.ts','utf8'
 const genericLifeEventWorker=fs.readFileSync('lib/agent/life-event-worker.ts','utf8')
 
 assert.match(agentRoute,/tryRunRestaurantReservation/)
-assert.ok(agentRoute.indexOf('tryRunRestaurantReservation') < agentRoute.indexOf('tryRunAppointmentFollowup'), 'restaurant reservations must outrank appointment follow-up')
+assert.ok(agentRoute.indexOf("const restaurantReservation = await tryRunRestaurantReservation") < agentRoute.indexOf("const appointmentFollowup = await tryRunAppointmentFollowup"), 'restaurant reservations must outrank appointment follow-up')
 assert.match(dashboardRoute,/tryRunRestaurantReservation/)
 assert.ok(dashboardRoute.indexOf("const restaurantReservation = await tryRunRestaurantReservation") < dashboardRoute.indexOf("const appointmentFollowup = await tryRunAppointmentFollowup"), 'dashboard restaurant routing must outrank appointment routing')
 assert.match(whatsappWebhook,/isRestaurantReservationRequest/)
