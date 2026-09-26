@@ -4,7 +4,7 @@ import { canonicalizeLinkUrl, detectLinkPlatform, isLinkVaultQuery, isLinkVaultS
 
 assert.equal(
   canonicalizeLinkUrl('https://www.instagram.com/reel/ABC123/?utm_source=share&igshid=secret#frag'),
-  'https://instagram.com/reel/ABC123/'
+  'https://instagram.com/reel/ABC123'
 )
 assert.equal(
   canonicalizeLinkUrl('https://github.com/samyakjain0606/brain-vault-extension?utm_medium=social'),
