@@ -203,8 +203,13 @@ export function parseSplitIntent(input: string): SplitIntent {
   if (reverseChartMatch) return { type: 'share_chart', groupName: cleanGroupName(reverseChartMatch[1]) }
 
   const amount = parseAmount(text)
-  const expenseLike = /\b(split|expense|paid|spent|add expense|bill|cab|hotel|dinner|lunch|breakfast|fuel|stay|tickets?|rent)\b/i.test(text)
-  if (amount && expenseLike) {
+  // Split must be opt-in. Category words such as "dinner", "hotel" or "tickets"
+  // are common in ordinary planning questions, and dates/times also contain numbers.
+  // Requiring an explicit split/expense signal prevents a sentence like
+  // "would 28 September at 8:30 PM be good for dinner?" from being mutated into
+  // an expense merely because it contains "dinner" + a number.
+  const explicitSplitExpense = /\bsplit\b|\bexpense\b|\bpaid\s+by\b/i.test(text)
+  if (amount && explicitSplitExpense) {
     const paidMatch = text.match(/paid\s+by\s+([a-zA-Z][\w\s]*?)(?:\s+(?:split|with|among|between|in|for)|,|$)/i)
     const paidBy = normalizeMemberName(paidMatch?.[1] || (/\bpaid\b/i.test(text) ? 'Me' : 'Me'))
 
