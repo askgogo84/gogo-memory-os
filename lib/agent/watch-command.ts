@@ -46,7 +46,7 @@ export function parseWebPageWatchCommand(text:string) {
 
 function isWatcherStatusQuery(text:string) {
   const raw=clean(text,400).toLowerCase()
-  return /^(?:what|which)\s+(?:are\s+you\s+)?(?:monitoring|watching|tracking)(?:\s+for\s+me)?\??$/.test(raw)
+  return /^(?:what|which)\s+(?:are\s+you\s+)?(?:monitoring|watching|tracking)(?:\s+for\s+me)?(?:\s+and\s+why)?\??$/.test(raw)
     || /^(?:show|list)\s+(?:my\s+)?(?:active\s+)?(?:monitors?|watchers?|watches)\??$/.test(raw)
     || /^what\s+(?:monitors?|watchers?|watches)\s+(?:do\s+i\s+have|are\s+active)\??$/.test(raw)
 }
@@ -76,13 +76,26 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     if(row.type==='web_page') label=`${label} — ${condition.watch==='title'?'page title':'page content'}`
     else if(row.type==='web_search') label=`${label} — web search`
     else if(row.type==='product_stock') label=`${label} — ${condition.variant||'stock'}`
-    else if(row.type==='email_triage') label='Inbox action watch'
+    else if(row.type==='email_triage') label=condition.title||'Inbox action watch'
     const cadence=Math.max(1,Number(row.cadence_minutes||60))
-    return `${index+1}. ${label} — active, checking about every ${cadence} min`
+    const why=condition.contextual===true&&condition.reason?`\n   Why: ${String(condition.reason)}`:''
+    const source=condition.contextual===true?`\n   Source: saved ${condition.contextualKind||'context'}`:''
+    const expires=condition.contextual===true&&condition.expiresAt&&Number.isFinite(Date.parse(String(condition.expiresAt)))
+      ? `\n   Expires: ${new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(condition.expiresAt))}`
+      :''
+    return `${index+1}. ${label} — active, checking about every ${cadence} min${why}${source}${expires}`
   })
+  const {data:tripSteps}=await supabaseAdmin.from('life_event_actions')
+    .select('id,title,action_key,status,due_at')
+    .eq('telegram_id',tg)
+    .in('action_key',['prepare-web-checkin','watch-boarding-pass-email','travel-disruption-watch'])
+    .in('status',['ready','waiting_approval','blocked','running'])
+    .order('due_at',{ascending:true}).limit(6)
+  const itinerary=(tripSteps||[]).map((row:any)=>`• ${row.title} — ${String(row.status).replace(/_/g,' ')} (itinerary-owned)`)
+  const itineraryBlock=itinerary.length?`\n\n✈️ *Itinerary-owned trip steps*\n${itinerary.join('\n')}\n_These are tied to the saved itinerary rather than duplicated as extra monitors._`:''
   return {
     runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-    text:`🔎 *Active background monitors*\n\n${lines.join('\n')}\n\nSelect a watcher from this list before saying *stop it*, or stop a watcher by name.`,
+    text:`🔎 *Active background monitors*\n\n${lines.join('\n')}${itineraryBlock}\n\nSelect a watcher from this list before saying *stop it*, or stop a watcher by name.`,
     handledBy:'watcher-status',
       verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
   }
@@ -165,8 +178,9 @@ export async function tryRestartWatcherFromCommand(params:{actor:AgentActor;text
   }
   const chosen=best.row
   const now=new Date().toISOString()
+  const chosenCondition:any=chosen.condition_json||{}
   const {data:updated,error}=await supabaseAdmin.from('agent_watchers')
-    .update({active:true,next_check_at:now,updated_at:now})
+    .update({active:true,next_check_at:now,updated_at:now,condition_json:{...chosenCondition,userStoppedAt:null}})
     .eq('id',chosen.id).eq('telegram_id',tg).eq('active',false)
     .select('id,active').maybeSingle()
   if(error)throw new Error(`watcher_restart_failed:${error.message}`)
@@ -199,8 +213,12 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
     }
     const chosen=best.row
     const now=new Date().toISOString()
+    const chosenCondition:any=chosen.condition_json||{}
     const {data:updated,error}=await supabaseAdmin.from('agent_watchers')
-      .update({active:false,next_check_at:null,updated_at:now})
+      .update({
+        active:false,next_check_at:null,updated_at:now,
+        condition_json:chosenCondition.contextual===true?{...chosenCondition,userStoppedAt:now}:chosenCondition,
+      })
       .eq('id',chosen.id).eq('telegram_id',tg).eq('active',true)
       .select('id,active,next_check_at').maybeSingle()
     if(error)throw new Error(`watcher_stop_failed:${error.message}`)
@@ -212,7 +230,16 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
       text:`Stopped ${String((chosen.condition_json as any)?.title||'that monitor')}. Persistent state now shows ${remaining.length} active monitor${remaining.length===1?'':'s'}.`,handledBy:'watcher-stop'}
   }
   if(intent==='all'){
-    const {data,error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
+    const rows=await canonicalActiveWatchers(tg)
+    const now=new Date().toISOString()
+    for(const row of rows){
+      const condition:any=row.condition_json||{}
+      if(condition.contextual===true){
+        await supabaseAdmin.from('agent_watchers').update({condition_json:{...condition,userStoppedAt:now},updated_at:now})
+          .eq('id',row.id).eq('telegram_id',tg).eq('active',true)
+      }
+    }
+    const {data,error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:now})
       .eq('telegram_id',tg).eq('active',true).select('id')
     if(error)throw new Error(`watcher_stop_failed:${error.message}`)
     await dismissIdeasForWatcherIds(tg,(data||[]).map((row:any)=>String(row.id)))
@@ -221,7 +248,15 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
   const context=await latestTypedContext(params.actor.legacyTelegramId)
   const selected=context?.domain==='watchers'?selectedTypedObject(context,params.text):null
   if(!selected)return {runId:'watcher-stop-selection',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:'Select the exact watcher from a current list or stop it by name. I will not choose the most recent watcher for this reference.',handledBy:'watcher-stop'}
-  const {data:updated,error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
+  const now=new Date().toISOString()
+  const {data:selectedRow,error:selectedReadError}=await supabaseAdmin.from('agent_watchers').select('id,condition_json')
+    .eq('id',selected.id).eq('telegram_id',tg).eq('active',true).maybeSingle()
+  if(selectedReadError||!selectedRow?.id)throw new Error('watcher_stop_selected_read_failed')
+  const selectedCondition:any=selectedRow.condition_json||{}
+  const {data:updated,error}=await supabaseAdmin.from('agent_watchers').update({
+      active:false,next_check_at:null,updated_at:now,
+      condition_json:selectedCondition.contextual===true?{...selectedCondition,userStoppedAt:now}:selectedCondition,
+    })
     .eq('id',selected.id).eq('telegram_id',tg).eq('active',true).select('id,active,next_check_at').maybeSingle()
   if(error||!updated||updated.active!==false)throw new Error('watcher_stop_update_unverified')
   const {data:verified,error:verifyError}=await supabaseAdmin.from('agent_watchers').select('id,active,next_check_at').eq('id',selected.id).eq('telegram_id',tg).maybeSingle()
