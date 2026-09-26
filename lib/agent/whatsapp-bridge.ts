@@ -12,7 +12,7 @@ import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, 
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
-import { prepareGeneralPlan, tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
+import { prepareGeneralPlanForActor, tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
 import { tryRunPersistentGeneralPlan } from './persistent-general-plan'
 import { tryRunTravelResearch } from './travel-research'
 import { hardenTravelResearchResult } from './travel-research-sanitize'
@@ -479,7 +479,7 @@ export async function tryRunWhatsAppAgent(params: {
     if (compound) return await learnedReturn(actor,params.text,compound,String(compound.handledBy||'compound-plan'),params.messageId)
   }
 
-  const prepared=await prepareGeneralPlan(params.text)
+  const prepared=await prepareGeneralPlanForActor(actor,params.text)
   const persistent = await tryRunPersistentGeneralPlan({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId, prepared })
   if (persistent) return await learnedReturn(actor,params.text,persistent,'persistent-general-plan',params.messageId)
 

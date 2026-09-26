@@ -1,4 +1,5 @@
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
+import { buildContextPack, renderContextBlock } from '@/lib/agent/context-brain'
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { askClaude, askClaudeWithContext, type Message } from '@/lib/claude'
 import { addToListDetailed, formatAddResult, clearList, formatList, getAllLists, getList, setItemDoneByText, resolveAndSetDoneAcrossLists, normalizeListName } from '@/lib/lists'
@@ -1202,7 +1203,18 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const history = await getConversationHistory(resolvedUser.telegramId)
   const memories = await getMemories(resolvedUser.telegramId)
   const preferenceBlock = await getPreferenceBlock(resolvedUser.telegramId)
-  const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name, preferenceBlock)
+  const contextPack = await buildContextPack({
+    actor:{
+      userId:String(resolvedUser.id),
+      legacyTelegramId:resolvedUser.telegramId,
+      whatsappId:String(resolvedUser.whatsappId||''),
+      name:resolvedUser.name||'Gogo',
+    },
+    text:incomingText,
+    options:{includeSemantic:true,maxFacts:12,horizonDays:60},
+  }).catch(()=>null)
+  const contextualBlock = contextPack ? renderContextBlock(contextPack,3200) : ''
+  const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name, preferenceBlock, contextualBlock)
   const parsed = parseClaudeResponse(rawClaude)
   let finalReply = rawClaude
 
