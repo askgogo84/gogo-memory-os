@@ -41,7 +41,7 @@ async function main(){
     assert.ok(source.indexOf('await trySameBrainIntrospection(')<source.indexOf('await observeShadowBrainTurn('),path)
   }
   const agentSource=readFileSync('app/api/agent/run/route.ts','utf8')
-  assert.ok(agentSource.indexOf('await trySameBrainIntrospection(')<agentSource.indexOf('await prepareGeneralPlan('))
+  assert.ok(agentSource.indexOf('await trySameBrainIntrospection(')<agentSource.indexOf('await prepareGeneralPlanForActor('))
   console.log('Brain introspection: matching, read-only ingress, tenant scope, replay/correction evidence, privacy and unavailable-store fallback passed')
 }
 main().catch(e=>{console.error(e);process.exitCode=1})
