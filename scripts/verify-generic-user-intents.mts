@@ -5,6 +5,7 @@ import { buildReminderFromAmPmChoice, isAmPmChoice } from '../lib/bot/handlers/r
 import { resolvePendingReminder } from '../lib/bot/pending-followup.ts'
 import { hasExplicitReminderTiming, naturalReminderPendingContext, naturalReminderTask, normalizeNaturalReminderSave, parseNumberedChecklist } from '../lib/bot/handlers/natural-command-routing.ts'
 import { isReservedSaveLastActionDestination } from '../lib/bot/handlers/save-last-context-routing.ts'
+import { parseSplitIntent } from '../lib/splitwise/split-parser.ts'
 
 // Exact screenshot flow: date first, clock time second. It must never become a note.
 const reminderText='Save this as reminder I travel to US on 27th September'
@@ -23,6 +24,17 @@ assert.match(datedParts,/27/)
 assert.match(datedParts,/September/i)
 assert.match(datedParts,/8:00\s*pm/i)
 assert.equal(normalizeNaturalReminderSave('save this memory about my US trip'),null)
+
+// Contextual planning questions containing a date/time + meal noun must never mutate
+// Split state. This reproduces the C1 production failure where "28 September ... dinner"
+// was incorrectly logged as a ₹28 expense.
+const contextualDinnerQuestion='Based on everything you already know about me, would 28 September around 8:30 PM be a good time for dinner in Bengaluru? Tell me what existing context matters.'
+assert.equal(parseSplitIntent(contextualDinnerQuestion),null,'context/date dinner question must not route to AskGogo Split')
+assert.equal(parseSplitIntent('spent 450 on lunch'),null,'personal expense logging must not be stolen by Split without an explicit split/expense signal')
+const explicitSplit=parseSplitIntent('Add expense 2400 hotel paid by me in Goa split equally')
+assert.ok(explicitSplit&&explicitSplit.type==='add_equal_expense','explicit split expense must keep working')
+assert.equal(explicitSplit!.amount,2400)
+assert.equal(explicitSplit!.groupName,'Goa')
 
 // Task first, time next: original task must survive the clarification turn.
 const noTime=normalizeNaturalReminderSave('Save this as reminder call Mom')
