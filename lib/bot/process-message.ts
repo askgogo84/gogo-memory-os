@@ -44,6 +44,7 @@ import { isTranslationRequest, translateText, buildTranslationReply, parseTarget
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
 import { checkAllowance, recordUsage, getPlan, getLimits, MeterUnavailableError, type AllowanceResult } from '@/lib/services/meter'
 import { issueToken } from '@/lib/dashboard/session'
+import { handleLinkVaultText } from '@/lib/services/link-vault'
 
 // ── Usage meter wiring (Phase 3: web-search only) ────────────────────────────
 // Gated entirely behind METER_ENABLED. When it is not exactly 'true', every
@@ -363,6 +364,16 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const resolvedUser = await resolveUser({ channel: params.channel, externalUserId: params.externalUserId, userName: params.userName })
 
   const incomingText = (params.text || '').trim()
+  const linkVaultReply=await handleLinkVaultText({
+    actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'},
+    text:incomingText,
+    sourceSurface:params.channel,
+  })
+  if(linkVaultReply){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',linkVaultReply.text)
+    return {handledBy:linkVaultReply.handledBy,text:formatOutgoingText(params.channel,linkVaultReply.text),resolvedUser}
+  }
   const typedReply=await tryTypedTimeRouting({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'},text:incomingText,surface:params.channel,messageId:params.messageId?String(params.messageId):null})
   if(typedReply){
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
