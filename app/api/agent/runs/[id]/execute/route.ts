@@ -12,6 +12,7 @@ import { finalizeApprovedAppointmentRun } from '@/lib/agent/appointment-followup
 import { executeApprovedWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-approval'
 import { executeApprovedLifeEventCheckin } from '@/lib/agent/life-event-execution'
 import { executeApprovedBookingCalendar } from '@/lib/agent/booking-calendar-execution'
+import { armApprovedRestaurantReservation } from '@/lib/agent/restaurant-reservation'
 
 import { executeApprovedGmailSend } from '@/lib/agent/gmail-send'
 
@@ -60,6 +61,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       result = await executeApprovedLifeEventCheckin({ actor, runId: id })
     } else if (planType === 'booking_event_calendar') {
       result = await executeApprovedBookingCalendar({ actor, runId: id })
+    } else if (planType === 'restaurant_reservation_release') {
+      result = await armApprovedRestaurantReservation({ actor, runId: id })
     } else if (planType === 'gmail_send') {
       result = await executeApprovedGmailSend({ actor, runId: id })
     } else {
