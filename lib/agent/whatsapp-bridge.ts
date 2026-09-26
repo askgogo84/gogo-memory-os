@@ -32,6 +32,7 @@ import { handleOpenLoopAction, handleOpenLoopQuery, handleOpenLoopResolution, sh
 import { tryRecoverAppointmentOption } from './appointment-followup-recovery'
 import { tryRunAppointmentFollowup } from './appointment-followup'
 import { tryRunAppointmentResearch } from './appointment-research'
+import { armApprovedRestaurantReservation, tryRunRestaurantReservation } from './restaurant-reservation'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -170,6 +171,8 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
           ? await executeApprovedLifeEventCheckin({ actor, runId:String(data.run_id) })
           : planType === 'booking_event_calendar'
             ? await executeApprovedBookingCalendar({ actor, runId:String(data.run_id) })
+            : planType === 'restaurant_reservation_release'
+              ? await armApprovedRestaurantReservation({ actor, runId:String(data.run_id) })
             : planType === 'gmail_send'
               ? await executeApprovedGmailSend({ actor, runId:String(data.run_id) })
               : await executeApprovedAgentRun({ actor, runId:String(data.run_id) })
@@ -416,6 +419,12 @@ export async function tryRunWhatsAppAgent(params: {
   // travel and generic browser/research handlers.
   const earlyProductStockWatch = await tryCreateProductStockWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (earlyProductStockWatch) return await learnedReturn(actor,params.text,earlyProductStockWatch,'product-stock-watch',params.messageId)
+
+  // Restaurant reservation semantics outrank generic appointment/reminder routing.
+  // The handler inspects the provider page first and only creates a timed mission
+  // from provider-grounded release evidence.
+  const restaurantReservation = await withWhatsAppBrowserBudget(actor, tryRunRestaurantReservation({ actor, surface:'whatsapp', text:params.text }))
+  if (restaurantReservation) return { ...(restaurantReservation as any), text:`${(restaurantReservation as any).text || ''}${(restaurantReservation as any).status === 'waiting_approval' ? '\n\nReply *APPROVE* to arm this reservation mission, or *REJECT* to stop.' : ''}`, handledBy:String((restaurantReservation as any).handledBy || 'restaurant-reservation') }
 
   const appointmentRecovery = await withWhatsAppBrowserBudget(actor, tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text }))
   if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String((appointmentRecovery as any).handledBy || 'appointment-followup-recovery') }
