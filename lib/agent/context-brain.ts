@@ -295,7 +295,7 @@ async function loadLearnedFacts(actor:AgentActor,query:string,includeSemantic:bo
       .eq('telegram_id',tg).maybeSingle(),
   ])
 
-  const insights:ContextFact[]=(insightResult.data||[]).map((row:any)=>({
+  const insights:ContextFact[]=(insightResult.data||[]).map((row:any):ContextFact=>({
     id:`insight:${row.id}`,
     source:'memory_insight',
     summary:safe(row.insight,360),
