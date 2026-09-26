@@ -98,7 +98,8 @@ export function isRestaurantReservationRequest(raw:string){
   const restaurant=/\b(restaurant|cafe|café|bistro|bar|noodle|dinner|lunch|brunch|table|party\s+of)\b/.test(text)
     ||/\b(?:book|reserve)\s+[a-z0-9&.' -]{2,80}\s+for\s+\d{1,2}\b/i.test(text)
   const exclusions=/\b(doctor|dentist|clinic|hospital|salon|spa|flight|hotel|train|bus|movie|concert|ticket)\b/.test(text)
-  return booking&&restaurant&&!exclusions
+  const reminderOnly=/\bremind\s+me\b|\bset\s+(?:a\s+)?reminder\b/.test(text)
+  return booking&&restaurant&&!exclusions&&!reminderOnly
 }
 
 export function parseRestaurantReservationIntent(raw:string):RestaurantReservationIntent|null{
