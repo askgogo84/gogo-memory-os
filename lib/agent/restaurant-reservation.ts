@@ -131,6 +131,40 @@ function candidateScore(result:WebSearchResult,restaurant:string){
   return score
 }
 
+const GENERIC_RESTAURANT_TOKENS=new Set(['restaurant','restaurants','cafe','café','bistro','bar','noodle','noodles','kitchen','eatery','the'])
+
+function firstPartyRuleScore(result:WebSearchResult,restaurant:string){
+  const url=String(result.url||'')
+  const h=host(url).toLowerCase()
+  if(!h||/instagram|facebook|reddit|tripadvisor|zomato|swiggy|youtube|linkedin|x\.com|twitter/.test(h))return-100
+  const title=String(result.title||'').toLowerCase()
+  const snippet=String(result.snippet||'').toLowerCase()
+  const path=(()=>{try{return new URL(url).pathname.toLowerCase()}catch{return''}})()
+  const tokens=restaurant.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x.length>2&&!GENERIC_RESTAURANT_TOKENS.has(x))
+  const identity=tokens.length?tokens:restaurant.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x.length>2)
+  const compactHost=h.replace(/[^a-z0-9]/g,'')
+  const hostHits=identity.filter(t=>compactHost.includes(t)).length
+  if(hostHits===0)return-100
+  let score=hostHits*12
+  score+=identity.filter(t=>title.includes(t)||snippet.includes(t)).length*3
+  if(/reserv|book|menu|visit/.test(path))score+=7
+  if(/reserv|bookings?|seats?|slots?/.test(title+' '+snippet))score+=8
+  if(/every\s+(?:sun|mon|tue|wed|thu|fri|sat)|open\s+every|booking.*open/.test(snippet))score+=10
+  return score
+}
+
+async function discoverFirstPartyRulePage(intent:RestaurantReservationIntent,providerUrl:string){
+  if(!intent.restaurant)return null
+  const results=await searchWebResults(`${intent.restaurant} official reservation booking rules opening time`)
+  const ranked=(results||[])
+    .filter(r=>/^https?:\/\//i.test(String(r.url||'')))
+    .filter(r=>host(String(r.url||''))!==host(providerUrl))
+    .map(r=>({r,score:firstPartyRuleScore(r,intent.restaurant)}))
+    .sort((a,b)=>b.score-a.score)
+  const top=ranked[0]
+  return top&&top.score>=12?{url:String(top.r.url),title:safe(top.r.title||intent.restaurant,220),snippet:safe(top.r.snippet,2200),score:top.score}:null
+}
+
 const KNOWN_RESERVATION_PROVIDERS:Record<string,{url:string;location?:string}>={
   'naru noodle bar':{url:'https://bookings.airmenus.in/eatnaru/order',location:'Bengaluru'},
   'naru':{url:'https://bookings.airmenus.in/eatnaru/order',location:'Bengaluru'},
@@ -160,8 +194,15 @@ export type ReservationRelease={
   openNow:boolean
 }
 
+function normalizeReservationEvidenceText(value:string){
+  return String(value||'')
+    .replace(/\b(\d{1,2})\s*[:.]\s*[oO0]{2}\s*(am|pm)\b/gi,'$1:00$2')
+    .replace(/\s+/g,' ')
+    .trim()
+}
+
 export function extractReservationRelease(pageText:string,timezone='Asia/Kolkata',now=new Date()):ReservationRelease{
-  const text=String(pageText||'').replace(/\s+/g,' ').trim()
+  const text=normalizeReservationEvidenceText(pageText)
   const soldOut=/\b(sold\s*out|fully\s+booked|no\s+available\s+dates?|no\s+availability)\b/i.test(text)
   const openNow=!soldOut&&/\b(select\s+(?:a\s+)?(?:date|time)|available\s+(?:dates?|times?|slots?)|book\s+now|reserve\s+now)\b/i.test(text)
   const dateMatch=text.match(/\bnext\s+opens?\s+(?:on\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[ ,]+(20\d{2}))?\b/i)
@@ -268,13 +309,50 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   if(inspected.status==='blocked'){
     return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I found ${intent.restaurant}'s reservation page, but the provider blocked read-only inspection before I could verify the release rules. I did not invent a booking time or create a reminder. Provider: ${provider.url}`}
   }
-  const release=extractReservationRelease(inspected.pageText,timezone)
+  let release=extractReservationRelease(inspected.pageText,timezone)
+  let ruleEvidenceUrl:string|null=null
+  let ruleEvidenceText=''
+  let ruleEvidenceTitle=''
+  if(!release.openNow&&!release.releaseAt){
+    const rulePage=await discoverFirstPartyRulePage(intent,provider.url)
+    if(rulePage){
+      ruleEvidenceUrl=rulePage.url
+      ruleEvidenceTitle=rulePage.title
+      const evidenceParts=[rulePage.snippet]
+      try{
+        const firstPartyInspection=await runSecureBrowser({
+          userId:params.actor.userId,
+          url:rulePage.url,
+          mode:'read',
+          objective:`Read only the restaurant's published reservation policy for ${intent.restaurant}. Capture recurring booking release weekday/time, seating slots, booking restrictions, cancellation/refund language, and any fee/deposit policy that is explicitly stated. Do not reserve, submit, authenticate, pay, or change anything.`,
+        })
+        if(firstPartyInspection.status==='completed'&&firstPartyInspection.pageText)evidenceParts.unshift(firstPartyInspection.pageText)
+      }catch(error:any){
+        console.error('RESTAURANT_FIRST_PARTY_RULE_INSPECTION_FAILED:',safe(error?.message||error,220))
+      }
+      ruleEvidenceText=evidenceParts.filter(Boolean).join('\n')
+      const firstPartyRelease=extractReservationRelease(ruleEvidenceText,timezone)
+      if(firstPartyRelease.openNow||firstPartyRelease.releaseAt){
+        release={
+          ...firstPartyRelease,
+          soldOut:release.soldOut||firstPartyRelease.soldOut,
+          openNow:release.openNow||firstPartyRelease.openNow,
+        }
+      }
+    }
+  }
   if(!release.openNow&&!release.releaseAt){
     const evidence=safe(inspected.pageText,700)
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I checked the provider page for ${intent.restaurant}, but I could not verify an exact future booking-release time. I will not turn this into an arbitrary reminder.\n\nProvider: ${provider.url}\nObserved: ${evidence||'No reliable release rule was exposed.'}`}
+    const ruleNote=ruleEvidenceUrl?`\nFirst-party policy checked: ${ruleEvidenceUrl}`:''
+    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I checked the live booking provider for ${intent.restaurant}, but I could not verify an exact future booking-release time from reliable provider/first-party evidence. I will not turn this into an arbitrary reminder.\n\nProvider: ${provider.url}${ruleNote}\nObserved: ${evidence||'No reliable release rule was exposed.'}`}
   }
 
   const releaseAt=release.openNow?new Date().toISOString():release.releaseAt!
+  const combinedReleaseEvidence=[inspected.pageText,ruleEvidenceText].filter(Boolean).join('\n')
+  const releaseSourceRefs=[
+    {source:'provider',kind:'restaurant_reservation_page',url:provider.url},
+    ...(ruleEvidenceUrl?[{source:'provider',kind:'restaurant_first_party_reservation_rules',url:ruleEvidenceUrl,title:ruleEvidenceTitle}]:[]),
+  ]
   const contextPack=await buildContextPack({
     actor:params.actor,
     text:params.text,
@@ -310,8 +388,8 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     lifecycle_state:'planned',
     participants:[],
     preferences_json:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0},
-    metadata_json:{restaurant:intent.restaurant,reservationUrl:provider.url,reservationLocation:(provider as any).location||null,providerDiscovery:provider.source,releaseAt,releaseRule:release.releaseRule,releaseEvidence:safe(inspected.pageText,1800),readOnlyInspection:true,contextWindows,contextRefs},
-    source_refs:[{source:'provider',kind:'restaurant_reservation_page',url:provider.url},...contextRefs],
+    metadata_json:{restaurant:intent.restaurant,reservationUrl:provider.url,reservationLocation:(provider as any).location||null,providerDiscovery:provider.source,releaseAt,releaseRule:release.releaseRule,releaseEvidence:safe(combinedReleaseEvidence,2600),releaseEvidenceUrl:ruleEvidenceUrl,readOnlyInspection:true,contextWindows,contextRefs},
+    source_refs:[...releaseSourceRefs,...contextRefs],
     dedupe_key:key,
     next_action_at:releaseAt,
     updated_at:now,
@@ -367,7 +445,9 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   }).then(()=>{})
 
   const when=new Intl.DateTimeFormat('en-IN',{timeZone:timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(releaseAt))
-  const evidence=release.releaseRule?`Provider rule: ${release.releaseRule}.`:(release.openNow?'The provider page currently exposes booking controls.':'Provider release time verified.')
+  const evidence=release.releaseRule
+    ? `${ruleEvidenceUrl?'First-party reservation rule':'Provider rule'}: ${release.releaseRule}.`
+    :(release.openNow?'The provider page currently exposes booking controls.':'Provider release time verified.')
   const window=intent.preferredStart&&intent.preferredEnd?`${intent.preferredStart}–${intent.preferredEnd}`:'next available'
   const travelNote=releaseTravel.length
     ? `\n\nContext check: your saved travel context places you ${releaseTravel[0].location?`in/around ${releaseTravel[0].location}`:'in active travel'} around this release window. I will not ignore that context: if the actual dining slot conflicts with your saved travel window/location, I will stop and ask instead of booking it.`
@@ -375,7 +455,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   return{
     runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,
     approvalId:String(approval.id),approvalRequired:true,
-    text:`I checked ${intent.restaurant}'s provider page first. ${evidence}${travelNote}\n\nI created a persistent reservation mission for ${when} (${timezone}).\n• Party: ${intent.partySize}\n• Preferred slot: ${window}${intent.requestedDate?`\n• Requested date: ${intent.requestedDate}`:''}\n• Fee/deposit authority: ₹0 — I must stop and ask before any charge.\n\nReply APPROVE to arm this exact bounded reservation attempt, or REJECT to stop it.`,
+    text:`I checked ${intent.restaurant}'s live booking provider first${ruleEvidenceUrl?' and verified the release rule against the restaurant\'s first-party reservation policy':''}. ${evidence}${travelNote}\n\nI created a persistent reservation mission for ${when} (${timezone}).\n• Party: ${intent.partySize}\n• Preferred slot: ${window}${intent.requestedDate?`\n• Requested date: ${intent.requestedDate}`:''}\n• Fee/deposit authority: ₹0 — I must stop and ask before any charge.\n\nReply APPROVE to arm this exact bounded reservation attempt, or REJECT to stop it.`,
   }
 }
 
