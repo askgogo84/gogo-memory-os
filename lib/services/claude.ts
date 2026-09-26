@@ -37,7 +37,8 @@ export async function askClaude(
   history: Message[],
   memories: string[],
   userName: string,
-  preferenceBlock: string = ''
+  preferenceBlock: string = '',
+  contextualBlock: string = ''
 ): Promise<string> {
   const memoryContext = memories.length > 0
     ? `\n\nWhat you remember about ${userName}:\n${memories.map((m, i) => `${i + 1}. ${m}`).join('\n')}`
@@ -46,8 +47,10 @@ export async function askClaude(
   const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
   const isoNow = new Date().toISOString()
 
+  const contextualContext = contextualBlock ? `\n\n${contextualBlock}` : ''
+
   const systemPrompt = `You are AskGogo, a brilliant personal AI assistant for ${userName}. Warm, concise, genuinely helpful.
-${memoryContext}${preferenceBlock}
+${memoryContext}${preferenceBlock}${contextualContext}
 
 Current IST time: ${now}
 Current UTC ISO: ${isoNow}
