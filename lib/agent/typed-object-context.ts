@@ -1,9 +1,9 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
-export type ObjectDomain='calendar'|'reminders'|'email'|'watchers'|'travel'|'browser'|'files'
+export type ObjectDomain='calendar'|'reminders'|'email'|'watchers'|'travel'|'browser'|'files'|'links'
 export type TypedObject={id:string;title:string}
 export type TypedContext={domain:ObjectDomain;items:TypedObject[];selectedId:string|null;at:string}
-const domains=['calendar','reminders','email','watchers','travel','browser','files']
+const domains=['calendar','reminders','email','watchers','travel','browser','files','links']
 export async function rememberTypedObjects(telegramId:number,domain:ObjectDomain,items:TypedObject[],selectedId?:string|null){
   const objects=items.filter(o=>o.id).slice(0,50).map(o=>({id:String(o.id),title:String(o.title||'').slice(0,240)}))
   const {error}=await supabaseAdmin.from('agent_activity').insert({telegram_id:String(telegramId),event_type:'typed_object_context',message:'Typed object selection updated.',metadata_json:{domain,items:objects,selectedId:selectedId===undefined?(objects.length===1?objects[0].id:null):selectedId,at:new Date().toISOString()}})
@@ -19,7 +19,7 @@ export async function latestTypedContext(telegramId:number):Promise<TypedContext
   return m as TypedContext
 }
 export function normalizedObjectTitle(value:string){return String(value||'').normalize('NFKC').toLowerCase().replace(/^(?:the |my )?(?:an? )?(?:calendar )?(?:event|meeting|reminder) (?:called |named )?/,'').replace(/[^\p{L}\p{N}]+/gu,' ').trim()}
-export function typedOrdinal(text:string){const m=text.match(/\b(first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+(?:one|event|meeting|reminder)\b/i);if(!m)return null;const words=['first','second','third','fourth','fifth'];return words.includes(m[1].toLowerCase())?words.indexOf(m[1].toLowerCase()):parseInt(m[1],10)-1}
+export function typedOrdinal(text:string){const m=text.match(/\b(first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+(?:one|event|meeting|reminder|link|reel|repo|repository)\b/i);if(!m)return null;const words=['first','second','third','fourth','fifth'];return words.includes(m[1].toLowerCase())?words.indexOf(m[1].toLowerCase()):parseInt(m[1],10)-1}
 export function selectedTypedObject(context:TypedContext|null,text:string){
   if(!context)return null
   const ordinal=typedOrdinal(text)
