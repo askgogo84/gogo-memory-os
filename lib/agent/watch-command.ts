@@ -70,7 +70,7 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
       verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
     }
   }
-  const lines=data.map((row:any,index:number)=>{
+  const formatWatcher=(row:any,index:number)=>{
     const condition:any=row.condition_json||{}
     let label=String(condition.title||row.type||'Watch')
     if(row.type==='web_page') label=`${label} — ${condition.watch==='title'?'page title':'page content'}`
@@ -78,13 +78,21 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     else if(row.type==='product_stock') label=`${label} — ${condition.variant||'stock'}`
     else if(row.type==='email_triage') label=condition.title||'Inbox action watch'
     const cadence=Math.max(1,Number(row.cadence_minutes||60))
-    const why=condition.contextual===true&&condition.reason?`\n   Why: ${String(condition.reason)}`:''
-    const source=condition.contextual===true?`\n   Source: saved ${condition.contextualKind||'context'}`:''
-    const expires=condition.contextual===true&&condition.expiresAt&&Number.isFinite(Date.parse(String(condition.expiresAt)))
+    const contextual=condition.contextual===true
+    const why=contextual&&condition.reason?`\n   Why: ${String(condition.reason)}`:''
+    const source=contextual?`\n   Source: saved ${condition.contextualKind||'context'}`:`\n   Source: your existing watch`
+    const expires=contextual&&condition.expiresAt&&Number.isFinite(Date.parse(String(condition.expiresAt)))
       ? `\n   Expires: ${new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(condition.expiresAt))}`
-      :''
+      : contextual?'':'\n   Expires: stays active until you stop it'
     return `${index+1}. ${label} — active, checking about every ${cadence} min${why}${source}${expires}`
-  })
+  }
+  const contextualRows=data.filter((row:any)=>row.condition_json?.contextual===true)
+  const manualRows=data.filter((row:any)=>row.condition_json?.contextual!==true)
+  const contextualLines=contextualRows.map((row:any,index:number)=>formatWatcher(row,index))
+  const manualLines=manualRows.map((row:any,index:number)=>formatWatcher(row,index))
+  const contextualBlock=contextualLines.length?`🧭 *Contextual watches created from your current context*\n\n${contextualLines.join('\n')}`:''
+  const manualBlock=manualLines.length?`👤 *Your other existing watches*\n\n${manualLines.join('\n')}`:''
+  const watcherBlocks=[contextualBlock,manualBlock].filter(Boolean).join('\n\n')
   const {data:tripSteps}=await supabaseAdmin.from('life_event_actions')
     .select('id,title,action_key,status,due_at')
     .eq('telegram_id',tg)
@@ -95,7 +103,7 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
   const itineraryBlock=itinerary.length?`\n\n✈️ *Itinerary-owned trip steps*\n${itinerary.join('\n')}\n_These are tied to the saved itinerary rather than duplicated as extra monitors._`:''
   return {
     runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-    text:`🔎 *Active background monitors*\n\n${lines.join('\n')}${itineraryBlock}\n\nSelect a watcher from this list before saying *stop it*, or stop a watcher by name.`,
+    text:`🔎 *Active background monitors*\n\n${watcherBlocks}${itineraryBlock}\n\nSelect a watcher from this list before saying *stop it*, or stop a watcher by name.`,
     handledBy:'watcher-status',
       verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
   }
@@ -197,8 +205,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
   const intent=stopWatcherIntent(params.text)
   if(!intent)return null
   const tg=String(params.actor.legacyTelegramId)
-  if(intent==='named'){
-    const target=clean(params.text,400).toLowerCase().replace(/^(?:stop|cancel|remove|disable)\s+/,'').replace(/\s+(?:watcher|watch|monitor).*$/,'').trim()
+  if(intent==='named'){    const target=clean(params.text,400).toLowerCase().replace(/^(?:stop|cancel|remove|disable)\s+/,'').replace(/\s+(?:watcher|watch|monitor).*$/,'').trim()
     const rows=await canonicalActiveWatchers(tg)
     const tokens=watcherIdentityTokens(target)
     const ranked=rows.map((row:any)=>{
@@ -397,8 +404,7 @@ export async function tryCreateInboxTriageWatchFromCommand(params:{
   if(existingError)throw new Error(`inbox_watch_read_failed:${existingError.message}`)
   if(existing?.id) {
     return {
-      runId:`inbox-watch-existing-${existing.id}`,
-      status:'completed' as const,
+      runId:`inbox-watch-existing-${existing.id}`,      status:'completed' as const,
       capability:'email' as const,
       risk:'low' as const,
       text:'Your inbox watch is already active. I’m quietly checking hourly and I’ll only message when a new email looks like it needs action.',
@@ -597,8 +603,7 @@ export async function tryCreateProductStockWatchFromCommand(params: {
     if((activeCount||0)>=budget.activeWebWatchersMax){
       return {
         runId:'product-watch-plan-limit',
-        status:'paused' as const, capability:'browser' as const, risk:'low' as const,
-        text:watcherUpgradeMessage(budget.planCode),
+        status:'paused' as const, capability:'browser' as const, risk:'low' as const,        text:watcherUpgradeMessage(budget.planCode),
         blockedReason:'plan_background_watch_limit',
         handledBy:'product-stock-watch',
       }
@@ -797,8 +802,7 @@ export async function tryGetProductStockWatchStatusFromCommand(params: {
     runId:`product-watch-status-${data.id}`,
     status:'paused' as const,
     capability:'browser' as const,
-    risk:'low' as const,
-    text:`The product watch is no longer active, and I don’t have a verified ${variant} availability event to report. I won’t claim it was available without verification.`,
+    risk:'low' as const,    text:`The product watch is no longer active, and I don’t have a verified ${variant} availability event to report. I won’t claim it was available without verification.`,
     handledBy:'product-stock-watch-status',
   }
 }
@@ -997,7 +1001,6 @@ export function parseFlightIdentifier(text: string) {
 function parseFlightWatchRequest(text: string): PendingFlightWatch | null {
   const raw = clean(text, 2000)
   if (!/^(?:please\s+)?(?:watch|monitor|track)\s+(?:my\s+|the\s+)?flights?\b/i.test(raw)) return null
-
   const destinationMatch = raw.match(/\bto\s+(.+?)\s+on\s+(.+?)(?=\s+(?:and\s+)?(?:alert|notify|tell|let)\s+me\b|$)/i)
   const destination = clean(destinationMatch?.[1] || '', 120)
   const dateText = clean(destinationMatch?.[2] || '', 120)
@@ -1088,4 +1091,3 @@ export async function tryCreateFlightWatchFromCommand(params: {
     handledBy: 'flight-watch-followup',
   }
 }
-
