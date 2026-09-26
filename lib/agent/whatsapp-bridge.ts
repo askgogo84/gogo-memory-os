@@ -32,7 +32,7 @@ import { handleOpenLoopAction, handleOpenLoopQuery, handleOpenLoopResolution, sh
 import { tryRecoverAppointmentOption } from './appointment-followup-recovery'
 import { tryRunAppointmentFollowup } from './appointment-followup'
 import { tryRunAppointmentResearch } from './appointment-research'
-import { armApprovedRestaurantReservation, tryRunRestaurantReservation } from './restaurant-reservation'
+import { armApprovedRestaurantReservation, queueRestaurantReservationResearch, tryRunRestaurantReservation } from './restaurant-reservation'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -420,11 +420,16 @@ export async function tryRunWhatsAppAgent(params: {
   const earlyProductStockWatch = await tryCreateProductStockWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (earlyProductStockWatch) return await learnedReturn(actor,params.text,earlyProductStockWatch,'product-stock-watch',params.messageId)
 
-  // Restaurant reservation semantics outrank generic appointment/reminder routing.
-  // The handler inspects the provider page first and only creates a timed mission
-  // from provider-grounded release evidence.
-  const restaurantReservation = await withWhatsAppBrowserBudget(actor, tryRunRestaurantReservation({ actor, surface:'whatsapp', text:params.text }))
-  if (restaurantReservation) return { ...(restaurantReservation as any), text:`${(restaurantReservation as any).text || ''}${(restaurantReservation as any).status === 'waiting_approval' ? '\n\nReply *APPROVE* to arm this reservation mission, or *REJECT* to stop.' : ''}`, handledBy:String((restaurantReservation as any).handledBy || 'restaurant-reservation') }
+  // Restaurant reservation research is durable before any provider browsing starts.
+  // WhatsApp returns quickly while Background Gogo gets the longer cron budget needed
+  // for provider + first-party rule verification. No consequential action is created
+  // until that background research produces grounded release evidence.
+  const restaurantReservation = await queueRestaurantReservationResearch({
+    actor,
+    text:params.text,
+    messageId:params.messageId,
+  })
+  if (restaurantReservation) return { ...(restaurantReservation as any), handledBy:String((restaurantReservation as any).handledBy || 'restaurant-reservation-background') }
 
   const appointmentRecovery = await withWhatsAppBrowserBudget(actor, tryRecoverAppointmentOption({ actor, surface:'whatsapp', text:params.text }))
   if (appointmentRecovery) return { ...appointmentRecovery, handledBy:String((appointmentRecovery as any).handledBy || 'appointment-followup-recovery') }

@@ -5,6 +5,7 @@ import type { AgentActor } from '@/lib/agent/actor'
 import { runQueuedTrainResearch } from '@/lib/agent/train-research'
 import { resumePausedBrowserRun } from '@/lib/agent/browser-command'
 import { sendWhatsApp } from '@/lib/whatsapp'
+import { runQueuedRestaurantReservationResearch } from '@/lib/agent/restaurant-reservation'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -35,6 +36,79 @@ async function actorFor(telegramId:string):Promise<AgentActor|null> {
 export async function GET(request:Request){
   if(!authorized(request))return NextResponse.json({error:'unauthorized'},{status:401})
   try{
+    // ---- restaurant_reservation_research: durable WhatsApp handoff ----
+    // Restaurant/provider inspection can legitimately exceed the ~42s WhatsApp budget.
+    // The WhatsApp path persists the objective first; this 300s worker owns the browser
+    // research and sends the grounded result back. No booking/payment is authorized here.
+    let reservationResearchClaimed=0,reservationResearchDone=0,reservationResearchFailed=0,reservationResearchRequeued=0
+    const reservationResearchStaleBefore=new Date(Date.now()-10*60_000).toISOString()
+    const reservationResearchDayAgo=new Date(Date.now()-24*3600_000).toISOString()
+
+    const {data:staleReservationResearch,error:staleReservationReadError}=await supabaseAdmin.from('agent_runs')
+      .select('id,telegram_id,metadata_json,started_at')
+      .eq('type','restaurant_reservation_research')
+      .eq('status','running')
+      .lte('updated_at',reservationResearchStaleBefore)
+      .limit(10)
+    if(staleReservationReadError)console.error('RESTAURANT_RESEARCH_STALE_READ_FAILED:',staleReservationReadError.message)
+    for(const stale of staleReservationResearch||[]){
+      const meta:any=stale.metadata_json||{}
+      const at=new Date().toISOString()
+      if(!meta.requeued&&String(stale.started_at||at)>reservationResearchDayAgo){
+        const{data:requeued}=await supabaseAdmin.from('agent_runs').update({
+          status:'queued',
+          updated_at:at,
+          metadata_json:{...meta,requeued:true,requeued_at:at},
+        }).eq('id',stale.id).eq('status','running').select('id').maybeSingle()
+        if(requeued?.id)reservationResearchRequeued++
+      }else{
+        await supabaseAdmin.from('agent_runs').update({
+          status:'failed',error:'restaurant_research_stale_recovered',
+          summary:'Background Gogo could not complete the reservation research.',
+          completed_at:at,updated_at:at,
+        }).eq('id',stale.id).eq('status','running')
+        reservationResearchFailed++
+      }
+    }
+
+    const {data:queuedReservationResearch,error:reservationQueueError}=await supabaseAdmin.from('agent_runs')
+      .select('id,telegram_id,metadata_json')
+      .eq('type','restaurant_reservation_research')
+      .eq('status','queued')
+      .order('updated_at',{ascending:true})
+      .limit(1)
+    if(reservationQueueError)console.error('RESTAURANT_RESEARCH_QUEUE_READ_FAILED:',reservationQueueError.message)
+    for(const run of queuedReservationResearch||[]){
+      const{data:claimed,error:claimError}=await supabaseAdmin.from('agent_runs').update({
+        status:'running',updated_at:new Date().toISOString(),
+      }).eq('id',run.id).eq('status','queued').select('id').maybeSingle()
+      if(claimError){reservationResearchFailed++;console.error('RESTAURANT_RESEARCH_CLAIM_FAILED:',run.id,claimError.message);continue}
+      if(!claimed?.id)continue
+      reservationResearchClaimed++
+      const actor=await actorFor(String(run.telegram_id))
+      if(!actor){
+        reservationResearchFailed++
+        const at=new Date().toISOString()
+        await supabaseAdmin.from('agent_runs').update({
+          status:'failed',error:'restaurant_research_actor_missing',
+          summary:'Background Gogo could not resume this reservation task because the user identity is unavailable.',
+          completed_at:at,updated_at:at,
+        }).eq('id',run.id).eq('status','running')
+        continue
+      }
+      try{
+        const result=await runQueuedRestaurantReservationResearch({actor,runId:String(run.id)})
+        reservationResearchDone++
+        if(actor.whatsappId&&result?.text)await sendWhatsApp(actor.whatsappId,result.text)
+      }catch(err:any){
+        reservationResearchFailed++
+        console.error('RESTAURANT_RESEARCH_WORKER_FAILED:',run.id,err?.message||err)
+        try{
+          if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not complete the reservation research safely. I did not book, pay, create an approval, or invent a release time. Please try again shortly.')
+        }catch{}
+      }
+    }
+
     const {data:runs,error}=await supabaseAdmin.from('agent_runs')
       .select('id,telegram_id,status,metadata_json,updated_at')
       .eq('type','autonomous')
@@ -202,7 +276,7 @@ export async function GET(request:Request){
         try{if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not complete the train search. I did not invent timings or availability. Try again shortly, or check IRCTC directly.')}catch{}
       }
     }
-    return NextResponse.json({ok:true,checked,resumed,completed,failed,skipped,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
+    return NextResponse.json({ok:true,checked,resumed,completed,failed,skipped,reservationResearchClaimed,reservationResearchDone,reservationResearchFailed,reservationResearchRequeued,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
   }catch(err:any){
     console.error('AUTONOMOUS_CRON_FAILED:',err?.message||err)
     return NextResponse.json({ok:false,error:'autonomous_worker_failed'},{status:500})
