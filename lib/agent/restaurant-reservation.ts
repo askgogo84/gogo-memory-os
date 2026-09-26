@@ -129,9 +129,16 @@ function candidateScore(result:WebSearchResult,restaurant:string){
   return score
 }
 
+const KNOWN_RESERVATION_URLS:Record<string,string>={
+  'naru noodle bar':'https://bookings.airmenus.in/eatnaru/order',
+  'naru':'https://bookings.airmenus.in/eatnaru/order',
+}
+
 async function discoverProvider(intent:RestaurantReservationIntent){
   if(intent.sourceUrl)return{url:intent.sourceUrl,title:intent.restaurant||host(intent.sourceUrl),source:'explicit_url'}
   if(!intent.restaurant)return null
+  const known=KNOWN_RESERVATION_URLS[intent.restaurant.toLowerCase().replace(/\s+/g,' ').trim()]
+  if(known)return{url:known,title:intent.restaurant,source:'known_provider_page'}
   const query=`${intent.restaurant} reservation booking official`
   const results=await searchWebResults(query)
   const ranked=(results||[])
@@ -244,12 +251,17 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I could not verify an official reservation page for ${intent.restaurant}. Send me the booking link and I will keep the reservation objective intact.`}
   }
   const timezone=await actorTimezone(params.actor)
-  const inspected=await runSecureBrowser({
-    userId:params.actor.userId,
-    url:provider.url,
-    mode:'read',
-    objective:`Read only the live reservation state and booking-release rules for ${intent.restaurant}. Determine whether bookings are open, sold out, or scheduled to open later. Capture any explicit next-open date and recurring release weekday/time. Do not sign in, fill personal details, reserve, submit, pay, or change anything.`,
-  })
+  let inspected:Awaited<ReturnType<typeof runSecureBrowser>>
+  try{
+    inspected=await runSecureBrowser({
+      userId:params.actor.userId,
+      url:provider.url,
+      mode:'read',
+      objective:`Read only the live reservation state and booking-release rules for ${intent.restaurant}. Determine whether bookings are open, sold out, or scheduled to open later. Capture any explicit next-open date and recurring release weekday/time. Do not sign in, fill personal details, reserve, submit, pay, or change anything.`,
+    })
+  }catch(error:any){
+    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I found ${intent.restaurant}'s reservation page, but I could not inspect it reliably right now. I did not invent a release time or create an arbitrary reminder. Provider: ${provider.url}`}
+  }
   if(inspected.status==='blocked'){
     return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I found ${intent.restaurant}'s reservation page, but the provider blocked read-only inspection before I could verify the release rules. I did not invent a booking time or create a reminder. Provider: ${provider.url}`}
   }
