@@ -19,10 +19,22 @@ import {
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import { isCalendarListName } from '@/lib/data/calendar-word'
 import { buildNaturalAssetRetrievalReply } from '@/lib/services/asset-natural-retrieval'
+import { handleLinkVaultText } from '@/lib/services/link-vault'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
 export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string }): Promise<string | null> {
+
+  // T14 Link Vault owns explicit saved-link capture/retrieval before legacy social
+  // buckets. It is private owner-bound state; a saved link is context, never permission.
+  if(extra?.telegramId){
+    const linkVault=await handleLinkVaultText({
+      actor:{userId:String(extra.telegramId),legacyTelegramId:extra.telegramId,whatsappId:phone,name:'Gogo'},
+      text,
+      sourceSurface:'whatsapp',
+    })
+    if(linkVault?.text)return linkVault.text
+  }
 
   // ── Detect Instagram / YouTube / TikTok / LinkedIn URL ─────────────────
   // Check for full URL FIRST before preview card detection
