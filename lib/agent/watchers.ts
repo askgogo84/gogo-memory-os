@@ -18,6 +18,18 @@ import {
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
 
+export type ContextualWatcherMeta = {
+  contextual?: boolean
+  contextualKind?: 'travel'
+  contextKey?: string
+  contextRoot?: string
+  contextClass?: 'flight_status'|'connection_ground'|'destination_weather'|'travel_email'
+  reason?: string
+  expiresAt?: string|null
+  sourceRefs?: Array<Record<string,unknown>>
+  userStoppedAt?: string|null
+}
+
 export type DeadlineWatcherCondition = {
   title: string
   deadline: string
@@ -25,10 +37,11 @@ export type DeadlineWatcherCondition = {
   delivery: WatcherDelivery
 }
 
-export type InboxTriageWatcherCondition = {
+export type InboxTriageWatcherCondition = ContextualWatcherMeta & {
   title: string
   delivery: WatcherDelivery
   cadenceMinutes: number
+  matchTerms?: string[]
 }
 
 export type ProductStockWatcherCondition = {
@@ -40,7 +53,7 @@ export type ProductStockWatcherCondition = {
   cadenceMinutes: number
 }
 
-export type WebSearchWatcherCondition = {
+export type WebSearchWatcherCondition = ContextualWatcherMeta & {
   title: string
   query: string
   triggerKeywords: string[]
@@ -66,6 +79,24 @@ function normalizeDelivery(value: unknown): WatcherDelivery {
   return ['app','whatsapp','both'].includes(String(value)) ? String(value) as WatcherDelivery : 'both'
 }
 
+function normalizeContextualMeta(input:any):ContextualWatcherMeta {
+  if(input?.contextual!==true)return{}
+  const expiresAt=input?.expiresAt?validDate(input.expiresAt):null
+  const contextClass=['flight_status','connection_ground','destination_weather','travel_email'].includes(String(input?.contextClass))
+    ? String(input.contextClass) as ContextualWatcherMeta['contextClass'] : undefined
+  return {
+    contextual:true,
+    contextualKind:input?.contextualKind==='travel'?'travel':undefined,
+    contextKey:String(input?.contextKey||'').slice(0,160)||undefined,
+    contextRoot:String(input?.contextRoot||'').slice(0,120)||undefined,
+    contextClass,
+    reason:String(input?.reason||'').replace(/\s+/g,' ').trim().slice(0,320)||undefined,
+    expiresAt,
+    sourceRefs:Array.isArray(input?.sourceRefs)?input.sourceRefs.slice(0,12):[],
+    userStoppedAt:input?.userStoppedAt?validDate(input.userStoppedAt):null,
+  }
+}
+
 export function normalizeDeadlineWatcher(input: any): DeadlineWatcherCondition | null {
   const title = String(input?.title || '').trim().slice(0, 180)
   const deadline = validDate(input?.deadline)
@@ -79,8 +110,11 @@ export function normalizeInboxTriageWatcher(input:any): InboxTriageWatcherCondit
   const title=String(input?.title||'Inbox action watch').trim().slice(0,180)
   const delivery=normalizeDelivery(input?.delivery)
   const cadenceMinutes=Math.max(60,Math.min(24*60,Math.floor(Number(input?.cadenceMinutes||60))))
+  const matchTerms=Array.isArray(input?.matchTerms)
+    ? Array.from(new Set(input.matchTerms.map((x:any)=>String(x||'').replace(/\s+/g,' ').trim()).filter((x:string)=>x.length>=3))).slice(0,12) as string[]
+    : []
   if(!title)return null
-  return {title,delivery,cadenceMinutes}
+  return {title,delivery,cadenceMinutes,matchTerms,...normalizeContextualMeta(input)}
 }
 
 export function normalizeProductStockWatcher(input: any): ProductStockWatcherCondition | null {
@@ -126,7 +160,7 @@ export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition
   const cadenceMinutes = Math.max(15, Math.min(24 * 60, Math.floor(Number(input?.cadenceMinutes || 60))))
   const burstUntil = input?.burstUntil ? validDate(input.burstUntil) : null
   if (!title || !query) return null
-  return { title, query, triggerKeywords, delivery, cadenceMinutes, burstUntil }
+  return { title, query, triggerKeywords, delivery, cadenceMinutes, burstUntil, ...normalizeContextualMeta(input) }
 }
 
 export async function createDeadlineWatcher(params: {
@@ -499,7 +533,13 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
   const seen=Array.isArray(watcher.last_state_json?.seenMessageIds)?watcher.last_state_json.seenMessageIds.map(String):[]
   const seenSet=new Set(seen)
   const fresh=messages.filter((m:any)=>m?.id&&!seenSet.has(String(m.id)))
-  const actions=fresh.map(inboxActionStep).filter(Boolean).slice(0,5) as Array<{subject:string;from:string;step:string}>
+  const scoped=condition.matchTerms?.length
+    ? fresh.filter((m:any)=>{
+        const hay=`${m?.subject||''} ${m?.from||''} ${m?.snippet||''}`.toLowerCase()
+        return condition.matchTerms!.some(term=>hay.includes(String(term).toLowerCase()))
+      })
+    : fresh
+  const actions=scoped.map(inboxActionStep).filter(Boolean).slice(0,5) as Array<{subject:string;from:string;step:string}>
   const currentIds=messages.map((m:any)=>String(m?.id||'')).filter(Boolean)
   const nextSeen=Array.from(new Set([...currentIds,...seen])).slice(0,120)
 
@@ -1037,6 +1077,18 @@ export async function processDueAgentWatchers(limit = 40) {
   for (const watcher of (data || []) as any[]) {
     checked++
     try {
+      const expiresAt=validDate(watcher.condition_json?.expiresAt)
+      if(watcher.condition_json?.contextual===true&&expiresAt&&Date.parse(expiresAt)<=now.getTime()){
+        await supabaseAdmin.from('agent_watchers').update({
+          active:false,next_check_at:null,last_checked_at:now.toISOString(),
+          last_state_json:{...(watcher.last_state_json||{}),expiredAt:now.toISOString(),expiredReason:'context_window_ended'},
+          updated_at:now.toISOString(),
+        }).eq('id',watcher.id).eq('telegram_id',String(watcher.telegram_id))
+        await writeActivity(String(watcher.telegram_id),`Contextual watch expired: ${String(watcher.condition_json?.title||watcher.type)}`,{
+          watcher_id:watcher.id,type:watcher.type,context_key:watcher.condition_json?.contextKey||null,expired_at:now.toISOString(),
+        })
+        continue
+      }
       const outcome = watcher.type === 'deadline'
         ? await processDeadlineWatcher(watcher, now)
         : watcher.type === 'web_search'
