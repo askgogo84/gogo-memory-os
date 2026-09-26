@@ -265,3 +265,41 @@ export async function handleLinkVaultText(params:{actor:AgentActor;text:string;s
   }
   return handleLinkVaultFollowup(params.actor,params.text)
 }
+
+
+export async function exportLinkVaultJson(telegramId:number){
+  const{data,error}=await supabaseAdmin.from('link_vault_items').select('canonical_url,original_url,platform,item_type,title,description,user_note,saved_at,topic,tags,shelf,preview_image,enrichment_status,auth_required').eq('telegram_id',telegramId).order('saved_at',{ascending:true})
+  if(error)throw new Error('link_vault_export_failed:'+error.message)
+  return{
+    version:'askgogo-link-vault-v1',
+    format:'brain-vault-compatible',
+    exported_at:new Date().toISOString(),
+    visibility:'private',
+    items:(data||[]).map((row:any)=>({
+      url:row.canonical_url,original_url:row.original_url,platform:row.platform,type:row.item_type,title:row.title,
+      description:row.description,note:row.user_note,saved_at:row.saved_at,topic:row.topic,tags:row.tags||[],shelf:row.shelf,
+      preview_image:row.preview_image,enrichment_status:row.enrichment_status,auth_required:Boolean(row.auth_required)
+    }))
+  }
+}
+
+export async function importLinkVaultJson(telegramId:number,input:any){
+  const items=Array.isArray(input)?input:Array.isArray(input?.items)?input.items:[]
+  if(!items.length)return{imported:0,skipped:0}
+  let imported=0,skipped=0
+  for(const raw of items.slice(0,100)){
+    const url=String(raw?.url||raw?.canonical_url||raw?.original_url||'').trim()
+    if(!canonicalizeLinkUrl(url)){skipped++;continue}
+    const note=safeNote(String(raw?.note||raw?.user_note||''))
+    try{
+      const saved=await saveLinkVaultItem({telegramId,text:'save '+url+(note?' '+note:''),url,visibleTitle:clean(raw?.title,160)||null,previewImage:clean(raw?.preview_image,1000)||null,sourceSurface:'vault-json-import'})
+      const tags=Array.from(new Set([...(saved.row.tags||[]),...(Array.isArray(raw?.tags)?raw.tags.map((x:any)=>clean(x,50).toLowerCase()).filter(Boolean):[])])).slice(0,12)
+      const patch:any={tags,updated_at:new Date().toISOString()}
+      if(raw?.topic)patch.topic=clean(raw.topic,120)
+      if(raw?.shelf&&['reference','inspiration','tool','product','social'].includes(String(raw.shelf)))patch.shelf=String(raw.shelf)
+      await supabaseAdmin.from('link_vault_items').update(patch).eq('id',saved.row.id).eq('telegram_id',telegramId)
+      imported++
+    }catch{skipped++}
+  }
+  return{imported,skipped}
+}
