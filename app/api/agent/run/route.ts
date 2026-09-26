@@ -11,7 +11,7 @@ import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 import { tryPrepareTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
-import { prepareGeneralPlan, tryRunGeneralPlan } from '@/lib/agent/general-planner'
+import { prepareGeneralPlanForActor, tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { tryRunPersistentGeneralPlan } from '@/lib/agent/persistent-general-plan'
 import { tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { attachWorkspaceMeetingApproval } from '@/lib/agent/workspace-meeting-approval'
@@ -137,7 +137,7 @@ export async function POST(request: Request) {
     const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:session.surface, text })
     if (appointmentResearch) return respond(appointmentResearch, 200)
 
-    const prepared=await prepareGeneralPlan(text)
+    const prepared=await prepareGeneralPlanForActor(actor,text)
     const persistentPlan = await tryRunPersistentGeneralPlan({ actor, surface: session.surface, text, messageId: body?.messageId || null, prepared })
     if (persistentPlan) return respond(persistentPlan, persistentPlan.status === 'waiting_approval' ? 202 : 200)
 
