@@ -281,6 +281,134 @@ async function existingMission(tg:number,key:string){
   return{event:data,run:run||null,approval:approval||null}
 }
 
+function reservationResearchHash(actor:AgentActor,text:string){
+  return createHash('sha256')
+    .update([actor.legacyTelegramId,safe(text,1800).toLowerCase()].join('|'))
+    .digest('hex')
+    .slice(0,40)
+}
+
+export async function queueRestaurantReservationResearch(params:{
+  actor:AgentActor
+  text:string
+  messageId?:string|number|null
+}){
+  const intent=parseRestaurantReservationIntent(params.text)
+  if(!intent)return null
+  if(!intent.restaurant){
+    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).'}
+  }
+  if(!intent.partySize){
+    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`How many people should I book at ${intent.restaurant} for?`}
+  }
+
+  const tg=String(params.actor.legacyTelegramId)
+  const requestHash=reservationResearchHash(params.actor,params.text)
+  const{data:existing,error:existingError}=await supabaseAdmin.from('agent_runs')
+    .select('id,status')
+    .eq('telegram_id',tg)
+    .eq('type','restaurant_reservation_research')
+    .eq('metadata_json->>request_hash',requestHash)
+    .in('status',['queued','running'])
+    .order('started_at',{ascending:false})
+    .limit(1)
+    .maybeSingle()
+  if(existingError)throw new Error(`restaurant_research_dedupe_failed:${existingError.message}`)
+  if(existing?.id){
+    return{
+      runId:String(existing.id),status:String(existing.status||'queued') as any,
+      capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation-background' as const,
+      text:`I’m still checking ${intent.restaurant}'s live booking provider and first-party reservation rules in Background Gogo. I’ll message you when I have verified evidence. Nothing will be booked or paid before the normal approval step.`,
+    }
+  }
+
+  const now=new Date().toISOString()
+  const{data:run,error}=await supabaseAdmin.from('agent_runs').insert({
+    telegram_id:tg,
+    type:'restaurant_reservation_research',
+    capability:'browser',
+    status:'queued',
+    title:`Research reservation · ${intent.restaurant}`.slice(0,180),
+    summary:'Queued provider-first restaurant reservation research for Background Gogo.',
+    progress:5,
+    why:'WhatsApp should return quickly while Background Gogo gets enough time to verify the live provider and first-party release rules.',
+    source:'whatsapp',
+    started_at:now,
+    updated_at:now,
+    metadata_json:{
+      plan_type:'restaurant_reservation_research',
+      request_hash:requestHash,
+      request_text:safe(params.text,1800),
+      message_id:params.messageId?String(params.messageId):null,
+      restaurant:intent.restaurant,
+      party_size:intent.partySize,
+      preferred_start:intent.preferredStart||null,
+      preferred_end:intent.preferredEnd||null,
+      requested_date:intent.requestedDate||null,
+      next_available:intent.nextAvailable,
+      max_booking_fee_paise:0,
+    },
+  }).select('id').single()
+  if(error||!run?.id)throw new Error(`restaurant_research_queue_failed:${error?.message||'unknown'}`)
+
+  await supabaseAdmin.from('agent_activity').insert({
+    telegram_id:tg,
+    run_id:String(run.id),
+    event_type:'restaurant_reservation_research_queued',
+    message:`Background reservation research queued for ${intent.restaurant}.`.slice(0,900),
+    metadata_json:{request_hash:requestHash,surface:'whatsapp'},
+  }).then(({error})=>{if(error)console.error('RESTAURANT_RESEARCH_ACTIVITY_FAILED:',error.message)})
+
+  return{
+    runId:String(run.id),status:'queued' as const,capability:'browser' as const,risk:'low' as const,
+    handledBy:'restaurant-reservation-background' as const,
+    text:`I’m checking ${intent.restaurant}'s live booking provider and first-party reservation rules in Background Gogo. I’ll message you as soon as I have verified release evidence. No booking, payment or approval has been created yet.`,
+  }
+}
+
+export async function runQueuedRestaurantReservationResearch(params:{actor:AgentActor;runId:string}){
+  const tg=String(params.actor.legacyTelegramId)
+  const{data:run,error}=await supabaseAdmin.from('agent_runs')
+    .select('id,status,metadata_json')
+    .eq('id',params.runId)
+    .eq('telegram_id',tg)
+    .eq('type','restaurant_reservation_research')
+    .maybeSingle()
+  if(error)throw new Error(`restaurant_research_run_read_failed:${error.message}`)
+  if(!run?.id)throw new Error('restaurant_research_run_not_found')
+  const meta:any=run.metadata_json||{}
+  if(meta.plan_type!=='restaurant_reservation_research')throw new Error('not_restaurant_research_plan')
+  const text=String(meta.request_text||'').trim()
+  if(!text)throw new Error('restaurant_research_request_missing')
+
+  try{
+    const result=await tryRunRestaurantReservation({actor:params.actor,surface:'whatsapp',text})
+    if(!result)throw new Error('restaurant_research_not_handled')
+    const at=new Date().toISOString()
+    await supabaseAdmin.from('agent_runs').update({
+      status:'completed',
+      summary:`Background restaurant research finished with status ${String(result.status||'completed')}.`,
+      progress:100,
+      error:null,
+      completed_at:at,
+      updated_at:at,
+      metadata_json:{...meta,outcome_status:result.status||null,child_run_id:result.runId||null,finished_at:at},
+    }).eq('id',params.runId).eq('telegram_id',tg)
+    return result
+  }catch(err:any){
+    const at=new Date().toISOString()
+    await Promise.resolve(supabaseAdmin.from('agent_runs').update({
+      status:'failed',
+      summary:'Background Gogo could not complete reservation research.',
+      progress:100,
+      error:safe(err?.message||'restaurant_research_failed',500),
+      completed_at:at,
+      updated_at:at,
+    }).eq('id',params.runId).eq('telegram_id',tg)).catch(()=>{})
+    throw err
+  }
+}
+
 export async function tryRunRestaurantReservation(params:{actor:AgentActor;surface:AgentSurface;text:string}){
   const intent=parseRestaurantReservationIntent(params.text)
   if(!intent)return null
