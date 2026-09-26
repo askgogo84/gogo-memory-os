@@ -528,7 +528,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     life_event_id:lifeEventId,
     telegram_id:String(params.actor.legacyTelegramId),
     action_key:'restaurant-reservation-release',
-    action_type:'browser_execute',
+    action_type:'browser_prepare',
     capability:'browser',
     title:`Attempt ${intent.restaurant} reservation at release`.slice(0,220),
     due_at:releaseAt,
