@@ -71,6 +71,7 @@ import {
 } from '@/lib/services/image-note-reader'
 import { isInstagramReelPreview, detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard } from '@/lib/services/reel-saver'
 import { saveMediaMemory, isMediaMemoryCommand, buildMediaMemoryReply, detectPlatformFromText } from '@/lib/services/media-memory'
+import { saveLinkVaultItem } from '@/lib/services/link-vault'
 import { indexMemory } from '@/lib/services/memory-index'
 import { buildThrowbackLine, isThrowbackReply, handleThrowbackReply, getLastAssistantMessage } from '@/lib/bot/handlers/throwback'
 import { detectPreferenceForget, forgetPreference } from '@/lib/bot/handlers/preferences'
@@ -472,6 +473,7 @@ export async function POST(req: NextRequest) {
       const isIGCard = detectInstagramPreviewCard(bodyText) || isLinkPreviewCard(bodyText, 'image/jpeg')
       if (isIGCard || isLinkedInCard) {
         const detectedUrl = detectReelUrl(bodyText) || undefined
+        if (detectedUrl) await saveLinkVaultItem({ telegramId: resolvedUser.telegramId, text: bodyText, url: detectedUrl, sourceSurface:'whatsapp-preview' }).catch(err=>console.error('LINK_VAULT_PREVIEW_SAVE_FAILED:',err?.message||err))
         const platform = detectPlatformFromText(bodyText, detectedUrl)
         const platformLabels: Record<string, string> = {
           instagram: '📸 Saving to Instagram memory...',
@@ -695,6 +697,7 @@ export async function POST(req: NextRequest) {
           // ── Social media content (Instagram, LinkedIn, Facebook, YouTube, Twitter) ──
           // Detect platform and save to the right memory bucket
           const detectedUrl = detectReelUrl(bodyText) || undefined
+          if (detectedUrl) await saveLinkVaultItem({ telegramId: resolvedUser.telegramId, text: bodyText, url: detectedUrl, sourceSurface:'whatsapp-preview' }).catch(err=>console.error('LINK_VAULT_PREVIEW_SAVE_FAILED:',err?.message||err))
           const platform = detectPlatformFromText(bodyText, detectedUrl)
           const platformLabels: Record<string, string> = {
             instagram: '📸 Saving to Instagram memory...',
