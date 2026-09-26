@@ -17,6 +17,7 @@ import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
+import { tryRunRestaurantReservation } from '@/lib/agent/restaurant-reservation'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunTrainResearch } from '@/lib/agent/train-research'
 
@@ -132,6 +133,17 @@ export async function POST(req: NextRequest) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'dashboard-day'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, dayReply)
       return NextResponse.json({ text: dayReply, handledBy: 'dashboard-day' })
+    }
+
+    const restaurantReservation = await tryRunRestaurantReservation({ actor, surface:'web', text })
+    if (restaurantReservation) {
+      const suffix = restaurantReservation.status === 'waiting_approval'
+        ? '\n\nOpen Gogo Agent to approve or reject this bounded reservation mission.'
+        : ''
+      const reply = `${restaurantReservation.text || ''}${suffix}`
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:restaurantReservation.handledBy,actualCapability:'browser',status:restaurantReservation.status,runId:restaurantReservation.runId}).catch(()=>{})
+      await saveConversation(user.telegram_id, text, reply)
+      return NextResponse.json({ text: reply, handledBy: restaurantReservation.handledBy, runId: restaurantReservation.runId, status: restaurantReservation.status })
     }
 
     // Same appointment brain as Gogo Agent: preserve discovery context across

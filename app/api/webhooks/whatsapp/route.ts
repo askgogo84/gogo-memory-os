@@ -53,6 +53,7 @@ import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { isGmailVerificationQuery } from '@/lib/agent/gmail-verification'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
 import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
+import { isRestaurantReservationRequest } from '@/lib/agent/restaurant-reservation'
 import {
   isAudioContentType,
   transcribeTwilioVoiceNote,
@@ -1119,6 +1120,32 @@ _"${originalText}"_
         await saveConversation(resolvedUser.telegramId,'assistant',watcherAgent.text)
         await sendWhatsAppMessage(from,watcherAgent.text)
         return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
+    // Restaurant reservations are durable provider workflows, not generic
+    // appointments/reminders. Give them deterministic first refusal before
+    // legacy feature routing can collapse "next available" into a reminder.
+    if (isRestaurantReservationRequest(text)) {
+      const reservationAgent = await tryRunWhatsAppAgent({
+        user: resolvedUser,
+        text,
+        messageId: inboundMessageSid || null,
+      })
+      if (reservationAgent) {
+        await recordShadowRouterOutcome({
+          telegramId:resolvedUser.telegramId,
+          surface:'whatsapp',
+          eventId:inboundMessageSid,
+          actualHandler:reservationAgent.handledBy || 'restaurant-reservation',
+          actualCapability:(reservationAgent as any).capability || 'browser',
+          status:reservationAgent.status || null,
+          runId:reservationAgent.runId || null,
+        }).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reservationAgent.text)
+        await sendWhatsAppMessage(from, reservationAgent.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type':'text/xml' } })
       }
     }
 

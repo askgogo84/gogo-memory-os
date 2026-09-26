@@ -23,6 +23,7 @@ import { shouldPreferSpecialistTravel } from '@/lib/agent/specialist-routing'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
 import { appointmentPrepareOptionNumber, tryRecoverAppointmentOption } from '@/lib/agent/appointment-followup-recovery'
+import { tryRunRestaurantReservation } from '@/lib/agent/restaurant-reservation'
 import { attachRunToThread, resolveThreadForUser } from '@/lib/agent/thread-context'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 
@@ -91,6 +92,9 @@ export async function POST(request: Request) {
         handledBy:'appointment-followup-hard-boundary',
       }, 200)
     }
+
+    const restaurantReservation = await tryRunRestaurantReservation({ actor, surface:session.surface, text })
+    if (restaurantReservation) return respond(restaurantReservation, restaurantReservation.status === 'waiting_approval' ? 202 : 200)
 
     const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:session.surface, text })
     if (appointmentFollowup) return respond(appointmentFollowup, appointmentFollowup.status === 'waiting_approval' ? 202 : 200)

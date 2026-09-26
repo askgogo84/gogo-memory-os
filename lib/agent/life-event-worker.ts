@@ -323,6 +323,7 @@ export async function processDueLifeEventActions(limit = 12) {
       .select(select)
       .in('status', ['queued','ready'])
       .neq('action_type', 'email_watch')
+      .neq('action_key', 'restaurant-reservation-release')
       .not('due_at', 'is', null)
       .lte('due_at', now.toISOString())
       .order('due_at', { ascending: true })
@@ -332,6 +333,7 @@ export async function processDueLifeEventActions(limit = 12) {
       .select(select)
       .eq('status', 'running')
       .neq('action_type', 'email_watch')
+      .neq('action_key', 'restaurant-reservation-release')
       .lte('updated_at', staleBefore)
       .order('updated_at', { ascending: true })
       .limit(limit),
