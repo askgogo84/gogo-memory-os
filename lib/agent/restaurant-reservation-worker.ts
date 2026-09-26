@@ -203,7 +203,7 @@ export async function processQueuedRestaurantReservations(limit=6){
     }catch(error:any){
       failed++
       console.error('RESTAURANT_RESERVATION_WORKER_FAILED:',action.id,error?.message||error)
-      await supabaseAdmin.from('life_event_actions').update({status:'blocked',payload_json:{...(action.payload_json as any||{}),blockedReason:safe(error?.message||'restaurant_reservation_worker_failed',300)},updated_at:new Date().toISOString()}).eq('id',String(action.id)).eq('telegram_id',String(action.telegram_id)).catch(()=>{})
+      await Promise.resolve(supabaseAdmin.from('life_event_actions').update({status:'blocked',payload_json:{...(action.payload_json as any||{}),blockedReason:safe(error?.message||'restaurant_reservation_worker_failed',300)},updated_at:new Date().toISOString()}).eq('id',String(action.id)).eq('telegram_id',String(action.telegram_id))).catch(()=>{})
     }
   }
   return{checked,completed,failed,paused,unknown,waitingApproval,staleUnknown:(stale.data||[]).length}
