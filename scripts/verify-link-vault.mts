@@ -54,3 +54,8 @@ assert.match(importRoute,/verifySameOrigin/)
 assert.doesNotMatch(svc,/github\.io|public\s+github\s+pages/i,'public GitHub publishing must not be the default')
 
 console.log('✅ T14 Link Vault: private canonical dedupe, semantic retrieval, typed exact actions and portable JSON')
+
+assert.match(vault,/contextualizeSavedItemReply/,'saved links should pass through Contextual Long Memory association')
+assert.match(vault,/kind:'link'/,'Link Vault must identify saved-link association kind')
+assert.match(vault,/platform:r\.platform,title:r\.title/,'link association must use canonical saved metadata')
+console.log('T14 saved-link contextual association wiring verified')
