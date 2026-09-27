@@ -76,6 +76,11 @@ export function parseBrowserCommand(text:string):BrowserCommand|null{
   }
 }
 
+function providerContentSearch(text:string){
+  return text.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for|show(?:\s+me)?)\s+(.+?)\s+on\s+(.+)$/i)
+    ||text.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for|show(?:\s+me)?)\s+(.+?)\s+from\s+(.+)$/i)
+}
+
 function normalizeProviderTarget(text:string){
   return text.toLowerCase().replace(/^(?:the|a|an|my|your|our)\s+/,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/,'')
 }
@@ -103,7 +108,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   let provider=candidates[0]
   // Provider names inside search content are not extra navigation targets.
   // Still reject actual multi-provider work instead of silently dropping a site.
-  const sourceTarget=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for|show(?:\s+me)?)\s+.+?\s+(?:on|from)\s+(.+)$/i)?.[1]||''
+  const sourceTarget=providerContentSearch(raw)?.[2]||''
   const directNavigation=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|show(?:\s+me)?|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||''
   const navigationText=startsWithProviderTarget(directNavigation)?directNavigation:sourceTarget||directNavigation
   const targetText=normalizeProviderTarget(navigationText).split(/\s+(?:and|for|to|then|about|from|by|mentioning)\b|[!?;,]/i)[0]
@@ -125,7 +130,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem','subscribe','unsubscribe','renew','share','block','unblock','reschedule','postpone','modify']
   const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
   const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange','refund','rate','report'].join('|')})`
-  const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
+  const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except|before|after|while|until|once|when|to)\\b)[\\s\\S])*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
     .replace(/\bmake\s+sure\s+([^.!?;,]*?\b(?:available|in\s+stock)\b)/g,'check $1')
     .replace(/\bpurchase\s+(history|details|receipt|status)\b/g,'order $1')
@@ -156,7 +161,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
 
   if(reminderMutation||calendarOrListMutation)return null
   if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?(?:return|exchange|refund|rate|report)(?!\s+(?:(?:the|my|this)\s+)?(?:price|results?|information|details|availability|summary|answer|control)\b)\s+/.test(actionable))return null
-  if(/\b(?:start|begin|continue|keep)\s+(?:ordering|buying|purchasing|booking|paying|submitting|redeeming|applying|following|unfollowing|liking|commenting|publishing|sending|replying|deleting|editing|changing|saving|blocking|unblocking|sharing|posting|messaging|returning|refunding|exchanging|canceling|cancelling|confirming|placing|making|creating|adding|removing|emptying|clearing|updating|increasing|decreasing|putting|moving|subscribing|unsubscribing|renewing|rescheduling|postponing|modifying|rating|reporting)\b/.test(actionable))return null
+  if(/\b(?:start|begin|continue|keep|before|after|while|until|once|when)\s+(?:ordering|buying|purchasing|booking|paying|submitting|redeeming|applying|following|unfollowing|liking|commenting|publishing|sending|replying|deleting|editing|changing|saving|blocking|unblocking|sharing|posting|messaging|returning|refunding|exchanging|canceling|cancelling|confirming|placing|making|creating|adding|removing|emptying|clearing|updating|increasing|decreasing|putting|moving|subscribing|unsubscribing|renewing|rescheduling|postponing|modifying|rating|reporting)\b/.test(actionable))return null
   if(shoppingSites.length&&/\bget\s+(?!(?:(?!\b(?:and|then|but|at|for|with|to|from|on|under|below|above|over)\b)[^.!?;,])*\b(?:prices?|costs?|availability|information|details|status)\b)/.test(actionable))return null
   if(/\b(?:request|initiate|process|claim)\b[^.!?]*\b(?:refund|return|cancellation)\b/.test(actionable))return null
   if(/(?:\bset\b|(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?default\b)[^.!?]*\b(?:address|profile|delivery|payment|cart|basket)\b/.test(actionable))return null
@@ -206,7 +211,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
 }
 export function isExplicitProviderBrowserRead(text:string){
   const raw=String(text||'').trim()
-  const providerSearch=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for|show(?:\s+me)?)\s+(.+?)\s+(?:on|from)\s+(.+)$/i)
+  const providerSearch=providerContentSearch(raw)
   const nativeObject=/\b(?:email|mail|gmail|notes?|memory|memories|lists?|tasks|todos|to-dos|reminders?|calendar)\b|\b(?:my|our)\s+(?:(?:next|upcoming|scheduled)\s+)?(?:appointments?|meetings?|events?)\b/i
   const hasNativeObject=(value:string)=>nativeObject.test(value.replace(/\b(?:for|about|from|by|mentioning)\s+(?:(?!\b(?:and|then|but)\b)[^.!?;,])*/gi,''))
   const searchTarget=providerSearch&&!hasNativeObject(providerSearch[1])?providerSearch[2]:undefined
