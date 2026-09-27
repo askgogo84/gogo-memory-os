@@ -122,6 +122,7 @@ for(const input of [
   'Open Blinkit and request a refund',
   'Open Blinkit and get me two cartons of milk',
   'Open Blinkit and start ordering milk',
+  'Have Amazon cancel my order',
   'Open Blinkit and get milk',
   'Open Blinkit and reschedule my delivery for tomorrow',
   'Open Blinkit and refund the spoiled milk',

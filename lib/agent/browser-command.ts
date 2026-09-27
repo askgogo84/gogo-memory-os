@@ -121,7 +121,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     .replace(/\b(my|the|your|our|this|that)\s+place\b/g,'$1 location')
     .replace(/\bupdate\s+me\s+(?:on|about)\b/g,'show me')
     .replace(/\b(the|an?|my|latest|recent|current|status)\s+update\b/g,'$1 status')
-    .replace(/(^|[.!?;])([ \t]*(?:did|has|have|does|will)\s+(?:amazon|flipkart|blinkit|zepto|instamart|they)\s+)(?:cancel|confirm|update)(?=\s+(?:my|the|this|that|our|your)\s+(?:latest\s+|last\s+)?order\b)/g,'$1$2')
+    .replace(/(^|[.!?;])([ \t]*(?:did|has|does|will)\s+(?:amazon|flipkart|blinkit|zepto|instamart|they)\s+)(?:cancel|confirm|update)(?=\s+(?:my|the|this|that|our|your)\s+(?:latest\s+|last\s+)?order\b)/g,'$1$2')
   const tokens=new Set((actionable.match(/[a-z0-9.]+/g)||[]).map(value=>value.replace(/\.$/,'')))
   const has=(...values:string[])=>values.some(value=>tokens.has(value))
 
