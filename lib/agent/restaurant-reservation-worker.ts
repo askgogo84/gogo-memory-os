@@ -120,7 +120,7 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   let result:any
   try{
     if(!reconciledResult)await releaseRunAuthHandoff(tg,runId)
-    result=reconciledResult||await runSecureBrowser({userId:actor.userId,url,mode:'execute',objective:instruction})
+    result=reconciledResult||await runSecureBrowser({reserveHumanHandoff:true,userId:actor.userId,url,mode:'execute',objective:instruction})
   }catch(error:any){
     if(error?.message==='browser_handoff_in_use'){
       // The shared browser was reserved before any provider navigation/action.

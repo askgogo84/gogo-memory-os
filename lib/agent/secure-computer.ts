@@ -454,7 +454,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         const summary=credentialSelectionRequired
           ? 'Multiple saved logins match this site. Choose which account Gogo should use.'
           : authGate.message||'This site needs a secure sign-in before Gogo can continue.'
-        const handoffReservation=reason!=='password'&&params.reserveHumanHandoff!==false?await releaseOwnerLock.reserveHandoff():undefined
+        const handoffReservation=reason!=='password'&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
         return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
       }
 
@@ -477,7 +477,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     // wave, so this page must be checked before completion or sandbox teardown.
     const finalAuthGate=detectHumanAuthGate(page)
     if(finalAuthGate.required||pageLooksLikeLogin(page)){
-      const handoffReservation=finalAuthGate.reason&&finalAuthGate.reason!=='password'&&params.reserveHumanHandoff!==false?await releaseOwnerLock.reserveHandoff():undefined
+      const handoffReservation=finalAuthGate.reason&&finalAuthGate.reason!=='password'&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
       return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),
         summary:finalAuthGate.message||'This site needs a secure sign-in before Gogo can continue.',
         pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',

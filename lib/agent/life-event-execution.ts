@@ -133,6 +133,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
   try {
     if(!params.reconciledResult)await releaseRunAuthHandoff(tg,params.runId)
     result = params.reconciledResult || await runSecureBrowser({
+      reserveHumanHandoff:true,
       userId: params.actor.userId,
       url,
       mode: 'execute',

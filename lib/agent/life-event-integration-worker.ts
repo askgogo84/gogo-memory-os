@@ -218,7 +218,7 @@ export async function processLifecycleMonitor(action: any, event: any, telegramI
 
   const actor = await resolveActor(telegramId)
   if(resumeRunId)await releaseRunAuthHandoff(telegramId,resumeRunId)
-  const result = await runSecureBrowser({ userId: actor.userId, url: target.url, mode: 'draft', objective: target.objective })
+  const result = await runSecureBrowser({ reserveHumanHandoff:true, userId: actor.userId, url: target.url, mode: 'draft', objective: target.objective })
   if (result.status === 'blocked') {
     const runId = resumeRunId || await createCompletedRun(telegramId, event, action, safe(result.summary || 'This status page needs a secure human step.'), {
       monitor_url: target.url, blocked_reason: result.blockReason || 'human_auth_required', auth_reason: result.authReason || null,

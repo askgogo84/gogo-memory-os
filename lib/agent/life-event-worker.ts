@@ -163,6 +163,7 @@ export async function prepareFlightCheckin(params: { telegramId: string; event: 
   try {
     if(params.resumeRunId)await releaseRunAuthHandoff(telegramId,runId)
     const result = await runSecureBrowser({
+      reserveHumanHandoff:true,
       userId: actor.userId,
       url,
       mode: 'draft',

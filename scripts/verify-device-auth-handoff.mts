@@ -256,7 +256,7 @@ const finalGateComputer=load('secure-computer.ts',{
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
   './trust':{canAuthorizeConsequentialAction:()=>true},
 })
-const finalGate=await finalGateComputer.runSecureBrowser({userId:'owner',url:'https://provider.example',objective:'Confirm my reservation',mode:'execute'})
+const finalGate=await finalGateComputer.runSecureBrowser({userId:'owner',url:'https://provider.example',objective:'Confirm my reservation',mode:'execute',reserveHumanHandoff:true})
 assert.equal(finalGate.status,'blocked')
 assert.equal(finalGate.authReason,'device_approval')
 assert.equal(finalGate.actions[0].consequential,true)
@@ -264,6 +264,10 @@ assert.equal(finalGate.originalUrl,'https://provider.example')
 assert.equal(finalGate.handoffReservation,'transfer')
 assert.equal(finalStops,0,'retain the browser for the human challenge opened by the final click')
 assert.equal(finalUnlocks,1,'release automated ownership before human takeover')
+browserReads=0
+const backgroundGate=await finalGateComputer.runSecureBrowser({userId:'owner',url:'https://provider.example',objective:'Read provider',mode:'read'})
+assert.equal(backgroundGate.status,'blocked')
+assert.equal(backgroundGate.handoffReservation,undefined,'background callers must not reserve a takeover they cannot consume')
 console.log('Execute-mode final-click authentication pauses before completion and sandbox teardown')
 
 rows.agent_runs.status='paused';rows.life_event_actions.status='blocked'
@@ -386,6 +390,18 @@ assert.equal(rows.agent_runs.metadata_json.handoff,undefined)
 assert.equal(rows.agent_runs.metadata_json.auth_resume,undefined)
 assert.equal(rows.life_events.lifecycle_state,'needs_attention')
 console.log('Expired or unavailable post-action sessions enter explicit manual verification; specialized confirmation remains supported')
+let trainSaveFails=false,trainCancelled=0
+const trainDb={from:(table:string)=>{let change:any;const q:any={select:()=>q,eq:()=>q,insert:()=>q,update:(value:any)=>{change=value;return q},single:async()=>({data:{id:'step'},error:null}),then:(resolve:any)=>Promise.resolve({data:null,count:0,error:trainSaveFails&&table==='agent_runs'&&change?.metadata_json?.handoff?{message:'failed'}:null}).then(resolve)};return q}}
+const train=load('train-research.ts',{
+  '@anthropic-ai/sdk':{default:class {}},'@/lib/supabase-admin':{supabaseAdmin:trainDb},
+  './secure-computer':{runSecureBrowser:async(params:any)=>{assert.equal(params.reserveHumanHandoff,true);return {status:'blocked',blockReason:'human_auth_required',authReason:'device_approval',url:'https://www.irctc.co.in',handoffReservation:'train-transfer'}}},
+  './provider-browser-handoff':{startProviderBrowserHandoff:async(params:any)=>{assert.equal(params.reservationToken,'train-transfer');return handoff},cancelProviderBrowserHandoff:async()=>{trainCancelled++}},
+})
+const trainParams={actor:{userId:'owner',legacyTelegramId:1},surface:'dashboard',runId:'train-run',c:{from:{label:'A',code:'A'},to:{label:'B',code:'B'},routeLabel:'A to B',date:'2026-10-01'},inputText:'Find trains',directOnly:true}
+assert.equal((await train.executeTrainRun(trainParams)).status,'paused')
+trainSaveFails=true
+assert.equal((await train.executeTrainRun(trainParams)).status,'failed')
+assert.equal(trainCancelled,1,'train research must release takeover if its token cannot be saved')
 for(const kind of ['flight_execute','restaurant']){
   outcomePage={...outcomePage,text:kind==='flight_execute'?"You're checked in; payment for the optional upgrade failed":'Table reserved; loyalty points pending'}
   assert.equal((await outcomeReader.inspectPostAuthOutcome({...outcomeMetadata,auth_resume:{kind}})).status,'completed')
