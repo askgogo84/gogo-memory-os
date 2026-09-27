@@ -34,7 +34,7 @@ export type SecureBrowserResult = {
   actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed'}>
   sandboxName:string
   blockReason?: 'human_auth_required'|'provider_access_limited'
-  authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
+  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
   credentialSelectionRequired?: boolean
 }
 
