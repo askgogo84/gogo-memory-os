@@ -94,7 +94,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   let provider=candidates[0]
   // Provider names inside search content are not extra navigation targets.
   // Still reject actual multi-provider work instead of silently dropping a site.
-  const navigationText=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||''
+  const navigationText=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?find\s+.+?\s+on\s+(.+)$/i)?.[1]||''
   const targetText=navigationText.replace(/^(?:the|a|an)\s+/i,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/i,'').split(/\s+(?:and|for|to|then)\b|[!?;,]/i)[0]
   if(candidates.length>1||targetText){
     const targets=candidates.filter(candidate=>candidate.alias.test(targetText))
@@ -116,10 +116,11 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
-    .replace(/\bmake\s+sure\b/g,'check')
+    .replace(/\bmake\s+sure\s+([^.!?;,]*?\b(?:available|in\s+stock)\b)/g,'check $1')
     .replace(/\bpurchase\s+(history|details|receipt|status)\b/g,'order $1')
     .replace(/\b(my|the|your|our|this|that)\s+place\b/g,'$1 location')
     .replace(/\bupdate\s+me\s+(?:on|about)\b/g,'show me')
+    .replace(/\b(the|an?|my|latest|recent|current|status)\s+update\b/g,'$1 status')
     .replace(/(^|[.!?;])([ \t]*(?:did|has|have|does|will)\s+(?:amazon|flipkart|blinkit|zepto|instamart|they)\s+)(?:cancel|confirm|update)(?=\s+(?:my|the|this|that|our|your)\s+(?:latest\s+|last\s+)?order\b)/g,'$1$2')
   const tokens=new Set((actionable.match(/[a-z0-9.]+/g)||[]).map(value=>value.replace(/\.$/,'')))
   const has=(...values:string[])=>values.some(value=>tokens.has(value))
@@ -168,7 +169,8 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     if(!/\b(?:order|message)\b/.test(clause)){previousRead=/\b(?:read|check|show|find|see|view|track)\b/.test(clause);continue}
     // Validate each ambiguous occurrence, not just the first read object.
     for(const nounPart of clause.match(/[\s\S]*?\b(?:order|message)\b/g)||[]){
-      const question=/^\s*(?:where|when|what|how|has|have|did|is|are|was|were|will|does)\b/.test(nounPart)
+      const questionPart=nounPart.replace(/^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?tell\s+me\s+/,'')
+      const question=/^\s*(?:where|when|what|how|has|have|did|is|are|was|were|will|does)\b/.test(questionPart)
         && /\b(?:my|the|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of|open(?=\s+(?:my|the|a|an|this|that|our|your)\b))\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const coordinatedNoun=previousRead&&/^\s*(?:(?:my|the|a|an|this|that|our|your|last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+)+(?:order|message)\s*$/.test(nounPart)
