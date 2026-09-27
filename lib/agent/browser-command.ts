@@ -124,11 +124,12 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(/\b(?:add|remove|empty|clear|update|increase|decrease)\b[^.!?]*\b(?:cart|basket)\b/.test(actionable))return null
 
   // Consequential provider actions must never be downgraded to read mode.
-  const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit']
+  const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','deliver']
   if(writeTokens.some(value=>tokens.has(value)))return null
   // Singular order/message can be the object of an explicit read request.
   // Remove only those noun phrases; any later imperative still blocks reads.
-  const withoutReadObjects=actionable.replace(/\b(?:read|check|show|find|see|view|track|look\s+at)\s+(?:me\s+)?(?:my|the|a|an|this|that|our|your)\s+(?:(?:last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+){0,3}(?:order|message)\b/g,' ')
+  if(/\bcomplete\b[^.!?]*\b(?:order|purchase|checkout|payment)\b/.test(actionable))return null
+  const withoutReadObjects=actionable.replace(/\b(?:my|the|a|an|this|that|our|your)\s+(?:(?:last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+){0,3}(?:order|message)\b/g,' ')
   if(/\b(?:order|message)\b/.test(withoutReadObjects))return null
   if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(actionable))return null
 
