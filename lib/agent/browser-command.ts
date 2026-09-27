@@ -111,7 +111,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   // Remove only explicitly prohibited action verbs and coordinated verb lists.
   // Do not discard the rest of a sentence: a later affirmative action must still
   // reject read routing ("do not like posts, but follow this account").
-  const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem']
+  const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem','subscribe','unsubscribe','renew']
   const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
   const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
@@ -179,7 +179,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(actionable))return null
 
   const readTokens=['find','search','show','look','check','open','read','see','saved','reel','reels','post','posts','order','orders','wishlist','message','messages','inbox','booking','bookings','history','receipt','receipts','invoice','invoices']
-  const shoppingRead=shoppingSites.length===1&&/\b(?:price|prices|cost|costs|how\s+much|available|availability|in\s+stock|stock\s+status)\b/.test(actionable)
+  const shoppingRead=shoppingSites.length===1&&/\b(?:price|prices|cost|costs|how\s+much|available|availability|in\s+stock|stock\s+status)\b/.test(actionable) || (shoppingSites.length===1&&/\b(?:does|do)\s+(?:blinkit|zepto|(?:swiggy\s+)?instamart)\s+(?:have|carry|stock|sell)\b/.test(actionable))
   if(!readTokens.some(value=>tokens.has(value))&&!shoppingRead)return null
 
   return {
