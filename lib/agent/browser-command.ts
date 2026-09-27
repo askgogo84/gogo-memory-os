@@ -123,8 +123,12 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(reminderMutation||calendarOrListMutation)return null
 
   // Consequential provider actions must never be downgraded to read mode.
-  const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','order','message']
+  const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit']
   if(writeTokens.some(value=>tokens.has(value)))return null
+  // Singular order/message can be the object of an explicit read request.
+  // Remove only those noun phrases; any later imperative still blocks reads.
+  const withoutReadObjects=actionable.replace(/\b(?:read|check|show|find|see|view|track|look\s+at)\s+(?:me\s+)?(?:my|the|a|an|this|that|our|your)\s+(?:(?:last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+){0,3}(?:order|message)\b/g,' ')
+  if(/\b(?:order|message)\b/.test(withoutReadObjects))return null
   if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(actionable))return null
 
   const readTokens=['find','search','show','look','check','open','read','see','saved','reel','reels','post','posts','order','orders','wishlist','message','messages','inbox','booking','bookings','history','receipt','receipts','invoice','invoices']
