@@ -182,7 +182,9 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   const {data:currentRun,error:currentRunError}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',String(tg)).maybeSingle()
   if(currentRunError||!currentRun)throw new Error('browser_handoff_run_unavailable')
   const runMetadata:any=currentRun.metadata_json||{}
-  if(runMetadata.browser_safe_to_retry===false)throw new Error('browser_resume_requires_provider_reconciliation')
+  const reconciledResult=runMetadata.browser_safe_to_retry===false
+    ? await (await import('./post-auth-outcome')).inspectPostAuthOutcome(runMetadata):undefined
+  if(reconciledResult?.status==='blocked')return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text:reconciledResult.summary,handledBy:'secure-browser' as const}
   if(runMetadata.handoff?.releaseUrl){
     // Release the human browser's profile lock only after permission/approval checks.
     const {releaseBrowserHandoff}=await import('./browser-handoff')
@@ -196,11 +198,13 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await supabaseAdmin.from('agent_steps').update({status:'running',error:null,completed_at:null,started_at:new Date().toISOString()}).eq('id',params.stepId)
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   try{
-    const result=await runSecureBrowser({userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null})
+    const result=reconciledResult||await runSecureBrowser({userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null})
     const at=new Date().toISOString()
 
     if(result.status==='blocked'){
       runMetadata.browser_safe_to_retry=!result.actions.some(action=>(action.kind==='submit'||action.consequential===true)&&action.status!=='skipped')
+      runMetadata.auth_action_log=result.actions
+      runMetadata.auth_original_url=params.command.url
       const blockReason=result.blockReason||'provider_access_limited'
       const compact={url:result.url,title:result.title,summary:result.summary,blockReason,authReason:result.authReason||null,credentialSelectionRequired:result.credentialSelectionRequired===true}
       await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:compact,error:blockReason,completed_at:at}).eq('id',params.stepId)

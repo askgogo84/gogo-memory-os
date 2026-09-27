@@ -25,7 +25,7 @@ async function browserPermission(telegramId:string):Promise<AgentPermissionLevel
   return(data?.level as AgentPermissionLevel|undefined)||'ask'
 }
 
-function hasSubmit(result:any){return Array.isArray(result?.actions)&&result.actions.some((a:any)=>a?.kind==='submit'&&a?.status==='done')}
+function hasSubmit(result:any){return Array.isArray(result?.actions)&&result.actions.some((a:any)=>(a?.kind==='submit'||a?.consequential===true)&&a?.status==='done')}
 function confirmedText(result:any){
   const text=`${result?.title||''} ${result?.pageText||''}`.toLowerCase()
   return /\b(reservation|booking|table)\b.{0,80}\b(confirmed|booked|successful|complete|reserved)\b|\b(confirmed|booked|successful|reserved)\b.{0,80}\b(reservation|booking|table)\b|\bconfirmation\s*(?:number|reference|code)\b/i.test(text)
@@ -80,7 +80,7 @@ async function failSafe(params:{action:any;event:any;runId:string;approvalId:str
   await Promise.all(updates)
 }
 
-export async function processOne(action:any){
+export async function processOne(action:any,reconciledResult?:Awaited<ReturnType<typeof runSecureBrowser>>){
   const tg=String(action.telegram_id)
   if(!(await claim(action)))return{status:'skipped' as const}
   const{data:event,error:eventError}=await supabaseAdmin.from('life_events').select('id,event_type,subtype,title,provider,timezone,location,lifecycle_state,preferences_json,metadata_json,source_refs').eq('id',action.life_event_id).eq('telegram_id',tg).maybeSingle()
@@ -120,8 +120,17 @@ export async function processOne(action:any){
   let result:any
   try{
     await releaseRunAuthHandoff(tg,runId)
-    result=await runSecureBrowser({userId:actor.userId,url,mode:'execute',objective:instruction})
+    result=reconciledResult||await runSecureBrowser({userId:actor.userId,url,mode:'execute',objective:instruction})
   }catch(error:any){
+    if(error?.message==='browser_handoff_in_use'){
+      // The shared browser was reserved before any provider navigation/action.
+      const at=new Date().toISOString()
+      await Promise.all([
+        supabaseAdmin.from('agent_runs').update({status:'queued',error:null,summary:'Waiting for the secure browser; no reservation action was attempted.',updated_at:at}).eq('id',runId).eq('telegram_id',tg).eq('status','running'),
+        supabaseAdmin.from('life_event_actions').update({status:'ready',updated_at:at}).eq('id',action.id).eq('telegram_id',tg).eq('status','running'),
+      ])
+      return{status:'queued' as const,runId}
+    }
     const summary='Gogo lost reliable provider evidence during the reservation attempt. The outcome is unknown, so it will not retry automatically.'
     await failSafe({action,event,runId,approvalId,status:'outcome_unknown',summary,error:'restaurant_reservation_outcome_unknown',actor})
     await notify(actor,`⚠️ ${summary}\n\nPlease verify directly with ${safe(payload.restaurant||event.title,160)} before trying again.`)

@@ -50,14 +50,15 @@ const db={from:(table:string)=>{
     then:(resolve:any)=>{if(directSaveFails&&change?.metadata_json?.handoff)return Promise.resolve({error:{message:'save failed'}}).then(resolve);if(change?.metadata_json)metadata=change.metadata_json;return Promise.resolve({error:null}).then(resolve)}}
   return q
 }}
-let browserCompleted=false,vaultCalls=0,browserActions:any[]=[]
+let browserCompleted=false,vaultCalls=0,browserActions:any[]=[],reconciliationEvidence:any,browserExecutions=0
 const command=load('browser-command.ts',{
+  './post-auth-outcome':{inspectPostAuthOutcome:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
   '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
-  './secure-computer':{runSecureBrowser:async()=>browserCompleted
+  './secure-computer':{runSecureBrowser:async()=>{browserExecutions++;return browserCompleted
     ? {status:'completed',url:'https://provider.example/account',title:'Account',summary:'Read account',forms:[],actions:[]}
-    : {status:'blocked',blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}},
+    : {status:'blocked',blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}}},
   '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff,cancelProviderBrowserHandoff:async()=>{directCancelled++}},
   './browser-handoff':{releaseBrowserHandoff:async(_url:string,options:any)=>{assert.equal(options.allowExpired,true);released++;return {ok:false,expired:true}}},
@@ -110,7 +111,7 @@ let tokenSaveFails=false,cancelledHandoffs=0
 const scopedDb={from:(table:string)=>{
   const filters:Array<[string,any]>=[];let change:any
   const execute=()=>{const row=rows[table];if(!row||!filters.every(([k,v])=>Array.isArray(v)?v.includes(row[k]):row[k]===v))return {data:null,error:null};if(tokenSaveFails&&change?.metadata_json?.handoff)return {data:null,error:{message:'save failed'}};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
-  const q:any={select:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},in:(k:string,v:any[])=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
+  const q:any={select:()=>q,order:()=>q,limit:()=>q,insert:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},in:(k:string,v:any[])=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
     maybeSingle:async()=>execute(),then:(resolve:any)=>Promise.resolve(execute()).then(resolve)}
   return q
 }}
@@ -118,6 +119,7 @@ const dispatched:string[]=[]
 let provisioningFails=false
 let preparationFails=false
 const shared=load('secondary-auth-handoff.ts',{
+  './post-auth-outcome':{inspectPostAuthOutcome:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{if(provisioningFails)throw new Error('temporary domain failure');return handoff},cancelProviderBrowserHandoff:async()=>{cancelledHandoffs++}},
   './browser-handoff':{releaseBrowserHandoff:async()=>({ok:true})},
@@ -261,3 +263,63 @@ assert.equal(rows.agent_runs.metadata_json.handoff,null)
 preparationFails=false
 assert.equal((await shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'})).runId,'run')
 console.log('Transient preparation failure restores paused state and supports a second same-run resume')
+let executionError='browser_handoff_in_use',executionCalls=0
+const executionMocks={
+  '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
+  './secure-computer':{runSecureBrowser:async()=>{executionCalls++;throw new Error(executionError)}},
+  './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{}},
+  './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
+  './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
+  './approval-binding':{assertApprovalBinding:()=>{}},
+  './life-event-approval-binding':{checkinApprovalFingerprintInput:()=>({})},
+  './restaurant-reservation':{restaurantReservationApprovalInput:()=>({})},
+}
+const flightExecutor=load('life-event-execution.ts',executionMocks)
+const restaurantExecutor=load('restaurant-reservation-worker.ts',executionMocks)
+for(const kind of ['flight','restaurant'])for(const busy of [true,false]){
+  executionError=busy?'browser_handoff_in_use':'provider_connection_lost'
+  rows.agent_runs={id:'run',telegram_id:'1',status:'queued',metadata_json:{plan_type:'life_event_checkin',life_event_id:'event',life_event_action_id:'action',checkin_url:'https://provider.example'}}
+  rows.life_events={id:'event',telegram_id:'1',event_type:'travel',subtype:'flight',confirmation_ref:'fixture',metadata_json:{}}
+  rows.life_event_actions={id:'action',telegram_id:'1',life_event_id:'event',status:kind==='flight'?'waiting_approval':'ready',payload_json:{approvalId:'approval',reservationUrl:'https://provider.example'}}
+  rows.agent_approvals={id:'approval',telegram_id:'1',run_id:'run',status:'approved',action_type:'booking',execution_payload:{action:'submit_web_checkin'}}
+  rows.users={id:'owner',telegram_id:1}
+  const result=kind==='flight'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run'}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions))
+  assert.equal(result.status,busy?'queued':'outcome_unknown')
+  assert.equal(rows.agent_runs.status,busy?'queued':'outcome_unknown')
+  assert.equal(rows.life_event_actions.status,busy?(kind==='flight'?'waiting_approval':'ready'):'blocked')
+  assert.equal(rows.agent_approvals.status,'approved','retain the exact approval for a retry or reconciliation')
+}
+console.log('Approved executors retain retryable same-run state on pre-navigation contention, but never replay uncertain failures')
+let outcomePage={url:'https://provider.example/confirmation',title:'Confirmation',text:'Reservation confirmed. Check-in complete.',forms:[]}
+const outcomeReader=load('post-auth-outcome.ts',{
+  './browser-handoff':{readBrowserHandoffState:async()=>outcomePage},
+  './browser-auth-gate':{detectHumanAuthGate},
+  './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
+})
+const outcomeMetadata={handoff:{stateUrl:'https://browser.example/state'},auth_original_url:'https://provider.example',auth_action_log:[{kind:'click',status:'done',consequential:true}]}
+const evidence=await outcomeReader.inspectPostAuthOutcome(outcomeMetadata)
+assert.equal(evidence.status,'completed')
+outcomePage={...outcomePage,title:'Sign in',text:'Approve this sign-in'}
+assert.equal((await outcomeReader.inspectPostAuthOutcome(outcomeMetadata)).status,'blocked')
+outcomePage={...outcomePage,title:'Confirmation',text:'Reservation confirmed',url:'https://unrelated.example'}
+await assert.rejects(()=>outcomeReader.inspectPostAuthOutcome(outcomeMetadata),/host_mismatch/)
+await assert.rejects(()=>outcomeReader.inspectPostAuthOutcome({}),/session_unavailable/)
+for(const kind of ['flight','restaurant']){
+  rows.agent_runs.status='queued'
+  rows.life_event_actions.status=kind==='flight'?'waiting_approval':'ready'
+  const before=executionCalls
+  const result=kind==='flight'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run',reconciledResult:evidence}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions),evidence)
+  assert.equal(result.status,'completed')
+  assert.equal(executionCalls,before,'reconciliation must not navigate, plan, or replay any action')
+  assert.equal(rows.agent_runs.id,'run')
+  assert.equal(rows.agent_approvals.status,'executed')
+  rows.agent_approvals.status='approved'
+}
+console.log('Post-auth provider confirmation completes the same approved execution without any browser replay')
+reconciliationEvidence=evidence
+const directBefore=browserExecutions
+assert.equal((await command.executeBrowser(params)).status,'completed')
+assert.equal(browserExecutions,directBefore)
+rows.agent_runs={id:'run',telegram_id:'1',status:'paused',metadata_json:{life_event_id:'event',life_event_action_id:'action',auth_resume:{kind:'flight_execute',safeToRetry:false},handoff}}
+rows.life_event_actions.status='blocked'
+assert.equal((await shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'owner'},runId:'run'})).runId,'run')
