@@ -23,6 +23,8 @@ const screenshotInstagram='Open Instagram and show me the 3 most recent posts in
 const screenshotBlinkit='Open Blinkit and check availability and the current price of Amul Taaza toned milk, 1 litre, for my delivery location. Ask me for my area and PIN code if needed. Do not order anything. If login is required, let me take control. After I authenticate, resume this same task and tell me the price.'
 assert.ok(isExplicitProviderBrowserRead(screenshotInstagram))
 assert.ok(isExplicitProviderBrowserRead(exactInstagramRequest))
+assert.equal(isExplicitProviderBrowserRead('Open Instagram and show my AskGogo tasks'),false)
+assert.equal(isExplicitProviderBrowserRead('Open Instagram and show my to-dos'),false)
 assert.ok(isExplicitProviderBrowserRead('Show my saved posts on my Instagram account'))
 assert.ok(isExplicitProviderBrowserRead('Show Instagram posts from Blinkit'))
 assert.ok(isExplicitProviderBrowserRead('Search Instagram for posts about Gmail'))
@@ -128,6 +130,7 @@ for(const input of [
   'Open Blinkit and request a refund',
   'Open Blinkit and get me two cartons of milk',
   'Open Blinkit and start ordering milk',
+  'Open Blinkit and rate this delivery five stars',
   'Open Blinkit and modify my delivery address',
   'Open Instagram and start following Alice',
   'Open Instagram and continue sharing posts',
