@@ -94,8 +94,8 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   let provider=candidates[0]
   // Provider names inside search content are not extra navigation targets.
   // Still reject actual multi-provider work instead of silently dropping a site.
-  if(candidates.length>1){
-    const targetText=raw.match(/^(?:please\s+)?(?:open|browse|visit|navigate\s+to|go\s+to)\s+(.+?)(?=\s+and\b|[!?;,]|$)/i)?.[1]||''
+  const targetText=raw.match(/^(?:please\s+)?(?:open|browse|visit|navigate\s+to|go\s+to)\s+(.+?)(?=\s+and\b|[!?;,]|$)/i)?.[1]||''
+  if(candidates.length>1||targetText){
     const targets=candidates.filter(candidate=>candidate.alias.test(targetText))
     if(targets.length!==1)return null
     const others=candidates.filter(candidate=>candidate!==targets[0])
@@ -114,6 +114,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   const prohibitedVerb=`(?:${compoundOrder}|${[...mutationVerbs,'message','post','order'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['’]?t|never)\\s+${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
+    .replace(/\bpurchase\s+(history|details|receipt|status)\b/g,'order $1')
     .replace(/\b(my|the|your|our|this|that)\s+place\b/g,'$1 location')
     .replace(/\bupdate\s+me\s+(?:on|about)\b/g,'show me')
     .replace(/(^|[.!?;])([ \t]*(?:did|has|have|does|will)\s+(?:amazon|flipkart|blinkit|zepto|instamart|they)\s+)(?:cancel|confirm|update)(?=\s+(?:my|the|this|that|our|your)\s+(?:latest\s+|last\s+)?order\b)/g,'$1$2')

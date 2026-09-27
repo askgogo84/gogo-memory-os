@@ -45,6 +45,11 @@ export function redactSecretShapedText(content: string): string {
   if (!content) return content
   let out = String(content)
 
+  // A connector such as "use" must not detach a numeric PIN from its label.
+  // Preserve intervening instructions while withholding the next code-shaped value.
+  out = out.replace(/(\b(?:pin(?:\s+code)?|otp)\s+if\s+(?:needed|required)\b)([\s\S]*?)(\b[A-Z0-9._\/-]*\d[A-Z0-9._\/-]*(?:[ -]+\d+)*\b)/gi,
+    (_match,label,between)=>`${label}${between}[sensitive detail withheld]`)
+
   // A conditional request for a PIN is not a value. Redact an adjacent numeric
   // code or an explicitly assigned value, but do not swallow the next task sentence.
   out = out.replace(/\b(pin(?:\s+code)?|otp)\s+if\s+(?:needed|required)\b(?:[\s.?!,;:-]*(?:(?:it\s+)?is\s+)?(\d[\d -]*\d)|[\s.?!,;-]*(?:it\s+)?(?:is|:|=)\s*([A-Z0-9][A-Z0-9._\/-]*))?/gi,

@@ -27,6 +27,7 @@ assert.equal(isExplicitProviderBrowserRead('What did I tell you about my Amazon 
 const conditionalPin=parseConnectedProviderReadCommand('Open Amazon and show my orders. Ask me for my PIN code if needed. It is 4821.')
 assert.ok(conditionalPin)
 assert.ok(!conditionalPin.objective.includes('4821'),'an authentication PIN must never become a postal code')
+assert.ok(!redactSecretShapedText('For Amazon login, my PIN if needed, use 4821').includes('4821'))
 for(const [input,host] of [
   [screenshotInstagram,'www.instagram.com'],
   [screenshotBlinkit,'blinkit.com'],
@@ -46,6 +47,7 @@ for(const [input,host] of [
   ['Check whether milk is available at my place on Blinkit','blinkit.com'],
   ['Will Amazon cancel my order?','www.amazon.in'],
   ['Does Amazon confirm my order?','www.amazon.in'],
+  ['Show my Blinkit purchase history','blinkit.com'],
   ['Check my Amazon order and latest message','www.amazon.in'],
   ['Check my Amazon order, and latest message','www.amazon.in'],
   ['Check my Amazon order status and latest message','www.amazon.in'],
@@ -83,6 +85,7 @@ for(const input of [
   'Open Blinkit and apply coupon SAVE20',
   'Open Zepto and redeem a coupon',
   'Open Blinkit to order milk',
+  'Open Reddit and show posts about Blinkit',
   'Check my Amazon order and message Bob',
   'Check my Amazon order to message the seller',
   'Check my Amazon order before you order milk',
