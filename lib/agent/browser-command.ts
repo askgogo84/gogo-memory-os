@@ -123,10 +123,9 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(reminderMutation||calendarOrListMutation)return null
 
   // Consequential provider actions must never be downgraded to read mode.
-  const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit']
+  const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','order','message']
   if(writeTokens.some(value=>tokens.has(value)))return null
   if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(actionable))return null
-  if(/\b(?:message|order)\s+(?:this|that|it|a|an|the|my|some|two|three|\d+)\b/.test(actionable))return null
 
   const readTokens=['find','search','show','look','check','open','read','see','saved','reel','reels','post','posts','order','orders','wishlist','message','messages','inbox','booking','bookings','history','receipt','receipts','invoice','invoices']
   if(!readTokens.some(value=>tokens.has(value)))return null

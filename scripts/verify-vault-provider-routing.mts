@@ -3,7 +3,7 @@ import { findVaultProviderInText } from '../lib/vault/providers'
 import { parseConnectedProviderReadCommand } from '../lib/agent/browser-command'
 import { redactSecretShapedText } from '../lib/bot/memory-redaction'
 
-for(const secret of ['PIN 4821','PIN code 4821','password: hunter2','OTP 903112']){
+for(const secret of ['PIN 4821','PIN code 4821','password: hunter2','OTP 903112','My PIN if needed is 4821','PIN code if required: 4821','password if needed is hunter2']){
   const text=`Ask me for my area and PIN code if needed. Do not order anything. ${secret}`
   const redacted=redactSecretShapedText(text)
   assert.ok(redacted.includes('Do not order anything.'),'keep the restriction preceding a real secret')
@@ -40,6 +40,9 @@ for(const input of [
   'Open Instagram and publish a post. Do not like anything.',
   'Open Blinkit and buy milk. Do not change my address.',
   'Open Zepto and order two cartons of milk.',
+  'Order milk on Blinkit',
+  'Order four cartons on Zepto',
+  'Open Instagram. Do not like anything. Message Bob.',
   'Remind me to check milk prices on Blinkit tomorrow.',
   'Compare milk prices on Blinkit, Instamart, and Zepto.',
 ])assert.equal(parseConnectedProviderReadCommand(input),null,'must not downgrade a mutation or truncate a multi-provider task: '+input)
