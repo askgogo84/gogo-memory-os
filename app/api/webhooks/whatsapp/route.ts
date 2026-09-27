@@ -1293,8 +1293,8 @@ _"${originalText}"_
     // existing capability gets the first chance to parse the turn, but it never grants
     // execution authority. The specialist still has to validate the command and all
     // existing approval/policy/provider-verification gates remain unchanged.
-    const jevIntent=isExplicitProviderBrowserRead(text)?null:promotedJevIntent(brainObservation?.jev)
-    if(jevIntent){
+    const jevIntent=promotedJevIntent(brainObservation?.jev)
+    if(jevIntent&&!isExplicitProviderBrowserRead(text)){
       const agentIntent=['watcher','reminder_read','reminder_mutation','email_read','email_mutation','list_task','memory_context','travel_research','browser_action'].includes(jevIntent)
       if(agentIntent){
         const promotedAgent=await tryRunWhatsAppJevSpecialist({
