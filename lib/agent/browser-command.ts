@@ -134,7 +134,8 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   const clauses=actionable.split(/[.!?;,\n]|\b(?:and|then|but)\b/)
   for(const clause of clauses){
     if(!/\b(?:order|message)\b/.test(clause))continue
-    const question=/^\s*(?:where|when|what|how|has|have|did|is|are|will)\b/.test(clause)
+    const question=/^\s*(?:where|when|what|how|has|have|did|is|are)\b/.test(clause)
+      && /\b(?:my|the|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(clause)
     const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of)\b[^.!?;,]*\b(?:order|message)\b/.test(clause)
     if(!question&&!readObject)return null
   }

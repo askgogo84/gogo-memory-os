@@ -64,6 +64,8 @@ for(const input of [
   'Open Blinkit and make an order for milk',
   'Open Blinkit and create an order for milk',
   'Check my Amazon order, order milk',
+  'Will you order milk on Blinkit?',
+  'Will you message Bob on Instagram?',
   'Remind me to check milk prices on Blinkit tomorrow.',
   'Compare milk prices on Blinkit, Instamart, and Zepto.',
 ])assert.equal(parseConnectedProviderReadCommand(input),null,'must not downgrade a mutation or truncate a multi-provider task: '+input)
