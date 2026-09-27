@@ -1,0 +1,76 @@
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { startProviderBrowserHandoff } from './provider-browser-handoff'
+import { releaseBrowserHandoff } from './browser-handoff'
+import type { SecureBrowserResult } from './secure-computer'
+import type { AgentActor } from './actor'
+
+export type AuthResumeKind='flight_prepare'|'flight_execute'|'restaurant'|'lifecycle_monitor'
+
+export async function attachSecondaryAuthHandoff(params:{userId:string;telegramId:string;runId:string;kind:AuthResumeKind;result:SecureBrowserResult}){
+  if(params.result.blockReason!=='human_auth_required'||!params.result.authReason||params.result.authReason==='password')return null
+  const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',params.telegramId).maybeSingle()
+  if(error||!run)throw new Error('auth_handoff_run_missing')
+  const handoff=await startProviderBrowserHandoff({userId:params.userId,url:params.result.url})
+  const safeToRetry=!params.result.actions.some(action=>action.kind==='submit'&&action.status==='done')
+  const {error:saveError}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...run.metadata_json,handoff,secondary_auth:{kind:params.kind,reason:params.result.authReason,safeToRetry}},completed_at:null})
+    .eq('id',params.runId).eq('telegram_id',params.telegramId)
+  if(saveError)throw new Error('auth_handoff_save_failed')
+  const base=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
+  return `${base}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+}
+
+export async function releaseRunAuthHandoff(telegramId:string,runId:string){
+  const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',runId).eq('telegram_id',telegramId).maybeSingle()
+  if(error||!run)throw new Error('auth_handoff_run_missing')
+  const meta:any=run.metadata_json||{}
+  if(!meta.handoff?.releaseUrl)return
+  await releaseBrowserHandoff(String(meta.handoff.releaseUrl),{allowExpired:true})
+  const {handoff,...remaining}=meta
+  const {error:saveError}=await supabaseAdmin.from('agent_runs').update({metadata_json:remaining}).eq('id',runId).eq('telegram_id',telegramId)
+  if(saveError)throw new Error('auth_handoff_release_save_failed')
+}
+
+export async function resumeSecondaryAuthRun(params:{actor:AgentActor;runId:string}){
+  const tg=String(params.actor.legacyTelegramId)
+  const {data:run,error}=await supabaseAdmin.from('agent_runs').select('status,metadata_json').eq('id',params.runId).eq('telegram_id',tg).maybeSingle()
+  if(error||!run)throw new Error('auth_handoff_run_missing')
+  const meta:any=run.metadata_json||{},auth=meta.secondary_auth
+  if(!auth)return null
+  if(run.status!=='paused'||!auth.safeToRetry)throw new Error('auth_resume_requires_provider_reconciliation')
+  if(!['flight_prepare','flight_execute','restaurant','lifecycle_monitor'].includes(auth.kind))throw new Error('auth_resume_kind_invalid')
+  const [{data:event,error:eventError},{data:action,error:actionError}]=await Promise.all([
+    supabaseAdmin.from('life_events').select('*').eq('id',meta.life_event_id).eq('telegram_id',tg).maybeSingle(),
+    supabaseAdmin.from('life_event_actions').select('*').eq('id',meta.life_event_action_id).eq('telegram_id',tg).eq('status','blocked').maybeSingle(),
+  ])
+  if(eventError||actionError||!event||!action||String(action.life_event_id)!==String(event.id))throw new Error('auth_resume_context_missing')
+  const preparation=auth.kind==='flight_prepare'||auth.kind==='lifecycle_monitor'
+  const actionStatus=preparation?'running':auth.kind==='flight_execute'?'waiting_approval':'ready'
+  const {data:claimed,error:claimError}=await supabaseAdmin.from('life_event_actions').update({status:actionStatus,updated_at:new Date().toISOString()})
+    .eq('id',action.id).eq('telegram_id',tg).eq('status','blocked').select('id').maybeSingle()
+  if(claimError||!claimed)throw new Error('auth_resume_already_claimed')
+  try{
+    const {error:runError}=await supabaseAdmin.from('agent_runs').update({status:preparation?'running':'queued',updated_at:new Date().toISOString()})
+      .eq('id',params.runId).eq('telegram_id',tg).eq('status','paused')
+    if(runError)throw new Error('auth_resume_run_update_failed')
+    let result:any
+    if(auth.kind==='flight_prepare'){
+      const {prepareFlightCheckin}=await import('./life-event-worker')
+      result=await prepareFlightCheckin({telegramId:tg,event,action,resumeRunId:params.runId})
+    }else if(auth.kind==='lifecycle_monitor'){
+      const {processLifecycleMonitor}=await import('./life-event-integration-worker')
+      result=await processLifecycleMonitor(action,event,tg,params.runId)
+    }else if(auth.kind==='flight_execute'){
+      const {executeApprovedLifeEventCheckin}=await import('./life-event-execution')
+      result=await executeApprovedLifeEventCheckin(params)
+    }else{
+      const {processOne}=await import('./restaurant-reservation-worker')
+      result=await processOne({...action,status:'ready'})
+    }
+    return {...result,runId:params.runId,text:result.text||'Gogo continued this same task using its saved constraints.'}
+  }catch(error){
+    // Keep a denied/failed continuation available without discarding its context.
+    await supabaseAdmin.from('agent_runs').update({status:'paused',updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',tg).eq('status',preparation?'running':'queued')
+    await supabaseAdmin.from('life_event_actions').update({status:'blocked'}).eq('id',action.id).eq('telegram_id',tg).eq('status',actionStatus)
+    throw error
+  }
+}

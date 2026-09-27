@@ -92,3 +92,44 @@ releaseStatus=403
 await assert.rejects(()=>releaseModule.releaseBrowserHandoff(handoff.releaseUrl,{allowExpired:true}),/403/,
   'authorization failures must not be treated as expiration')
 console.log('Expired takeover recovery preserves same-task continuation without weakening authorization')
+
+// Exercise the shared owner-scoped handoff and dispatch for every life-event consumer.
+const rows:any={agent_runs:{id:'run',telegram_id:'1',status:'paused',metadata_json:{life_event_id:'event',life_event_action_id:'action',constraint:'saved'}},
+  life_events:{id:'event',telegram_id:'1'},life_event_actions:{id:'action',telegram_id:'1',life_event_id:'event',status:'blocked'}}
+const scopedDb={from:(table:string)=>{
+  const filters:Array<[string,any]>=[];let change:any
+  const execute=()=>{const row=rows[table];if(!row||!filters.every(([k,v])=>row[k]===v))return {data:null,error:null};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
+  const q:any={select:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
+    maybeSingle:async()=>execute(),then:(resolve:any)=>Promise.resolve(execute()).then(resolve)}
+  return q
+}}
+const dispatched:string[]=[]
+const shared=load('secondary-auth-handoff.ts',{
+  '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
+  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff},
+  './browser-handoff':{releaseBrowserHandoff:async()=>({ok:true})},
+  './life-event-worker':{prepareFlightCheckin:async(p:any)=>{assert.equal(p.resumeRunId,'run');dispatched.push('flight_prepare');return {status:'completed'}}},
+  './life-event-execution':{executeApprovedLifeEventCheckin:async(p:any)=>{assert.equal(p.runId,'run');dispatched.push('flight_execute');return {status:'completed'}}},
+  './life-event-integration-worker':{processLifecycleMonitor:async(_a:any,_e:any,_t:any,runId:string)=>{assert.equal(runId,'run');dispatched.push('lifecycle_monitor');return {status:'completed'}}},
+  './restaurant-reservation-worker':{processOne:async(p:any)=>{assert.equal(p.id,'action');dispatched.push('restaurant');return {status:'completed'}}},
+})
+for(const kind of ['flight_prepare','flight_execute','restaurant','lifecycle_monitor']){
+  rows.agent_runs.status='paused';rows.life_event_actions.status='blocked'
+  await shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind,result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[]}})
+  assert.equal(rows.agent_runs.metadata_json.constraint,'saved')
+  assert.equal(rows.agent_runs.metadata_json.handoff, handoff)
+  const result=await shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'})
+  assert.equal(result.runId,'run')
+}
+assert.deepEqual(dispatched,['flight_prepare','flight_execute','restaurant','lifecycle_monitor'])
+rows.agent_runs.status='paused';rows.life_event_actions.status='blocked'
+rows.agent_runs.metadata_json.secondary_auth.safeToRetry=false
+await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1},runId:'run'}),/reconciliation/)
+await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:2},runId:'run'}),/run_missing/)
+for(const file of ['life-event-worker.ts','life-event-execution.ts','restaurant-reservation-worker.ts','life-event-integration-worker.ts']){
+  const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')
+  assert.match(source,/await attachSecondaryAuthHandoff\(/,`${file} must create and persist takeover`)
+  const policyGuard=source.search(/if\s*\(\s*!policy\.allowed/)
+  assert.ok(policyGuard>=0&&source.indexOf('await releaseRunAuthHandoff(')>policyGuard,`${file} must retain policy gating`)
+}
+console.log('All life-event secondary-auth consumers preserve owner, run, constraints, and executor routing')

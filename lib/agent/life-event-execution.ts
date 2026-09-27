@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runSecureBrowser } from './secure-computer'
+import { attachSecondaryAuthHandoff, releaseRunAuthHandoff } from './secondary-auth-handoff'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
 import { assertApprovalBinding } from './approval-binding'
@@ -130,6 +131,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
 
   let result: Awaited<ReturnType<typeof runSecureBrowser>>
   try {
+    await releaseRunAuthHandoff(tg,params.runId)
     result = await runSecureBrowser({
       userId: params.actor.userId,
       url,
@@ -172,6 +174,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
   const at = new Date().toISOString()
 
   if (result.status === 'blocked') {
+    const handoffUrl=await attachSecondaryAuthHandoff({userId:params.actor.userId,telegramId:tg,runId:params.runId,kind:'flight_execute',result})
     await supabaseAdmin.from('agent_runs').update({
       status: 'paused', progress: 65, summary: safe(result.summary || 'Gogo paused at a secure human step.', 1000),
       error: result.blockReason || 'human_auth_required', updated_at: at,
@@ -193,7 +196,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
       risk: 'high' as const,
       handledBy: 'life-event-checkin' as const,
       blockedReason: 'human_auth_required' as const,
-      text: `${safe(result.summary || 'Check-in reached a secure step.', 900)}\n\nI stopped before the protected step. I did not request, infer, or store a password, OTP, passkey, CAPTCHA response, or payment-auth value.`,
+      text: `${safe(result.summary || 'Check-in reached a secure step.', 900)}\n\nI stopped before the protected step. I did not request, infer, or store a password, OTP, passkey, CAPTCHA response, or payment-auth value.${handoffUrl?`\n\nTake control and resume this same task here:\n${handoffUrl}`:''}`,
     }
   }
 

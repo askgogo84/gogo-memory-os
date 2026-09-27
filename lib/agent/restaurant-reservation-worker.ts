@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { runSecureBrowser } from './secure-computer'
+import { attachSecondaryAuthHandoff, releaseRunAuthHandoff } from './secondary-auth-handoff'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
 import { assertApprovalBinding } from './approval-binding'
@@ -79,7 +80,7 @@ async function failSafe(params:{action:any;event:any;runId:string;approvalId:str
   await Promise.all(updates)
 }
 
-async function processOne(action:any){
+export async function processOne(action:any){
   const tg=String(action.telegram_id)
   if(!(await claim(action)))return{status:'skipped' as const}
   const{data:event,error:eventError}=await supabaseAdmin.from('life_events').select('id,event_type,subtype,title,provider,timezone,location,lifecycle_state,preferences_json,metadata_json,source_refs').eq('id',action.life_event_id).eq('telegram_id',tg).maybeSingle()
@@ -118,6 +119,7 @@ async function processOne(action:any){
 
   let result:any
   try{
+    await releaseRunAuthHandoff(tg,runId)
     result=await runSecureBrowser({userId:actor.userId,url,mode:'execute',objective:instruction})
   }catch(error:any){
     const summary='Gogo lost reliable provider evidence during the reservation attempt. The outcome is unknown, so it will not retry automatically.'
@@ -128,9 +130,10 @@ async function processOne(action:any){
   }
 
   if(result.status==='blocked'){
+    const handoffUrl=await attachSecondaryAuthHandoff({userId:actor.userId,telegramId:tg,runId,kind:'restaurant',result})
     const summary=safe(result.summary||'The provider requires a human authentication or protected step.',900)
     await failSafe({action,event,runId,approvalId,status:'paused',summary,error:result.blockReason||'human_auth_required',actor})
-    await notify(actor,`🔐 ${safe(payload.restaurant||event.title,160)} needs a secure human step before I can continue. I stopped before passwords, OTPs, CAPTCHAs, passkeys or payment authentication. Open AskGogo Agent / Take Control for this run; the original reservation constraints remain attached.`)
+    await notify(actor,`🔐 ${safe(payload.restaurant||event.title,160)} needs a secure human step before I can continue. I stopped before passwords, OTPs, CAPTCHAs, passkeys or payment authentication.${handoffUrl?` Take control and resume this same task: ${handoffUrl}`:' Open AskGogo Agent for this run.'} The original reservation constraints remain attached.`)
     await activity(tg,runId,'restaurant_reservation_human_step','Reservation paused at a protected provider step.',{life_event_id:event.id,action_id:action.id,auth_reason:result.authReason||null})
     return{status:'paused' as const,runId}
   }
