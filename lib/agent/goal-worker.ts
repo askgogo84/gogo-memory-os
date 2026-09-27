@@ -96,7 +96,7 @@ export async function processDueGoalReviews(limit=20){
       const goal=await goalSnapshot(telegramId,String(watcher.goal_id||''))
       const activity=await recordGoalReview({telegramId,watcher,goal,triggered:result.triggered,failed:result.failed,now})
       if(result.triggered||result.failed){
-        const title=result.failed?'Gogo needs your attention':String(goal?.status)==='completed'?'Gogo completed a goal':String(goal?.status)==='blocked'?'Gogo paused safely':'Gogo advanced a goal'
+        const title=result.failed?'Needs your attention':String(goal?.status)==='completed'?'Goal complete':String(goal?.status)==='blocked'?'Needs your input':'Progress update'
         const body=activity?.summary||goalSummary(goal,result.failed)
         await sendAgentPush(telegramId,{
           title,
@@ -111,7 +111,7 @@ export async function processDueGoalReviews(limit=20){
       const goal=await goalSnapshot(telegramId,String(watcher.goal_id||''))
       const activity=await recordGoalReview({telegramId,watcher,goal,triggered:false,failed:true,now})
       await sendAgentPush(telegramId,{
-        title:'Gogo needs your attention',
+        title:'Needs your attention',
         body:activity?.summary||goalSummary(goal,true),
         path:'/agent',
         data:{goalId:String(watcher.goal_id||''),watcherId:String(watcher.id||''),runId:activity?.runId||''},

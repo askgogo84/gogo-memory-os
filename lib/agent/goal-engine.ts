@@ -127,7 +127,7 @@ export async function processGoalReviewWatcher(watcher:any,now:Date){
     }else if(step.kind==='review'){
       step.status='blocked';step.result={reason:'human_review_required'}
       await idea(tg,step.title,step.instruction,goalId,'Review')
-      await notify(actor,`💡 Gogo needs your input on a goal\n\n${goal.title}\n${step.title}\n\nOpen AskGogo to review.`)
+      await notify(actor,`${goal.title}\n\nI need your input on: ${step.title}\n\nOpen AskGogo to review.`)
       triggered=true
     }else{
       const classified=classifyAgentRequest(step.instruction)
@@ -138,7 +138,7 @@ export async function processGoalReviewWatcher(watcher:any,now:Date){
       if(!safePrivate){
         step.status='blocked';step.result={reason:!sentinel.allowed?`sentinel_${sentinel.reason}`:policy.reason,capability:classified.capability}
         await idea(tg,step.title,`Gogo prepared this goal step but needs you before it can continue: ${step.instruction}`,goalId,'Review action')
-        await notify(actor,`🛡️ Gogo paused a goal before a consequential step\n\n${goal.title}\n${step.title}\n\nOpen AskGogo to review.`)
+        await notify(actor,`${goal.title}\n\nI need your approval before: ${step.title}\n\nOpen AskGogo to review.`)
         triggered=true
       }else{
         const result=await dispatchThroughSameBrain({actor,text:step.instruction,messageId:`goal:${goalId}:${step.id}`})
@@ -153,7 +153,7 @@ export async function processGoalReviewWatcher(watcher:any,now:Date){
   const state=await saveGoal(goalId,tg,plan)
   if(state.status==='completed'){
     const artifactId=await createGoalArtifact(tg,goal,plan)
-    await notify(actor,`✅ Gogo completed a background goal\n\n${goal.title}\n\nI created a private goal artifact in the app.`)
+    await notify(actor,`✅ ${goal.title} is complete.\n\nI saved the result in AskGogo.`)
     await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,last_checked_at:now.toISOString(),last_state_json:{completedAt:now.toISOString(),artifactId}}).eq('id',watcher.id)
     return {triggered:true,failed:false}
   }

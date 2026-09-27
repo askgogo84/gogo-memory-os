@@ -44,9 +44,11 @@ assert.match(worker,/blockers:Array\.isArray\(goal\?\.blockers\)/)
 // Meaningful progress and blockers surface proactively in the app, including the
 // exact next action where one exists; a worker exception also produces a visible
 // failed Activity item rather than silently disappearing.
-assert.match(worker,/Gogo advanced a goal/)
-assert.match(worker,/Gogo paused safely/)
-assert.match(worker,/Gogo needs your attention/)
+assert.doesNotMatch(worker,/Gogo advanced a goal/)
+assert.doesNotMatch(worker,/Gogo paused safely/)
+assert.match(worker,/Needs your attention/)
+assert.match(worker,/Goal complete/)
+assert.match(worker,/Needs your input/)
 assert.match(worker,/Next: \$\{next\}/)
 assert.match(worker,/recordGoalReview\(\{telegramId,watcher,goal,triggered:false,failed:true,now\}\)/)
 assert.match(worker,/sendAgentPush/)
@@ -62,3 +64,17 @@ assert.match(resume,/next_check_at:now/)
 assert.doesNotMatch(resume,/dispatchThroughSameBrain|runSecureBrowser|sendWhatsAppMessage/)
 
 console.log('agent background goals verification passed')
+
+assert.doesNotMatch(engine,/Gogo needs your input on a goal/,'goal messages should not narrate backend goal machinery')
+assert.doesNotMatch(engine,/Gogo paused a goal before a consequential step/,'goal approval message should be outcome-first')
+assert.match(engine,/I need your input on:/)
+assert.match(engine,/I need your approval before:/)
+assert.match(engine,/is complete/)
+console.log('Outcome-first goal messaging verification passed')
+
+const whatsappBridge=readFileSync('lib/agent/whatsapp-bridge.ts','utf8')
+assert.doesNotMatch(whatsappBridge,/Background Gogo has a .*step plan/,'WhatsApp should not expose plan machinery when creating a goal')
+assert.match(whatsappBridge,/I’ll keep working on/)
+assert.match(whatsappBridge,/I’ll only interrupt you if I need your input or approval/)
+assert.match(whatsappBridge,/Dashboard → Goals/)
+console.log('Outcome-first WhatsApp goal creation verification passed')
