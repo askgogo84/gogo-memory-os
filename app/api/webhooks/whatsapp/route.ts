@@ -1289,6 +1289,33 @@ _"${originalText}"_
       return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
     }
 
+    // Vault/provider read tasks must beat legacy feature routing. A phrase like
+    // "Find the AI reels I saved recently on Instagram" contains words such as
+    // "saved" that legacy media-memory handlers can mistake for a save command.
+    // Give the provider browser specialist first refusal before routeFeatureIntent.
+    if (parseConnectedProviderReadCommand(text)) {
+      const providerAgent = await tryRunWhatsAppAgent({
+        user: resolvedUser,
+        text,
+        messageId: inboundMessageSid || null,
+      })
+      if (providerAgent) {
+        await recordShadowRouterOutcome({
+          telegramId:resolvedUser.telegramId,
+          surface:'whatsapp',
+          eventId:inboundMessageSid,
+          actualHandler:providerAgent.handledBy || 'whatsapp-agent',
+          actualCapability:(providerAgent as any).capability || null,
+          status:providerAgent.status || null,
+          runId:providerAgent.runId || null,
+        }).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', providerAgent.text)
+        await sendWhatsAppMessage(from, providerAgent.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
     // Jev is promoted only to specialist *first refusal*. It may choose which
     // existing capability gets the first chance to parse the turn, but it never grants
     // execution authority. The specialist still has to validate the command and all
@@ -1351,33 +1378,6 @@ _"${originalText}"_
           await sendWhatsAppMessage(from,promotedCalendar)
           return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
         }
-      }
-    }
-
-    // Vault/provider read tasks must beat legacy feature routing. A phrase like
-    // "Find the AI reels I saved recently on Instagram" contains words such as
-    // "saved" that legacy media-memory handlers can mistake for a save command.
-    // Give the provider browser specialist first refusal before routeFeatureIntent.
-    if (parseConnectedProviderReadCommand(text)) {
-      const providerAgent = await tryRunWhatsAppAgent({
-        user: resolvedUser,
-        text,
-        messageId: inboundMessageSid || null,
-      })
-      if (providerAgent) {
-        await recordShadowRouterOutcome({
-          telegramId:resolvedUser.telegramId,
-          surface:'whatsapp',
-          eventId:inboundMessageSid,
-          actualHandler:providerAgent.handledBy || 'whatsapp-agent',
-          actualCapability:(providerAgent as any).capability || null,
-          status:providerAgent.status || null,
-          runId:providerAgent.runId || null,
-        }).catch(()=>{})
-        await saveConversation(resolvedUser.telegramId, 'user', text)
-        await saveConversation(resolvedUser.telegramId, 'assistant', providerAgent.text)
-        await sendWhatsAppMessage(from, providerAgent.text)
-        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
 

@@ -122,4 +122,5 @@ const providerPreflight=whatsappRoute.indexOf('if (parseConnectedProviderReadCom
 const legacyFeature=whatsappRoute.indexOf('const featureReply = await routeFeatureIntent')
 assert.ok(providerPreflight>=0,'WhatsApp must have a provider-browser preflight')
 assert.ok(legacyFeature>providerPreflight,'Vault-backed provider tasks must beat legacy feature routing on WhatsApp')
+assert.ok(whatsappRoute.indexOf('const jevIntent=promotedJevIntent')>providerPreflight,'Explicit provider reads must beat semantic memory/save promotion too')
 assert.match(whatsappRoute,/tryRunWhatsAppAgent/)
