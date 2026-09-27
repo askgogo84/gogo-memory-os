@@ -10,6 +10,7 @@ export type ContextSource =
   | 'travel_ticket'
   | 'travel_presence'
   | 'open_loop'
+  | 'goal'
   | 'semantic_memory'
   | 'memory_insight'
   | 'memory_profile'
@@ -39,6 +40,7 @@ export type ContextPack = {
     lifeEvents:number
     travelTickets:number
     openLoops:number
+    goals?:number
     semanticMemories:number
     insights:number
     typedContext:number
@@ -186,7 +188,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   const lower=new Date(now-2*86400_000).toISOString()
   const upper=new Date(now+horizonDays*86400_000).toISOString()
 
-  const [lifeResult,loopResult,ticketResult,typed]=await Promise.all([
+  const [lifeResult,loopResult,goalResult,ticketResult,typed]=await Promise.all([
     supabaseAdmin.from('life_events')
       .select('id,event_type,subtype,title,provider,start_at,end_at,timezone,location,lifecycle_state,metadata_json,source_refs,updated_at')
       .eq('telegram_id',tg)
@@ -199,6 +201,12 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       .order('priority',{ascending:false})
       .order('updated_at',{ascending:false})
       .limit(40),
+    supabaseAdmin.from('agent_goals')
+      .select('id,title,outcome,status,progress,deadline,next_action,blockers,updated_at')
+      .eq('telegram_id',tg)
+      .in('status',['active','blocked'])
+      .order('updated_at',{ascending:false})
+      .limit(30),
     supabaseAdmin.from('travel_tickets')
       .select('id,type,booking_group,from_city,to_city,depart_at,arrive_at,airline,flight_no,source')
       .eq('telegram_id',Number(actor.legacyTelegramId))
@@ -253,6 +261,33 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
     })
   }
 
+  const goalFacts:ContextFact[]=[]
+  for(const row of goalResult.data||[]){
+    const text=[(row as any).title,(row as any).outcome,(row as any).next_action,...(Array.isArray((row as any).blockers)?(row as any).blockers:[])].filter(Boolean).join(' ')
+    const lexical=lexicalScore(query,text)
+    const score=clamp(0.4+lexical*0.46+(String((row as any).status)==='blocked'?0.05:0))
+    if(score<0.5&&lexical<0.16)continue
+    const progress=Math.max(0,Math.min(100,Number((row as any).progress||0)))
+    const next=safe((row as any).next_action,180)
+    const blocked=Array.isArray((row as any).blockers)&&((row as any).blockers as any[]).length>0
+    const summary=safe([
+      `Goal: ${(row as any).title||'Untitled goal'}`,
+      (row as any).outcome?`Outcome: ${(row as any).outcome}`:'',
+      `Progress: ${progress}%`,
+      next?`Next: ${next}`:'',
+      blocked?`Blocked: ${safe((row as any).blockers[0],180)}`:'',
+    ].filter(Boolean).join(' · '),520)
+    goalFacts.push({
+      id:`goal:${(row as any).id}`,
+      source:'goal',
+      summary,score,confidence:0.98,
+      startAt:validIso((row as any).updated_at),
+      endAt:validIso((row as any).deadline),
+      kind:String((row as any).status||'active'),
+      inferred:false,
+      sourceRefs:[{type:'goal',id:String((row as any).id)}],
+    })
+  }
   const travelFacts=buildTravelPresenceFacts(ticketResult.data||[],now,horizonDays)
     .map(f=>({...f,score:factScore({query,text:`${f.summary} ${f.location||''}`,base:f.source==='travel_presence'?0.52:0.48,startAt:f.startAt,now,horizonDays})}))
 
@@ -273,7 +308,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
     }
   }
 
-  return{lifeFacts,openLoops,travelFacts,typedFacts}
+  return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts}
 }
 
 async function loadLearnedFacts(actor:AgentActor,query:string,includeSemantic:boolean){
@@ -372,6 +407,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
     ...operational.travelFacts,
     ...operational.lifeFacts,
     ...operational.openLoops,
+    ...operational.goalFacts,
     ...learned.semantic,
     ...learned.insights,
     ...learned.profile,
@@ -388,6 +424,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
       lifeEvents:operational.lifeFacts.length,
       travelTickets:operational.travelFacts.filter(f=>f.source==='travel_ticket'||f.source==='travel_presence').length,
       openLoops:operational.openLoops.length,
+      goals:operational.goalFacts.length,
       semanticMemories:learned.semantic.length,
       insights:learned.insights.length,
       typedContext:operational.typedFacts.length,
