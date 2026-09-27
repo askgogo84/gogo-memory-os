@@ -32,6 +32,8 @@ for(const [input,host] of [
   ['What is the status of my Amazon order?','www.amazon.in'],
   ['When will my Blinkit order arrive?','blinkit.com'],
   ['When will Amazon deliver my order?','www.amazon.in'],
+  ['Check my Amazon order and latest message','www.amazon.in'],
+  ['Open Blinkit. Ask me for my area and PIN code if needed and check the price of milk','blinkit.com'],
   ['Open Blinkit and check the price; do not place an order.','blinkit.com'],
   ['Open Blinkit and check the price. Do not make an order or add to my cart.','blinkit.com'],
 ] as const){
@@ -55,6 +57,9 @@ for(const input of [
   'Show my latest Instagram message and message Bob.',
   'Place an order for milk on Blinkit.',
   'Open Blinkit and add milk to my cart',
+  'Open Blinkit and put milk in my cart',
+  'Open Zepto and move milk to my basket',
+  'Check my Amazon order and message Bob',
   'Open Zepto and remove milk from the basket',
   'Open Instamart and empty my cart',
   'Open Blinkit and reorder milk',
