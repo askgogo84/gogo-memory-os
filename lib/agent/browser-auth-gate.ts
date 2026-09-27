@@ -41,7 +41,7 @@ export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
   const hasOtpCopy = /\b(one[- ]?time password|verification code|enter (?:the )?code|we sent (?:you )?a code|authenticator app)\b/.test(text)
   const hasPasskey = /\b(passkey|security key|use your device|windows hello|touch id|face id)\b/.test(text)
   const hasCaptcha = /\b(captcha|i'?m not a robot|verify you are human|human verification)\b/.test(text)
-  const hasExplicitDeviceApproval = /\bapprove (?:this )?(?:sign[- ]?in|login)\b/.test(text)
+  const hasExplicitDeviceApproval = /\bapprove (?:this )?(?:sign[- ]?in|login)\b/.test(promptText)
   // A bare login/navigation label is not evidence of an active auth prompt.
   // Require actionable auth copy within the same short passage as a device cue;
   // never combine independent matches from across the inspected page.
