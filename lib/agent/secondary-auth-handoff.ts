@@ -10,11 +10,23 @@ export async function attachSecondaryAuthHandoff(params:{userId:string;telegramI
   if(params.result.blockReason!=='human_auth_required'||!params.result.authReason||params.result.authReason==='password')return null
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',params.telegramId).maybeSingle()
   if(error||!run)throw new Error('auth_handoff_run_missing')
-  const handoff=await startProviderBrowserHandoff({userId:params.userId,url:params.result.url})
   const safeToRetry=!params.result.actions.some(action=>action.kind==='submit'&&action.status==='done')
-  const {error:saveError}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...run.metadata_json,handoff,secondary_auth:{kind:params.kind,reason:params.result.authReason,safeToRetry}},completed_at:null})
+  const marker={kind:params.kind,reason:params.result.authReason,safeToRetry}
+  const metadata={...run.metadata_json,browser_url:params.result.url,handoff:null,secondary_auth:marker,auth_resume:{kind:params.kind,safeToRetry}}
+  const {error:saveError}=await supabaseAdmin.from('agent_runs').update({status:'paused',error:'human_auth_required',summary:params.result.summary,metadata_json:metadata,completed_at:null})
     .eq('id',params.runId).eq('telegram_id',params.telegramId)
   if(saveError)throw new Error('auth_handoff_save_failed')
+  const {error:actionError}=await supabaseAdmin.from('life_event_actions').update({status:'blocked'})
+    .eq('id',metadata.life_event_action_id).eq('telegram_id',params.telegramId).eq('status','running')
+  if(actionError)throw new Error('auth_handoff_action_save_failed')
+  // Provisioning is retryable; the run/action are already safely paused.
+  try{
+    const handoff=await startProviderBrowserHandoff({userId:params.userId,url:params.result.url})
+    const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...metadata,handoff}}).eq('id',params.runId).eq('telegram_id',params.telegramId)
+    if(error)throw new Error('auth_handoff_save_failed')
+  }catch{
+    // The task page retains a retry control even when another takeover is active.
+  }
   const base=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
   return `${base}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
 }
@@ -23,9 +35,8 @@ export async function releaseRunAuthHandoff(telegramId:string,runId:string){
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',runId).eq('telegram_id',telegramId).maybeSingle()
   if(error||!run)throw new Error('auth_handoff_run_missing')
   const meta:any=run.metadata_json||{}
-  if(!meta.handoff?.releaseUrl)return
-  await releaseBrowserHandoff(String(meta.handoff.releaseUrl),{allowExpired:true})
-  const {handoff,...remaining}=meta
+  if(meta.handoff?.releaseUrl)await releaseBrowserHandoff(String(meta.handoff.releaseUrl),{allowExpired:true})
+  const {handoff,secondary_auth,...remaining}=meta
   const {error:saveError}=await supabaseAdmin.from('agent_runs').update({metadata_json:remaining}).eq('id',runId).eq('telegram_id',telegramId)
   if(saveError)throw new Error('auth_handoff_release_save_failed')
 }
@@ -34,7 +45,7 @@ export async function resumeSecondaryAuthRun(params:{actor:AgentActor;runId:stri
   const tg=String(params.actor.legacyTelegramId)
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('status,metadata_json').eq('id',params.runId).eq('telegram_id',tg).maybeSingle()
   if(error||!run)throw new Error('auth_handoff_run_missing')
-  const meta:any=run.metadata_json||{},auth=meta.secondary_auth
+  const meta:any=run.metadata_json||{},auth=meta.auth_resume||meta.secondary_auth
   if(!auth)return null
   if(run.status!=='paused'||!auth.safeToRetry)throw new Error('auth_resume_requires_provider_reconciliation')
   if(!['flight_prepare','flight_execute','restaurant','lifecycle_monitor'].includes(auth.kind))throw new Error('auth_resume_kind_invalid')

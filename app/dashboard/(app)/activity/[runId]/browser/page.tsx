@@ -25,7 +25,7 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   const latest=[...run.steps].reverse().find(s=>s.toolName==='secure_browser'||/browser/i.test(s.toolName)||s.output?.browser)
   const raw:any=latest?.output?.browser||latest?.output?.browserState||latest?.output||{}
   const pageTitle=String(raw?.title||'')
-  const pageUrl=String(raw?.url||handoff?.providerUrl||'')
+  const pageUrl=String(raw?.url||handoff?.providerUrl||run.metadata?.browser_url||'')
   let displayUrl=browser.hostname||'Secure browser'
   try{
     const u=new URL(pageUrl)
@@ -126,6 +126,10 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
           <a href={'/api/dashboard/agent/runs/'+encodeURIComponent(run.id)+'/handoff'} target="_blank" rel="noopener" className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-[11px] bg-[#2FB8A6] px-4 text-[13px] font-bold text-[#F2EFEA]">{deviceHandoff?'Open provider':'Take control'}</a>
           {cloudTakeover&&secondaryAuth&&run.metadata?.secondary_auth?.safeToRetry!==false&&<div className="mt-3"><VaultResumeTaskButton runId={run.id} label="Resume this task"/></div>}
           {run.metadata?.secondary_auth?.safeToRetry===false&&<p className="mt-3 text-[12px] text-[#D9A441]">A submit may already have reached the provider. Verify the outcome before retrying.</p>}
+        </section>}
+        {secondaryAuth&&!cloudTakeover&&run.metadata?.secondary_auth?.safeToRetry!==false&&<section className="rounded-[16px] bg-[#1A1710] p-5">
+          <p className="mb-3 text-[12px] text-[#D9A441]">The secure browser is not available yet. Finish any other active takeover, then retry this saved task.</p>
+          <VaultResumeTaskButton runId={run.id} label="Retry this task"/>
         </section>}
 
         <section className="rounded-[16px] border border-[#2A2A2A] bg-[#111111] p-5">

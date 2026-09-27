@@ -27,6 +27,7 @@ export type SecureTicketReadResult = {
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
   handoff?: 'device_handoff_required'
   authHandoff?: Awaited<ReturnType<typeof startProviderBrowserHandoff>>
+  authHandoffPending?: boolean
 }
 
 const sandboxName = browserSandboxNameFor
@@ -248,11 +249,12 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     const gate = detectHumanAuthGate({ title: page.title, text: page.text, forms: [] })
     if (gate.required) {
       const authHandoff=params.humanHandoff!==false&&gate.reason&&gate.reason!=='password'
-        ? await startProviderBrowserHandoff({userId:params.userId,url:String(page.url||params.url)}) : undefined
-      keepForHuman=Boolean(authHandoff)
+        ? await startProviderBrowserHandoff({userId:params.userId,url:String(page.url||params.url)}).catch(()=>undefined) : undefined
+      const authHandoffPending=params.humanHandoff!==false&&gate.reason!=='password'&&!authHandoff
+      keepForHuman=Boolean(authHandoff)||authHandoffPending
       return {
         status: 'blocked', url: String(page.url || params.url), title: String(page.title || '').slice(0, 300),
-        pageText: '', usefulLinks: [], blockReason: 'human_auth_required', authReason: gate.reason, authHandoff,
+        pageText: '', usefulLinks: [], blockReason: 'human_auth_required', authReason: gate.reason, authHandoff, authHandoffPending,
       }
     }
     return {
@@ -263,7 +265,8 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
   } catch (error: any) {
     console.error('SECURE_TICKET_READER_FAILED:', safeFailureCode(error))
     const fallback=await fallbackSecureComputer(params)
-    keepForHuman=Boolean(fallback.authHandoff)
+    // A failed read may be contending with another task's live takeover.
+    keepForHuman=true
     return fallback
   } finally {
     if (sandbox&&!keepForHuman) await sandbox.stop().catch(() => {})

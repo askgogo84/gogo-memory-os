@@ -104,9 +104,10 @@ const scopedDb={from:(table:string)=>{
   return q
 }}
 const dispatched:string[]=[]
+let provisioningFails=false
 const shared=load('secondary-auth-handoff.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
-  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff},
+  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{if(provisioningFails)throw new Error('temporary domain failure');return handoff}},
   './browser-handoff':{releaseBrowserHandoff:async()=>({ok:true})},
   './life-event-worker':{prepareFlightCheckin:async(p:any)=>{assert.equal(p.resumeRunId,'run');dispatched.push('flight_prepare');return {status:'completed'}}},
   './life-event-execution':{executeApprovedLifeEventCheckin:async(p:any)=>{assert.equal(p.runId,'run');dispatched.push('flight_execute');return {status:'completed'}}},
@@ -123,7 +124,7 @@ for(const kind of ['flight_prepare','flight_execute','restaurant','lifecycle_mon
 }
 assert.deepEqual(dispatched,['flight_prepare','flight_execute','restaurant','lifecycle_monitor'])
 rows.agent_runs.status='paused';rows.life_event_actions.status='blocked'
-rows.agent_runs.metadata_json.secondary_auth.safeToRetry=false
+rows.agent_runs.metadata_json.auth_resume.safeToRetry=false
 await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1},runId:'run'}),/reconciliation/)
 await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:2},runId:'run'}),/run_missing/)
 for(const file of ['life-event-worker.ts','life-event-execution.ts','restaurant-reservation-worker.ts','life-event-integration-worker.ts']){
@@ -133,3 +134,34 @@ for(const file of ['life-event-worker.ts','life-event-execution.ts','restaurant-
   assert.ok(policyGuard>=0&&source.indexOf('await releaseRunAuthHandoff(')>policyGuard,`${file} must retain policy gating`)
 }
 console.log('All life-event secondary-auth consumers preserve owner, run, constraints, and executor routing')
+
+provisioningFails=true
+rows.agent_runs.status='running';rows.life_event_actions.status='running'
+const retryLink=await shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'restaurant',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[]}})
+assert.match(retryLink,/\/run\/browser$/)
+assert.equal(rows.agent_runs.status,'paused')
+assert.equal(rows.life_event_actions.status,'blocked')
+assert.equal(rows.agent_runs.metadata_json.handoff,null)
+await shared.releaseRunAuthHandoff('1','run')
+assert.equal(rows.agent_runs.metadata_json.secondary_auth,undefined,'consume display marker even when provisioning failed')
+assert.equal(rows.agent_runs.metadata_json.auth_resume.kind,'restaurant','retain executor context separately from auth UI state')
+
+let reserved=true,policyUpdates=0
+const launches:any[]=[]
+const provider=load('provider-browser-handoff.ts',{
+  crypto:{randomBytes:()=>({toString:()=> 'new-token'})},
+  './browser-handoff':{BROWSER_HANDOFF_PORT:3001,HANDOFF_SERVER:'fixture',getPersistentBrowserSandbox:async()=>({name:'owner',sandbox:{
+    writeFiles:async()=>{},updateNetworkPolicy:async()=>{policyUpdates++},domain:async()=> 'browser.example',
+    runCommand:async(command:any)=>{launches.push(command);return {exitCode:command.cmd==='flock'?0:reserved?0:1}},
+  }})},
+},'',{setTimeout:(f:()=>void)=>{f();return 0}})
+await provider.startProviderBrowserHandoff({userId:'owner',url:'https://provider.example'})
+assert.equal(policyUpdates,1)
+assert.equal(launches[0].cmd,'flock')
+assert.equal(launches[0].args[0],'-n')
+assert.equal(launches[0].detached,true)
+reserved=false
+await assert.rejects(()=>provider.startProviderBrowserHandoff({userId:'owner',url:'https://other.example'}),/in_use/)
+assert.equal(policyUpdates,1,'a contending task must not change the active takeover network policy')
+assert.equal(launches.some(c=>JSON.stringify(c).includes('pkill')),false,'never replace a live owner takeover token')
+console.log('Provisioning failure, consumed auth markers, and concurrent owner takeover safety verified')

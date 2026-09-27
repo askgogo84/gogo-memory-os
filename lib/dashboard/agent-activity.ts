@@ -146,13 +146,13 @@ export function browserContextForRun(run:DashboardActivityRun){
   // Some browser executors store the browser result directly in output_json,
   // while others nest it under browser/browserState. Accept all live formats.
   const browser=browserStep?.output?.browser||browserStep?.output?.browserState||browserStep?.output||null
-  const rawUrl=String(browser?.url||handoff?.providerUrl||'')
+  const rawUrl=String(browser?.url||handoff?.providerUrl||meta?.browser_url||'')
   let hostname=''
   try{hostname=rawUrl?new URL(rawUrl).hostname:''}catch{}
   const mode=String(handoff?.mode||'')
   const handoffActive=['paused','waiting_approval'].includes(run.status)
   return {
-    hasBrowser:Boolean(browserStep||handoff),
+    hasBrowser:Boolean(browserStep||handoff||meta?.secondary_auth||meta?.auth_resume),
     hostname,
     title:String(browser?.title||''),
     status:String(browser?.status||''),

@@ -41,7 +41,7 @@ export async function POST(request:Request,{params}:{params:Promise<{runId:strin
     if(runError||!run)return NextResponse.json({ok:false,error:'run_unavailable'},{status:404})
     const meta:any=run.metadata_json||{}
     let host=''
-    try{host=new URL(String(meta.url||'')).hostname}catch{}
+    try{host=new URL(String(meta.url||meta.browser_url||meta.checkin_url||'')).hostname}catch{}
     if(!host)return NextResponse.json({ok:false,error:'run_url_invalid'},{status:400})
     const matches=await listVaultCredentialsForDomain(session.telegramId,host)
     if(!matches.some(item=>item.credentialId===requestedCredentialId)){
