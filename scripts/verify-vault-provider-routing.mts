@@ -35,6 +35,7 @@ assert.ok(!redactSecretShapedText('For Amazon login, my PIN if needed, use 4821'
 assert.ok(!redactSecretShapedText('My PIN if needed; on step 2 use 4821').includes('4821'))
 assert.ok(!redactSecretShapedText('My OTP if needed, use ABCDEF').includes('ABCDEF'))
 assert.ok(!redactSecretShapedText('My PIN if needed. Then open the account using 4821.').includes('4821'))
+assert.ok(!redactSecretShapedText('My PIN if needed. Then open the account with 4821.').includes('4821'))
 assert.match(redactSecretShapedText('Ask me for my PIN if needed. Then book 2 seats for 7 PM.'),/Then book 2 seats for 7 PM\./)
 assert.match(redactSecretShapedText('Ask me for my PIN if needed. Then check flights on 15 October 2026.'),/15 October 2026/)
 for(const [input,host] of [
@@ -100,6 +101,7 @@ for(const input of [
   'Open Blinkit and request a refund',
   'Open Blinkit and get me two cartons of milk',
   "Open Blinkit; don't change my address, and buy milk.",
+  "Open Blinkit. Don't cancel my order, and buy milk.",
   'Show my Zepto list',
   'Read my Blinkit notes',
   'Open Blinkit and apply coupon SAVE20',

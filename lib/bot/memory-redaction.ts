@@ -48,11 +48,15 @@ export function redactSecretShapedText(content: string): string {
   // Withhold the conditional credential clause regardless of code format.
   // Resume only at an explicit new task, preserving its quantities and dates.
   out = out.replace(/\b(pin(?:\s+code)?|otp)\s+if\s+(?:needed|required)\b([\s\S]*)/gi,
-    (_match,label,tail)=>{
+    (_match,label,tail,offset,source)=>{
+      const request=/\bask\s+(?:me\s+)?for\s+(?:my\s+)?$/i.test(source.slice(0,offset))
       const task='(?:book|check|show|find|read|search|compare|open|browse|visit|remind|schedule|buy|purchase|summarize)'
       const boundary=tail.search(new RegExp(`(?:[.!?;]\\s*(?:(?:then|next|afterwards)\\s+)?|\\b(?:then|next|afterwards|and)\\s+)(?=${task}\\b)`,'i'))
-      // A new task may still contain instructions to use the supplied credential.
-      const remainingTask=boundary<0?'':tail.slice(boundary).replace(/\b(?:using|use|enter|type|try)\b[^.!?;\n]*/gi,'[sensitive detail withheld]')
+      // Supplied credential statements are withheld in full. Only an explicit
+      // request for missing input can retain a separate, non-authentication task.
+      const beforeTask=boundary<0?tail:tail.slice(0,boundary)
+      let remainingTask=request&&boundary>=0&&!beforeTask.replace(/[.!?;\s]/g,'')?tail.slice(boundary):''
+      if(/\b(?:account|login|log\s+in|sign\s+in|authenticate|authentication|credential|password|passcode|pin|otp)\b/i.test(remainingTask))remainingTask=''
       return `${label.replace(/\s+code$/i,'')} [sensitive detail withheld]${remainingTask}`
     })
 

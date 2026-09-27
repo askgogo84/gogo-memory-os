@@ -112,8 +112,8 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   // reject read routing ("do not like posts, but follow this account").
   const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem']
   const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
-  const prohibitedVerb=`(?:${compoundOrder}|${[...mutationVerbs,'message','post','order','set','default','use'].join('|')})`
-  const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
+  const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use'].join('|')})`
+  const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
     .replace(/\bpurchase\s+(history|details|receipt|status)\b/g,'order $1')
     .replace(/\b(my|the|your|our|this|that)\s+place\b/g,'$1 location')
