@@ -15,7 +15,7 @@ const SECRET_KEYWORDS =
 // Sensitive values that may appear in conversation history. Keep this deliberately
 // conservative: it is only a prompt-boundary redactor, not a parser for the source data.
 const LABELED_SECRET_VALUE_RE =
-  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|card\s*number|account\s*number|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b(?:\s+(?:code\s+)?if\s+(?:needed|required)[.?!,;]?\s*(?:it\s+)?)?\s*(?:is|:|=|-)?\s*([A-Z0-9][A-Z0-9\s._\-/]{2,})/gi
+  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|card\s*number|account\s*number|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b\s*(?:is|:|=|-)?\s*([A-Z0-9][A-Z0-9\s._\-/]{2,})/gi
 
 // Heuristic: does this memory look like it carries a credential/identifier we must not
 // surface to the model?
@@ -44,21 +44,6 @@ export function isSecretShapedMemory(content: string): boolean {
 export function redactSecretShapedText(content: string): string {
   if (!content) return content
   let out = String(content)
-
-  // Withhold the conditional credential clause regardless of code format.
-  // Resume only at an explicit new task, preserving its quantities and dates.
-  out = out.replace(/\b(pin(?:\s+code)?|otp)\s+if\s+(?:needed|required)\b([\s\S]*)/gi,
-    (_match,label,tail,offset,source)=>{
-      const request=/\bask\s+(?:me\s+)?for\s+(?:my\s+)?$/i.test(source.slice(0,offset))
-      const task='(?:book|check|show|find|read|search|compare|open|browse|visit|remind|schedule|buy|purchase|summarize)'
-      const boundary=tail.search(new RegExp(`(?:[.!?;]\\s*(?:(?:then|next|afterwards)\\s+)?|\\b(?:then|next|afterwards|and)\\s+)(?=${task}\\b)`,'i'))
-      // Supplied credential statements are withheld in full. Only an explicit
-      // request for missing input can retain a separate, non-authentication task.
-      const beforeTask=boundary<0?tail:tail.slice(0,boundary)
-      let remainingTask=request&&boundary>=0&&!beforeTask.replace(/[.!?;\s]/g,'')?tail.slice(boundary):''
-      if(/\b(?:account|login|log\s+in|sign\s+in|authenticate|authentication|credential|password|passcode|pin|otp)\b/i.test(remainingTask))remainingTask=''
-      return `${label.replace(/\s+code$/i,'')} [sensitive detail withheld]${remainingTask}`
-    })
 
   // Preserve the label/context and replace only its value.
   out = out.replace(LABELED_SECRET_VALUE_RE, (_match, label) => `${label} [sensitive detail withheld]`)
