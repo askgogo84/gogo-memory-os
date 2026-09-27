@@ -86,3 +86,11 @@ assert.match(restaurantWorker,/actual DINING SLOT/)
 assert.match(restaurantWorker,/do not submit; stop and ask/)
 
 console.log('✅ Context Brain v1 regression passed: bounded retrieval + semantic memory + temporal travel context + planner/freeform/specialist wiring')
+
+assert.match(processMessage,/contextualizeMediaReply/,'saved media should run through contextual association')
+assert.match(processMessage,/Platform: \${params\.item\.platform}/,'media association must use the understood media item, not only the raw URL')
+assert.match(processMessage,/includeSemantic:true,maxFacts:10/,'media association should retrieve bounded semantic context')
+assert.match(processMessage,/f\.score>=0\.58&&f\.confidence>=0\.55/,'weak long-memory matches must be filtered')
+assert.match(processMessage,/return exactly NONE/,'association must stay silent when relevance is weak')
+assert.match(processMessage,/Do not introduce any named entity unless it appears in the supplied context/,'unrelated entity leakage must remain forbidden')
+console.log('Contextual Long Memory media-association verification passed')
