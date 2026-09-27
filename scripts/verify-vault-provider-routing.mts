@@ -31,6 +31,8 @@ assert.ok(conditionalPin)
 assert.ok(!conditionalPin.objective.includes('4821'),'an authentication PIN must never become a postal code')
 assert.ok(!redactSecretShapedText('For Amazon login, my PIN if needed, use 4821').includes('4821'))
 assert.ok(!redactSecretShapedText('My PIN if needed; on step 2 use 4821').includes('4821'))
+assert.match(redactSecretShapedText('Ask me for my PIN if needed. Then book 2 seats for 7 PM.'),/Then book 2 seats for 7 PM\./)
+assert.match(redactSecretShapedText('Ask me for my PIN if needed. Then check flights on 15 October 2026.'),/15 October 2026/)
 for(const [input,host] of [
   [screenshotInstagram,'www.instagram.com'],
   [screenshotBlinkit,'blinkit.com'],
@@ -88,6 +90,7 @@ for(const input of [
   'Open Blinkit and save 12 Main St as my delivery address',
   'Open Blinkit and set 12 Main St as my delivery address',
   'Open Blinkit and use coupon SAVE20',
+  'Open Blinkit and request a refund',
   "Open Blinkit; don't change my address, and buy milk.",
   'Show my Zepto list',
   'Read my Blinkit notes',

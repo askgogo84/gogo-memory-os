@@ -45,10 +45,15 @@ export function redactSecretShapedText(content: string): string {
   if (!content) return content
   let out = String(content)
 
-  // Keep all code-shaped values after a conditional credential label private;
-  // an earlier step number must not detach the actual code from that label.
+  // Inspect the credential clause, including explicit follow-up assignments.
+  // A later task sentence must retain its quantities, dates, and times.
   out = out.replace(/(\b(?:pin(?:\s+code)?|otp)\s+if\s+(?:needed|required)\b)([\s\S]*)/gi,
-    (_match,label,tail)=>label+tail.replace(/\b[A-Z0-9._\/-]*\d[A-Z0-9._\/-]*(?:[ -]+\d+)*\b/gi,'[sensitive detail withheld]'))
+    (_match,label,tail)=>{
+      const boundary=tail.search(/[.!?]\s+(?!(?:it\s+is|use|enter|type|try)\b)|\b(?:then|next|afterwards)\s+(?!(?:use|enter|type|try)\b)/i)
+      const end=boundary<0?tail.length:boundary
+      const credentialClause=tail.slice(0,end).replace(/\b(?=[A-Z0-9._\/-]{3,}\b)[A-Z0-9._\/-]*\d[A-Z0-9._\/-]*(?:[ -]+\d+)*\b/gi,'[sensitive detail withheld]')
+      return label+credentialClause+tail.slice(end)
+    })
 
   // A conditional request for a PIN is not a value. Redact an adjacent numeric
   // code or an explicitly assigned value, but do not swallow the next task sentence.

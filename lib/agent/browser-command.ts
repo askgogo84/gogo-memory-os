@@ -141,6 +141,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     (/\badd\b/.test(lower) && /\bto\s+(?:my\s+)?(?:calendar|list)\b/.test(lower))
 
   if(reminderMutation||calendarOrListMutation)return null
+  if(/\b(?:request|initiate|process|claim)\b[^.!?]*\b(?:refund|return|cancellation)\b/.test(actionable))return null
   if(/\b(?:set|default)\b[^.!?]*\b(?:address|profile|delivery|payment|cart|basket)\b/.test(actionable))return null
   if(/\buse\s+(?:(?:my|the|this|a|an)\s+)?(?:coupon|promo|voucher|code)\b/.test(actionable))return null
   if(/\b(?:add|remove|empty|clear|update|increase|decrease)\b[^.!?]*\b(?:cart|basket)\b/.test(actionable))return null
