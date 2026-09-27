@@ -127,7 +127,7 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
           {cloudTakeover&&secondaryAuth&&<div className="mt-3"><VaultResumeTaskButton runId={run.id} label={(run.metadata?.secondary_auth?.safeToRetry===false||run.metadata?.browser_safe_to_retry===false)?"Check outcome without repeating action":"Resume this task"}/></div>}
           {(run.metadata?.secondary_auth?.safeToRetry===false||run.metadata?.browser_safe_to_retry===false)&&<p className="mt-3 text-[12px] text-[#D9A441]">An action may already have reached the provider. Gogo will only inspect the result after you finish authentication; it will not repeat the action.</p>}
         </section>}
-        {secondaryAuth&&!cloudTakeover&&run.metadata?.secondary_auth?.safeToRetry!==false&&run.metadata?.browser_safe_to_retry!==false&&<section className="rounded-[16px] bg-[#1A1710] p-5">
+        {(secondaryAuth||run.metadata?.browser_waiting)&&!cloudTakeover&&run.metadata?.secondary_auth?.safeToRetry!==false&&run.metadata?.browser_safe_to_retry!==false&&<section className="rounded-[16px] bg-[#1A1710] p-5">
           <p className="mb-3 text-[12px] text-[#D9A441]">The secure browser is not available yet. Finish any other active takeover, then retry this saved task.</p>
           <VaultResumeTaskButton runId={run.id} label="Retry this task"/>
         </section>}

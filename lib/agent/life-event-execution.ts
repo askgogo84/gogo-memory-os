@@ -131,7 +131,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
 
   let result: Awaited<ReturnType<typeof runSecureBrowser>>
   try {
-    await releaseRunAuthHandoff(tg,params.runId)
+    if(!params.reconciledResult)await releaseRunAuthHandoff(tg,params.runId)
     result = params.reconciledResult || await runSecureBrowser({
       userId: params.actor.userId,
       url,
@@ -144,11 +144,12 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     if(reason==='browser_handoff_in_use'){
       // Ownership is acquired before navigation; contention cannot have submitted.
       await Promise.all([
-        supabaseAdmin.from('agent_runs').update({status:'queued',error:null,summary:'Waiting for the secure browser. No check-in action was attempted; the same approved task can be retried.',updated_at:at}).eq('id',params.runId).eq('telegram_id',tg).eq('status','running'),
-        supabaseAdmin.from('life_event_actions').update({status:'waiting_approval',updated_at:at}).eq('id',lifeEventActionId).eq('telegram_id',tg).eq('status','running'),
+        supabaseAdmin.from('agent_runs').update({status:'paused',error:null,summary:'Waiting for the secure browser. No check-in action was attempted; retry this same approved task from its browser page.',metadata_json:{...meta,handoff:null,secondary_auth:undefined,browser_waiting:true,browser_url:url,auth_resume:{kind:'flight_execute',safeToRetry:true}},updated_at:at}).eq('id',params.runId).eq('telegram_id',tg).eq('status','running'),
+        supabaseAdmin.from('life_event_actions').update({status:'blocked',updated_at:at}).eq('id',lifeEventActionId).eq('telegram_id',tg).eq('status','running'),
       ])
-      return {runId:params.runId,status:'queued' as const,capability:'travel' as const,risk:'high' as const,handledBy:'life-event-checkin' as const,
-        text:'Another task is using your secure browser. No check-in action was attempted. Retry this same approved task after the browser is free.'}
+      const base=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
+      return {runId:params.runId,status:'paused' as const,capability:'travel' as const,risk:'high' as const,handledBy:'life-event-checkin' as const,
+        text:`Another task is using your secure browser. No check-in action was attempted. Retry this same approved task after the browser is free: ${base}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`}
     }
     await Promise.all([
       supabaseAdmin.from('agent_runs').update({
@@ -236,6 +237,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     }
   }
 
+  if(params.reconciledResult)await releaseRunAuthHandoff(tg,params.runId)
   await Promise.all([
     supabaseAdmin.from('agent_runs').update({
       status: 'completed', progress: 100,

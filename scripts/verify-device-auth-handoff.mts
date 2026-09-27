@@ -263,11 +263,11 @@ assert.equal(rows.agent_runs.metadata_json.handoff,null)
 preparationFails=false
 assert.equal((await shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'})).runId,'run')
 console.log('Transient preparation failure restores paused state and supports a second same-run resume')
-let executionError='browser_handoff_in_use',executionCalls=0
+let executionError='browser_handoff_in_use',executionCalls=0,executionReleases=0
 const executionMocks={
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
   './secure-computer':{runSecureBrowser:async()=>{executionCalls++;throw new Error(executionError)}},
-  './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{}},
+  './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{executionReleases++}},
   './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
   './approval-binding':{assertApprovalBinding:()=>{}},
@@ -284,9 +284,14 @@ for(const kind of ['flight','restaurant'])for(const busy of [true,false]){
   rows.agent_approvals={id:'approval',telegram_id:'1',run_id:'run',status:'approved',action_type:'booking',execution_payload:{action:'submit_web_checkin'}}
   rows.users={id:'owner',telegram_id:1}
   const result=kind==='flight'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run'}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions))
-  assert.equal(result.status,busy?'queued':'outcome_unknown')
-  assert.equal(rows.agent_runs.status,busy?'queued':'outcome_unknown')
-  assert.equal(rows.life_event_actions.status,busy?(kind==='flight'?'waiting_approval':'ready'):'blocked')
+  assert.equal(result.status,busy?(kind==='flight'?'paused':'queued'):'outcome_unknown')
+  assert.equal(rows.agent_runs.status,result.status)
+  assert.equal(rows.life_event_actions.status,busy?(kind==='flight'?'blocked':'ready'):'blocked')
+  if(busy&&kind==='flight'){
+    assert.equal(rows.agent_runs.metadata_json.browser_waiting,true)
+    assert.equal(rows.agent_runs.metadata_json.auth_resume.kind,'flight_execute')
+    assert.match(result.text,/\/run\/browser$/)
+  }
   assert.equal(rows.agent_approvals.status,'approved','retain the exact approval for a retry or reconciliation')
 }
 console.log('Approved executors retain retryable same-run state on pre-navigation contention, but never replay uncertain failures')
@@ -299,12 +304,24 @@ const outcomeReader=load('post-auth-outcome.ts',{
 const outcomeMetadata={handoff:{stateUrl:'https://browser.example/state'},auth_original_url:'https://provider.example',auth_action_log:[{kind:'click',status:'done',consequential:true}]}
 const evidence=await outcomeReader.inspectPostAuthOutcome(outcomeMetadata)
 assert.equal(evidence.status,'completed')
+for(const text of ['Payment declined','Reservation pending','Please wait','Welcome back','Reservation confirmed but payment failed']){
+  outcomePage={...outcomePage,title:'Provider',text}
+  assert.equal((await outcomeReader.inspectPostAuthOutcome(outcomeMetadata)).status,'blocked','an unfinished or failed result cannot complete the run or consume approval')
+}
 outcomePage={...outcomePage,title:'Sign in',text:'Approve this sign-in'}
 assert.equal((await outcomeReader.inspectPostAuthOutcome(outcomeMetadata)).status,'blocked')
 outcomePage={...outcomePage,title:'Confirmation',text:'Reservation confirmed',url:'https://unrelated.example'}
 await assert.rejects(()=>outcomeReader.inspectPostAuthOutcome(outcomeMetadata),/host_mismatch/)
 await assert.rejects(()=>outcomeReader.inspectPostAuthOutcome({}),/session_unavailable/)
 for(const kind of ['flight','restaurant']){
+  rows.agent_runs.status='queued'
+  rows.life_event_actions.status=kind==='flight'?'waiting_approval':'ready'
+  const priorReleases=executionReleases
+  const pending={...evidence,title:'Provider',pageText:'Processing'}
+  const incomplete=kind==='flight'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run',reconciledResult:pending}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions),pending)
+  assert.equal(incomplete.status,'paused')
+  assert.equal(executionReleases,priorReleases,'retain takeover until confirmation is verified')
+  assert.equal(rows.agent_approvals.status,'approved')
   rows.agent_runs.status='queued'
   rows.life_event_actions.status=kind==='flight'?'waiting_approval':'ready'
   const before=executionCalls

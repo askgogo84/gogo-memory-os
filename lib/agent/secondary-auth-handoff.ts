@@ -39,7 +39,7 @@ export async function releaseRunAuthHandoff(telegramId:string,runId:string){
   if(error||!run)throw new Error('auth_handoff_run_missing')
   const meta:any=run.metadata_json||{}
   if(meta.handoff?.releaseUrl)await releaseBrowserHandoff(String(meta.handoff.releaseUrl),{allowExpired:true})
-  const {handoff,secondary_auth,...remaining}=meta
+  const {handoff,secondary_auth,browser_waiting,...remaining}=meta
   const {error:saveError}=await supabaseAdmin.from('agent_runs').update({metadata_json:remaining}).eq('id',runId).eq('telegram_id',telegramId)
   if(saveError)throw new Error('auth_handoff_release_save_failed')
 }

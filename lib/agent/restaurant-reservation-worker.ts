@@ -119,7 +119,7 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
 
   let result:any
   try{
-    await releaseRunAuthHandoff(tg,runId)
+    if(!reconciledResult)await releaseRunAuthHandoff(tg,runId)
     result=reconciledResult||await runSecureBrowser({userId:actor.userId,url,mode:'execute',objective:instruction})
   }catch(error:any){
     if(error?.message==='browser_handoff_in_use'){
@@ -150,6 +150,10 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   const submitted=hasSubmit(result)
   const verified=submitted&&confirmedText(result)
   if(!verified){
+    if(reconciledResult){
+      await failSafe({action,event,runId,approvalId,status:'paused',summary:'The provider outcome is not confirmed yet. Check the retained browser again without repeating the reservation.',error:'restaurant_reconciliation_pending',actor})
+      return {status:'paused' as const,runId}
+    }
     if(submitted){
       const summary='The reservation submit may have reached the provider, but Gogo could not verify a final confirmation. Outcome unknown; no automatic retry.'
       await failSafe({action,event,runId,approvalId,status:'outcome_unknown',summary,error:'restaurant_reservation_confirmation_unknown',actor})
@@ -166,6 +170,7 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   }
 
   const now=new Date().toISOString()
+  if(reconciledResult)await releaseRunAuthHandoff(tg,runId)
   const meta={...(event.metadata_json||{}),reservationConfirmed:true,reservationConfirmedAt:now,confirmationUrl:result.url,confirmationEvidence:safe(result.pageText,2200)}
   await Promise.all([
     supabaseAdmin.from('agent_runs').update({status:'completed',summary:'Restaurant reservation submitted and verified from the provider confirmation page.',progress:100,completed_at:now,updated_at:now,metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:String(event.id),life_event_action_id:String(action.id),providerConfirmationVerified:true,confirmationUrl:result.url}}).eq('id',runId).eq('telegram_id',tg),
