@@ -3,8 +3,8 @@ import { findVaultProviderInText } from '../lib/vault/providers'
 import { parseConnectedProviderReadCommand } from '../lib/agent/browser-command'
 import { redactSecretShapedText } from '../lib/bot/memory-redaction'
 
-for(const secret of ['PIN 4821','PIN code 4821','password: hunter2','OTP 903112','My PIN if needed is 4821','PIN code if required: 4821','password if needed is hunter2']){
-  const text=`Ask me for my area and PIN code if needed. Do not order anything. ${secret}`
+for(const secret of ['PIN 4821','PIN code 4821','password: hunter2','OTP 903112','My PIN if needed is 4821','PIN code if required: 4821','password if needed is hunter2','My PIN if needed? 4821','My PIN if needed. It is 4821']){
+  const text=`Read the account. Do not order anything. ${secret}`
   const redacted=redactSecretShapedText(text)
   assert.ok(redacted.includes('Do not order anything.'),'keep the restriction preceding a real secret')
   assert.ok(!redacted.includes(secret.split(' ').at(-1)!),'redact actual credentials after the instructional phrase')
@@ -34,7 +34,7 @@ for(const [input,host] of [
   assert.equal(new URL(command.url).hostname,host)
   assert.equal(command.mode,'read')
   assert.equal(command.approvalAction,undefined)
-  assert.equal(command.objective,input,'retain the complete objective and human-auth instructions')
+  assert.equal(command.objective,input.replace('area and PIN code','area and postal code'),'retain objective and human-auth restrictions; normalize the explicitly postal label')
 }
 for(const input of [
   'Open Instagram and show saved posts. Do not like posts, but follow this account.',
@@ -48,6 +48,9 @@ for(const input of [
   'Check my Amazon order then order milk.',
   'Show my latest Instagram message and message Bob.',
   'Place an order for milk on Blinkit.',
+  'Open Blinkit and add milk to my cart',
+  'Open Zepto and remove milk from the basket',
+  'Open Instamart and empty my cart',
   'Remind me to check milk prices on Blinkit tomorrow.',
   'Compare milk prices on Blinkit, Instamart, and Zepto.',
 ])assert.equal(parseConnectedProviderReadCommand(input),null,'must not downgrade a mutation or truncate a multi-provider task: '+input)

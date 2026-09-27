@@ -121,6 +121,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     (/\badd\b/.test(lower) && /\bto\s+(?:my\s+)?(?:calendar|list)\b/.test(lower))
 
   if(reminderMutation||calendarOrListMutation)return null
+  if(/\b(?:add|remove|empty|clear|update|increase|decrease)\b[^.!?]*\b(?:cart|basket)\b/.test(actionable))return null
 
   // Consequential provider actions must never be downgraded to read mode.
   const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit']
@@ -136,7 +137,9 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
 
   return {
     url:provider.loginUrl,
-    objective:safe(raw,1800),
+    // In this explicit address question PIN means postal code, not a credential.
+    // Normalize the label before redaction; never exempt credential labels globally.
+    objective:safe(raw.replace(/\b(ask\s+me\s+for\s+(?:my\s+)?area\s+and\s+)pin\s+code(?=\s+if\s+(?:needed|required)\s*[.!?])/gi,'$1postal code'),1800),
     mode:'read',
     risk:'low',
   }
