@@ -153,7 +153,7 @@ async function captureCredential(page){
       const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
       const visible=el=>{try{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return false}};
       return {
-        url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,30000),
+        url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,30000),
         shareData:window.__gogoShareData||null,
         links:Array.from(document.querySelectorAll('a[href]')).filter(visible).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).filter(x=>/ticket|pass|qr|barcode|download|share|wallet|venue/i.test(x.text+' '+x.href)).slice(0,40)
       };

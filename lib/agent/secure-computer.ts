@@ -91,7 +91,7 @@ async function model(page){
       return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')};
     };
     return {
-      url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,18000),
+      url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       forms:Array.from(document.forms).filter(visible).slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(inputs)
@@ -159,7 +159,7 @@ async function model(page){
     };
     return {
       url:location.href,title:document.title,
-      text:clean(document.body?.innerText||'').slice(0,18000),
+      text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       links:Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0,100).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})),
       forms:Array.from(document.forms).filter(visible).slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),

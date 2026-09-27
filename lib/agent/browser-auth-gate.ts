@@ -43,7 +43,7 @@ export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
   // never combine independent matches from across the inspected page.
   const authPrompts = [...text.matchAll(/\b(?:(?:sign[- ]?in|log in|login) (?:to continue|to your account|required)|(?:trying|attempting) to (?:sign[- ]?in|log in)|verify your identity|verify it['’]?s you|authentication required|enter your password)\b/g)]
   // An auth-specific document title is stronger than an in-page navigation link.
-  if (/^(?:sign[- ]?in|log in|login)$/i.test(page.title?.trim() || '')) {
+  if (/^(?:sign[- ]?in|log in|login)(?:\s*[-–—|:]\s*\S.*)?$/i.test(page.title?.trim() || '')) {
     const titlePrompt = /^\s*(?:sign[- ]?in|log in|login)\b/.exec(text)
     if (titlePrompt) authPrompts.push(titlePrompt)
   }

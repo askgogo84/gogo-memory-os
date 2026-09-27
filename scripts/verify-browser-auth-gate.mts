@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
 
 const publicForm={title:'Contact us',text:'Send us a message',forms:[{inputs:[{name:'email',type:'email',label:'Email'},{name:'message',type:'textarea',label:'Message'}]}]}
@@ -70,3 +72,27 @@ for (const [text, reason] of [
 }
 
 console.log('T1b navigation/proximity regressions and T1c boundaries verified')
+
+// Execute the production page.evaluate callbacks against DOM-shaped fixtures.
+// Testing only raw detector input would miss whitespace lost during extraction.
+for (const [file, expectedExtractions] of [['secure-computer.ts', 2], ['secure-ticket-reader.ts', 1]] as const) {
+  const source = readFileSync(new URL(`../lib/agent/${file}`, import.meta.url), 'utf8')
+  const callbacks = [...source.matchAll(/page\.evaluate\(\(\)\s*=>\s*\{([\s\S]*?)\n\s*\}\);/g)]
+    .map(match => match[1]).filter(body => body.includes('document.body?.innerText'))
+  assert.equal(callbacks.length, expectedExtractions, `exercise every page extraction in ${file}`)
+  for (const body of callbacks) {
+    const extract = (title: string, innerText: string) => runInNewContext(`(() => {${body}})()`, {
+      document: { title, body: { innerText }, forms: [], querySelectorAll: () => [] },
+      location: { href:'https://example.com/page' }, window: {},
+    })
+    for (const copy of ['Our new device is available now.', 'Check your phone for your ticket.']) {
+      const page = extract('Tickets and products', `Sign in to your account\r\n \r\n${copy}`)
+      assert.equal(detectHumanAuthGate(page).required, false, `${file} must preserve separate paragraphs`)
+    }
+    for (const title of ['Sign in – Google Accounts', 'Sign in | Provider', 'Login - Provider', 'Log in: Provider']) {
+      const page = extract(title, 'Check your phone and tap Yes')
+      assert.equal(detectHumanAuthGate(page).reason, 'device_approval', `${file} must recognize provider-qualified auth titles`)
+    }
+  }
+}
+console.log('Production browser, Vault, and ticket extraction auth regressions verified')
