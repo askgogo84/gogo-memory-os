@@ -15,7 +15,7 @@ export async function markAuthOutcomeUnknown(telegramId:string,runId:string,meta
     if(error)throw new Error('auth_reconciliation_action_save_failed')
   }
   if(metadata.life_event_id){
-    const {error}=await supabaseAdmin.from('life_events').update({lifecycle_state:'needs_attention',updated_at:new Date().toISOString()}).eq('id',metadata.life_event_id).eq('telegram_id',telegramId)
+    const {error}=await supabaseAdmin.from('life_events').update({lifecycle_state:'needs_attention',updated_at:new Date().toISOString()}).eq('id',metadata.life_event_id).eq('telegram_id',telegramId).eq('lifecycle_state','in_progress')
     if(error)throw new Error('auth_reconciliation_event_save_failed')
   }
   return {runId,status:'outcome_unknown' as const,text:summary}

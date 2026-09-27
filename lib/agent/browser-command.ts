@@ -198,8 +198,10 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Gogo is working in an isolated secure browser.',progress:45,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
   await supabaseAdmin.from('agent_steps').update({status:'running',error:null,completed_at:null,started_at:new Date().toISOString()}).eq('id',params.stepId)
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
+  let pendingHandoffReservation:string|undefined
   try{
     const result=reconciledResult||await runSecureBrowser({userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null})
+    pendingHandoffReservation=result.handoffReservation
     const at=new Date().toISOString()
 
     if(result.status==='blocked'){
@@ -214,7 +216,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       if(blockReason==='human_auth_required'){
         if(result.authReason&&result.authReason!=='password'){
           const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
-          const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:result.url,originalUrl:params.command.url})
+          const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:result.url,originalUrl:params.command.url,reservationToken:result.handoffReservation})
           const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff},completed_at:null}).eq('id',params.runId).eq('telegram_id',String(tg))
           if(error){
             await cancelProviderBrowserHandoff(params.actor.userId,handoff).catch(()=>{})
@@ -260,6 +262,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     await activity(tg,params.runId,'run_completed',result.summary,{host:new URL(result.url).hostname,action_count:result.actions.length})
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
   }catch(err:any){
+    if(pendingHandoffReservation)await (await import('./provider-browser-handoff')).cancelBrowserHandoffReservation(params.actor.userId,pendingHandoffReservation).catch(()=>{})
     if(runMetadata.browser_safe_to_retry===false){
       const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
       return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}

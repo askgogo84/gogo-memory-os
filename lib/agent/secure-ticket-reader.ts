@@ -1,6 +1,6 @@
 import { Sandbox } from '@vercel/sandbox'
 import { detectHumanAuthGate } from './browser-auth-gate'
-import { acquireBrowserOwnerLock } from './browser-owner-lock'
+import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
 import { detectProviderChallenge, PROVIDER_CLOUDFLARE_CHALLENGE, DEVICE_HANDOFF_REQUIRED } from './provider-challenge'
 import { runSecureBrowser } from './secure-computer'
 import { startProviderBrowserHandoff } from './provider-browser-handoff'
@@ -192,11 +192,12 @@ async function fallbackSecureComputer(params: { userId: string; url: string; hum
       userId: params.userId,
       url: params.url,
       mode: 'read',
+      reserveHumanHandoff:params.humanHandoff!==false,
       objective: 'Read this confirmed booking/ticket page. Do not submit, purchase, cancel, authenticate, or change anything.',
     })
     if (result.status === 'blocked') {
       const authHandoff=params.humanHandoff!==false&&result.authReason&&result.authReason!=='password'
-        ? await startProviderBrowserHandoff({userId:params.userId,url:result.url||params.url,originalUrl:params.url}) : undefined
+        ? await startProviderBrowserHandoff({userId:params.userId,url:result.url||params.url,originalUrl:params.url,reservationToken:result.handoffReservation}) : undefined
       return {
         status: 'blocked', url: result.url || params.url, title: result.title || '', pageText: '', usefulLinks: [],
         blockReason: 'human_auth_required', authReason: result.authReason, authHandoff,
@@ -213,7 +214,7 @@ async function fallbackSecureComputer(params: { userId: string; url: string; hum
 
 export async function readProviderTicketPage(params: { userId: string; url: string; humanHandoff?: boolean; resumeHandoff?: SecureTicketReadResult['authHandoff'] }): Promise<SecureTicketReadResult> {
   let sandbox: any = null
-  let releaseOwnerLock:(()=>Promise<void>)|undefined
+  let releaseOwnerLock:BrowserOwnerRelease|undefined
   let keepForHuman=false
   // Only an explicit continuation may release a user's active takeover session.
   if(params.resumeHandoff?.releaseUrl)await releaseBrowserHandoff(params.resumeHandoff.releaseUrl,{allowExpired:true})
@@ -249,11 +250,13 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     }
     const gate = detectHumanAuthGate({ title: page.title, text: page.text, forms: [] })
     if (gate.required) {
+      let reservationToken:string|undefined
       if(params.humanHandoff!==false&&gate.reason!=='password'){
+        reservationToken=await releaseOwnerLock!.reserveHandoff()
         await releaseOwnerLock?.();releaseOwnerLock=undefined
       }
       const authHandoff=params.humanHandoff!==false&&gate.reason&&gate.reason!=='password'
-        ? await startProviderBrowserHandoff({userId:params.userId,url:String(page.url||params.url),originalUrl:params.url}).catch(()=>undefined) : undefined
+        ? await startProviderBrowserHandoff({userId:params.userId,url:String(page.url||params.url),originalUrl:params.url,reservationToken}).catch(()=>undefined) : undefined
       const authHandoffPending=params.humanHandoff!==false&&gate.reason!=='password'&&!authHandoff
       keepForHuman=Boolean(authHandoff)||authHandoffPending
       return {

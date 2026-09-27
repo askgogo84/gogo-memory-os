@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { startProviderBrowserHandoff, cancelProviderBrowserHandoff } from './provider-browser-handoff'
+import { startProviderBrowserHandoff, cancelProviderBrowserHandoff, cancelBrowserHandoffReservation } from './provider-browser-handoff'
 import { releaseBrowserHandoff } from './browser-handoff'
 import type { SecureBrowserResult } from './secure-computer'
 import type { AgentActor } from './actor'
@@ -8,6 +8,13 @@ import { inspectPostAuthRun, markAuthOutcomeUnknown } from './post-auth-outcome'
 export type AuthResumeKind='flight_prepare'|'flight_execute'|'restaurant'|'lifecycle_monitor'
 
 export async function attachSecondaryAuthHandoff(params:{userId:string;telegramId:string;runId:string;kind:AuthResumeKind;result:SecureBrowserResult}){
+  try{return await attachSecondaryAuthHandoffImpl(params)}catch(error){
+    if(params.result.handoffReservation)await cancelBrowserHandoffReservation(params.userId,params.result.handoffReservation).catch(()=>{})
+    throw error
+  }
+}
+
+async function attachSecondaryAuthHandoffImpl(params:{userId:string;telegramId:string;runId:string;kind:AuthResumeKind;result:SecureBrowserResult}){
   if(params.result.blockReason!=='human_auth_required'||!params.result.authReason||params.result.authReason==='password')return null
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',params.telegramId).maybeSingle()
   if(error||!run)throw new Error('auth_handoff_run_missing')
@@ -23,7 +30,7 @@ export async function attachSecondaryAuthHandoff(params:{userId:string;telegramI
   // Provisioning is retryable; the run/action are already safely paused.
   let createdHandoff:Awaited<ReturnType<typeof startProviderBrowserHandoff>>|undefined
   try{
-    createdHandoff=await startProviderBrowserHandoff({userId:params.userId,url:params.result.url,originalUrl:params.result.originalUrl})
+    createdHandoff=await startProviderBrowserHandoff({userId:params.userId,url:params.result.url,originalUrl:params.result.originalUrl,reservationToken:params.result.handoffReservation})
     const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...metadata,handoff:createdHandoff}}).eq('id',params.runId).eq('telegram_id',params.telegramId)
     if(error)throw new Error('auth_handoff_save_failed')
   }catch{

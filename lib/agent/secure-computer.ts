@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
-import { acquireBrowserOwnerLock } from './browser-owner-lock'
+import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
 import { upsertVaultSession } from '@/lib/vault/session-store'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -29,6 +29,7 @@ export type SecureBrowserResult = {
   status:'completed'|'prepared'|'blocked'|'failed'
   url:string
   originalUrl?:string
+  handoffReservation?:string
   title:string
   summary:string
   pageText:string
@@ -336,8 +337,8 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass}):Promise<SecureBrowserResult>{
-  let releaseOwnerLock:(()=>Promise<void>)|undefined
+export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean}):Promise<SecureBrowserResult>{
+  let releaseOwnerLock:BrowserOwnerRelease|undefined
   try {
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
@@ -453,7 +454,8 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         const summary=credentialSelectionRequired
           ? 'Multiple saved logins match this site. Choose which account Gogo should use.'
           : authGate.message||'This site needs a secure sign-in before Gogo can continue.'
-        return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
+        const handoffReservation=reason!=='password'&&params.reserveHumanHandoff!==false?await releaseOwnerLock.reserveHandoff():undefined
+        return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
       }
 
       const actions=await planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION')
@@ -475,7 +477,8 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     // wave, so this page must be checked before completion or sandbox teardown.
     const finalAuthGate=detectHumanAuthGate(page)
     if(finalAuthGate.required||pageLooksLikeLogin(page)){
-      return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,title:safeText(page.title,300),
+      const handoffReservation=finalAuthGate.reason&&finalAuthGate.reason!=='password'&&params.reserveHumanHandoff!==false?await releaseOwnerLock.reserveHandoff():undefined
+      return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),
         summary:finalAuthGate.message||'This site needs a secure sign-in before Gogo can continue.',
         pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',
         forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:finalAuthGate.reason||'password'}

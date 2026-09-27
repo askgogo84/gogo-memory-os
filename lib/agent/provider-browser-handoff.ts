@@ -2,6 +2,12 @@ import { randomBytes } from 'crypto'
 import { BROWSER_HANDOFF_PORT, HANDOFF_SERVER, getPersistentBrowserSandbox, releaseBrowserHandoff } from './browser-handoff'
 import { ensureBrowserRuntime } from './secure-browser-bootstrap'
 
+export async function cancelBrowserHandoffReservation(userId:string,token:string){
+  const {sandbox}=await getPersistentBrowserSandbox(userId,{bootstrap:false})
+  await sandbox.writeFiles([{path:`gogo-handoff-abort-${token}`,content:Buffer.from(token)}])
+  await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');try{if(fs.readFileSync('gogo-handoff-transfer','utf8')===process.argv[1])fs.unlinkSync('gogo-handoff-transfer')}catch{}",token]})
+}
+
 export async function cancelProviderBrowserHandoff(userId:string,handoff:{token:string;releaseUrl:string}){
   try{await releaseBrowserHandoff(handoff.releaseUrl,{allowExpired:true})}finally{
     // Also stop a server still starting up, using only this reservation's token.
@@ -10,30 +16,33 @@ export async function cancelProviderBrowserHandoff(userId:string,handoff:{token:
   }
 }
 
-export async function startProviderBrowserHandoff(params:{userId:string;url:string;originalUrl?:string}){
+export async function startProviderBrowserHandoff(params:{userId:string;url:string;originalUrl?:string;reservationToken?:string}){
   const target=new URL(params.url)
   const hosts=[target,...(params.originalUrl?[new URL(params.originalUrl)]:[])]
   if(hosts.some(url=>!['https:','http:'].includes(url.protocol)))throw new Error('browser_url_not_http')
   const allow=Object.fromEntries(hosts.flatMap(url=>[[url.hostname,[]],[`*.${url.hostname}`,[]]]))
   const {sandbox,name}=await getPersistentBrowserSandbox(params.userId,{bootstrap:false})
+  const token=params.reservationToken||randomBytes(24).toString('base64url')
+  try{
   await sandbox.writeFiles([{path:'gogo-handoff.js',content:Buffer.from(HANDOFF_SERVER)}])
-  const token=randomBytes(24).toString('base64url')
   const encoded=Buffer.from(params.url).toString('base64')
   // Hold one OS lock for the server lifetime. A second run must never kill or
   // rotate the token of an active owner-scoped takeover. Reserve before changing
   // network policy, then let the lock holder launch Chromium after setup.
   const launch=String.raw`const fs=require('fs');const token=process.argv[1],url=process.argv[2];
+let transfer='';try{transfer=fs.readFileSync('gogo-handoff-transfer','utf8')}catch{}
+if(process.argv[3]==='required'?transfer!==token:Boolean(transfer))process.exit(1);
+if(transfer===token)fs.unlinkSync('gogo-handoff-transfer');
 fs.writeFileSync('gogo-handoff-reserved',token);
 const deadline=Date.now()+300000;let launched=false;
 const timer=setInterval(()=>{let abort='';try{abort=fs.readFileSync('gogo-handoff-abort-'+token,'utf8')}catch{}
 if(abort===token||(!launched&&Date.now()>deadline))process.exit(1);
 let ready='';try{ready=fs.readFileSync('gogo-handoff-go','utf8')}catch{}
 if(!launched&&ready===token){launched=true;process.argv=['node','gogo-handoff.js',token,url];require('./gogo-handoff.js')}},100);`
-  await sandbox.runCommand({cmd:'flock',args:['-n','--close','gogo-handoff.lock','node','-e',launch,token,encoded],detached:true} as any)
+  await sandbox.runCommand({cmd:'flock',args:['-n','--close','gogo-handoff.lock','node','-e',launch,token,encoded,params.reservationToken?'required':'new'],detached:true} as any)
   await new Promise(r=>setTimeout(r,500))
   const reservation=await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');let value='';try{value=fs.readFileSync('gogo-handoff-reserved','utf8')}catch{};process.exit(value===process.argv[1]?0:1)",token]})
   if(reservation.exitCode!==0)throw new Error('browser_handoff_in_use')
-  try{
   await ensureBrowserRuntime(sandbox)
   await sandbox.updateNetworkPolicy({allow} as any)
   await sandbox.writeFiles([{path:'gogo-handoff-go',content:Buffer.from(token)}])
@@ -45,6 +54,7 @@ if(!launched&&ready===token){launched=true;process.argv=['node','gogo-handoff.js
   return {sandboxName:name,token,takeoverUrl:`${base}/?token=${q}`,stateUrl:`${base}/state?token=${q}`,agentActionUrl:`${base}/agent-action?token=${q}`,releaseUrl:`${base}/release?token=${q}`}
   }catch(error){
     await sandbox.writeFiles([{path:`gogo-handoff-abort-${token}`,content:Buffer.from(token)}]).catch(()=>{})
+    await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');try{if(fs.readFileSync('gogo-handoff-transfer','utf8')===process.argv[1])fs.unlinkSync('gogo-handoff-transfer')}catch{}",token]}).catch(()=>{})
     throw error
   }
 }

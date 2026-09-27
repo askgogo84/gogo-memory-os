@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto'
 
 /** Reserve the same owner lock used by human takeover before touching Chromium or egress. */
-export async function acquireBrowserOwnerLock(sandbox:any):Promise<()=>Promise<void>>{
+export type BrowserOwnerRelease=(()=>Promise<void>)&{reserveHandoff:()=>Promise<string>}
+export async function acquireBrowserOwnerLock(sandbox:any):Promise<BrowserOwnerRelease>{
   const token=randomBytes(18).toString('base64url')
   const hold=String.raw`const fs=require('fs'),token=process.argv[1];
+if(fs.existsSync('gogo-handoff-transfer'))process.exit(1);
 fs.writeFileSync('gogo-browser-held-'+token,'ready');
 const deadline=Date.now()+20*60*1000;
 setInterval(()=>{if(Date.now()>deadline||fs.existsSync('gogo-browser-release-'+token))process.exit(0)},50);`
@@ -19,8 +21,15 @@ setInterval(()=>{if(Date.now()>deadline||fs.existsSync('gogo-browser-release-'+t
     await sandbox.writeFiles([{path:`gogo-browser-release-${token}`,content:Buffer.from('release')}]).catch(()=>{})
     throw new Error('browser_handoff_in_use')
   }
-  return async()=>{
+  const release=async()=>{
     await sandbox.writeFiles([{path:`gogo-browser-release-${token}`,content:Buffer.from('release')}]).catch(()=>{})
     await new Promise(r=>setTimeout(r,150))
   }
+  return Object.assign(release,{reserveHandoff:async()=>{
+    const reservation=randomBytes(24).toString('base64url')
+    // Written while this process still owns flock. Every later automated owner
+    // checks it under flock and exits; only this takeover token can consume it.
+    await sandbox.writeFiles([{path:'gogo-handoff-transfer',content:Buffer.from(reservation)}])
+    return reservation
+  }})
 }

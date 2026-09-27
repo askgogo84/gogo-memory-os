@@ -20,7 +20,7 @@ const sandbox={writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async
 const reader=load('secure-ticket-reader.ts',{
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>sandbox}},
   './browser-auth-gate':{detectHumanAuthGate},
-  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>async()=>{}},
+  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{},{reserveHandoff:async()=>"transfer"})},
   './provider-challenge':{detectProviderChallenge:()=>({challenged:false})},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'fixture',ensureBrowserRuntime:async()=>{}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{started++;return handoff}},
@@ -205,8 +205,22 @@ await assert.rejects(()=>lockModule.acquireBrowserOwnerLock(lockSandbox),/browse
 assert.equal(lockCommands[0].args[2],'gogo-handoff.lock','automated readers and takeover must reserve the same lock')
 lockAvailable=true
 const unlock=await lockModule.acquireBrowserOwnerLock(lockSandbox)
+assert.equal(await unlock.reserveHandoff(),'reservation')
 await unlock()
 assert.ok(lockCommands.some(c=>c.files?.[0]?.path==='gogo-browser-release-reservation'))
+const transferWrite=lockCommands.findIndex(c=>c.files?.[0]?.path==='gogo-handoff-transfer')
+const releaseWrite=lockCommands.findIndex((c,i)=>i>transferWrite&&c.files?.[0]?.path==='gogo-browser-release-reservation')
+assert.ok(transferWrite>=0&&releaseWrite>transferWrite,'reserve the next human owner before releasing automation')
+const transferFiles=new Map([['gogo-handoff-transfer','reserved-token']])
+const transferFs={existsSync:(path:string)=>transferFiles.has(path),readFileSync:(path:string)=>transferFiles.get(path)||'',writeFileSync:(path:string,value:string)=>{transferFiles.set(path,value)},unlinkSync:(path:string)=>{transferFiles.delete(path)}}
+assert.throws(()=>runInNewContext(lockCommands[0].args[5],{require:()=>transferFs,process:{argv:['node','contender'],exit:()=>{throw new Error('contender blocked')}},setInterval:()=>{}}),/contender blocked/)
+assert.equal(transferFiles.has('gogo-browser-held-contender'),false)
+const launchScript=launches[0].args[5]
+assert.throws(()=>runInNewContext(launchScript,{require:()=>transferFs,process:{argv:['node','wrong-token','url','required'],exit:()=>{throw new Error('wrong transfer token')}},setInterval:()=>{}}),/wrong transfer token/)
+assert.equal(transferFiles.get('gogo-handoff-transfer'),'reserved-token')
+runInNewContext(launchScript,{require:()=>transferFs,process:{argv:['node','reserved-token','url','required'],exit:()=>{throw new Error('unexpected exit')}},setInterval:()=>{}})
+assert.equal(transferFiles.has('gogo-handoff-transfer'),false)
+assert.equal(transferFiles.get('gogo-handoff-reserved'),'reserved-token')
 let unexpectedBootstrap=0
 const lockedComputer=load('secure-computer.ts',{
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
@@ -238,7 +252,7 @@ const finalGateComputer=load('secure-computer.ts',{
       : {url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'click',detail:'#confirm',status:'done',consequential:true}]})})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
-  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>async()=>{finalUnlocks++}},
+  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{finalUnlocks++},{reserveHandoff:async()=>"transfer"})},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
   './trust':{canAuthorizeConsequentialAction:()=>true},
 })
@@ -247,6 +261,7 @@ assert.equal(finalGate.status,'blocked')
 assert.equal(finalGate.authReason,'device_approval')
 assert.equal(finalGate.actions[0].consequential,true)
 assert.equal(finalGate.originalUrl,'https://provider.example')
+assert.equal(finalGate.handoffReservation,'transfer')
 assert.equal(finalStops,0,'retain the browser for the human challenge opened by the final click')
 assert.equal(finalUnlocks,1,'release automated ownership before human takeover')
 console.log('Execute-mode final-click authentication pauses before completion and sandbox teardown')
@@ -350,13 +365,19 @@ outcomeReadError=new Error('browser_handoff_state_failed:403')
 await assert.rejects(()=>outcomeReader.inspectPostAuthRun('1','run',outcomeMetadata),/403/)
 assert.equal(rows.agent_runs.status,'paused','authorization errors cannot clear an active takeover')
 outcomeReadError=new Error('browser_handoff_state_failed:410')
+rows.life_events.lifecycle_state='in_progress'
 assert.equal(await outcomeReader.inspectPostAuthRun('1','run',{...outcomeMetadata,life_event_action_id:'action',life_event_id:'event'}),null)
 assert.equal(rows.life_events.lifecycle_state,'needs_attention')
 assert.equal(rows.agent_runs.status,'outcome_unknown')
 assert.equal(rows.agent_runs.metadata_json.handoff,undefined)
 assert.equal(rows.agent_runs.metadata_json.auth_reconciliation_required,true)
+rows.life_events.lifecycle_state='completed'
+await outcomeReader.markAuthOutcomeUnknown('1','run',{...outcomeMetadata,life_event_id:'event'})
+assert.equal(rows.life_events.lifecycle_state,'completed','stale reconciliation must not regress a terminal parent state')
 outcomeReadError=undefined
 provisioningFails=true
+rows.life_events.lifecycle_state='in_progress'
+rows.agent_runs.metadata_json.life_event_id='event'
 rows.agent_runs.status='running';rows.life_event_actions.status='running'
 const unavailable=await shared.attachSecondaryAuthHandoff({userId:'owner',telegramId:'1',runId:'run',kind:'restaurant',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://login.example',originalUrl:'https://provider.example',actions:outcomeMetadata.auth_action_log}})
 assert.equal(unavailable.status,'outcome_unknown')
