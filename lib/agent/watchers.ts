@@ -1018,7 +1018,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     await sendWhatsAppIfWanted(
       telegramId,
       condition.delivery,
-      `🔎 Gogo found a high-signal update\n\n${condition.title}\n${candidate.result.title}\n\nI saved the source in Ideas. I’ll stay quiet unless something materially different appears.`,
+      `${candidate.result.title}\n\nThis looks relevant to ${condition.title.replace(/^Watch:\\s*/i,'')}. I saved the source for you and I’ll only message again if something meaningfully changes.`,
     ).catch(err => console.error('AGENT_WATCHER_WHATSAPP_FAILED:', err?.message || err))
     await writeActivity(telegramId, `Background Gogo found a high-signal web update: ${condition.title}`, {
       watcher_id:watcher.id,
