@@ -94,3 +94,10 @@ assert.match(processMessage,/f\.score>=0\.58&&f\.confidence>=0\.55/,'weak long-m
 assert.match(processMessage,/return exactly NONE/,'association must stay silent when relevance is weak')
 assert.match(processMessage,/Do not introduce any named entity unless it appears in the supplied context/,'unrelated entity leakage must remain forbidden')
 console.log('Contextual Long Memory media-association verification passed')
+
+const contextBrainSource=fs.readFileSync('lib/agent/context-brain.ts','utf8')
+assert.match(contextBrainSource,/from\('agent_goals'\)/,'active goals must be available to Context Brain')
+assert.match(contextBrainSource,/source:'goal'/,'goals must carry typed provenance')
+assert.match(contextBrainSource,/Goal: /,'goal context should be human-readable')
+assert.match(contextBrainSource,/score<0\.5&&lexical<0\.16/,'unrelated goals must stay out of a turn')
+console.log('Contextual Long Memory goal recall verification passed')
