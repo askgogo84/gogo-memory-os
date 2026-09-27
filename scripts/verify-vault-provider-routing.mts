@@ -28,6 +28,7 @@ assert.ok(isExplicitProviderBrowserRead('Open the website for Blinkit and check 
 assert.equal(isExplicitProviderBrowserRead('What did I tell you about my Amazon order?'),false)
 assert.equal(isExplicitProviderBrowserRead('Open my memory about my Amazon order'),false)
 assert.equal(isExplicitProviderBrowserRead('Open my notes about Blinkit prices'),false)
+assert.equal(isExplicitProviderBrowserRead('Open the Amazon email and check my order confirmation'),false)
 const conditionalPin=parseConnectedProviderReadCommand('Open Amazon and show my orders. Ask me for my PIN code if needed. It is 4821.')
 assert.ok(conditionalPin)
 assert.ok(!conditionalPin.objective.includes('4821'),'an authentication PIN must never become a postal code')
@@ -47,6 +48,8 @@ for(const [input,host] of [
   ['Open my Amazon order','www.amazon.in'],
   ['Open my latest Instagram message','www.instagram.com'],
   ['Open Instagram and show recent posts from Blinkit','www.instagram.com'],
+  ['Search Instagram for Blinkit posts','www.instagram.com'],
+  ['Open Blinkit and return the price of milk','blinkit.com'],
   ['Check whether milk is available at my place on Blinkit','blinkit.com'],
   ['Will Amazon cancel my order?','www.amazon.in'],
   ['Does Amazon confirm my order?','www.amazon.in'],
@@ -94,6 +97,8 @@ for(const input of [
   'Open Blinkit and get me two cartons of milk',
   'Open Blinkit and start ordering milk',
   'Open Zepto and begin buying milk',
+  'Open Blinkit and return the spoiled milk',
+  'Open Zepto to exchange the milk',
   "Open Blinkit; don't change my address, and buy milk.",
   "Open Blinkit. Don't cancel my order, and buy milk.",
   'Show my Zepto list',

@@ -94,13 +94,14 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   let provider=candidates[0]
   // Provider names inside search content are not extra navigation targets.
   // Still reject actual multi-provider work instead of silently dropping a site.
-  const targetText=raw.match(/^(?:please\s+)?(?:open|browse|visit|navigate\s+to|go\s+to)\s+(.+?)(?=\s+and\b|[!?;,]|$)/i)?.[1]||''
+  const navigationText=raw.match(/^(?:please\s+)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||''
+  const targetText=navigationText.replace(/^(?:the|a|an)\s+/i,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/i,'').split(/\s+(?:and|for)\b|[!?;,]/i)[0]
   if(candidates.length>1||targetText){
     const targets=candidates.filter(candidate=>candidate.alias.test(targetText))
     if(targets.length!==1)return null
     const others=candidates.filter(candidate=>candidate!==targets[0])
     if(!others.every(candidate=>[...raw.matchAll(new RegExp(candidate.alias.source,'gi'))].every(match=>
-      /\b(?:from|about|by|mentioning)\s+$/i.test(raw.slice(0,match.index)))))return null
+      /\b(?:from|about|by|mentioning|for)\s+$/i.test(raw.slice(0,match.index)))))return null
     provider=targets[0]
   }
   if(!provider)return null
@@ -112,7 +113,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   // reject read routing ("do not like posts, but follow this account").
   const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem']
   const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
-  const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use'].join('|')})`
+  const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
     .replace(/\bpurchase\s+(history|details|receipt|status)\b/g,'order $1')
@@ -141,6 +142,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     (/\badd\b/.test(lower) && /\bto\s+(?:my\s+)?(?:calendar|list)\b/.test(lower))
 
   if(reminderMutation||calendarOrListMutation)return null
+  if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?(?:return|exchange)(?!\s+(?:(?:the|my|this)\s+)?(?:price|results?|information|details|availability|summary|answer|control)\b)\s+/.test(actionable))return null
   if(/\b(?:start|begin|continue|keep)\s+(?:ordering|buying|purchasing|booking|paying|submitting|redeeming|applying)\b/.test(actionable))return null
   if(shoppingSites.length&&/\bget\s+(?:me|us)\s+(?!(?:the\s+)?(?:(?:current|latest|lowest|best|total)\s+)?(?:prices?|cost|availability|information|details|status)\b)/.test(actionable))return null
   if(/\b(?:request|initiate|process|claim)\b[^.!?]*\b(?:refund|return|cancellation)\b/.test(actionable))return null
@@ -189,9 +191,11 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   }
 }
 export function isExplicitProviderBrowserRead(text:string){
-  const target=String(text||'').trim().match(/^(?:please\s+)?(?:open|browse|visit|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]?.toLowerCase()
+  const target=String(text||'').trim().match(/^(?:please\s+)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]?.toLowerCase()
   if(!target)return false
   const navigationTarget=target.replace(/^(?:the|a|an)\s+/,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/,'')
+  const navigationObject=navigationTarget.split(/\b(?:and|then|to|for)\b|[.!?;,]/)[0]
+  if(/\b(?:email|mail|gmail|notes?|memory|memories|lists?|reminders?|calendar)\b/.test(navigationObject))return false
   const vaultProvider=findVaultProviderInText(navigationTarget)
   const aliases=[...(vaultProvider?.aliases||[]),'blinkit','instamart','swiggy instamart','zepto']
   const directTarget=aliases.some(alias=>navigationTarget.startsWith(alias)&&!/[a-z0-9]/i.test(navigationTarget.charAt(alias.length)))
