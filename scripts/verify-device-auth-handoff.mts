@@ -4,11 +4,11 @@ import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
 
-function load(file: string, mocks: Record<string, any>, extra='') {
+function load(file: string, mocks: Record<string, any>, extra='', globals:Record<string,any>={}) {
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
-  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||{},process:{env:{}},Buffer,URL,console})
+  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||{},process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
   return exports
 }
 
@@ -23,7 +23,7 @@ const reader=load('secure-ticket-reader.ts',{
   './provider-challenge':{detectProviderChallenge:()=>({challenged:false})},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'fixture',ensureBrowserRuntime:async()=>{}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{started++;return handoff}},
-  './browser-handoff':{releaseBrowserHandoff:async()=>{released++}},
+  './browser-handoff':{releaseBrowserHandoff:async(_url:string,options:any)=>{assert.equal(options.allowExpired,true);released++;return {ok:false,expired:true}}},
 })
 const paused=await reader.readProviderTicketPage({userId:'user',url:'https://provider.example/ticket'})
 assert.equal(paused.authReason,'device_approval')
@@ -58,7 +58,7 @@ const command=load('browser-command.ts',{
     : {status:'blocked',blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in'}},
   '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff},
-  './browser-handoff':{releaseBrowserHandoff:async()=>{released++}},
+  './browser-handoff':{releaseBrowserHandoff:async(_url:string,options:any)=>{assert.equal(options.allowExpired,true);released++;return {ok:false,expired:true}}},
 },'\nexport { executeBrowser }')
 const params={actor:{userId:'user',legacyTelegramId:1},runId:'same-run',stepId:'same-step',command:{url:metadata.url,objective:metadata.objective,risk:'low'},mode:'read'}
 const blocked=await command.executeBrowser(params)
@@ -79,3 +79,16 @@ console.log('Device auth takeover, ticket lifetime, and same-run continuation ve
 const computerSource=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
 assert.match(computerSource,/authGate\.reason==='password'\|\|\(!authGate\.required&&loginish\)/,
   'a detected secondary challenge must never trigger a Vault password attempt')
+
+let releaseStatus=410
+const releaseModule=load('browser-handoff.ts',{'@anthropic-ai/sdk':{default:class {}}},'',{
+  fetch:async()=>{if(releaseStatus===0)throw new Error('expired endpoint');return {ok:releaseStatus===200,status:releaseStatus,json:async()=>({ok:true})}},
+})
+for(const status of [404,410,502,503,504,0]){
+  releaseStatus=status
+  assert.equal((await releaseModule.releaseBrowserHandoff(handoff.releaseUrl,{allowExpired:true})).expired,true)
+}
+releaseStatus=403
+await assert.rejects(()=>releaseModule.releaseBrowserHandoff(handoff.releaseUrl,{allowExpired:true}),/403/,
+  'authorization failures must not be treated as expiration')
+console.log('Expired takeover recovery preserves same-task continuation without weakening authorization')

@@ -185,7 +185,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   if(runMetadata.handoff?.releaseUrl){
     // Release the human browser's profile lock only after permission/approval checks.
     const {releaseBrowserHandoff}=await import('./browser-handoff')
-    await releaseBrowserHandoff(String(runMetadata.handoff.releaseUrl))
+    await releaseBrowserHandoff(String(runMetadata.handoff.releaseUrl),{allowExpired:true})
     delete runMetadata.handoff
     const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:runMetadata}).eq('id',params.runId).eq('telegram_id',String(tg))
     if(error)throw new Error('browser_handoff_release_save_failed')

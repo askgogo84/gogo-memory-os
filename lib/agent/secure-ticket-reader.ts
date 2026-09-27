@@ -215,7 +215,7 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
   let sandbox: any = null
   let keepForHuman=false
   // Only an explicit continuation may release a user's active takeover session.
-  if(params.resumeHandoff?.releaseUrl)await releaseBrowserHandoff(params.resumeHandoff.releaseUrl)
+  if(params.resumeHandoff?.releaseUrl)await releaseBrowserHandoff(params.resumeHandoff.releaseUrl,{allowExpired:true})
   try {
     sandbox = await computer(params.userId, params.url)
     const payload = Buffer.from(JSON.stringify({ url: params.url })).toString('base64')

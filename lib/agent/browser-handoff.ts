@@ -116,6 +116,15 @@ export async function continueBrowserHandoffResearch(params:{stateUrl:string;age
   return{state,blocked:null as null}
 }
 
-export async function releaseBrowserHandoff(releaseUrl:string){
-  const res=await fetch(releaseUrl,{method:'POST',cache:'no-store'});if(!res.ok)throw new Error(`browser_handoff_release_failed:${res.status}`);return await res.json()
+export async function releaseBrowserHandoff(releaseUrl:string,options:{allowExpired?:boolean}={}){
+  let res:Response
+  try{
+    res=await fetch(releaseUrl,{method:'POST',cache:'no-store',signal:AbortSignal.timeout(10000)})
+  }catch(error){
+    if(options.allowExpired)return {ok:false,expired:true}
+    throw error
+  }
+  if(options.allowExpired&&[404,410,502,503,504].includes(res.status))return {ok:false,expired:true}
+  if(!res.ok)throw new Error(`browser_handoff_release_failed:${res.status}`)
+  return await res.json()
 }
