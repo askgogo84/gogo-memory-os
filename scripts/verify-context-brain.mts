@@ -109,3 +109,6 @@ assert.match(contextBrainGoalSource,/source:'goal'/,'goals must carry typed prov
 assert.match(contextBrainGoalSource,/Goal: /,'goal context should be human-readable')
 assert.match(contextBrainGoalSource,/score<0\.5&&lexical<0\.16/,'unrelated goals must stay out of a turn')
 console.log('Contextual Long Memory goal recall verification passed')
+
+assert.match(association,/\['semantic_memory','memory_insight','open_loop','goal','typed_context','life_event'\]/,'relevant persistent goals must participate in saved-item associations')
+console.log('Contextual association includes relevance-gated persistent goals')
