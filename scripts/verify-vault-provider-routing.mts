@@ -3,7 +3,7 @@ import { findVaultProviderInText } from '../lib/vault/providers'
 import { parseConnectedProviderReadCommand } from '../lib/agent/browser-command'
 import { redactSecretShapedText } from '../lib/bot/memory-redaction'
 
-for(const secret of ['PIN 4821','PIN code 4821','password: hunter2','OTP 903112','My PIN if needed is 4821','PIN code if required: 4821','password if needed is hunter2','My PIN if needed? 4821','My PIN if needed. It is 4821']){
+for(const secret of ['PIN 4821','PIN code 4821','password: hunter2','OTP 903112','My PIN if needed is 4821','PIN code if required: 4821','password if needed is hunter2','My PIN if needed? 4821','My PIN if needed. It is 4821','My PIN if needed, 4821','My PIN if needed; 4821']){
   const text=`Read the account. Do not order anything. ${secret}`
   const redacted=redactSecretShapedText(text)
   assert.ok(redacted.includes('Do not order anything.'),'keep the restriction preceding a real secret')
@@ -33,6 +33,8 @@ for(const [input,host] of [
   ['When will my Blinkit order arrive?','blinkit.com'],
   ['When will Amazon deliver my order?','www.amazon.in'],
   ['Check my Amazon order and latest message','www.amazon.in'],
+  ['Check my Amazon order, and latest message','www.amazon.in'],
+  ['Open Blinkit. Ask for my PIN code if needed. Then check the price of milk. Do not order.','blinkit.com'],
   ['Open Blinkit. Ask me for my area and PIN code if needed and check the price of milk','blinkit.com'],
   ['Open Blinkit and check the price; do not place an order.','blinkit.com'],
   ['Open Blinkit and check the price. Do not make an order or add to my cart.','blinkit.com'],
@@ -42,7 +44,7 @@ for(const [input,host] of [
   assert.equal(new URL(command.url).hostname,host)
   assert.equal(command.mode,'read')
   assert.equal(command.approvalAction,undefined)
-  assert.equal(command.objective,input.replace('area and PIN code','area and postal code'),'retain objective and human-auth restrictions; normalize the explicitly postal label')
+  assert.equal(command.objective,input.replace('PIN code','postal code'),'retain objective and human-auth restrictions; normalize the explicitly postal label')
 }
 for(const input of [
   'Open Instagram and show saved posts. Do not like posts, but follow this account.',
@@ -59,6 +61,7 @@ for(const input of [
   'Open Blinkit and add milk to my cart',
   'Open Blinkit and put milk in my cart',
   'Open Zepto and move milk to my basket',
+  'Open Blinkit and save 12 Main St as my delivery address',
   'Check my Amazon order and message Bob',
   'Open Zepto and remove milk from the basket',
   'Open Instamart and empty my cart',
