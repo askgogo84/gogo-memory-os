@@ -53,7 +53,7 @@ import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, captureJ
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { isGmailVerificationQuery } from '@/lib/agent/gmail-verification'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
-import { parseConnectedProviderReadCommand } from '@/lib/agent/browser-command'
+import { parseConnectedProviderReadCommand, isExplicitProviderBrowserRead } from '@/lib/agent/browser-command'
 import { isRestaurantReservationRequest } from '@/lib/agent/restaurant-reservation'
 import {
   isAudioContentType,
@@ -1294,7 +1294,7 @@ _"${originalText}"_
     // execution authority. The specialist still has to validate the command and all
     // existing approval/policy/provider-verification gates remain unchanged.
     const jevIntent=promotedJevIntent(brainObservation?.jev)
-    if(jevIntent){
+    if(jevIntent&&!isExplicitProviderBrowserRead(text)){
       const agentIntent=['watcher','reminder_read','reminder_mutation','email_read','email_mutation','list_task','memory_context','travel_research','browser_action'].includes(jevIntent)
       if(agentIntent){
         const promotedAgent=await tryRunWhatsAppJevSpecialist({

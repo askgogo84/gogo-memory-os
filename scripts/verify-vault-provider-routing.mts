@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { findVaultProviderInText } from '../lib/vault/providers'
-import { parseConnectedProviderReadCommand } from '../lib/agent/browser-command'
+import { parseConnectedProviderReadCommand, isExplicitProviderBrowserRead } from '../lib/agent/browser-command'
+import { redactSecretShapedText } from '../lib/bot/memory-redaction'
+
+for(const secret of ['PIN 4821','PIN code 4821','password: hunter2','OTP 903112']){
+  const text=`Read the account. Do not order anything. ${secret}`
+  const redacted=redactSecretShapedText(text)
+  assert.ok(redacted.includes('Do not order anything.'),'keep the restriction preceding a real secret')
+  assert.ok(!redacted.includes(secret.split(' ').at(-1)!),'redact actual credentials after the instructional phrase')
+}
 
 assert.equal(findVaultProviderInText('Find the AI reels I saved recently on Instagram')?.key,'instagram')
 assert.equal(findVaultProviderInText('Check my Amazon orders')?.key,'amazon')
@@ -11,6 +19,173 @@ assert.equal(findVaultProviderInText('Show my Booking.com reservations')?.key,'b
 assert.equal(findVaultProviderInText('Find something on a random website'),null)
 
 const exactInstagramRequest='Find the AI reels I saved recently on Instagram.'
+const screenshotInstagram='Open Instagram and show me the 3 most recent posts in my Saved collection. Do not like, comment, follow, message, post, or change anything.'
+const screenshotBlinkit='Open Blinkit and check availability and the current price of Amul Taaza toned milk, 1 litre, for my delivery location. Ask me for my area and PIN code if needed. Do not order anything. If login is required, let me take control. After I authenticate, resume this same task and tell me the price.'
+assert.ok(isExplicitProviderBrowserRead(screenshotInstagram))
+assert.ok(isExplicitProviderBrowserRead(exactInstagramRequest))
+assert.equal(isExplicitProviderBrowserRead('Open Instagram and show my next appointment'),false)
+assert.equal(isExplicitProviderBrowserRead('Open Instagram and show my AskGogo tasks'),false)
+assert.equal(isExplicitProviderBrowserRead('Open Instagram and show my to-dos'),false)
+assert.ok(isExplicitProviderBrowserRead('Show my saved posts on my Instagram account'))
+assert.ok(isExplicitProviderBrowserRead('Show Instagram posts from Blinkit'))
+assert.ok(isExplicitProviderBrowserRead('Search Instagram for posts about Gmail'))
+assert.ok(isExplicitProviderBrowserRead('Show my saved posts on Instagram'))
+assert.ok(isExplicitProviderBrowserRead('Search for the posts I saved on Instagram'))
+assert.equal(isExplicitProviderBrowserRead('Find my notes on Instagram'),false)
+assert.equal(isExplicitProviderBrowserRead('Open Instagram and show my Gmail inbox'),false)
+for(const prefix of ['Can you','Could you please','Would you','Please would you'])assert.ok(isExplicitProviderBrowserRead(`${prefix} open Instagram and show my saved posts?`))
+assert.ok(isExplicitProviderBrowserRead(screenshotBlinkit))
+assert.ok(isExplicitProviderBrowserRead('Open the Instagram app and show my saved posts'))
+assert.ok(isExplicitProviderBrowserRead('Open the website for Blinkit and check milk prices'))
+assert.equal(isExplicitProviderBrowserRead('What did I tell you about my Amazon order?'),false)
+assert.equal(isExplicitProviderBrowserRead('Open my memory about my Amazon order'),false)
+assert.equal(isExplicitProviderBrowserRead('Open my notes about Blinkit prices'),false)
+assert.equal(isExplicitProviderBrowserRead('Open the Amazon email and check my order confirmation'),false)
+const conditionalPin=parseConnectedProviderReadCommand('Open Amazon and show my orders. Ask me for my PIN code if needed. It is 4821.')
+assert.ok(conditionalPin)
+assert.ok(!conditionalPin.objective.includes('4821'),'an authentication PIN must never become a postal code')
+for(const [input,host] of [
+  [screenshotInstagram,'www.instagram.com'],
+  [screenshotBlinkit,'blinkit.com'],
+  ['Open Instamart and check milk prices. Do not buy, pay, or order anything.','www.swiggy.com'],
+  ['Check milk availability on Zepto. Don’t purchase anything.','www.zepto.com'],
+  ['Check my Amazon order','www.amazon.in'],
+  ['Open Instagram and show my saved posts. Do not start following anyone.','www.instagram.com'],
+  ['Open Instagram and show my saved posts. Do not continue sharing anything.','www.instagram.com'],
+  ['Show Facebook posts about Instagram','www.facebook.com'],
+  ['Show posts from Blinkit on Instagram','www.instagram.com'],
+  ['Is there a new message on Instagram?','www.instagram.com'],
+  ['Show Instagram posts from Blinkit','www.instagram.com'],
+  ['Show posts from Instagram','www.instagram.com'],
+  ['Get milk prices on Blinkit','blinkit.com'],
+  ['Get Amul milk availability on Zepto','www.zepto.com'],
+  ['Do I have my latest Instagram message?','www.instagram.com'],
+  ['Could my Amazon order be delayed?','www.amazon.in'],
+  ['Should my Amazon order have arrived?','www.amazon.in'],
+  ['Open Blinkit and get the current price of milk','blinkit.com'],
+  ['Open Instagram and show posts from the Blinkit account','www.instagram.com'],
+  ['Show Instagram posts about Blinkit','www.instagram.com'],
+  ['Show my saved posts on Instagram','www.instagram.com'],
+  ['Why was my Amazon order cancelled?','www.amazon.in'],
+  ['Search for posts about Blinkit on Instagram','www.instagram.com'],
+  ['Tell me where my Amazon order is','www.amazon.in'],
+  ['Can you tell me where my Amazon order is','www.amazon.in'],
+  ['Show me the latest update on my Amazon order','www.amazon.in'],
+  ['Find posts about Blinkit on Instagram','www.instagram.com'],
+  ['Was my Amazon order cancelled?','www.amazon.in'],
+  ['Were my Amazon order details updated?','www.amazon.in'],
+  ['Open Blinkit and show my default delivery address','blinkit.com'],
+  ['Show my latest Instagram message','www.instagram.com'],
+  ['Where is my Amazon order?','www.amazon.in'],
+  ['What is the status of my Amazon order?','www.amazon.in'],
+  ['When will my Blinkit order arrive?','blinkit.com'],
+  ['When will Amazon deliver my order?','www.amazon.in'],
+  ['Did Amazon cancel my order?','www.amazon.in'],
+  ['Update me on my Amazon order','www.amazon.in'],
+  ['Open my Amazon order','www.amazon.in'],
+  ['Open my latest Instagram message','www.instagram.com'],
+  ['Open Instagram and show recent posts from Blinkit','www.instagram.com'],
+  ['Search Instagram for Blinkit posts','www.instagram.com'],
+  ['Open Blinkit and return the price of milk','blinkit.com'],
+  ['Open Blinkit and make sure Amul milk is available','blinkit.com'],
+  ['Check whether milk is available at my place on Blinkit','blinkit.com'],
+  ['Will Amazon cancel my order?','www.amazon.in'],
+  ['Does Amazon confirm my order?','www.amazon.in'],
+  ['Show my Blinkit purchase history','blinkit.com'],
+  ['Check milk prices on Blinkit. Do not use coupons or set my delivery address.','blinkit.com'],
+  ['Check my Amazon order and latest message','www.amazon.in'],
+  ['Check my Amazon order, and latest message','www.amazon.in'],
+  ['Check my Amazon order status and latest message','www.amazon.in'],
+  ["What's the price of Amul milk on Blinkit?",'blinkit.com'],
+  ['How much is Amul milk on Blinkit?','blinkit.com'],
+  ['Does Blinkit have Amul milk?','blinkit.com'],
+  ['Does Zepto carry Amul milk?','www.zepto.com'],
+  ['What does Amul milk cost on Zepto?','www.zepto.com'],
+  ['Get me the current price of milk on Blinkit','blinkit.com'],
+  ['Is Amul milk available on Zepto?','www.zepto.com'],
+  ['Open Blinkit. Ask me for my area and PIN code if needed and check the price of milk','blinkit.com'],
+  ['Open Blinkit and check the price; do not place an order.','blinkit.com'],
+  ['Open Blinkit and check the price. Do not make an order or add to my cart.','blinkit.com'],
+] as const){
+  const command=parseConnectedProviderReadCommand(input)
+  assert.ok(command,input)
+  assert.equal(new URL(command.url).hostname,host)
+  assert.equal(command.mode,'read')
+  assert.equal(command.approvalAction,undefined)
+  const expected=input.includes('area and PIN code')?input.replace('PIN code','postal code'):input
+  assert.equal(command.objective,expected,'retain objective and human-auth restrictions; normalize only the explicitly postal label')
+}
+for(const input of [
+  'Open Instagram and show saved posts. Do not like posts, but follow this account.',
+  'Open Instagram and show saved posts. Do not like, comment, or change anything. Follow this account.',
+  'Open Instagram and publish a post. Do not like anything.',
+  'Open Blinkit and buy milk. Do not change my address.',
+  'Open Zepto and order two cartons of milk.',
+  'Order milk on Blinkit',
+  'Order four cartons on Zepto',
+  'Open Instagram. Do not like anything. Message Bob.',
+  'Check my Amazon order then order milk.',
+  'Show my latest Instagram message and message Bob.',
+  'Place an order for milk on Blinkit.',
+  'Open Blinkit and add milk to my cart',
+  'Open Blinkit and put milk in my cart',
+  'Open Zepto and move milk to my basket',
+  'Open Blinkit and save 12 Main St as my delivery address',
+  'Open Blinkit and set 12 Main St as my delivery address',
+  'Open Blinkit and use coupon SAVE20',
+  'Open Blinkit and request a refund',
+  'Open Blinkit and get me two cartons of milk',
+  'Open Blinkit and start ordering milk',
+  'Show my saved posts on Instagram and Facebook',
+  "Open Instagram. Don't like anything before sharing the post.",
+  'Open Instagram and report this post',
+  'Open Blinkit and rate this delivery five stars',
+  'Open Blinkit and modify my delivery address',
+  'Open Instagram and start following Alice',
+  'Open Instagram and continue sharing posts',
+  'Open Blinkit and get milk at the lowest price',
+  'Open Blinkit and get milk then check the price',
+  'Have Amazon cancel my order',
+  'Open Blinkit and get milk',
+  'Open Blinkit and reschedule my delivery for tomorrow',
+  'Open Blinkit and refund the spoiled milk',
+  'Open Blinkit and make sure my delivery address is changed to 12 Main St',
+  'Open Reddit to see posts about Blinkit',
+  'Open Reddit then show posts about Blinkit',
+  'Open Instagram and share this post',
+  'Open Instagram and block this user',
+  'Open Blinkit and subscribe to Amul milk',
+  'Open Zepto and renew my subscription',
+  'Open Zepto and begin buying milk',
+  'Open Blinkit and return the spoiled milk',
+  'Open Zepto to exchange the milk',
+  "Open Blinkit; don't change my address, and buy milk.",
+  "Open Blinkit. Don't cancel my order, and buy milk.",
+  'Show my Zepto list',
+  'Read my Blinkit notes',
+  'Open Blinkit and apply coupon SAVE20',
+  'Open Zepto and redeem a coupon',
+  'Open Blinkit to order milk',
+  'Open Reddit and show posts about Blinkit',
+  'Check my Amazon order and message Bob',
+  'Check my Amazon order to message the seller',
+  'Check my Amazon order before you order milk',
+  'Open Zepto and remove milk from the basket',
+  'Open Instamart and empty my cart',
+  'Open Blinkit and reorder milk',
+  'Place my order on Blinkit',
+  'Complete my order on Zepto',
+  'Confirm my Blinkit order',
+  'Did Amazon cancel my order? Cancel my other order.',
+  'Open Blinkit and make an order for milk',
+  'Open Blinkit and create an order for milk',
+  'Check my Amazon order, order milk',
+  'Will you order milk on Blinkit?',
+  'Will you message Bob on Instagram?',
+  'Remind me to check milk prices on Blinkit tomorrow.',
+  'Compare milk prices on Blinkit, Instamart, and Zepto.',
+  'Open Instagram and show posts from Blinkit, then open Blinkit and check milk prices',
+])assert.equal(parseConnectedProviderReadCommand(input),null,'must not downgrade a mutation or truncate a multi-provider task: '+input)
 const exactCommand=parseConnectedProviderReadCommand(exactInstagramRequest)
 assert.equal(exactCommand?.mode,'read')
 assert.match(String(exactCommand?.url||''),/instagram\.com/)
@@ -64,4 +239,6 @@ const providerPreflight=whatsappRoute.indexOf('if (parseConnectedProviderReadCom
 const legacyFeature=whatsappRoute.indexOf('const featureReply = await routeFeatureIntent')
 assert.ok(providerPreflight>=0,'WhatsApp must have a provider-browser preflight')
 assert.ok(legacyFeature>providerPreflight,'Vault-backed provider tasks must beat legacy feature routing on WhatsApp')
+assert.ok(whatsappRoute.indexOf('const jevIntent=')<providerPreflight,'Memory questions retain semantic specialist first refusal')
+assert.match(whatsappRoute,/if\(jevIntent&&!isExplicitProviderBrowserRead\(text\)\)/,'Explicit navigation must bypass semantic memory/save promotion')
 assert.match(whatsappRoute,/tryRunWhatsAppAgent/)

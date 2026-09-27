@@ -8,7 +8,7 @@ import { runSecureBrowser, type BrowserMode } from './secure-computer'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
-import { findVaultProviderInText } from '@/lib/vault/providers'
+import { VAULT_PROVIDERS } from '@/lib/vault/providers'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 
 export type BrowserCommand = {
@@ -76,14 +76,68 @@ export function parseBrowserCommand(text:string):BrowserCommand|null{
   }
 }
 
+function providerContentSearch(text:string){
+  return text.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for|show(?:\s+me)?)\s+(.+?)\s+on\s+(.+)$/i)
+    ||text.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for|show(?:\s+me)?)\s+(.+?)\s+from\s+(.+)$/i)
+}
+
+function normalizeProviderTarget(text:string){
+  return text.toLowerCase().replace(/^(?:the|a|an|my|your|our)\s+/,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/,'')
+}
+function startsWithProviderTarget(text:string){
+  const target=normalizeProviderTarget(text)
+  return [...Object.values(VAULT_PROVIDERS).flatMap(provider=>provider.aliases||[provider.key]),'blinkit','instamart','swiggy instamart','zepto'].some(alias=>target.startsWith(alias)&&!/[a-z0-9]/i.test(target.charAt(alias.length)))
+}
+
 export function parseConnectedProviderReadCommand(text:string):BrowserCommand|null{
   const raw=String(text||'').trim()
   if(!raw)return null
-  const provider=findVaultProviderInText(raw)
+  // Public shopping sites need browser routing even without a Vault integration.
+  // Keep these entry points separate from password-provider configuration.
+  const shoppingSites=[
+    {alias:/\bblinkit\b/i,loginUrl:'https://blinkit.com/'},
+    {alias:/\b(?:swiggy\s+)?instamart\b/i,loginUrl:'https://www.swiggy.com/instamart'},
+    {alias:/\bzepto\b/i,loginUrl:'https://www.zepto.com/'},
+  ].filter(site=>site.alias.test(raw))
+  const vaultCandidates=Object.values(VAULT_PROVIDERS).map(provider=>({
+    alias:new RegExp('\\b(?:'+(provider.aliases||[provider.key]).map(name=>name.replace(/\./g,'\\.')).join('|')+')\\b','i'),
+    loginUrl:provider.loginUrl,
+  })).filter(provider=>provider.alias.test(raw))
+  const candidates=[...shoppingSites,...vaultCandidates]
+  let provider=candidates[0]
+  // Provider names inside search content are not extra navigation targets.
+  // Still reject actual multi-provider work instead of silently dropping a site.
+  const sourceTarget=providerContentSearch(raw)?.[2]||''
+  const directNavigation=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|show(?:\s+me)?|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||''
+  const navigationText=startsWithProviderTarget(directNavigation)?directNavigation:sourceTarget||directNavigation
+  const targetText=normalizeProviderTarget(navigationText).split(/\s+(?:and|for|to|then|about|from|by|mentioning)\b|[!?;,]/i)[0]
+  if(candidates.length>1||targetText){
+    const targets=candidates.filter(candidate=>candidate.alias.test(targetText))
+    if(targets.length!==1)return null
+    const others=candidates.filter(candidate=>candidate!==targets[0])
+    if(!others.every(candidate=>[...raw.matchAll(new RegExp(candidate.alias.source,'gi'))].every(match=>
+      /\b(?:from|about|by|mentioning|for)\s+(?:(?:the|a|an)\s+)?$/i.test(raw.slice(0,match.index)))))return null
+    provider=targets[0]
+  }
   if(!provider)return null
 
   const lower=raw.toLowerCase()
-  const tokens=new Set((lower.match(/[a-z0-9.]+/g)||[]).map(value=>value.replace(/\.$/,'')))
+  if(/^(?:please\s+)?(?:show|open|read|find|check)\s+(?:me\s+)?(?:my|the)\s+[^.!?]*\b(?:lists?|notes?|memories|memory)\b/.test(lower))return null
+  // Remove only explicitly prohibited action verbs and coordinated verb lists.
+  // Do not discard the rest of a sentence: a later affirmative action must still
+  // reject read routing ("do not like posts, but follow this account").
+  const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem','subscribe','unsubscribe','renew','share','block','unblock','reschedule','postpone','modify']
+  const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
+  const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange','refund','rate','report'].join('|')})`
+  const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|(?:start|begin|continue|keep)\\s+\\w+ing\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except|before|after|while|until|once|when|to)\\b)[\\s\\S])*`,'gi')
+  const actionable=lower.replace(negatedActions,' ')
+    .replace(/\bmake\s+sure\s+([^.!?;,]*?\b(?:available|in\s+stock)\b)/g,'check $1')
+    .replace(/\bpurchase\s+(history|details|receipt|status)\b/g,'order $1')
+    .replace(/\b(my|the|your|our|this|that)\s+place\b/g,'$1 location')
+    .replace(/\bupdate\s+me\s+(?:on|about)\b/g,'show me')
+    .replace(/\b(the|an?|my|latest|recent|current|status)\s+update\b/g,'$1 status')
+    .replace(/(^|[.!?;])([ \t]*(?:did|has|does|will)\s+(?:amazon|flipkart|blinkit|zepto|instamart|they)\s+)(?:cancel|confirm|update)(?=\s+(?:my|the|this|that|our|your)\s+(?:latest\s+|last\s+)?order\b)/g,'$1$2')
+  const tokens=new Set((actionable.match(/[a-z0-9.]+/g)||[]).map(value=>value.replace(/\.$/,'')))
   const has=(...values:string[])=>values.some(value=>tokens.has(value))
 
   // Deterministic mutations always keep their native handlers.
@@ -105,22 +159,70 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     (/\badd\b/.test(lower) && /\bto\s+(?:my\s+)?(?:calendar|list)\b/.test(lower))
 
   if(reminderMutation||calendarOrListMutation)return null
+  if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?(?:return|exchange|refund|rate|report)(?!\s+(?:(?:the|my|this)\s+)?(?:price|results?|information|details|availability|summary|answer|control)\b)\s+/.test(actionable))return null
+  if(/\b(?:start|begin|continue|keep|before|after|while|until|once|when)\s+(?:ordering|buying|purchasing|booking|paying|submitting|redeeming|applying|following|unfollowing|liking|commenting|publishing|sending|replying|deleting|editing|changing|saving|blocking|unblocking|sharing|posting|messaging|returning|refunding|exchanging|canceling|cancelling|confirming|placing|making|creating|adding|removing|emptying|clearing|updating|increasing|decreasing|putting|moving|subscribing|unsubscribing|renewing|rescheduling|postponing|modifying|rating|reporting)\b/.test(actionable))return null
+  if(shoppingSites.length&&/\bget\s+(?!(?:(?!\b(?:and|then|but|at|for|with|to|from|on|under|below|above|over)\b)[^.!?;,])*\b(?:prices?|costs?|availability|information|details|status)\b)/.test(actionable))return null
+  if(/\b(?:request|initiate|process|claim)\b[^.!?]*\b(?:refund|return|cancellation)\b/.test(actionable))return null
+  if(/(?:\bset\b|(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?default\b)[^.!?]*\b(?:address|profile|delivery|payment|cart|basket)\b/.test(actionable))return null
+  if(/\buse\s+(?:(?:my|the|this|a|an)\s+)?(?:coupon|promo|voucher|code)\b/.test(actionable))return null
+  if(/\b(?:add|remove|empty|clear|update|increase|decrease)\b[^.!?]*\b(?:cart|basket)\b/.test(actionable))return null
 
   // Consequential provider actions must never be downgraded to read mode.
-  const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit']
+  const writeTokens=mutationVerbs
   if(writeTokens.some(value=>tokens.has(value)))return null
-  if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(lower))return null
+  if(/\bcomplete\b[^.!?]*\b(?:order|purchase|checkout|payment)\b/.test(actionable))return null
+  // Classify ambiguous order/message nouns within their own clause. A read in
+  // one clause never licenses a purchase or message in a later clause.
+  const clauses=actionable.split(/([.!?;,\n]|\b(?:and|then|but)\b)/)
+  let previousRead=false
+  for(const clause of clauses){
+    if(!clause.trim())continue
+    if(/^(?:[.!?;,\n]|and|then|but)$/.test(clause)){
+      if(clause!==','&&clause!=='and')previousRead=false
+      continue
+    }
+    if(!/\b(?:order|message)\b/.test(clause)){previousRead=/\b(?:read|check|show|find|see|view|track)\b/.test(clause);continue}
+    // Validate each ambiguous occurrence, not just the first read object.
+    for(const nounPart of clause.match(/[\s\S]*?\b(?:order|message)\b/g)||[]){
+      const questionPart=nounPart.replace(/^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?tell\s+me\s+/,'')
+      const question=/^\s*(?:where|when|what|why|which|whose|how|has|have|had|do|does|did|am|is|are|was|were|can|could|will|would|shall|should|may|might|must)\b/.test(questionPart)
+        && /\b(?:my|the|a|an|any|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
+      const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of|open(?=\s+(?:my|the|a|an|this|that|our|your)\b))\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
+      const coordinatedNoun=previousRead&&/^\s*(?:(?:my|the|a|an|this|that|our|your|last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+)+(?:order|message)\s*$/.test(nounPart)
+      if(!question&&!readObject&&!coordinatedNoun)return null
+      previousRead=true
+    }
+  }
+  if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(actionable))return null
 
   const readTokens=['find','search','show','look','check','open','read','see','saved','reel','reels','post','posts','order','orders','wishlist','message','messages','inbox','booking','bookings','history','receipt','receipts','invoice','invoices']
-  if(!readTokens.some(value=>tokens.has(value)))return null
+  const shoppingRead=shoppingSites.length===1&&/\b(?:price|prices|cost|costs|how\s+much|available|availability|in\s+stock|stock\s+status)\b/.test(actionable) || (shoppingSites.length===1&&/\b(?:does|do)\s+(?:blinkit|zepto|(?:swiggy\s+)?instamart)\s+(?:have|carry|stock|sell)\b/.test(actionable))
+  if(!readTokens.some(value=>tokens.has(value))&&!shoppingRead)return null
 
   return {
     url:provider.loginUrl,
-    objective:safe(raw,1800),
+    // In this explicit address question PIN means postal code, not a credential.
+    // Normalize the label before redaction; never exempt credential labels globally.
+    objective:safe(raw.replace(/\b(ask\s+(?:me\s+)?for\s+(?:my\s+)?area\s+and\s+)pin\s+code(?=\s+if\s+(?:needed|required)\b)/gi,'$1postal code'),1800),
     mode:'read',
     risk:'low',
   }
 }
+export function isExplicitProviderBrowserRead(text:string){
+  const raw=String(text||'').trim()
+  const providerSearch=providerContentSearch(raw)
+  const nativeObject=/\b(?:email|mail|gmail|notes?|memory|memories|lists?|tasks|todos|to-dos|reminders?|calendar)\b|\b(?:my|our)\s+(?:(?:next|upcoming|scheduled)\s+)?(?:appointments?|meetings?|events?)\b/i
+  const hasNativeObject=(value:string)=>nativeObject.test(value.replace(/\b(?:for|about|from|by|mentioning)\s+(?:(?!\b(?:and|then|but)\b)[^.!?;,])*/gi,''))
+  const searchTarget=providerSearch&&!hasNativeObject(providerSearch[1])?providerSearch[2]:undefined
+  const directNavigation=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|show(?:\s+me)?|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||''
+  const target=startsWithProviderTarget(directNavigation)?directNavigation:searchTarget||directNavigation
+  if(!target)return false
+  const navigationTarget=normalizeProviderTarget(target)
+  if(hasNativeObject(navigationTarget))return false
+  const directTarget=startsWithProviderTarget(navigationTarget)
+  return directTarget&&!!parseConnectedProviderReadCommand(text)
+}
+
 async function permission(tg:number):Promise<AgentPermissionLevel>{
   const {data,error}=await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',String(tg)).eq('capability','browser').maybeSingle()
   if(error)throw new Error(`browser_permission_failed:${error.message}`)
