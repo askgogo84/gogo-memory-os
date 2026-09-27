@@ -105,18 +105,19 @@ const rows:any={agent_runs:{id:'run',telegram_id:'1',status:'paused',metadata_js
 let tokenSaveFails=false,cancelledHandoffs=0
 const scopedDb={from:(table:string)=>{
   const filters:Array<[string,any]>=[];let change:any
-  const execute=()=>{const row=rows[table];if(!row||!filters.every(([k,v])=>row[k]===v))return {data:null,error:null};if(tokenSaveFails&&change?.metadata_json?.handoff)return {data:null,error:{message:'save failed'}};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
-  const q:any={select:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
+  const execute=()=>{const row=rows[table];if(!row||!filters.every(([k,v])=>Array.isArray(v)?v.includes(row[k]):row[k]===v))return {data:null,error:null};if(tokenSaveFails&&change?.metadata_json?.handoff)return {data:null,error:{message:'save failed'}};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
+  const q:any={select:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},in:(k:string,v:any[])=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
     maybeSingle:async()=>execute(),then:(resolve:any)=>Promise.resolve(execute()).then(resolve)}
   return q
 }}
 const dispatched:string[]=[]
 let provisioningFails=false
+let preparationFails=false
 const shared=load('secondary-auth-handoff.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{if(provisioningFails)throw new Error('temporary domain failure');return handoff},cancelProviderBrowserHandoff:async()=>{cancelledHandoffs++}},
   './browser-handoff':{releaseBrowserHandoff:async()=>({ok:true})},
-  './life-event-worker':{prepareFlightCheckin:async(p:any)=>{assert.equal(p.resumeRunId,'run');dispatched.push('flight_prepare');return {status:'completed'}}},
+  './life-event-worker':{prepareFlightCheckin:async(p:any)=>{assert.equal(p.resumeRunId,'run');if(preparationFails){rows.agent_runs.status='failed';rows.life_event_actions.status='blocked';delete rows.agent_runs.metadata_json.secondary_auth;throw new Error('temporary browser contention')};dispatched.push('flight_prepare');return {status:'completed'}}},
   './life-event-execution':{executeApprovedLifeEventCheckin:async(p:any)=>{assert.equal(p.runId,'run');dispatched.push('flight_execute');return {status:'completed'}}},
   './life-event-integration-worker':{processLifecycleMonitor:async(_a:any,_e:any,_t:any,runId:string)=>{assert.equal(runId,'run');dispatched.push('lifecycle_monitor');return {status:'completed'}}},
   './restaurant-reservation-worker':{processOne:async(p:any)=>{assert.equal(p.id,'action');dispatched.push('restaurant');return {status:'completed'}}},
@@ -200,3 +201,16 @@ const lockedComputer=load('secure-computer.ts',{
 await assert.rejects(()=>lockedComputer.getComputer('user','https://provider.example'),/browser_handoff_in_use/)
 assert.equal(unexpectedBootstrap,0,'ordinary browser tasks must not bootstrap an active owner takeover')
 console.log('Automated browser reservations and direct handoff persistence failure verified')
+
+rows.agent_runs.status='paused';rows.life_event_actions.status='blocked'
+rows.agent_runs.metadata_json.auth_resume={kind:'flight_prepare',safeToRetry:true}
+rows.agent_runs.metadata_json.secondary_auth={kind:'flight_prepare',reason:'device_approval',safeToRetry:true}
+preparationFails=true
+await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'}),/temporary browser contention/)
+assert.equal(rows.agent_runs.status,'paused')
+assert.equal(rows.life_event_actions.status,'blocked')
+assert.equal(rows.agent_runs.metadata_json.secondary_auth.kind,'flight_prepare')
+assert.equal(rows.agent_runs.metadata_json.handoff,null)
+preparationFails=false
+assert.equal((await shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'})).runId,'run')
+console.log('Transient preparation failure restores paused state and supports a second same-run resume')

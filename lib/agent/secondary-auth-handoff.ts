@@ -82,8 +82,10 @@ export async function resumeSecondaryAuthRun(params:{actor:AgentActor;runId:stri
     return {...result,runId:params.runId,text:result.text||'Gogo continued this same task using its saved constraints.'}
   }catch(error){
     // Keep a denied/failed continuation available without discarding its context.
-    await supabaseAdmin.from('agent_runs').update({status:'paused',updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',tg).eq('status',preparation?'running':'queued')
-    await supabaseAdmin.from('life_event_actions').update({status:'blocked'}).eq('id',action.id).eq('telegram_id',tg).eq('status',actionStatus)
+    await supabaseAdmin.from('agent_runs').update({status:'paused',updated_at:new Date().toISOString(),
+      ...(preparation?{metadata_json:{...meta,handoff:null,secondary_auth:meta.secondary_auth||{...auth,reason:'device_approval'}}}:{}),
+    }).eq('id',params.runId).eq('telegram_id',tg).in('status',preparation?['running','failed']:['queued'])
+    await supabaseAdmin.from('life_event_actions').update({status:'blocked'}).eq('id',action.id).eq('telegram_id',tg).in('status',preparation?['running','blocked']:[actionStatus])
     throw error
   }
 }
