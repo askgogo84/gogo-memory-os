@@ -24,6 +24,8 @@ const screenshotBlinkit='Open Blinkit and check availability and the current pri
 assert.ok(isExplicitProviderBrowserRead(screenshotInstagram))
 assert.ok(isExplicitProviderBrowserRead(screenshotBlinkit))
 assert.equal(isExplicitProviderBrowserRead('What did I tell you about my Amazon order?'),false)
+assert.equal(isExplicitProviderBrowserRead('Open my memory about my Amazon order'),false)
+assert.equal(isExplicitProviderBrowserRead('Open my notes about Blinkit prices'),false)
 const conditionalPin=parseConnectedProviderReadCommand('Open Amazon and show my orders. Ask me for my PIN code if needed. It is 4821.')
 assert.ok(conditionalPin)
 assert.ok(!conditionalPin.objective.includes('4821'),'an authentication PIN must never become a postal code')

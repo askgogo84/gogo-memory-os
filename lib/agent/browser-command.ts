@@ -183,8 +183,12 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   }
 }
 export function isExplicitProviderBrowserRead(text:string){
-  return /^(?:please\s+)?(?:open|browse|visit|navigate\s+to|go\s+to)\b/i.test(String(text||'').trim())
-    && !!parseConnectedProviderReadCommand(text)
+  const target=String(text||'').trim().match(/^(?:please\s+)?(?:open|browse|visit|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]?.toLowerCase()
+  if(!target)return false
+  const vaultProvider=findVaultProviderInText(target)
+  const aliases=[...(vaultProvider?.aliases||[]),'blinkit','instamart','swiggy instamart','zepto']
+  const directTarget=aliases.some(alias=>target.startsWith(alias)&&!/[a-z0-9]/i.test(target.charAt(alias.length)))
+  return directTarget&&!!parseConnectedProviderReadCommand(text)
 }
 
 async function permission(tg:number):Promise<AgentPermissionLevel>{
