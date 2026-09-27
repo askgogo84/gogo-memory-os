@@ -21,11 +21,12 @@ export function VaultCredentialForm(props:{
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
   const [saved,setSaved]=useState(false)
+  const [resumeMessage,setResumeMessage]=useState('')
 
   async function submit(e:FormEvent){
     e.preventDefault()
     if(busy)return
-    setBusy(true);setError('');setSaved(false)
+    setBusy(true);setError('');setSaved(false);setResumeMessage('')
     try{
       const res=await fetch('/api/dashboard/vault',{
         method:'POST',
@@ -38,14 +39,20 @@ export function VaultCredentialForm(props:{
       setSecret('')
       setSaved(true)
       if(props.returnRun){
+        let resumed=false
         try{
-          await fetch('/api/dashboard/agent/runs/'+encodeURIComponent(props.returnRun)+'/resume',{
+          const resumeRes=await fetch('/api/dashboard/agent/runs/'+encodeURIComponent(props.returnRun)+'/resume',{
             method:'POST',
             headers:{'content-type':'application/json'},
             body:'{}',
           })
+          const resumeBody=await resumeRes.json().catch(()=>({}))
+          resumed=resumeRes.ok&&resumeBody?.ok===true
         }catch{}
-        setTimeout(()=>router.push('/dashboard/activity/'+encodeURIComponent(props.returnRun)),650)
+        setResumeMessage(resumed
+          ? 'Vault updated. Gogo was notified and is resuming this same task.'
+          : 'Vault updated. Your original task is still saved — open it to continue safely.')
+        setTimeout(()=>router.push('/dashboard/activity/'+encodeURIComponent(props.returnRun)),1100)
       }else{
         setTimeout(()=>router.push('/dashboard/you/vault'),650)
       }
@@ -82,7 +89,7 @@ export function VaultCredentialForm(props:{
     </div>
 
     {error&&<p role="alert" className="rounded-[12px] border border-red-900/15 bg-red-50 px-3 py-2 text-[12px] text-red-800">{error}</p>}
-    {saved&&<p role="status" className="rounded-[12px] border border-emerald-900/10 bg-emerald-50 px-3 py-2 text-[12px] font-semibold text-emerald-800">✓ Login saved securely.</p>}
+    {saved&&<p role="status" className="rounded-[12px] border border-emerald-900/10 bg-emerald-50 px-3 py-2 text-[12px] font-semibold text-emerald-800">✓ {resumeMessage||'Login saved securely.'}</p>}
 
     <button type="submit" disabled={busy||!username||!secret}
       className="flex h-12 w-full items-center justify-center rounded-[14px] bg-gogo-ink px-5 text-[14px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">
