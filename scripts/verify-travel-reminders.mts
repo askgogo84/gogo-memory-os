@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 // Verifies the travel-ticket reminder SCHEDULING logic — the decisions that decide
 // whether a departure alert, a check-in nudge, or a "check-in already open" note is
 // produced for a leg given the moment it was saved.
