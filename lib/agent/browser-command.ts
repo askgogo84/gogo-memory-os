@@ -140,17 +140,21 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
       continue
     }
     if(!/\b(?:order|message)\b/.test(clause)){previousRead=/\b(?:read|check|show|find|see|view|track)\b/.test(clause);continue}
-    const question=/^\s*(?:where|when|what|how|has|have|did|is|are)\b/.test(clause)
-      && /\b(?:my|the|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(clause)
-    const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of)\b[^.!?;,]*\b(?:order|message)\b/.test(clause)
-    const coordinatedNoun=previousRead&&/^\s*(?:(?:my|the|a|an|this|that|our|your|last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+)+(?:order|message)\s*$/.test(clause)
-    if(!question&&!readObject&&!coordinatedNoun)return null
-    previousRead=true
+    // Validate each ambiguous occurrence, not just the first read object.
+    for(const nounPart of clause.match(/[\s\S]*?\b(?:order|message)\b/g)||[]){
+      const question=/^\s*(?:where|when|what|how|has|have|did|is|are)\b/.test(nounPart)
+        && /\b(?:my|the|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
+      const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
+      const coordinatedNoun=previousRead&&/^\s*(?:(?:my|the|a|an|this|that|our|your|last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+)+(?:order|message)\s*$/.test(nounPart)
+      if(!question&&!readObject&&!coordinatedNoun)return null
+      previousRead=true
+    }
   }
   if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(actionable))return null
 
   const readTokens=['find','search','show','look','check','open','read','see','saved','reel','reels','post','posts','order','orders','wishlist','message','messages','inbox','booking','bookings','history','receipt','receipts','invoice','invoices']
-  if(!readTokens.some(value=>tokens.has(value)))return null
+  const shoppingRead=shoppingSites.length===1&&/\b(?:price|prices|available|availability|in\s+stock|stock\s+status)\b/.test(actionable)
+  if(!readTokens.some(value=>tokens.has(value))&&!shoppingRead)return null
 
   return {
     url:provider.loginUrl,
