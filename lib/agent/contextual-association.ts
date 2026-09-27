@@ -33,7 +33,7 @@ export async function contextualizeSavedItemReply(params:{
   if(!pack)return params.baseReply
 
   const relevant=pack.facts
-    .filter(f=>['semantic_memory','memory_insight','open_loop','typed_context','life_event'].includes(f.source))
+    .filter(f=>['semantic_memory','memory_insight','open_loop','goal','typed_context','life_event'].includes(f.source))
     .filter(f=>f.score>=0.58&&f.confidence>=0.55)
     .slice(0,6)
   if(!relevant.length)return params.baseReply
