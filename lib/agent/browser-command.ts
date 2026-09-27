@@ -179,6 +179,18 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   })
   if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
 
+  const {data:currentRun,error:currentRunError}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',String(tg)).maybeSingle()
+  if(currentRunError||!currentRun)throw new Error('browser_handoff_run_unavailable')
+  const runMetadata:any=currentRun.metadata_json||{}
+  if(runMetadata.handoff?.releaseUrl){
+    // Release the human browser's profile lock only after permission/approval checks.
+    const {releaseBrowserHandoff}=await import('./browser-handoff')
+    await releaseBrowserHandoff(String(runMetadata.handoff.releaseUrl))
+    delete runMetadata.handoff
+    const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:runMetadata}).eq('id',params.runId).eq('telegram_id',String(tg))
+    if(error)throw new Error('browser_handoff_release_save_failed')
+  }
+
   await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Gogo is working in an isolated secure browser.',progress:45,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
   await supabaseAdmin.from('agent_steps').update({status:'running',error:null,completed_at:null,started_at:new Date().toISOString()}).eq('id',params.stepId)
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
@@ -193,6 +205,19 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:blockReason,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
       await activity(tg,params.runId,blockReason,blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
       if(blockReason==='human_auth_required'){
+        if(result.authReason&&result.authReason!=='password'){
+          const {startProviderBrowserHandoff}=await import('./provider-browser-handoff')
+          const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:result.url})
+          const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff},completed_at:null}).eq('id',params.runId).eq('telegram_id',String(tg))
+          if(error)throw new Error('browser_handoff_save_failed')
+          const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
+          const resumeUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+          return {
+            runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
+            text:`${result.summary}\n\nOpen this task to Take control, complete the human-only step, then select Resume this task:\n${resumeUrl}\n\nDo not paste passwords or one-time codes into chat. Gogo keeps this same task and rechecks permissions before continuing.`,
+            blockedReason:'human_auth_required' as const,handledBy:'secure-browser' as const,
+          }
+        }
         const host=new URL(result.url).hostname
         const vault=await buildVaultAddLink({
           telegramId:tg,

@@ -104,3 +104,4 @@ for (const [file, expectedExtractions] of [['secure-computer.ts', 2], ['secure-t
   }
 }
 console.log('Production browser, Vault, and ticket extraction auth regressions verified')
+await import('./verify-device-auth-handoff.mts')

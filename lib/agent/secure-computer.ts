@@ -356,7 +356,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       // resolved in the trusted backend, passed to the sandbox as command-scoped
       // environment variables, and injected directly by Playwright. They are
       // never exposed to the model planner, task objective, Activity, or logs.
-      if(!vaultAttempted && (authGate.reason==='password'||loginish)){
+      if(!vaultAttempted && (authGate.reason==='password'||(!authGate.required&&loginish))){
         const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}

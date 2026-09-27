@@ -2,6 +2,8 @@ import { Sandbox } from '@vercel/sandbox'
 import { detectHumanAuthGate } from './browser-auth-gate'
 import { detectProviderChallenge, PROVIDER_CLOUDFLARE_CHALLENGE, DEVICE_HANDOFF_REQUIRED } from './provider-challenge'
 import { runSecureBrowser } from './secure-computer'
+import { startProviderBrowserHandoff } from './provider-browser-handoff'
+import { releaseBrowserHandoff } from './browser-handoff'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
@@ -24,6 +26,7 @@ export type SecureTicketReadResult = {
   blockReason?: 'human_auth_required' | 'provider_cloudflare_challenge'
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
   handoff?: 'device_handoff_required'
+  authHandoff?: Awaited<ReturnType<typeof startProviderBrowserHandoff>>
 }
 
 const sandboxName = browserSandboxNameFor
@@ -183,7 +186,7 @@ async function computer(userId: string, url: string) {
   return sandbox
 }
 
-async function fallbackSecureComputer(params: { userId: string; url: string }): Promise<SecureTicketReadResult> {
+async function fallbackSecureComputer(params: { userId: string; url: string; humanHandoff?: boolean }): Promise<SecureTicketReadResult> {
   try {
     const result = await runSecureBrowser({
       userId: params.userId,
@@ -192,9 +195,11 @@ async function fallbackSecureComputer(params: { userId: string; url: string }): 
       objective: 'Read this confirmed booking/ticket page. Do not submit, purchase, cancel, authenticate, or change anything.',
     })
     if (result.status === 'blocked') {
+      const authHandoff=params.humanHandoff!==false&&result.authReason&&result.authReason!=='password'
+        ? await startProviderBrowserHandoff({userId:params.userId,url:result.url||params.url}) : undefined
       return {
         status: 'blocked', url: result.url || params.url, title: result.title || '', pageText: '', usefulLinks: [],
-        blockReason: 'human_auth_required', authReason: result.authReason,
+        blockReason: 'human_auth_required', authReason: result.authReason, authHandoff,
       }
     }
     if (result.status === 'completed' || result.status === 'prepared') {
@@ -206,8 +211,11 @@ async function fallbackSecureComputer(params: { userId: string; url: string }): 
   return { status: 'failed', url: params.url, title: '', pageText: '', usefulLinks: [] }
 }
 
-export async function readProviderTicketPage(params: { userId: string; url: string }): Promise<SecureTicketReadResult> {
+export async function readProviderTicketPage(params: { userId: string; url: string; humanHandoff?: boolean; resumeHandoff?: SecureTicketReadResult['authHandoff'] }): Promise<SecureTicketReadResult> {
   let sandbox: any = null
+  let keepForHuman=false
+  // Only an explicit continuation may release a user's active takeover session.
+  if(params.resumeHandoff?.releaseUrl)await releaseBrowserHandoff(params.resumeHandoff.releaseUrl)
   try {
     sandbox = await computer(params.userId, params.url)
     const payload = Buffer.from(JSON.stringify({ url: params.url })).toString('base64')
@@ -239,9 +247,12 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     }
     const gate = detectHumanAuthGate({ title: page.title, text: page.text, forms: [] })
     if (gate.required) {
+      const authHandoff=params.humanHandoff!==false&&gate.reason&&gate.reason!=='password'
+        ? await startProviderBrowserHandoff({userId:params.userId,url:String(page.url||params.url)}) : undefined
+      keepForHuman=Boolean(authHandoff)
       return {
         status: 'blocked', url: String(page.url || params.url), title: String(page.title || '').slice(0, 300),
-        pageText: '', usefulLinks: [], blockReason: 'human_auth_required', authReason: gate.reason,
+        pageText: '', usefulLinks: [], blockReason: 'human_auth_required', authReason: gate.reason, authHandoff,
       }
     }
     return {
@@ -251,8 +262,10 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     }
   } catch (error: any) {
     console.error('SECURE_TICKET_READER_FAILED:', safeFailureCode(error))
-    return fallbackSecureComputer(params)
+    const fallback=await fallbackSecureComputer(params)
+    keepForHuman=Boolean(fallback.authHandoff)
+    return fallback
   } finally {
-    if (sandbox) await sandbox.stop().catch(() => {})
+    if (sandbox&&!keepForHuman) await sandbox.stop().catch(() => {})
   }
 }

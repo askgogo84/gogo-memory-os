@@ -35,7 +35,8 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   const latestOutput:any=latest?.output||{}
   const humanAuth=latestOutput?.blockReason==='human_auth_required'||String(run.error||'')==='human_auth_required'
   const host=browser.hostname||(()=>{try{return new URL(pageUrl).hostname}catch{return ''}})()
-  const vaultProvider=humanAuth&&host?findVaultProviderForDomain(host):null
+  const secondaryAuth=humanAuth&&Boolean(latestOutput?.authReason)&&latestOutput.authReason!=='password'
+  const vaultProvider=humanAuth&&!secondaryAuth&&host?findVaultProviderForDomain(host):null
   const vaultAccounts=vaultProvider
     ? await listVaultCredentialsForDomain(session.telegramId,host).catch(()=>[])
     : []
@@ -123,6 +124,7 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
           <h2 className="mt-2 font-serif text-[22px] font-semibold text-[#F2EFEA]">{deviceHandoff?'Open this on your device.':'Take control when Gogo needs you.'}</h2>
           <p className="mt-2 text-[12.5px] leading-5 text-[#9A9A9A]">{deviceHandoff?'The provider blocks the server browser. Continue on your own connection.':'Use the same persistent browser session for the human-only step, then return control to Gogo.'}</p>
           <a href={'/api/dashboard/agent/runs/'+encodeURIComponent(run.id)+'/handoff'} target="_blank" rel="noopener" className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-[11px] bg-[#2FB8A6] px-4 text-[13px] font-bold text-[#F2EFEA]">{deviceHandoff?'Open provider':'Take control'}</a>
+          {cloudTakeover&&secondaryAuth&&<div className="mt-3"><VaultResumeTaskButton runId={run.id} label="Resume this task"/></div>}
         </section>}
 
         <section className="rounded-[16px] border border-[#2A2A2A] bg-[#111111] p-5">
