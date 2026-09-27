@@ -42,6 +42,10 @@ for(const [input,host] of [
   ['Update me on my Amazon order','www.amazon.in'],
   ['Open my Amazon order','www.amazon.in'],
   ['Open my latest Instagram message','www.instagram.com'],
+  ['Open Instagram and show recent posts from Blinkit','www.instagram.com'],
+  ['Check whether milk is available at my place on Blinkit','blinkit.com'],
+  ['Will Amazon cancel my order?','www.amazon.in'],
+  ['Does Amazon confirm my order?','www.amazon.in'],
   ['Check my Amazon order and latest message','www.amazon.in'],
   ['Check my Amazon order, and latest message','www.amazon.in'],
   ['Check my Amazon order status and latest message','www.amazon.in'],
@@ -96,6 +100,7 @@ for(const input of [
   'Will you message Bob on Instagram?',
   'Remind me to check milk prices on Blinkit tomorrow.',
   'Compare milk prices on Blinkit, Instamart, and Zepto.',
+  'Open Instagram and show posts from Blinkit, then open Blinkit and check milk prices',
 ])assert.equal(parseConnectedProviderReadCommand(input),null,'must not downgrade a mutation or truncate a multi-provider task: '+input)
 const exactCommand=parseConnectedProviderReadCommand(exactInstagramRequest)
 assert.equal(exactCommand?.mode,'read')
