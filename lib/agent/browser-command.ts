@@ -94,8 +94,8 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   let provider=candidates[0]
   // Provider names inside search content are not extra navigation targets.
   // Still reject actual multi-provider work instead of silently dropping a site.
-  const navigationText=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for)\s+.+?\s+on\s+(.+)$/i)?.[1]||''
-  const targetText=navigationText.replace(/^(?:the|a|an)\s+/i,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/i,'').split(/\s+(?:and|for|to|then)\b|[!?;,]/i)[0]
+  const navigationText=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for|show(?:\s+me)?)\s+.+?\s+on\s+(.+)$/i)?.[1]||raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|show(?:\s+me)?|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||''
+  const targetText=navigationText.replace(/^(?:the|a|an)\s+/i,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/i,'').split(/\s+(?:and|for|to|then|about|from|by|mentioning)\b|[!?;,]/i)[0]
   if(candidates.length>1||targetText){
     const targets=candidates.filter(candidate=>candidate.alias.test(targetText))
     if(targets.length!==1)return null
@@ -195,10 +195,10 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
 }
 export function isExplicitProviderBrowserRead(text:string){
   const raw=String(text||'').trim()
-  const providerSearch=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for)\s+(.+?)\s+on\s+(.+)$/i)
+  const providerSearch=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for|show(?:\s+me)?)\s+(.+?)\s+on\s+(.+)$/i)
   const nativeObject=/\b(?:email|mail|gmail|notes?|memory|memories|lists?|reminders?|calendar)\b/i
   const searchTarget=providerSearch&&!nativeObject.test(providerSearch[1])?providerSearch[2]:undefined
-  const target=(raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||searchTarget)?.toLowerCase()
+  const target=(searchTarget||raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|show(?:\s+me)?|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1])?.toLowerCase()
   if(!target)return false
   const navigationTarget=target.replace(/^(?:the|a|an)\s+/,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/,'')
   if(nativeObject.test(navigationTarget))return false

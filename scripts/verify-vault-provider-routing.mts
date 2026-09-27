@@ -23,6 +23,7 @@ const screenshotInstagram='Open Instagram and show me the 3 most recent posts in
 const screenshotBlinkit='Open Blinkit and check availability and the current price of Amul Taaza toned milk, 1 litre, for my delivery location. Ask me for my area and PIN code if needed. Do not order anything. If login is required, let me take control. After I authenticate, resume this same task and tell me the price.'
 assert.ok(isExplicitProviderBrowserRead(screenshotInstagram))
 assert.ok(isExplicitProviderBrowserRead(exactInstagramRequest))
+assert.ok(isExplicitProviderBrowserRead('Show my saved posts on Instagram'))
 assert.ok(isExplicitProviderBrowserRead('Search for the posts I saved on Instagram'))
 assert.equal(isExplicitProviderBrowserRead('Find my notes on Instagram'),false)
 assert.equal(isExplicitProviderBrowserRead('Open Instagram and show my Gmail inbox'),false)
@@ -43,6 +44,8 @@ for(const [input,host] of [
   ['Open Instamart and check milk prices. Do not buy, pay, or order anything.','www.swiggy.com'],
   ['Check milk availability on Zepto. Don’t purchase anything.','www.zepto.com'],
   ['Check my Amazon order','www.amazon.in'],
+  ['Show Instagram posts about Blinkit','www.instagram.com'],
+  ['Show my saved posts on Instagram','www.instagram.com'],
   ['Why was my Amazon order cancelled?','www.amazon.in'],
   ['Search for posts about Blinkit on Instagram','www.instagram.com'],
   ['Tell me where my Amazon order is','www.amazon.in'],
