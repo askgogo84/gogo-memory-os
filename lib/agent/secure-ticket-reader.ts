@@ -22,7 +22,7 @@ export type SecureTicketReadResult = {
   usefulLinks: Array<{ text: string; href: string }>
   credential?: TicketCredential
   blockReason?: 'human_auth_required' | 'provider_cloudflare_challenge'
-  authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
+  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
   handoff?: 'device_handoff_required'
 }
 
