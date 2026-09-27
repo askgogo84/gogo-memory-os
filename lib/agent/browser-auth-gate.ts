@@ -11,7 +11,7 @@ export type BrowserPageModel = {
 
 export type HumanAuthGate = {
   required: boolean
-  reason?: 'password' | 'otp' | 'passkey' | 'captcha' | 'payment_auth'
+  reason?: 'password' | 'otp' | 'passkey' | 'captcha' | 'device_approval' | 'payment_auth'
   message?: string
 }
 
@@ -37,6 +37,7 @@ export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
   const hasOtpCopy = /\b(one[- ]?time password|verification code|enter (?:the )?code|we sent (?:you )?a code|authenticator app)\b/.test(text)
   const hasPasskey = /\b(passkey|security key|use your device|windows hello|touch id|face id)\b/.test(text)
   const hasCaptcha = /\b(captcha|i'?m not a robot|verify you are human|human verification)\b/.test(text)
+  const hasDeviceApproval = /\b(approve (?:this )?(?:sign[- ]?in|login)|new device|check your (?:phone|device)|tap (?:yes|approve)|approve (?:it )?on your (?:phone|device)|we sent (?:a )?(?:notification|prompt) to your (?:phone|device))\b/.test(text)
   const hasPaymentAuth = /\b(3d secure|3ds|bank authentication|confirm this payment|approve this payment)\b/.test(text)
 
   if (hasPaymentAuthField || hasPaymentAuth) {
@@ -47,6 +48,9 @@ export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
   }
   if (hasPasskey) {
     return { required:true, reason:'passkey', message:'This site requires a passkey or device authentication.' }
+  }
+  if (hasDeviceApproval) {
+    return { required:true, reason:'device_approval', message:'Approve this sign-in on your trusted device, then Gogo can continue the same task.' }
   }
   if (hasCaptcha) {
     return { required:true, reason:'captcha', message:'This site requires human verification.' }
