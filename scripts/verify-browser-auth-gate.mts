@@ -93,6 +93,14 @@ for (const [file, expectedExtractions] of [['secure-computer.ts', 2], ['secure-t
       const page = extract(title, 'Check your phone and tap Yes')
       assert.equal(detectHumanAuthGate(page).reason, 'device_approval', `${file} must recognize provider-qualified auth titles`)
     }
+    for (const [copy, reason] of [
+      ['Enter the\ncode', 'otp'], ['Use your security\nkey', 'passkey'],
+      ['Verify you are\nhuman', 'captcha'], ['Confirm this\npayment', 'payment_auth'],
+      ['Verify your\nidentity. Check your\nphone.', 'device_approval'],
+    ] as const) {
+      assert.equal(detectHumanAuthGate(extract('Continue', copy)).reason, reason,
+        `${file} must preserve existing auth boundaries across rendered line breaks`)
+    }
   }
 }
 console.log('Production browser, Vault, and ticket extraction auth regressions verified')

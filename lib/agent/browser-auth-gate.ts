@@ -26,7 +26,11 @@ function inputText(input: any) {
  * or infer credentials.
  */
 export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
-  const text = `${page?.title || ''} ${page?.text || ''}`.toLowerCase().slice(0, 22000)
+  const promptText = `${page?.title || ''} ${page?.text || ''}`.toLowerCase().slice(0, 22000)
+    .replace(/\r\n?/g, '\n').split(/\n\s*\n/)
+    .map(paragraph => paragraph.replace(/\s+/g, ' ')).join('\n\n')
+  // Retain the existing whitespace-insensitive checks for other auth boundaries.
+  const text = promptText.replace(/\s+/g, ' ')
   const inputs = (page?.forms || []).flatMap(form => Array.isArray(form.inputs) ? form.inputs : [])
   const descriptors = inputs.map(inputText)
 
@@ -41,17 +45,17 @@ export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
   // A bare login/navigation label is not evidence of an active auth prompt.
   // Require actionable auth copy within the same short passage as a device cue;
   // never combine independent matches from across the inspected page.
-  const authPrompts = [...text.matchAll(/\b(?:(?:sign[- ]?in|log in|login) (?:to continue|to your account|required)|(?:trying|attempting) to (?:sign[- ]?in|log in)|verify your identity|verify it['’]?s you|authentication required|enter your password)\b/g)]
+  const authPrompts = [...promptText.matchAll(/\b(?:(?:sign[- ]?in|log in|login) (?:to continue|to your account|required)|(?:trying|attempting) to (?:sign[- ]?in|log in)|verify your identity|verify it['’]?s you|authentication required|enter your password)\b/g)]
   // An auth-specific document title is stronger than an in-page navigation link.
   if (/^(?:sign[- ]?in|log in|login)(?:\s*[-–—|:]\s*\S.*)?$/i.test(page.title?.trim() || '')) {
-    const titlePrompt = /^\s*(?:sign[- ]?in|log in|login)\b/.exec(text)
+    const titlePrompt = /^\s*(?:sign[- ]?in|log in|login)\b/.exec(promptText)
     if (titlePrompt) authPrompts.push(titlePrompt)
   }
-  const deviceCues = [...text.matchAll(/\b(new device|check your (?:phone|device)|tap (?:yes|approve)|approve (?:it )?on your (?:phone|device)|we sent (?:a )?(?:notification|prompt) to your (?:phone|device))\b/g)]
+  const deviceCues = [...promptText.matchAll(/\b(new device|check your (?:phone|device)|tap (?:yes|approve)|approve (?:it )?on your (?:phone|device)|we sent (?:a )?(?:notification|prompt) to your (?:phone|device))\b/g)]
   const hasNearbyDeviceApproval = authPrompts.some(auth => deviceCues.some(device => {
     const first = auth.index! < device.index! ? auth : device
     const second = first === auth ? device : auth
-    const gap = text.slice(first.index! + first[0].length, second.index!)
+    const gap = promptText.slice(first.index! + first[0].length, second.index!)
     return gap.length <= 160 && !/\n\s*\n/.test(gap)
   }))
   const hasDeviceApproval = hasExplicitDeviceApproval || hasNearbyDeviceApproval
