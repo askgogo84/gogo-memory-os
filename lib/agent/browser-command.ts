@@ -124,7 +124,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   // reject read routing ("do not like posts, but follow this account").
   const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem','subscribe','unsubscribe','renew','share','block','unblock','reschedule','postpone','modify']
   const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
-  const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange','refund','rate'].join('|')})`
+  const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange','refund','rate','report'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
     .replace(/\bmake\s+sure\s+([^.!?;,]*?\b(?:available|in\s+stock)\b)/g,'check $1')
@@ -155,8 +155,8 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     (/\badd\b/.test(lower) && /\bto\s+(?:my\s+)?(?:calendar|list)\b/.test(lower))
 
   if(reminderMutation||calendarOrListMutation)return null
-  if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?(?:return|exchange|refund|rate)(?!\s+(?:(?:the|my|this)\s+)?(?:price|results?|information|details|availability|summary|answer|control)\b)\s+/.test(actionable))return null
-  if(/\b(?:start|begin|continue|keep)\s+(?:ordering|buying|purchasing|booking|paying|submitting|redeeming|applying|following|unfollowing|liking|commenting|publishing|sending|replying|deleting|editing|changing|saving|blocking|unblocking|sharing|posting|messaging|returning|refunding|exchanging|canceling|cancelling|confirming|placing|making|creating|adding|removing|emptying|clearing|updating|increasing|decreasing|putting|moving|subscribing|unsubscribing|renewing|rescheduling|postponing|modifying|rating)\b/.test(actionable))return null
+  if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?(?:return|exchange|refund|rate|report)(?!\s+(?:(?:the|my|this)\s+)?(?:price|results?|information|details|availability|summary|answer|control)\b)\s+/.test(actionable))return null
+  if(/\b(?:start|begin|continue|keep)\s+(?:ordering|buying|purchasing|booking|paying|submitting|redeeming|applying|following|unfollowing|liking|commenting|publishing|sending|replying|deleting|editing|changing|saving|blocking|unblocking|sharing|posting|messaging|returning|refunding|exchanging|canceling|cancelling|confirming|placing|making|creating|adding|removing|emptying|clearing|updating|increasing|decreasing|putting|moving|subscribing|unsubscribing|renewing|rescheduling|postponing|modifying|rating|reporting)\b/.test(actionable))return null
   if(shoppingSites.length&&/\bget\s+(?!(?:(?!\b(?:and|then|but|at|for|with|to|from|on|under|below|above|over)\b)[^.!?;,])*\b(?:prices?|costs?|availability|information|details|status)\b)/.test(actionable))return null
   if(/\b(?:request|initiate|process|claim)\b[^.!?]*\b(?:refund|return|cancellation)\b/.test(actionable))return null
   if(/(?:\bset\b|(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?default\b)[^.!?]*\b(?:address|profile|delivery|payment|cart|basket)\b/.test(actionable))return null
@@ -182,7 +182,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     for(const nounPart of clause.match(/[\s\S]*?\b(?:order|message)\b/g)||[]){
       const questionPart=nounPart.replace(/^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?tell\s+me\s+/,'')
       const question=/^\s*(?:where|when|what|why|which|whose|how|has|have|had|do|does|did|am|is|are|was|were|can|could|will|would|shall|should|may|might|must)\b/.test(questionPart)
-        && /\b(?:my|the|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
+        && /\b(?:my|the|a|an|any|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of|open(?=\s+(?:my|the|a|an|this|that|our|your)\b))\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const coordinatedNoun=previousRead&&/^\s*(?:(?:my|the|a|an|this|that|our|your|last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+)+(?:order|message)\s*$/.test(nounPart)
       if(!question&&!readObject&&!coordinatedNoun)return null
@@ -207,7 +207,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
 export function isExplicitProviderBrowserRead(text:string){
   const raw=String(text||'').trim()
   const providerSearch=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for|show(?:\s+me)?)\s+(.+?)\s+(?:on|from)\s+(.+)$/i)
-  const nativeObject=/\b(?:email|mail|gmail|notes?|memory|memories|lists?|tasks|todos|to-dos|reminders?|calendar)\b/i
+  const nativeObject=/\b(?:email|mail|gmail|notes?|memory|memories|lists?|tasks|todos|to-dos|reminders?|calendar)\b|\b(?:my|our)\s+(?:(?:next|upcoming|scheduled)\s+)?(?:appointments?|meetings?|events?)\b/i
   const hasNativeObject=(value:string)=>nativeObject.test(value.replace(/\b(?:for|about|from|by|mentioning)\s+(?:(?!\b(?:and|then|but)\b)[^.!?;,])*/gi,''))
   const searchTarget=providerSearch&&!hasNativeObject(providerSearch[1])?providerSearch[2]:undefined
   const directNavigation=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|show(?:\s+me)?|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||''
