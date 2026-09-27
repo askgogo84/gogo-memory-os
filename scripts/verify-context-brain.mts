@@ -102,3 +102,10 @@ assert.match(mediaMemory,/semanticSourceId=createHash\('sha256'\)/,'media write-
 assert.match(mediaMemory,/params\.detectedUrl\|\|''/,'canonical source URL should participate in media identity when available')
 assert.match(mediaMemory,/await indexMemory\(\{/,'media write-back should be awaited so serverless completion cannot drop it')
 console.log('Contextual Long Memory media write-back + semantic dedupe verification passed')
+
+const contextBrainGoalSource=fs.readFileSync('lib/agent/context-brain.ts','utf8')
+assert.match(contextBrainGoalSource,/from\('agent_goals'\)/,'active goals must be available to Context Brain')
+assert.match(contextBrainGoalSource,/source:'goal'/,'goals must carry typed provenance')
+assert.match(contextBrainGoalSource,/Goal: /,'goal context should be human-readable')
+assert.match(contextBrainGoalSource,/score<0\.5&&lexical<0\.16/,'unrelated goals must stay out of a turn')
+console.log('Contextual Long Memory goal recall verification passed')
