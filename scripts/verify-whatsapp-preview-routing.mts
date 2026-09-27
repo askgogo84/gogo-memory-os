@@ -27,3 +27,13 @@ assert.match(queue, /I’m handling this booking now/)
 assert.match(queue, /action_key:\s*'booking-closure'/)
 
 console.log('✅ WhatsApp booking/link preview routing regression passed')
+
+const association=fs.readFileSync('lib/agent/contextual-association.ts','utf8')
+assert.match(route,/contextualizeSavedItemReply/,'WhatsApp preview/image ingestion must use the shared long-memory association layer')
+assert.match(route,/kind:'media'/,'social preview cards must associate against durable context')
+assert.match(route,/kind:'image_note'/,'generic image notes must associate against durable context')
+assert.match(association,/includeSemantic:true,maxFacts:10/,'association lookup stays bounded')
+assert.match(association,/f\.score>=0\.58&&f\.confidence>=0\.55/,'weak memories are filtered')
+assert.match(association,/return exactly NONE/,'weak associations stay silent')
+assert.match(association,/Do not introduce any named entity unless it appears in the supplied context/,'unrelated entity leakage remains forbidden')
+console.log('✅ Cross-surface Contextual Long Memory ingestion regression passed')
