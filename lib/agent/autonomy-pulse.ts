@@ -21,6 +21,13 @@ function fmtWhen(iso:string|null|undefined,timezone:string){
 
 type PulseItem={key:string;score:number;line:string;kind:string}
 
+function usefulOpenLoopTitle(value:unknown){
+  const title=clean(value,170)
+  if(!title)return''
+  const generic=/^(?:waiting on me|waiting|pending|open loop|follow up|follow-up|needs attention)$/i
+  return generic.test(title)?'':title
+}
+
 async function candidateUserIds(){
   const since=new Date(Date.now()-72*3600_000).toISOString()
   const future=new Date(Date.now()+7*86400_000).toISOString()
@@ -117,15 +124,18 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
   for(const loop of openLoops||[]){
     if(loop.next_check_at && Date.parse(String(loop.next_check_at))>Date.now())continue
     const score=Math.round(Math.max(0,Math.min(1,Number(loop.priority||0.8)))*100)
-    const badge=loop.kind==='followup'?'📨':loop.kind==='waiting_on'?'⏳':loop.kind==='approval'?'🛡️':loop.kind==='life_event'?'✈️':'🧠'
-    items.push({key:`open_loop:${loop.id}`,score,line:`${badge} *Open loop*: ${clean(loop.title,170)}`,kind:'open_loop'})
+    const title=usefulOpenLoopTitle(loop.title)
+    if(!title)continue
+    const badge=loop.kind==='followup'?'📨':loop.kind==='waiting_on'?'⏳':loop.kind==='approval'?'🛡️':loop.kind==='life_event'?'✈️':'•'
+    const action=clean(loop.summary,160)
+    items.push({key:`open_loop:${loop.id}`,score,line:`${badge} ${title}${action&&action.toLowerCase()!==title.toLowerCase()?` — ${action}`:''}`,kind:'open_loop'})
   }
   for(const e of events||[]){
     const hours=(new Date(e.start_at).getTime()-Date.now())/3600_000
     const score=hours<=24?94:hours<=48?84:76
     const when=fmtWhen(e.start_at,timezone)
     const where=clean(e.location,100)
-    items.push({key:`event:${e.id}:${e.start_at}`,score,line:`✈️ *Upcoming*: ${clean(e.title,150)} — ${when}${where?` · ${where}`:''}`,kind:'life_event'})
+    items.push({key:`event:${e.id}:${e.start_at}`,score,line:`✈️ ${clean(e.title,150)} — ${when}${where?` · ${where}`:''}`,kind:'life_event'})
   }
   const suppressedRunErrors=new Set([
     'stale_provider_access_limited',
@@ -156,7 +166,7 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     // strong ones should interrupt the user proactively.
     if(fromMemoryTwin&&score<90)continue
     if(!fromMemoryTwin&&score<85)continue
-    items.push({key:`idea:${idea.id}`,score,line:`💡 *${clean(idea.title,150)}*: ${clean(idea.reason||idea.expected_value,200)}`,kind:'idea'})
+    items.push({key:`idea:${idea.id}`,score,line:`${clean(idea.title,150)} — ${clean(idea.reason||idea.expected_value,200)}`,kind:'idea'})
   }
 
   const dedup=new Map<string,PulseItem>()
@@ -197,13 +207,10 @@ async function sendPulse(telegramId:string){
   const previous=await lastPulse(telegramId)
   if(String(previous?.metadata_json?.fingerprint||'')===pulse.fingerprint)return {sent:false,reason:'duplicate'}
 
-  const name=clean(user.name,80).split(' ')[0]||'there'
   const message=[
-    `🧠 *Gogo is staying on top of things, ${name}*`,
-    '',
     ...pulse.items.map(x=>x.line),
     '',
-    'Reply *what are you working on for me?* for the full live status.',
+    'If you want the full status, ask *what are you working on for me?*',
   ].join('\n')
   // Use natural free-form copy while the WhatsApp service window is open.
   // Outside the window we must fall back to an approved Utility template.
