@@ -147,7 +147,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(/\b(?:start|begin|continue|keep)\s+(?:ordering|buying|purchasing|booking|paying|submitting|redeeming|applying)\b/.test(actionable))return null
   if(shoppingSites.length&&/\bget\s+(?:me|us)\s+(?!(?:the\s+)?(?:(?:current|latest|lowest|best|total)\s+)?(?:prices?|cost|availability|information|details|status)\b)/.test(actionable))return null
   if(/\b(?:request|initiate|process|claim)\b[^.!?]*\b(?:refund|return|cancellation)\b/.test(actionable))return null
-  if(/\b(?:set|default)\b[^.!?]*\b(?:address|profile|delivery|payment|cart|basket)\b/.test(actionable))return null
+  if(/(?:\bset\b|(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?default\b)[^.!?]*\b(?:address|profile|delivery|payment|cart|basket)\b/.test(actionable))return null
   if(/\buse\s+(?:(?:my|the|this|a|an)\s+)?(?:coupon|promo|voucher|code)\b/.test(actionable))return null
   if(/\b(?:add|remove|empty|clear|update|increase|decrease)\b[^.!?]*\b(?:cart|basket)\b/.test(actionable))return null
 
@@ -168,7 +168,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     if(!/\b(?:order|message)\b/.test(clause)){previousRead=/\b(?:read|check|show|find|see|view|track)\b/.test(clause);continue}
     // Validate each ambiguous occurrence, not just the first read object.
     for(const nounPart of clause.match(/[\s\S]*?\b(?:order|message)\b/g)||[]){
-      const question=/^\s*(?:where|when|what|how|has|have|did|is|are|will|does)\b/.test(nounPart)
+      const question=/^\s*(?:where|when|what|how|has|have|did|is|are|was|were|will|does)\b/.test(nounPart)
         && /\b(?:my|the|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of|open(?=\s+(?:my|the|a|an|this|that|our|your)\b))\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const coordinatedNoun=previousRead&&/^\s*(?:(?:my|the|a|an|this|that|our|your|last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+)+(?:order|message)\s*$/.test(nounPart)
