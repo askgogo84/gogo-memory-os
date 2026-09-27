@@ -146,7 +146,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(reminderMutation||calendarOrListMutation)return null
   if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?(?:return|exchange|refund)(?!\s+(?:(?:the|my|this)\s+)?(?:price|results?|information|details|availability|summary|answer|control)\b)\s+/.test(actionable))return null
   if(/\b(?:start|begin|continue|keep)\s+(?:ordering|buying|purchasing|booking|paying|submitting|redeeming|applying)\b/.test(actionable))return null
-  if(shoppingSites.length&&/\bget\s+(?:me|us)\s+(?!(?:the\s+)?(?:(?:current|latest|lowest|best|total)\s+)?(?:prices?|cost|availability|information|details|status)\b)/.test(actionable))return null
+  if(shoppingSites.length&&/\bget\s+(?!(?:(?:me|us)\s+)?(?:the\s+)?(?:(?:current|latest|lowest|best|total)\s+)?(?:prices?|cost|availability|information|details|status)\b)/.test(actionable))return null
   if(/\b(?:request|initiate|process|claim)\b[^.!?]*\b(?:refund|return|cancellation)\b/.test(actionable))return null
   if(/(?:\bset\b|(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?default\b)[^.!?]*\b(?:address|profile|delivery|payment|cart|basket)\b/.test(actionable))return null
   if(/\buse\s+(?:(?:my|the|this|a|an)\s+)?(?:coupon|promo|voucher|code)\b/.test(actionable))return null
