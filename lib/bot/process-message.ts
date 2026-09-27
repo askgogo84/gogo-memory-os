@@ -1,5 +1,6 @@
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { buildContextPack, renderContextBlock } from '@/lib/agent/context-brain'
+import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { askClaude, askClaudeWithContext, type Message } from '@/lib/claude'
 import { addToListDetailed, formatAddResult, clearList, formatList, getAllLists, getList, setItemDoneByText, resolveAndSetDoneAcrossLists, normalizeListName } from '@/lib/lists'
@@ -207,52 +208,6 @@ async function saveMemory(telegramId: number, content: string, topic: string | n
   // Awaited semantic index (survives serverless response). Never blocks the save on failure.
   if (data?.id) {
     await indexMemory({ telegramId, sourceId: String(data.id), content, topic })
-  }
-}
-
-async function contextualizeMediaReply(params:{
-  resolvedUser:Awaited<ReturnType<typeof resolveUser>>
-  mediaReply:string
-  item:{platform:string;title:string;summary:string;tags?:string[]}
-}){
-  const query=[params.item.title,params.item.summary,...(params.item.tags||[])].filter(Boolean).join(' ').slice(0,1800)
-  if(query.length<20)return params.mediaReply
-  const actor={
-    userId:String(params.resolvedUser.id),
-    legacyTelegramId:params.resolvedUser.telegramId,
-    whatsappId:String(params.resolvedUser.whatsappId||''),
-    name:params.resolvedUser.name||'Gogo',
-  }
-  const pack=await buildContextPack({
-    actor,
-    text:query,
-    options:{includeSemantic:true,maxFacts:10,horizonDays:60},
-  }).catch(()=>null)
-  if(!pack)return params.mediaReply
-  const relevant=pack.facts
-    .filter(f=>['semantic_memory','memory_insight','open_loop','typed_context','life_event'].includes(f.source))
-    .filter(f=>f.score>=0.58&&f.confidence>=0.55)
-    .slice(0,6)
-  if(!relevant.length)return params.mediaReply
-  const contextualBlock=renderContextBlock({...pack,facts:relevant},2200)
-  const associationPrompt=[
-    'A new saved media item was just understood.',
-    `Platform: ${params.item.platform}`,
-    `Title: ${params.item.title}`,
-    `Summary: ${params.item.summary}`,
-    '',
-    'Using only the supplied AskGogo context, write ONE short, natural sentence about an existing project/workstream/person that this item is clearly relevant to and why.',
-    'If there is no strong, specific connection, return exactly NONE.',
-    'Do not mention internal memory, retrieval, scores, context packs, watchers, open loops, or hidden identifiers.',
-    'Do not introduce any named entity unless it appears in the supplied context and is materially connected to the new item.',
-  ].join('\n')
-  try{
-    const association=(await askClaude(associationPrompt,[],[],params.resolvedUser.name,'',contextualBlock)).trim()
-    if(!association||/^none[.!]?$/i.test(association))return params.mediaReply
-    if(association.length>320)return params.mediaReply
-    return `${params.mediaReply}\n\n${association}`
-  }catch{
-    return params.mediaReply
   }
 }
 
@@ -1068,7 +1023,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       bodyText: incomingText,
       detectedUrl,
     })
-    const contextualMediaReply=await contextualizeMediaReply({resolvedUser,mediaReply,item})
+    const contextualMediaReply=await contextualizeSavedItemReply({
+      userId:String(resolvedUser.id),telegramId:resolvedUser.telegramId,whatsappId:resolvedUser.whatsappId,name:resolvedUser.name,
+      baseReply:mediaReply,item:{kind:'media',platform:item.platform,title:item.title,summary:item.summary,tags:item.tags},
+    })
     await saveConversation(resolvedUser.telegramId, 'user', `[${platform}] ${incomingText}`)
     await saveConversation(resolvedUser.telegramId, 'assistant', contextualMediaReply)
     return { text: formatOutgoingText(params.channel, contextualMediaReply), resolvedUser }
@@ -1084,7 +1042,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       bodyText: incomingText,
       detectedUrl: textReelUrl,
     })
-    const contextualMediaReply=await contextualizeMediaReply({resolvedUser,mediaReply,item})
+    const contextualMediaReply=await contextualizeSavedItemReply({
+      userId:String(resolvedUser.id),telegramId:resolvedUser.telegramId,whatsappId:resolvedUser.whatsappId,name:resolvedUser.name,
+      baseReply:mediaReply,item:{kind:'media',platform:item.platform,title:item.title,summary:item.summary,tags:item.tags},
+    })
     await saveConversation(resolvedUser.telegramId, 'user', `[youtube] ${incomingText}`)
     await saveConversation(resolvedUser.telegramId, 'assistant', contextualMediaReply)
     return { text: formatOutgoingText(params.channel, contextualMediaReply), resolvedUser }
