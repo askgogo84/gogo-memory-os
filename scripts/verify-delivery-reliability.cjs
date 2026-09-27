@@ -366,3 +366,12 @@ async function main() {
   console.log('Delivery reliability: SQL leases, recurrence rollback, stale fencing, concurrency, cancellation, consent, crash/DB failure, unknown no-retry passed')
 }
 main().catch(e=>{console.error(e);process.exitCode=1})
+
+
+// Sunday briefing should not repeat today's reminders again under Week ahead.
+const dailyBriefSource=fs.readFileSync('app/api/cron/daily-briefings/route.ts','utf8')
+assert.match(dailyBriefSource,/function tomorrowIstStartIso/)
+assert.match(dailyBriefSource,/week-ahead[\s\S]{0,200}starts tomorrow/i)
+assert.match(dailyBriefSource,/\.gte\('remind_at', startIso\)/)
+assert.match(dailyBriefSource,/\.lt\('remind_at', weekIso\)/)
+console.log('Sunday week-ahead excludes items already shown in today briefing')
