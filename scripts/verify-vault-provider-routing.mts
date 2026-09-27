@@ -24,6 +24,7 @@ const screenshotBlinkit='Open Blinkit and check availability and the current pri
 assert.ok(isExplicitProviderBrowserRead(screenshotInstagram))
 assert.ok(isExplicitProviderBrowserRead(exactInstagramRequest))
 assert.equal(isExplicitProviderBrowserRead('Find my notes on Instagram'),false)
+assert.equal(isExplicitProviderBrowserRead('Open Instagram and show my Gmail inbox'),false)
 for(const prefix of ['Can you','Could you please','Would you','Please would you'])assert.ok(isExplicitProviderBrowserRead(`${prefix} open Instagram and show my saved posts?`))
 assert.ok(isExplicitProviderBrowserRead(screenshotBlinkit))
 assert.ok(isExplicitProviderBrowserRead('Open the Instagram app and show my saved posts'))
@@ -102,6 +103,10 @@ for(const input of [
   'Open Blinkit and request a refund',
   'Open Blinkit and get me two cartons of milk',
   'Open Blinkit and start ordering milk',
+  'Open Reddit to see posts about Blinkit',
+  'Open Reddit then show posts about Blinkit',
+  'Open Instagram and share this post',
+  'Open Instagram and block this user',
   'Open Blinkit and subscribe to Amul milk',
   'Open Zepto and renew my subscription',
   'Open Zepto and begin buying milk',
