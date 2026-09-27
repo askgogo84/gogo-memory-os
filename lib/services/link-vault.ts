@@ -4,6 +4,7 @@ import { embedText } from '@/lib/services/embeddings'
 import { isSecretShapedMemory, redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { latestTypedContext, rememberTypedObjects, selectedTypedObject } from '@/lib/agent/typed-object-context'
 import type { AgentActor } from '@/lib/agent/actor'
+import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 
 export type LinkPlatform='instagram'|'youtube'|'twitter'|'linkedin'|'tiktok'|'github'|'facebook'|'web'
 export type LinkVaultRow={
@@ -257,7 +258,16 @@ export async function handleLinkVaultText(params:{actor:AgentActor;text:string;s
   if(isLinkVaultSaveRequest(params.text)){
     const saved=await saveLinkVaultItem({telegramId:params.actor.legacyTelegramId,text:params.text,sourceSurface:params.sourceSurface})
     const r=saved.row,restrictedNote=r.auth_required?' I saved only the URL and visible/user-supplied metadata; I did not pretend to read restricted content.':''
-    return{text:'🔗 '+(saved.merged?'Updated existing saved link':'Saved to Link Vault')+': *'+r.title+'*\n'+r.canonical_url+(r.user_note?'\nNote: '+r.user_note:'')+restrictedNote,status:'completed',handledBy:'link-vault',capability:'memory',runId:''}
+    const baseReply='🔗 '+(saved.merged?'Updated existing saved link':'Saved to Link Vault')+': *'+r.title+'*\n'+r.canonical_url+(r.user_note?'\nNote: '+r.user_note:'')+restrictedNote
+    const reply=await contextualizeSavedItemReply({
+      userId:String(params.actor.userId),
+      telegramId:params.actor.legacyTelegramId,
+      whatsappId:params.actor.whatsappId,
+      name:params.actor.name,
+      baseReply,
+      item:{kind:'link',platform:r.platform,title:r.title,summary:[r.description,r.user_note,'Tags: '+(r.tags||[]).join(', ')].filter(Boolean).join(' · '),tags:r.tags||[]},
+    })
+    return{text:reply,status:'completed',handledBy:'link-vault',capability:'memory',runId:''}
   }
   if(isLinkVaultQuery(params.text)){
     const rows=await queryLinkVault(params.actor.legacyTelegramId,params.text)
