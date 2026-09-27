@@ -227,6 +227,27 @@ for(const [label,throws,expected,mode] of [['Confirm reservation',false,true,'ex
   assert.equal(actions[0].status,mode==='read'?'skipped':throws?'failed':'done')
 }
 console.log('Production browser script records consequential clicks and uncertain click outcomes')
+let browserReads=0,finalStops=0,finalUnlocks=0
+const finalGateComputer=load('secure-computer.ts',{
+  '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[{type:'text',text:'[{"kind":"click","selector":"#confirm"}]'}]})}}},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{finalStops++},
+    runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(browserReads++===0
+      ? {url:'https://provider.example',title:'Reservation',text:'Review reservation',forms:[]}
+      : {url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'click',detail:'#confirm',status:'done',consequential:true}]})})})}},
+  './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
+  './browser-auth-gate':{detectHumanAuthGate},
+  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>async()=>{finalUnlocks++}},
+  './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
+  './trust':{canAuthorizeConsequentialAction:()=>true},
+})
+const finalGate=await finalGateComputer.runSecureBrowser({userId:'owner',url:'https://provider.example',objective:'Confirm my reservation',mode:'execute'})
+assert.equal(finalGate.status,'blocked')
+assert.equal(finalGate.authReason,'device_approval')
+assert.equal(finalGate.actions[0].consequential,true)
+assert.equal(finalGate.originalUrl,'https://provider.example')
+assert.equal(finalStops,0,'retain the browser for the human challenge opened by the final click')
+assert.equal(finalUnlocks,1,'release automated ownership before human takeover')
+console.log('Execute-mode final-click authentication pauses before completion and sandbox teardown')
 
 rows.agent_runs.status='paused';rows.life_event_actions.status='blocked'
 rows.agent_runs.metadata_json.auth_resume={kind:'flight_prepare',safeToRetry:true}

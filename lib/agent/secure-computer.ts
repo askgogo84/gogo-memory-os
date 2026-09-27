@@ -471,6 +471,15 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       if(doneCount===0)break
     }
 
+    // The final action wave can itself open MFA. Non-read flows have only one
+    // wave, so this page must be checked before completion or sandbox teardown.
+    const finalAuthGate=detectHumanAuthGate(page)
+    if(finalAuthGate.required||pageLooksLikeLogin(page)){
+      return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,title:safeText(page.title,300),
+        summary:finalAuthGate.message||'This site needs a secure sign-in before Gogo can continue.',
+        pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',
+        forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:finalAuthGate.reason||'password'}
+    }
     await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft' && anyPlannedSubmit
     return {
