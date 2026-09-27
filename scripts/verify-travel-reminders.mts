@@ -95,3 +95,10 @@ expectPlan(
 
 console.log(`\n${fails === 0 ? '✅ all cases passed' : `❌ ${fails} case(s) failed`}\n`)
 process.exit(fails === 0 ? 0 : 1)
+
+import { reminderDuplicatesFlight } from '../lib/bot/handlers/morning-briefing'
+const flight={from_city:'Bengaluru',to_city:'Abu Dhabi',flight_no:'EY 239',pnr:'B8XIQC'}
+assert.equal(reminderDuplicatesFlight({message:'Bengaluru → Abu Dhabi departs in 3 hours at 22:15! PNR: B8XIQC'},[flight]),true)
+assert.equal(reminderDuplicatesFlight({message:'Etihad EY 239 departs tonight'},[flight]),true)
+assert.equal(reminderDuplicatesFlight({message:'Drink water'},[flight]),false)
+console.log('Morning briefing travel/reminder dedupe verified')
