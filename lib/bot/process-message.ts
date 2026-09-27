@@ -210,6 +210,52 @@ async function saveMemory(telegramId: number, content: string, topic: string | n
   }
 }
 
+async function contextualizeMediaReply(params:{
+  resolvedUser:Awaited<ReturnType<typeof resolveUser>>
+  mediaReply:string
+  item:{platform:string;title:string;summary:string;tags?:string[]}
+}){
+  const query=[params.item.title,params.item.summary,...(params.item.tags||[])].filter(Boolean).join(' ').slice(0,1800)
+  if(query.length<20)return params.mediaReply
+  const actor={
+    userId:String(params.resolvedUser.id),
+    legacyTelegramId:params.resolvedUser.telegramId,
+    whatsappId:String(params.resolvedUser.whatsappId||''),
+    name:params.resolvedUser.name||'Gogo',
+  }
+  const pack=await buildContextPack({
+    actor,
+    text:query,
+    options:{includeSemantic:true,maxFacts:10,horizonDays:60},
+  }).catch(()=>null)
+  if(!pack)return params.mediaReply
+  const relevant=pack.facts
+    .filter(f=>['semantic_memory','memory_insight','open_loop','typed_context','life_event'].includes(f.source))
+    .filter(f=>f.score>=0.58&&f.confidence>=0.55)
+    .slice(0,6)
+  if(!relevant.length)return params.mediaReply
+  const contextualBlock=renderContextBlock({...pack,facts:relevant},2200)
+  const associationPrompt=[
+    'A new saved media item was just understood.',
+    `Platform: ${params.item.platform}`,
+    `Title: ${params.item.title}`,
+    `Summary: ${params.item.summary}`,
+    '',
+    'Using only the supplied AskGogo context, write ONE short, natural sentence about an existing project/workstream/person that this item is clearly relevant to and why.',
+    'If there is no strong, specific connection, return exactly NONE.',
+    'Do not mention internal memory, retrieval, scores, context packs, watchers, open loops, or hidden identifiers.',
+    'Do not introduce any named entity unless it appears in the supplied context and is materially connected to the new item.',
+  ].join('\n')
+  try{
+    const association=(await askClaude(associationPrompt,[],[],params.resolvedUser.name,'',contextualBlock)).trim()
+    if(!association||/^none[.!]?$/i.test(association))return params.mediaReply
+    if(association.length>320)return params.mediaReply
+    return `${params.mediaReply}\n\n${association}`
+  }catch{
+    return params.mediaReply
+  }
+}
+
 function parseTopicSave(text: string): { topic: string; fact: string } | null {
   let m = text.match(/^\s*remember\s+(?:for|in|to)\s+(?:my\s+)?(.+?)\s+(?:bucket|space|topic)\s*[:,\-]?\s*(.+)$/i)
   if (m) return { topic: m[1].trim().toLowerCase(), fact: m[2].trim() }
@@ -1016,30 +1062,32 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (isIGPreview) {
     const detectedUrl = detectReelUrl(incomingText) || undefined
     const platform = detectPlatformFromText(incomingText, detectedUrl)
-    const { reply: mediaReply } = await saveMediaMemory({
+    const { reply: mediaReply, item } = await saveMediaMemory({
       telegramId: resolvedUser.telegramId,
       platform,
       bodyText: incomingText,
       detectedUrl,
     })
+    const contextualMediaReply=await contextualizeMediaReply({resolvedUser,mediaReply,item})
     await saveConversation(resolvedUser.telegramId, 'user', `[${platform}] ${incomingText}`)
-    await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
-    return { text: formatOutgoingText(params.channel, mediaReply), resolvedUser }
+    await saveConversation(resolvedUser.telegramId, 'assistant', contextualMediaReply)
+    return { text: formatOutgoingText(params.channel, contextualMediaReply), resolvedUser }
   }
 
   // ── YouTube / social URL sent as plain text ──────────────────
   const textReelUrl = detectReelUrl(incomingText)
   if (textReelUrl && /youtu\.?be|youtube\.com/i.test(textReelUrl)) {
     const platform = detectPlatformFromText(incomingText, textReelUrl)
-    const { reply: mediaReply } = await saveMediaMemory({
+    const { reply: mediaReply, item } = await saveMediaMemory({
       telegramId: resolvedUser.telegramId,
       platform,
       bodyText: incomingText,
       detectedUrl: textReelUrl,
     })
+    const contextualMediaReply=await contextualizeMediaReply({resolvedUser,mediaReply,item})
     await saveConversation(resolvedUser.telegramId, 'user', `[youtube] ${incomingText}`)
-    await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
-    return { text: formatOutgoingText(params.channel, mediaReply), resolvedUser }
+    await saveConversation(resolvedUser.telegramId, 'assistant', contextualMediaReply)
+    return { text: formatOutgoingText(params.channel, contextualMediaReply), resolvedUser }
   }
 
   // ── Nutrition ──────────────────────────────────────────────
