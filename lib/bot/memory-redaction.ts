@@ -45,6 +45,11 @@ export function redactSecretShapedText(content: string): string {
   if (!content) return content
   let out = String(content)
 
+  // A conditional request for a PIN is not a value. Redact an adjacent numeric
+  // code or an explicitly assigned value, but do not swallow the next task sentence.
+  out = out.replace(/\b(pin(?:\s+code)?|otp)\s+if\s+(?:needed|required)\b(?:[\s.?!,;:-]*(?:(?:it\s+)?is\s+)?(\d[\d -]*\d)|[\s.?!,;-]*(?:it\s+)?(?:is|:|=)\s*([A-Z0-9][A-Z0-9._\/-]*))?/gi,
+    (_match,label)=>`${label.replace(/\s+code$/i,'')} [sensitive detail withheld]`)
+
   // Preserve the label/context and replace only its value.
   out = out.replace(LABELED_SECRET_VALUE_RE, (_match, label) => `${label} [sensitive detail withheld]`)
 

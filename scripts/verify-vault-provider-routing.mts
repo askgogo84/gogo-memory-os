@@ -24,6 +24,9 @@ const screenshotBlinkit='Open Blinkit and check availability and the current pri
 assert.ok(isExplicitProviderBrowserRead(screenshotInstagram))
 assert.ok(isExplicitProviderBrowserRead(screenshotBlinkit))
 assert.equal(isExplicitProviderBrowserRead('What did I tell you about my Amazon order?'),false)
+const conditionalPin=parseConnectedProviderReadCommand('Open Amazon and show my orders. Ask me for my PIN code if needed. It is 4821.')
+assert.ok(conditionalPin)
+assert.ok(!conditionalPin.objective.includes('4821'),'an authentication PIN must never become a postal code')
 for(const [input,host] of [
   [screenshotInstagram,'www.instagram.com'],
   [screenshotBlinkit,'blinkit.com'],
@@ -37,6 +40,8 @@ for(const [input,host] of [
   ['When will Amazon deliver my order?','www.amazon.in'],
   ['Did Amazon cancel my order?','www.amazon.in'],
   ['Update me on my Amazon order','www.amazon.in'],
+  ['Open my Amazon order','www.amazon.in'],
+  ['Open my latest Instagram message','www.instagram.com'],
   ['Check my Amazon order and latest message','www.amazon.in'],
   ['Check my Amazon order, and latest message','www.amazon.in'],
   ['Check my Amazon order status and latest message','www.amazon.in'],
@@ -52,7 +57,8 @@ for(const [input,host] of [
   assert.equal(new URL(command.url).hostname,host)
   assert.equal(command.mode,'read')
   assert.equal(command.approvalAction,undefined)
-  assert.equal(command.objective,input.replace('PIN code','postal code'),'retain objective and human-auth restrictions; normalize the explicitly postal label')
+  const expected=input.includes('area and PIN code')?input.replace('PIN code','postal code'):input.replace('PIN code if needed','PIN [sensitive detail withheld]')
+  assert.equal(command.objective,expected,'retain objective and human-auth restrictions; normalize only the explicitly postal label')
 }
 for(const input of [
   'Open Instagram and show saved posts. Do not like posts, but follow this account.',
@@ -70,6 +76,9 @@ for(const input of [
   'Open Blinkit and put milk in my cart',
   'Open Zepto and move milk to my basket',
   'Open Blinkit and save 12 Main St as my delivery address',
+  'Open Blinkit and apply coupon SAVE20',
+  'Open Zepto and redeem a coupon',
+  'Open Blinkit to order milk',
   'Check my Amazon order and message Bob',
   'Check my Amazon order to message the seller',
   'Check my Amazon order before you order milk',

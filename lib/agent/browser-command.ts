@@ -96,7 +96,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   // Remove only explicitly prohibited action verbs and coordinated verb lists.
   // Do not discard the rest of a sentence: a later affirmative action must still
   // reject read routing ("do not like posts, but follow this account").
-  const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save']
+  const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem']
   const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
   const prohibitedVerb=`(?:${compoundOrder}|${[...mutationVerbs,'message','post','order'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['’]?t|never)\\s+${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*`,'gi')
@@ -146,7 +146,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     for(const nounPart of clause.match(/[\s\S]*?\b(?:order|message)\b/g)||[]){
       const question=/^\s*(?:where|when|what|how|has|have|did|is|are)\b/.test(nounPart)
         && /\b(?:my|the|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
-      const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
+      const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of|open(?=\s+(?:my|the|a|an|this|that|our|your)\b))\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const coordinatedNoun=previousRead&&/^\s*(?:(?:my|the|a|an|this|that|our|your|last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+)+(?:order|message)\s*$/.test(nounPart)
       if(!question&&!readObject&&!coordinatedNoun)return null
       previousRead=true
@@ -162,7 +162,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     url:provider.loginUrl,
     // In this explicit address question PIN means postal code, not a credential.
     // Normalize the label before redaction; never exempt credential labels globally.
-    objective:safe(raw.replace(/\b(ask\s+(?:me\s+)?for\s+(?:my\s+)?(?:area\s+and\s+)?)pin\s+code(?=\s+if\s+(?:needed|required)\b)/gi,'$1postal code'),1800),
+    objective:safe(raw.replace(/\b(ask\s+(?:me\s+)?for\s+(?:my\s+)?area\s+and\s+)pin\s+code(?=\s+if\s+(?:needed|required)\b)/gi,'$1postal code'),1800),
     mode:'read',
     risk:'low',
   }
