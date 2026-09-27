@@ -204,11 +204,12 @@ async function tryCreateGoal(actor: AgentActor, text: string): Promise<WhatsAppA
   }).then(({ error }) => { if (error) console.error('WHATSAPP_AGENT_APPROVAL_ACTIVITY_FAILED:', error.message) })
   try {
     const plan = await initializeBackgroundGoal({telegramId:String(actor.legacyTelegramId),goalId:String(data.id),title:goal.title,outcome:goal.outcome})
-    return { text:`Goal created: *${goal.title}*\n\nBackground Gogo has a ${plan.steps.length}-step plan and will keep reviewing it. You can track progress in *Dashboard → Gogo Agent*.`, status:'active', handledBy:'whatsapp-agent-goal' }
+    const next=plan.steps[0]?.title||'the next safe step'
+    return { text:`Got it — I’ll keep working on *${goal.title}*.\n\nNext: *${next}*. I’ll only interrupt you if I need your input or approval. You can see progress in *Dashboard → Goals*.`, status:'active', handledBy:'whatsapp-agent-goal' }
   } catch (err:any) {
     await supabaseAdmin.from('agent_goals').update({status:'blocked',blockers:['Background planning failed.'],updated_at:new Date().toISOString()}).eq('id',data.id)
     console.error('WHATSAPP_AGENT_GOAL_INIT_FAILED:',err?.message||err)
-    return { text:`I created the goal *${goal.title}*, but Background Gogo could not initialize its plan yet. It is saved as blocked for review in the dashboard.`, status:'blocked', handledBy:'whatsapp-agent-goal' }
+    return { text:`I saved *${goal.title}*, but I couldn’t start the next step yet. It’s waiting for review in *Dashboard → Goals*.`, status:'blocked', handledBy:'whatsapp-agent-goal' }
   }
 }
 
