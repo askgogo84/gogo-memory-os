@@ -24,7 +24,7 @@ assert.match(computer,/region:SANDBOX_REGION/)
 
 // Setup egress is explicit, then policy is replaced with the requested target
 // family before user browser work runs.
-assert.match(computer,/networkPolicy:BROWSER_SETUP_NETWORK/)
+assert.match(computer,/acquireBrowserOwnerLock\(sandbox\)/)
 assert.match(computer,/updateNetworkPolicy\(\{allow\}/)
 
 // Both browser surfaces share the ONE proven bootstrap and never drift.
@@ -33,7 +33,7 @@ assert.match(computer,/SANDBOX_WORKDIR/)
 assert.match(computer,/path:\`\$\{SANDBOX_WORKDIR\}\/gogo-browser\.js\`/)
 assert.match(computer,/cd \$\{SANDBOX_WORKDIR\} && node gogo-browser\.js/)
 assert.match(ticket,/ensureBrowserRuntime\(sandbox\)/)
-assert.match(ticket,/networkPolicy: BROWSER_SETUP_NETWORK/)
+assert.match(ticket,/acquireBrowserOwnerLock\(sandbox\)/)
 
 // --- Vercel Sandbox bootstrap invariants ---
 // 1. Supported image form, NOT the deprecated runtime:'node24'.

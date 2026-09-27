@@ -1,7 +1,10 @@
 import { Sandbox } from '@vercel/sandbox'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
 import { detectProviderChallenge, PROVIDER_CLOUDFLARE_CHALLENGE, DEVICE_HANDOFF_REQUIRED } from './provider-challenge'
 import { runSecureBrowser } from './secure-computer'
+import { startProviderBrowserHandoff } from './provider-browser-handoff'
+import { releaseBrowserHandoff } from './browser-handoff'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
 const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
@@ -22,8 +25,10 @@ export type SecureTicketReadResult = {
   usefulLinks: Array<{ text: string; href: string }>
   credential?: TicketCredential
   blockReason?: 'human_auth_required' | 'provider_cloudflare_challenge'
-  authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
+  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
   handoff?: 'device_handoff_required'
+  authHandoff?: Awaited<ReturnType<typeof startProviderBrowserHandoff>>
+  authHandoffPending?: boolean
 }
 
 const sandboxName = browserSandboxNameFor
@@ -153,7 +158,7 @@ async function captureCredential(page){
       const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
       const visible=el=>{try{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return false}};
       return {
-        url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,30000),
+        url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,30000),
         shareData:window.__gogoShareData||null,
         links:Array.from(document.querySelectorAll('a[href]')).filter(visible).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).filter(x=>/ticket|pass|qr|barcode|download|share|wallet|venue/i.test(x.text+' '+x.href)).slice(0,40)
       };
@@ -171,30 +176,31 @@ async function computer(userId: string, url: string) {
   const sandbox = await Sandbox.getOrCreate({
     name: sandboxName(userId), image: SANDBOX_IMAGE, region: SANDBOX_REGION,
     timeout: 20 * 60 * 1000, persistent: true, ports: BROWSER_PORTS, resources: { vcpus: 1 },
-    networkPolicy: BROWSER_SETUP_NETWORK,
   } as any)
+  const releaseOwnerLock=await acquireBrowserOwnerLock(sandbox)
   try {
     await ensureBrowserRuntime(sandbox)
-  } catch {
-    throw new Error('ticket_browser_bootstrap_failed')
-  }
   await sandbox.writeFiles([{ path: 'gogo-ticket-reader.js', content: Buffer.from(SCRIPT) }])
   await sandbox.updateNetworkPolicy({ allow: allowedHosts(url) } as any)
-  return sandbox
+  return {sandbox,releaseOwnerLock}
+  }catch(error){await releaseOwnerLock();throw error}
 }
 
-async function fallbackSecureComputer(params: { userId: string; url: string }): Promise<SecureTicketReadResult> {
+async function fallbackSecureComputer(params: { userId: string; url: string; humanHandoff?: boolean }): Promise<SecureTicketReadResult> {
   try {
     const result = await runSecureBrowser({
       userId: params.userId,
       url: params.url,
       mode: 'read',
+      reserveHumanHandoff:params.humanHandoff!==false,
       objective: 'Read this confirmed booking/ticket page. Do not submit, purchase, cancel, authenticate, or change anything.',
     })
     if (result.status === 'blocked') {
+      const authHandoff=params.humanHandoff!==false&&result.authReason&&result.authReason!=='password'
+        ? await startProviderBrowserHandoff({userId:params.userId,url:result.url||params.url,originalUrl:params.url,reservationToken:result.handoffReservation}) : undefined
       return {
         status: 'blocked', url: result.url || params.url, title: result.title || '', pageText: '', usefulLinks: [],
-        blockReason: 'human_auth_required', authReason: result.authReason,
+        blockReason: 'human_auth_required', authReason: result.authReason, authHandoff,
       }
     }
     if (result.status === 'completed' || result.status === 'prepared') {
@@ -206,10 +212,15 @@ async function fallbackSecureComputer(params: { userId: string; url: string }): 
   return { status: 'failed', url: params.url, title: '', pageText: '', usefulLinks: [] }
 }
 
-export async function readProviderTicketPage(params: { userId: string; url: string }): Promise<SecureTicketReadResult> {
+export async function readProviderTicketPage(params: { userId: string; url: string; humanHandoff?: boolean; resumeHandoff?: SecureTicketReadResult['authHandoff'] }): Promise<SecureTicketReadResult> {
   let sandbox: any = null
+  let releaseOwnerLock:BrowserOwnerRelease|undefined
+  let keepForHuman=false
+  // Only an explicit continuation may release a user's active takeover session.
+  if(params.resumeHandoff?.releaseUrl)await releaseBrowserHandoff(params.resumeHandoff.releaseUrl,{allowExpired:true})
   try {
-    sandbox = await computer(params.userId, params.url)
+    const owned=await computer(params.userId, params.url)
+    sandbox=owned.sandbox;releaseOwnerLock=owned.releaseOwnerLock
     const payload = Buffer.from(JSON.stringify({ url: params.url })).toString('base64')
     const result = await sandbox.runCommand({ cmd: 'node', args: ['gogo-ticket-reader.js', payload] })
     if (result.exitCode !== 0) throw new Error('ticket_browser_failed')
@@ -239,9 +250,18 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     }
     const gate = detectHumanAuthGate({ title: page.title, text: page.text, forms: [] })
     if (gate.required) {
+      let reservationToken:string|undefined
+      if(params.humanHandoff!==false&&gate.reason!=='password'){
+        reservationToken=await releaseOwnerLock!.reserveHandoff()
+        await releaseOwnerLock?.();releaseOwnerLock=undefined
+      }
+      const authHandoff=params.humanHandoff!==false&&gate.reason&&gate.reason!=='password'
+        ? await startProviderBrowserHandoff({userId:params.userId,url:String(page.url||params.url),originalUrl:params.url,reservationToken}).catch(()=>undefined) : undefined
+      const authHandoffPending=params.humanHandoff!==false&&gate.reason!=='password'&&!authHandoff
+      keepForHuman=Boolean(authHandoff)||authHandoffPending
       return {
         status: 'blocked', url: String(page.url || params.url), title: String(page.title || '').slice(0, 300),
-        pageText: '', usefulLinks: [], blockReason: 'human_auth_required', authReason: gate.reason,
+        pageText: '', usefulLinks: [], blockReason: 'human_auth_required', authReason: gate.reason, authHandoff, authHandoffPending,
       }
     }
     return {
@@ -251,8 +271,13 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     }
   } catch (error: any) {
     console.error('SECURE_TICKET_READER_FAILED:', safeFailureCode(error))
-    return fallbackSecureComputer(params)
+    await releaseOwnerLock?.();releaseOwnerLock=undefined
+    const fallback=await fallbackSecureComputer(params)
+    // A failed read may be contending with another task's live takeover.
+    keepForHuman=true
+    return fallback
   } finally {
-    if (sandbox) await sandbox.stop().catch(() => {})
+    if (sandbox&&!keepForHuman) await sandbox.stop().catch(() => {})
+    await releaseOwnerLock?.()
   }
 }

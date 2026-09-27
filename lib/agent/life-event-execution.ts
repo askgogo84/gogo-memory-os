@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runSecureBrowser } from './secure-computer'
+import { attachSecondaryAuthHandoff, releaseRunAuthHandoff } from './secondary-auth-handoff'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
 import { assertApprovalBinding } from './approval-binding'
@@ -20,16 +21,16 @@ async function browserPermission(telegramId: string): Promise<AgentPermissionLev
   return (data?.level as AgentPermissionLevel | undefined) || 'ask'
 }
 
-function hasCheckinSuccessEvidence(result: { actions?: Array<{kind:string;status:string}>; title?: string; pageText?: string }) {
+function hasCheckinSuccessEvidence(result: { actions?: Array<{kind:string;status:string;consequential?:boolean}>; title?: string; pageText?: string }) {
   const successful = Array.isArray(result.actions) ? result.actions.filter(a => a.status === 'done') : []
   const finalAction = successful[successful.length - 1]
-  const finalSubmitSucceeded = finalAction?.kind === 'submit'
+  const finalSubmitSucceeded = finalAction?.kind === 'submit'||finalAction?.consequential===true
   const confirmationText = `${result.title || ''} ${result.pageText || ''}`.toLowerCase()
   const terminalConfirmation = /\b(check[- ]?in (?:is )?(?:complete|completed|successful|confirmed)|you(?:'|’)re checked in|you are checked in|checked in successfully|check[- ]?in confirmation(?: number)?)\b/i.test(confirmationText)
   return finalSubmitSucceeded && terminalConfirmation
 }
 
-export async function executeApprovedLifeEventCheckin(params: { actor: AgentActor; runId: string }) {
+export async function executeApprovedLifeEventCheckin(params: { actor: AgentActor; runId: string; reconciledResult?:Awaited<ReturnType<typeof runSecureBrowser>> }) {
   const tg = String(params.actor.legacyTelegramId)
   const { data: run, error: runError } = await supabaseAdmin.from('agent_runs')
     .select('id,status,metadata_json')
@@ -130,7 +131,9 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
 
   let result: Awaited<ReturnType<typeof runSecureBrowser>>
   try {
-    result = await runSecureBrowser({
+    if(!params.reconciledResult)await releaseRunAuthHandoff(tg,params.runId)
+    result = params.reconciledResult || await runSecureBrowser({
+      reserveHumanHandoff:true,
       userId: params.actor.userId,
       url,
       mode: 'execute',
@@ -139,6 +142,16 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
   } catch (error: any) {
     const at = new Date().toISOString()
     const reason = safe(error?.message || 'secure_browser_execution_failed', 400)
+    if(reason==='browser_handoff_in_use'){
+      // Ownership is acquired before navigation; contention cannot have submitted.
+      await Promise.all([
+        supabaseAdmin.from('agent_runs').update({status:'paused',error:null,summary:'Waiting for the secure browser. No check-in action was attempted; retry this same approved task from its browser page.',metadata_json:{...meta,handoff:null,secondary_auth:undefined,browser_waiting:true,browser_url:url,auth_resume:{kind:'flight_execute',safeToRetry:true}},updated_at:at}).eq('id',params.runId).eq('telegram_id',tg).eq('status','running'),
+        supabaseAdmin.from('life_event_actions').update({status:'blocked',updated_at:at}).eq('id',lifeEventActionId).eq('telegram_id',tg).eq('status','running'),
+      ])
+      const base=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
+      return {runId:params.runId,status:'paused' as const,capability:'travel' as const,risk:'high' as const,handledBy:'life-event-checkin' as const,
+        text:`Another task is using your secure browser. No check-in action was attempted. Retry this same approved task after the browser is free: ${base}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`}
+    }
     await Promise.all([
       supabaseAdmin.from('agent_runs').update({
         status: 'outcome_unknown', progress: 65,
@@ -172,6 +185,8 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
   const at = new Date().toISOString()
 
   if (result.status === 'blocked') {
+    const handoffUrl=await attachSecondaryAuthHandoff({userId:params.actor.userId,telegramId:tg,runId:params.runId,kind:'flight_execute',result})
+    if(handoffUrl&&typeof handoffUrl!=='string')return {...handoffUrl,capability:'travel' as const,risk:'high' as const,handledBy:'life-event-checkin' as const}
     await supabaseAdmin.from('agent_runs').update({
       status: 'paused', progress: 65, summary: safe(result.summary || 'Gogo paused at a secure human step.', 1000),
       error: result.blockReason || 'human_auth_required', updated_at: at,
@@ -193,7 +208,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
       risk: 'high' as const,
       handledBy: 'life-event-checkin' as const,
       blockedReason: 'human_auth_required' as const,
-      text: `${safe(result.summary || 'Check-in reached a secure step.', 900)}\n\nI stopped before the protected step. I did not request, infer, or store a password, OTP, passkey, CAPTCHA response, or payment-auth value.`,
+      text: `${safe(result.summary || 'Check-in reached a secure step.', 900)}\n\nI stopped before the protected step. I did not request, infer, or store a password, OTP, passkey, CAPTCHA response, or payment-auth value.${handoffUrl?`\n\nTake control and resume this same task here:\n${handoffUrl}`:''}`,
     }
   }
 
@@ -224,6 +239,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     }
   }
 
+  if(params.reconciledResult)await releaseRunAuthHandoff(tg,params.runId)
   await Promise.all([
     supabaseAdmin.from('agent_runs').update({
       status: 'completed', progress: 100,

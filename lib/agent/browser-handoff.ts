@@ -1,5 +1,4 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { randomBytes } from 'crypto'
 import { Sandbox } from '@vercel/sandbox'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
@@ -24,7 +23,7 @@ const initialUrl=Buffer.from(process.argv[3]||'', 'base64').toString('utf8');
 let context,page;
 function ok(res,code=200,type='application/json'){res.writeHead(code,{'content-type':type,'cache-control':'no-store'});return res}
 function auth(req){try{const u=new URL(req.url,'http://x');return u.searchParams.get('token')===token||req.headers['x-gogo-handoff-token']===token}catch{return false}}
-async function model(){return await page.evaluate(()=>{const clean=s=>String(s||'').replace(/\s+/g,' ').trim();const visible=el=>{try{const r=el.getBoundingClientRect();const s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return true}};const input=el=>{const id=el.id||'',name=el.getAttribute('name')||'',type=(el.getAttribute('type')||el.tagName||'').toLowerCase();const label=id?clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||''):'';let selector='';if(id)selector='#'+CSS.escape(id);else if(name)selector=el.tagName.toLowerCase()+'[name="'+CSS.escape(name)+'"]';else selector=el.tagName.toLowerCase();return{selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')}};return{url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,18000),links:Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0,100).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})),forms:Array.from(document.forms).filter(visible).slice(0,16).map(f=>({action:f.action||location.href,method:(f.method||'get').toLowerCase(),inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(input)}))}})}
+async function model(){return await page.evaluate(()=>{const clean=s=>String(s||'').replace(/\s+/g,' ').trim();const visible=el=>{try{const r=el.getBoundingClientRect();const s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return true}};const input=el=>{const id=el.id||'',name=el.getAttribute('name')||'',type=(el.getAttribute('type')||el.tagName||'').toLowerCase();const label=id?clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||''):'';let selector='';if(id)selector='#'+CSS.escape(id);else if(name)selector=el.tagName.toLowerCase()+'[name="'+CSS.escape(name)+'"]';else selector=el.tagName.toLowerCase();return{selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')}};return{url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),links:Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0,100).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})),forms:Array.from(document.forms).filter(visible).slice(0,16).map(f=>({action:f.action||location.href,method:(f.method||'get').toLowerCase(),inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(input)}))}})}
 async function isConsequential(selector){try{return await page.locator(selector).first().evaluate(el=>{const t=(el.getAttribute('type')||'').toLowerCase();const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();const safe=/\b(search|find|show|filter|apply filters|see results|view results|check availability|update results|go)\b/i.test(text);const bad=/\b(book|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i.test(text);if(safe&&!bad)return false;if(bad)return true;if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;return false})}catch{return true}}
 (async()=>{
  context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900}});
@@ -68,34 +67,20 @@ async function isConsequential(selector){try{return await page.locator(selector)
 })().catch(e=>{console.error(e&&e.stack||e);process.exit(1)});
 `
 
-export async function getPersistentBrowserSandbox(userId:string){
+export async function getPersistentBrowserSandbox(userId:string,options:{bootstrap?:boolean}={}){
   const name=browserSandboxName(userId)
-  const sandbox=await Sandbox.getOrCreate({name,image:SANDBOX_IMAGE,region:SANDBOX_REGION,timeout:20*60*1000,persistent:true,ports:[BROWSER_HANDOFF_PORT],resources:{vcpus:1},networkPolicy:BROWSER_SETUP_NETWORK} as any)
-  await ensureBrowserRuntime(sandbox)
+  const sandbox=await Sandbox.getOrCreate({name,image:SANDBOX_IMAGE,region:SANDBOX_REGION,timeout:20*60*1000,persistent:true,ports:[BROWSER_HANDOFF_PORT],resources:{vcpus:1},...(options.bootstrap===false?{}:{networkPolicy:BROWSER_SETUP_NETWORK})} as any)
+  if(options.bootstrap!==false)await ensureBrowserRuntime(sandbox)
   return {sandbox,name}
 }
 
 export async function startBrowserHandoff(params:{userId:string;url:string}){
-  const {sandbox,name}=await getPersistentBrowserSandbox(params.userId)
-  await sandbox.writeFiles([{path:'gogo-handoff.js',content:Buffer.from(HANDOFF_SERVER)}])
-  const token=randomBytes(24).toString('base64url')
-  const encoded=Buffer.from(params.url).toString('base64')
-    // The takeover server must OUTLIVE this call. A non-detached runCommand has its
-  // whole process group reaped when it returns, so `nohup ... &` died with SIGTERM
-  // (exit 143) before it could bind the port - the takeover URL then returned
-  // 502 SANDBOX_NOT_LISTENING. detached:true is the SDK's supported long-running mode.
-  await sandbox.runCommand({cmd:'bash',args:['-lc',`pkill -f 'gogo-handoff.js' >/dev/null 2>&1 || true`]}).catch(()=>{})
-  await sandbox.runCommand({cmd:'node',args:['gogo-handoff.js',token,encoded],detached:true} as any)
-  await new Promise(r=>setTimeout(r,1500))
-  const domain=typeof (sandbox as any).domain==='function' ? await (sandbox as any).domain(BROWSER_HANDOFF_PORT) : ''
-  if(!domain)throw new Error('browser_handoff_domain_unavailable')
-  const base=String(domain).startsWith('http')?String(domain):`https://${domain}`
-  const q=encodeURIComponent(token)
-  return {sandboxName:name,token,takeoverUrl:`${base}/?token=${q}`,stateUrl:`${base}/state?token=${q}`,agentActionUrl:`${base}/agent-action?token=${q}`,releaseUrl:`${base}/release?token=${q}`}
+  const {startProviderBrowserHandoff}=await import('./provider-browser-handoff')
+  return startProviderBrowserHandoff(params)
 }
 
 export async function readBrowserHandoffState(stateUrl:string){
-  const res=await fetch(stateUrl,{cache:'no-store'});if(!res.ok)throw new Error(`browser_handoff_state_failed:${res.status}`);return await res.json() as HandoffState
+  const res=await fetch(stateUrl,{cache:'no-store',signal:AbortSignal.timeout(10000)});if(!res.ok)throw new Error(`browser_handoff_state_failed:${res.status}`);return await res.json() as HandoffState
 }
 
 function parseJsonArray(text:string){const clean=String(text||'').replace(/```json|```/g,'').trim();try{const v=JSON.parse(clean);return Array.isArray(v)?v:[]}catch{}const m=clean.match(/\[[\s\S]*\]/);if(!m)return[];try{const v=JSON.parse(m[0]);return Array.isArray(v)?v:[]}catch{return[]}}
@@ -116,6 +101,15 @@ export async function continueBrowserHandoffResearch(params:{stateUrl:string;age
   return{state,blocked:null as null}
 }
 
-export async function releaseBrowserHandoff(releaseUrl:string){
-  const res=await fetch(releaseUrl,{method:'POST',cache:'no-store'});if(!res.ok)throw new Error(`browser_handoff_release_failed:${res.status}`);return await res.json()
+export async function releaseBrowserHandoff(releaseUrl:string,options:{allowExpired?:boolean}={}){
+  let res:Response
+  try{
+    res=await fetch(releaseUrl,{method:'POST',cache:'no-store',signal:AbortSignal.timeout(10000)})
+  }catch(error){
+    if(options.allowExpired)return {ok:false,expired:true}
+    throw error
+  }
+  if(options.allowExpired&&[404,410,502,503,504].includes(res.status))return {ok:false,expired:true}
+  if(!res.ok)throw new Error(`browser_handoff_release_failed:${res.status}`)
+  return await res.json()
 }

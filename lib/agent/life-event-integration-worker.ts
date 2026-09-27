@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runSecureBrowser } from './secure-computer'
+import { attachSecondaryAuthHandoff, releaseRunAuthHandoff } from './secondary-auth-handoff'
 import { sendAgentPush } from './push'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
@@ -192,9 +193,10 @@ async function processCalendarDraft(action: any, event: any, telegramId: string)
   return { status: 'waiting_approval' as const, runId: prepared.runId, approvalId: prepared.approvalId }
 }
 
-async function processLifecycleMonitor(action: any, event: any, telegramId: string) {
+export async function processLifecycleMonitor(action: any, event: any, telegramId: string, resumeRunId?:string) {
   const target = lifecycleMonitorTarget(event, action)
   if (!target) {
+    if(resumeRunId)throw new Error('monitor_target_missing')
     await defer(action, 360, { monitorState: 'waiting_for_status_url' })
     return { status: 'deferred' as const }
   }
@@ -209,27 +211,31 @@ async function processLifecycleMonitor(action: any, event: any, telegramId: stri
   })
   if (!policy.allowed || !sentinel.allowed) {
     const reason = !policy.allowed ? policy.reason : sentinel.reason
+    if(resumeRunId)throw new Error(`monitor_resume_policy_${reason}`)
     await defer(action, 360, { monitorState: 'blocked_by_safe_mode', blockedReason: reason })
     return { status: 'deferred' as const }
   }
 
   const actor = await resolveActor(telegramId)
-  const result = await runSecureBrowser({ userId: actor.userId, url: target.url, mode: 'draft', objective: target.objective })
+  if(resumeRunId)await releaseRunAuthHandoff(telegramId,resumeRunId)
+  const result = await runSecureBrowser({ reserveHumanHandoff:true, userId: actor.userId, url: target.url, mode: 'draft', objective: target.objective })
   if (result.status === 'blocked') {
-    const runId = await createCompletedRun(telegramId, event, action, safe(result.summary || 'This status page needs a secure human step.'), {
+    const runId = resumeRunId || await createCompletedRun(telegramId, event, action, safe(result.summary || 'This status page needs a secure human step.'), {
       monitor_url: target.url, blocked_reason: result.blockReason || 'human_auth_required', auth_reason: result.authReason || null,
     })
+    const handoffUrl=await attachSecondaryAuthHandoff({userId:actor.userId,telegramId,runId,kind:'lifecycle_monitor',result})
     await supabaseAdmin.from('agent_runs').update({ status:'paused', progress:55, completed_at:null, updated_at:new Date().toISOString() }).eq('id',runId)
     await supabaseAdmin.from('life_event_actions').update({
       status:'blocked', updated_at:new Date().toISOString(),
       payload_json:{...(action.payload_json||{}),monitorState:'human_auth_required',blockedReason:result.blockReason||'human_auth_required',authReason:result.authReason||null},
     }).eq('id',action.id).eq('status','running')
     await writeActivity(telegramId, runId, 'human_auth_required', 'Gogo paused lifecycle monitoring at a protected provider step.', { life_event_id:event.id, action_id:action.id })
-    await sendAgentPush(telegramId, { title:'Gogo needs you', body:safe(result.summary || 'A protected provider step needs your attention.',240), path:'/agent', data:{runId,lifeEventId:String(event.id)} }).catch(()=>{})
+    await sendAgentPush(telegramId, { title:'Gogo needs you', body:safe(result.summary || 'A protected provider step needs your attention.',240), path:handoffUrl?`/dashboard/activity/${encodeURIComponent(runId)}/browser`:'/agent', data:{runId,lifeEventId:String(event.id)} }).catch(()=>{})
     return { status:'blocked' as const, runId }
   }
 
   const pageText = safe(result.pageText || result.summary || '', 6000)
+  if(resumeRunId)await supabaseAdmin.from('agent_runs').update({status:'completed',progress:100,error:null,summary:'Gogo resumed the same provider monitor and verified the current page.',completed_at:new Date().toISOString()}).eq('id',resumeRunId).eq('telegram_id',telegramId)
   const fingerprint = lifecycleFingerprint(result.title || event.title, pageText)
   const previous = String(action.payload_json?.lastFingerprint || '')
   const terminal = lifecycleTerminalState(String(event.event_type || ''), pageText, {
@@ -254,7 +260,7 @@ async function processLifecycleMonitor(action: any, event: any, telegramId: stri
   const summary = terminal.terminal
     ? `${event.title}: provider status is now ${terminal.label}.`
     : `${event.title}: the provider status page changed.`
-  const runId = await createCompletedRun(telegramId, event, action, summary, { monitor_url:target.url, lifecycle_terminal:terminal.label, changed:true })
+  const runId = resumeRunId || await createCompletedRun(telegramId, event, action, summary, { monitor_url:target.url, lifecycle_terminal:terminal.label, changed:true })
   await writeActivity(telegramId, runId, 'life_event_status_changed', summary, { life_event_id:event.id, action_id:action.id, terminal:terminal.label })
   await sendAgentPush(telegramId, { title:'Gogo found a status change', body:safe(summary,260), path:'/agent', data:{runId,lifeEventId:String(event.id)} }).catch(()=>{})
 

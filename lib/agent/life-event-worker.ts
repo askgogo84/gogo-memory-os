@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runSecureBrowser } from './secure-computer'
+import { attachSecondaryAuthHandoff, releaseRunAuthHandoff } from './secondary-auth-handoff'
 import { sendAgentPush } from './push'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
@@ -122,12 +123,13 @@ function freeSeatPolicy(event: any) {
   return { label: 'Free allocation only', policy: 'free_allocation_only' }
 }
 
-async function prepareFlightCheckin(params: { telegramId: string; event: any; action: any }) {
+export async function prepareFlightCheckin(params: { telegramId: string; event: any; action: any; resumeRunId?:string }) {
   const { telegramId, event, action } = params
   const payload = action.payload_json || {}
   const url = String(payload.checkInUrl || '').trim()
   const confirmation = String(payload.confirmationRef || event.confirmation_ref || '').trim()
   if (!url || !confirmation) {
+    if(params.resumeRunId)throw new Error('checkin_context_incomplete')
     await markAction(String(action.id), 'blocked', { ...(payload || {}), blockedReason: 'missing_checkin_url_or_confirmation' })
     const runId = await createRun({ telegramId, event, action, status: 'paused', summary: 'Gogo could not safely prepare check-in because the verified check-in URL or booking reference is missing.' })
     await activity(telegramId, runId, 'life_event_blocked', 'Flight check-in preparation paused because required booking context is missing.', { life_event_id: event.id })
@@ -144,6 +146,7 @@ async function prepareFlightCheckin(params: { telegramId: string; event: any; ac
   })
   if (!policy.allowed || !sentinel.allowed) {
     const reason = !policy.allowed ? policy.reason : sentinel.reason
+    if(params.resumeRunId)throw new Error(`checkin_resume_policy_${reason}`)
     await markAction(String(action.id), 'blocked', { ...(payload || {}), blockedReason: reason })
     const runId = await createRun({ telegramId, event, action, status: 'paused', summary: `Gogo Safe Mode blocked background check-in preparation: ${reason}.` })
     await activity(telegramId, runId, 'life_event_blocked', 'Background airline check-in preparation was blocked by Gogo Safe Mode.', { life_event_id: event.id, reason })
@@ -151,14 +154,16 @@ async function prepareFlightCheckin(params: { telegramId: string; event: any; ac
   }
 
   const actor = await resolveActor(telegramId)
-  const runId = await createRun({
+  const runId = params.resumeRunId || await createRun({
     telegramId, event, action, status: 'running',
     summary: 'Gogo is opening the airline site in the isolated Secure Computer and preparing the check-in form without submitting it.',
     metadata: { checkin_url: url, provider: event.provider || null, confirmation_ref_present: true, permission_level: permissionLevel },
   })
 
   try {
+    if(params.resumeRunId)await releaseRunAuthHandoff(telegramId,runId)
     const result = await runSecureBrowser({
+      reserveHumanHandoff:true,
       userId: actor.userId,
       url,
       mode: 'draft',
@@ -166,10 +171,11 @@ async function prepareFlightCheckin(params: { telegramId: string; event: any; ac
     })
     const at = new Date().toISOString()
     if (result.status === 'blocked') {
+      const handoffUrl=await attachSecondaryAuthHandoff({userId:actor.userId,telegramId,runId,kind:'flight_prepare',result})
       await supabaseAdmin.from('agent_runs').update({ status: 'paused', progress: 55, summary: safe(result.summary, 1200), error: result.blockReason || 'browser_blocked', updated_at: at }).eq('id', runId).eq('telegram_id', telegramId)
       await markAction(String(action.id), 'blocked', { ...(payload || {}), browserRunId: runId, blockedReason: result.blockReason || 'browser_blocked' })
       await activity(telegramId, runId, 'human_auth_required', 'Gogo paused flight check-in at a human authentication boundary.', { life_event_id: event.id, auth_reason: result.authReason || null })
-      await sendAgentPush(telegramId, { title: 'Gogo needs you for check-in', body: safe(result.summary || 'Airline check-in reached a secure step that only you can complete.', 280), path: '/agent', data: { runId, lifeEventId: String(event.id) } }).catch(() => {})
+      await sendAgentPush(telegramId, { title: 'Gogo needs you for check-in', body: safe(result.summary || 'Airline check-in reached a secure step that only you can complete.', 280), path: handoffUrl?`/dashboard/activity/${encodeURIComponent(runId)}/browser`:'/agent', data: { runId, lifeEventId: String(event.id) } }).catch(() => {})
       return { status: 'blocked' as const, runId }
     }
 

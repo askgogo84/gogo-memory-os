@@ -25,7 +25,7 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   const latest=[...run.steps].reverse().find(s=>s.toolName==='secure_browser'||/browser/i.test(s.toolName)||s.output?.browser)
   const raw:any=latest?.output?.browser||latest?.output?.browserState||latest?.output||{}
   const pageTitle=String(raw?.title||'')
-  const pageUrl=String(raw?.url||handoff?.providerUrl||'')
+  const pageUrl=String(raw?.url||handoff?.providerUrl||run.metadata?.browser_url||'')
   let displayUrl=browser.hostname||'Secure browser'
   try{
     const u=new URL(pageUrl)
@@ -35,7 +35,8 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   const latestOutput:any=latest?.output||{}
   const humanAuth=latestOutput?.blockReason==='human_auth_required'||String(run.error||'')==='human_auth_required'
   const host=browser.hostname||(()=>{try{return new URL(pageUrl).hostname}catch{return ''}})()
-  const vaultProvider=humanAuth&&host?findVaultProviderForDomain(host):null
+  const secondaryAuth=Boolean(run.metadata?.secondary_auth)||(humanAuth&&Boolean(latestOutput?.authReason)&&latestOutput.authReason!=='password')
+  const vaultProvider=humanAuth&&!secondaryAuth&&host?findVaultProviderForDomain(host):null
   const vaultAccounts=vaultProvider
     ? await listVaultCredentialsForDomain(session.telegramId,host).catch(()=>[])
     : []
@@ -118,11 +119,21 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
           </div>
         </section>}
 
+        {run.metadata?.auth_reconciliation_required&&<section className="rounded-[16px] bg-[#1A1710] p-5">
+          <h2 className="font-serif text-[22px] text-[#F2EFEA]">Verify the outcome with the provider</h2>
+          <p className="mt-2 text-[12.5px] leading-5 text-[#D9A441]">The retained browser is unavailable after a possible submission. Check your booking, check-in, or payment status directly with the provider before taking any further action. Gogo will not repeat the action.</p>
+        </section>}
         {(cloudTakeover||deviceHandoff)&&<section className="rounded-[16px] bg-[#1A1710] p-5">
           <p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#D9A441]">{deviceHandoff?'Your device':'Human handoff'}</p>
           <h2 className="mt-2 font-serif text-[22px] font-semibold text-[#F2EFEA]">{deviceHandoff?'Open this on your device.':'Take control when Gogo needs you.'}</h2>
           <p className="mt-2 text-[12.5px] leading-5 text-[#9A9A9A]">{deviceHandoff?'The provider blocks the server browser. Continue on your own connection.':'Use the same persistent browser session for the human-only step, then return control to Gogo.'}</p>
           <a href={'/api/dashboard/agent/runs/'+encodeURIComponent(run.id)+'/handoff'} target="_blank" rel="noopener" className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-[11px] bg-[#2FB8A6] px-4 text-[13px] font-bold text-[#F2EFEA]">{deviceHandoff?'Open provider':'Take control'}</a>
+          {cloudTakeover&&secondaryAuth&&<div className="mt-3"><VaultResumeTaskButton runId={run.id} label={(run.metadata?.secondary_auth?.safeToRetry===false||run.metadata?.browser_safe_to_retry===false)?"Check outcome without repeating action":"Resume this task"}/></div>}
+          {(run.metadata?.secondary_auth?.safeToRetry===false||run.metadata?.browser_safe_to_retry===false)&&<p className="mt-3 text-[12px] text-[#D9A441]">An action may already have reached the provider. Gogo will only inspect the result after you finish authentication; it will not repeat the action.</p>}
+        </section>}
+        {(secondaryAuth||run.metadata?.browser_waiting)&&!cloudTakeover&&run.metadata?.secondary_auth?.safeToRetry!==false&&run.metadata?.browser_safe_to_retry!==false&&<section className="rounded-[16px] bg-[#1A1710] p-5">
+          <p className="mb-3 text-[12px] text-[#D9A441]">The secure browser is not available yet. Finish any other active takeover, then retry this saved task.</p>
+          <VaultResumeTaskButton runId={run.id} label="Retry this task"/>
         </section>}
 
         <section className="rounded-[16px] border border-[#2A2A2A] bg-[#111111] p-5">

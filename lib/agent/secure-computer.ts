@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
 import { upsertVaultSession } from '@/lib/vault/session-store'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -27,14 +28,16 @@ type BrowserAction =
 export type SecureBrowserResult = {
   status:'completed'|'prepared'|'blocked'|'failed'
   url:string
+  originalUrl?:string
+  handoffReservation?:string
   title:string
   summary:string
   pageText:string
   forms:Array<{action:string;method:string;inputs:Array<{selector:string;name:string;type:string;label:string}>}>
-  actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed'}>
+  actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed';consequential?:boolean}>
   sandboxName:string
   blockReason?: 'human_auth_required'|'provider_access_limited'
-  authReason?: 'password'|'otp'|'passkey'|'captcha'|'payment_auth'
+  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
   credentialSelectionRequired?: boolean
 }
 
@@ -91,7 +94,7 @@ async function model(page){
       return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')};
     };
     return {
-      url:location.href,title:document.title,text:clean(document.body?.innerText||'').slice(0,18000),
+      url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       forms:Array.from(document.forms).filter(visible).slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
         inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(inputs)
@@ -159,7 +162,7 @@ async function model(page){
     };
     return {
       url:location.href,title:document.title,
-      text:clean(document.body?.innerText||'').slice(0,18000),
+      text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       links:Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0,100).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})),
       forms:Array.from(document.forms).filter(visible).slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
@@ -188,6 +191,7 @@ async function isConsequentialControl(page,selector){
     await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
     await page.waitForTimeout(900);
     for(const a of (payload.actions||[])){
+      let consequential=a.kind==='submit';
       try{
         if(a.kind==='goto') await page.goto(a.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
         else if(a.kind==='fill') await page.locator(a.selector).first().fill(a.value,{timeout:10000});
@@ -195,15 +199,16 @@ async function isConsequentialControl(page,selector){
         else if(a.kind==='check') await page.locator(a.selector).first().check({timeout:10000});
         else if(a.kind==='wait') await page.waitForTimeout(Math.min(5000,Math.max(100,Number(a.ms)||500)));
         else if(a.kind==='click'){
-          if(payload.mode!=='execute' && await isConsequentialControl(page,a.selector)){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
+          consequential=await isConsequentialControl(page,a.selector);
+          if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential});continue;}
           await page.locator(a.selector).first().click({timeout:10000});
         } else if(a.kind==='submit'){
           if(payload.mode!=='execute'){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
           await page.locator(a.selector).first().click({timeout:10000});
         }
-        log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done'});
+        log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
         await page.waitForTimeout(650);
-      }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed'});}
+      }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential});}
     }
     const out=await model(page); out.actions=log; console.log(JSON.stringify(out));
   } finally { await context.close(); }
@@ -215,8 +220,10 @@ async function getComputer(userId:string,targetUrl:string){
   const name=userSandboxName(canonicalUserId)
   const sandbox=await Sandbox.getOrCreate({
     name, image:SANDBOX_IMAGE, region:SANDBOX_REGION, timeout:20*60*1000, persistent:true,
-    ports:BROWSER_PORTS, resources:{vcpus:1}, networkPolicy:BROWSER_SETUP_NETWORK,
+    ports:BROWSER_PORTS, resources:{vcpus:1},
   } as any)
+  const releaseOwnerLock=await acquireBrowserOwnerLock(sandbox)
+  try{
   await ensureBrowserRuntime(sandbox)
   await sandbox.writeFiles([
     {path:`${SANDBOX_WORKDIR}/gogo-browser.js`,content:Buffer.from(BROWSER_SCRIPT)},
@@ -224,7 +231,8 @@ async function getComputer(userId:string,targetUrl:string){
   ])
   const {allow}=allowedHosts(targetUrl)
   await sandbox.updateNetworkPolicy({allow} as any)
-  return {sandbox,name}
+  return {sandbox,name,releaseOwnerLock}
+  }catch(error){await releaseOwnerLock();throw error}
 }
 
 function parseJsonLoose(text:string){
@@ -279,14 +287,16 @@ async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;
   return JSON.parse(lines[lines.length-1])
 }
 async function inspect(userId:string,url:string){
-  const {sandbox,name}=await getComputer(userId,url)
+  const {sandbox,name,releaseOwnerLock}=await getComputer(userId,url)
+  try{
   const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[]})).toString('base64')
   const result=await sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload]})
   if(result.exitCode!==0)throw new Error(`secure_browser_read_failed:${safeText(await result.stderr(),700)}`)
   const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
   if(!lines.length)throw new Error('secure_browser_empty_output')
   const parsed=JSON.parse(lines[lines.length-1])
-  return {sandbox,name,page:parsed}
+  return {sandbox,name,page:parsed,releaseOwnerLock}
+  }catch(error){await releaseOwnerLock();throw error}
 }
 
 function detectProviderAccessBlock(page:any){
@@ -324,14 +334,16 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
 }
 
 function normalizeActionLog(values:any[]){
-  return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const}))
+  return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean}):Promise<SecureBrowserResult>{
+  let releaseOwnerLock:BrowserOwnerRelease|undefined
   try {
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
     const first=await inspect(params.userId,target.toString())
+    releaseOwnerLock=first.releaseOwnerLock
     let page=first.page
     let actionLog:any[]=[]
     let anyPlannedSubmit=false
@@ -356,7 +368,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       // resolved in the trusted backend, passed to the sandbox as command-scoped
       // environment variables, and injected directly by Playwright. They are
       // never exposed to the model planner, task objective, Activity, or logs.
-      if(!vaultAttempted && (authGate.reason==='password'||loginish)){
+      if(!vaultAttempted && (authGate.reason==='password'||(!authGate.required&&loginish))){
         const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
@@ -442,7 +454,8 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         const summary=credentialSelectionRequired
           ? 'Multiple saved logins match this site. Choose which account Gogo should use.'
           : authGate.message||'This site needs a secure sign-in before Gogo can continue.'
-        return {status:'blocked',url:safeText(page.url||target,1200),title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
+        const handoffReservation=(reason!=='password'||params.reservePasswordHandoff===true)&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
+        return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
       }
 
       const actions=await planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION')
@@ -460,6 +473,16 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       if(doneCount===0)break
     }
 
+    // The final action wave can itself open MFA. Non-read flows have only one
+    // wave, so this page must be checked before completion or sandbox teardown.
+    const finalAuthGate=detectHumanAuthGate(page)
+    if(finalAuthGate.required||pageLooksLikeLogin(page)){
+      const handoffReservation=(finalAuthGate.reason&&finalAuthGate.reason!=='password'||params.reservePasswordHandoff===true)&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
+      return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),
+        summary:finalAuthGate.message||'This site needs a secure sign-in before Gogo can continue.',
+        pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',
+        forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:finalAuthGate.reason||'password'}
+    }
     await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft' && anyPlannedSubmit
     return {
@@ -471,5 +494,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     const safeError=safeText(error?.message||error,1000)
     console.error('SECURE_BROWSER_FAILED:',safeError)
     throw new Error(safeError||'secure_browser_failed')
+  }finally{
+    await releaseOwnerLock?.()
   }
 }

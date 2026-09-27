@@ -47,3 +47,9 @@ assert.match(form,/Your original task is still saved — open it to continue saf
 assert.match(form,/resumeRes\.ok&&resumeBody\?\.ok===true/,'resume feedback must be bound to the resume endpoint result')
 assert.doesNotMatch(form,/try\{\s*await fetch\('\/api\/dashboard\/agent\/runs\/'.*\/resume/s,'Vault resume must not silently ignore the endpoint outcome')
 console.log('T1a Vault update → notified → same-run resume feedback verified')
+
+const authGate=fs.readFileSync('lib/agent/browser-auth-gate.ts','utf8')
+assert.match(authGate,/reason:'otp'/,'T1c OTP must remain an explicit human-auth boundary')
+assert.match(browser,/Do not paste passwords or one-time codes into chat/,'T1c secondary auth must stay out of chat/model context')
+assert.doesNotMatch(browser,/send (?:me|gogo) (?:the )?(?:otp|verification code|one-time code)/i,'AskGogo must never solicit secondary auth codes in chat')
+console.log('T1c secondary-auth human-only boundary verified')

@@ -179,20 +179,57 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   })
   if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
 
+  const {data:currentRun,error:currentRunError}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',String(tg)).maybeSingle()
+  if(currentRunError||!currentRun)throw new Error('browser_handoff_run_unavailable')
+  const runMetadata:any=currentRun.metadata_json||{}
+  const reconciledResult=runMetadata.browser_safe_to_retry===false
+    ? await (await import('./post-auth-outcome')).inspectPostAuthRun(String(tg),params.runId,runMetadata):undefined
+  if(reconciledResult===null)return {runId:params.runId,status:'outcome_unknown' as const,capability:'browser' as const,risk:params.command.risk,text:'The browser session is unavailable. Verify the outcome directly with the provider; Gogo will not repeat the action.',handledBy:'secure-browser' as const}
+  if(reconciledResult?.status==='blocked')return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text:reconciledResult.summary,handledBy:'secure-browser' as const}
+  if(runMetadata.handoff?.releaseUrl){
+    // Release the human browser's profile lock only after permission/approval checks.
+    const {releaseBrowserHandoff}=await import('./browser-handoff')
+    await releaseBrowserHandoff(String(runMetadata.handoff.releaseUrl),{allowExpired:true})
+    delete runMetadata.handoff
+    const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:runMetadata}).eq('id',params.runId).eq('telegram_id',String(tg))
+    if(error)throw new Error('browser_handoff_release_save_failed')
+  }
+
   await supabaseAdmin.from('agent_runs').update({status:'running',summary:'Gogo is working in an isolated secure browser.',progress:45,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
   await supabaseAdmin.from('agent_steps').update({status:'running',error:null,completed_at:null,started_at:new Date().toISOString()}).eq('id',params.stepId)
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
+  let pendingHandoffReservation:string|undefined
   try{
-    const result=await runSecureBrowser({userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null})
+    const result=reconciledResult||await runSecureBrowser({reserveHumanHandoff:true,userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null})
+    pendingHandoffReservation=result.handoffReservation
     const at=new Date().toISOString()
 
     if(result.status==='blocked'){
+      runMetadata.browser_safe_to_retry=!result.actions.some(action=>(action.kind==='submit'||action.consequential===true)&&action.status!=='skipped')
+      runMetadata.auth_action_log=result.actions
+      runMetadata.auth_original_url=params.command.url
       const blockReason=result.blockReason||'provider_access_limited'
       const compact={url:result.url,title:result.title,summary:result.summary,blockReason,authReason:result.authReason||null,credentialSelectionRequired:result.credentialSelectionRequired===true}
       await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:compact,error:blockReason,completed_at:at}).eq('id',params.stepId)
-      await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:blockReason,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
+      await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:blockReason,metadata_json:runMetadata,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
       await activity(tg,params.runId,blockReason,blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
       if(blockReason==='human_auth_required'){
+        if(result.authReason&&result.authReason!=='password'){
+          const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
+          const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:result.url,originalUrl:params.command.url,reservationToken:result.handoffReservation})
+          const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff},completed_at:null}).eq('id',params.runId).eq('telegram_id',String(tg))
+          if(error){
+            await cancelProviderBrowserHandoff(params.actor.userId,handoff).catch(()=>{})
+            throw new Error('browser_handoff_save_failed')
+          }
+          const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
+          const resumeUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+          return {
+            runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
+            text:`${result.summary}\n\nOpen this task to Take control, complete the human-only step, then select Resume this task:\n${resumeUrl}\n\nDo not paste passwords or one-time codes into chat. Gogo keeps this same task and rechecks permissions before continuing.`,
+            blockedReason:'human_auth_required' as const,handledBy:'secure-browser' as const,
+          }
+        }
         const host=new URL(result.url).hostname
         const vault=await buildVaultAddLink({
           telegramId:tg,
@@ -225,6 +262,11 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     await activity(tg,params.runId,'run_completed',result.summary,{host:new URL(result.url).hostname,action_count:result.actions.length})
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
   }catch(err:any){
+    if(pendingHandoffReservation)await (await import('./provider-browser-handoff')).cancelBrowserHandoffReservation(params.actor.userId,pendingHandoffReservation).catch(()=>{})
+    if(runMetadata.browser_safe_to_retry===false){
+      const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
+      return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}
+    }
     const message=String(err?.message||'secure_browser_failed');const at=new Date().toISOString()
     await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),completed_at:at}).eq('id',params.stepId)).catch(()=>{})
     await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the secure browser session.',error:safe(message,500),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
@@ -274,7 +316,7 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
   const {data:step}=await supabaseAdmin.from('agent_steps').select('id').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('tool_name','secure_browser').limit(1).maybeSingle()
   if(!step?.id)throw new Error('browser_step_missing')
   const result=await executeBrowser({actor:params.actor,runId:params.runId,stepId:String(step.id),command,mode:'execute',approved:true})
-  if(result.status!=='paused')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approved.id).eq('telegram_id',String(tg))
+  if(result.status==='completed')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approved.id).eq('telegram_id',String(tg))
   return result
 }
 

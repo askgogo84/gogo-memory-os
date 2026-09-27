@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runSecureBrowser } from './secure-computer'
 import { continueBrowserHandoffResearch, readBrowserHandoffState } from './browser-handoff'
-import { startProviderBrowserHandoff } from './provider-browser-handoff'
+import { startProviderBrowserHandoff, cancelProviderBrowserHandoff, cancelBrowserHandoffReservation } from './provider-browser-handoff'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 
@@ -115,8 +115,12 @@ export async function tryResumeTrainHandoff(params:{actor:AgentActor;text:string
   const at=new Date().toISOString()
   if(!trains.length){await supabaseAdmin.from('agent_runs').update({summary:'Gogo resumed the same rail browser, but verified train rows are not visible yet.',progress:70,updated_at:at,metadata_json:{...meta,state:'waiting_for_user',handoff:{...handoff,lastUrl:state.url}}}).eq('id',runId);return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:`I resumed the same rail browser session, but the train results are not visible yet.\n\nOpen the live browser again, finish the human-only step/search, tap *Return control to Gogo*, then reply *CONTINUE*.\n${handoff.takeoverUrl}`,handledBy:'train-handoff-resume' as const}}
   const text=formatTrainResult(c,trains)
-  await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context:c,trains,inventoryType:'browser-verified',handoff,resumed:true,browserState:{url:state.url,title:state.title}},error:null,completed_at:at}).eq('run_id',runId).eq('telegram_id',String(tg))
-  await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(text,1800),progress:100,error:null,completed_at:at,updated_at:at,metadata_json:{...meta,state:'completed',handoff:{...handoff,lastUrl:state.url}}}).eq('id',runId)
+  const {error:stepSaveError}=await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context:c,trains,inventoryType:'browser-verified',resumed:true,browserState:{url:state.url,title:state.title}},error:null,completed_at:at}).eq('run_id',runId).eq('telegram_id',String(tg))
+  if(stepSaveError)throw new Error('train_resume_step_save_failed')
+  const {error:runSaveError}=await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(text,1800),progress:100,error:null,completed_at:at,updated_at:at,metadata_json:{...meta,state:'completed',handoff:{...handoff,lastUrl:state.url}}}).eq('id',runId).eq('telegram_id',String(tg))
+  if(runSaveError)throw new Error('train_resume_run_save_failed')
+  await cancelProviderBrowserHandoff(params.actor.userId,handoff)
+  await supabaseAdmin.from('agent_runs').update({metadata_json:{...meta,state:'completed',handoff:null}}).eq('id',runId).eq('telegram_id',String(tg))
   await activity(tg,runId,'run_completed',`Task completed after human handoff with ${trains.length} browser-verified train options.`,{result_count:trains.length,handoff:true})
   return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'train-handoff-resume' as const}
 }
@@ -172,8 +176,11 @@ export async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurf
   const {count:priorSteps}=await supabaseAdmin.from('agent_steps').select('id',{count:'exact',head:true}).eq('run_id',runId)
   const {data:step,error:stepError}=await supabaseAdmin.from('agent_steps').insert({telegram_id:String(tg),run_id:runId,ordinal:(priorSteps||0)+1,tool_name:'secure_browser',title:'Work through live train search',status:'running',input_json:{context:params.c,directOnly:params.directOnly},output_json:{},started_at:now}).select('id').single();if(stepError||!step?.id)throw new Error(`train_step_create_failed:${stepError?.message||'unknown'}`)
   await activity(tg,runId,'browser_research_started',`Gogo opened the rail provider for ${params.c.routeLabel}.`,{date:params.c.date,directOnly:params.directOnly})
+  let pendingReservation:string|undefined
+  let createdHandoff:Awaited<ReturnType<typeof startProviderBrowserHandoff>>|undefined
   try{
-    const browser=await runSecureBrowser({userId:params.actor.userId,url:'https://www.irctc.co.in/nget/train-search',objective:`Find ${params.directOnly?'direct ':''}trains from ${params.c.from.label} (${params.c.from.code}) to ${params.c.to.label} (${params.c.to.code}) on ${params.c.date}. Use safe search controls and obtain actual train rows, visible fare, classes and seat availability. Rank the useful options by availability, fare and duration. Do not sign in, book, submit passenger details or pay.`,mode:'read'})
+    const browser=await runSecureBrowser({reserveHumanHandoff:true,reservePasswordHandoff:true,userId:params.actor.userId,url:'https://www.irctc.co.in/nget/train-search',objective:`Find ${params.directOnly?'direct ':''}trains from ${params.c.from.label} (${params.c.from.code}) to ${params.c.to.label} (${params.c.to.code}) on ${params.c.date}. Use safe search controls and obtain actual train rows, visible fare, classes and seat availability. Rank the useful options by availability, fare and duration. Do not sign in, book, submit passenger details or pay.`,mode:'read'})
+    pendingReservation=browser.handoffReservation
     if(browser.status==='blocked'){
       const providerUrl=browser.url||'https://www.irctc.co.in/nget/train-search'
       // TWO KINDS OF WALL, TWO KINDS OF HANDOFF.
@@ -194,10 +201,13 @@ export async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurf
         await activity(tg,runId,'device_handoff_required','The provider blocks server traffic by IP; sent the user a direct link for their own browser.',{reason:browser.blockReason,url:providerUrl})
         return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:`${params.c.routeLabel} · ${params.c.date}\n\nIRCTC blocks automated access from servers, so I cannot read the times myself - this is their policy, not a fault at my end.\n\nOpen it on your phone, where it works normally:\n${providerUrl}\n\nSearch ${params.c.from.label} to ${params.c.to.label} for ${params.c.date}, then send me a screenshot of the results or the exact train number + timing you see there. I can help compare the options from what you provide, but I cannot verify live IRCTC availability from the cloud.\n\nNo booking or payment action has been made.`,blockedReason:browser.blockReason,handledBy:'train-research' as const}
       }
-      const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:providerUrl})
+      const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:providerUrl,originalUrl:"https://www.irctc.co.in/nget/train-search",reservationToken:pendingReservation})
+      createdHandoff=handoff
       const at=new Date().toISOString();const metadata={...baseMeta,state:'waiting_for_user',handoff}
-      await supabaseAdmin.from('agent_steps').update({status:'queued',output_json:{browser,context:params.c,handoff},error:null,completed_at:null}).eq('id',String(step.id))
-      await supabaseAdmin.from('agent_runs').update({status:'paused',summary:'The rail provider needs human control before Gogo can continue.',progress:50,error:null,updated_at:at,metadata_json:metadata}).eq('id',runId)
+      const {error:stepSaveError}=await supabaseAdmin.from('agent_steps').update({status:'queued',output_json:{browser,context:params.c,handoff},error:null,completed_at:null}).eq('id',String(step.id))
+      if(stepSaveError)throw new Error('train_handoff_step_save_failed')
+      const {error:runSaveError}=await supabaseAdmin.from('agent_runs').update({status:'paused',summary:'The rail provider needs human control before Gogo can continue.',progress:50,error:null,updated_at:at,metadata_json:metadata}).eq('id',runId)
+      if(runSaveError)throw new Error('train_handoff_run_save_failed')
       await activity(tg,runId,'browser_handoff_ready','The rail provider requires human control; the same persistent browser is ready for takeover.',{reason:browser.blockReason||null})
       return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:`Train task needs you · ${params.c.routeLabel} · ${params.c.date}\n\nThe rail provider is limiting automated access. I kept a persistent browser ready for you.\n\nOpen this secure browser:\n${handoff.takeoverUrl}\n\nComplete only the human-required step (login/CAPTCHA/search if needed), tap *Return control to Gogo*, then come back to WhatsApp and reply *CONTINUE*.\n\nNo booking or payment action has been made.`,blockedReason:browser.blockReason,handledBy:'train-research' as const}
     }
@@ -207,6 +217,8 @@ export async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurf
     await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{browser,context:params.c,trains,inventoryType:'browser-verified'},completed_at:at}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(text,1800),progress:100,completed_at:at,updated_at:at,metadata_json:{...baseMeta,state:'completed'}}).eq('id',runId);await activity(tg,runId,'run_completed',`Task completed with ${trains.length} browser-verified train options.`,{result_count:trains.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'train-research' as const}
   }catch(err:any){
     const at=new Date().toISOString();const msg=safe(err?.message||'train_research_failed',500)
+    if(createdHandoff)await cancelProviderBrowserHandoff(params.actor.userId,createdHandoff).catch(()=>{})
+    else if(pendingReservation)await cancelBrowserHandoffReservation(params.actor.userId,pendingReservation).catch(()=>{})
     const stepCleanup=await supabaseAdmin.from('agent_steps').update({status:'failed',error:msg,completed_at:at}).eq('id',String(step.id))
     if(stepCleanup.error)console.error('TRAIN_STEP_CLEANUP_FAILED:',stepCleanup.error.message)
     const runCleanup=await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the train task.',error:msg,completed_at:at,updated_at:at}).eq('id',runId)

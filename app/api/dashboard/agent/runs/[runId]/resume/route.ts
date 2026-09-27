@@ -3,6 +3,7 @@ import { getSession } from '@/lib/dashboard/session'
 import { verifySameOrigin } from '@/lib/dashboard/guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { resumePausedBrowserRun } from '@/lib/agent/browser-command'
+import { resumeSecondaryAuthRun } from '@/lib/agent/secondary-auth-handoff'
 import type { AgentActor } from '@/lib/agent/actor'
 import { listVaultCredentialsForDomain } from '@/lib/vault/credential-store'
 
@@ -40,7 +41,7 @@ export async function POST(request:Request,{params}:{params:Promise<{runId:strin
     if(runError||!run)return NextResponse.json({ok:false,error:'run_unavailable'},{status:404})
     const meta:any=run.metadata_json||{}
     let host=''
-    try{host=new URL(String(meta.url||'')).hostname}catch{}
+    try{host=new URL(String(meta.url||meta.browser_url||meta.checkin_url||'')).hostname}catch{}
     if(!host)return NextResponse.json({ok:false,error:'run_url_invalid'},{status:400})
     const matches=await listVaultCredentialsForDomain(session.telegramId,host)
     if(!matches.some(item=>item.credentialId===requestedCredentialId)){
@@ -54,7 +55,7 @@ export async function POST(request:Request,{params}:{params:Promise<{runId:strin
   }
 
   try{
-    const result=await resumePausedBrowserRun({actor,runId:String(runId)})
+    const result=await resumeSecondaryAuthRun({actor,runId:String(runId)})||await resumePausedBrowserRun({actor,runId:String(runId)})
     return NextResponse.json({ok:true,result:{
       runId:result.runId,status:result.status,text:result.text,blockedReason:(result as any).blockedReason||null,
     }})

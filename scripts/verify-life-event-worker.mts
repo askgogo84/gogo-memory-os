@@ -64,7 +64,8 @@ assert.match(execution, /lifecycle_state:\s*'watching'/)
 // Non-execute browser work may now click safe search/filter controls, but the
 // browser still detects and blocks consequential submit/book/buy/check-in controls.
 assert.match(secureComputer, /isConsequentialControl/)
-assert.match(secureComputer, /payload\.mode!=='execute' && await isConsequentialControl/)
+assert.match(secureComputer, /consequential=await isConsequentialControl/)
+assert.match(secureComputer, /payload\.mode!=='execute' && consequential/)
 assert.match(secureComputer, /check\\s\*-\?\\s\*in/)
 assert.match(secureComputer, /confirm\(\?:ation\)\?/)
 assert.match(secureComputer, /safeResearch/)
