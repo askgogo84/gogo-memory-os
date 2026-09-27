@@ -79,11 +79,27 @@ export function parseBrowserCommand(text:string):BrowserCommand|null{
 export function parseConnectedProviderReadCommand(text:string):BrowserCommand|null{
   const raw=String(text||'').trim()
   if(!raw)return null
-  const provider=findVaultProviderInText(raw)
+  // Public shopping sites need browser routing even without a Vault integration.
+  // Keep these entry points separate from password-provider configuration.
+  const shoppingSites=[
+    {alias:/\bblinkit\b/i,loginUrl:'https://blinkit.com/'},
+    {alias:/\b(?:swiggy\s+)?instamart\b/i,loginUrl:'https://www.swiggy.com/instamart'},
+    {alias:/\bzepto\b/i,loginUrl:'https://www.zepto.com/'},
+  ].filter(site=>site.alias.test(raw))
+  const vaultProvider=findVaultProviderInText(raw)
+  // A comparison across providers must not silently become a one-site task.
+  if(shoppingSites.length+(vaultProvider?1:0)>1)return null
+  const provider=vaultProvider||shoppingSites[0]
   if(!provider)return null
 
   const lower=raw.toLowerCase()
-  const tokens=new Set((lower.match(/[a-z0-9.]+/g)||[]).map(value=>value.replace(/\.$/,'')))
+  // Remove only explicitly prohibited action verbs and coordinated verb lists.
+  // Do not discard the rest of a sentence: a later affirmative action must still
+  // reject read routing ("do not like posts, but follow this account").
+  const prohibitedVerb='(?:like|comment|follow|unfollow|message|post|publish|send|reply|delete|edit|change|buy|purchase|checkout|pay|book|reserve|submit|order)'
+  const negatedActions=new RegExp(`\\b(?:do\\s+not|don['’]?t|never)\\s+${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*`,'gi')
+  const actionable=lower.replace(negatedActions,' ')
+  const tokens=new Set((actionable.match(/[a-z0-9.]+/g)||[]).map(value=>value.replace(/\.$/,'')))
   const has=(...values:string[])=>values.some(value=>tokens.has(value))
 
   // Deterministic mutations always keep their native handlers.
@@ -109,7 +125,8 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   // Consequential provider actions must never be downgraded to read mode.
   const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit']
   if(writeTokens.some(value=>tokens.has(value)))return null
-  if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(lower))return null
+  if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(actionable))return null
+  if(/\b(?:message|order)\s+(?:this|that|it|a|an|the|my|some|two|three|\d+)\b/.test(actionable))return null
 
   const readTokens=['find','search','show','look','check','open','read','see','saved','reel','reels','post','posts','order','orders','wishlist','message','messages','inbox','booking','bookings','history','receipt','receipts','invoice','invoices']
   if(!readTokens.some(value=>tokens.has(value)))return null

@@ -15,7 +15,7 @@ const SECRET_KEYWORDS =
 // Sensitive values that may appear in conversation history. Keep this deliberately
 // conservative: it is only a prompt-boundary redactor, not a parser for the source data.
 const LABELED_SECRET_VALUE_RE =
-  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|card\s*number|account\s*number|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b\s*(?:is|:|=|-)?\s*([A-Z0-9][A-Z0-9\s._\-/]{2,})/gi
+  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|card\s*number|account\s*number|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b(?!\s+(?:code\s+)?if\s+(?:needed|required)\b)\s*(?:is|:|=|-)?\s*([A-Z0-9][A-Z0-9\s._\-/]{2,})/gi
 
 // Heuristic: does this memory look like it carries a credential/identifier we must not
 // surface to the model?
