@@ -23,6 +23,8 @@ const screenshotInstagram='Open Instagram and show me the 3 most recent posts in
 const screenshotBlinkit='Open Blinkit and check availability and the current price of Amul Taaza toned milk, 1 litre, for my delivery location. Ask me for my area and PIN code if needed. Do not order anything. If login is required, let me take control. After I authenticate, resume this same task and tell me the price.'
 assert.ok(isExplicitProviderBrowserRead(screenshotInstagram))
 assert.ok(isExplicitProviderBrowserRead(screenshotBlinkit))
+assert.ok(isExplicitProviderBrowserRead('Open the Instagram app and show my saved posts'))
+assert.ok(isExplicitProviderBrowserRead('Open the website for Blinkit and check milk prices'))
 assert.equal(isExplicitProviderBrowserRead('What did I tell you about my Amazon order?'),false)
 assert.equal(isExplicitProviderBrowserRead('Open my memory about my Amazon order'),false)
 assert.equal(isExplicitProviderBrowserRead('Open my notes about Blinkit prices'),false)
@@ -32,6 +34,7 @@ assert.ok(!conditionalPin.objective.includes('4821'),'an authentication PIN must
 assert.ok(!redactSecretShapedText('For Amazon login, my PIN if needed, use 4821').includes('4821'))
 assert.ok(!redactSecretShapedText('My PIN if needed; on step 2 use 4821').includes('4821'))
 assert.ok(!redactSecretShapedText('My OTP if needed, use ABCDEF').includes('ABCDEF'))
+assert.ok(!redactSecretShapedText('My PIN if needed. Then open the account using 4821.').includes('4821'))
 assert.match(redactSecretShapedText('Ask me for my PIN if needed. Then book 2 seats for 7 PM.'),/Then book 2 seats for 7 PM\./)
 assert.match(redactSecretShapedText('Ask me for my PIN if needed. Then check flights on 15 October 2026.'),/15 October 2026/)
 for(const [input,host] of [

@@ -190,9 +190,10 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
 export function isExplicitProviderBrowserRead(text:string){
   const target=String(text||'').trim().match(/^(?:please\s+)?(?:open|browse|visit|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]?.toLowerCase()
   if(!target)return false
-  const vaultProvider=findVaultProviderInText(target)
+  const navigationTarget=target.replace(/^(?:the|a|an)\s+/,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/,'')
+  const vaultProvider=findVaultProviderInText(navigationTarget)
   const aliases=[...(vaultProvider?.aliases||[]),'blinkit','instamart','swiggy instamart','zepto']
-  const directTarget=aliases.some(alias=>target.startsWith(alias)&&!/[a-z0-9]/i.test(target.charAt(alias.length)))
+  const directTarget=aliases.some(alias=>navigationTarget.startsWith(alias)&&!/[a-z0-9]/i.test(navigationTarget.charAt(alias.length)))
   return directTarget&&!!parseConnectedProviderReadCommand(text)
 }
 

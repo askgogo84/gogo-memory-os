@@ -51,7 +51,9 @@ export function redactSecretShapedText(content: string): string {
     (_match,label,tail)=>{
       const task='(?:book|check|show|find|read|search|compare|open|browse|visit|remind|schedule|buy|purchase|summarize)'
       const boundary=tail.search(new RegExp(`(?:[.!?;]\\s*(?:(?:then|next|afterwards)\\s+)?|\\b(?:then|next|afterwards|and)\\s+)(?=${task}\\b)`,'i'))
-      return `${label.replace(/\s+code$/i,'')} [sensitive detail withheld]${boundary<0?'':tail.slice(boundary)}`
+      // A new task may still contain instructions to use the supplied credential.
+      const remainingTask=boundary<0?'':tail.slice(boundary).replace(/\b(?:using|use|enter|type|try)\b[^.!?;\n]*/gi,'[sensitive detail withheld]')
+      return `${label.replace(/\s+code$/i,'')} [sensitive detail withheld]${remainingTask}`
     })
 
   // Preserve the label/context and replace only its value.
