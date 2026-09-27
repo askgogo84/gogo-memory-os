@@ -95,3 +95,10 @@ assert.match(association,/f\.score>=0\.58&&f\.confidence>=0\.55/,'weak long-memo
 assert.match(association,/return exactly NONE/,'association must stay silent when relevance is weak')
 assert.match(association,/Do not introduce any named entity unless it appears in the supplied context/,'unrelated entity leakage must remain forbidden')
 console.log('Contextual Long Memory media-association verification passed')
+
+const mediaMemory=fs.readFileSync('lib/services/media-memory.ts','utf8')
+assert.match(mediaMemory,/sourceTable:'media_saves'/,'understood media must write back into semantic long memory')
+assert.match(mediaMemory,/semanticSourceId=createHash\('sha256'\)/,'media write-back must use a deterministic dedupe key')
+assert.match(mediaMemory,/params\.detectedUrl\|\|''/,'canonical source URL should participate in media identity when available')
+assert.match(mediaMemory,/await indexMemory\(\{/,'media write-back should be awaited so serverless completion cannot drop it')
+console.log('Contextual Long Memory media write-back + semantic dedupe verification passed')
