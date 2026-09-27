@@ -35,3 +35,10 @@ assert.ok(autonomousCron,'persistent autonomous cron must be scheduled')
 assert.equal(autonomousCron.schedule,'* * * * *')
 
 console.log('✅ Persistent general-plan routing + resume worker regression passed')
+
+const autonomous=fs.readFileSync('lib/agent/autonomous-runtime.ts','utf8')
+assert.doesNotMatch(autonomous,/Gogo created a persistent execution plan and started working on it/,'run summaries shown to users must not narrate orchestration')
+assert.doesNotMatch(persistent,/Gogo created a persistent plan and started executing it/,'persistent-plan fallback copy must stay outcome-first')
+assert.match(autonomous,/I’m working through this request/)
+assert.match(autonomous,/Completed and verified/)
+console.log('Outcome-first persistent mission summary verification passed')
