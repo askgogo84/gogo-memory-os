@@ -192,11 +192,15 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   }
 }
 export function isExplicitProviderBrowserRead(text:string){
-  const target=String(text||'').trim().match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]?.toLowerCase()
+  const raw=String(text||'').trim()
+  const providerSearch=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?find\s+(.+?)\s+on\s+(.+)$/i)
+  const nativeObject=/\b(?:email|mail|gmail|notes?|memory|memories|lists?|reminders?|calendar)\b/i
+  const searchTarget=providerSearch&&!nativeObject.test(providerSearch[1])?providerSearch[2]:undefined
+  const target=(raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||searchTarget)?.toLowerCase()
   if(!target)return false
   const navigationTarget=target.replace(/^(?:the|a|an)\s+/,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/,'')
   const navigationObject=navigationTarget.split(/\b(?:and|then|to|for)\b|[.!?;,]/)[0]
-  if(/\b(?:email|mail|gmail|notes?|memory|memories|lists?|reminders?|calendar)\b/.test(navigationObject))return false
+  if(nativeObject.test(navigationObject))return false
   const vaultProvider=findVaultProviderInText(navigationTarget)
   const aliases=[...(vaultProvider?.aliases||[]),'blinkit','instamart','swiggy instamart','zepto']
   const directTarget=aliases.some(alias=>navigationTarget.startsWith(alias)&&!/[a-z0-9]/i.test(navigationTarget.charAt(alias.length)))
