@@ -19,6 +19,11 @@ function inputText(input: any) {
   return `${input?.name || ''} ${input?.type || ''} ${input?.label || ''}`.toLowerCase()
 }
 
+function normalizeAuthText(text: string) {
+  return text.toLowerCase().slice(0, 22000).replace(/\r\n?/g, '\n').split(/\n\s*\n/)
+    .map(paragraph => paragraph.replace(/\s+/g, ' ')).join('\n\n')
+}
+
 /**
  * Detect pages where continuing safely requires a human-only authentication step.
  * This intentionally examines only field metadata and visible page copy — never
@@ -26,9 +31,9 @@ function inputText(input: any) {
  * or infer credentials.
  */
 export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
-  const promptText = `${page?.title || ''} ${page?.text || ''}`.toLowerCase().slice(0, 22000)
-    .replace(/\r\n?/g, '\n').split(/\n\s*\n/)
-    .map(paragraph => paragraph.replace(/\s+/g, ' ')).join('\n\n')
+  const titleText = normalizeAuthText(page?.title || '')
+  const bodyText = normalizeAuthText(page?.text || '')
+  const promptText = `${titleText} ${bodyText}`.slice(0, 22000)
   // Retain the existing whitespace-insensitive checks for other auth boundaries.
   const text = promptText.replace(/\s+/g, ' ')
   const inputs = (page?.forms || []).flatMap(form => Array.isArray(form.inputs) ? form.inputs : [])
@@ -41,7 +46,7 @@ export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
   const hasOtpCopy = /\b(one[- ]?time password|verification code|enter (?:the )?code|we sent (?:you )?a code|authenticator app)\b/.test(text)
   const hasPasskey = /\b(passkey|security key|use your device|windows hello|touch id|face id)\b/.test(text)
   const hasCaptcha = /\b(captcha|i'?m not a robot|verify you are human|human verification)\b/.test(text)
-  const hasExplicitDeviceApproval = /\bapprove (?:this )?(?:sign[- ]?in|login)\b/.test(promptText)
+  const hasExplicitDeviceApproval = [titleText, bodyText].some(copy => /\bapprove (?:this )?(?:sign[- ]?in|login)\b/.test(copy))
   // A bare login/navigation label is not evidence of an active auth prompt.
   // Require actionable auth copy within the same short passage as a device cue;
   // never combine independent matches from across the inspected page.

@@ -91,6 +91,8 @@ for (const [file, expectedExtractions] of [['secure-computer.ts', 2], ['secure-t
     }
     assert.equal(detectHumanAuthGate(extract('Help', 'Please approve this\n\nsign-in documentation update.')).required,
       false, 'explicit approval phrases must not bridge unrelated paragraphs')
+    assert.equal(detectHumanAuthGate(extract('How to approve this', 'Sign-in notification documentation')).required,
+      false, 'explicit approval phrases must not bridge the document title and body')
     for (const title of ['Sign in – Google Accounts', 'Sign in | Provider', 'Login - Provider', 'Log in: Provider']) {
       const page = extract(title, 'Check your phone and tap Yes')
       assert.equal(detectHumanAuthGate(page).reason, 'device_approval', `${file} must recognize provider-qualified auth titles`)
