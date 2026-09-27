@@ -82,16 +82,25 @@ async function alreadyEmailSentToday(telegramId: number, today: string) {
   return Boolean(data?.length)
 }
 
+function tomorrowIstStartIso(now=new Date()) {
+  const key=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(now)
+  const start=new Date(`${key}T00:00:00+05:30`)
+  start.setUTCDate(start.getUTCDate()+1)
+  return start.toISOString()
+}
+
 async function weekAheadSummary(telegramId: number): Promise<string | null> {
-  const nowIso = new Date().toISOString()
-  const weekIso = new Date(Date.now() + 7 * 864e5).toISOString()
+  // Today's events/reminders are already shown in the daily briefing. The week-ahead
+  // section starts tomorrow so Sunday does not repeat the same flight/water reminders.
+  const startIso = tomorrowIstStartIso()
+  const weekIso = new Date(Date.parse(startIso) + 7 * 864e5).toISOString()
   const { data } = await supabaseAdmin
     .from('reminders')
     .select('message, remind_at')
     .eq('telegram_id', telegramId)
     .eq('sent', false)
-    .gte('remind_at', nowIso)
-    .lte('remind_at', weekIso)
+    .gte('remind_at', startIso)
+    .lt('remind_at', weekIso)
     .order('remind_at', { ascending: true })
     .limit(6)
   const rows = data || []
