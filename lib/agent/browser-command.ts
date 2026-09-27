@@ -116,6 +116,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
+    .replace(/\bmake\s+sure\b/g,'check')
     .replace(/\bpurchase\s+(history|details|receipt|status)\b/g,'order $1')
     .replace(/\b(my|the|your|our|this|that)\s+place\b/g,'$1 location')
     .replace(/\bupdate\s+me\s+(?:on|about)\b/g,'show me')

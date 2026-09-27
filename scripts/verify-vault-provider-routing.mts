@@ -50,6 +50,7 @@ for(const [input,host] of [
   ['Open Instagram and show recent posts from Blinkit','www.instagram.com'],
   ['Search Instagram for Blinkit posts','www.instagram.com'],
   ['Open Blinkit and return the price of milk','blinkit.com'],
+  ['Open Blinkit and make sure Amul milk is available','blinkit.com'],
   ['Check whether milk is available at my place on Blinkit','blinkit.com'],
   ['Will Amazon cancel my order?','www.amazon.in'],
   ['Does Amazon confirm my order?','www.amazon.in'],
