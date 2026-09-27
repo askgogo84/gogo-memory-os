@@ -50,14 +50,14 @@ const db={from:(table:string)=>{
     then:(resolve:any)=>{if(directSaveFails&&change?.metadata_json?.handoff)return Promise.resolve({error:{message:'save failed'}}).then(resolve);if(change?.metadata_json)metadata=change.metadata_json;return Promise.resolve({error:null}).then(resolve)}}
   return q
 }}
-let browserCompleted=false,vaultCalls=0
+let browserCompleted=false,vaultCalls=0,browserActions:any[]=[]
 const command=load('browser-command.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
   './secure-computer':{runSecureBrowser:async()=>browserCompleted
     ? {status:'completed',url:'https://provider.example/account',title:'Account',summary:'Read account',forms:[],actions:[]}
-    : {status:'blocked',blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in'}},
+    : {status:'blocked',blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}},
   '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff,cancelProviderBrowserHandoff:async()=>{directCancelled++}},
   './browser-handoff':{releaseBrowserHandoff:async(_url:string,options:any)=>{assert.equal(options.allowExpired,true);released++;return {ok:false,expired:true}}},
@@ -81,6 +81,10 @@ browserCompleted=false;directSaveFails=true
 await assert.rejects(()=>command.executeBrowser(params),/browser_handoff_save_failed/)
 assert.equal(directCancelled,1,'direct browser commands must clean up an unsaved takeover')
 directSaveFails=false
+browserActions=[{kind:'click',status:'done',consequential:true}]
+await command.executeBrowser(params)
+assert.equal(metadata.browser_safe_to_retry,false)
+await assert.rejects(()=>command.executeBrowser(params),/reconciliation/)
 console.log('Device auth takeover, ticket lifetime, and same-run continuation verified')
 const computerSource=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
 assert.match(computerSource,/authGate\.reason==='password'\|\|\(!authGate\.required&&loginish\)/,
@@ -131,6 +135,15 @@ for(const kind of ['flight_prepare','flight_execute','restaurant','lifecycle_mon
   assert.equal(result.runId,'run')
 }
 assert.deepEqual(dispatched,['flight_prepare','flight_execute','restaurant','lifecycle_monitor'])
+for(const action of [
+  {kind:'click',status:'done',consequential:true},
+  {kind:'click',status:'failed',consequential:true},
+  {kind:'submit',status:'done'},
+]){
+  await shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'restaurant',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://login.example',originalUrl:'https://provider.example',actions:[action]}})
+  assert.equal(rows.agent_runs.metadata_json.auth_resume.safeToRetry,false)
+  await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1},runId:'run'}),/reconciliation/)
+}
 rows.agent_runs.status='paused';rows.life_event_actions.status='blocked'
 rows.agent_runs.metadata_json.auth_resume.safeToRetry=false
 await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1},runId:'run'}),/reconciliation/)
@@ -159,17 +172,18 @@ assert.equal(cancelledHandoffs,1,'release the owner lock if the takeover token c
 assert.equal(rows.agent_runs.status,'paused')
 tokenSaveFails=false
 
-let reserved=true,policyUpdates=0,bootstraps=0
+let reserved=true,policyUpdates=0,bootstraps=0,lastPolicy:any
 const launches:any[]=[]
 const provider=load('provider-browser-handoff.ts',{
   crypto:{randomBytes:()=>({toString:()=> 'new-token'})},
   './secure-browser-bootstrap':{ensureBrowserRuntime:async()=>{bootstraps++}},
   './browser-handoff':{BROWSER_HANDOFF_PORT:3001,HANDOFF_SERVER:'fixture',getPersistentBrowserSandbox:async(_id:string,options:any)=>{assert.equal(options.bootstrap,false);return {name:'owner',sandbox:{
-    writeFiles:async()=>{},updateNetworkPolicy:async()=>{policyUpdates++},domain:async()=> 'browser.example',
+    writeFiles:async()=>{},updateNetworkPolicy:async(policy:any)=>{policyUpdates++;lastPolicy=policy},domain:async()=> 'browser.example',
     runCommand:async(command:any)=>{launches.push(command);return {exitCode:command.cmd==='flock'?0:reserved?0:1}},
   }}}},
 },'',{setTimeout:(f:()=>void)=>{f();return 0}})
-await provider.startProviderBrowserHandoff({userId:'owner',url:'https://provider.example'})
+await provider.startProviderBrowserHandoff({userId:'owner',url:'https://login.example',originalUrl:'https://provider.example'})
+assert.deepEqual(Object.keys(lastPolicy.allow).sort(),['*.login.example','*.provider.example','login.example','provider.example'])
 assert.equal(policyUpdates,1)
 assert.equal(launches[0].cmd,'flock')
 assert.equal(launches[0].args[0],'-n')
@@ -193,14 +207,26 @@ await unlock()
 assert.ok(lockCommands.some(c=>c.files?.[0]?.path==='gogo-browser-release-reservation'))
 let unexpectedBootstrap=0
 const lockedComputer=load('secure-computer.ts',{
+  './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   '@anthropic-ai/sdk':{default:class {}},
   '@vercel/sandbox':{Sandbox:{getOrCreate:async(options:any)=>{assert.equal(options.networkPolicy,undefined);return {}}}},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>{throw new Error('browser_handoff_in_use')}},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{unexpectedBootstrap++}},
-},'\nexport { getComputer }')
+},'\nexport { getComputer, BROWSER_SCRIPT, normalizeActionLog }')
 await assert.rejects(()=>lockedComputer.getComputer('user','https://provider.example'),/browser_handoff_in_use/)
 assert.equal(unexpectedBootstrap,0,'ordinary browser tasks must not bootstrap an active owner takeover')
 console.log('Automated browser reservations and direct handoff persistence failure verified')
+for(const [label,throws,expected] of [['Confirm reservation',false,true],['Confirm reservation',true,true],['Search',false,false]] as const){
+  let output:any
+  const element={textContent:label,tagName:'BUTTON',id:'action',getAttribute:(name:string)=>name==='type'?'button':null}
+  const page={goto:async()=>{},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://login.example',text:'Approve this sign-in'}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element),click:async()=>{if(throws)throw new Error('timeout after click')}})})}
+  await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[page],close:async()=>{}})}}),
+    process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'click',selector:'#action'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{output=JSON.parse(value)},error:console.error}})
+  const actions=lockedComputer.normalizeActionLog(output.actions)
+  assert.equal(actions[0].consequential,expected,'the executed DOM control determines replay safety')
+  assert.equal(actions[0].status,throws?'failed':'done')
+}
+console.log('Production browser script records consequential clicks and uncertain click outcomes')
 
 rows.agent_runs.status='paused';rows.life_event_actions.status='blocked'
 rows.agent_runs.metadata_json.auth_resume={kind:'flight_prepare',safeToRetry:true}

@@ -196,7 +196,7 @@ async function fallbackSecureComputer(params: { userId: string; url: string; hum
     })
     if (result.status === 'blocked') {
       const authHandoff=params.humanHandoff!==false&&result.authReason&&result.authReason!=='password'
-        ? await startProviderBrowserHandoff({userId:params.userId,url:result.url||params.url}) : undefined
+        ? await startProviderBrowserHandoff({userId:params.userId,url:result.url||params.url,originalUrl:params.url}) : undefined
       return {
         status: 'blocked', url: result.url || params.url, title: result.title || '', pageText: '', usefulLinks: [],
         blockReason: 'human_auth_required', authReason: result.authReason, authHandoff,
@@ -253,7 +253,7 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
         await releaseOwnerLock?.();releaseOwnerLock=undefined
       }
       const authHandoff=params.humanHandoff!==false&&gate.reason&&gate.reason!=='password'
-        ? await startProviderBrowserHandoff({userId:params.userId,url:String(page.url||params.url)}).catch(()=>undefined) : undefined
+        ? await startProviderBrowserHandoff({userId:params.userId,url:String(page.url||params.url),originalUrl:params.url}).catch(()=>undefined) : undefined
       const authHandoffPending=params.humanHandoff!==false&&gate.reason!=='password'&&!authHandoff
       keepForHuman=Boolean(authHandoff)||authHandoffPending
       return {

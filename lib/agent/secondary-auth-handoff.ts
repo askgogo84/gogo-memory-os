@@ -10,7 +10,7 @@ export async function attachSecondaryAuthHandoff(params:{userId:string;telegramI
   if(params.result.blockReason!=='human_auth_required'||!params.result.authReason||params.result.authReason==='password')return null
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',params.telegramId).maybeSingle()
   if(error||!run)throw new Error('auth_handoff_run_missing')
-  const safeToRetry=!params.result.actions.some(action=>action.kind==='submit'&&action.status==='done')
+  const safeToRetry=!params.result.actions.some(action=>(action.kind==='submit'||action.consequential===true)&&action.status!=='skipped')
   const marker={kind:params.kind,reason:params.result.authReason,safeToRetry}
   const metadata={...run.metadata_json,browser_url:params.result.url,handoff:null,secondary_auth:marker,auth_resume:{kind:params.kind,safeToRetry}}
   const {error:saveError}=await supabaseAdmin.from('agent_runs').update({status:'paused',error:'human_auth_required',summary:params.result.summary,metadata_json:metadata,completed_at:null})
@@ -22,7 +22,7 @@ export async function attachSecondaryAuthHandoff(params:{userId:string;telegramI
   // Provisioning is retryable; the run/action are already safely paused.
   let createdHandoff:Awaited<ReturnType<typeof startProviderBrowserHandoff>>|undefined
   try{
-    createdHandoff=await startProviderBrowserHandoff({userId:params.userId,url:params.result.url})
+    createdHandoff=await startProviderBrowserHandoff({userId:params.userId,url:params.result.url,originalUrl:params.result.originalUrl})
     const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...metadata,handoff:createdHandoff}}).eq('id',params.runId).eq('telegram_id',params.telegramId)
     if(error)throw new Error('auth_handoff_save_failed')
   }catch{

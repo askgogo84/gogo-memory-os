@@ -10,8 +10,11 @@ export async function cancelProviderBrowserHandoff(userId:string,handoff:{token:
   }
 }
 
-export async function startProviderBrowserHandoff(params:{userId:string;url:string}){
+export async function startProviderBrowserHandoff(params:{userId:string;url:string;originalUrl?:string}){
   const target=new URL(params.url)
+  const hosts=[target,...(params.originalUrl?[new URL(params.originalUrl)]:[])]
+  if(hosts.some(url=>!['https:','http:'].includes(url.protocol)))throw new Error('browser_url_not_http')
+  const allow=Object.fromEntries(hosts.flatMap(url=>[[url.hostname,[]],[`*.${url.hostname}`,[]]]))
   const {sandbox,name}=await getPersistentBrowserSandbox(params.userId,{bootstrap:false})
   await sandbox.writeFiles([{path:'gogo-handoff.js',content:Buffer.from(HANDOFF_SERVER)}])
   const token=randomBytes(24).toString('base64url')
@@ -32,7 +35,7 @@ if(!launched&&ready===token){launched=true;process.argv=['node','gogo-handoff.js
   if(reservation.exitCode!==0)throw new Error('browser_handoff_in_use')
   try{
   await ensureBrowserRuntime(sandbox)
-  await sandbox.updateNetworkPolicy({allow:{[target.hostname]:[],[`*.${target.hostname}`]:[]}} as any)
+  await sandbox.updateNetworkPolicy({allow} as any)
   await sandbox.writeFiles([{path:'gogo-handoff-go',content:Buffer.from(token)}])
   await new Promise(r=>setTimeout(r,1500))
   const domain=typeof (sandbox as any).domain==='function' ? await (sandbox as any).domain(BROWSER_HANDOFF_PORT) : ''

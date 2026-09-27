@@ -28,11 +28,12 @@ type BrowserAction =
 export type SecureBrowserResult = {
   status:'completed'|'prepared'|'blocked'|'failed'
   url:string
+  originalUrl?:string
   title:string
   summary:string
   pageText:string
   forms:Array<{action:string;method:string;inputs:Array<{selector:string;name:string;type:string;label:string}>}>
-  actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed'}>
+  actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed';consequential?:boolean}>
   sandboxName:string
   blockReason?: 'human_auth_required'|'provider_access_limited'
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
@@ -189,6 +190,7 @@ async function isConsequentialControl(page,selector){
     await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
     await page.waitForTimeout(900);
     for(const a of (payload.actions||[])){
+      let consequential=a.kind==='submit';
       try{
         if(a.kind==='goto') await page.goto(a.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
         else if(a.kind==='fill') await page.locator(a.selector).first().fill(a.value,{timeout:10000});
@@ -196,15 +198,16 @@ async function isConsequentialControl(page,selector){
         else if(a.kind==='check') await page.locator(a.selector).first().check({timeout:10000});
         else if(a.kind==='wait') await page.waitForTimeout(Math.min(5000,Math.max(100,Number(a.ms)||500)));
         else if(a.kind==='click'){
-          if(payload.mode!=='execute' && await isConsequentialControl(page,a.selector)){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
+          consequential=await isConsequentialControl(page,a.selector);
+          if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential});continue;}
           await page.locator(a.selector).first().click({timeout:10000});
         } else if(a.kind==='submit'){
           if(payload.mode!=='execute'){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
           await page.locator(a.selector).first().click({timeout:10000});
         }
-        log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done'});
+        log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
         await page.waitForTimeout(650);
-      }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed'});}
+      }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential});}
     }
     const out=await model(page); out.actions=log; console.log(JSON.stringify(out));
   } finally { await context.close(); }
@@ -330,7 +333,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
 }
 
 function normalizeActionLog(values:any[]){
-  return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const}))
+  return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
 export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass}):Promise<SecureBrowserResult>{
@@ -450,7 +453,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         const summary=credentialSelectionRequired
           ? 'Multiple saved logins match this site. Choose which account Gogo should use.'
           : authGate.message||'This site needs a secure sign-in before Gogo can continue.'
-        return {status:'blocked',url:safeText(page.url||target,1200),title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
+        return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
       }
 
       const actions=await planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION')
