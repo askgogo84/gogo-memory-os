@@ -44,7 +44,7 @@ export async function inspectPostAuthOutcome(metadata:any):Promise<SecureBrowser
   const pending=/\b(pending|processing|please wait|awaiting|in progress)\b/i.test(text)
   const confirmed=/\b(?:reservation|booking|order|purchase|payment|submission|application|check[- ]?in)\s+(?:is\s+|was\s+)?(?:confirmed|successful|complete|completed)\b|\b(?:you are|you['’]re) checked in\b/i.test(text)
   const specialized=['flight_execute','restaurant'].includes(metadata.auth_resume?.kind)
-  if(failed||pending||(!specialized&&!confirmed))return {...base,status:'blocked',blockReason:'provider_access_limited',
+  if(!specialized&&(failed||pending||!confirmed))return {...base,status:'blocked',blockReason:'provider_access_limited',
     summary:failed?'The provider reports an unsuccessful outcome. Gogo has not repeated the action. Inspect the provider result before deciding what to do next.':'The provider has not shown a confirmed outcome yet. Check again after the page finishes updating; Gogo will not repeat the action.',
     pageText:redactBrowserSensitiveText(page.text).slice(0,9000)}
   return {...base,status:'completed',summary:'Gogo inspected the provider result after authentication without repeating the action.',pageText:redactBrowserSensitiveText(page.text).slice(0,9000)}

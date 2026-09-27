@@ -28,7 +28,7 @@ export async function attachSecondaryAuthHandoff(params:{userId:string;telegramI
     if(error)throw new Error('auth_handoff_save_failed')
   }catch{
     if(createdHandoff)await cancelProviderBrowserHandoff(params.userId,createdHandoff).catch(()=>{})
-    if(!safeToRetry)await markAuthOutcomeUnknown(params.telegramId,params.runId,metadata)
+    if(!safeToRetry)return await markAuthOutcomeUnknown(params.telegramId,params.runId,metadata)
     // The task page retains a retry control even when another takeover is active.
   }
   const base=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')

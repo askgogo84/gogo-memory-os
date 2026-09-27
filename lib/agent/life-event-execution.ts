@@ -185,6 +185,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
 
   if (result.status === 'blocked') {
     const handoffUrl=await attachSecondaryAuthHandoff({userId:params.actor.userId,telegramId:tg,runId:params.runId,kind:'flight_execute',result})
+    if(handoffUrl&&typeof handoffUrl!=='string')return {...handoffUrl,capability:'travel' as const,risk:'high' as const,handledBy:'life-event-checkin' as const}
     await supabaseAdmin.from('agent_runs').update({
       status: 'paused', progress: 65, summary: safe(result.summary || 'Gogo paused at a secure human step.', 1000),
       error: result.blockReason || 'human_auth_required', updated_at: at,

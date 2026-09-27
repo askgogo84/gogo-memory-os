@@ -263,11 +263,11 @@ assert.equal(rows.agent_runs.metadata_json.handoff,null)
 preparationFails=false
 assert.equal((await shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'})).runId,'run')
 console.log('Transient preparation failure restores paused state and supports a second same-run resume')
-let executionError='browser_handoff_in_use',executionCalls=0,executionReleases=0
+let executionError='browser_handoff_in_use',executionCalls=0,executionReleases=0,executionResult:any
 const executionMocks={
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
-  './secure-computer':{runSecureBrowser:async()=>{executionCalls++;throw new Error(executionError)}},
-  './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{executionReleases++}},
+  './secure-computer':{runSecureBrowser:async()=>{executionCalls++;if(executionResult)return executionResult;throw new Error(executionError)}},
+  './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{executionReleases++},attachSecondaryAuthHandoff:async()=>({runId:'run',status:'outcome_unknown',text:'Verify directly with the provider; the action will not be repeated.'})},
   './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
   './approval-binding':{assertApprovalBinding:()=>{}},
@@ -326,7 +326,8 @@ for(const kind of ['flight','restaurant']){
   rows.agent_runs.status='queued'
   rows.life_event_actions.status=kind==='flight'?'waiting_approval':'ready'
   const before=executionCalls
-  const result=kind==='flight'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run',reconciledResult:evidence}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions),evidence)
+  const confirmedEvidence={...evidence,pageText:kind==='flight'?"You're checked in; payment for the optional upgrade failed":'Table reserved; loyalty points pending'}
+  const result=kind==='flight'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run',reconciledResult:confirmedEvidence}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions),confirmedEvidence)
   assert.equal(result.status,'completed')
   assert.equal(executionCalls,before,'reconciliation must not navigate, plan, or replay any action')
   assert.equal(rows.agent_runs.id,'run')
@@ -356,8 +357,21 @@ assert.equal(rows.agent_runs.metadata_json.auth_reconciliation_required,true)
 outcomeReadError=undefined
 provisioningFails=true
 rows.agent_runs.status='running';rows.life_event_actions.status='running'
-await shared.attachSecondaryAuthHandoff({userId:'owner',telegramId:'1',runId:'run',kind:'restaurant',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://login.example',originalUrl:'https://provider.example',actions:outcomeMetadata.auth_action_log}})
+const unavailable=await shared.attachSecondaryAuthHandoff({userId:'owner',telegramId:'1',runId:'run',kind:'restaurant',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://login.example',originalUrl:'https://provider.example',actions:outcomeMetadata.auth_action_log}})
+assert.equal(unavailable.status,'outcome_unknown')
 assert.equal(rows.agent_runs.status,'outcome_unknown','unsafe provisioning failure must expose manual verification, not a stranded pause')
 assert.equal(rows.agent_runs.metadata_json.handoff,undefined)
 assert.equal(rows.agent_runs.metadata_json.auth_resume,undefined)
 console.log('Expired or unavailable post-action sessions enter explicit manual verification; specialized confirmation remains supported')
+for(const kind of ['flight_execute','restaurant']){
+  outcomePage={...outcomePage,text:kind==='flight_execute'?"You're checked in; payment for the optional upgrade failed":'Table reserved; loyalty points pending'}
+  assert.equal((await outcomeReader.inspectPostAuthOutcome({...outcomeMetadata,auth_resume:{kind}})).status,'completed')
+  rows.agent_runs.status='queued'
+  rows.agent_runs.metadata_json={plan_type:'life_event_checkin',life_event_id:'event',life_event_action_id:'action',checkin_url:'https://provider.example'}
+  rows.life_event_actions.status=kind==='flight_execute'?'waiting_approval':'ready'
+  executionResult={...evidence,status:'blocked',blockReason:'human_auth_required',authReason:'device_approval'}
+  const result=kind==='flight_execute'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run'}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions))
+  assert.equal(result.status,'outcome_unknown')
+  assert.match(result.text,/Verify directly/)
+  assert.doesNotMatch(result.text,/Take control/)
+}

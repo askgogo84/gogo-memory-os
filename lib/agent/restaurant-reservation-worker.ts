@@ -140,6 +140,10 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
 
   if(result.status==='blocked'){
     const handoffUrl=await attachSecondaryAuthHandoff({userId:actor.userId,telegramId:tg,runId,kind:'restaurant',result})
+    if(handoffUrl&&typeof handoffUrl!=='string'){
+      await notify(actor,handoffUrl.text)
+      return handoffUrl
+    }
     const summary=safe(result.summary||'The provider requires a human authentication or protected step.',900)
     await failSafe({action,event,runId,approvalId,status:'paused',summary,error:result.blockReason||'human_auth_required',actor})
     await notify(actor,`🔐 ${safe(payload.restaurant||event.title,160)} needs a secure human step before I can continue. I stopped before passwords, OTPs, CAPTCHAs, passkeys or payment authentication.${handoffUrl?` Take control and resume this same task: ${handoffUrl}`:' Open AskGogo Agent for this run.'} The original reservation constraints remain attached.`)
