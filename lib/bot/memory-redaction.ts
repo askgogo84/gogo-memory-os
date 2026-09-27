@@ -45,20 +45,14 @@ export function redactSecretShapedText(content: string): string {
   if (!content) return content
   let out = String(content)
 
-  // Inspect the credential clause, including explicit follow-up assignments.
-  // A later task sentence must retain its quantities, dates, and times.
-  out = out.replace(/(\b(?:pin(?:\s+code)?|otp)\s+if\s+(?:needed|required)\b)([\s\S]*)/gi,
+  // Withhold the conditional credential clause regardless of code format.
+  // Resume only at an explicit new task, preserving its quantities and dates.
+  out = out.replace(/\b(pin(?:\s+code)?|otp)\s+if\s+(?:needed|required)\b([\s\S]*)/gi,
     (_match,label,tail)=>{
-      const boundary=tail.search(/[.!?]\s+(?!(?:it\s+is|use|enter|type|try)\b)|\b(?:then|next|afterwards)\s+(?!(?:use|enter|type|try)\b)/i)
-      const end=boundary<0?tail.length:boundary
-      const credentialClause=tail.slice(0,end).replace(/\b(?=[A-Z0-9._\/-]{3,}\b)[A-Z0-9._\/-]*\d[A-Z0-9._\/-]*(?:[ -]+\d+)*\b/gi,'[sensitive detail withheld]')
-      return label+credentialClause+tail.slice(end)
+      const task='(?:book|check|show|find|read|search|compare|open|browse|visit|remind|schedule|buy|purchase|summarize)'
+      const boundary=tail.search(new RegExp(`(?:[.!?;]\\s*(?:(?:then|next|afterwards)\\s+)?|\\b(?:then|next|afterwards|and)\\s+)(?=${task}\\b)`,'i'))
+      return `${label.replace(/\s+code$/i,'')} [sensitive detail withheld]${boundary<0?'':tail.slice(boundary)}`
     })
-
-  // A conditional request for a PIN is not a value. Redact an adjacent numeric
-  // code or an explicitly assigned value, but do not swallow the next task sentence.
-  out = out.replace(/\b(pin(?:\s+code)?|otp)\s+if\s+(?:needed|required)\b(?:[\s.?!,;:-]*(?:(?:it\s+)?is\s+)?(\d[\d -]*\d)|[\s.?!,;-]*(?:it\s+)?(?:is|:|=)\s*([A-Z0-9][A-Z0-9._\/-]*))?/gi,
-    (_match,label)=>`${label.replace(/\s+code$/i,'')} [sensitive detail withheld]`)
 
   // Preserve the label/context and replace only its value.
   out = out.replace(LABELED_SECRET_VALUE_RE, (_match, label) => `${label} [sensitive detail withheld]`)

@@ -141,6 +141,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     (/\badd\b/.test(lower) && /\bto\s+(?:my\s+)?(?:calendar|list)\b/.test(lower))
 
   if(reminderMutation||calendarOrListMutation)return null
+  if(shoppingSites.length&&/\bget\s+(?:me|us)\s+(?!(?:the\s+)?(?:(?:current|latest|lowest|best|total)\s+)?(?:prices?|cost|availability|information|details|status)\b)/.test(actionable))return null
   if(/\b(?:request|initiate|process|claim)\b[^.!?]*\b(?:refund|return|cancellation)\b/.test(actionable))return null
   if(/\b(?:set|default)\b[^.!?]*\b(?:address|profile|delivery|payment|cart|basket)\b/.test(actionable))return null
   if(/\buse\s+(?:(?:my|the|this|a|an)\s+)?(?:coupon|promo|voucher|code)\b/.test(actionable))return null
@@ -174,7 +175,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(actionable))return null
 
   const readTokens=['find','search','show','look','check','open','read','see','saved','reel','reels','post','posts','order','orders','wishlist','message','messages','inbox','booking','bookings','history','receipt','receipts','invoice','invoices']
-  const shoppingRead=shoppingSites.length===1&&/\b(?:price|prices|available|availability|in\s+stock|stock\s+status)\b/.test(actionable)
+  const shoppingRead=shoppingSites.length===1&&/\b(?:price|prices|cost|costs|how\s+much|available|availability|in\s+stock|stock\s+status)\b/.test(actionable)
   if(!readTokens.some(value=>tokens.has(value))&&!shoppingRead)return null
 
   return {

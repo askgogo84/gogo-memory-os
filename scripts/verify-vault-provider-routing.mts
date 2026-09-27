@@ -31,6 +31,7 @@ assert.ok(conditionalPin)
 assert.ok(!conditionalPin.objective.includes('4821'),'an authentication PIN must never become a postal code')
 assert.ok(!redactSecretShapedText('For Amazon login, my PIN if needed, use 4821').includes('4821'))
 assert.ok(!redactSecretShapedText('My PIN if needed; on step 2 use 4821').includes('4821'))
+assert.ok(!redactSecretShapedText('My OTP if needed, use ABCDEF').includes('ABCDEF'))
 assert.match(redactSecretShapedText('Ask me for my PIN if needed. Then book 2 seats for 7 PM.'),/Then book 2 seats for 7 PM\./)
 assert.match(redactSecretShapedText('Ask me for my PIN if needed. Then check flights on 15 October 2026.'),/15 October 2026/)
 for(const [input,host] of [
@@ -58,6 +59,9 @@ for(const [input,host] of [
   ['Check my Amazon order, and latest message','www.amazon.in'],
   ['Check my Amazon order status and latest message','www.amazon.in'],
   ["What's the price of Amul milk on Blinkit?",'blinkit.com'],
+  ['How much is Amul milk on Blinkit?','blinkit.com'],
+  ['What does Amul milk cost on Zepto?','www.zepto.com'],
+  ['Get me the current price of milk on Blinkit','blinkit.com'],
   ['Is Amul milk available on Zepto?','www.zepto.com'],
   ['Open Blinkit. Ask for my PIN code if needed. Then check the price of milk. Do not order.','blinkit.com'],
   ['Open Blinkit. Ask me for my area and PIN code if needed and check the price of milk','blinkit.com'],
@@ -91,6 +95,7 @@ for(const input of [
   'Open Blinkit and set 12 Main St as my delivery address',
   'Open Blinkit and use coupon SAVE20',
   'Open Blinkit and request a refund',
+  'Open Blinkit and get me two cartons of milk',
   "Open Blinkit; don't change my address, and buy milk.",
   'Show my Zepto list',
   'Read my Blinkit notes',
