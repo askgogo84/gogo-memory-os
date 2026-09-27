@@ -152,7 +152,7 @@ export async function createAutonomousRun(params: {
     capability: route.primary,
     status: 'running',
     title: safe(params.plan.objective, 180),
-    summary: 'Gogo created a persistent execution plan and started working on it.',
+    summary: 'I’m working through this request.',
     progress: 1,
     why: `Gogo routed this outcome to ${route.primary}${route.supporting.length ? ` with ${route.supporting.join(', ')}` : ''}.`,
     source: safe(params.source, 100),
@@ -295,7 +295,7 @@ async function reconcileRun(runId: string, telegramId: string) {
   const now = new Date().toISOString()
 
   if (completed === steps.length) {
-    const { error } = await supabaseAdmin.from('agent_runs').update({ status: 'completed', progress: 100, summary: 'Gogo completed and verified the autonomous plan.', completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'completed' } }).eq('id', runId).eq('telegram_id', telegramId)
+    const { error } = await supabaseAdmin.from('agent_runs').update({ status: 'completed', progress: 100, summary: 'Completed and verified.', completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'completed' } }).eq('id', runId).eq('telegram_id', telegramId)
     if (error) throw new Error(`autonomous_run_complete_failed:${error.message}`)
     await activity(telegramId, runId, 'autonomous_run_completed', 'Gogo completed and verified the full plan.', { completed_steps: completed, total_steps: total })
     return 'completed' as const
