@@ -94,7 +94,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   let provider=candidates[0]
   // Provider names inside search content are not extra navigation targets.
   // Still reject actual multi-provider work instead of silently dropping a site.
-  const navigationText=raw.match(/^(?:please\s+)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||''
+  const navigationText=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||''
   const targetText=navigationText.replace(/^(?:the|a|an)\s+/i,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/i,'').split(/\s+(?:and|for)\b|[!?;,]/i)[0]
   if(candidates.length>1||targetText){
     const targets=candidates.filter(candidate=>candidate.alias.test(targetText))
@@ -192,7 +192,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   }
 }
 export function isExplicitProviderBrowserRead(text:string){
-  const target=String(text||'').trim().match(/^(?:please\s+)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]?.toLowerCase()
+  const target=String(text||'').trim().match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]?.toLowerCase()
   if(!target)return false
   const navigationTarget=target.replace(/^(?:the|a|an)\s+/,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/,'')
   const navigationObject=navigationTarget.split(/\b(?:and|then|to|for)\b|[.!?;,]/)[0]

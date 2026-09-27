@@ -22,6 +22,7 @@ const exactInstagramRequest='Find the AI reels I saved recently on Instagram.'
 const screenshotInstagram='Open Instagram and show me the 3 most recent posts in my Saved collection. Do not like, comment, follow, message, post, or change anything.'
 const screenshotBlinkit='Open Blinkit and check availability and the current price of Amul Taaza toned milk, 1 litre, for my delivery location. Ask me for my area and PIN code if needed. Do not order anything. If login is required, let me take control. After I authenticate, resume this same task and tell me the price.'
 assert.ok(isExplicitProviderBrowserRead(screenshotInstagram))
+for(const prefix of ['Can you','Could you please','Would you','Please would you'])assert.ok(isExplicitProviderBrowserRead(`${prefix} open Instagram and show my saved posts?`))
 assert.ok(isExplicitProviderBrowserRead(screenshotBlinkit))
 assert.ok(isExplicitProviderBrowserRead('Open the Instagram app and show my saved posts'))
 assert.ok(isExplicitProviderBrowserRead('Open the website for Blinkit and check milk prices'))
