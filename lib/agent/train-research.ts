@@ -115,8 +115,12 @@ export async function tryResumeTrainHandoff(params:{actor:AgentActor;text:string
   const at=new Date().toISOString()
   if(!trains.length){await supabaseAdmin.from('agent_runs').update({summary:'Gogo resumed the same rail browser, but verified train rows are not visible yet.',progress:70,updated_at:at,metadata_json:{...meta,state:'waiting_for_user',handoff:{...handoff,lastUrl:state.url}}}).eq('id',runId);return{runId,status:'paused' as const,capability:'travel' as const,risk:'low' as const,text:`I resumed the same rail browser session, but the train results are not visible yet.\n\nOpen the live browser again, finish the human-only step/search, tap *Return control to Gogo*, then reply *CONTINUE*.\n${handoff.takeoverUrl}`,handledBy:'train-handoff-resume' as const}}
   const text=formatTrainResult(c,trains)
-  await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context:c,trains,inventoryType:'browser-verified',handoff,resumed:true,browserState:{url:state.url,title:state.title}},error:null,completed_at:at}).eq('run_id',runId).eq('telegram_id',String(tg))
-  await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(text,1800),progress:100,error:null,completed_at:at,updated_at:at,metadata_json:{...meta,state:'completed',handoff:{...handoff,lastUrl:state.url}}}).eq('id',runId)
+  const {error:stepSaveError}=await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context:c,trains,inventoryType:'browser-verified',resumed:true,browserState:{url:state.url,title:state.title}},error:null,completed_at:at}).eq('run_id',runId).eq('telegram_id',String(tg))
+  if(stepSaveError)throw new Error('train_resume_step_save_failed')
+  const {error:runSaveError}=await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(text,1800),progress:100,error:null,completed_at:at,updated_at:at,metadata_json:{...meta,state:'completed',handoff:{...handoff,lastUrl:state.url}}}).eq('id',runId).eq('telegram_id',String(tg))
+  if(runSaveError)throw new Error('train_resume_run_save_failed')
+  await cancelProviderBrowserHandoff(params.actor.userId,handoff)
+  await supabaseAdmin.from('agent_runs').update({metadata_json:{...meta,state:'completed',handoff:null}}).eq('id',runId).eq('telegram_id',String(tg))
   await activity(tg,runId,'run_completed',`Task completed after human handoff with ${trains.length} browser-verified train options.`,{result_count:trains.length,handoff:true})
   return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'train-handoff-resume' as const}
 }
@@ -175,7 +179,7 @@ export async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurf
   let pendingReservation:string|undefined
   let createdHandoff:Awaited<ReturnType<typeof startProviderBrowserHandoff>>|undefined
   try{
-    const browser=await runSecureBrowser({reserveHumanHandoff:true,userId:params.actor.userId,url:'https://www.irctc.co.in/nget/train-search',objective:`Find ${params.directOnly?'direct ':''}trains from ${params.c.from.label} (${params.c.from.code}) to ${params.c.to.label} (${params.c.to.code}) on ${params.c.date}. Use safe search controls and obtain actual train rows, visible fare, classes and seat availability. Rank the useful options by availability, fare and duration. Do not sign in, book, submit passenger details or pay.`,mode:'read'})
+    const browser=await runSecureBrowser({reserveHumanHandoff:true,reservePasswordHandoff:true,userId:params.actor.userId,url:'https://www.irctc.co.in/nget/train-search',objective:`Find ${params.directOnly?'direct ':''}trains from ${params.c.from.label} (${params.c.from.code}) to ${params.c.to.label} (${params.c.to.code}) on ${params.c.date}. Use safe search controls and obtain actual train rows, visible fare, classes and seat availability. Rank the useful options by availability, fare and duration. Do not sign in, book, submit passenger details or pay.`,mode:'read'})
     pendingReservation=browser.handoffReservation
     if(browser.status==='blocked'){
       const providerUrl=browser.url||'https://www.irctc.co.in/nget/train-search'

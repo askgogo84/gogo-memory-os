@@ -337,7 +337,7 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean}):Promise<SecureBrowserResult>{
   let releaseOwnerLock:BrowserOwnerRelease|undefined
   try {
     const target=new URL(params.url)
@@ -454,7 +454,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         const summary=credentialSelectionRequired
           ? 'Multiple saved logins match this site. Choose which account Gogo should use.'
           : authGate.message||'This site needs a secure sign-in before Gogo can continue.'
-        const handoffReservation=reason!=='password'&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
+        const handoffReservation=(reason!=='password'||params.reservePasswordHandoff===true)&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
         return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
       }
 
@@ -477,7 +477,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     // wave, so this page must be checked before completion or sandbox teardown.
     const finalAuthGate=detectHumanAuthGate(page)
     if(finalAuthGate.required||pageLooksLikeLogin(page)){
-      const handoffReservation=finalAuthGate.reason&&finalAuthGate.reason!=='password'&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
+      const handoffReservation=(finalAuthGate.reason&&finalAuthGate.reason!=='password'||params.reservePasswordHandoff===true)&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
       return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),
         summary:finalAuthGate.message||'This site needs a secure sign-in before Gogo can continue.',
         pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',
