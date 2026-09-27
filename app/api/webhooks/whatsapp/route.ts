@@ -46,6 +46,7 @@ import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } 
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
+import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { jevClarificationReply, promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
 import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, captureJevOpenLoopFromTurn, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate } from '@/lib/agent/open-loops'
@@ -485,15 +486,19 @@ export async function POST(req: NextRequest) {
           other: '🔗 Saving content...',
         }
         await sendWhatsAppMessage(from, platformLabels[platform] || '💾 Saving...')
-        const { reply: mediaReply } = await saveMediaMemory({
+        const { reply: mediaReply, item } = await saveMediaMemory({
           telegramId: resolvedUser.telegramId,
           platform,
           bodyText,
           detectedUrl,
         })
+        const contextualMediaReply=await contextualizeSavedItemReply({
+          userId:String(resolvedUser.id),telegramId:resolvedUser.telegramId,whatsappId:resolvedUser.whatsappId,name:resolvedUser.name,
+          baseReply:mediaReply,item:{kind:'media',platform:item.platform,title:item.title,summary:item.summary,tags:item.tags},
+        })
         await saveConversation(resolvedUser.telegramId, 'user', `[${platform}] ${bodyText}`.trim())
-        await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
-        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || `[${platform}]`, reply: mediaReply })
+        await saveConversation(resolvedUser.telegramId, 'assistant', contextualMediaReply)
+        await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || `[${platform}]`, reply: contextualMediaReply })
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
       // Real user-sent video — fall through to Claude
@@ -709,7 +714,7 @@ export async function POST(req: NextRequest) {
             other: '🔗 Saving content...',
           }
           await sendWhatsAppMessage(from, platformLabels[platform] || '💾 Saving...')
-          const { reply: mediaReply } = await saveMediaMemory({
+          const { reply: mediaReply, item } = await saveMediaMemory({
             telegramId: resolvedUser.telegramId,
             platform,
             bodyText,
@@ -718,9 +723,13 @@ export async function POST(req: NextRequest) {
             authToken: process.env.TWILIO_AUTH_TOKEN || undefined,
             detectedUrl,
           })
+          const contextualMediaReply=await contextualizeSavedItemReply({
+            userId:String(resolvedUser.id),telegramId:resolvedUser.telegramId,whatsappId:resolvedUser.whatsappId,name:resolvedUser.name,
+            baseReply:mediaReply,item:{kind:'media',platform:item.platform,title:item.title,summary:item.summary,tags:item.tags},
+          })
           await saveConversation(resolvedUser.telegramId, 'user', `[${platform}] ${bodyText}`.trim())
-          await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || `[${platform}]`, reply: mediaReply })
+          await saveConversation(resolvedUser.telegramId, 'assistant', contextualMediaReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || `[${platform}]`, reply: contextualMediaReply })
         } else {
           // Asset memory gate first: payment proof / passport / ID → masked save.
           // Null (not a structured asset / any error) falls through to the note path.
@@ -740,10 +749,14 @@ export async function POST(req: NextRequest) {
           })
           const savedNote = compactImageNoteForSaving(imageReply)
           await addToList(resolvedUser.telegramId, 'notes', [savedNote])
-          await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image note]')
-          await saveConversation(resolvedUser.telegramId, 'assistant', imageReply)
           const imageDocTitle = deriveNoteTitleFromReader(imageReply)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image note]', reply: `${imageReply}\n\n🗂️ Filed under *${imageDocTitle}* — say *my notes* to get it back.` })
+          const contextualImageReply=await contextualizeSavedItemReply({
+            userId:String(resolvedUser.id),telegramId:resolvedUser.telegramId,whatsappId:resolvedUser.whatsappId,name:resolvedUser.name,
+            baseReply:imageReply,item:{kind:'image_note',title:imageDocTitle,summary:savedNote},
+          })
+          await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image note]')
+          await saveConversation(resolvedUser.telegramId, 'assistant', contextualImageReply)
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image note]', reply: `${contextualImageReply}\n\n🗂️ Filed under *${imageDocTitle}* — say *my notes* to get it back.` })
           // Additive: durably store the document image (default note path; existing notes write unchanged above).
           await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: imageReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
         }
