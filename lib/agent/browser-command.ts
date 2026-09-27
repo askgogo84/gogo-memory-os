@@ -170,7 +170,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     // Validate each ambiguous occurrence, not just the first read object.
     for(const nounPart of clause.match(/[\s\S]*?\b(?:order|message)\b/g)||[]){
       const questionPart=nounPart.replace(/^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?tell\s+me\s+/,'')
-      const question=/^\s*(?:where|when|what|why|which|whose|how|has|have|did|is|are|was|were|will|does)\b/.test(questionPart)
+      const question=/^\s*(?:where|when|what|why|which|whose|how|has|have|had|do|does|did|am|is|are|was|were|can|could|will|would|shall|should|may|might|must)\b/.test(questionPart)
         && /\b(?:my|the|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of|open(?=\s+(?:my|the|a|an|this|that|our|your)\b))\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const coordinatedNoun=previousRead&&/^\s*(?:(?:my|the|a|an|this|that|our|your|last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+)+(?:order|message)\s*$/.test(nounPart)
