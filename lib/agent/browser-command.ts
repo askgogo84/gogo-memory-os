@@ -8,7 +8,7 @@ import { runSecureBrowser, type BrowserMode } from './secure-computer'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
-import { findVaultProviderInText } from '@/lib/vault/providers'
+import { VAULT_PROVIDERS } from '@/lib/vault/providers'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 
 export type BrowserCommand = {
@@ -86,8 +86,7 @@ function normalizeProviderTarget(text:string){
 }
 function startsWithProviderTarget(text:string){
   const target=normalizeProviderTarget(text)
-  const provider=findVaultProviderInText(target)
-  return [...(provider?.aliases||[]),'blinkit','instamart','swiggy instamart','zepto'].some(alias=>target.startsWith(alias)&&!/[a-z0-9]/i.test(target.charAt(alias.length)))
+  return [...Object.values(VAULT_PROVIDERS).flatMap(provider=>provider.aliases||[provider.key]),'blinkit','instamart','swiggy instamart','zepto'].some(alias=>target.startsWith(alias)&&!/[a-z0-9]/i.test(target.charAt(alias.length)))
 }
 
 export function parseConnectedProviderReadCommand(text:string):BrowserCommand|null{
@@ -100,11 +99,11 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     {alias:/\b(?:swiggy\s+)?instamart\b/i,loginUrl:'https://www.swiggy.com/instamart'},
     {alias:/\bzepto\b/i,loginUrl:'https://www.zepto.com/'},
   ].filter(site=>site.alias.test(raw))
-  const vaultProvider=findVaultProviderInText(raw)
-  const candidates=[...shoppingSites,...(vaultProvider?[{
-    alias:new RegExp('\\b(?:'+(vaultProvider.aliases||[vaultProvider.key]).map(name=>name.replace(/\./g,'\\.')).join('|')+')\\b','i'),
-    loginUrl:vaultProvider.loginUrl,
-  }]:[])]
+  const vaultCandidates=Object.values(VAULT_PROVIDERS).map(provider=>({
+    alias:new RegExp('\\b(?:'+(provider.aliases||[provider.key]).map(name=>name.replace(/\./g,'\\.')).join('|')+')\\b','i'),
+    loginUrl:provider.loginUrl,
+  })).filter(provider=>provider.alias.test(raw))
+  const candidates=[...shoppingSites,...vaultCandidates]
   let provider=candidates[0]
   // Provider names inside search content are not extra navigation targets.
   // Still reject actual multi-provider work instead of silently dropping a site.
@@ -130,7 +129,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem','subscribe','unsubscribe','renew','share','block','unblock','reschedule','postpone','modify']
   const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
   const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange','refund','rate','report'].join('|')})`
-  const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except|before|after|while|until|once|when|to)\\b)[\\s\\S])*`,'gi')
+  const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|(?:start|begin|continue|keep)\\s+\\w+ing\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except|before|after|while|until|once|when|to)\\b)[\\s\\S])*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
     .replace(/\bmake\s+sure\s+([^.!?;,]*?\b(?:available|in\s+stock)\b)/g,'check $1')
     .replace(/\bpurchase\s+(history|details|receipt|status)\b/g,'order $1')
