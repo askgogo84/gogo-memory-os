@@ -101,6 +101,8 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   const prohibitedVerb=`(?:${compoundOrder}|${[...mutationVerbs,'message','post','order'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['’]?t|never)\\s+${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
+    .replace(/\bupdate\s+me\s+(?:on|about)\b/g,'show me')
+    .replace(/(^|[.!?;])([ \t]*(?:did|has|have|does|will)\s+(?:amazon|flipkart|blinkit|zepto|instamart|they)\s+)(?:cancel|confirm|update)(?=\s+(?:my|the|this|that|our|your)\s+(?:latest\s+|last\s+)?order\b)/g,'$1$2')
   const tokens=new Set((actionable.match(/[a-z0-9.]+/g)||[]).map(value=>value.replace(/\.$/,'')))
   const has=(...values:string[])=>values.some(value=>tokens.has(value))
 
@@ -165,6 +167,11 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     risk:'low',
   }
 }
+export function isExplicitProviderBrowserRead(text:string){
+  return /^(?:please\s+)?(?:open|browse|visit|navigate\s+to|go\s+to)\b/i.test(String(text||'').trim())
+    && !!parseConnectedProviderReadCommand(text)
+}
+
 async function permission(tg:number):Promise<AgentPermissionLevel>{
   const {data,error}=await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',String(tg)).eq('capability','browser').maybeSingle()
   if(error)throw new Error(`browser_permission_failed:${error.message}`)

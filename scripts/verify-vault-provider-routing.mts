@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { findVaultProviderInText } from '../lib/vault/providers'
-import { parseConnectedProviderReadCommand } from '../lib/agent/browser-command'
+import { parseConnectedProviderReadCommand, isExplicitProviderBrowserRead } from '../lib/agent/browser-command'
 import { redactSecretShapedText } from '../lib/bot/memory-redaction'
 
 for(const secret of ['PIN 4821','PIN code 4821','password: hunter2','OTP 903112','My PIN if needed is 4821','PIN code if required: 4821','password if needed is hunter2','My PIN if needed? 4821','My PIN if needed. It is 4821','My PIN if needed, 4821','My PIN if needed; 4821']){
@@ -21,6 +21,9 @@ assert.equal(findVaultProviderInText('Find something on a random website'),null)
 const exactInstagramRequest='Find the AI reels I saved recently on Instagram.'
 const screenshotInstagram='Open Instagram and show me the 3 most recent posts in my Saved collection. Do not like, comment, follow, message, post, or change anything.'
 const screenshotBlinkit='Open Blinkit and check availability and the current price of Amul Taaza toned milk, 1 litre, for my delivery location. Ask me for my area and PIN code if needed. Do not order anything. If login is required, let me take control. After I authenticate, resume this same task and tell me the price.'
+assert.ok(isExplicitProviderBrowserRead(screenshotInstagram))
+assert.ok(isExplicitProviderBrowserRead(screenshotBlinkit))
+assert.equal(isExplicitProviderBrowserRead('What did I tell you about my Amazon order?'),false)
 for(const [input,host] of [
   [screenshotInstagram,'www.instagram.com'],
   [screenshotBlinkit,'blinkit.com'],
@@ -32,6 +35,8 @@ for(const [input,host] of [
   ['What is the status of my Amazon order?','www.amazon.in'],
   ['When will my Blinkit order arrive?','blinkit.com'],
   ['When will Amazon deliver my order?','www.amazon.in'],
+  ['Did Amazon cancel my order?','www.amazon.in'],
+  ['Update me on my Amazon order','www.amazon.in'],
   ['Check my Amazon order and latest message','www.amazon.in'],
   ['Check my Amazon order, and latest message','www.amazon.in'],
   ['Check my Amazon order status and latest message','www.amazon.in'],
@@ -74,6 +79,7 @@ for(const input of [
   'Place my order on Blinkit',
   'Complete my order on Zepto',
   'Confirm my Blinkit order',
+  'Did Amazon cancel my order? Cancel my other order.',
   'Open Blinkit and make an order for milk',
   'Open Blinkit and create an order for milk',
   'Check my Amazon order, order milk',
@@ -135,5 +141,6 @@ const providerPreflight=whatsappRoute.indexOf('if (parseConnectedProviderReadCom
 const legacyFeature=whatsappRoute.indexOf('const featureReply = await routeFeatureIntent')
 assert.ok(providerPreflight>=0,'WhatsApp must have a provider-browser preflight')
 assert.ok(legacyFeature>providerPreflight,'Vault-backed provider tasks must beat legacy feature routing on WhatsApp')
-assert.ok(whatsappRoute.indexOf('const jevIntent=promotedJevIntent')>providerPreflight,'Explicit provider reads must beat semantic memory/save promotion too')
+assert.ok(whatsappRoute.indexOf('const jevIntent=')<providerPreflight,'Memory questions retain semantic specialist first refusal')
+assert.match(whatsappRoute,/const jevIntent=isExplicitProviderBrowserRead\(text\)\?null:promotedJevIntent/,'Explicit navigation must bypass semantic memory/save promotion')
 assert.match(whatsappRoute,/tryRunWhatsAppAgent/)
