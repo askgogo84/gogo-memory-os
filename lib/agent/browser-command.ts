@@ -96,7 +96,9 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   // Remove only explicitly prohibited action verbs and coordinated verb lists.
   // Do not discard the rest of a sentence: a later affirmative action must still
   // reject read routing ("do not like posts, but follow this account").
-  const prohibitedVerb='(?:like|comment|follow|unfollow|message|post|publish|send|reply|delete|edit|change|buy|purchase|checkout|pay|book|reserve|submit|order)'
+  const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease']
+  const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
+  const prohibitedVerb=`(?:${compoundOrder}|${[...mutationVerbs,'message','post','order'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['’]?t|never)\\s+${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
   const tokens=new Set((actionable.match(/[a-z0-9.]+/g)||[]).map(value=>value.replace(/\.$/,'')))
@@ -124,13 +126,18 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(/\b(?:add|remove|empty|clear|update|increase|decrease)\b[^.!?]*\b(?:cart|basket)\b/.test(actionable))return null
 
   // Consequential provider actions must never be downgraded to read mode.
-  const writeTokens=['send','reply','publish','comment','like','follow','unfollow','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','deliver']
+  const writeTokens=mutationVerbs
   if(writeTokens.some(value=>tokens.has(value)))return null
-  // Singular order/message can be the object of an explicit read request.
-  // Remove only those noun phrases; any later imperative still blocks reads.
   if(/\bcomplete\b[^.!?]*\b(?:order|purchase|checkout|payment)\b/.test(actionable))return null
-  const withoutReadObjects=actionable.replace(/\b(?:my|the|a|an|this|that|our|your)\s+(?:(?:last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+){0,3}(?:order|message)\b/g,' ')
-  if(/\b(?:order|message)\b/.test(withoutReadObjects))return null
+  // Classify ambiguous order/message nouns within their own clause. A read in
+  // one clause never licenses a purchase or message in a later clause.
+  const clauses=actionable.split(/[.!?;,\n]|\b(?:and|then|but)\b/)
+  for(const clause of clauses){
+    if(!/\b(?:order|message)\b/.test(clause))continue
+    const question=/^\s*(?:where|when|what|how|has|have|did|is|are|will)\b/.test(clause)
+    const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of)\b[^.!?;,]*\b(?:order|message)\b/.test(clause)
+    if(!question&&!readObject)return null
+  }
   if(tokens.has('post') && /\bpost\s+(?:this|that|it|a|an|the|to)\b/.test(actionable))return null
 
   const readTokens=['find','search','show','look','check','open','read','see','saved','reel','reels','post','posts','order','orders','wishlist','message','messages','inbox','booking','bookings','history','receipt','receipts','invoice','invoices']

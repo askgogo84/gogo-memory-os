@@ -31,6 +31,9 @@ for(const [input,host] of [
   ['Where is my Amazon order?','www.amazon.in'],
   ['What is the status of my Amazon order?','www.amazon.in'],
   ['When will my Blinkit order arrive?','blinkit.com'],
+  ['When will Amazon deliver my order?','www.amazon.in'],
+  ['Open Blinkit and check the price; do not place an order.','blinkit.com'],
+  ['Open Blinkit and check the price. Do not make an order or add to my cart.','blinkit.com'],
 ] as const){
   const command=parseConnectedProviderReadCommand(input)
   assert.ok(command,input)
@@ -58,6 +61,9 @@ for(const input of [
   'Place my order on Blinkit',
   'Complete my order on Zepto',
   'Confirm my Blinkit order',
+  'Open Blinkit and make an order for milk',
+  'Open Blinkit and create an order for milk',
+  'Check my Amazon order, order milk',
   'Remind me to check milk prices on Blinkit tomorrow.',
   'Compare milk prices on Blinkit, Instamart, and Zepto.',
 ])assert.equal(parseConnectedProviderReadCommand(input),null,'must not downgrade a mutation or truncate a multi-provider task: '+input)
