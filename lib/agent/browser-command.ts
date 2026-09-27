@@ -94,7 +94,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   let provider=candidates[0]
   // Provider names inside search content are not extra navigation targets.
   // Still reject actual multi-provider work instead of silently dropping a site.
-  const navigationText=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?find\s+.+?\s+on\s+(.+)$/i)?.[1]||''
+  const navigationText=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for)\s+.+?\s+on\s+(.+)$/i)?.[1]||''
   const targetText=navigationText.replace(/^(?:the|a|an)\s+/i,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/i,'').split(/\s+(?:and|for|to|then)\b|[!?;,]/i)[0]
   if(candidates.length>1||targetText){
     const targets=candidates.filter(candidate=>candidate.alias.test(targetText))
@@ -113,7 +113,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   // reject read routing ("do not like posts, but follow this account").
   const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem','subscribe','unsubscribe','renew','share','block','unblock']
   const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
-  const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange'].join('|')})`
+  const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange','refund'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
     .replace(/\bmake\s+sure\s+([^.!?;,]*?\b(?:available|in\s+stock)\b)/g,'check $1')
@@ -144,7 +144,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     (/\badd\b/.test(lower) && /\bto\s+(?:my\s+)?(?:calendar|list)\b/.test(lower))
 
   if(reminderMutation||calendarOrListMutation)return null
-  if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?(?:return|exchange)(?!\s+(?:(?:the|my|this)\s+)?(?:price|results?|information|details|availability|summary|answer|control)\b)\s+/.test(actionable))return null
+  if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?(?:return|exchange|refund)(?!\s+(?:(?:the|my|this)\s+)?(?:price|results?|information|details|availability|summary|answer|control)\b)\s+/.test(actionable))return null
   if(/\b(?:start|begin|continue|keep)\s+(?:ordering|buying|purchasing|booking|paying|submitting|redeeming|applying)\b/.test(actionable))return null
   if(shoppingSites.length&&/\bget\s+(?:me|us)\s+(?!(?:the\s+)?(?:(?:current|latest|lowest|best|total)\s+)?(?:prices?|cost|availability|information|details|status)\b)/.test(actionable))return null
   if(/\b(?:request|initiate|process|claim)\b[^.!?]*\b(?:refund|return|cancellation)\b/.test(actionable))return null
@@ -170,7 +170,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     // Validate each ambiguous occurrence, not just the first read object.
     for(const nounPart of clause.match(/[\s\S]*?\b(?:order|message)\b/g)||[]){
       const questionPart=nounPart.replace(/^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?tell\s+me\s+/,'')
-      const question=/^\s*(?:where|when|what|how|has|have|did|is|are|was|were|will|does)\b/.test(questionPart)
+      const question=/^\s*(?:where|when|what|why|which|whose|how|has|have|did|is|are|was|were|will|does)\b/.test(questionPart)
         && /\b(?:my|the|this|that|our|your)\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const readObject=/\b(?:read|check|show|find|see|view|track|look\s+at|status\s+of|details\s+of|open(?=\s+(?:my|the|a|an|this|that|our|your)\b))\b[^.!?;,]*\b(?:order|message)\b/.test(nounPart)
       const coordinatedNoun=previousRead&&/^\s*(?:(?:my|the|a|an|this|that|our|your|last|latest|recent|current|previous|first|next|amazon|flipkart|instagram|facebook|linkedin|blinkit|zepto|instamart)\s+)+(?:order|message)\s*$/.test(nounPart)
@@ -195,10 +195,10 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
 }
 export function isExplicitProviderBrowserRead(text:string){
   const raw=String(text||'').trim()
-  const providerSearch=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?find\s+(.+?)\s+on\s+(.+)$/i)
+  const providerSearch=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for)\s+(.+?)\s+on\s+(.+)$/i)
   const nativeObject=/\b(?:email|mail|gmail|notes?|memory|memories|lists?|reminders?|calendar)\b/i
   const searchTarget=providerSearch&&!nativeObject.test(providerSearch[1])?providerSearch[2]:undefined
-  const target=(raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||searchTarget)?.toLowerCase()
+  const target=(raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1]||searchTarget)?.toLowerCase()
   if(!target)return false
   const navigationTarget=target.replace(/^(?:the|a|an)\s+/,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/,'')
   if(nativeObject.test(navigationTarget))return false
