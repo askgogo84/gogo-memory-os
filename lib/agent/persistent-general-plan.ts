@@ -182,7 +182,7 @@ export async function tryRunPersistentGeneralPlan(params: {
     await recordTaskModelUsage(params.actor.legacyTelegramId,String(duplicate.id),modelUsage).catch(()=>{})
     return {
       runId:String(duplicate.id),status:String(duplicate.status||'running'),capability:'orchestrator',risk:'low' as const,
-      text:safe(duplicate.summary||'Gogo is already working on this same request.'),handledBy:'persistent-general-plan' as const,
+      text:safe(duplicate.summary||'I’m already working on this same request.'),handledBy:'persistent-general-plan' as const,
       persistent:true,runtimeVersion:'gogo-autonomous-v1',progress:Number(duplicate.progress||1),deduplicated:true,
     }
   }
@@ -223,7 +223,7 @@ export async function tryRunPersistentGeneralPlan(params: {
     status: run.status || executed.status,
     capability: created.route.primary,
     risk: 'low' as const,
-    text: run.summary || 'Gogo created a persistent plan and started executing it.',
+    text: run.summary || 'I started working through this request.',
     handledBy: 'persistent-general-plan' as const,
     persistent: true,
     runtimeVersion: 'gogo-autonomous-v1',
