@@ -183,7 +183,8 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   if(currentRunError||!currentRun)throw new Error('browser_handoff_run_unavailable')
   const runMetadata:any=currentRun.metadata_json||{}
   const reconciledResult=runMetadata.browser_safe_to_retry===false
-    ? await (await import('./post-auth-outcome')).inspectPostAuthOutcome(runMetadata):undefined
+    ? await (await import('./post-auth-outcome')).inspectPostAuthRun(String(tg),params.runId,runMetadata):undefined
+  if(reconciledResult===null)return {runId:params.runId,status:'outcome_unknown' as const,capability:'browser' as const,risk:params.command.risk,text:'The browser session is unavailable. Verify the outcome directly with the provider; Gogo will not repeat the action.',handledBy:'secure-browser' as const}
   if(reconciledResult?.status==='blocked')return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text:reconciledResult.summary,handledBy:'secure-browser' as const}
   if(runMetadata.handoff?.releaseUrl){
     // Release the human browser's profile lock only after permission/approval checks.
@@ -259,6 +260,10 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     await activity(tg,params.runId,'run_completed',result.summary,{host:new URL(result.url).hostname,action_count:result.actions.length})
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
   }catch(err:any){
+    if(runMetadata.browser_safe_to_retry===false){
+      const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
+      return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}
+    }
     const message=String(err?.message||'secure_browser_failed');const at=new Date().toISOString()
     await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),completed_at:at}).eq('id',params.stepId)).catch(()=>{})
     await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the secure browser session.',error:safe(message,500),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
@@ -308,7 +313,7 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
   const {data:step}=await supabaseAdmin.from('agent_steps').select('id').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('tool_name','secure_browser').limit(1).maybeSingle()
   if(!step?.id)throw new Error('browser_step_missing')
   const result=await executeBrowser({actor:params.actor,runId:params.runId,stepId:String(step.id),command,mode:'execute',approved:true})
-  if(result.status!=='paused')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approved.id).eq('telegram_id',String(tg))
+  if(result.status==='completed')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approved.id).eq('telegram_id',String(tg))
   return result
 }
 

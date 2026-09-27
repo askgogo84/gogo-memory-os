@@ -72,7 +72,7 @@ async function failSafe(params:{action:any;event:any;runId:string;approvalId:str
   const now=new Date().toISOString(),tg=String(params.actor.legacyTelegramId)
   const actionStatus=params.actionStatus||'blocked'
   const updates:any[]=[
-    supabaseAdmin.from('agent_runs').update({status:params.status,summary:params.summary,error:params.error,updated_at:now,completed_at:params.status==='failed'?now:null}).eq('id',params.runId).eq('telegram_id',tg),
+    supabaseAdmin.from('agent_runs').update({status:params.status,summary:params.summary,error:params.error,updated_at:now,completed_at:params.status==='failed'?now:null}).eq('id',params.runId).eq('telegram_id',tg).in('status',['running','paused']),
     supabaseAdmin.from('life_event_actions').update({status:actionStatus,payload_json:{...(params.action.payload_json||{}),blockedReason:params.error,updatedAt:now},updated_at:now}).eq('id',params.action.id).eq('telegram_id',tg),
     supabaseAdmin.from('life_events').update({lifecycle_state:'needs_attention',updated_at:now}).eq('id',params.event.id).eq('telegram_id',tg),
   ]

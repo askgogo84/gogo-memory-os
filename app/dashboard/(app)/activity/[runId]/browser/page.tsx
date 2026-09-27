@@ -119,6 +119,10 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
           </div>
         </section>}
 
+        {run.metadata?.auth_reconciliation_required&&<section className="rounded-[16px] bg-[#1A1710] p-5">
+          <h2 className="font-serif text-[22px] text-[#F2EFEA]">Verify the outcome with the provider</h2>
+          <p className="mt-2 text-[12.5px] leading-5 text-[#D9A441]">The retained browser is unavailable after a possible submission. Check your booking, check-in, or payment status directly with the provider before taking any further action. Gogo will not repeat the action.</p>
+        </section>}
         {(cloudTakeover||deviceHandoff)&&<section className="rounded-[16px] bg-[#1A1710] p-5">
           <p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#D9A441]">{deviceHandoff?'Your device':'Human handoff'}</p>
           <h2 className="mt-2 font-serif text-[22px] font-semibold text-[#F2EFEA]">{deviceHandoff?'Open this on your device.':'Take control when Gogo needs you.'}</h2>

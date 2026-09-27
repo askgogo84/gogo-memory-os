@@ -80,7 +80,7 @@ export async function startBrowserHandoff(params:{userId:string;url:string}){
 }
 
 export async function readBrowserHandoffState(stateUrl:string){
-  const res=await fetch(stateUrl,{cache:'no-store'});if(!res.ok)throw new Error(`browser_handoff_state_failed:${res.status}`);return await res.json() as HandoffState
+  const res=await fetch(stateUrl,{cache:'no-store',signal:AbortSignal.timeout(10000)});if(!res.ok)throw new Error(`browser_handoff_state_failed:${res.status}`);return await res.json() as HandoffState
 }
 
 function parseJsonArray(text:string){const clean=String(text||'').replace(/```json|```/g,'').trim();try{const v=JSON.parse(clean);return Array.isArray(v)?v:[]}catch{}const m=clean.match(/\[[\s\S]*\]/);if(!m)return[];try{const v=JSON.parse(m[0]);return Array.isArray(v)?v:[]}catch{return[]}}

@@ -52,7 +52,7 @@ const db={from:(table:string)=>{
 }}
 let browserCompleted=false,vaultCalls=0,browserActions:any[]=[],reconciliationEvidence:any,browserExecutions=0
 const command=load('browser-command.ts',{
-  './post-auth-outcome':{inspectPostAuthOutcome:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
+  './post-auth-outcome':{inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
   '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
@@ -119,7 +119,7 @@ const dispatched:string[]=[]
 let provisioningFails=false
 let preparationFails=false
 const shared=load('secondary-auth-handoff.ts',{
-  './post-auth-outcome':{inspectPostAuthOutcome:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
+  './post-auth-outcome':{inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')},markAuthOutcomeUnknown:async(...args:any[])=>outcomeReader.markAuthOutcomeUnknown(...args)},
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{if(provisioningFails)throw new Error('temporary domain failure');return handoff},cancelProviderBrowserHandoff:async()=>{cancelledHandoffs++}},
   './browser-handoff':{releaseBrowserHandoff:async()=>({ok:true})},
@@ -295,9 +295,10 @@ for(const kind of ['flight','restaurant'])for(const busy of [true,false]){
   assert.equal(rows.agent_approvals.status,'approved','retain the exact approval for a retry or reconciliation')
 }
 console.log('Approved executors retain retryable same-run state on pre-navigation contention, but never replay uncertain failures')
-let outcomePage={url:'https://provider.example/confirmation',title:'Confirmation',text:'Reservation confirmed. Check-in complete.',forms:[]}
+let outcomePage={url:'https://provider.example/confirmation',title:'Confirmation',text:'Reservation confirmed. Check-in complete.',forms:[]},outcomeReadError:Error|undefined
 const outcomeReader=load('post-auth-outcome.ts',{
-  './browser-handoff':{readBrowserHandoffState:async()=>outcomePage},
+  '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
+  './browser-handoff':{readBrowserHandoffState:async()=>{if(outcomeReadError)throw outcomeReadError;return outcomePage}},
   './browser-auth-gate':{detectHumanAuthGate},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
 })
@@ -340,3 +341,23 @@ assert.equal(browserExecutions,directBefore)
 rows.agent_runs={id:'run',telegram_id:'1',status:'paused',metadata_json:{life_event_id:'event',life_event_action_id:'action',auth_resume:{kind:'flight_execute',safeToRetry:false},handoff}}
 rows.life_event_actions.status='blocked'
 assert.equal((await shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'owner'},runId:'run'})).runId,'run')
+outcomePage={...outcomePage,url:'https://provider.example/confirmation',title:'Provider',text:'Table reserved'}
+const specialized=await outcomeReader.inspectPostAuthOutcome({...outcomeMetadata,auth_resume:{kind:'restaurant'}})
+assert.equal(specialized.status,'completed','pass the snapshot to the specialized confirmation predicate')
+rows.agent_runs.status='paused'
+outcomeReadError=new Error('browser_handoff_state_failed:403')
+await assert.rejects(()=>outcomeReader.inspectPostAuthRun('1','run',outcomeMetadata),/403/)
+assert.equal(rows.agent_runs.status,'paused','authorization errors cannot clear an active takeover')
+outcomeReadError=new Error('browser_handoff_state_failed:410')
+assert.equal(await outcomeReader.inspectPostAuthRun('1','run',{...outcomeMetadata,life_event_action_id:'action'}),null)
+assert.equal(rows.agent_runs.status,'outcome_unknown')
+assert.equal(rows.agent_runs.metadata_json.handoff,undefined)
+assert.equal(rows.agent_runs.metadata_json.auth_reconciliation_required,true)
+outcomeReadError=undefined
+provisioningFails=true
+rows.agent_runs.status='running';rows.life_event_actions.status='running'
+await shared.attachSecondaryAuthHandoff({userId:'owner',telegramId:'1',runId:'run',kind:'restaurant',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://login.example',originalUrl:'https://provider.example',actions:outcomeMetadata.auth_action_log}})
+assert.equal(rows.agent_runs.status,'outcome_unknown','unsafe provisioning failure must expose manual verification, not a stranded pause')
+assert.equal(rows.agent_runs.metadata_json.handoff,undefined)
+assert.equal(rows.agent_runs.metadata_json.auth_resume,undefined)
+console.log('Expired or unavailable post-action sessions enter explicit manual verification; specialized confirmation remains supported')

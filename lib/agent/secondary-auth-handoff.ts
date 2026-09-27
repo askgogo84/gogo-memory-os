@@ -3,7 +3,7 @@ import { startProviderBrowserHandoff, cancelProviderBrowserHandoff } from './pro
 import { releaseBrowserHandoff } from './browser-handoff'
 import type { SecureBrowserResult } from './secure-computer'
 import type { AgentActor } from './actor'
-import { inspectPostAuthOutcome } from './post-auth-outcome'
+import { inspectPostAuthRun, markAuthOutcomeUnknown } from './post-auth-outcome'
 
 export type AuthResumeKind='flight_prepare'|'flight_execute'|'restaurant'|'lifecycle_monitor'
 
@@ -28,6 +28,7 @@ export async function attachSecondaryAuthHandoff(params:{userId:string;telegramI
     if(error)throw new Error('auth_handoff_save_failed')
   }catch{
     if(createdHandoff)await cancelProviderBrowserHandoff(params.userId,createdHandoff).catch(()=>{})
+    if(!safeToRetry)await markAuthOutcomeUnknown(params.telegramId,params.runId,metadata)
     // The task page retains a retry control even when another takeover is active.
   }
   const base=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
@@ -55,7 +56,9 @@ export async function resumeSecondaryAuthRun(params:{actor:AgentActor;runId:stri
   let reconciledResult:SecureBrowserResult|undefined
   if(!auth.safeToRetry){
     if(!['flight_execute','restaurant'].includes(auth.kind))throw new Error('auth_resume_requires_provider_reconciliation')
-    reconciledResult=await inspectPostAuthOutcome(meta)
+    const inspected=await inspectPostAuthRun(tg,params.runId,meta)
+    if(!inspected)return {runId:params.runId,status:'outcome_unknown',text:'The browser session is unavailable. Verify the outcome directly with the provider; Gogo will not repeat the action.'}
+    reconciledResult=inspected
     if(reconciledResult.status==='blocked')return {runId:params.runId,status:'paused',text:reconciledResult.summary}
   }
   const [{data:event,error:eventError},{data:action,error:actionError}]=await Promise.all([

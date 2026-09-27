@@ -152,7 +152,7 @@ export function browserContextForRun(run:DashboardActivityRun){
   const mode=String(handoff?.mode||'')
   const handoffActive=['paused','waiting_approval'].includes(run.status)
   return {
-    hasBrowser:Boolean(browserStep||handoff||meta?.secondary_auth||meta?.auth_resume),
+    hasBrowser:Boolean(browserStep||handoff||meta?.secondary_auth||meta?.auth_resume||meta?.auth_reconciliation_required),
     hostname,
     title:String(browser?.title||''),
     status:String(browser?.status||''),
