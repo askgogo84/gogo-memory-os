@@ -20,3 +20,7 @@ const payment={title:'Confirm payment',text:'3D Secure bank authentication requi
 assert.equal(detectHumanAuthGate(payment).reason,'payment_auth')
 
 console.log('✅ Secure browser human-auth boundary checks passed')
+
+const deviceApproval={title:'Approve sign-in',text:'New device detected. Check your phone and tap Yes to approve this login.',forms:[]}
+assert.deepEqual(detectHumanAuthGate(deviceApproval),{required:true,reason:'device_approval',message:'Approve this sign-in on your trusted device, then Gogo can continue the same task.'})
+console.log('T1b trusted-device approval auth boundary verified')
