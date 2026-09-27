@@ -5,7 +5,9 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk'
+import { createHash } from 'node:crypto'
 import { addToList, getList, type ListItem } from '@/lib/lists'
+import { indexMemory } from '@/lib/services/memory-index'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -20,6 +22,7 @@ export interface MediaMemoryItem {
   source_text: string   // raw caption/hashtags
   saved_at: string
   has_transcript: boolean
+  source_url?: string
 }
 
 // ── Platform bucket names ─────────────────────────────────────────────────────
@@ -285,6 +288,7 @@ export async function saveMediaMemory(params: {
     source_text: bodyText.slice(0, 300),
     saved_at: new Date().toISOString(),
     has_transcript: !!transcript,
+    source_url: params.detectedUrl || undefined,
   }
 
   // Save to platform bucket + notes (for unified search)
@@ -295,6 +299,19 @@ export async function saveMediaMemory(params: {
     addToList(telegramId, bucket, [JSON.stringify(item)]),
     addToList(telegramId, 'notes', [noteText]),
   ])
+
+  // Write the understood item back into the shared semantic memory index so a later,
+  // unrelated turn can rediscover it. The deterministic key dedupes repeat forwards.
+  const semanticContent=[title,summary,tags.join(' '),creator].filter(Boolean).join(' · ').slice(0,1800)
+  const semanticIdentity=[platform,params.detectedUrl||'',title,creator].join('|').toLowerCase()
+  const semanticSourceId=createHash('sha256').update(semanticIdentity).digest('hex').slice(0,40)
+  await indexMemory({
+    telegramId,
+    sourceId:semanticSourceId,
+    sourceTable:'media_saves',
+    content:semanticContent,
+    topic:tags[0]||platform,
+  })
 
   // Build WhatsApp reply
   const platformEmoji: Record<MediaPlatform, string> = {
