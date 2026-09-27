@@ -106,13 +106,14 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(!provider)return null
 
   const lower=raw.toLowerCase()
+  if(/^(?:please\s+)?(?:show|open|read|find|check)\s+(?:me\s+)?(?:my|the)\s+[^.!?]*\b(?:lists?|notes?|memories|memory)\b/.test(lower))return null
   // Remove only explicitly prohibited action verbs and coordinated verb lists.
   // Do not discard the rest of a sentence: a later affirmative action must still
   // reject read routing ("do not like posts, but follow this account").
   const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem']
   const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
   const prohibitedVerb=`(?:${compoundOrder}|${[...mutationVerbs,'message','post','order','set','default','use'].join('|')})`
-  const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+${prohibitedVerb}\\b(?:(?![.!?;\\n]|\\b(?:but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
+  const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
   const actionable=lower.replace(negatedActions,' ')
     .replace(/\bpurchase\s+(history|details|receipt|status)\b/g,'order $1')
     .replace(/\b(my|the|your|our|this|that)\s+place\b/g,'$1 location')

@@ -30,6 +30,7 @@ const conditionalPin=parseConnectedProviderReadCommand('Open Amazon and show my 
 assert.ok(conditionalPin)
 assert.ok(!conditionalPin.objective.includes('4821'),'an authentication PIN must never become a postal code')
 assert.ok(!redactSecretShapedText('For Amazon login, my PIN if needed, use 4821').includes('4821'))
+assert.ok(!redactSecretShapedText('My PIN if needed; on step 2 use 4821').includes('4821'))
 for(const [input,host] of [
   [screenshotInstagram,'www.instagram.com'],
   [screenshotBlinkit,'blinkit.com'],
@@ -87,6 +88,9 @@ for(const input of [
   'Open Blinkit and save 12 Main St as my delivery address',
   'Open Blinkit and set 12 Main St as my delivery address',
   'Open Blinkit and use coupon SAVE20',
+  "Open Blinkit; don't change my address, and buy milk.",
+  'Show my Zepto list',
+  'Read my Blinkit notes',
   'Open Blinkit and apply coupon SAVE20',
   'Open Zepto and redeem a coupon',
   'Open Blinkit to order milk',
