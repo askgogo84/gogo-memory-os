@@ -1,5 +1,6 @@
 import { Sandbox } from '@vercel/sandbox'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { acquireBrowserOwnerLock } from './browser-owner-lock'
 import { detectProviderChallenge, PROVIDER_CLOUDFLARE_CHALLENGE, DEVICE_HANDOFF_REQUIRED } from './provider-challenge'
 import { runSecureBrowser } from './secure-computer'
 import { startProviderBrowserHandoff } from './provider-browser-handoff'
@@ -175,16 +176,14 @@ async function computer(userId: string, url: string) {
   const sandbox = await Sandbox.getOrCreate({
     name: sandboxName(userId), image: SANDBOX_IMAGE, region: SANDBOX_REGION,
     timeout: 20 * 60 * 1000, persistent: true, ports: BROWSER_PORTS, resources: { vcpus: 1 },
-    networkPolicy: BROWSER_SETUP_NETWORK,
   } as any)
+  const releaseOwnerLock=await acquireBrowserOwnerLock(sandbox)
   try {
     await ensureBrowserRuntime(sandbox)
-  } catch {
-    throw new Error('ticket_browser_bootstrap_failed')
-  }
   await sandbox.writeFiles([{ path: 'gogo-ticket-reader.js', content: Buffer.from(SCRIPT) }])
   await sandbox.updateNetworkPolicy({ allow: allowedHosts(url) } as any)
-  return sandbox
+  return {sandbox,releaseOwnerLock}
+  }catch(error){await releaseOwnerLock();throw error}
 }
 
 async function fallbackSecureComputer(params: { userId: string; url: string; humanHandoff?: boolean }): Promise<SecureTicketReadResult> {
@@ -214,11 +213,13 @@ async function fallbackSecureComputer(params: { userId: string; url: string; hum
 
 export async function readProviderTicketPage(params: { userId: string; url: string; humanHandoff?: boolean; resumeHandoff?: SecureTicketReadResult['authHandoff'] }): Promise<SecureTicketReadResult> {
   let sandbox: any = null
+  let releaseOwnerLock:(()=>Promise<void>)|undefined
   let keepForHuman=false
   // Only an explicit continuation may release a user's active takeover session.
   if(params.resumeHandoff?.releaseUrl)await releaseBrowserHandoff(params.resumeHandoff.releaseUrl,{allowExpired:true})
   try {
-    sandbox = await computer(params.userId, params.url)
+    const owned=await computer(params.userId, params.url)
+    sandbox=owned.sandbox;releaseOwnerLock=owned.releaseOwnerLock
     const payload = Buffer.from(JSON.stringify({ url: params.url })).toString('base64')
     const result = await sandbox.runCommand({ cmd: 'node', args: ['gogo-ticket-reader.js', payload] })
     if (result.exitCode !== 0) throw new Error('ticket_browser_failed')
@@ -248,6 +249,9 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     }
     const gate = detectHumanAuthGate({ title: page.title, text: page.text, forms: [] })
     if (gate.required) {
+      if(params.humanHandoff!==false&&gate.reason!=='password'){
+        await releaseOwnerLock?.();releaseOwnerLock=undefined
+      }
       const authHandoff=params.humanHandoff!==false&&gate.reason&&gate.reason!=='password'
         ? await startProviderBrowserHandoff({userId:params.userId,url:String(page.url||params.url)}).catch(()=>undefined) : undefined
       const authHandoffPending=params.humanHandoff!==false&&gate.reason!=='password'&&!authHandoff
@@ -264,11 +268,13 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     }
   } catch (error: any) {
     console.error('SECURE_TICKET_READER_FAILED:', safeFailureCode(error))
+    await releaseOwnerLock?.();releaseOwnerLock=undefined
     const fallback=await fallbackSecureComputer(params)
     // A failed read may be contending with another task's live takeover.
     keepForHuman=true
     return fallback
   } finally {
     if (sandbox&&!keepForHuman) await sandbox.stop().catch(() => {})
+    await releaseOwnerLock?.()
   }
 }

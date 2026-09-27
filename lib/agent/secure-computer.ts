@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { acquireBrowserOwnerLock } from './browser-owner-lock'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
 import { upsertVaultSession } from '@/lib/vault/session-store'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -215,8 +216,10 @@ async function getComputer(userId:string,targetUrl:string){
   const name=userSandboxName(canonicalUserId)
   const sandbox=await Sandbox.getOrCreate({
     name, image:SANDBOX_IMAGE, region:SANDBOX_REGION, timeout:20*60*1000, persistent:true,
-    ports:BROWSER_PORTS, resources:{vcpus:1}, networkPolicy:BROWSER_SETUP_NETWORK,
+    ports:BROWSER_PORTS, resources:{vcpus:1},
   } as any)
+  const releaseOwnerLock=await acquireBrowserOwnerLock(sandbox)
+  try{
   await ensureBrowserRuntime(sandbox)
   await sandbox.writeFiles([
     {path:`${SANDBOX_WORKDIR}/gogo-browser.js`,content:Buffer.from(BROWSER_SCRIPT)},
@@ -224,7 +227,8 @@ async function getComputer(userId:string,targetUrl:string){
   ])
   const {allow}=allowedHosts(targetUrl)
   await sandbox.updateNetworkPolicy({allow} as any)
-  return {sandbox,name}
+  return {sandbox,name,releaseOwnerLock}
+  }catch(error){await releaseOwnerLock();throw error}
 }
 
 function parseJsonLoose(text:string){
@@ -279,14 +283,16 @@ async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;
   return JSON.parse(lines[lines.length-1])
 }
 async function inspect(userId:string,url:string){
-  const {sandbox,name}=await getComputer(userId,url)
+  const {sandbox,name,releaseOwnerLock}=await getComputer(userId,url)
+  try{
   const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[]})).toString('base64')
   const result=await sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload]})
   if(result.exitCode!==0)throw new Error(`secure_browser_read_failed:${safeText(await result.stderr(),700)}`)
   const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
   if(!lines.length)throw new Error('secure_browser_empty_output')
   const parsed=JSON.parse(lines[lines.length-1])
-  return {sandbox,name,page:parsed}
+  return {sandbox,name,page:parsed,releaseOwnerLock}
+  }catch(error){await releaseOwnerLock();throw error}
 }
 
 function detectProviderAccessBlock(page:any){
@@ -328,10 +334,12 @@ function normalizeActionLog(values:any[]){
 }
 
 export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass}):Promise<SecureBrowserResult>{
+  let releaseOwnerLock:(()=>Promise<void>)|undefined
   try {
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
     const first=await inspect(params.userId,target.toString())
+    releaseOwnerLock=first.releaseOwnerLock
     let page=first.page
     let actionLog:any[]=[]
     let anyPlannedSubmit=false
@@ -471,5 +479,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     const safeError=safeText(error?.message||error,1000)
     console.error('SECURE_BROWSER_FAILED:',safeError)
     throw new Error(safeError||'secure_browser_failed')
+  }finally{
+    await releaseOwnerLock?.()
   }
 }

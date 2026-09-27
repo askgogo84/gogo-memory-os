@@ -206,10 +206,13 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       await activity(tg,params.runId,blockReason,blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
       if(blockReason==='human_auth_required'){
         if(result.authReason&&result.authReason!=='password'){
-          const {startProviderBrowserHandoff}=await import('./provider-browser-handoff')
+          const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
           const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:result.url})
           const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff},completed_at:null}).eq('id',params.runId).eq('telegram_id',String(tg))
-          if(error)throw new Error('browser_handoff_save_failed')
+          if(error){
+            await cancelProviderBrowserHandoff(params.actor.userId,handoff).catch(()=>{})
+            throw new Error('browser_handoff_save_failed')
+          }
           const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
           const resumeUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
           return {

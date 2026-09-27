@@ -20,6 +20,7 @@ const sandbox={writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async
 const reader=load('secure-ticket-reader.ts',{
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>sandbox}},
   './browser-auth-gate':{detectHumanAuthGate},
+  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>async()=>{}},
   './provider-challenge':{detectProviderChallenge:()=>({challenged:false})},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'fixture',ensureBrowserRuntime:async()=>{}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{started++;return handoff}},
@@ -40,12 +41,13 @@ assert.equal(started,1,'background watchers must not create an undisclosed takeo
 
 let metadata:any={objective:'Read my account',url:'https://provider.example/account',mode:'read'}
 const mutations:any[]=[]
+let directSaveFails=false,directCancelled=0
 const db={from:(table:string)=>{
   let change:any
   const q:any={select:()=>q,eq:()=>q,insert:(value:any)=>{mutations.push({table,insert:value});return q},
     update:(value:any)=>{change=value;mutations.push({table,update:value});return q},
     maybeSingle:async()=>({data:{metadata_json:metadata},error:null}),
-    then:(resolve:any)=>{if(change?.metadata_json)metadata=change.metadata_json;return Promise.resolve({error:null}).then(resolve)}}
+    then:(resolve:any)=>{if(directSaveFails&&change?.metadata_json?.handoff)return Promise.resolve({error:{message:'save failed'}}).then(resolve);if(change?.metadata_json)metadata=change.metadata_json;return Promise.resolve({error:null}).then(resolve)}}
   return q
 }}
 let browserCompleted=false,vaultCalls=0
@@ -57,7 +59,7 @@ const command=load('browser-command.ts',{
     ? {status:'completed',url:'https://provider.example/account',title:'Account',summary:'Read account',forms:[],actions:[]}
     : {status:'blocked',blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in'}},
   '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
-  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff},
+  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff,cancelProviderBrowserHandoff:async()=>{directCancelled++}},
   './browser-handoff':{releaseBrowserHandoff:async(_url:string,options:any)=>{assert.equal(options.allowExpired,true);released++;return {ok:false,expired:true}}},
 },'\nexport { executeBrowser }')
 const params={actor:{userId:'user',legacyTelegramId:1},runId:'same-run',stepId:'same-step',command:{url:metadata.url,objective:metadata.objective,risk:'low'},mode:'read'}
@@ -75,6 +77,10 @@ assert.equal(continued.status,'completed')
 assert.equal(metadata.handoff,undefined)
 assert.equal(released,2)
 assert.equal(mutations.some(m=>m.table==='agent_runs'&&m.insert),false,'handoff must never replace the run')
+browserCompleted=false;directSaveFails=true
+await assert.rejects(()=>command.executeBrowser(params),/browser_handoff_save_failed/)
+assert.equal(directCancelled,1,'direct browser commands must clean up an unsaved takeover')
+directSaveFails=false
 console.log('Device auth takeover, ticket lifetime, and same-run continuation verified')
 const computerSource=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
 assert.match(computerSource,/authGate\.reason==='password'\|\|\(!authGate\.required&&loginish\)/,
@@ -173,3 +179,24 @@ assert.equal(policyUpdates,1,'a contending task must not change the active takeo
 assert.equal(bootstraps,1,'a contending task must not bootstrap or replace the setup policy')
 assert.equal(launches.some(c=>JSON.stringify(c).includes('pkill')),false,'never replace a live owner takeover token')
 console.log('Provisioning failure, consumed auth markers, and concurrent owner takeover safety verified')
+
+let lockAvailable=false
+const lockCommands:any[]=[]
+const lockModule=load('browser-owner-lock.ts',{'node:crypto':{randomBytes:()=>({toString:()=> 'reservation'})}},'',{setTimeout:(f:()=>void)=>{f();return 0}})
+const lockSandbox={runCommand:async(c:any)=>{lockCommands.push(c);return {exitCode:c.cmd==='flock'?0:lockAvailable?0:1}},writeFiles:async(files:any)=>{lockCommands.push({files})}}
+await assert.rejects(()=>lockModule.acquireBrowserOwnerLock(lockSandbox),/browser_handoff_in_use/)
+assert.equal(lockCommands[0].args[2],'gogo-handoff.lock','automated readers and takeover must reserve the same lock')
+lockAvailable=true
+const unlock=await lockModule.acquireBrowserOwnerLock(lockSandbox)
+await unlock()
+assert.ok(lockCommands.some(c=>c.files?.[0]?.path==='gogo-browser-release-reservation'))
+let unexpectedBootstrap=0
+const lockedComputer=load('secure-computer.ts',{
+  '@anthropic-ai/sdk':{default:class {}},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async(options:any)=>{assert.equal(options.networkPolicy,undefined);return {}}}},
+  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>{throw new Error('browser_handoff_in_use')}},
+  './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{unexpectedBootstrap++}},
+},'\nexport { getComputer }')
+await assert.rejects(()=>lockedComputer.getComputer('user','https://provider.example'),/browser_handoff_in_use/)
+assert.equal(unexpectedBootstrap,0,'ordinary browser tasks must not bootstrap an active owner takeover')
+console.log('Automated browser reservations and direct handoff persistence failure verified')
