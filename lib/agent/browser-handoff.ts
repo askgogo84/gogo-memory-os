@@ -67,10 +67,10 @@ async function isConsequential(selector){try{return await page.locator(selector)
 })().catch(e=>{console.error(e&&e.stack||e);process.exit(1)});
 `
 
-export async function getPersistentBrowserSandbox(userId:string){
+export async function getPersistentBrowserSandbox(userId:string,options:{bootstrap?:boolean}={}){
   const name=browserSandboxName(userId)
-  const sandbox=await Sandbox.getOrCreate({name,image:SANDBOX_IMAGE,region:SANDBOX_REGION,timeout:20*60*1000,persistent:true,ports:[BROWSER_HANDOFF_PORT],resources:{vcpus:1},networkPolicy:BROWSER_SETUP_NETWORK} as any)
-  await ensureBrowserRuntime(sandbox)
+  const sandbox=await Sandbox.getOrCreate({name,image:SANDBOX_IMAGE,region:SANDBOX_REGION,timeout:20*60*1000,persistent:true,ports:[BROWSER_HANDOFF_PORT],resources:{vcpus:1},...(options.bootstrap===false?{}:{networkPolicy:BROWSER_SETUP_NETWORK})} as any)
+  if(options.bootstrap!==false)await ensureBrowserRuntime(sandbox)
   return {sandbox,name}
 }
 

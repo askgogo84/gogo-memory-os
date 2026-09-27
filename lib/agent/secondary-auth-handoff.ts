@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { startProviderBrowserHandoff } from './provider-browser-handoff'
+import { startProviderBrowserHandoff, cancelProviderBrowserHandoff } from './provider-browser-handoff'
 import { releaseBrowserHandoff } from './browser-handoff'
 import type { SecureBrowserResult } from './secure-computer'
 import type { AgentActor } from './actor'
@@ -20,11 +20,13 @@ export async function attachSecondaryAuthHandoff(params:{userId:string;telegramI
     .eq('id',metadata.life_event_action_id).eq('telegram_id',params.telegramId).eq('status','running')
   if(actionError)throw new Error('auth_handoff_action_save_failed')
   // Provisioning is retryable; the run/action are already safely paused.
+  let createdHandoff:Awaited<ReturnType<typeof startProviderBrowserHandoff>>|undefined
   try{
-    const handoff=await startProviderBrowserHandoff({userId:params.userId,url:params.result.url})
-    const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...metadata,handoff}}).eq('id',params.runId).eq('telegram_id',params.telegramId)
+    createdHandoff=await startProviderBrowserHandoff({userId:params.userId,url:params.result.url})
+    const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...metadata,handoff:createdHandoff}}).eq('id',params.runId).eq('telegram_id',params.telegramId)
     if(error)throw new Error('auth_handoff_save_failed')
   }catch{
+    if(createdHandoff)await cancelProviderBrowserHandoff(params.userId,createdHandoff).catch(()=>{})
     // The task page retains a retry control even when another takeover is active.
   }
   const base=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')

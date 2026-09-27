@@ -96,9 +96,10 @@ console.log('Expired takeover recovery preserves same-task continuation without 
 // Exercise the shared owner-scoped handoff and dispatch for every life-event consumer.
 const rows:any={agent_runs:{id:'run',telegram_id:'1',status:'paused',metadata_json:{life_event_id:'event',life_event_action_id:'action',constraint:'saved'}},
   life_events:{id:'event',telegram_id:'1'},life_event_actions:{id:'action',telegram_id:'1',life_event_id:'event',status:'blocked'}}
+let tokenSaveFails=false,cancelledHandoffs=0
 const scopedDb={from:(table:string)=>{
   const filters:Array<[string,any]>=[];let change:any
-  const execute=()=>{const row=rows[table];if(!row||!filters.every(([k,v])=>row[k]===v))return {data:null,error:null};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
+  const execute=()=>{const row=rows[table];if(!row||!filters.every(([k,v])=>row[k]===v))return {data:null,error:null};if(tokenSaveFails&&change?.metadata_json?.handoff)return {data:null,error:{message:'save failed'}};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
   const q:any={select:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
     maybeSingle:async()=>execute(),then:(resolve:any)=>Promise.resolve(execute()).then(resolve)}
   return q
@@ -107,7 +108,7 @@ const dispatched:string[]=[]
 let provisioningFails=false
 const shared=load('secondary-auth-handoff.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
-  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{if(provisioningFails)throw new Error('temporary domain failure');return handoff}},
+  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{if(provisioningFails)throw new Error('temporary domain failure');return handoff},cancelProviderBrowserHandoff:async()=>{cancelledHandoffs++}},
   './browser-handoff':{releaseBrowserHandoff:async()=>({ok:true})},
   './life-event-worker':{prepareFlightCheckin:async(p:any)=>{assert.equal(p.resumeRunId,'run');dispatched.push('flight_prepare');return {status:'completed'}}},
   './life-event-execution':{executeApprovedLifeEventCheckin:async(p:any)=>{assert.equal(p.runId,'run');dispatched.push('flight_execute');return {status:'completed'}}},
@@ -145,15 +146,21 @@ assert.equal(rows.agent_runs.metadata_json.handoff,null)
 await shared.releaseRunAuthHandoff('1','run')
 assert.equal(rows.agent_runs.metadata_json.secondary_auth,undefined,'consume display marker even when provisioning failed')
 assert.equal(rows.agent_runs.metadata_json.auth_resume.kind,'restaurant','retain executor context separately from auth UI state')
+provisioningFails=false;tokenSaveFails=true
+await shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'restaurant',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[]}})
+assert.equal(cancelledHandoffs,1,'release the owner lock if the takeover token cannot be persisted')
+assert.equal(rows.agent_runs.status,'paused')
+tokenSaveFails=false
 
-let reserved=true,policyUpdates=0
+let reserved=true,policyUpdates=0,bootstraps=0
 const launches:any[]=[]
 const provider=load('provider-browser-handoff.ts',{
   crypto:{randomBytes:()=>({toString:()=> 'new-token'})},
-  './browser-handoff':{BROWSER_HANDOFF_PORT:3001,HANDOFF_SERVER:'fixture',getPersistentBrowserSandbox:async()=>({name:'owner',sandbox:{
+  './secure-browser-bootstrap':{ensureBrowserRuntime:async()=>{bootstraps++}},
+  './browser-handoff':{BROWSER_HANDOFF_PORT:3001,HANDOFF_SERVER:'fixture',getPersistentBrowserSandbox:async(_id:string,options:any)=>{assert.equal(options.bootstrap,false);return {name:'owner',sandbox:{
     writeFiles:async()=>{},updateNetworkPolicy:async()=>{policyUpdates++},domain:async()=> 'browser.example',
     runCommand:async(command:any)=>{launches.push(command);return {exitCode:command.cmd==='flock'?0:reserved?0:1}},
-  }})},
+  }}}},
 },'',{setTimeout:(f:()=>void)=>{f();return 0}})
 await provider.startProviderBrowserHandoff({userId:'owner',url:'https://provider.example'})
 assert.equal(policyUpdates,1)
@@ -163,5 +170,6 @@ assert.equal(launches[0].detached,true)
 reserved=false
 await assert.rejects(()=>provider.startProviderBrowserHandoff({userId:'owner',url:'https://other.example'}),/in_use/)
 assert.equal(policyUpdates,1,'a contending task must not change the active takeover network policy')
+assert.equal(bootstraps,1,'a contending task must not bootstrap or replace the setup policy')
 assert.equal(launches.some(c=>JSON.stringify(c).includes('pkill')),false,'never replace a live owner takeover token')
 console.log('Provisioning failure, consumed auth markers, and concurrent owner takeover safety verified')
