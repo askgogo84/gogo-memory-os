@@ -101,7 +101,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     if(targets.length!==1)return null
     const others=candidates.filter(candidate=>candidate!==targets[0])
     if(!others.every(candidate=>[...raw.matchAll(new RegExp(candidate.alias.source,'gi'))].every(match=>
-      /\b(?:from|about|by|mentioning|for)\s+$/i.test(raw.slice(0,match.index)))))return null
+      /\b(?:from|about|by|mentioning|for)\s+(?:(?:the|a|an)\s+)?$/i.test(raw.slice(0,match.index)))))return null
     provider=targets[0]
   }
   if(!provider)return null
@@ -111,7 +111,7 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   // Remove only explicitly prohibited action verbs and coordinated verb lists.
   // Do not discard the rest of a sentence: a later affirmative action must still
   // reject read routing ("do not like posts, but follow this account").
-  const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem','subscribe','unsubscribe','renew','share','block','unblock']
+  const mutationVerbs=['like','comment','follow','unfollow','publish','send','reply','delete','edit','change','buy','purchase','checkout','pay','book','reserve','submit','reorder','cancel','confirm','place','make','create','add','remove','empty','clear','update','increase','decrease','put','move','save','apply','redeem','subscribe','unsubscribe','renew','share','block','unblock','reschedule','postpone']
   const compoundOrder='(?:place|make|create|complete|confirm|cancel)\\s+(?:a|an|the|my|this|that|our|your)\\s+(?:order|purchase|booking|reservation|payment)'
   const prohibitedVerb=`(?:${[...mutationVerbs,'message','post','order','set','default','use','return','exchange','refund'].join('|')})`
   const negatedActions=new RegExp(`\\b(?:do\\s+not|don['\\u2019]?t|never)\\s+(?:${compoundOrder}\\b|${prohibitedVerb}\\b(?:\\s*(?:,\\s*(?:(?:or|and)\\s+)?|(?:or|and)\\s+)${prohibitedVerb}\\b)*)(?:(?![.!?;,\\n]|\\b(?:and|but|then|however|instead|except)\\b)[\\s\\S])*`,'gi')
@@ -197,11 +197,12 @@ export function isExplicitProviderBrowserRead(text:string){
   const raw=String(text||'').trim()
   const providerSearch=raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:find|search\s+for|show(?:\s+me)?)\s+(.+?)\s+on\s+(.+)$/i)
   const nativeObject=/\b(?:email|mail|gmail|notes?|memory|memories|lists?|reminders?|calendar)\b/i
-  const searchTarget=providerSearch&&!nativeObject.test(providerSearch[1])?providerSearch[2]:undefined
+  const hasNativeObject=(value:string)=>nativeObject.test(value.replace(/\b(?:for|about|from|by|mentioning)\s+(?:(?!\b(?:and|then|but)\b)[^.!?;,])*/gi,''))
+  const searchTarget=providerSearch&&!hasNativeObject(providerSearch[1])?providerSearch[2]:undefined
   const target=(searchTarget||raw.match(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|browse|visit|show(?:\s+me)?|search(?!\s+for\b)|navigate\s+to|go\s+to)\s+(.+)$/i)?.[1])?.toLowerCase()
   if(!target)return false
   const navigationTarget=target.replace(/^(?:the|a|an)\s+/,'').replace(/^(?:app|website|site)\s+(?:for\s+)?/,'')
-  if(nativeObject.test(navigationTarget))return false
+  if(hasNativeObject(navigationTarget))return false
   const vaultProvider=findVaultProviderInText(navigationTarget)
   const aliases=[...(vaultProvider?.aliases||[]),'blinkit','instamart','swiggy instamart','zepto']
   const directTarget=aliases.some(alias=>navigationTarget.startsWith(alias)&&!/[a-z0-9]/i.test(navigationTarget.charAt(alias.length)))
