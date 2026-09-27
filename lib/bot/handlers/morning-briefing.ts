@@ -98,6 +98,24 @@ async function getTodaysReminders(telegramId: number) {
 
 // Flights departing today (IST). Reads the structured travel_tickets store; returns
 // [] on any error (e.g. table not migrated yet) so the brief stays resilient.
+function normalizeBriefKey(value: unknown) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+export function reminderDuplicatesFlight(reminder:any, flights:any[]) {
+  const text=normalizeBriefKey(reminder?.message)
+  if(!text)return false
+  return (flights||[]).some((f:any)=>{
+    const flightNo=normalizeBriefKey(f.flight_no)
+    const pnr=normalizeBriefKey(f.pnr)
+    const from=normalizeBriefKey(f.from_city)
+    const to=normalizeBriefKey(f.to_city)
+    if(flightNo&&text.includes(flightNo))return true
+    if(pnr&&text.includes(pnr)&&/depart|flight|boarding|check in|checkin/.test(text))return true
+    return Boolean(from&&to&&text.includes(from)&&text.includes(to)&&/depart|flight|boarding/.test(text))
+  })
+}
+
 async function getTodaysDepartures(telegramId: number) {
   try {
     const key = todayDateKey() // YYYY-MM-DD in IST
@@ -184,8 +202,12 @@ function cleanWeather(raw: string) {
 }
 
 export async function buildMorningBriefing(telegramId: number, userName?: string) {
-  const reminders = await getTodaysReminders(telegramId)
-  const calendarState = await getCalendarState(telegramId)
+  const [reminders, calendarState, flights] = await Promise.all([
+    getTodaysReminders(telegramId),
+    getCalendarState(telegramId),
+    getTodaysDepartures(telegramId),
+  ])
+  const visibleReminders=reminders.filter((r:any)=>!reminderDuplicatesFlight(r,flights))
 
   let weatherText = 'Weather unavailable right now.'
   try {
@@ -214,7 +236,6 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
 
   // ✈️ Today's flight — above Calendar. 'travel' is included by the 'default' flag.
   if (show('travel')) {
-    const flights = await getTodaysDepartures(telegramId)
     if (flights.length) {
       const lines = flights.map((f: any) => {
         const carrier = [f.airline, f.flight_no].filter(Boolean).join(' ')
@@ -245,8 +266,8 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
 
   if (show('reminder') || show('task')) {
     let rem = `⏰ *Reminders*\n`
-    if (reminders.length) {
-      rem += reminders
+    if (visibleReminders.length) {
+      rem += visibleReminders
         .slice(0, 7)
         .map((r: any) => `• ${cleanReminderText(r.message)} — ${formatReminderTime(r.remind_at)}`)
         .join('\n')
