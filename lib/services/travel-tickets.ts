@@ -167,7 +167,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       .eq('telegram_id', ctx.telegramId)
       .eq('type', leg.type)
     if(leg.type==='flight'&&leg.pnr&&leg.flightNo&&leg.dateLabel){
-      sel=sel.eq('pnr',leg.pnr).eq('date_label',leg.dateLabel)
+      sel=sel.eq('pnr',leg.pnr).eq('date_label',leg.dateLabel).eq('leg_index',leg.legIndex).eq('from_city',leg.fromCity).eq('to_city',leg.toCity)
     }else if(iso)sel=sel.eq('depart_at',iso)
     else sel=sel.is('depart_at',null).eq('from_city',leg.fromCity).eq('to_city',leg.toCity).eq('date_label',leg.dateLabel).eq('depart_local',leg.departLocal)
     if (leg.flightNo) sel = sel.eq('flight_no', leg.flightNo)

@@ -260,7 +260,7 @@ let legacyReminders:any[]=[],legacyTickets:any[]=[]
 const updatedTickets:any[]=[]
 const updatedLegacy:any[]=[],deletedLegacy:string[]=[]
 const ticketDb={from:(table:string)=>{
- const filters:any={};let deleting=false;const q:any={select:()=>q,eq:(key:string,value:any)=>{filters[key]=value;return q},in:(key:string,value:any)=>{filters[key]=value;return q},limit:async()=>({data:(table==='reminders'?legacyReminders:legacyTickets).filter(row=>Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value)),error:null}),update:(row:any)=>{(table==='reminders'?updatedLegacy:updatedTickets).push(row);return q},delete:()=>{deleting=true;return q},then:(resolve:any)=>{if(deleting){legacyReminders=legacyReminders.filter(row=>{const match=Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value);if(match)deletedLegacy.push(row.id);return !match})}return Promise.resolve({error:null}).then(resolve)},insert:async(row:any)=>{ticketWrites.push({table,row});return {error:null}}};return q
+ const filters:any={};let deleting=false;const q:any={select:()=>q,eq:(key:string,value:any)=>{filters[key]=value;return q},in:(key:string,value:any)=>{filters[key]=value;return q},limit:async()=>({data:(table==='reminders'?legacyReminders:legacyTickets).filter(row=>Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value)),error:null}),update:(row:any)=>{(table==='reminders'?updatedLegacy:updatedTickets).push(row);return q},delete:()=>{deleting=true;return q},then:(resolve:any)=>{if(deleting){legacyReminders=legacyReminders.filter(row=>{const match=Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value);if(match)deletedLegacy.push(row.id);return !match})}return Promise.resolve({error:null}).then(resolve)},insert:async(row:any)=>{ticketWrites.push({table,row});if(table==='travel_tickets')legacyTickets.push({...row,id:`stored-${ticketWrites.length}`});return {error:null}}};return q
 }}
 const ticketModule:any={}
 const airlineCheckin=await import('../lib/services/airline-checkin')
@@ -367,3 +367,10 @@ assert.deepEqual(unknownWrites[0].row.passengers,['Named Passenger'])
 assert.equal(unknownWrites[0].row.pnr,'UNKNOWN99')
 assert.equal(unknownReply.remindersSet,0)
 assert.match(unknownReply.reply,/could not verify the departure/)
+
+const throughBefore=ticketWrites.length
+await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'BLR',to:'AUH',date:'28 Sep 2040',departure:'10:00',arrival:'12:00',arrivalDate:'28 Sep 2040',airline:'Example',flightNo:'XX222',pnr:'THROUGH99'},{from:'AUH',to:'JFK',date:'28 Sep 2040',departure:'14:00',arrival:'19:00',arrivalDate:'28 Sep 2040',airline:'Example',flightNo:'XX222',pnr:'THROUGH99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
+const throughRows=ticketWrites.slice(throughBefore).filter(write=>write.table==='travel_tickets').map(write=>write.row)
+assert.equal(throughRows.length,2)
+assert.deepEqual(throughRows.map(row=>[row.leg_index,row.from_city,row.to_city]),[[0,'BLR','AUH'],[1,'AUH','JFK']])
+assert.equal(buildTravelPresenceFacts([{...legacyArrival,from_city:'Unknown airport',depart_at:null,raw:{date:'28 Sep 2020',departure:'10:00'}}],Date.parse('2040-09-28T00:00Z')).length,0,'old null-time identities cannot enter current context')

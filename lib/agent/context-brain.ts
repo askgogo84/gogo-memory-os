@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { embedText } from '@/lib/services/embeddings'
 import { isIndexable, recallableMemoryText } from '@/lib/services/memory-index'
-import { ticketTimezone, flightInstants } from '@/lib/services/travel-time'
+import { ticketTimezone, flightInstants, ticketInstant } from '@/lib/services/travel-time'
 import { redactSecretShapedText, isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
 import { latestTypedContext } from './typed-object-context'
@@ -128,6 +128,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
       id:String(row.id||''),
       from:safe(row.from_city,100),
       to:safe(row.to_city,100),
+      printedDate:ticketInstant(raw.date||row.date_label,'12:00','UTC')?.toISOString()||null,
       departAt:parsed?.departAt?.toISOString()||(canonical?validIso(row.depart_at):null),
       arriveAt:parsed?parsed.arriveAt?.toISOString()||null:canonical?validIso(row.arrive_at):null,
       airline:safe(row.airline,100),
@@ -144,6 +145,10 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
   for(let i=0;i<flights.length;i++){
     const leg=flights[i]
     const departMs=Date.parse(leg.departAt)
+    if(!leg.departAt){
+      const printedMs=Date.parse(leg.printedDate)
+      if(!Number.isFinite(printedMs)||printedMs>horizonEnd+86400_000||printedMs<now-3*86400_000)continue
+    }
     if(departMs>horizonEnd||departMs<now-2*86400_000)continue
     const validArrival=leg.arriveAt&&Date.parse(leg.arriveAt)>departMs?leg.arriveAt:null
     const passengerLabel=leg.passengers.length?`Passengers: ${leg.passengers.join(', ')}`:'Passenger identity not recorded'
@@ -220,7 +225,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       .order('updated_at',{ascending:false})
       .limit(30),
     supabaseAdmin.from('travel_tickets')
-      .select('id,type,booking_group,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,depart_tz,raw')
+      .select('id,type,booking_group,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,depart_tz,date_label,raw')
       .eq('telegram_id',Number(actor.legacyTelegramId))
       .or(`depart_at.is.null,and(depart_at.gte.${lower},depart_at.lte.${upper})`)
       .order('depart_at',{ascending:true})
