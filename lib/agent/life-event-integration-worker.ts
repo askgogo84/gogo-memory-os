@@ -235,48 +235,27 @@ export async function processLifecycleMonitor(action: any, event: any, telegramI
   }
 
   const pageText = safe(result.pageText || result.summary || '', 6000)
-  if(resumeRunId)await supabaseAdmin.from('agent_runs').update({status:'completed',progress:100,error:null,summary:'Gogo resumed the same provider monitor and verified the current page.',completed_at:new Date().toISOString()}).eq('id',resumeRunId).eq('telegram_id',telegramId)
-  const fingerprint = lifecycleFingerprint(result.title || event.title, pageText)
-  const previous = String(action.payload_json?.lastFingerprint || '')
-  const terminal = lifecycleTerminalState(String(event.event_type || ''), pageText, {
-    title: event.title,
-    confirmationRef: event.confirmation_ref,
-    provider: event.provider,
+  const terminal=lifecycleTerminalState(String(event.event_type||''),pageText,{title:event.title,confirmationRef:event.confirmation_ref,provider:event.provider})
+  const {data,error}=await supabaseAdmin.rpc('gogo_publish_lifecycle_monitor',{
+    p_action_id:action.id,p_event_id:event.id,p_telegram_id:telegramId,p_revision:action.payload_json?.scheduleRevision??null,
+    p_fingerprint:lifecycleFingerprint(result.title||event.title,pageText),p_text:pageText,p_url:target.url,p_cadence:target.cadenceMinutes,
+    p_terminal_label:terminal.terminal?terminal.label:null,p_resume_run_id:resumeRunId||null,
   })
-  const changed = Boolean(previous && previous !== fingerprint)
-  const firstCheck = !previous
-  const at = new Date().toISOString()
+  if(error||!data)throw new Error(`life_event_monitor_publication_failed:${error?.message||'missing_result'}`)
+  return data as {status:'completed'|'deferred';runId?:string}
+}
 
-  if (firstCheck) {
-    await defer(action, target.cadenceMinutes, { lastFingerprint:fingerprint, lastCheckedAt:at, lastStatusText:safe(pageText,800), monitorUrl:target.url })
-    return { status:'deferred' as const }
+export async function deliverLifecycleMonitorNotices(){
+  const {data,error}=await supabaseAdmin.from('agent_activity').select('id').eq('event_type','life_event_status_changed').eq('metadata_json->>notificationState','pending').order('created_at').limit(20)
+  if(error)throw new Error(`monitor_notice_read_failed:${error.message}`)
+  for(const row of data||[]){
+    const {data:notice,error:claimError}=await supabaseAdmin.rpc('gogo_claim_monitor_notice',{p_id:row.id})
+    if(claimError)throw new Error(`monitor_notice_claim_failed:${claimError.message}`)
+    if(!notice)continue
+    const sent=await sendAgentPush(String(notice.telegramId),{title:'Saved status update',body:'Gogo recorded a provider status update. Open AskGogo for the current details.',path:'/agent',data:{runId:notice.runId,lifeEventId:notice.lifeEventId}})
+    const {error:saveError}=await supabaseAdmin.from('agent_activity').update({metadata_json:{...notice.metadata,notificationState:sent.failed?'failed':'sent'}}).eq('id',row.id).eq('metadata_json->>notificationState','claimed')
+    if(saveError)throw new Error(`monitor_notice_finish_failed:${saveError.message}`)
   }
-
-  if (!changed && !terminal.terminal) {
-    await defer(action, target.cadenceMinutes, { lastFingerprint:fingerprint, lastCheckedAt:at, lastStatusText:safe(pageText,800), monitorUrl:target.url })
-    return { status:'deferred' as const }
-  }
-
-  const summary = terminal.terminal
-    ? `${event.title}: provider status is now ${terminal.label}.`
-    : `${event.title}: the provider status page changed.`
-  const runId = resumeRunId || await createCompletedRun(telegramId, event, action, summary, { monitor_url:target.url, lifecycle_terminal:terminal.label, changed:true })
-  await writeActivity(telegramId, runId, 'life_event_status_changed', summary, { life_event_id:event.id, action_id:action.id, terminal:terminal.label })
-  await sendAgentPush(telegramId, { title:'Gogo found a status change', body:safe(summary,260), path:'/agent', data:{runId,lifeEventId:String(event.id)} }).catch(()=>{})
-
-  const existingMeta = event.metadata_json || {}
-  await supabaseAdmin.from('life_events').update({
-    lifecycle_state: terminal.terminal ? 'completed' : 'watching',
-    metadata_json: { ...existingMeta, lifecycleMonitor:{ url:target.url, fingerprint, checkedAt:at, terminal:terminal.label, statusText:safe(pageText,800) } },
-    updated_at: at,
-  }).eq('id',event.id).eq('telegram_id',telegramId)
-
-  if (terminal.terminal) {
-    await complete(action, { lastFingerprint:fingerprint, lastCheckedAt:at, terminal:terminal.label, monitorUrl:target.url })
-    return { status:'completed' as const, runId }
-  }
-  await defer(action, target.cadenceMinutes, { lastFingerprint:fingerprint, lastCheckedAt:at, lastStatusText:safe(pageText,800), monitorUrl:target.url })
-  return { status:'deferred' as const, runId }
 }
 
 async function processBillReview(action: any, event: any, telegramId: string) {
@@ -351,5 +330,6 @@ export async function processDueLifeEventIntegrations(limit=12){
       }
     }
   }
+  await deliverLifecycleMonitorNotices()
   return{checked,claimed,completed,waitingApproval,deferred,blocked,failed}
 }

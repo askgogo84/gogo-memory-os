@@ -87,6 +87,65 @@ begin
   update boarding_pass_outbox set status='claimed',updated_at=now() where id=o.id;
   return jsonb_build_object('id',o.id,'telegramId',o.telegram_id,'runId',o.run_id,'lifeEventId',o.life_event_id,'scheduleRevision',o.schedule_revision);
 end $$;
+create or replace function pg_temp.gogo_publish_lifecycle_monitor(p_action_id uuid,p_event_id uuid,p_telegram_id text,p_revision text,p_fingerprint text,p_text text,p_url text,p_cadence integer,p_terminal_label text,p_resume_run_id uuid default null)
+returns jsonb language plpgsql security invoker set search_path=pg_temp,public as $$
+declare e life_events%rowtype; a life_event_actions%rowtype; previous text; publish boolean; terminal boolean; rid uuid; meta jsonb; summary text;
+begin
+ select * into e from life_events where id=p_event_id and telegram_id=p_telegram_id for update;
+ if not found then raise exception 'life_event_schedule_changed' using errcode='40001';end if;
+ select * into a from life_event_actions where id=p_action_id and life_event_id=e.id and telegram_id=p_telegram_id for update;
+ if not found or a.action_type<>'monitor' or a.status<>'running'
+   or a.payload_json->>'scheduleRevision' is distinct from p_revision
+   or e.metadata_json->>'ticketScheduleRevision' is distinct from p_revision
+   or e.lifecycle_state in ('completed','cancelled','expired') then
+   raise exception 'life_event_schedule_changed' using errcode='40001';
+ end if;
+ previous=coalesce(a.payload_json->>'lastFingerprint','');
+ terminal=previous<>'' and p_terminal_label is not null;
+ publish=previous<>'' and (previous<>p_fingerprint or terminal);
+ summary=case when terminal then e.title||': provider status is now '||p_terminal_label||'.' else e.title||': the provider status page changed.' end;
+ meta=jsonb_build_object('plan_type','life_event_integration','life_event_id',e.id,'life_event_action_id',a.id,'action_key',a.action_key,'scheduleRevision',p_revision,'fingerprint',p_fingerprint,'monitor_url',p_url,'lifecycle_terminal',p_terminal_label,'recordedAt',now());
+ if p_resume_run_id is not null then
+   update agent_runs set status='completed',progress=100,error=null,summary='Gogo resumed the same provider monitor and verified the current page.',completed_at=now(),updated_at=now()
+   where id=p_resume_run_id and telegram_id=p_telegram_id and metadata_json->>'life_event_action_id'=a.id::text returning id into rid;
+   if rid is null then raise exception 'monitor_resume_run_mismatch';end if;
+ end if;
+ if publish then
+   if rid is null then
+     insert into agent_runs(telegram_id,type,capability,status,title,summary,progress,why,source,metadata_json,completed_at)
+     values(p_telegram_id,'life_event',a.capability,'completed','Gogo · '||left(e.title,150),left(summary,1200),100,'Background Gogo verified a provider status update.','background_life_event',meta,now()) returning id into rid;
+   end if;
+   insert into agent_activity(telegram_id,run_id,event_type,message,metadata_json)
+     values(p_telegram_id,rid,'life_event_status_changed',left(summary,900),meta||jsonb_build_object('notificationState','pending'));
+   update life_events set lifecycle_state=case when terminal then 'completed' else 'watching' end,
+     metadata_json=metadata_json||jsonb_build_object('lifecycleMonitor',jsonb_build_object('url',p_url,'fingerprint',p_fingerprint,'checkedAt',now(),'terminal',p_terminal_label,'statusText',left(p_text,800),'scheduleRevision',p_revision)),updated_at=now() where id=e.id;
+ end if;
+ update life_event_actions set status=case when terminal then 'completed' else 'ready' end,
+   due_at=case when terminal then due_at else now()+make_interval(mins=>greatest(1,least(p_cadence,1440))) end,
+   payload_json=payload_json||jsonb_build_object('lastFingerprint',p_fingerprint,'lastCheckedAt',now(),'lastStatusText',left(p_text,800),'monitorUrl',p_url,'terminal',case when terminal then p_terminal_label else null end),updated_at=now() where id=a.id;
+ return jsonb_build_object('status',case when terminal then 'completed' else 'deferred' end,'runId',rid);
+end $$;
+
+create or replace function pg_temp.gogo_claim_monitor_notice(p_id uuid)
+returns jsonb language plpgsql security invoker set search_path=pg_temp,public as $$
+declare notice agent_activity%rowtype; e life_events%rowtype; a life_event_actions%rowtype;
+begin
+ select * into notice from agent_activity where id=p_id and event_type='life_event_status_changed';
+ if not found then return null;end if;
+ select * into e from life_events where id::text=notice.metadata_json->>'life_event_id' and telegram_id=notice.telegram_id for update;
+ select * into a from life_event_actions where id::text=notice.metadata_json->>'life_event_action_id' and telegram_id=notice.telegram_id and life_event_id=e.id for update;
+ select * into notice from agent_activity where id=p_id for update;
+ if notice.metadata_json->>'notificationState' is distinct from 'pending' then return null;end if;
+ if e.id is null or a.id is null or e.lifecycle_state in ('cancelled','expired')
+   or e.metadata_json->>'ticketScheduleRevision' is distinct from notice.metadata_json->>'scheduleRevision'
+   or a.payload_json->>'scheduleRevision' is distinct from notice.metadata_json->>'scheduleRevision'
+   or a.payload_json->>'lastFingerprint' is distinct from notice.metadata_json->>'fingerprint' then
+   update agent_activity set metadata_json=metadata_json||'{"notificationState":"cancelled"}'::jsonb where id=p_id;
+   return null;
+ end if;
+ update agent_activity set metadata_json=metadata_json||'{"notificationState":"claimed"}'::jsonb where id=p_id;
+ return jsonb_build_object('id',notice.id,'telegramId',notice.telegram_id,'runId',notice.run_id,'lifeEventId',e.id,'metadata',notice.metadata_json);
+end $$;
 create or replace function pg_temp.gogo_promote_travel_ticket_test()
 returns trigger
 language plpgsql
@@ -180,6 +239,7 @@ begin
   returning id into v_event_id;
 
   if v_timing_changed then
+    update agent_activity set metadata_json=metadata_json||'{"notificationState":"cancelled"}'::jsonb where event_type='life_event_status_changed' and metadata_json->>'life_event_id'=v_event_id::text and metadata_json->>'notificationState'='pending';
     update agent_runs r set status='failed',error='flight_schedule_changed',
       summary='This paused preparation used an old flight schedule. Gogo will prepare the corrected itinerary again.',updated_at=now()
       where r.telegram_id=new.telegram_id::text and r.status in ('paused','queued','running','waiting_approval')
@@ -501,6 +561,32 @@ do $test$ declare aid uuid; eid uuid; rid uuid; begin
  update pg_temp.life_event_actions set status='blocked',payload_json=(payload_json-'browserRunId'-'runId')||'{"blockedReason":"missing_checkin_url_or_confirmation"}'::jsonb where id=aid;
  update pg_temp.travel_tickets set pnr='ENRICHED-AGAIN' where telegram_id=23;
  if not exists(select 1 from pg_temp.agent_runs where id=rid and status='failed') then raise exception 'unlinked missing-confirmation run was stranded';end if;
+end $test$;
+do $test$ declare aid uuid; eid uuid; rev text; runs_before integer; output jsonb; notice uuid; begin
+ select id,life_event_id,payload_json->>'scheduleRevision' into aid,eid,rev from pg_temp.life_event_actions where telegram_id='23' and action_key='travel-disruption-watch';
+ update pg_temp.life_event_actions set status='running',payload_json=payload_json||'{"lastFingerprint":"before"}'::jsonb where id=aid;
+ select count(*) into runs_before from pg_temp.agent_runs;
+ update pg_temp.travel_tickets set depart_at=now()+interval '13 days' where telegram_id=23;
+ begin
+  perform pg_temp.gogo_publish_lifecycle_monitor(aid,eid,'23',rev,'stale','Old flight landed','https://fixture.invalid/status',60,'landed',null);
+  raise exception 'stale monitor result accepted';
+ exception when serialization_failure then null;end;
+ if (select count(*) from pg_temp.agent_runs)<>runs_before or exists(select 1 from pg_temp.life_events where id=eid and lifecycle_state='completed') then raise exception 'stale monitor published side effects';end if;
+ select payload_json->>'scheduleRevision' into rev from pg_temp.life_event_actions where id=aid;
+ update pg_temp.life_event_actions set status='running' where id=aid;
+ output=pg_temp.gogo_publish_lifecycle_monitor(aid,eid,'23',rev,'after','Corrected flight delayed','https://fixture.invalid/status',60,null,null);
+ if output->>'status'<>'deferred' or not exists(select 1 from pg_temp.life_event_actions where id=aid and status='ready' and payload_json->>'lastFingerprint'='after') then raise exception 'current monitor did not commit atomically';end if;
+ select id into notice from pg_temp.agent_activity where run_id=(output->>'runId')::uuid and event_type='life_event_status_changed';
+ if notice is null then raise exception 'monitor notice was not queued';end if;
+ update pg_temp.travel_tickets set depart_at=now()+interval '14 days' where telegram_id=23;
+ if pg_temp.gogo_claim_monitor_notice(notice) is not null then raise exception 'superseded monitor notice was claimed';end if;
+ select payload_json->>'scheduleRevision' into rev from pg_temp.life_event_actions where id=aid;
+ update pg_temp.life_event_actions set status='running' where id=aid;
+ output=pg_temp.gogo_publish_lifecycle_monitor(aid,eid,'23',rev,'landed','Corrected flight landed','https://fixture.invalid/status',60,'landed',null);
+ if output->>'status'<>'completed' then raise exception 'verified terminal monitor not completed';end if;
+ select id into notice from pg_temp.agent_activity where run_id=(output->>'runId')::uuid and event_type='life_event_status_changed';
+ if pg_temp.gogo_claim_monitor_notice(notice) is null then raise exception 'current terminal notice was not claimed';end if;
+ if pg_temp.gogo_claim_monitor_notice(notice) is not null then raise exception 'monitor notice replayed';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;

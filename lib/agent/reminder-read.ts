@@ -13,15 +13,23 @@ export function reminderTimezoneMetadata(text:string){
   return {timezone,text:cleaned}
 }
 
-const noise=new Set('review list show find retrieve read check inspect look up reminders reminder active upcoming pending saved existing entries entry scheduled created added set updated my me the a an for about related to this that these those trip travel flight flights checklist only please all account wide on at in of and with from plan organize organisation organization confirm status departure arrival time dates date tomorrow today next week am pm sep sept september jan january feb february mar march apr april may jun june jul july aug august oct october nov november dec december'.split(' '))
+const noise=new Set('is are was were be been being have has had will would could should can may might must what which whether due review list show find retrieve read check inspect look up reminders reminder active upcoming pending saved existing entries entry scheduled created added set updated my me the a an for about related to this that these those trip travel flight flights checklist only please all account wide on at in of and with from plan organize organisation organization confirm status departure arrival time dates date tomorrow today next week am pm sep sept september jan january feb february mar march apr april may jun june jul july aug august oct october nov november dec december'.split(' '))
 function terms(text:string){return reminderTimezoneMetadata(text).text.toLowerCase().replace(/newyork/g,'new york').replace(/\b(?:do not|don.t|never|without)\b[^.;!?]*/gi,'').match(/[a-z][a-z0-9]*/g)?.filter(word=>word.length>2&&!noise.has(word))||[]}
 
 /** Conservative text matching: uncertain references never turn into account-wide lists. */
 export function reminderScope(step:{title:string;instruction:string},mission:string){
   const stepText=`${step.title} ${step.instruction}`
-  const scoped=/\b(for|about|related to|trip|checklist|flight|this|that)\b/i.test(stepText)
+  const scoped=/\b(for|about|related to|trip|checklist|flight)\b|\b(?:this|that)\s+(?:one|journey|booking|itinerary)\b/i.test(stepText)
   const groups=(text:string)=>text.split(/\b(?:and|or)\b|[,;→]/i).map(part=>[...new Set(terms(part))]).filter(group=>group.length)
-  const stepGroups=groups(stepText)
+  const subjectGroups=(text:string)=>{
+    const qualifier=/\b(?:for|about|related to|matching|containing|mentioning|concerning|titled|named)\s+(.+)/i.exec(text)
+    const reminder=text.search(/\breminders?\b/i)
+    // Descriptive subjects before "reminders" and explicit qualifiers carry
+    // scope; relative grammar after it ("that are upcoming") does not.
+    const prefix=reminder>=0?text.slice(0,reminder):qualifier?'':text
+    return [...groups(prefix),...(qualifier?groups(qualifier[1]):[])]
+  }
+  const stepGroups=[...subjectGroups(step.title),...subjectGroups(step.instruction)]
   const scopeGroups=stepGroups.length?stepGroups:scoped?groups(mission):[]
   const scopeTerms=[...new Set(scopeGroups.flat())]
   return {scopeTerms,scopeGroups,unresolved:scoped&&!scopeTerms.length}

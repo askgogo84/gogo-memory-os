@@ -304,6 +304,8 @@ assert.deepEqual(updatedLegacy.slice(-reminderWrites.length).map(row=>row.remind
  const q:any={select:()=>q,eq:()=>q,gte:()=>q,order:()=>q,range:async()=>({data:rows,error:null})};return q
 }
 try{
+ const upcoming=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders that are upcoming'},missionText:'Show reminders that are upcoming'})
+ assert.equal((upcoming.output as any).reminders.length,4,'grammatical auxiliaries must not filter account-wide reminders')
  const commaDates=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for Sep 28, 2030 at 5 pm, and Sep 29, 2030 at 6 pm'},missionText:'Review reminders'})
  assert.deepEqual((commaDates.output as any).reminders.map((row:any)=>row.id),['28-11:30','29-12:30'])
  const paired=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm and 29 Sep 2030 at 6 pm'},missionText:'Review reminders'})
@@ -591,3 +593,7 @@ await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Passenger 
 assert.equal(legacyTickets.length,2,'same flight route and departure with different PNRs can be independent bookings')
 assert.equal(updatedTickets.length,separateBookingUpdates,'a different PNR must not silently overwrite a valid booking')
 assert.equal(legacyTickets[0].pnr,'BOOKING-A')
+
+assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show reminders that I have coming up'},'Show reminders').scopeTerms,[])
+assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show dentist reminders that are upcoming'},'Show reminders').scopeTerms,['dentist'])
+assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show reminders about dentist'},'Show reminders').scopeTerms,['dentist'])
