@@ -783,3 +783,11 @@ await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{lau
 assert.equal(JSON.parse(boundaryOutput.executionBeforeText).receiptRecords.length,2)
 assert.equal(JSON.parse(boundaryOutput.executionAfterText).receiptRecords.length,3)
 console.log('Actual browser script preserves the full receipt-record snapshots at submission')
+
+const priorIds=JSON.stringify({receiptRecords:[{id:'data-order-id:old-1',phrase:'Order placed'},{id:'data-order-id:old-2',phrase:'Order placed'}]})
+const afterIds=JSON.stringify({receiptRecords:[{id:'data-order-id:old-2',phrase:'Order placed'},{id:'data-order-id:new-3',phrase:'Thank you for your order'}]})
+const cappedNodes=['old-2','new-3'].map((id,i)=>({innerText:i?'Thank you for your order':'Order placed',getClientRects:()=>[{}],contains:(other:any)=>false,getAttribute:(key:string)=>key==='data-order-id'?id:null}))
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:priorIds,pattern:'(?:order|purchase)'},document:{body:{innerText:'Order placed\nThank you for your order'},querySelectorAll:()=>cappedNodes}}),true)
+queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Thank you for your order',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:priorIds,executionAfterText:afterIds}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,'Thank you for your order')
+console.log('Stable provider receipt identities detect new results in capped history')

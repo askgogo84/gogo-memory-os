@@ -209,7 +209,13 @@ const receiptSnapshot=()=>{
  const standalone=visibleMatches('[role="status"],[role="alert"],dialog')
   .filter(node=>!recordsNodes.some(record=>record.contains(node)||node.contains(record)));
  const nodes=[...recordsNodes,...standalone.filter(node=>!standalone.some(parent=>parent!==node&&parent.contains(node)))];
- const records=[...new Set(nodes)].map(node=>extract(node.innerText||'')[0].phrase.replace(/\s+/g,' ').trim());
+ const records=[...new Set(nodes)].map(node=>{
+  const attrs=['data-order-id','data-booking-id','data-confirmation-id','data-application-id'];
+  const attr=attrs.find(key=>node.getAttribute?.(key));
+  const reference=String(node.innerText||'').match(/\b(?:order|booking|confirmation|application|receipt)\s*(?:number|id|reference|ref|#)\s*[:#-]?\s*([a-z0-9][a-z0-9-]{3,})\b/i);
+  const id=attr?attr+':'+node.getAttribute(attr):reference?'reference:'+reference[1].toLowerCase():null;
+  return {id,phrase:extract(node.innerText||'')[0].phrase.replace(/\s+/g,' ').trim()};
+ });
  return records.length?JSON.stringify({receiptRecords:records}):extract(document.body?.innerText||'').map(item=>item.phrase.replace(/\s+/g,' ').trim()).join('\n');
 };
 const receiptCount=(text)=>{
@@ -296,7 +302,13 @@ const receiptSnapshot=()=>{
  const standalone=visibleMatches('[role="status"],[role="alert"],dialog')
   .filter(node=>!recordsNodes.some(record=>record.contains(node)||node.contains(record)));
  const nodes=[...recordsNodes,...standalone.filter(node=>!standalone.some(parent=>parent!==node&&parent.contains(node)))];
- const records=[...new Set(nodes)].map(node=>extract(node.innerText||'')[0].phrase.replace(/\s+/g,' ').trim());
+ const records=[...new Set(nodes)].map(node=>{
+  const attrs=['data-order-id','data-booking-id','data-confirmation-id','data-application-id'];
+  const attr=attrs.find(key=>node.getAttribute?.(key));
+  const reference=String(node.innerText||'').match(/\b(?:order|booking|confirmation|application|receipt)\s*(?:number|id|reference|ref|#)\s*[:#-]?\s*([a-z0-9][a-z0-9-]{3,})\b/i);
+  const id=attr?attr+':'+node.getAttribute(attr):reference?'reference:'+reference[1].toLowerCase():null;
+  return {id,phrase:extract(node.innerText||'')[0].phrase.replace(/\s+/g,' ').trim()};
+ });
  return records.length?JSON.stringify({receiptRecords:records}):extract(document.body?.innerText||'').map(item=>item.phrase.replace(/\s+/g,' ').trim()).join('\n');
 };
 const receiptCount=(text)=>{
@@ -304,7 +316,15 @@ const receiptCount=(text)=>{
  return extract(text).length;
 };
 
-return receiptCount(receiptSnapshot())>receiptCount(before);
+const after=receiptSnapshot();
+try{
+ const old=JSON.parse(before).receiptRecords,current=JSON.parse(after).receiptRecords;
+ if(Array.isArray(old)&&Array.isArray(current)&&old.every(item=>item&&typeof item.id==='string')){
+  const ids=new Set(old.map(item=>item.id));
+  if(current.some(item=>item&&typeof item.id==='string'&&!ids.has(item.id)))return true;
+ }
+}catch{}
+return receiptCount(after)>receiptCount(before);
           },{before:executionBeforeText,pattern:payload.confirmationPattern},{timeout:15000,polling:250}).catch(()=>{});
           executionAfterText=await snapshotConfirmation(page,payload.confirmationPattern);
         }
@@ -472,11 +492,12 @@ const extract=(text:string)=>{
  return groups.sort((a,b)=>b.length-a.length)[0]||[];
 };
 const records=(text:string)=>{
- try{const parsed=JSON.parse(text);if(Array.isArray(parsed.receiptRecords))return parsed.receiptRecords.flatMap((phrase:unknown)=>typeof phrase==='string'?extract(phrase).slice(0,1):[]);}catch{}
- return extract(text);
+ try{const parsed=JSON.parse(text);if(Array.isArray(parsed.receiptRecords))return parsed.receiptRecords.flatMap((item:any)=>{const phrase=typeof item==='string'?item:item?.phrase;return typeof phrase==='string'?extract(phrase).slice(0,1).map(match=>({...match,id:typeof item?.id==='string'?item.id:null})):[];});}catch{}
+ return extract(text).map(match=>({...match,id:null as string|null}));
 };
-const baselineCount=records(before).length;
-  const match=records(after)[baselineCount]
+const previous=records(before),current=records(after);
+const oldIds=new Set(previous.map(item=>item.id));
+  const match=(previous.every(item=>item.id)?current.find(item=>item.id&&!oldIds.has(item.id)):null)||current[previous.length]
   return match?safeText(match.line,1800):null
 }
 

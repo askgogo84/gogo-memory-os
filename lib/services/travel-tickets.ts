@@ -180,6 +180,19 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
 
     let { data: existing, error: lookupError } = await sel.limit(2)
     if(lookupError)throw new Error(lookupError.message)
+    if(!existing?.length&&leg.type==='flight'&&iso){
+      let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local')
+        .eq('telegram_id',ctx.telegramId).eq('type','flight').is('depart_at',null)
+      unknown=leg.pnr?unknown.eq('pnr',leg.pnr):unknown.or('pnr.is.null,pnr.eq.')
+      unknown=leg.flightNo?unknown.eq('flight_no',leg.flightNo):unknown.or('flight_no.is.null,flight_no.eq.')
+      if(leg.pnr&&leg.flightNo)unknown=unknown.eq('leg_index',leg.legIndex)
+      else unknown=unknown.eq('from_city',leg.fromCity).eq('to_city',leg.toCity)
+      const result=await unknown.limit(101)
+      if(result.error)throw new Error(result.error.message)
+      if((result.data?.length||0)>100)throw new Error('travel_ticket_identity_ambiguous')
+      const printed=ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'UTC')?.toISOString()
+      existing=(result.data||[]).filter(row=>printed&&ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed)
+    }
     // Printed labels can vary between parsers while the canonical flight stays
     // the same. Reuse its database dedupe identity after null-time reconciliation.
     if(!existing?.length&&leg.type==='flight'&&iso){

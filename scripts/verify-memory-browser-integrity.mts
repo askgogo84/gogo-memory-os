@@ -408,3 +408,10 @@ await ticketModule.persistAndRemindTicket({type:'flight',flights:[{from:'San Fra
 assert.equal(ticketWrites.filter(write=>write.table==='travel_tickets').length,canonicalBefore,'parser label changes reuse canonical departure identity')
 assert.equal(updatedTickets.at(-1).from_city,'San Francisco')
 console.log('Equivalent printed city/date labels reuse the canonical saved flight')
+
+legacyTickets=[];legacyReminders=[]
+await ticketModule.persistAndRemindTicket(partialTicket,ticketCtx)
+await ticketModule.persistAndRemindTicket({...partialTicket,flights:[{...partialTicket.flights[0],date:'28 September 2040',departureTimezone:'Asia/Kolkata'}]},ticketCtx)
+assert.equal(legacyTickets.length,1,'renamed printed date reconciles null-time flight before canonical lookup')
+assert.equal(updatedTickets.at(-1).depart_at,'2040-09-28T04:30:00.000Z')
+console.log('Normalized printed dates reconcile unknown-time tickets in place')
