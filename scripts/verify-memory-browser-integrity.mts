@@ -415,3 +415,15 @@ await ticketModule.persistAndRemindTicket({...partialTicket,flights:[{...partial
 assert.equal(legacyTickets.length,1,'renamed printed date reconciles null-time flight before canonical lookup')
 assert.equal(updatedTickets.at(-1).depart_at,'2040-09-28T04:30:00.000Z')
 console.log('Normalized printed dates reconcile unknown-time tickets in place')
+
+legacyTickets=[];legacyReminders=[]
+const missingIds={type:'flight',flights:[{from:'Unknown airport',to:'JFK',date:'28 Sep 2040',departure:'10:00'}]}
+await ticketModule.persistAndRemindTicket(missingIds,ticketCtx)
+await ticketModule.persistAndRemindTicket({...missingIds,flights:[{...missingIds.flights[0],date:'28 September 2040',departureTimezone:'Asia/Kolkata',pnr:'NEW-PNR',flightNo:'XX789'}]},ticketCtx)
+assert.equal(legacyTickets.length,1,'newly learned identifiers enrich the compatible unknown-time ticket')
+assert.equal(updatedTickets.at(-1).pnr,'NEW-PNR')
+legacyTickets=[{...currentTicket,id:'unrelated-weak-flight',pnr:null,flight_no:null,from_city:'LAX',to_city:'SEA'}]
+const weakUpdates=updatedTickets.length
+await ticketModule.persistAndRemindTicket({type:'flight',flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00'}]},ticketCtx)
+assert.equal(updatedTickets.length,weakUpdates,'weak canonical identity cannot overwrite another route at the same instant')
+console.log('Missing ticket identifiers are enriched; unrelated weak identities remain isolated')

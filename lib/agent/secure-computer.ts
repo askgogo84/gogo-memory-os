@@ -208,7 +208,7 @@ const receiptSnapshot=()=>{
  const recordsNodes=containers.filter(node=>!containers.some(child=>child!==node&&node.contains(child)));
  const standalone=visibleMatches('[role="status"],[role="alert"],dialog')
   .filter(node=>!recordsNodes.some(record=>record.contains(node)||node.contains(record)));
- const nodes=[...recordsNodes,...standalone.filter(node=>!standalone.some(parent=>parent!==node&&parent.contains(node)))];
+ const nodes=[...recordsNodes,...standalone.filter(node=>!standalone.some(parent=>parent!==node&&parent.contains(node)))].map(node=>node.closest?.('[data-order-id],[data-booking-id],[data-confirmation-id],[data-application-id]')||node);
  const records=[...new Set(nodes)].map(node=>{
   const attrs=['data-order-id','data-booking-id','data-confirmation-id','data-application-id'];
   const attr=attrs.find(key=>node.getAttribute?.(key));
@@ -301,7 +301,7 @@ const receiptSnapshot=()=>{
  const recordsNodes=containers.filter(node=>!containers.some(child=>child!==node&&node.contains(child)));
  const standalone=visibleMatches('[role="status"],[role="alert"],dialog')
   .filter(node=>!recordsNodes.some(record=>record.contains(node)||node.contains(record)));
- const nodes=[...recordsNodes,...standalone.filter(node=>!standalone.some(parent=>parent!==node&&parent.contains(node)))];
+ const nodes=[...recordsNodes,...standalone.filter(node=>!standalone.some(parent=>parent!==node&&parent.contains(node)))].map(node=>node.closest?.('[data-order-id],[data-booking-id],[data-confirmation-id],[data-application-id]')||node);
  const records=[...new Set(nodes)].map(node=>{
   const attrs=['data-order-id','data-booking-id','data-confirmation-id','data-application-id'];
   const attr=attrs.find(key=>node.getAttribute?.(key));

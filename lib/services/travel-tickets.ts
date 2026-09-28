@@ -181,17 +181,21 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     let { data: existing, error: lookupError } = await sel.limit(2)
     if(lookupError)throw new Error(lookupError.message)
     if(!existing?.length&&leg.type==='flight'&&iso){
-      let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local')
+      let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city')
         .eq('telegram_id',ctx.telegramId).eq('type','flight').is('depart_at',null)
-      unknown=leg.pnr?unknown.eq('pnr',leg.pnr):unknown.or('pnr.is.null,pnr.eq.')
-      unknown=leg.flightNo?unknown.eq('flight_no',leg.flightNo):unknown.or('flight_no.is.null,flight_no.eq.')
-      if(leg.pnr&&leg.flightNo)unknown=unknown.eq('leg_index',leg.legIndex)
-      else unknown=unknown.eq('from_city',leg.fromCity).eq('to_city',leg.toCity)
+      // Missing stored identifiers may be enriched, but conflicting identifiers
+      // never match. Compare locally without interpolating parser text in filters.
+      unknown=unknown.eq('leg_index',leg.legIndex)
       const result=await unknown.limit(101)
       if(result.error)throw new Error(result.error.message)
       if((result.data?.length||0)>100)throw new Error('travel_ticket_identity_ambiguous')
       const printed=ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'UTC')?.toISOString()
-      existing=(result.data||[]).filter(row=>printed&&ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed)
+      existing=(result.data||[]).filter(row=>{
+        const compatible=(stored:string|null,incoming:string|undefined|null)=>incoming?(!stored||stored===incoming):!stored
+        if(!compatible(row.pnr,leg.pnr)||!compatible(row.flight_no,leg.flightNo))return false
+        if(!(row.pnr&&row.flight_no)&& (row.from_city!==leg.fromCity||row.to_city!==leg.toCity))return false
+        return printed&&ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed
+      })
     }
     // Printed labels can vary between parsers while the canonical flight stays
     // the same. Reuse its database dedupe identity after null-time reconciliation.
@@ -200,6 +204,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
         .eq('telegram_id',ctx.telegramId).eq('type',leg.type).eq('depart_at',iso)
       canonical=leg.pnr?canonical.eq('pnr',leg.pnr):canonical.or('pnr.is.null,pnr.eq.')
       canonical=leg.flightNo?canonical.eq('flight_no',leg.flightNo):canonical.or('flight_no.is.null,flight_no.eq.')
+      if(!(leg.pnr&&leg.flightNo))canonical=canonical.eq('from_city',leg.fromCity).eq('to_city',leg.toCity).eq('leg_index',leg.legIndex)
       const result=await canonical.limit(2)
       if(result.error)throw new Error(result.error.message)
       existing=result.data

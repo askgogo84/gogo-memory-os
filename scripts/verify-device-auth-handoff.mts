@@ -791,3 +791,8 @@ assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(inp
 queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Thank you for your order',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:priorIds,executionAfterText:afterIds}]
 assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,'Thank you for your order')
 console.log('Stable provider receipt identities detect new results in capped history')
+
+const parentReceipts=['old-2','new-3'].map(id=>({innerText:'Order placed',getClientRects:()=>[{}],getAttribute:(key:string)=>key==='data-order-id'?id:null,contains:(node:any)=>node.parent===id}))
+const nestedReceipts=parentReceipts.map((parent,i)=>({parent:i?'new-3':'old-2',innerText:'Order placed',getClientRects:()=>[{}],getAttribute:()=>null,contains:()=>false,closest:()=>parent}))
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:priorIds,pattern:'(?:order|purchase)'},document:{body:{innerText:'Order placed\nOrder placed'},querySelectorAll:(selector:string)=>selector.startsWith('[data-')?[...parentReceipts,...nestedReceipts]:[]}}),true)
+console.log('Nested receipt content preserves its enclosing provider identity')
