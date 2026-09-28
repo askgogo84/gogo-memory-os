@@ -352,13 +352,13 @@ function normalizeActionLog(values:any[]){
 
 export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean}):Promise<SecureBrowserResult>{
   let releaseOwnerLock:BrowserOwnerRelease|undefined
-  let readSandbox:{stop:()=>Promise<unknown>}|undefined
+  let activeSandbox:{stop:()=>Promise<unknown>}|undefined
   try {
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
     const first=await inspect(params.userId,target.toString())
     releaseOwnerLock=first.releaseOwnerLock
-    if(params.mode==='read')readSandbox=first.sandbox
+    activeSandbox=first.sandbox
     let page=first.page
     let actionLog:any[]=[]
     let anyPlannedSubmit=false
@@ -510,7 +510,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       pageText:safeText(page.text,9000),forms:Array.isArray(page.forms)?page.forms.slice(0,12).map((form:any)=>({...form,action:safeText(form?.action,1200)})):[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
     }
   } catch (error:any) {
-    await readSandbox?.stop().catch(()=>{})
+    await activeSandbox?.stop().catch(()=>{})
     const safeError=safeText(error?.message||error,1000)
     console.error('SECURE_BROWSER_FAILED:',safeError)
     throw new Error(safeError||'secure_browser_failed')

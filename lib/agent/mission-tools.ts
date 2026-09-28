@@ -6,7 +6,7 @@ import { addToListDetailed, getAllLists, getList, normalizeListName } from '@/li
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { dispatchThroughSameBrain } from './same-brain'
-import { executeReadOnlyCalendarStep } from './calendar-read'
+import { executeReadOnlyCalendarStep, calendarReadWindow } from './calendar-read'
 import { buildTravelResearchContext, curateTravelResults, isPublicTravelResearchRequest } from './travel-research'
 import type { AgentActor } from './actor'
 
@@ -205,9 +205,14 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
     const clocks=[...new Set([...reviewText.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter((clock):clock is string=>!!clock))]
     const clock=clocks[0]||null
     const relative=/\b(today|tomorrow)\b/i.exec(reviewText)?.[1].toLowerCase()
+    const weekRelative=/\b(?:this|next) week\b/i.test(reviewText)
     let temporal: {timezone:string;dates:string[];clock:string|null;clocks:string[]}|undefined
-    if(dates.length||clock||relative){
+    if(dates.length||clock||relative||weekRelative){
       const timezone=reminderTimezoneMetadata(reviewText).timezone||await actorTimezone(actor)
+      if(weekRelative&&!dates.length){
+        const window=calendarReadWindow(reviewText,new Date(),timezone)
+        for(let day=new Date(`${window.startDate}T00:00:00Z`);day.toISOString().slice(0,10)<=window.endDate;day.setUTCDate(day.getUTCDate()+1))dates.push(day.toISOString().slice(0,10))
+      }
       if(relative&&!dates.length){
         const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
         const values:Record<string,string>={};for(const part of parts)values[part.type]=part.value

@@ -523,3 +523,12 @@ for(const badOutput of ['', 'invalid-json']){
  assert.equal(evidenceStops,before+1,'initial inspection failure must stop the sandbox')
 }
 inspectionOutput=undefined
+
+evidencePage={url:'https://provider.example',title:'Provider',text:'The provider page is loaded and ready for the requested action.',forms:[]}
+modelFailure=true
+for(const mode of ['draft','execute']){
+ const before=evidenceStops
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode}),/browser_planning_failed/)
+ assert.equal(evidenceStops,before+1,`${mode} planning failure stops its sandbox`)
+}
+modelFailure=false

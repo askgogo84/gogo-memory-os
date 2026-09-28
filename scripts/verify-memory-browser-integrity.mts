@@ -233,6 +233,8 @@ try{
  assert.deepEqual((explicitZone.output as any).reminders.map((row:any)=>row.id),['five'])
  const multipleClocks=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders at 5 pm and 6 pm'},missionText:'Review reminders'})
  assert.deepEqual((multipleClocks.output as any).reminders.map((row:any)=>row.id),['five','six'])
+ const nextWeek=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:"Show next week's reminders"},missionText:'Review reminders'})
+ assert.equal((nextWeek.output as any).reminders.length,0,'next week must not include unrelated 2030 reminders')
  const tomorrow=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:"Show tomorrow's reminders"},missionText:'Review reminders'})
  assert.equal((tomorrow.output as any).reminders.length,0,'tomorrow must not include unrelated 2030 reminders')
  const clockOnly=await readScopedReminders(17,{title:'Show reminders',instruction:'Show reminders set for 5 pm'},'Review reminders',{timezone:'Asia/Kolkata',dates:[],clock:'17:00'})
