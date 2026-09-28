@@ -162,3 +162,9 @@ for(const kind of ['profile','insight']){
  assert.equal(pack.retrievalIncomplete,true,kind)
 }
 console.log('Whole-step reminder classification and partial profile/insight outage disclosure passed')
+
+assert.equal(travelTime.ticketTimezone('IST'),'Europe/Istanbul')
+assert.equal(flightInstants({from:'IST',to:'BLR',date:'28 Sep 2026',departure:'10:00'}).departAt?.toISOString(),'2026-09-28T07:00:00.000Z')
+for(const [code,zone] of Object.entries({EST:'America/Chicago',MST:'Europe/Amsterdam',HST:'America/New_York'}))assert.equal(travelTime.ticketTimezone(code),zone,code)
+assert.equal(reminderStepIntent({title:'Cancel reminder',instruction:'Cancel the reminder for 28 Sep 2026 at 5 pm'}),'unknown')
+console.log('Airport-code precedence and unsupported reminder mutation guards passed')

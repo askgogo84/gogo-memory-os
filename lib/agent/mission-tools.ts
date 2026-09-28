@@ -172,7 +172,7 @@ export function reminderStepIntent(step:{title:string;instruction:string}):'read
     const positive=text.replace(/\b(?:do not|don't|never)\b[^.;!?]*(?=[.;!?]|$)/gi,'')
     for(const clause of positive.split(/[.;!?]|\b(?:and|then)\b/i)){
       const verb=clause.match(verbs)?.[1]?.toLowerCase()
-      if(verb)intents.add(reads.has(verb)?'read':'write')
+      if(verb)intents.add(reads.has(verb)?'read':['create','set','add','schedule','remind'].includes(verb)?'write':'unsupported')
     }
   }
   return intents.size>1?'mixed':intents.has('read')?'read':intents.has('write')?'write':'unknown'

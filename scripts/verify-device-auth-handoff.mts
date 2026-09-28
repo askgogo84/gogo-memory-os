@@ -2,14 +2,14 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
-import { isLoginDestination, verifiedBrowserAnswer } from '../lib/agent/browser-evidence'
+import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from '../lib/agent/browser-evidence'
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
 
 function load(file: string, mocks: Record<string, any>, extra='', globals:Record<string,any>={}) {
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
-  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./browser-evidence'?{isLoginDestination,verifiedBrowserAnswer}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
+  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
   return exports
 }
 
@@ -477,3 +477,14 @@ for(const objective of ['Open https://provider.example and report the page title
  assert.equal(result.summary,'Acme')
 }
 console.log('Equivalent direct page-title requests accept the observed title')
+
+for(const objective of ['Report the page title and current price','Show the title plus availability','Read the title, stock and delivery fees']){
+ modelText=JSON.stringify({complete:true,evidence:['Acme']})
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective}),/browser_objective_unverified/,objective)
+}
+evidencePage={url:'https://provider.example',title:'Acme',text:'Amul Taaza toned milk 1 litre is available at ₹60.',forms:[]}
+modelText=JSON.stringify({complete:true,evidence:['Acme',evidencePage.text]})
+const combined=await evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective:'Report the page title and current price'})
+assert.equal(combined.status,'completed')
+assert.match(combined.summary,/₹60/)
+console.log('Compound title requests require actual body evidence')
