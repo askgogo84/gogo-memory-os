@@ -345,3 +345,11 @@ assert.match(recomputed.summary,/18:00.*America\/New_York/)
 const incompleteLegacy=buildTravelPresenceFacts([{...legacyArrival,raw:{...legacyArrival.raw,arrivalDate:undefined}}],Date.parse('2040-09-28T00:00Z'))
 assert.equal(incompleteLegacy.find(f=>f.source==='travel_ticket')!.endAt,null)
 assert.ok(!incompleteLegacy.some(f=>f.source==='travel_presence'))
+
+const unknownOrigin=buildTravelPresenceFacts([{...legacyArrival,from_city:'Unknown airport'}],Date.parse('2040-09-28T00:00Z')).find(f=>f.source==='travel_ticket')!
+assert.equal(unknownOrigin.startAt,null)
+assert.equal(unknownOrigin.endAt,null)
+assert.match(unknownOrigin.summary,/Departure instant unverified/)
+const repeatedClock=buildTravelPresenceFacts([{...legacyArrival,from_city:'JFK',to_city:'LHR',raw:{date:'1 Nov 2026',departure:'01:30',arrival:'14:00',arrivalDate:'1 Nov 2026'}}],Date.parse('2026-11-01T00:00Z')).find(f=>f.source==='travel_ticket')!
+assert.equal(repeatedClock.startAt,null)
+assert.equal(repeatedClock.endAt,null)

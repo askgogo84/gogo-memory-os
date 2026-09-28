@@ -128,7 +128,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
       id:String(row.id||''),
       from:safe(row.from_city,100),
       to:safe(row.to_city,100),
-      departAt:parsed?.departAt?.toISOString()||validIso(row.depart_at),
+      departAt:parsed?.departAt?.toISOString()||(canonical?validIso(row.depart_at):null),
       arriveAt:parsed?parsed.arriveAt?.toISOString()||null:canonical?validIso(row.arrive_at):null,
       airline:safe(row.airline,100),
       flightNo:safe(row.flight_no,60),
@@ -136,7 +136,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
       passengers:(Array.isArray(row.passengers)?row.passengers:[]).map((name:unknown)=>safe(name,100)).filter(Boolean),
       arrivalTz:ticketTimezone(row.to_city,row.raw?.arrivalTimezone),
     }})
-    .filter((row:any)=>row.id&&row.departAt)
+    .filter((row:any)=>row.id)
     .sort((a:any,b:any)=>Date.parse(a.departAt)-Date.parse(b.departAt))
 
   const horizonEnd=now+horizonDays*86400_000
@@ -151,7 +151,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     facts.push({
       id:`travel-ticket:${leg.id}`,
       source:'travel_ticket',
-      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,leg.airline,leg.flightNo,passengerLabel,arrivalLabel].filter(Boolean).join(' · '),620),
+      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,leg.airline,leg.flightNo,passengerLabel,...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel].filter(Boolean).join(' · '),620),
       score:0.8,
       confidence:0.98,
       startAt:leg.departAt,
