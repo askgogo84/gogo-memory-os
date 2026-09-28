@@ -230,7 +230,7 @@ const lockedComputer=load('secure-computer.ts',{
   '@vercel/sandbox':{Sandbox:{getOrCreate:async(options:any)=>{assert.equal(options.networkPolicy,undefined);return {}}}},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>{throw new Error('browser_handoff_in_use')}},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{unexpectedBootstrap++}},
-},'\nexport { getComputer, BROWSER_SCRIPT, normalizeActionLog, approvedBrowserOperation }')
+},'\nexport { getComputer, BROWSER_SCRIPT, normalizeActionLog }')
 await assert.rejects(()=>lockedComputer.getComputer('user','https://provider.example'),/browser_handoff_in_use/)
 assert.equal(unexpectedBootstrap,0,'ordinary browser tasks must not bootstrap an active owner takeover')
 console.log('Automated browser reservations and direct handoff persistence failure verified')
@@ -249,7 +249,7 @@ console.log('Production browser script records consequential clicks and uncertai
 let browserReads=0,finalStops=0,finalUnlocks=0
 let finalChallenge:any={url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'click',detail:'#confirm',status:'done',consequential:true}]}
 const finalGateComputer=load('secure-computer.ts',{
-  '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[{type:'text',text:'[{"kind":"click","selector":"#confirm"}]'}]})}}},
+  '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[{type:'text',text:'{"approvedOperation":"booking","actions":[{"kind":"click","selector":"#confirm"}]}'}]})}}},
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{finalStops++},
     runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(browserReads++===0
       ? {url:'https://provider.example',title:'Reservation',text:'Review reservation',forms:[]}
@@ -436,10 +436,11 @@ let inspectionOutput:string|undefined
 let evidencePage:any={url:'https://www.instagram.com/accounts/login/',title:'Instagram',text:'',forms:[]}
 let modelFailure=false
 let modelText='[]'
+let plannedOperation:string|undefined
 let queuedObservations:any[]=[]
 let evidenceCredential:any=null
 const evidenceComputer=load('secure-computer.ts',{
-  '@anthropic-ai/sdk':{default:class {messages={create:async()=>{if(modelFailure)throw new Error('unavailable');return {content:[{type:'text',text:modelText}]}}}}},
+  '@anthropic-ai/sdk':{default:class {messages={create:async()=>{if(modelFailure)throw new Error('unavailable');let response=modelText;try{const parsed=JSON.parse(modelText);if(plannedOperation&&Array.isArray(parsed))response=JSON.stringify({approvedOperation:plannedOperation,actions:parsed})}catch{};return {content:[{type:'text',text:response}]}}}}},
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(queuedObservations.shift()??evidencePage)})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
@@ -548,6 +549,7 @@ for(const mode of ['draft','execute']){
 }
 console.log('Write-mode runs cannot complete without observed action evidence')
 
+plannedOperation='booking'
 evidencePage.executionBeforeText='Review the requested operation.'
 evidencePage.executionAfterText='Awaiting provider response.'
 modelText=JSON.stringify([{kind:'fill',selector:'#name',value:'Example'},{kind:'click',selector:'#confirm'}])
@@ -567,12 +569,15 @@ queuedObservations=[{...evidencePage,text:'Reservation confirmed.'},{...evidence
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 console.log('Local confirmation requires new affirmative provider evidence, not stale, pending or conditional text')
 
+plannedOperation='application'
 queuedObservations=[{...evidencePage,text:'Review application.'},{...evidencePage,text:'Application submitted successfully.',executionAfterText:'Application submitted successfully.'}]
 assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Submit this application',mode:'execute'})).summary,'Application submitted successfully')
+plannedOperation='application'
 queuedObservations=[{...evidencePage,text:'Review application.'},{...evidencePage,text:'Awaiting provider response.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Submit this application',mode:'execute'}),(error:any)=>error.message==='browser_objective_unverified'&&error.browserExecutionStarted===true)
 console.log('Generic applications confirm locally; uncertain submissions carry a no-replay marker')
 
+plannedOperation='booking'
 evidenceCredential={username:'fixture',secret:'fixture-only',provider:'fixture',domain:'provider.example',credentialId:'fixture',telegramId:17}
 queuedObservations=[{url:'https://provider.example/login',title:'Sign in',text:'Enter your password',forms:[{inputs:[{type:'password'}]}]},{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.',executionAfterText:'Reservation confirmed.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
@@ -615,10 +620,12 @@ assert.equal(boundaryOutput.executionAfterText,'Booking submission pending.')
 console.log('Later consequential-labelled controls cannot overwrite the original submission evidence')
 
 for(const [objective,confirmation] of [['Cancel my booking','Booking cancelled'],['Cancel my reservation','Reservation canceled'],['Cancel my booking','Your booking has been cancelled'],['Check in for my flight','You are checked in'],['Check in for my flight','You are now checked in'],['Check in for my flight','Checked in successfully']]){
+ plannedOperation=objective.startsWith('Cancel')?'cancellation':'check_in'
  queuedObservations=[{...evidencePage,text:'Review the operation.'},{...evidencePage,text:confirmation,executionBeforeText:'Review the operation.',executionAfterText:confirmation}]
  assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'})).summary,confirmation)
 }
 for(const [objective,confirmation] of [['Cancel my booking','Your booking is not cancelled'],['Cancel my reservation','When reservation canceled, contact us'],['Check in for my flight','You are not checked in'],['Check in for my flight','Once checked in, print the pass']]){
+ plannedOperation=objective.startsWith('Cancel')?'cancellation':'check_in'
  queuedObservations=[{...evidencePage,text:'Review the operation.'},{...evidencePage,text:confirmation,executionBeforeText:'Review the operation.',executionAfterText:confirmation}]
  await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'}),/browser_objective_unverified/)
 }
@@ -631,18 +638,21 @@ assert.equal(boundaryOutput.executionBeforeText,'Review the new reservation.')
 assert.equal(boundaryOutput.executionAfterText,'Reservation confirmed.')
 console.log('A plain Cancel dismissal cannot own evidence for an approved booking')
 
-assert.equal(lockedComputer.approvedBrowserOperation('Book a refundable fare with free cancellation'),'(?:booking|reservation)')
-assert.equal(lockedComputer.approvedBrowserOperation('Book this fare; do not cancel my existing booking'),'(?:booking|reservation)')
-assert.equal(lockedComputer.approvedBrowserOperation('Cancel my reservation'),'cancellation')
-assert.equal(lockedComputer.approvedBrowserOperation('Open the site and then cancel my booking'),'cancellation')
-queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Review reservation.',executionAfterText:'Reservation confirmed.'}]
-assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Book a refundable fare with free cancellation',mode:'execute'})).summary,'Reservation confirmed')
-console.log('Cancellation policy mentions and negated cancellation do not change the approved booking operation')
 
-for(const objective of ['Could you cancel my booking?',"I'd like to cancel my reservation",'Open the site, cancel my booking','Please cancel my booking']){
- assert.equal(lockedComputer.approvedBrowserOperation(objective),'cancellation')
- queuedObservations=[{...evidencePage,text:'Review cancellation.'},{...evidencePage,text:'Booking cancelled',executionBeforeText:'Review cancellation.',executionAfterText:'Booking cancelled'}]
- assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'})).summary,'Booking cancelled')
+for(const [objective,operation,confirmation] of [
+ ['Book a refundable fare with free cancellation','booking','Reservation confirmed'],
+ ['Book a fare I can cancel for free','booking','Reservation confirmed'],
+ ["I can't travel so please cancel my booking",'cancellation','Booking cancelled'],
+ ['Could you cancel my booking?','cancellation','Booking cancelled'],
+ ["I'd like to cancel my reservation",'cancellation','Booking cancelled'],
+ ['Open the site, cancel my booking','cancellation','Booking cancelled'],
+ ['Book this fare; do not cancel my existing booking','booking','Reservation confirmed'],
+ ['Click Cancel to dismiss the modal, then book the room','booking','Reservation confirmed']]){
+ plannedOperation=operation
+ queuedObservations=[{...evidencePage,text:'Review the approved operation.'},{...evidencePage,text:confirmation,executionBeforeText:'Review the approved operation.',executionAfterText:confirmation}]
+ assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'})).summary,confirmation)
 }
-for(const objective of ['Could you book this fare and not cancel my booking?',"Book it; don't cancel my reservation",'Click Cancel to dismiss the modal, then book the room','Book a fare with a Cancel option'])assert.equal(lockedComputer.approvedBrowserOperation(objective),'(?:booking|reservation)')
-console.log('Polite and comma-delimited cancellation requests work without treating negation or button labels as cancellation approval')
+plannedOperation=undefined
+queuedObservations=[{...evidencePage,text:'Review the operation.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Book a fare',mode:'execute'}),(error:any)=>error.message==='browser_objective_unverified'&&error.browserExecutionStarted===false)
+console.log('Execution consistently uses the preclassified operation; missing classification fails before any action')
