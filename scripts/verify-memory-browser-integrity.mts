@@ -168,3 +168,9 @@ assert.equal(flightInstants({from:'IST',to:'BLR',date:'28 Sep 2026',departure:'1
 for(const [code,zone] of Object.entries({EST:'America/Chicago',MST:'Europe/Amsterdam',HST:'America/New_York'}))assert.equal(travelTime.ticketTimezone(code),zone,code)
 assert.equal(reminderStepIntent({title:'Cancel reminder',instruction:'Cancel the reminder for 28 Sep 2026 at 5 pm'}),'unknown')
 console.log('Airport-code precedence and unsupported reminder mutation guards passed')
+
+for(const instruction of ['Review my reminders before creating one for 5 pm','Review my reminders before adding one for 5 pm','Review reminders after setting one for 5 pm','Review reminders before making a new one','Inspect saved entries while scheduling a new reminder']){
+ assert.equal(reminderStepIntent({title:'Review reminders',instruction}),'mixed',instruction)
+}
+assert.equal(reminderStepIntent({title:'Create a reminder',instruction:'Create a reminder to review my travel documents at 5 pm'}),'write')
+console.log('Every operation in mixed reminder clauses is classified, including gerunds')

@@ -165,15 +165,26 @@ async function persistMissionReminder(params:{actor:AgentActor;date:string;time:
 }
 
 export function reminderStepIntent(step:{title:string;instruction:string}):'read'|'write'|'mixed'|'unknown'{
-  const reads=new Set(['review','list','show','find','retrieve','read','check','inspect','look up'])
-  const verbs=/(?<![\w-])(review|list|show|find|retrieve|read|check|inspect|look up|create|set|add|schedule|remind|move|reschedule|update|edit|delete|remove|cancel|complete)(?![\w-])/i
+  const verbs=/(?<![\w-])(review(?:ing|ed)?|list(?:ing|ed)?|show(?:ing|n)?|find(?:ing)?|retriev(?:e|ing|ed)|read(?:ing)?|check(?:ing|ed)?|inspect(?:ing|ed)?|look(?:ing)? up|creat(?:e|ing|ed)|mak(?:e|ing)|set(?:ting)?|add(?:ing|ed)?|schedul(?:e|ing|ed)|remind(?:ing|ed)?|mov(?:e|ing|ed)|reschedul(?:e|ing|ed)|updat(?:e|ing|ed)|edit(?:ing|ed)?|delet(?:e|ing|ed)|remov(?:e|ing|ed)|cancel(?:ling|ing|led|ed)?|complet(?:e|ing|ed))(?![\w-])/gi
+  const kind=(verb:string)=>/^(review|list|show|find|retriev|read|check|inspect|look)/i.test(verb)?'read':/^(creat|mak|set|add|schedul|remind)/i.test(verb)?'write':'unsupported'
   const intents=new Set<string>()
   for(const text of [step.title,step.instruction]){
     const positive=text.replace(/\b(?:do not|don't|never)\b[^.;!?]*(?=[.;!?]|$)/gi,'')
+    let creations=0
     for(const clause of positive.split(/[.;!?]|\b(?:and|then)\b/i)){
-      const verb=clause.match(verbs)?.[1]?.toLowerCase()
-      if(verb)intents.add(reads.has(verb)?'read':['create','set','add','schedule','remind'].includes(verb)?'write':'unsupported')
+      let matches=[...clause.matchAll(verbs)]
+      // In an explicit creation, "reminder to review documents" is the reminder
+      // content. In a review, later verbs still describe outstanding operations.
+      if(matches[0]&&kind(matches[0][1])==='write'){
+        const payload=clause.search(/\breminders?\b[\s\S]*?\bto\b/i)
+        if(payload>=0)matches=matches.filter(match=>(match.index||0)<payload)
+      }
+      for(const match of matches){
+        const action=kind(match[1]);intents.add(action)
+        if(action==='write')creations++
+      }
     }
+    if(creations>1)return 'mixed'
   }
   return intents.size>1?'mixed':intents.has('read')?'read':intents.has('write')?'write':'unknown'
 }

@@ -471,7 +471,7 @@ console.log('Title watchers and structured travel consumers retain verified obse
 
 evidencePage={url:'https://provider.example',title:'Acme',text:'',forms:[]}
 modelText=JSON.stringify({complete:true,evidence:['Acme']})
-for(const objective of ['Open https://provider.example and report the page title','What is the title of this website?','Read the document title','Open this page and tell me its title']){
+for(const objective of ['Open https://provider.example and report the page title','What is the title of this website?','Read the document title','Open this page and tell me its title','Get the webpage title']){
  const result=await evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective})
  assert.equal(result.status,'completed',objective)
  assert.equal(result.summary,'Acme')
