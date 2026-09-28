@@ -115,7 +115,7 @@ begin
       summary='This paused preparation used an old flight schedule. Gogo will prepare the corrected itinerary again.',updated_at=now()
       where r.telegram_id=new.telegram_id::text and r.status in ('paused','queued','running','waiting_approval')
         and exists(select 1 from life_event_actions a where a.life_event_id=v_event_id and a.action_type='browser_prepare' and a.status='blocked'
-          and r.id::text=coalesce(a.payload_json->>'browserRunId',a.payload_json->>'runId'));
+          and (r.id::text=coalesce(a.payload_json->>'browserRunId',a.payload_json->>'runId') or (r.metadata_json->>'life_event_action_id'=a.id::text and r.metadata_json->>'life_event_id'=v_event_id::text)));
     update life_event_actions set status='queued',
       payload_json=(payload_json-'browserRunId'-'runId'-'approvalId'-'blockedReason'-'authReason')||jsonb_build_object('supersededPreparationRunId',coalesce(payload_json->>'browserRunId',payload_json->>'runId',payload_json->>'supersededPreparationRunId')),
       updated_at=now() where life_event_id=v_event_id and action_type='browser_prepare' and status='blocked';

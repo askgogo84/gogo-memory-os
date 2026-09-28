@@ -184,7 +184,7 @@ begin
       summary='This paused preparation used an old flight schedule. Gogo will prepare the corrected itinerary again.',updated_at=now()
       where r.telegram_id=new.telegram_id::text and r.status in ('paused','queued','running','waiting_approval')
         and exists(select 1 from life_event_actions a where a.life_event_id=v_event_id and a.action_type='browser_prepare' and a.status='blocked'
-          and r.id::text=coalesce(a.payload_json->>'browserRunId',a.payload_json->>'runId'));
+          and (r.id::text=coalesce(a.payload_json->>'browserRunId',a.payload_json->>'runId') or (r.metadata_json->>'life_event_action_id'=a.id::text and r.metadata_json->>'life_event_id'=v_event_id::text)));
     update life_event_actions set status='queued',
       payload_json=(payload_json-'browserRunId'-'runId'-'approvalId'-'blockedReason'-'authReason')||jsonb_build_object('supersededPreparationRunId',coalesce(payload_json->>'browserRunId',payload_json->>'runId',payload_json->>'supersededPreparationRunId')),
       updated_at=now() where life_event_id=v_event_id and action_type='browser_prepare' and status='blocked';
@@ -494,6 +494,13 @@ do $test$ declare aid uuid; eid uuid; old_revision text; begin
  update pg_temp.life_event_actions set status='completed' where id=aid;
  update pg_temp.travel_tickets set flight_no='AI999' where telegram_id=23;
  if not exists(select 1 from pg_temp.life_event_actions where id=aid and status='queued' and payload_json->>'scheduleRevision' is distinct from old_revision) then raise exception 'replacement flight without time change retained old preparation';end if;
+end $test$;
+do $test$ declare aid uuid; eid uuid; rid uuid; begin
+ select id,life_event_id into aid,eid from pg_temp.life_event_actions where telegram_id='23' and action_key='prepare-web-checkin';
+ insert into pg_temp.agent_runs(telegram_id,type,capability,status,title,metadata_json) values('23','life_event','browser','paused','Missing confirmation',jsonb_build_object('life_event_action_id',aid,'life_event_id',eid)) returning id into rid;
+ update pg_temp.life_event_actions set status='blocked',payload_json=(payload_json-'browserRunId'-'runId')||'{"blockedReason":"missing_checkin_url_or_confirmation"}'::jsonb where id=aid;
+ update pg_temp.travel_tickets set pnr='ENRICHED-AGAIN' where telegram_id=23;
+ if not exists(select 1 from pg_temp.agent_runs where id=rid and status='failed') then raise exception 'unlinked missing-confirmation run was stranded';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;

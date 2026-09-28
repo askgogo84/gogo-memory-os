@@ -584,3 +584,10 @@ const beforeAmbiguous=updatedTickets.length
 await assert.rejects(()=>ticketModule.persistAndRemindTicket({...correctedClock,flights:[{...correctedClock.flights[0],date:'30 Sep 2040',flightNo:'UA999'}]},ticketCtx),/travel_ticket_persist_failed/)
 
 assert.equal(updatedTickets.length,beforeAmbiguous,'ambiguous reissue must not update either saved flight')
+
+legacyTickets=[{...currentTicket,id:'separate-booking-a',pnr:'BOOKING-A',passengers:['Passenger A']}];legacyReminders=[]
+const separateBookingUpdates=updatedTickets.length
+await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Passenger B'],flights:[{...correctedClock.flights[0],departure:currentTicket.depart_local,pnr:'BOOKING-B'}]},ticketCtx)
+assert.equal(legacyTickets.length,2,'same flight route and departure with different PNRs can be independent bookings')
+assert.equal(updatedTickets.length,separateBookingUpdates,'a different PNR must not silently overwrite a valid booking')
+assert.equal(legacyTickets[0].pnr,'BOOKING-A')
