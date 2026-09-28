@@ -234,13 +234,13 @@ async function isConsequentialControl(page,selector){
     const t=(el.getAttribute('type')||'').toLowerCase();
     const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
     const safeResearch=/\b(search|find|show|filter|apply filters|see results|view results|check availability|update results|go)\b/i.test(text);
-    const navigation=/\b(?:(?:view|manage|open|show|see)\s+(?:(?:my|your|the)\s+)?(?:booking|reservation)s?(?:\s+(?:details|confirmation))?|(?:booking|reservation)\s+details)\b/gi;
+    const navigation=/\b(?:(?:view|manage|open|show|see|read|inspect|review)\s+(?:(?:my|your|the)\s+)?(?:booking|reservation|confirmation|order|payment|purchase|application|cancellation)s?(?:\s+(?:details|confirmation|status|history|receipt))?|(?:booking|reservation)\s+details)\b/gi;
     const visibleText=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value')].filter(Boolean).join(' ').toLowerCase();
     const inspecting=visibleText.replace(navigation,' ')!==visibleText;
     let commitText=text.replace(navigation,' ');
     if(inspecting){
       const metadata=[el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').toLowerCase();
-      commitText=visibleText.replace(navigation,' ')+' '+metadata.replace(navigation,' ').replace(/\b(?:booking|reservation|confirmation)s?\b/gi,' ');
+      commitText=visibleText.replace(navigation,' ')+' '+metadata.replace(navigation,' ').replace(/\b(?:booking|reservation|confirmation|order|payment|purchase|application|cancellation)s?\b/gi,' ');
     }
     const consequential=/\b(book|booking|cancel|cancellation|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i.test(commitText);
     if(text!==commitText&&!consequential)return false;
