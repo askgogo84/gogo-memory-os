@@ -157,27 +157,26 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
 // Insert a leg unless an identical one already exists (same user, type, exact
 // departure instant, and identifier). Tolerates the table being absent so a
 // code-first deploy degrades gracefully.
-async function persistLeg(ctx: TicketContext, leg: Leg): Promise<void> {
+async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined> {
   if (!leg.departAt) return
   const iso = leg.departAt.toISOString()
   try {
     let sel = supabaseAdmin
       .from('travel_tickets')
-      .select('id')
+      .select('id,depart_at')
       .eq('telegram_id', ctx.telegramId)
       .eq('type', leg.type)
-      .eq('depart_at', iso)
+    if(leg.type==='flight'&&leg.pnr&&leg.flightNo&&leg.dateLabel){
+      sel=sel.eq('pnr',leg.pnr).eq('date_label',leg.dateLabel)
+    }else sel=sel.eq('depart_at',iso)
     if (leg.flightNo) sel = sel.eq('flight_no', leg.flightNo)
     else if (leg.trainNo) sel = sel.eq('train_no', leg.trainNo)
     else if (leg.eventName) sel = sel.eq('event_name', leg.eventName)
 
-    const { data: existing } = await sel.limit(1)
-    if (existing && existing.length) {
-      console.log('TRAVEL_TICKET_DEDUPE_SKIP:', { type: leg.type, depart_at: iso })
-      return
-    }
-
-    const { error } = await supabaseAdmin.from('travel_tickets').insert({
+    const { data: existing, error: lookupError } = await sel.limit(2)
+    if(lookupError)throw new Error(lookupError.message)
+    if(existing&&existing.length>1)throw new Error('travel_ticket_identity_ambiguous')
+    const row={
       telegram_id: ctx.telegramId,
       whatsapp_to: ctx.whatsappTo,
       type: leg.type,
@@ -201,8 +200,15 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<void> {
       passengers: leg.passengers,
       source: ctx.source,
       raw: leg.raw,
-    })
-    if (error) console.error('TRAVEL_TICKET_INSERT_FAILED:', error.message)
+    }
+    if(existing?.[0]){
+      const previous=new Date(existing[0].depart_at)
+      const {error}=await supabaseAdmin.from('travel_tickets').update(row).eq('telegram_id',ctx.telegramId).eq('id',existing[0].id)
+      if(error)throw new Error(error.message)
+      return Number.isFinite(previous.getTime())?previous:undefined
+    }
+    const {error}=await supabaseAdmin.from('travel_tickets').insert(row)
+    if(error)throw new Error(error.message)
   } catch (err: any) {
     console.error('TRAVEL_TICKET_PERSIST_ERROR:', err?.message || err)
   }
@@ -225,21 +231,22 @@ function ticketAlertIdentity(message:string){
     .replace(/\s+/g,' ').trim()
 }
 
-async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date): Promise<ReminderWriteResult> {
+async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date, previousRemindAt?:Date): Promise<ReminderWriteResult> {
   const iso = remindAt.toISOString()
   const { data: existing, error: selError } = await supabaseAdmin
     .from('reminders')
-    .select('id,message,timezone')
+    .select('id,message,timezone,remind_at,sent')
     .eq('telegram_id', ctx.telegramId)
-    .eq('remind_at', iso)
+    .in('remind_at', [...new Set([iso,...(previousRemindAt?[previousRemindAt.toISOString()]:[])])])
     .limit(1000)
   // A failed existence check must not silently drop the reminder — log and fall
   // through to insert (the DB unique-index backstop still guards against a dupe).
   if (selError) console.error('TRAVEL_REMINDER_DEDUPE_CHECK_FAILED:', selError.message)
   const matched=(existing||[]).find((row:any)=>ticketAlertIdentity(String(row.message||''))===ticketAlertIdentity(message))
   if(matched){
-    if(matched.message!==message||matched.timezone!==ctx.timezone){
-      const {error}=await supabaseAdmin.from('reminders').update({message,timezone:ctx.timezone}).eq('telegram_id',ctx.telegramId).eq('id',matched.id)
+    if(matched.sent)return 'exists'
+    if(matched.message!==message||matched.timezone!==ctx.timezone||matched.remind_at!==iso){
+      const {error}=await supabaseAdmin.from('reminders').update({message,timezone:ctx.timezone,remind_at:iso}).eq('telegram_id',ctx.telegramId).eq('id',matched.id)
       if(error)return 'failed'
     }
     return 'exists'
@@ -340,14 +347,14 @@ export async function persistAndRemindTicket(
   const scheduledAlerts: { kind: 'departure' | 'checkin'; legType: Leg['type']; remindAt: Date; timezone:string }[] = []
 
   for (const leg of legs) {
-    await persistLeg(ctx, leg)
+    const previousDeparture=await persistLeg(ctx, leg)
 
     for (const decision of planLegReminders(leg, now)) {
       if (decision.kind === 'checkin_open_now') {
         openNowNotes.push(decision.message)
         continue
       }
-      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt)
+      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, previousDeparture&&leg.departAt?new Date(previousDeparture.getTime()+decision.remindAt.getTime()-leg.departAt.getTime()):undefined)
       if (res === 'inserted') remindersSet++
       else if (res === 'failed') remindersFailed++
       if (res === 'inserted' || res === 'exists') {

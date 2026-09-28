@@ -33,7 +33,7 @@ function explicitDates(text:string, defaultYear=new Date().getUTCFullYear()){
   let m:RegExpExecArray|null
   const dayMonth=/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(20\d{2}))?/gi
   while((m=dayMonth.exec(text))){const month=MONTHS[m[2].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[1]))}
-  const monthDay=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:[,\s]+(20\d{2}))?/gi
+  const monthDay=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})\b(?:[,\s]+(20\d{2}))?/gi
   while((m=monthDay.exec(text))){const month=MONTHS[m[1].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[2]))}
   const iso=/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g
   while((m=iso.exec(text)))add(Number(m[1]),Number(m[2]),Number(m[3]))
@@ -206,7 +206,7 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
     const clock=clocks[0]||null
     const relative=/\b(today|tomorrow)\b/i.exec(reviewText)?.[1].toLowerCase()
     const weekRelative=/\b(?:this|next) week\b/i.test(reviewText)
-    let temporal: {timezone:string;dates:string[];clock:string|null;clocks:string[]}|undefined
+    let temporal: {timezone:string;dates:string[];clock:string|null;clocks:string[];pairs?:Array<{date:string;clock:string}>}|undefined
     if(dates.length||clock||relative||weekRelative){
       const timezone=reminderTimezoneMetadata(reviewText).timezone||await actorTimezone(actor)
       if(weekRelative&&!dates.length){
@@ -220,7 +220,18 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
         if(relative==='tomorrow')date.setUTCDate(date.getUTCDate()+1)
         dates.push(date.toISOString().slice(0,10))
       }
-      temporal={timezone,dates,clock,clocks}
+      let pairs:Array<{date:string;clock:string}>|undefined
+      if(dates.length>1&&clocks.length>1&&!weekRelative){
+        pairs=[]
+        for(const clause of reviewText.split(/\band\b|[;,]/i)){
+          const clauseDates=explicitDates(clause)
+          const clauseClocks=[...new Set([...clause.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter((time):time is string=>!!time))]
+          if(clauseDates.length===1&&clauseClocks.length===1)pairs.push({date:clauseDates[0],clock:clauseClocks[0]})
+          else throw new Error('mission_reminder_paired_scope_unverified')
+        }
+        if(!dates.every(date=>pairs!.some(pair=>pair.date===date))||!clocks.every(time=>pairs!.some(pair=>pair.clock===time)))throw new Error('mission_reminder_paired_scope_unverified')
+      }
+      temporal={timezone,dates,clock,clocks,pairs}
     }
     const {reminders,truncated,scopeTerms}=await readScopedReminders(actor.legacyTelegramId,step,missionText,temporal)
     return {text:(reminders.length

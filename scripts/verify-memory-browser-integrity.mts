@@ -256,10 +256,11 @@ assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show remin
 assert.equal(reminderStepIntent({title:'Show reminders',instruction:'Show reminders I created for the conference'}),'read')
 assert.equal(reminderStepIntent({title:'List reminders',instruction:'List reminders I added yesterday'}),'read')
 const ticketWrites:Array<{table:string;row:any}>=[]
-let legacyReminders:any[]=[]
+let legacyReminders:any[]=[],legacyTickets:any[]=[]
+const updatedTickets:any[]=[]
 const updatedLegacy:any[]=[]
 const ticketDb={from:(table:string)=>{
- const filters:any={};const q:any={select:()=>q,eq:(key:string,value:any)=>{filters[key]=value;return q},limit:async()=>({data:table==='reminders'?legacyReminders.filter(row=>Object.entries(filters).every(([key,value])=>row[key]===value)):[],error:null}),update:(row:any)=>{updatedLegacy.push(row);return q},then:(resolve:any)=>Promise.resolve({error:null}).then(resolve),insert:async(row:any)=>{ticketWrites.push({table,row});return {error:null}}};return q
+ const filters:any={};const q:any={select:()=>q,eq:(key:string,value:any)=>{filters[key]=value;return q},in:(key:string,value:any)=>{filters[key]=value;return q},limit:async()=>({data:(table==='reminders'?legacyReminders:legacyTickets).filter(row=>Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value)),error:null}),update:(row:any)=>{(table==='reminders'?updatedLegacy:updatedTickets).push(row);return q},then:(resolve:any)=>Promise.resolve({error:null}).then(resolve),insert:async(row:any)=>{ticketWrites.push({table,row});return {error:null}}};return q
 }}
 const ticketModule:any={}
 const airlineCheckin=await import('../lib/services/airline-checkin')
@@ -281,3 +282,23 @@ assert.ok(updatedLegacy.every(row=>row.timezone==='America/Los_Angeles'))
 assert.equal(reminderStepIntent({title:'Create reminder',instruction:'Create and schedule a reminder for 5 pm'}),'write')
 assert.equal(reminderStepIntent({title:'Create reminder',instruction:'Make sure a reminder is set for 5 pm'}),'write')
 assert.equal(reminderStepIntent({title:'Create reminders',instruction:'Create a reminder for 5 pm and add another for 6 pm'}),'mixed')
+
+const currentTicket=ticketWrites.find(write=>write.table==='travel_tickets')!.row
+legacyTickets=[{...currentTicket,id:'old-flight',depart_at:'2040-09-28T04:30:00Z',depart_tz:'Asia/Kolkata'}]
+const shift=Date.parse(legacyTickets[0].depart_at)-Date.parse(currentTicket.depart_at)
+legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`wrong-zone-${i}`,remind_at:new Date(Date.parse(write.row.remind_at)+shift).toISOString(),timezone:'Asia/Kolkata'}))
+const writesBefore=ticketWrites.length
+await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
+assert.equal(ticketWrites.length,writesBefore,'correcting a legacy departure updates ticket and alerts in place')
+assert.equal(updatedTickets.at(-1).depart_at,currentTicket.depart_at)
+assert.deepEqual(updatedLegacy.slice(-reminderWrites.length).map(row=>row.remind_at),reminderWrites.map(write=>write.row.remind_at))
+
+;(supabaseAdmin as any).from=(table:string)=>{
+ if(table==='users')return {select:()=>({eq:()=>({maybeSingle:async()=>({data:{timezone:'Asia/Kolkata'},error:null})})})}
+ const rows=['28','29'].flatMap(day=>['11:30','12:30'].map(time=>({id:`${day}-${time}`,message:'Packing',remind_at:`2030-09-${day}T${time}:00Z`,timezone:'Asia/Kolkata'})))
+ const q:any={select:()=>q,eq:()=>q,gte:()=>q,order:()=>q,range:async()=>({data:rows,error:null})};return q
+}
+try{
+ const paired=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm and 29 Sep 2030 at 6 pm'},missionText:'Review reminders'})
+ assert.deepEqual((paired.output as any).reminders.map((row:any)=>row.id),['28-11:30','29-12:30'])
+}finally{(supabaseAdmin as any).from=originalFrom}

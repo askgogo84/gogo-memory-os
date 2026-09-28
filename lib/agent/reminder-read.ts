@@ -27,7 +27,7 @@ export function reminderScope(step:{title:string;instruction:string},mission:str
   return {scopeTerms,scopeGroups,unresolved:scoped&&!scopeTerms.length}
 }
 
-export async function readScopedReminders(ownerId:number,step:{title:string;instruction:string},mission:string,temporal?:{timezone:string;dates:string[];clock:string|null;clocks?:string[]}){
+export async function readScopedReminders(ownerId:number,step:{title:string;instruction:string},mission:string,temporal?:{timezone:string;dates:string[];clock:string|null;clocks?:string[];pairs?:Array<{date:string;clock:string}>}){
   const scope=reminderScope(step,mission)
   const reminders:Array<{id:string;message:string;remindAt:string;timezone:string}>=[]
   const now=new Date().toISOString()
@@ -43,6 +43,7 @@ export async function readScopedReminders(ownerId:number,step:{title:string;inst
         const local=getLocalParts(new Date(row.remind_at),temporal.timezone)
         const date=`${local.year}-${String(local.month).padStart(2,'0')}-${String(local.day).padStart(2,'0')}`
         const clock=`${String(local.hour).padStart(2,'0')}:${String(local.minute).padStart(2,'0')}`
+        if(temporal.pairs&&!temporal.pairs.some(pair=>pair.date===date&&pair.clock===clock))continue
         if(temporal.dates.length&&!temporal.dates.includes(date))continue
         const clocks=temporal.clocks||(temporal.clock?[temporal.clock]:[])
         if(clocks.length&&!clocks.includes(clock))continue
