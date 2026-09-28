@@ -238,7 +238,10 @@ async function isConsequentialControl(page,selector){
     const visibleText=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value')].filter(Boolean).join(' ').toLowerCase();
     const inspecting=visibleText.replace(navigation,' ')!==visibleText;
     let commitText=text.replace(navigation,' ');
-    if(inspecting)commitText=commitText.replace(/\b(?:booking|reservation)\s+confirmation\b/gi,' ');
+    if(inspecting){
+      const metadata=[el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').toLowerCase();
+      commitText=visibleText.replace(navigation,' ')+' '+metadata.replace(navigation,' ').replace(/\b(?:booking|reservation|confirmation)s?\b/gi,' ');
+    }
     const consequential=/\b(book|booking|cancel|cancellation|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i.test(commitText);
     if(text!==commitText&&!consequential)return false;
     if(safeResearch && !consequential)return false;
