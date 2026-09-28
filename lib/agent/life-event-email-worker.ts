@@ -132,6 +132,11 @@ async function activity(telegramId: string, runId: string | null, eventType: str
   await supabaseAdmin.from('agent_activity').insert({ telegram_id: telegramId, run_id: runId, event_type: eventType, message: safe(message, 900), metadata_json: metadata })
 }
 
+export function eligibleBoardingPassMessages(messages:any[],action:any){
+  const excluded=new Set((Array.isArray(action?.payload_json?.excludedGmailMessageIds)?action.payload_json.excludedGmailMessageIds:[]).filter((id:unknown)=>typeof id==='string'&&id))
+  return messages.filter(message=>!excluded.has(String(message.id)))
+}
+
 async function processBoardingPassWatch(action: any, event: any, telegramId: string) {
   const cutoff = cutoffAt(event.start_at)
   if (cutoff && Date.now() > new Date(cutoff).getTime()) { await completeAction(action, { closedReason: 'boarding_pass_watch_window_ended', cutoffAt: cutoff }); return { status: 'completed' as const, matched: false } }
@@ -143,7 +148,7 @@ async function processBoardingPassWatch(action: any, event: any, telegramId: str
     const result = await searchWorkspaceEmails(actor, searchText)
     for (const message of result.messages || []) messageMap.set(String(message.id), message)
   }
-  const messages = [...messageMap.values()]
+  const messages = eligibleBoardingPassMessages([...messageMap.values()],action)
   const payload = action.payload_json || {}, flightNo = payload.flightNo || event?.metadata_json?.flightNo || null, confirmationRef = payload.confirmationRef || event.confirmation_ref || null
   const ranked = messages.map((message: any) => ({ message, match: scoreBoardingPassCandidate({ subject: message.subject, from: message.from, snippet: message.snippet, provider: event.provider, confirmationRef, flightNo }) })).sort((a: any, b: any) => b.match.score - a.match.score)
 

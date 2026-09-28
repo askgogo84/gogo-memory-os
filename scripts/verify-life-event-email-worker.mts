@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts } from '../lib/agent/life-event-email-worker'
+import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts, eligibleBoardingPassMessages } from '../lib/agent/life-event-email-worker'
 
 const worker=fs.readFileSync('lib/agent/life-event-email-worker.ts','utf8')
 const route=fs.readFileSync('app/api/cron/life-events/route.ts','utf8')
@@ -31,3 +31,8 @@ const genericPos=route.indexOf('processDueLifeEventActions()')
 assert.ok(emailPos>=0&&genericPos>emailPos,'email watches must run before the generic life-event worker in the same cron invocation')
 
 console.log('✅ Gmail boarding-pass lifecycle regression passed')
+
+const rescheduledWatch={payload_json:{excludedGmailMessageIds:['old-pass',null,'older-pass']}}
+assert.deepEqual(eligibleBoardingPassMessages([{id:'old-pass'},{id:'new-pass'}],rescheduledWatch).map(row=>row.id),['new-pass'])
+assert.deepEqual(eligibleBoardingPassMessages([{id:'old-pass'},{id:'older-pass'}],rescheduledWatch),[],'only old boarding passes must leave the watch searching')
+console.log('Rescheduled boarding-pass watches exclude previous matches before scoring or attachment reads')

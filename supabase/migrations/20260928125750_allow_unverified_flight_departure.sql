@@ -140,6 +140,12 @@ begin
     on conflict (life_event_id,action_key) do update set due_at=case when v_timing_changed then excluded.due_at else life_event_actions.due_at end,payload_json=(case when v_timing_changed and excluded.due_at>now() then life_event_actions.payload_json-'timing_unverified'-'timing_elapsed' else life_event_actions.payload_json end)||excluded.payload_json,status=case when life_event_actions.status='completed' and v_timing_changed and excluded.due_at>now() and life_event_actions.action_type in ('notify','monitor','email_watch') then 'queued' when life_event_actions.status='cancelled' and v_timing_changed and excluded.due_at>now() and (life_event_actions.payload_json->>'timing_unverified'='true' or life_event_actions.payload_json->>'timing_elapsed'='true') then 'queued' else life_event_actions.status end,updated_at=now();
   end if;
 
+  if v_timing_changed then
+    update life_event_actions set payload_json=payload_json||jsonb_build_object(
+      'excludedGmailMessageIds',coalesce(payload_json->'excludedGmailMessageIds','[]'::jsonb)||jsonb_build_array(payload_json->>'gmailMessageId',(select metadata_json#>>'{boardingPass,gmailMessageId}' from life_events where id=v_event_id)))
+      where life_event_id=v_event_id and action_type='email_watch' and status='queued' and due_at>now();
+  end if;
+
   -- Corrected elapsed action times must not be picked up as due work.
   update life_event_actions set status='cancelled',payload_json=payload_json||'{"timing_elapsed":true}'::jsonb,updated_at=now()
     where life_event_id=v_event_id and due_at<=now() and (new.depart_at<=now() or (v_timing_changed and id=any(v_existing_timed_actions))) and status in ('queued','ready','waiting_approval','blocked');
