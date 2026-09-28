@@ -25,8 +25,9 @@ export function verifiedBrowserAnswer(value:unknown,pageText:string,title='',all
   const observed=normalize(pageText)
   const normalizedTitle=normalize(title)
   if((!observed&&!(allowTitleOnly&&normalizedTitle))||!Array.isArray(result.evidence)||!result.evidence.length)return null
-  if(!result.evidence.every(quote=>typeof quote==='string'&&((normalize(quote).length>=12&&observed.includes(normalize(quote)))||(normalizedTitle&&normalize(quote)===normalizedTitle))))return null
-  if(!allowTitleOnly&&!result.evidence.some(quote=>normalize(String(quote))!==normalizedTitle&&normalize(String(quote)).length>=12&&observed.includes(normalize(String(quote)))))return null
+  const bodyEvidence=(quote:string)=>{const text=normalize(quote);return !!text&&observed.includes(text)&&(text.length>=12||text===observed)}
+  if(!result.evidence.every(quote=>typeof quote==='string'&&((bodyEvidence(quote))||(normalizedTitle&&normalize(quote)===normalizedTitle))))return null
+  if(!allowTitleOnly&&!result.evidence.some(quote=>normalize(String(quote))!==normalizedTitle&&bodyEvidence(String(quote))))return null
   // Return only verified source excerpts. A genuine quote cannot launder an
   // unrelated or contradictory freeform answer into a successful result.
   const excerpts=[...new Set(result.evidence.map(quote=>String(quote).replace(/\s+/g,' ').trim()))].join('\n')

@@ -494,3 +494,10 @@ modelText=JSON.stringify({complete:true,evidence:[evidencePage.text]})
 const shortResult=await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Read the service status'})
 assert.equal(shortResult.status,'completed')
 assert.equal(shortResult.summary,'Status: operational')
+
+for(const body of ['OK','UP','Healthy']){
+ evidencePage={url:'https://provider.example/status',title:'Status',text:body,forms:[]}
+ modelText=JSON.stringify({complete:true,evidence:[body]})
+ const result=await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Read the service status'})
+ assert.equal(result.summary,body)
+}

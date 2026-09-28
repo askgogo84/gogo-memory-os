@@ -1,3 +1,4 @@
+import { readScopedReminders } from './reminder-read'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { refreshAccessToken } from '@/lib/google-calendar'
@@ -195,15 +196,13 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
   if(stepIntent==='mixed')throw new Error('mission_reminder_mixed_read_write_requires_separate_steps')
   if(stepIntent==='unknown')throw new Error('mission_reminder_intent_unverified')
   if(stepIntent==='read'){
-    const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone')
-      .eq('telegram_id',actor.legacyTelegramId).eq('sent',false).gte('remind_at',new Date().toISOString())
-      .order('remind_at',{ascending:true}).limit(50)
-    if(error)throw new Error(`mission_reminder_read_failed:${error.message}`)
-    const reminders=(data||[]).map((row:any)=>({id:String(row.id),message:safe(row.message,500),remindAt:String(row.remind_at),timezone:String(row.timezone||'UTC')}))
-    return {text:reminders.length
-      ? `Pending saved reminders (up to 50, account-wide; only use entries relevant to the requested trip):\n${reminders.map(row=>`${row.message} — ${row.remindAt} (UTC)`).join('\n')}`
-      : 'No upcoming unsent reminders were found in the saved reminder store. This does not establish that the trip checklist is complete.',
-      output:{reminders,readOnly:true,scope:'owner_pending_reminders',verifiedStore:'reminders'}}
+    const {reminders,truncated,scopeTerms}=await readScopedReminders(actor.legacyTelegramId,step,missionText)
+    return {text:(reminders.length
+      ? `Pending saved reminders${scopeTerms.length?` matching ${scopeTerms.join(' ')}`:''}:\n${reminders.map(row=>`${row.message} — ${row.remindAt} (UTC)`).join('\n')}`
+      : 'No upcoming unsent reminders matching the requested text were found. This does not establish that the trip checklist is complete.')
+      +(scopeTerms.length?'\nMatched saved reminder text; reminders without these names or labels may not be included.':'')
+      +(truncated?'\nThe review reached its 1,000-reminder limit; later reminders were not checked.':''),
+      output:{reminders,readOnly:true,scope:'requested_reminders',scopeTerms,truncated,verifiedStore:'reminders'}}
   }
   const exactDate=explicitDate(step.instruction)||await relativeMissionDate(step.instruction,actor)
   const exactTime=explicitMissionClock(step.instruction)

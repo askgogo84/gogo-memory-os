@@ -34,7 +34,7 @@ assert.match(block,/Retrieval is incomplete/)
 
 assert.equal(isLoginDestination({url:'https://www.instagram.com/accounts/login/',title:'Instagram',text:''}),true)
 assert.equal(isLoginDestination({url:'https://shop.example/products',text:'Sign in. Read about your new device. Check your phone for your ticket.'}),false)
-assert.equal(verifiedBrowserAnswer({complete:true,answer:'Done',evidence:['Instagram']},'Instagram'),null)
+assert.equal(verifiedBrowserAnswer({complete:true,answer:'Done',evidence:['Instagram']},'Instagram','Instagram'),null)
 assert.equal(verifiedBrowserAnswer({complete:true,answer:'Three saved posts',evidence:['Saved post 1: a holiday']},'Instagram Sign in to see photos and videos from your friends.'),null)
 assert.equal(verifiedBrowserAnswer({complete:false,answer:'No result',evidence:[]},'Amul Taaza milk is available for delivery in your area.'),null)
 const observed='Amul Taaza toned milk 1 litre. Available at ₹60 in Indiranagar. Delivery fee ₹25.'
@@ -105,7 +105,7 @@ const originalFrom=supabaseAdmin.from
 let reminderQueries=0,reminderReadFails=false
 ;(supabaseAdmin as any).from=(table:string)=>{
  assert.equal(table,'reminders');reminderQueries++
- const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(value,17);if(key==='sent')assert.equal(value,false);return q},gte:()=>q,order:()=>q,limit:async()=>({data:[],error:reminderReadFails?{message:'fixture outage'}:null})}
+ const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(value,17);if(key==='sent')assert.equal(value,false);return q},gte:()=>q,order:()=>q,range:async()=>({data:[],error:reminderReadFails?{message:'fixture outage'}:null})}
  return q
 }
 try{
@@ -184,3 +184,21 @@ assert.equal(verifiedBrowserAnswer({complete:true,evidence:['Status: operational
 for(const followup of ['When are they landing?','Show their arrival time','What about them?','When do those arrive?']){
   assert.match(recallQuery(followup,[{role:'user',content:'Divya and Ravi fly to New York'},{role:'assistant',content:'Invented Rome booking'}]),/Divya and Ravi/)
 }
+
+// Scoped review searches beyond the first 50 and never displays unrelated rows.
+const {readScopedReminders}=await import('../lib/agent/reminder-read')
+const reminderRows=Array.from({length:101},(_,i)=>({id:String(i),message:i===100?'New York check-in':'Mumbai packing',remind_at:'2030-01-01T00:00:00Z',timezone:'UTC'}))
+const pageOffsets:number[]=[]
+;(supabaseAdmin as any).from=(table:string)=>{
+ assert.equal(table,'reminders')
+ const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(value,17);return q},gte:()=>q,order:()=>q,range:async(start:number,end:number)=>{pageOffsets.push(start);return {data:reminderRows.slice(start,end+1),error:null}}}
+ return q
+}
+try{
+ const scoped=await readScopedReminders(17,{title:'Review reminders',instruction:'Review reminders for New York'},'Review New York trip')
+ assert.deepEqual(scoped.reminders.map(row=>row.id),['100'])
+ assert.deepEqual(pageOffsets,[0,100])
+ await assert.rejects(()=>readScopedReminders(17,{title:'Review reminders',instruction:'Review reminders for this trip'},'Review this trip'),/scope_unverified/)
+ const all=await readScopedReminders(17,{title:'Review reminders',instruction:'List all my reminders'},'List all reminders')
+ assert.equal(all.reminders.length,101)
+}finally{(supabaseAdmin as any).from=originalFrom}
