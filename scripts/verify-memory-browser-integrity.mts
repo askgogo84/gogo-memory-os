@@ -597,3 +597,16 @@ assert.equal(legacyTickets[0].pnr,'BOOKING-A')
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show reminders that I have coming up'},'Show reminders').scopeTerms,[])
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show dentist reminders that are upcoming'},'Show reminders').scopeTerms,['dentist'])
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show reminders about dentist'},'Show reminders').scopeTerms,['dentist'])
+
+assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Look for reminders that I have coming up'},'Look for reminders').scopeTerms,[])
+assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Look for dentist reminders'},'Look for reminders').scopeTerms,['dentist'])
+legacyTickets=[{...currentTicket,id:'weak-passenger-flight',pnr:null,passengers:['Earlier Passenger'],seat:'12A',raw:{...currentTicket.raw,pnr:null,seat:'12A'}}];legacyReminders=[]
+await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Later Passenger'],flights:[{...knownNoIds.flights[0],flightNo:currentTicket.flight_no,seat:'14B'}]},ticketCtx)
+const mergedPassengers=updatedTickets.at(-1)
+assert.deepEqual(JSON.parse(JSON.stringify(mergedPassengers.passengers)),['Earlier Passenger','Later Passenger'])
+assert.equal(mergedPassengers.seat,null,'a seat from one passenger cannot describe the merged group')
+assert.deepEqual(JSON.parse(JSON.stringify(mergedPassengers.raw.passengerDetails)),[{passengers:['Earlier Passenger'],seat:'12A'},{passengers:['Later Passenger'],seat:'14B'}])
+legacyTickets=[{...mergedPassengers,id:'weak-passenger-flight'}]
+await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Later Passenger'],flights:[{...knownNoIds.flights[0],flightNo:currentTicket.flight_no,seat:'16C'}]},ticketCtx)
+assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).passengers)),['Earlier Passenger','Later Passenger'])
+assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).raw.passengerDetails)),[{passengers:['Earlier Passenger'],seat:'12A'},{passengers:['Later Passenger'],seat:'16C'}])

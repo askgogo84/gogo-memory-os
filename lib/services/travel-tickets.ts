@@ -244,6 +244,9 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       refreshFlightReminderText(priorLeg)
       leg.previousReminderMessages=[priorLeg.reminderMsg,priorLeg.checkinMsg].filter((value):value is string=>!!value)
       leg.previousReminderDecisions=planLegReminders(priorLeg,Number.NEGATIVE_INFINITY).filter((decision):decision is Extract<TicketReminderDecision,{remindAt:Date}>=>'remindAt' in decision)
+      const mergeWeakPassengers=leg.type==='flight'&&!leg.pnr&&!saved.pnr
+      const incomingPassengers=leg.passengers||[]
+      const incomingSeat=leg.seat
       leg.pnr=leg.pnr||saved.pnr||null
       leg.flightNo=leg.flightNo||saved.flight_no||null
       leg.airline=leg.airline||saved.airline||null
@@ -252,6 +255,31 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       leg.passengers=leg.passengers?.length?leg.passengers:saved.passengers||null
       const incomingRaw=leg.raw||{}
       leg.raw={...(saved.raw||{}),...Object.fromEntries(Object.entries(incomingRaw).filter(([,value])=>value!==null&&value!==undefined&&value!==''))}
+      if(mergeWeakPassengers){
+        const passengerNames=new Map<string,string>()
+        for(const name of [...(saved.passengers||[]),...incomingPassengers]){
+          const clean=String(name||'').replace(/\s+/g,' ').trim()
+          if(clean)passengerNames.set(clean.toLowerCase(),clean)
+        }
+        leg.passengers=[...passengerNames.values()]
+        const observations=new Map<string,{passengers:string[];seat:string|null}>()
+        const addObservation=(passengers:unknown,seat:unknown)=>{
+          if(!Array.isArray(passengers)||!passengers.length)return
+          const names=passengers.map(name=>String(name||'').trim()).filter(Boolean)
+          if(!names.length)return
+          const key=names.map(name=>name.toLowerCase()).sort().join('|')
+          const prior=observations.get(key)
+          observations.set(key,{passengers:names,seat:typeof seat==='string'&&seat.trim()?seat:prior?.seat||null})
+        }
+        const previousDetails=Array.isArray(saved.raw?.passengerDetails)?saved.raw.passengerDetails:[]
+        for(const detail of previousDetails)addObservation(detail?.passengers,detail?.seat)
+        if(!previousDetails.length)addObservation(saved.passengers,saved.seat)
+        addObservation(incomingPassengers,incomingSeat)
+        leg.raw.passengerDetails=[...observations.values()]
+        // A single row-level seat must not be attributed to every passenger.
+        if(observations.size>1)leg.seat=null
+        leg.raw.seat=leg.seat
+      }
       if(leg.type==='flight'&&!leg.departAt&&!incomingRaw.departureTimezone&&saved.from_city===leg.fromCity){
         const savedZone=saved.raw?.departureTimezone||(saved.raw?.timeNormalizationVersion===2?saved.depart_tz:null)
         if(savedZone){

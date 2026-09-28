@@ -22,8 +22,9 @@ export function reminderScope(step:{title:string;instruction:string},mission:str
   const scoped=/\b(for|about|related to|trip|checklist|flight)\b|\b(?:this|that)\s+(?:one|journey|booking|itinerary)\b/i.test(stepText)
   const groups=(text:string)=>text.split(/\b(?:and|or)\b|[,;→]/i).map(part=>[...new Set(terms(part))]).filter(group=>group.length)
   const subjectGroups=(text:string)=>{
-    const qualifier=/\b(?:for|about|related to|matching|containing|mentioning|concerning|titled|named)\s+(.+)/i.exec(text)
-    const reminder=text.search(/\breminders?\b/i)
+    const noun=/\breminders?\b/i.exec(text)
+    const reminder=noun?.index??-1
+    const qualifier=/\b(?:for|about|related to|matching|containing|mentioning|concerning|titled|named)\s+(.+)/i.exec(noun?text.slice(reminder+noun[0].length):text)
     // Descriptive subjects before "reminders" and explicit qualifiers carry
     // scope; relative grammar after it ("that are upcoming") does not.
     const prefix=reminder>=0?text.slice(0,reminder):qualifier?'':text
