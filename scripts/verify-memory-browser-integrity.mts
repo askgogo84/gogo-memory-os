@@ -174,3 +174,13 @@ for(const instruction of ['Review my reminders before creating one for 5 pm','Re
 }
 assert.equal(reminderStepIntent({title:'Create a reminder',instruction:'Create a reminder to review my travel documents at 5 pm'}),'write')
 console.log('Every operation in mixed reminder clauses is classified, including gerunds')
+
+// Fall-back clocks must remain unverified, including half-hour transitions.
+assert.equal(ticketInstant('1 Nov 2026','01:30','America/New_York'),null)
+assert.equal(ticketInstant('1 Nov 2026','02:30','America/New_York')?.toISOString(),'2026-11-01T07:30:00.000Z')
+assert.equal(ticketInstant('5 Apr 2026','01:45','Australia/Lord_Howe'),null)
+assert.equal(verifiedBrowserAnswer({complete:true,evidence:['Status: operational']},'Status: operational'),'Status: operational')
+assert.equal(verifiedBrowserAnswer({complete:true,evidence:['Status: operational']},'Loading...'),null)
+for(const followup of ['When are they landing?','Show their arrival time','What about them?','When do those arrive?']){
+  assert.match(recallQuery(followup,[{role:'user',content:'Divya and Ravi fly to New York'},{role:'assistant',content:'Invented Rome booking'}]),/Divya and Ravi/)
+}

@@ -1,4 +1,4 @@
-import { timezoneFromCity, isValidTimezone, zonedLocalTimeToUtc, getLocalParts } from '@/lib/timezone'
+import { timezoneFromCity, isValidTimezone, zonedLocalTimeToUtc, getLocalParts, getTimezoneOffsetMs } from '@/lib/timezone'
 
 import airportData from '@/lib/data/airport-timezones.json'
 
@@ -21,8 +21,19 @@ export function ticketInstant(date?:string,time?:string,timezone='Asia/Kolkata')
   const year=Number(match[3]),day=Number(match[1]),hour=Number(clock[1]),minute=Number(clock[2])
   if(!month||day<1||day>31||hour>23||minute>59)return null
   const result=zonedLocalTimeToUtc({year,month,day,hour,minute,timezone})
-  const local=getLocalParts(result,timezone)
-  return local.year===year&&local.month===month&&local.day===day&&local.hour===hour&&local.minute===minute?result:null
+  const matches=(instant:Date)=>{
+    const local=getLocalParts(instant,timezone)
+    return local.year===year&&local.month===month&&local.day===day&&local.hour===hour&&local.minute===minute
+  }
+  if(!matches(result))return null
+  // A repeated local clock has two valid offsets. Never choose one silently.
+  const wallClock=Date.UTC(year,month-1,day,hour,minute)
+  for(const days of [-2,-1,1,2]){
+    const offset=getTimezoneOffsetMs(new Date(result.getTime()+days*86400000),timezone)
+    const alternative=new Date(wallClock-offset)
+    if(alternative.getTime()!==result.getTime()&&matches(alternative))return null
+  }
+  return result
 }
 
 export function flightInstants(f:{from:string;to:string;date:string;departure:string;arrival?:string;arrivalDate?:string;departureTimezone?:string;arrivalTimezone?:string}){

@@ -24,7 +24,7 @@ export function verifiedBrowserAnswer(value:unknown,pageText:string,title='',all
   const normalize=(text:string)=>text.replace(/\s+/g,' ').trim().toLowerCase()
   const observed=normalize(pageText)
   const normalizedTitle=normalize(title)
-  if((observed.length<40&&!(allowTitleOnly&&normalizedTitle))||!Array.isArray(result.evidence)||!result.evidence.length)return null
+  if((!observed&&!(allowTitleOnly&&normalizedTitle))||!Array.isArray(result.evidence)||!result.evidence.length)return null
   if(!result.evidence.every(quote=>typeof quote==='string'&&((normalize(quote).length>=12&&observed.includes(normalize(quote)))||(normalizedTitle&&normalize(quote)===normalizedTitle))))return null
   if(!allowTitleOnly&&!result.evidence.some(quote=>normalize(String(quote))!==normalizedTitle&&normalize(String(quote)).length>=12&&observed.includes(normalize(String(quote)))))return null
   // Return only verified source excerpts. A genuine quote cannot launder an
