@@ -812,3 +812,16 @@ const unrelatedStatusGone=JSON.stringify({receiptRecords:[{id:'data-order-id:old
 queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Order placed',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:mixedBefore,executionAfterText:unrelatedStatusGone}]
 assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,'Order placed')
 console.log('Unrelated anonymous status loss cannot cancel directly identified new receipt evidence')
+
+plannedOperation=undefined
+modelText=JSON.stringify({approvedOperation:'none',draftReady:false,actions:[{kind:'click',selector:'#start'}]})
+queuedObservations=[{...evidencePage,text:'Start application'},{...evidencePage,text:'Application form',actions:[{kind:'click',status:'done'}],draftVerified:false}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Prepare application with name Example',mode:'draft'}),/browser_objective_unverified/)
+modelText=JSON.stringify({approvedOperation:'none',draftReady:true,actions:[{kind:'fill',selector:'#name',value:'Example'}]})
+queuedObservations=[{...evidencePage,text:'Application form'},{...evidencePage,text:'Application form',actions:[{kind:'fill',status:'done'}],draftVerified:true}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Prepare application with name Example',mode:'draft'})).status,'prepared')
+let draftFieldValue=''
+const draftPage={goto:async()=>{},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://provider.example',text:'Draft form'}),locator:()=>({first:()=>({fill:async(value:string)=>{draftFieldValue=value},inputValue:async()=>draftFieldValue})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[draftPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'draft',actions:[{kind:'fill',selector:'#name',value:'Example'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.draftVerified,true)
+console.log('Draft completion requires a complete field plan and final DOM value verification; opening a form is insufficient')

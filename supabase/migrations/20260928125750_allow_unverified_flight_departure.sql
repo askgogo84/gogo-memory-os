@@ -62,7 +62,7 @@ begin
     update life_event_actions set status='cancelled',updated_at=now()
       where life_event_id in (select id from life_events
         where telegram_id=new.telegram_id::text and metadata_json->>'travel_ticket_id'=new.id::text and id<>v_event_id)
-        and status in ('queued','ready','waiting_approval','blocked');
+        and status in ('queued','ready','waiting_approval','blocked') and coalesce(payload_json->>'scheduleCorrectionUncertain','false')<>'true';
     update life_events set lifecycle_state='cancelled',next_action_at=null,updated_at=now()
       where telegram_id=new.telegram_id::text and metadata_json->>'travel_ticket_id'=new.id::text and id<>v_event_id
         and lifecycle_state not in ('completed','cancelled','expired');
@@ -108,9 +108,18 @@ begin
     lifecycle_state=case when life_events.lifecycle_state in ('completed','cancelled','expired') then life_events.lifecycle_state when excluded.start_at is null or life_events.lifecycle_state='captured' then excluded.lifecycle_state else life_events.lifecycle_state end, next_action_at=excluded.next_action_at, updated_at=now()
   returning id into v_event_id;
 
+  if v_timing_changed then
+    update life_event_actions set
+      payload_json=payload_json||jsonb_build_object('scheduleRevision',gen_random_uuid()::text)
+        ||case when status='running' and action_type not in ('notify','monitor','email_watch','browser_prepare') then '{"scheduleCorrectionUncertain":true,"reconciliationRequired":true}'::jsonb else '{}'::jsonb end,
+      status=case when status='running' then case when action_type in ('notify','monitor','email_watch','browser_prepare') then 'queued' else 'blocked' end else status end,
+      updated_at=now()
+      where life_event_id=v_event_id and due_at is not null;
+  end if;
+
   if exists(select 1 from life_events where id=v_event_id and lifecycle_state in ('completed','cancelled','expired')) then
     update life_events set next_action_at=null where id=v_event_id;
-    update life_event_actions set status='cancelled',updated_at=now() where life_event_id=v_event_id and status in ('queued','ready','waiting_approval','blocked');
+    update life_event_actions set status='cancelled',updated_at=now() where life_event_id=v_event_id and status in ('queued','ready','waiting_approval','blocked') and coalesce(payload_json->>'scheduleCorrectionUncertain','false')<>'true';
     return new;
   end if;
 
@@ -120,7 +129,7 @@ begin
   on conflict (life_event_id,action_key) do update set updated_at=now();
 
   if new.depart_at is null then
-    update life_event_actions set status='cancelled',payload_json=payload_json||'{"timing_unverified":true}'::jsonb,updated_at=now() where life_event_id=v_event_id and due_at is not null and status in ('queued','ready','waiting_approval','blocked');
+    update life_event_actions set status='cancelled',payload_json=payload_json||'{"timing_unverified":true}'::jsonb,updated_at=now() where life_event_id=v_event_id and due_at is not null and status in ('queued','ready','waiting_approval','blocked') and coalesce(payload_json->>'scheduleCorrectionUncertain','false')<>'true';
     return new;
   end if;
 
@@ -154,7 +163,7 @@ begin
 
   -- Corrected elapsed action times must not be picked up as due work.
   update life_event_actions set status='cancelled',payload_json=payload_json||'{"timing_elapsed":true}'::jsonb,updated_at=now()
-    where life_event_id=v_event_id and due_at<now() and (new.depart_at<=now() or (v_timing_changed and id=any(v_existing_timed_actions))) and status in ('queued','ready','waiting_approval','blocked');
+    where life_event_id=v_event_id and due_at<now() and (new.depart_at<=now() or (v_timing_changed and id=any(v_existing_timed_actions))) and status in ('queued','ready','waiting_approval','blocked') and coalesce(payload_json->>'scheduleCorrectionUncertain','false')<>'true';
   update life_events set next_action_at=(select min(due_at) from life_event_actions where life_event_id=v_event_id and due_at>=now() and status in ('queued','ready'))
     where id=v_event_id;
 
@@ -167,4 +176,22 @@ drop trigger if exists travel_ticket_promote_life_event on travel_tickets;
 create trigger travel_ticket_promote_life_event
 after insert or update on travel_tickets
 for each row execute function gogo_promote_travel_ticket_to_life_event();
+
+
+create or replace function public.gogo_fence_life_event_schedule()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  -- Ticket propagation is a nested trigger. Direct worker writes must retain
+  -- the schedule revision they claimed, including after another worker starts.
+  if pg_trigger_depth()=1 and old.payload_json->>'scheduleRevision' is not null
+    and old.payload_json->>'scheduleRevision' is distinct from new.payload_json->>'scheduleRevision' then
+    raise exception 'life_event_schedule_changed' using errcode='40001';
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.gogo_fence_life_event_schedule() from public, anon, authenticated;
+drop trigger if exists life_event_schedule_fence on public.life_event_actions;
+create trigger life_event_schedule_fence before update on public.life_event_actions
+for each row execute function public.gogo_fence_life_event_schedule();
 
