@@ -404,7 +404,7 @@ async function loadLearnedFacts(actor:AgentActor,query:string,includeSemantic:bo
 
   // Owner-scoped lexical retrieval also works when embedding generation/indexing fails.
   // Values are alphanumeric tokens, never raw PostgREST filter syntax.
-  const stop=new Set('what when where how does have time saved remember about from with that this your there please landing arrival'.split(' '))
+  const stop=new Set('what when where why who how does did do have has had time saved remember about from with that this your there please landing arrival previous user request are was were been being they them their theirs she her hers his him its these those and the for into onto can could would should will shall also again already look flying flies fly arrive arriving'.split(' '))
   const terms=[...tokens(query)].filter(word=>!stop.has(word)).slice(0,8)
   if(includeSemantic&&terms.length){
     const filter=terms.map(word=>`content.ilike.%${word}%`).join(',')

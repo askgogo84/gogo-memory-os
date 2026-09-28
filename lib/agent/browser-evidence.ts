@@ -24,7 +24,7 @@ export function verifiedBrowserAnswer(value:unknown,pageText:string,title='',all
   const normalize=(text:string)=>text.replace(/\s+/g,' ').trim().toLowerCase()
   const observed=normalize(pageText)
   const normalizedTitle=normalize(title)
-  if(/^(?:loading|please wait|just a moment|loading please wait|sign in|log in|login)[.\s…!]*$/i.test(observed))return null
+  if(/^(?:loading\b|please wait\b|just a moment\b|sign in[.\s…!]*$|log in[.\s…!]*$|login[.\s…!]*$)/i.test(observed))return null
   const terseStatus=/^(?:ok|up|healthy|operational|down|unavailable|available)$/i.test(observed)
   if((!observed&&!(allowTitleOnly&&normalizedTitle))||!Array.isArray(result.evidence)||!result.evidence.length)return null
   const bodyEvidence=(quote:string)=>{const text=normalize(quote);return !!text&&observed.includes(text)&&(text.length>=12||text===observed)}

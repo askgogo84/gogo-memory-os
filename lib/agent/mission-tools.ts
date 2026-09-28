@@ -170,7 +170,7 @@ export function reminderStepIntent(step:{title:string;instruction:string}):'read
   const kind=(verb:string)=>/^(review|list|show|find|retriev|read|check|inspect|look)/i.test(verb)?'read':/^(creat|mak|set|add|schedul|remind)/i.test(verb)?'write':'unsupported'
   const intents=new Set<string>()
   for(const text of [step.title,step.instruction]){
-    const positive=text.replace(/\b(?:do not|don't|never)\b[^.;!?]*(?=[.;!?]|$)/gi,'')
+    const positive=text.replace(/\b(?:do not|don't|never|without)\b[^.;!?]*(?=[.;!?]|$)/gi,'')
     let creations=0
     for(const clause of positive.split(/[.;!?]|\b(?:and|then)\b/i)){
       let matches=[...clause.matchAll(verbs)]

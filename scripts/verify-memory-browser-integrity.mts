@@ -63,11 +63,12 @@ const stores:Record<string,any[]>={
     {id:'other-owner',telegram_id:18,content:'Divya lives elsewhere'}],
   memory_embeddings:[],
 }
+const lexicalFilters:string[]=[]
 const database={rpc:async()=>({data:[],error:null}),from:(table:string)=>{
   const filters:Array<[string,unknown]>=[]
   queries.push({table,filters})
   const result=()=>({data:table==='user_consent_settings'?{memory_enabled:consentEnabled}:table==='user_memory_profile'?null:(stores[table]||[]).filter(row=>filters.every(([key,value])=>String(row[key])===String(value))),error:(table==='user_memory_profile'&&profileLookupFails||table==='user_insights'&&insightLookupFails)?{message:'fixture lookup outage'}:null})
-  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},is:()=>q,or:()=>q,in:()=>q,gte:()=>q,lte:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
+  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},is:()=>q,or:(filter:string)=>{lexicalFilters.push(filter);return q},in:()=>q,gte:()=>q,lte:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
   return q
 }}
 const exports:any={}
@@ -79,6 +80,13 @@ assert.ok(recalled.facts.some((fact:any)=>fact.id==='semantic:old-fact'))
 assert.equal(recalled.retrievalIncomplete,true)
 assert.ok(recalled.facts.every((fact:any)=>!['semantic:secret','semantic:internal','semantic:other-owner'].includes(fact.id)))
 assert.ok(queries.every(query=>query.filters.some(([key,value])=>key==='telegram_id'&&String(value)==='17')))
+lexicalFilters.length=0
+await exports.buildContextPack({actor,text:recallQuery('When are they landing?',[{role:'user',content:'Divya and Ravi fly to New York'}])})
+assert.ok(lexicalFilters.length>=2)
+for(const filter of lexicalFilters){
+ for(const name of ['divya','ravi','new','york'])assert.ok(filter.includes(`%${name}%`))
+ assert.doesNotMatch(filter,/%(?:previous|user|request|are|they|and|fly)%/)
+}
 consentEnabled=false
 queries.length=0
 const disabled=await exports.buildContextPack({actor,text:'When does Divya arrive in New York?'})
@@ -204,3 +212,5 @@ try{
  const all=await readScopedReminders(17,{title:'Review reminders',instruction:'List all my reminders'},'List all reminders')
  assert.equal(all.reminders.length,101)
 }finally{(supabaseAdmin as any).from=originalFrom}
+
+assert.equal(reminderStepIntent({title:'Review reminders',instruction:'Review active reminders without creating, editing, or deleting anything'}),'read')

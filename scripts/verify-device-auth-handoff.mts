@@ -502,7 +502,7 @@ for(const body of ['OK','UP','Healthy']){
  assert.equal(result.summary,body)
 }
 
-for(const body of ['Loading...','Please wait','Just a moment']){
+for(const body of ['Loading...','Please wait','Just a moment','Loading products...','Please wait while we fetch availability']){
  evidencePage={url:'https://provider.example/status',title:'Status',text:body,forms:[]}
  modelText=JSON.stringify({complete:true,evidence:[body]})
  await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Read the service status'}),/browser_objective_unverified/)
