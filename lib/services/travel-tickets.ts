@@ -31,15 +31,15 @@ function iataFromFlightNo(flightNo: string | null): string | null {
   return code in AIRLINES ? code : null
 }
 
-// Absolute IST date + 24h time for naming a specific alert's fire time, e.g.
+// Local date + 24h time in the departure timezone for naming a specific alert's fire time, e.g.
 // "Thu 27 Aug 11:30". Used only in the confirmation copy, so on any formatter error
 // it degrades to the raw ISO rather than throwing.
-function formatAlertWhenIST(d: Date): string {
+function formatAlertWhen(d: Date, timezone: string): string {
   try {
     return new Intl.DateTimeFormat('en-GB', {
       weekday: 'short', day: '2-digit', month: 'short',
       hour: '2-digit', minute: '2-digit', hour12: false,
-      timeZone: 'Asia/Kolkata',
+      timeZone: timezone,
     }).format(d).replace(/,/g, '')
   } catch {
     return d.toISOString()
@@ -325,7 +325,7 @@ export async function persistAndRemindTicket(
   // Alerts that are actually scheduled (inserted now OR already present on a re-forward)
   // so the confirmation can name each with its real fire time. 'failed' is excluded —
   // it's surfaced separately below so we never claim an alert that didn't land.
-  const scheduledAlerts: { kind: 'departure' | 'checkin'; legType: Leg['type']; remindAt: Date }[] = []
+  const scheduledAlerts: { kind: 'departure' | 'checkin'; legType: Leg['type']; remindAt: Date; timezone:string }[] = []
 
   for (const leg of legs) {
     await persistLeg(ctx, leg)
@@ -335,11 +335,11 @@ export async function persistAndRemindTicket(
         openNowNotes.push(decision.message)
         continue
       }
-      const res = await createReminderIfAbsent(ctx, decision.message, decision.remindAt)
+      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt)
       if (res === 'inserted') remindersSet++
       else if (res === 'failed') remindersFailed++
       if (res === 'inserted' || res === 'exists') {
-        scheduledAlerts.push({ kind: decision.kind, legType: leg.type, remindAt: decision.remindAt })
+        scheduledAlerts.push({ kind: decision.kind, legType: leg.type, remindAt: decision.remindAt, timezone:leg.departTz||ctx.timezone })
       }
     }
   }
@@ -351,12 +351,12 @@ export async function persistAndRemindTicket(
     console.error('TRAVEL_TICKET_NOTE_FAILED:', err?.message || err)
   }
 
-  // Name every alert that's actually scheduled with its real IST fire time, instead of
+  // Name every alert that's actually scheduled with its local fire time, instead of
   // the old blanket "3 hours before each departure" (which lied about the check-in alert).
   let reminderTail = ''
   if (scheduledAlerts.length) {
     const parts = scheduledAlerts.map((a) => {
-      const when = formatAlertWhenIST(a.remindAt)
+      const when = `${formatAlertWhen(a.remindAt,a.timezone)} (${a.timezone})`
       if (a.kind === 'checkin') return `🧳 Check-in alert ${when}`
       return `⏰ ${a.legType === 'event' ? 'Event' : 'Departure'} alert ${when}`
     })

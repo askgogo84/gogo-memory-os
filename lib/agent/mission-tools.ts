@@ -172,7 +172,7 @@ export function reminderStepIntent(step:{title:string;instruction:string}):'read
   for(const text of [step.title,step.instruction]){
     const positive=text.replace(/\b(?:do not|don't|never|without)\b(?:(?!\b(?:then|but|afterwards?|subsequently|and\s+(?:create|make|set|add|schedule|remind|review|list|show|find|retrieve|read|check|inspect|move|reschedule|update|edit|delete|remove|cancel|complete))\b)[^.;!?])*/gi,'')
       .replace(/\b(?:scheduled|created|added|updated)\s+(?=reminders?\b)/gi,'')
-      .replace(/\b(reminders?\s+)(?:(?:that\s+)?(?:were|are)\s+)?(?:scheduled|created|added|set|updated)\b/gi,'$1')
+      .replace(/\b(reminders?\s+)(?:(?:that\s+)?(?:(?:were|are)|(?:I|we|you|they)(?:\s+(?:have|had))?)\s+)?(?:scheduled|created|added|set|updated)\b/gi,'$1')
     let creations=0
     for(const clause of positive.split(/[.;!?]|\b(?:and|then)\b/i)){
       let matches=[...clause.matchAll(verbs)]

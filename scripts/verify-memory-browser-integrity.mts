@@ -229,7 +229,7 @@ try{
  assert.ok('reminders' in timed.output)
  assert.deepEqual((timed.output as any).reminders.map((row:any)=>row.id),['five'])
  assert.match(timed.text,/17:00.*Asia\/Kolkata/)
- const explicitZone=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm ist'},missionText:'Review reminders'})
+ const explicitZone=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for 28 Sept 2030 at 5 pm ist'},missionText:'Review reminders'})
  assert.deepEqual((explicitZone.output as any).reminders.map((row:any)=>row.id),['five'])
  const tomorrow=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:"Show tomorrow's reminders"},missionText:'Review reminders'})
  assert.equal((tomorrow.output as any).reminders.length,0,'tomorrow must not include unrelated 2030 reminders')
@@ -248,3 +248,19 @@ assert.ok(['Asia/Kolkata','Asia/Calcutta'].includes(reminderTimezoneMetadata('5 
 assert.equal(reminderTimezoneMetadata('5 pm America/Port-au-Prince').timezone,'America/Port-au-Prince')
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm America/Port-au-Prince'},'Review reminders').scopeTerms,[])
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm ist'},'Review reminders').scopeTerms,[])
+
+assert.equal(reminderStepIntent({title:'Show reminders',instruction:'Show reminders I created for the conference'}),'read')
+assert.equal(reminderStepIntent({title:'List reminders',instruction:'List reminders I added yesterday'}),'read')
+const ticketWrites:Array<{table:string;row:any}>=[]
+const ticketDb={from:(table:string)=>{
+ const q:any={select:()=>q,eq:()=>q,limit:async()=>({data:[],error:null}),insert:async(row:any)=>{ticketWrites.push({table,row});return {error:null}}};return q
+}}
+const ticketModule:any={}
+const airlineCheckin=await import('../lib/services/airline-checkin')
+const ticketMocks:any={'./travel-time':travelTime,'@/lib/supabase-admin':{supabaseAdmin:ticketDb},'@/lib/lists':{addToList:async()=>{}},'./pdf-reader':{buildTicketReply:(_info:unknown,tail:string)=> `Ticket saved${tail}`},'./airline-checkin':airlineCheckin}
+runInNewContext(ts.transpileModule(readFileSync('lib/services/travel-tickets.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:ticketModule,require:(name:string)=>ticketMocks[name],console,Date,Intl})
+const ticketReply=await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
+const reminderWrites=ticketWrites.filter(write=>write.table==='reminders')
+assert.ok(reminderWrites.length>0)
+assert.ok(reminderWrites.every(write=>write.row.timezone==='America/Los_Angeles'))
+assert.match(ticketReply.reply,/America\/Los_Angeles/)
