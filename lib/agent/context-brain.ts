@@ -118,7 +118,7 @@ function titleCaseLocation(value:unknown){
 }
 
 function requestedPassengerSeat(name:string,query:string){
-  if(!/\bseat(?:s|ing)?\b/i.test(query))return false
+  if(!/\b(?:seat(?:s|ing|ed)?|sitting)\b/i.test(query))return false
   const normalize=(text:string)=>text.normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim()
   const passenger=normalize(name),request=normalize(query)
   if(!passenger)return false

@@ -658,3 +658,8 @@ const familyFacts=buildTravelPresenceFacts([familyTicket],Date.parse('2040-09-28
 assert.equal(familyFacts.filter(f=>f.id.includes(':seat:')).length,0)
 const shortNameFacts=buildTravelPresenceFacts([familyTicket],Date.parse('2040-09-28T00:00:00Z'),60,'What seat is Bo Li in?')
 assert.ok(shortNameFacts.some(f=>f.id.includes(':seat:')&&f.summary.includes('Seat for Bo Li: 31A')))
+
+for(const query of ['Where is Bo Li seated?','Where is Bo Li sitting?']){
+ const facts=buildTravelPresenceFacts([familyTicket],Date.parse('2040-09-28T00:00:00Z'),60,query)
+ assert.ok(facts.some(f=>f.id.includes(':seat:')&&f.summary.includes('Seat for Bo Li: 31A')),query)
+}
