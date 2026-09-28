@@ -729,3 +729,14 @@ for(const stale of [true,false]){
  else assert.equal((await execute()).summary,'Order placed')
 }
 console.log('Full-DOM phrase snapshots retain late confirmations and reject stale evidence moving into the text prefix')
+
+plannedOperation='purchase';modelText=JSON.stringify([{kind:'submit',selector:'#place-order'}])
+for(const confirmation of ['Thank you for your order','Thanks for your purchase','Successfully placed your order','Order complete']){
+ queuedObservations=[{...evidencePage,text:'Review purchase.'},{...evidencePage,text:confirmation,actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:'',executionAfterText:confirmation}]
+ assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,confirmation)
+}
+for(const [before,after] of [['Thank you for your order','Order placed'],['Order placed','Thanks for your purchase']]){
+ queuedObservations=[{...evidencePage,text:'Review purchase.'},{...evidencePage,text:after,actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:before,executionAfterText:after}]
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'}),/browser_objective_unverified/)
+}
+console.log('Thank-you/reversed receipts confirm purchases, while changing confirmation wording alone remains stale')

@@ -176,19 +176,20 @@ async function model(page){
 }
 async function snapshotConfirmation(page,pattern){
   return await page.evaluate(({pattern})=>{
-const normalize=(text)=>String(text||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').replace(/\b(?:has been|is|was|are|successfully)\s+/g,'').replace(/\b(?:confirmed|completed|placed|processed|successful|submitted|received)\b/g,'confirmed').replace(/\bcancelled\b/g,'canceled').replace(/\s+/g,' ').trim();
-const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|placed|processed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
+const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|complete|placed|processed|successful|succeeded|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
+const gratitude=pattern!=='cancellation'&&pattern!=='check[ -]?in'?new RegExp('\\b(?:thank\\s+you|thanks)\\s+for\\s+(?:your|the)\\s+'+pattern+'\\b','i'):null;
+const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|processed|confirmed)\\s+(?:(?:your|the|this)\\s+)?'+pattern+'\\b','i');
 const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
 const extract=(text)=>{
- const raw=String(text||'');
- const matcher=new RegExp(confirmation.source+(verb?'|'+verb.source:''),'gi');
+ const raw=String(text||'').normalize('NFKC');
+ const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:''),'gi');
  return [...raw.matchAll(matcher)].flatMap(match=>{
   const start=match.index||0,end=start+match[0].length;
   const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
   const next=raw.slice(end).search(/[\n.!?]/);
   const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
   if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
-  return [{key:normalize(match[0]),line,phrase:match[0]}];
+  return [{key:pattern,line,phrase:match[0]}];
  });
 };
 
@@ -239,19 +240,20 @@ async function isConsequentialControl(page,selector){
         await page.waitForTimeout(650);
         if(captureEvidence){
           await page.waitForFunction(({before,pattern})=>{
-const normalize=(text)=>String(text||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').replace(/\b(?:has been|is|was|are|successfully)\s+/g,'').replace(/\b(?:confirmed|completed|placed|processed|successful|submitted|received)\b/g,'confirmed').replace(/\bcancelled\b/g,'canceled').replace(/\s+/g,' ').trim();
-const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|placed|processed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
+const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|complete|placed|processed|successful|succeeded|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
+const gratitude=pattern!=='cancellation'&&pattern!=='check[ -]?in'?new RegExp('\\b(?:thank\\s+you|thanks)\\s+for\\s+(?:your|the)\\s+'+pattern+'\\b','i'):null;
+const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|processed|confirmed)\\s+(?:(?:your|the|this)\\s+)?'+pattern+'\\b','i');
 const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
 const extract=(text)=>{
- const raw=String(text||'');
- const matcher=new RegExp(confirmation.source+(verb?'|'+verb.source:''),'gi');
+ const raw=String(text||'').normalize('NFKC');
+ const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:''),'gi');
  return [...raw.matchAll(matcher)].flatMap(match=>{
   const start=match.index||0,end=start+match[0].length;
   const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
   const next=raw.slice(end).search(/[\n.!?]/);
   const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
   if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
-  return [{key:normalize(match[0]),line,phrase:match[0]}];
+  return [{key:pattern,line,phrase:match[0]}];
  });
 };
 const baseline=new Set(extract(before).map(item=>item.key));
@@ -401,19 +403,20 @@ async function assessReadOutcome(objective:string,page:any):Promise<string|null>
 function localExecutionConfirmation(approvedOperation:ApprovedBrowserOperation|null,before:string,after:string,actions:any[]):string|null{
   if(!actions.some(a=>a.status==='done'&&a.kind==='submit')||!approvedOperation)return null
   const pattern=operationPatterns[approvedOperation]
-const normalize=(text:string)=>String(text||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').replace(/\b(?:has been|is|was|are|successfully)\s+/g,'').replace(/\b(?:confirmed|completed|placed|processed|successful|submitted|received)\b/g,'confirmed').replace(/\bcancelled\b/g,'canceled').replace(/\s+/g,' ').trim();
-const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|placed|processed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
+const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|complete|placed|processed|successful|succeeded|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
+const gratitude=pattern!=='cancellation'&&pattern!=='check[ -]?in'?new RegExp('\\b(?:thank\\s+you|thanks)\\s+for\\s+(?:your|the)\\s+'+pattern+'\\b','i'):null;
+const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|processed|confirmed)\\s+(?:(?:your|the|this)\\s+)?'+pattern+'\\b','i');
 const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
 const extract=(text:string)=>{
- const raw=String(text||'');
- const matcher=new RegExp(confirmation.source+(verb?'|'+verb.source:''),'gi');
+ const raw=String(text||'').normalize('NFKC');
+ const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:''),'gi');
  return [...raw.matchAll(matcher)].flatMap(match=>{
   const start=match.index||0,end=start+match[0].length;
   const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
   const next=raw.slice(end).search(/[\n.!?]/);
   const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
   if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
-  return [{key:normalize(match[0]),line,phrase:match[0]}];
+  return [{key:pattern,line,phrase:match[0]}];
  });
 };
 const baseline=new Set(extract(before).map(item=>item.key));
