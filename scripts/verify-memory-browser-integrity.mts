@@ -97,3 +97,30 @@ assert.equal(verifiedBrowserAnswer({complete:true,answer:'Three posts',evidence:
 assert.equal(memoryIndex.recallableMemoryText('Divya passport S1234567 expires 12/09/2030','documents'),'Divya passport [redacted] expires [redacted]')
 assert.equal(memoryIndex.recallableMemoryText('Divya passport S1234567','memories'),null)
 console.log('Title-only observations, supported Indian airports, same-day arrivals and safe document recall passed')
+
+// A read step must not require a newly created reminder or invoke a mutation path.
+const {executeVerifiedMissionReminder}=await import('../lib/agent/mission-tools')
+const {supabaseAdmin}=await import('../lib/supabase-admin')
+const originalFrom=supabaseAdmin.from
+let reminderQueries=0,reminderReadFails=false
+;(supabaseAdmin as any).from=(table:string)=>{
+ assert.equal(table,'reminders');reminderQueries++
+ const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(value,17);if(key==='sent')assert.equal(value,false);return q},gte:()=>q,order:()=>q,limit:async()=>({data:[],error:reminderReadFails?{message:'fixture outage'}:null})}
+ return q
+}
+try{
+ const result=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review active reminders for this trip',instruction:'Review active reminders for this trip on 28 Sep 2026 at 2:35 am'},missionText:'Review the saved trip'})
+ assert.ok('readOnly' in result.output&&result.output.readOnly===true)
+ assert.equal(reminderQueries,1)
+ assert.match(result.text,/No upcoming unsent reminders/)
+ reminderReadFails=true
+ await assert.rejects(()=>executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Review active reminders'},missionText:'Review the trip'}),/mission_reminder_read_failed/)
+}finally{(supabaseAdmin as any).from=originalFrom}
+console.log('Reminder review remains read-only even when the request includes a date and time')
+
+const {buildLegs}=await import('../lib/services/travel-tickets')
+for(const from of ['NDLS','SBC','New Delhi']){
+ const leg=buildLegs({type:'train',from,to:'Bengaluru',date:'28 Sep 2026',departure:'10:00',arrival:'12:00',trainNo:'12345',trainName:'Fixture',pnr:'fixture',passengers:['Fixture']})[0]
+ assert.equal(leg.departAt?.toISOString(),'2026-09-28T04:30:00.000Z',from)
+}
+console.log('Indian rail station codes retain IST departure parsing')

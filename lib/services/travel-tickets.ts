@@ -111,7 +111,7 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
     })
   } else if (info.type === 'train') {
     const t = info as TrainInfo
-    const tz = resolveDepartTz(t.from)
+    const tz = resolveDepartTz(t.from) || 'Asia/Kolkata' // Indian rail station codes retain the established IST default.
     legs.push({
       type: 'train',
       legIndex: 0,
