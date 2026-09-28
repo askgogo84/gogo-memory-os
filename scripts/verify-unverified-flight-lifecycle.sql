@@ -32,6 +32,7 @@ declare
   v_checkin_at timestamptz;
   v_timing_changed boolean := false;
   v_previous_checkin_at timestamptz;
+  v_existing_timed_actions uuid[] := array[]::uuid[];
 begin
   v_type := case when new.type = 'event' then 'event' else 'travel' end;
   v_provider := case
@@ -54,6 +55,7 @@ begin
       and (dedupe_key=v_key or metadata_json->>'travel_ticket_id'=new.id::text)
     order by (dedupe_key=v_key) desc, created_at asc limit 1;
   if v_event_id is not null then
+    select coalesce(array_agg(id),array[]::uuid[]) into v_existing_timed_actions from life_event_actions where life_event_id=v_event_id and due_at is not null;
     -- Reuse the existing lifecycle and its action IDs when clocks are corrected.
     update life_event_actions set status='cancelled',updated_at=now()
       where life_event_id in (select id from life_events
@@ -122,23 +124,23 @@ begin
       (v_event_id,new.telegram_id::text,'watch-boarding-pass-email','email_watch','email','Watch connected email for boarding pass or check-in confirmation',v_checkin_at,false,false,jsonb_build_object('read_only',true,'pnr',new.pnr)),
       (v_event_id,new.telegram_id::text,'departure-readiness','notify','travel','Prepare for departure',new.depart_at - interval '3 hours',false,false,jsonb_build_object('from',new.from_city,'to',new.to_city)),
       (v_event_id,new.telegram_id::text,'travel-disruption-watch','monitor','travel','Watch for meaningful flight changes',new.depart_at - interval '24 hours',false,false,jsonb_build_object('notify_only_on_material_change',true))
-    on conflict (life_event_id,action_key) do update set due_at=case when v_timing_changed then excluded.due_at else life_event_actions.due_at end,payload_json=(life_event_actions.payload_json-'timing_unverified'-'timing_elapsed')||excluded.payload_json,status=case when life_event_actions.status='cancelled' and (life_event_actions.payload_json->>'timing_unverified'='true' or life_event_actions.payload_json->>'timing_elapsed'='true') then 'queued' else life_event_actions.status end,updated_at=now();
+    on conflict (life_event_id,action_key) do update set due_at=case when v_timing_changed then excluded.due_at else life_event_actions.due_at end,payload_json=(case when v_timing_changed and excluded.due_at>now() then life_event_actions.payload_json-'timing_unverified'-'timing_elapsed' else life_event_actions.payload_json end)||excluded.payload_json,status=case when life_event_actions.status='cancelled' and v_timing_changed and excluded.due_at>now() and (life_event_actions.payload_json->>'timing_unverified'='true' or life_event_actions.payload_json->>'timing_elapsed'='true') then 'queued' else life_event_actions.status end,updated_at=now();
   elsif new.type = 'event' then
     insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
     values
       (v_event_id,new.telegram_id::text,'event-calendar-draft','calendar_draft','calendar','Prepare calendar entry for this event',null,true,false,jsonb_build_object('mutation','create_event','approval_required',true)),
       (v_event_id,new.telegram_id::text,'event-readiness','prepare','travel','Prepare venue, travel and ticket readiness',new.depart_at - interval '3 hours',false,false,jsonb_build_object('venue',new.venue)),
       (v_event_id,new.telegram_id::text,'event-change-watch','monitor','browser','Watch for meaningful event timing or venue changes',new.depart_at - interval '24 hours',false,false,jsonb_build_object('notify_only_on_material_change',true))
-    on conflict (life_event_id,action_key) do update set due_at=case when v_timing_changed then excluded.due_at else life_event_actions.due_at end,payload_json=(life_event_actions.payload_json-'timing_unverified'-'timing_elapsed')||excluded.payload_json,status=case when life_event_actions.status='cancelled' and (life_event_actions.payload_json->>'timing_unverified'='true' or life_event_actions.payload_json->>'timing_elapsed'='true') then 'queued' else life_event_actions.status end,updated_at=now();
+    on conflict (life_event_id,action_key) do update set due_at=case when v_timing_changed then excluded.due_at else life_event_actions.due_at end,payload_json=(case when v_timing_changed and excluded.due_at>now() then life_event_actions.payload_json-'timing_unverified'-'timing_elapsed' else life_event_actions.payload_json end)||excluded.payload_json,status=case when life_event_actions.status='cancelled' and v_timing_changed and excluded.due_at>now() and (life_event_actions.payload_json->>'timing_unverified'='true' or life_event_actions.payload_json->>'timing_elapsed'='true') then 'queued' else life_event_actions.status end,updated_at=now();
   else
     insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
     values (v_event_id,new.telegram_id::text,'departure-readiness','notify','travel','Prepare for departure',new.depart_at - interval '3 hours',false,false,jsonb_build_object('from',new.from_city,'to',new.to_city))
-    on conflict (life_event_id,action_key) do update set due_at=case when v_timing_changed then excluded.due_at else life_event_actions.due_at end,payload_json=(life_event_actions.payload_json-'timing_unverified'-'timing_elapsed')||excluded.payload_json,status=case when life_event_actions.status='cancelled' and (life_event_actions.payload_json->>'timing_unverified'='true' or life_event_actions.payload_json->>'timing_elapsed'='true') then 'queued' else life_event_actions.status end,updated_at=now();
+    on conflict (life_event_id,action_key) do update set due_at=case when v_timing_changed then excluded.due_at else life_event_actions.due_at end,payload_json=(case when v_timing_changed and excluded.due_at>now() then life_event_actions.payload_json-'timing_unverified'-'timing_elapsed' else life_event_actions.payload_json end)||excluded.payload_json,status=case when life_event_actions.status='cancelled' and v_timing_changed and excluded.due_at>now() and (life_event_actions.payload_json->>'timing_unverified'='true' or life_event_actions.payload_json->>'timing_elapsed'='true') then 'queued' else life_event_actions.status end,updated_at=now();
   end if;
 
   -- Corrected elapsed action times must not be picked up as due work.
   update life_event_actions set status='cancelled',payload_json=payload_json||'{"timing_elapsed":true}'::jsonb,updated_at=now()
-    where life_event_id=v_event_id and due_at<=now() and (new.depart_at<=now() or v_timing_changed) and status in ('queued','ready','waiting_approval','blocked');
+    where life_event_id=v_event_id and due_at<=now() and (new.depart_at<=now() or (v_timing_changed and id=any(v_existing_timed_actions))) and status in ('queued','ready','waiting_approval','blocked');
   update life_events set next_action_at=(select min(due_at) from life_event_actions where life_event_id=v_event_id and due_at>now() and status in ('queued','ready'))
     where id=v_event_id;
 
@@ -229,6 +231,18 @@ update pg_temp.travel_tickets set seat='12A' where telegram_id=22;
 do $test$ begin
  if not exists(select 1 from pg_temp.life_event_actions where telegram_id='22' and action_key='prepare-web-checkin' and status='queued' and due_at>now() and payload_json->>'runId'='retained-run' and payload_json->>'approvalId'='retained-approval') then raise exception 'worker resume state was overwritten';end if;
  if not exists(select 1 from pg_temp.life_events where telegram_id='22' and lifecycle_state='watching' and metadata_json->>'boardingPass'='retained' and source_refs @> '[{"kind":"email","id":"retained-email"}]'::jsonb) then raise exception 'lifecycle enriched memory was overwritten';end if;
+end $test$;
+
+insert into pg_temp.travel_tickets (telegram_id,type,pnr,flight_no,from_city,to_city,depart_at,depart_tz,date_label,depart_local,source)
+values (23,'flight','NEWLY-VERIFIED','AI125','DEL','BOM',null,'','28 Sep 2040','10:00','pdf');
+update pg_temp.travel_tickets set depart_at=now()+interval '12 hours',depart_tz='Asia/Kolkata' where telegram_id=23;
+do $test$ begin
+ if not exists(select 1 from pg_temp.life_event_actions where telegram_id='23' and action_key='prepare-web-checkin' and status='queued' and due_at<=now()) then raise exception 'newly verified open window was cancelled';end if;
+end $test$;
+update pg_temp.travel_tickets set depart_at=now()+interval '6 hours' where telegram_id=22;
+update pg_temp.travel_tickets set seat='13A' where telegram_id=22;
+do $test$ begin
+ if not exists(select 1 from pg_temp.life_event_actions where telegram_id='22' and action_key='prepare-web-checkin' and status='cancelled' and payload_json->>'timing_elapsed'='true') then raise exception 'metadata update requeued elapsed cancellation';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;
