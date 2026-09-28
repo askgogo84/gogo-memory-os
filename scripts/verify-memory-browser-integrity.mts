@@ -552,3 +552,13 @@ await ticketModule.persistAndRemindTicket({...correctedClock,flights:[{...correc
 assert.equal(ticketWrites.filter(write=>write.table==='travel_tickets').length,largeHistoryCount,'unrelated history pages do not prevent strong reschedule matching')
 assert.equal(updatedTickets.at(-1).depart_at,'2040-09-29T17:00:00.000Z')
 console.log('Ticket compatibility paginates unrelated history before evaluating ambiguity')
+
+legacyTickets=[];legacyReminders=[]
+const explicitZone={type:'flight',flights:[{from:'Ambiguous airport',to:'JFK',date:'28 Sep 2040',departure:'10:00',departureTimezone:'Asia/Kolkata',flightNo:'XX777',pnr:'ZONE-KEEP'}]}
+await ticketModule.persistAndRemindTicket(explicitZone,ticketCtx)
+await ticketModule.persistAndRemindTicket({...explicitZone,flights:[{...explicitZone.flights[0],departureTimezone:undefined}]},ticketCtx)
+assert.equal(updatedTickets.at(-1).depart_at,'2040-09-28T04:30:00.000Z','omitted normalization metadata retains verified departure')
+assert.equal(updatedTickets.at(-1).depart_tz,'Asia/Kolkata')
+await ticketModule.persistAndRemindTicket({...explicitZone,flights:[{...explicitZone.flights[0],departureTimezone:undefined,departure:'invalid'}]},ticketCtx)
+assert.equal(updatedTickets.at(-1).depart_at,null,'invalid printed clock still clears the departure')
+console.log('Sparse timezone metadata preserves verified timing without hiding invalid clocks')

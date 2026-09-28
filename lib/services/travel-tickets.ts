@@ -184,7 +184,7 @@ async function matchingTicketRows(query:any,matches:(row:any)=>boolean):Promise<
 
 async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined> {
   if (!leg.departAt&&leg.type!=='flight') return
-  const iso = leg.departAt?.toISOString()||null
+  let iso = leg.departAt?.toISOString()||null
   try {
     let sel = supabaseAdmin
       .from('travel_tickets')
@@ -251,6 +251,17 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       leg.passengers=leg.passengers?.length?leg.passengers:saved.passengers||null
       const incomingRaw=leg.raw||{}
       leg.raw={...(saved.raw||{}),...Object.fromEntries(Object.entries(incomingRaw).filter(([,value])=>value!==null&&value!==undefined&&value!==''))}
+      if(leg.type==='flight'&&!leg.departAt&&!incomingRaw.departureTimezone&&saved.from_city===leg.fromCity){
+        const savedZone=saved.raw?.departureTimezone||(saved.raw?.timeNormalizationVersion===2?saved.depart_tz:null)
+        if(savedZone){
+          const normalized=flightInstants({...leg.raw,departureTimezone:savedZone})
+          leg.departAt=normalized.departAt
+          leg.departTz=normalized.departTz
+          leg.arriveAt=normalized.arriveAt
+          leg.raw.departureTimezone=savedZone
+          iso=leg.departAt?.toISOString()||null
+        }
+      }
       if(!incomingRaw.arrival&&saved.arrive_at&&leg.departAt){
         const previousArrival=new Date(saved.arrive_at)
         const normalized=saved.raw?.timeNormalizationVersion===2?previousArrival:flightInstants(leg.raw).arriveAt
