@@ -500,3 +500,20 @@ legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`obsolete-future
 await ticketModule.persistAndRemindTicket({...correctedClock,flights:[{...correctedClock.flights[0],date:printedYesterday}]},ticketCtx)
 assert.equal(legacyReminders.length,0,'valid correction into the past retires both obsolete future alerts')
 console.log('Weak invalid-clock corrections and elapsed scheduling windows retire obsolete alerts')
+
+legacyTickets=[];legacyReminders=[]
+const weakValidStart=ticketWrites.length
+await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
+legacyReminders=ticketWrites.slice(weakValidStart).filter(write=>write.table==='reminders').map((write,i)=>({...write.row,id:`weak-valid-${i}`,sent:false}))
+const weakValidAlerts=ticketWrites.filter(write=>write.table==='reminders').length
+await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds.flights[0],departure:'11:00'}]},ticketCtx)
+assert.equal(legacyTickets.length,1,'valid weak clock correction reuses the saved row')
+assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,weakValidAlerts)
+legacyTickets=[];legacyReminders=[]
+const enrichingStart=ticketWrites.length
+await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
+legacyReminders=ticketWrites.slice(enrichingStart).filter(write=>write.table==='reminders').map((write,i)=>({...write.row,id:`enrich-alert-${i}`,sent:false}))
+const enrichingAlerts=ticketWrites.filter(write=>write.table==='reminders').length
+await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds.flights[0],pnr:'ENRICHED',flightNo:'XX999',airline:'Example'}]},ticketCtx)
+assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,enrichingAlerts,'matched ticket supplies prior reminder identities during enrichment')
+console.log('Valid weak corrections and identifier enrichment reconcile existing alerts')

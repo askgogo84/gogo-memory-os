@@ -75,6 +75,7 @@ type Leg = {
   passengers: string[] | null
   raw: any
   reminderMsg: string
+  previousReminderMessages?: string[]
   checkinMsg: string | null
 }
 
@@ -173,7 +174,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
   try {
     let sel = supabaseAdmin
       .from('travel_tickets')
-      .select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,raw')
+      .select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,depart_tz,raw')
       .eq('telegram_id', ctx.telegramId)
       .eq('type', leg.type)
     if(leg.type==='flight'&&leg.pnr&&leg.flightNo&&leg.dateLabel){
@@ -192,9 +193,8 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     let { data: existing, error: lookupError } = await sel.limit(2)
     if(lookupError)throw new Error(lookupError.message)
     if(!existing?.length&&leg.type==='flight'){
-      let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,raw')
+      let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,depart_tz,raw')
         .eq('telegram_id',ctx.telegramId).eq('type','flight')
-      if(iso)unknown=unknown.is('depart_at',null)
       // Missing stored identifiers may be enriched, but conflicting identifiers
       // never match. Compare locally without interpolating parser text in filters.
       unknown=unknown.eq('leg_index',leg.legIndex)
@@ -207,14 +207,13 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
         const compatible=(stored:string|null,incoming:string|undefined|null)=>!incoming||!stored||stored===incoming
         if(!compatible(row.pnr,leg.pnr)||!compatible(row.flight_no,leg.flightNo))return false
         if(!(row.pnr&&row.flight_no&&leg.pnr&&leg.flightNo)&& (row.from_city!==leg.fromCity||row.to_city!==leg.toCity))return false
-        return printed?ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed:
-          !!printedDay&&ticketInstant(row.date_label,'00:00','UTC')?.toISOString()===printedDay
+        return !!printedDay&&ticketInstant(row.date_label,'00:00','UTC')?.toISOString()===printedDay
       })
     }
     // Printed labels can vary between parsers while the canonical flight stays
     // the same. Reuse its database dedupe identity after null-time reconciliation.
     if(!existing?.length&&leg.type==='flight'&&iso){
-      const result=await supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,raw')
+      const result=await supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,depart_tz,raw')
         .eq('telegram_id',ctx.telegramId).eq('type',leg.type).eq('depart_at',iso).limit(101)
       if(result.error)throw new Error(result.error.message)
       if((result.data?.length||0)>100)throw new Error('travel_ticket_identity_ambiguous')
@@ -227,6 +226,9 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     if(existing&&existing.length>1)throw new Error('travel_ticket_identity_ambiguous')
     if(existing?.[0]){
       const saved=existing[0]
+      const priorLeg={...leg,pnr:saved.pnr,flightNo:saved.flight_no,airline:saved.airline,fromCity:saved.from_city,toCity:saved.to_city,dateLabel:saved.date_label,departLocal:saved.depart_local,departTz:saved.depart_tz}
+      refreshFlightReminderText(priorLeg)
+      leg.previousReminderMessages=[priorLeg.reminderMsg,priorLeg.checkinMsg].filter((value):value is string=>!!value)
       leg.pnr=leg.pnr||saved.pnr||null
       leg.flightNo=leg.flightNo||saved.flight_no||null
       leg.airline=leg.airline||saved.airline||null
@@ -304,14 +306,14 @@ async function retireUnverifiedTicketAlerts(ctx:TicketContext,leg:Leg,previousDe
   if(!decisions.length)return
   const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,sent').eq('telegram_id',ctx.telegramId).eq('sent',false).in('remind_at',[...new Set(decisions.map(d=>d.remindAt.toISOString()))]).limit(1000)
   if(error)throw new Error('travel_unverified_alert_cleanup_failed')
-  const ids=(data||[]).filter((row:any)=>decisions.some(d=>d.remindAt.toISOString()===row.remind_at&&ticketAlertIdentity(d.message)===ticketAlertIdentity(String(row.message||'')))).map((row:any)=>row.id)
+  const ids=(data||[]).filter((row:any)=>decisions.some(d=>d.remindAt.toISOString()===row.remind_at&&[d.message,...(leg.previousReminderMessages||[])].some(message=>ticketAlertIdentity(message)===ticketAlertIdentity(String(row.message||''))))).map((row:any)=>row.id)
   if(ids.length){
     const {error}=await supabaseAdmin.from('reminders').delete().eq('telegram_id',ctx.telegramId).eq('sent',false).in('id',ids)
     if(error)throw new Error('travel_unverified_alert_cleanup_failed')
   }
 }
 
-async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date, previousRemindAt:Date[]=[]): Promise<ReminderWriteResult> {
+async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date, previousRemindAt:Date[]=[],previousMessages:string[]=[]): Promise<ReminderWriteResult> {
   const iso = remindAt.toISOString()
   const { data: existing, error: selError } = await supabaseAdmin
     .from('reminders')
@@ -322,7 +324,8 @@ async function createReminderIfAbsent(ctx: TicketContext, message: string, remin
   // A failed existence check must not silently drop the reminder — log and fall
   // through to insert (the DB unique-index backstop still guards against a dupe).
   if (selError) console.error('TRAVEL_REMINDER_DEDUPE_CHECK_FAILED:', selError.message)
-  const matches=(existing||[]).filter((row:any)=>ticketAlertIdentity(String(row.message||''))===ticketAlertIdentity(message))
+  const identities=new Set([message,...previousMessages].map(ticketAlertIdentity))
+  const matches=(existing||[]).filter((row:any)=>identities.has(ticketAlertIdentity(String(row.message||''))))
   if(matches.some((row:any)=>row.sent&&row.remind_at===iso)){
     const obsoleteIds=matches.filter((row:any)=>!row.sent).map((row:any)=>row.id)
     if(obsoleteIds.length){
@@ -456,7 +459,7 @@ export async function persistAndRemindTicket(
         openNowNotes.push(decision.message)
         continue
       }
-      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, leg.departAt?[previousDeparture,leg.type==='flight'?ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata'):null].filter((date):date is Date=>!!date).map(date=>new Date(date.getTime()+decision.remindAt.getTime()-leg.departAt!.getTime())):[])
+      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, leg.departAt?[previousDeparture,leg.type==='flight'?ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata'):null].filter((date):date is Date=>!!date).map(date=>new Date(date.getTime()+decision.remindAt.getTime()-leg.departAt!.getTime())):[],leg.previousReminderMessages)
       if (res === 'inserted') remindersSet++
       else if (res === 'failed') remindersFailed++
       else if (res === 'already_sent') remindersAlreadySent++
