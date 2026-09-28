@@ -503,10 +503,11 @@ console.log('Weak invalid-clock corrections and elapsed scheduling windows retir
 
 legacyTickets=[];legacyReminders=[]
 const weakValidStart=ticketWrites.length
-await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
+const weakWithPnr={...knownNoIds,flights:[{...knownNoIds.flights[0],pnr:'WEAK-CORRECTION'}]}
+await ticketModule.persistAndRemindTicket(weakWithPnr,ticketCtx)
 legacyReminders=ticketWrites.slice(weakValidStart).filter(write=>write.table==='reminders').map((write,i)=>({...write.row,id:`weak-valid-${i}`,sent:false}))
 const weakValidAlerts=ticketWrites.filter(write=>write.table==='reminders').length
-await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds.flights[0],departure:'11:00'}]},ticketCtx)
+await ticketModule.persistAndRemindTicket({...weakWithPnr,flights:[{...weakWithPnr.flights[0],departure:'11:00'}]},ticketCtx)
 assert.equal(legacyTickets.length,1,'valid weak clock correction reuses the saved row')
 assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,weakValidAlerts)
 legacyTickets=[];legacyReminders=[]
@@ -528,3 +529,9 @@ await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds
 assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,carrierAlertCount,'new carrier window updates old reminder rather than inserting another')
 assert.ok(updatedLegacy.slice(carrierUpdates).some(row=>row.message.includes('check-in')&&row.remind_at==='2040-09-26T17:00:00.000Z'))
 console.log('Carrier enrichment searches the previous check-in window and moves its existing alert')
+
+legacyTickets=[];legacyReminders=[]
+await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
+await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds.flights[0],departure:'11:00'}]},ticketCtx)
+assert.equal(legacyTickets.length,2,'distinct same-day clocks without a shared identifier remain separate flights')
+console.log('A clock change requires shared correction identity; anonymous same-day flights remain distinct')

@@ -68,6 +68,7 @@ declare
   v_location text;
   v_key text;
   v_checkin_at timestamptz;
+  v_timing_changed boolean := false;
 begin
   v_type := case when new.type = 'event' then 'event' else 'travel' end;
   v_provider := case
@@ -106,6 +107,11 @@ begin
       when '6E' then 48 when 'AI' then 48 when 'IX' then 48 when 'QP' then 48
       when 'SG' then 48 when 'UK' then 48 when 'EK' then 48 when 'SQ' then 48
       when 'LH' then 23 else 24 end) else null end;
+
+  if TG_OP='UPDATE' then
+    v_timing_changed := old.depart_at is distinct from new.depart_at
+      or exists(select 1 from life_event_actions where life_event_id=v_event_id and action_key='prepare-web-checkin' and due_at is distinct from v_checkin_at);
+  end if;
 
   insert into life_events (
     telegram_id,event_type,subtype,source,title,provider,start_at,end_at,timezone,location,
@@ -165,7 +171,7 @@ begin
 
   -- Corrected elapsed action times must not be picked up as due work.
   update life_event_actions set status='cancelled',payload_json=payload_json||'{"timing_elapsed":true}'::jsonb,updated_at=now()
-    where life_event_id=v_event_id and due_at<=now() and status in ('queued','ready','waiting_approval','blocked');
+    where life_event_id=v_event_id and due_at<=now() and (new.depart_at<=now() or v_timing_changed) and status in ('queued','ready','waiting_approval','blocked');
   update life_events set next_action_at=(select min(due_at) from life_event_actions where life_event_id=v_event_id and due_at>now() and status in ('queued','ready'))
     where id=v_event_id;
 

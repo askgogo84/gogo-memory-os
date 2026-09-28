@@ -208,6 +208,9 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
         const compatible=(stored:string|null,incoming:string|undefined|null)=>!incoming||!stored||stored===incoming
         if(!compatible(row.pnr,leg.pnr)||!compatible(row.flight_no,leg.flightNo))return false
         if(!(row.pnr&&row.flight_no&&leg.pnr&&leg.flightNo)&& (row.from_city!==leg.fromCity||row.to_city!==leg.toCity))return false
+        const sameClock=printed&&ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed
+        const correctionIdentity=leg.pnr&&row.pnr===leg.pnr||leg.flightNo&&row.flight_no===leg.flightNo
+        if(printed&&!sameClock&&!correctionIdentity)return false
         return !!printedDay&&ticketInstant(row.date_label,'00:00','UTC')?.toISOString()===printedDay
       })
     }

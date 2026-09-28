@@ -30,6 +30,7 @@ declare
   v_location text;
   v_key text;
   v_checkin_at timestamptz;
+  v_timing_changed boolean := false;
 begin
   v_type := case when new.type = 'event' then 'event' else 'travel' end;
   v_provider := case
@@ -68,6 +69,11 @@ begin
       when '6E' then 48 when 'AI' then 48 when 'IX' then 48 when 'QP' then 48
       when 'SG' then 48 when 'UK' then 48 when 'EK' then 48 when 'SQ' then 48
       when 'LH' then 23 else 24 end) else null end;
+
+  if TG_OP='UPDATE' then
+    v_timing_changed := old.depart_at is distinct from new.depart_at
+      or exists(select 1 from life_event_actions where life_event_id=v_event_id and action_key='prepare-web-checkin' and due_at is distinct from v_checkin_at);
+  end if;
 
   insert into life_events (
     telegram_id,event_type,subtype,source,title,provider,start_at,end_at,timezone,location,
@@ -127,7 +133,7 @@ begin
 
   -- Corrected elapsed action times must not be picked up as due work.
   update life_event_actions set status='cancelled',payload_json=payload_json||'{"timing_elapsed":true}'::jsonb,updated_at=now()
-    where life_event_id=v_event_id and due_at<=now() and status in ('queued','ready','waiting_approval','blocked');
+    where life_event_id=v_event_id and due_at<=now() and (new.depart_at<=now() or v_timing_changed) and status in ('queued','ready','waiting_approval','blocked');
   update life_events set next_action_at=(select min(due_at) from life_event_actions where life_event_id=v_event_id and due_at>now() and status in ('queued','ready'))
     where id=v_event_id;
 
@@ -203,6 +209,13 @@ values (20,'flight','AIR-INDIA','AI123','DEL','BOM','2040-09-28T04:30:00Z','Asia
 do $test$ begin
  if not exists(select 1 from pg_temp.life_event_actions where telegram_id='20' and action_key='prepare-web-checkin' and due_at='2040-09-26T04:30:00Z') then raise exception '48h carrier lifecycle window lost';end if;
  if not exists(select 1 from pg_temp.life_event_actions where telegram_id='21' and action_key='prepare-web-checkin' and due_at='2040-09-27T05:30:00Z') then raise exception '23h carrier lifecycle window lost';end if;
+end $test$;
+
+insert into pg_temp.travel_tickets (telegram_id,type,pnr,flight_no,from_city,to_city,depart_at,depart_tz,date_label,depart_local,source)
+values (22,'flight','OPEN-WINDOW','AI124','DEL','BOM',now()+interval '12 hours','Asia/Kolkata','28 Sep 2040','10:00','pdf');
+update pg_temp.travel_tickets set passengers=array['Newly learned name'] where telegram_id=22;
+do $test$ begin
+ if not exists(select 1 from pg_temp.life_event_actions where telegram_id='22' and action_key='prepare-web-checkin' and status='queued' and due_at<=now()) then raise exception 'already-open initial capture was cancelled';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;
