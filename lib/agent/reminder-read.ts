@@ -1,7 +1,8 @@
+import { getLocalParts } from '@/lib/timezone'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 
-const noise=new Set('review list show find retrieve read check inspect look up reminders reminder active upcoming pending saved existing entries entry my me the a an for about related to this that these those trip travel flight flights checklist only please all account wide on at in of and with from plan organize organisation organization confirm status departure arrival time dates date tomorrow today next week am pm sep september jan january feb february mar march apr april may jun june jul july aug august oct october nov november dec december'.split(' '))
+const noise=new Set('review list show find retrieve read check inspect look up reminders reminder active upcoming pending saved existing entries entry scheduled created added set updated my me the a an for about related to this that these those trip travel flight flights checklist only please all account wide on at in of and with from plan organize organisation organization confirm status departure arrival time dates date tomorrow today next week am pm sep september jan january feb february mar march apr april may jun june jul july aug august oct october nov november dec december'.split(' '))
 function terms(text:string){return text.toLowerCase().replace(/newyork/g,'new york').replace(/\b(?:do not|don.t|never|without)\b[^.;!?]*/gi,'').match(/[a-z][a-z0-9]*/g)?.filter(word=>word.length>2&&!noise.has(word))||[]}
 
 /** Conservative text matching: uncertain references never turn into account-wide lists. */
@@ -15,7 +16,7 @@ export function reminderScope(step:{title:string;instruction:string},mission:str
   return {scopeTerms,scopeGroups,unresolved:scoped&&!scopeTerms.length}
 }
 
-export async function readScopedReminders(ownerId:number,step:{title:string;instruction:string},mission:string){
+export async function readScopedReminders(ownerId:number,step:{title:string;instruction:string},mission:string,temporal?:{timezone:string;dates:string[];clock:string|null}){
   const scope=reminderScope(step,mission)
   const reminders:Array<{id:string;message:string;remindAt:string;timezone:string}>=[]
   const now=new Date().toISOString()
@@ -25,8 +26,15 @@ export async function readScopedReminders(ownerId:number,step:{title:string;inst
       .eq('telegram_id',ownerId).eq('sent',false).gte('remind_at',now)
       .order('remind_at',{ascending:true}).order('id',{ascending:true}).range(offset,offset+99)
     if(error)throw new Error(`mission_reminder_read_failed:${error.message}`)
-    if(data?.length&&scope.unresolved)throw new Error('mission_reminder_scope_unverified')
+    if(data?.length&&scope.unresolved&&!temporal)throw new Error('mission_reminder_scope_unverified')
     for(const row of data||[]){
+      if(temporal){
+        const local=getLocalParts(new Date(row.remind_at),temporal.timezone)
+        const date=`${local.year}-${String(local.month).padStart(2,'0')}-${String(local.day).padStart(2,'0')}`
+        const clock=`${String(local.hour).padStart(2,'0')}:${String(local.minute).padStart(2,'0')}`
+        if(temporal.dates.length&&!temporal.dates.includes(date))continue
+        if(temporal.clock&&clock!==temporal.clock)continue
+      }
       const message=redactSecretShapedText(String(row.message||''))
       const words=message.toLowerCase().replace(/newyork/g,'new york').match(/[a-z][a-z0-9]*/g)||[]
       if(scope.scopeGroups.length&&!scope.scopeGroups.some(group=>group.every(term=>words.some(word=>word===term||(term.length>=4&&word.startsWith(term))))))continue

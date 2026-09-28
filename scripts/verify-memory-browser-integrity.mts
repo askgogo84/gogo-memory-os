@@ -112,6 +112,7 @@ const {supabaseAdmin}=await import('../lib/supabase-admin')
 const originalFrom=supabaseAdmin.from
 let reminderQueries=0,reminderReadFails=false
 ;(supabaseAdmin as any).from=(table:string)=>{
+ if(table==='users')return {select:()=>({eq:()=>({maybeSingle:async()=>({data:{timezone:'Asia/Kolkata'},error:null})})})}
  assert.equal(table,'reminders');reminderQueries++
  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(value,17);if(key==='sent')assert.equal(value,false);return q},gte:()=>q,order:()=>q,range:async()=>({data:[],error:reminderReadFails?{message:'fixture outage'}:null})}
  return q
@@ -214,3 +215,22 @@ try{
 }finally{(supabaseAdmin as any).from=originalFrom}
 
 assert.equal(reminderStepIntent({title:'Review reminders',instruction:'Review active reminders without creating, editing, or deleting anything'}),'read')
+
+assert.equal(reminderStepIntent({title:'Review reminders',instruction:'Review reminders without deleting anything, then create one for 5 pm'}),'mixed')
+assert.equal(reminderStepIntent({title:'Show reminders',instruction:'Show reminders set for 5 pm'}),'read')
+assert.equal(reminderStepIntent({title:'List reminders',instruction:'List scheduled reminders'}),'read')
+;(supabaseAdmin as any).from=(table:string)=>{
+ if(table==='users')return {select:()=>({eq:()=>({maybeSingle:async()=>({data:{timezone:'Asia/Kolkata'},error:null})})})}
+ const q:any={select:()=>q,eq:()=>q,gte:()=>q,order:()=>q,range:async()=>({data:[{id:'five',message:'Packing',remind_at:'2030-09-28T11:30:00Z',timezone:'Asia/Kolkata'},{id:'six',message:'Packing',remind_at:'2030-09-28T12:30:00Z',timezone:'Asia/Kolkata'}],error:null})}
+ return q
+}
+try{
+ const timed=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Review reminders for 28 Sep 2030 at 5 pm'},missionText:'Review reminders'})
+ assert.ok('reminders' in timed.output)
+ assert.deepEqual((timed.output as any).reminders.map((row:any)=>row.id),['five'])
+ assert.match(timed.text,/17:00.*Asia\/Kolkata/)
+ const tomorrow=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:"Show tomorrow's reminders"},missionText:'Review reminders'})
+ assert.equal((tomorrow.output as any).reminders.length,0,'tomorrow must not include unrelated 2030 reminders')
+ const clockOnly=await readScopedReminders(17,{title:'Show reminders',instruction:'Show reminders set for 5 pm'},'Review reminders',{timezone:'Asia/Kolkata',dates:[],clock:'17:00'})
+ assert.deepEqual(clockOnly.reminders.map(row=>row.id),['five'])
+}finally{(supabaseAdmin as any).from=originalFrom}

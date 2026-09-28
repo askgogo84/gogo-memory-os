@@ -170,7 +170,9 @@ export function reminderStepIntent(step:{title:string;instruction:string}):'read
   const kind=(verb:string)=>/^(review|list|show|find|retriev|read|check|inspect|look)/i.test(verb)?'read':/^(creat|mak|set|add|schedul|remind)/i.test(verb)?'write':'unsupported'
   const intents=new Set<string>()
   for(const text of [step.title,step.instruction]){
-    const positive=text.replace(/\b(?:do not|don't|never|without)\b[^.;!?]*(?=[.;!?]|$)/gi,'')
+    const positive=text.replace(/\b(?:do not|don't|never|without)\b(?:(?!\b(?:then|but|afterwards?|subsequently)\b)[^.;!?])*/gi,'')
+      .replace(/\b(?:scheduled|created|added|set|updated)\s+(?=reminders?\b)/gi,'')
+      .replace(/\b(reminders?\s+)(?:(?:that\s+)?(?:were|are)\s+)?(?:scheduled|created|added|set|updated)\b/gi,'$1')
     let creations=0
     for(const clause of positive.split(/[.;!?]|\b(?:and|then)\b/i)){
       let matches=[...clause.matchAll(verbs)]
@@ -196,9 +198,25 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
   if(stepIntent==='mixed')throw new Error('mission_reminder_mixed_read_write_requires_separate_steps')
   if(stepIntent==='unknown')throw new Error('mission_reminder_intent_unverified')
   if(stepIntent==='read'){
-    const {reminders,truncated,scopeTerms}=await readScopedReminders(actor.legacyTelegramId,step,missionText)
+    const reviewText=`${step.title} ${step.instruction}`
+    const dates=explicitDates(reviewText)
+    const clock=explicitMissionClock(reviewText)
+    const relative=/\b(today|tomorrow)\b/i.exec(reviewText)?.[1].toLowerCase()
+    let temporal: {timezone:string;dates:string[];clock:string|null}|undefined
+    if(dates.length||clock||relative){
+      const timezone=await actorTimezone(actor)
+      if(relative&&!dates.length){
+        const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
+        const values:Record<string,string>={};for(const part of parts)values[part.type]=part.value
+        const date=new Date(`${values.year}-${values.month}-${values.day}T00:00:00Z`)
+        if(relative==='tomorrow')date.setUTCDate(date.getUTCDate()+1)
+        dates.push(date.toISOString().slice(0,10))
+      }
+      temporal={timezone,dates,clock}
+    }
+    const {reminders,truncated,scopeTerms}=await readScopedReminders(actor.legacyTelegramId,step,missionText,temporal)
     return {text:(reminders.length
-      ? `Pending saved reminders${scopeTerms.length?` matching ${scopeTerms.join(' ')}`:''}:\n${reminders.map(row=>`${row.message} — ${row.remindAt} (UTC)`).join('\n')}`
+      ? `Pending saved reminders${scopeTerms.length?` matching ${scopeTerms.join(' ')}`:''}:\n${reminders.map(row=>`${row.message} — ${new Intl.DateTimeFormat('en-GB',{timeZone:normalizeTimezone(row.timezone),dateStyle:'medium',timeStyle:'short'}).format(new Date(row.remindAt))} (${normalizeTimezone(row.timezone)})`).join('\n')}`
       : 'No upcoming unsent reminders matching the requested text were found. This does not establish that the trip checklist is complete.')
       +(scopeTerms.length?'\nMatched saved reminder text; reminders without these names or labels may not be included.':'')
       +(truncated?'\nThe review reached its 1,000-reminder limit; later reminders were not checked.':''),
