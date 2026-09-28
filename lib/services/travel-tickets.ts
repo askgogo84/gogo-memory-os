@@ -158,8 +158,8 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
 // departure instant, and identifier). Tolerates the table being absent so a
 // code-first deploy degrades gracefully.
 async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined> {
-  if (!leg.departAt) return
-  const iso = leg.departAt.toISOString()
+  if (!leg.departAt&&leg.type!=='flight') return
+  const iso = leg.departAt?.toISOString()||null
   try {
     let sel = supabaseAdmin
       .from('travel_tickets')
@@ -168,7 +168,8 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       .eq('type', leg.type)
     if(leg.type==='flight'&&leg.pnr&&leg.flightNo&&leg.dateLabel){
       sel=sel.eq('pnr',leg.pnr).eq('date_label',leg.dateLabel)
-    }else sel=sel.eq('depart_at',iso)
+    }else if(iso)sel=sel.eq('depart_at',iso)
+    else sel=sel.is('depart_at',null).eq('from_city',leg.fromCity).eq('to_city',leg.toCity).eq('date_label',leg.dateLabel).eq('depart_local',leg.departLocal)
     if (leg.flightNo) sel = sel.eq('flight_no', leg.flightNo)
     else if (leg.trainNo) sel = sel.eq('train_no', leg.trainNo)
     else if (leg.eventName) sel = sel.eq('event_name', leg.eventName)
@@ -202,15 +203,17 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       raw: {...leg.raw,timeNormalizationVersion:2},
     }
     if(existing?.[0]){
-      const previous=new Date(existing[0].depart_at)
+      const previous=existing[0].depart_at?new Date(existing[0].depart_at):null
+      if(!leg.departAt&&previous)return previous
       const {error}=await supabaseAdmin.from('travel_tickets').update(row).eq('telegram_id',ctx.telegramId).eq('id',existing[0].id)
       if(error)throw new Error(error.message)
-      return Number.isFinite(previous.getTime())?previous:undefined
+      return previous&&Number.isFinite(previous.getTime())?previous:undefined
     }
     const {error}=await supabaseAdmin.from('travel_tickets').insert(row)
     if(error)throw new Error(error.message)
   } catch (err: any) {
     console.error('TRAVEL_TICKET_PERSIST_ERROR:', err?.message || err)
+    throw new Error('travel_ticket_persist_failed')
   }
 }
 

@@ -68,7 +68,7 @@ const database={rpc:async()=>({data:[],error:null}),from:(table:string)=>{
   const filters:Array<[string,unknown]>=[]
   queries.push({table,filters})
   const result=()=>({data:table==='user_consent_settings'?{memory_enabled:consentEnabled}:table==='user_memory_profile'?null:(stores[table]||[]).filter(row=>filters.every(([key,value])=>String(row[key])===String(value))),error:(table==='user_memory_profile'&&profileLookupFails||table==='user_insights'&&insightLookupFails)?{message:'fixture lookup outage'}:null})
-  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},is:()=>q,or:(filter:string)=>{lexicalFilters.push(filter);return q},in:()=>q,gte:()=>q,lte:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
+  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},is:()=>q,or:(filter:string)=>{if(['memories','memory_embeddings'].includes(table))lexicalFilters.push(filter);return q},in:()=>q,gte:()=>q,lte:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
   return q
 }}
 const exports:any={}
@@ -353,3 +353,17 @@ assert.match(unknownOrigin.summary,/Departure instant unverified/)
 const repeatedClock=buildTravelPresenceFacts([{...legacyArrival,from_city:'JFK',to_city:'LHR',raw:{date:'1 Nov 2026',departure:'01:30',arrival:'14:00',arrivalDate:'1 Nov 2026'}}],Date.parse('2026-11-01T00:00Z')).find(f=>f.source==='travel_ticket')!
 assert.equal(repeatedClock.startAt,null)
 assert.equal(repeatedClock.endAt,null)
+
+assert.equal(travelTime.ticketTimezone('Goa'),'Asia/Kolkata')
+assert.equal(travelTime.ticketTimezone('goa'),'Asia/Kolkata')
+assert.equal(travelTime.ticketTimezone('GOA'),'Europe/Rome')
+const unknownTicketBefore=ticketWrites.length
+const unknownReply=await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Named Passenger'],flights:[{from:'Unknown airport',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'Example',flightNo:'XX123',pnr:'UNKNOWN99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
+const unknownWrites=ticketWrites.slice(unknownTicketBefore)
+assert.equal(unknownWrites.length,1)
+assert.equal(unknownWrites[0].table,'travel_tickets')
+assert.equal(unknownWrites[0].row.depart_at,null)
+assert.deepEqual(unknownWrites[0].row.passengers,['Named Passenger'])
+assert.equal(unknownWrites[0].row.pnr,'UNKNOWN99')
+assert.equal(unknownReply.remindersSet,0)
+assert.match(unknownReply.reply,/could not verify the departure/)

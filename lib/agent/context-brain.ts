@@ -222,8 +222,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
     supabaseAdmin.from('travel_tickets')
       .select('id,type,booking_group,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,depart_tz,raw')
       .eq('telegram_id',Number(actor.legacyTelegramId))
-      .gte('depart_at',lower)
-      .lte('depart_at',upper)
+      .or(`depart_at.is.null,and(depart_at.gte.${lower},depart_at.lte.${upper})`)
       .order('depart_at',{ascending:true})
       .limit(80),
     latestTypedContext(actor.legacyTelegramId).catch(()=>null),

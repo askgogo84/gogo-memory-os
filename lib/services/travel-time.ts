@@ -7,7 +7,9 @@ const airports=airportData as {iata:Record<string,string>;cities:Record<string,s
 export function ticketTimezone(city?:string, explicit?:string):string|null {
   if(explicit&&isValidTimezone(explicit))return explicit
   const name=String(city||'').trim()
-  const zone=airports.iata[name.toUpperCase()]||timezoneFromCity(name)||airports.cities[name.toLowerCase()]
+  const cityZone=airports.cities[name.toLowerCase()]||(name.toLowerCase()==='goa'&&name!=='GOA'?'Asia/Kolkata':null)
+  const code=/^[A-Z]{3}$/.test(name)?airports.iata[name]:null
+  const zone=code||cityZone||timezoneFromCity(name)
   return zone&&isValidTimezone(zone)?zone:null
 }
 
