@@ -305,13 +305,15 @@ try{
  assert.deepEqual((paired.output as any).reminders.map((row:any)=>row.id),['28-11:30','29-12:30'])
 }finally{(supabaseAdmin as any).from=originalFrom}
 
-legacyReminders=legacyReminders.map(row=>({...row,sent:true}))
+const priorInstantReminders=legacyReminders
+legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`exact-sent-${i}`,sent:true}))
 const sentUpdatesBefore=updatedLegacy.length
 const sentReply=await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
 assert.equal(sentReply.remindersSet,0)
 assert.equal(updatedLegacy.length,sentUpdatesBefore)
 assert.match(sentReply.reply,/already sent and were not rearmed/)
 assert.doesNotMatch(sentReply.reply,/Departure alert|Check-in alert/)
+legacyReminders=priorInstantReminders.map(row=>({...row,sent:true}))
 
 assert.equal(reminderStepIntent({title:'Check reminder',instruction:'Check whether the reminder was created'}),'read')
 assert.equal(reminderStepIntent({title:'Show reminder',instruction:'Show whether the reminder is scheduled'}),'read')
@@ -463,3 +465,23 @@ assert.equal(richUpdate.raw.arrival,currentTicket.raw.arrival)
 assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,richAlertCount,'restored identifiers rebuild matching reminder text instead of duplicating alerts')
 assert.ok(!ticketWrites.filter(write=>write.table==='reminders').slice(richAlertCount).some(write=>/undefined|null/.test(write.row.message)))
 console.log('Sparse re-forwards retain passenger/arrival metadata and reuse identifier-bearing reminders')
+
+const correctedClock={type:'flight',flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'11:00',airline:'United',flightNo:'UA123',pnr:'TEST99'}]}
+legacyTickets=[{...currentTicket,id:'clock-correction'}]
+legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`clock-old-${i}`,sent:false}))
+const clockInsertCount=ticketWrites.filter(write=>write.table==='reminders').length
+const clockUpdateCount=updatedLegacy.length
+await ticketModule.persistAndRemindTicket(correctedClock,ticketCtx)
+assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,clockInsertCount,'corrected clock updates pending alerts instead of duplicating')
+assert.equal(updatedLegacy.length-clockUpdateCount,reminderWrites.length)
+assert.ok(updatedLegacy.slice(clockUpdateCount).every(row=>row.message.includes('11:00')))
+legacyTickets=[{...currentTicket,id:'clock-sent-correction'}]
+legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`clock-sent-${i}`,sent:true}))
+const revised=await ticketModule.persistAndRemindTicket(correctedClock,ticketCtx)
+assert.equal(revised.remindersSet,reminderWrites.length,'sent alerts at the old instant do not suppress revised future alerts')
+assert.ok(legacyReminders.every(row=>row.sent),'sent history remains untouched')
+legacyTickets=[{...currentTicket,id:'clock-invalid-correction'}]
+legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`clock-invalid-${i}`,sent:false}))
+await ticketModule.persistAndRemindTicket({...correctedClock,flights:[{...correctedClock.flights[0],departure:'invalid'}]},ticketCtx)
+assert.equal(legacyReminders.length,0,'invalid replacement clock retires pending prior-instant alerts')
+console.log('Clock corrections reconcile pending alerts and schedule revised times without rearming sent history')

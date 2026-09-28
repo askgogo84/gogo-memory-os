@@ -291,7 +291,7 @@ type ReminderWriteResult = 'inserted' | 'exists' | 'already_sent' | 'failed'
 // delivers via whatsapp_to, so telegramId is the correct, constraint-satisfying value.
 function ticketAlertIdentity(message:string){
   return message.replace(/\s+\((?:[A-Za-z_]+\/[A-Za-z0-9_+\/-]+|timezone unverified)\)(?=[!.])/g,'')
-    .replace(/(\bdeparts )[^\n]+?( at \d{1,2}:\d{2})/gi,'$1$2')
+    .replace(/(\bdeparts )[^!.\n]+(?=[!.])/gi,'$1<departure>')
     .replace(/\s+/g,' ').trim()
 }
 
@@ -320,9 +320,16 @@ async function createReminderIfAbsent(ctx: TicketContext, message: string, remin
   // through to insert (the DB unique-index backstop still guards against a dupe).
   if (selError) console.error('TRAVEL_REMINDER_DEDUPE_CHECK_FAILED:', selError.message)
   const matches=(existing||[]).filter((row:any)=>ticketAlertIdentity(String(row.message||''))===ticketAlertIdentity(message))
-  const matched=matches.find((row:any)=>!row.sent&&row.remind_at===iso)||matches.find((row:any)=>!row.sent)||matches[0]
+  if(matches.some((row:any)=>row.sent&&row.remind_at===iso)){
+    const obsoleteIds=matches.filter((row:any)=>!row.sent).map((row:any)=>row.id)
+    if(obsoleteIds.length){
+      const {error}=await supabaseAdmin.from('reminders').delete().eq('telegram_id',ctx.telegramId).eq('sent',false).in('id',obsoleteIds)
+      if(error)return 'failed'
+    }
+    return 'already_sent'
+  }
+  const matched=matches.find((row:any)=>!row.sent&&row.remind_at===iso)||matches.find((row:any)=>!row.sent)
   if(matched){
-    if(matched.sent)return 'already_sent'
     if(matched.message!==message||matched.timezone!==ctx.timezone||matched.remind_at!==iso){
       const {error}=await supabaseAdmin.from('reminders').update({message,timezone:ctx.timezone,remind_at:iso}).eq('telegram_id',ctx.telegramId).eq('id',matched.id)
       if(error)return 'failed'
