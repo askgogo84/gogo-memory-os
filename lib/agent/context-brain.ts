@@ -135,10 +135,10 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
       flightNo:safe(row.flight_no,60),
       bookingGroup:safe(row.booking_group,120),
       passengers:(Array.isArray(row.passengers)?row.passengers:[]).map((name:unknown)=>safe(name,100)).filter(Boolean),
-      seatDetails:(Array.isArray(raw.passengerDetails)?raw.passengerDetails:[{passengers:row.passengers,seat:row.seat||raw.seat}]).flatMap((detail:any)=>{
+      seatObservations:(Array.isArray(raw.passengerDetails)?raw.passengerDetails:[{passengers:row.passengers,seat:row.seat||raw.seat}]).flatMap((detail:any)=>{
         const names=(Array.isArray(detail?.passengers)?detail.passengers:[]).map((name:unknown)=>safe(name,100)).filter(Boolean)
         const seat=safe(detail?.seat,30)
-        return seat&&names.length?[names.length===1?`Seat for ${names[0]}: ${seat}`:`Seat ${seat} recorded with ${names.join(', ')}; individual assignment unverified`]:[]
+        return seat&&names.length?[{names,seat}]:[]
       }),
       arrivalTz:ticketTimezone(row.to_city,row.raw?.arrivalTimezone),
     }})
@@ -161,7 +161,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     facts.push({
       id:`travel-ticket:${leg.id}`,
       source:'travel_ticket',
-      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,leg.airline,leg.flightNo,passengerLabel,...leg.seatDetails,...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel].filter(Boolean).join(' · '),620),
+      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,leg.airline,leg.flightNo,passengerLabel,...leg.seatObservations.map((detail:any)=>detail.names.length===1?`Seat for ${detail.names[0]}: ${detail.seat}`:`Seat ${detail.seat} recorded with ${detail.names.join(', ')}; individual assignment unverified`),...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel].filter(Boolean).join(' · '),620),
       score:0.8,
       confidence:0.98,
       startAt:leg.departAt,
@@ -172,6 +172,17 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
       inferred:false,
       sourceRefs:[{type:'travel_ticket',id:leg.id}],
     })
+
+    // Each passenger observation must remain searchable even when a large
+    // booking's aggregate summary is truncated. Normal fact ranking selects
+    // the requested passenger before the context budget is applied.
+    const flightFact=facts[facts.length-1]
+    for(const detail of leg.seatObservations){
+      for(const name of detail.names){
+        const label=detail.names.length===1?`Seat for ${name}: ${detail.seat}`:`Passenger ${name}: seat ${detail.seat} recorded on a group ticket; individual assignment unverified`
+        facts.push({...flightFact,id:`travel-ticket:${leg.id}:seat:${hash(label)}`,summary:safe([label,leg.flightNo,`Flight ${leg.from} → ${leg.to}`].filter(Boolean).join(' · '),620)})
+      }
+    }
 
     if(!validArrival||!leg.to)continue
     const arriveMs=Date.parse(validArrival)

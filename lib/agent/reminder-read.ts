@@ -26,7 +26,10 @@ export function reminderScope(step:{title:string;instruction:string},mission:str
     const qualifier=/\b(?:for|about|related to|matching|containing|mentioning|concerning|titled|named)\s+(.+)/i.exec(noun?text.slice(reminder+noun[0].length):text)
     // Descriptive subjects before "reminders" and explicit qualifiers carry
     // scope; relative grammar after it ("that are upcoming") does not.
-    const prefix=reminder>=0?text.slice(0,reminder):qualifier?'':text
+    const rawPrefix=reminder>=0?text.slice(0,reminder):qualifier?'':text
+    // Remove request/question grammar as a prefix, retaining a descriptive
+    // subject such as dentist in "How many dentist reminders do I have?".
+    const prefix=rawPrefix.replace(/^\s*(?:(?:please|tell\s+me|show\s+me|can\s+you|could\s+you|would\s+you)\s+)*(?:how\s+many|what(?:\s+are)?|which(?:\s+are)?|(?:do|does|did)\s+(?:i|we|you)\s+have|(?:are|is)\s+there)\b\s*/i,'')
     return [...groups(prefix),...(qualifier?groups(qualifier[1]):[])]
   }
   const stepGroups=[...subjectGroups(step.title),...subjectGroups(step.instruction)]
