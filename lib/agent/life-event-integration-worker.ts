@@ -203,10 +203,10 @@ export async function processLifecycleMonitor(action: any, event: any, telegramI
 
   const permissionLevel = await browserPermission(telegramId)
   const policy = evaluateAgentExecutionPolicy({
-    capability: 'browser', permissionLevel, mode: 'draft', risk: 'low', irreversible: false, approvalStatus: null,
+    capability: 'browser', permissionLevel, mode: 'read', risk: 'low', irreversible: false, approvalStatus: null,
   })
   const sentinel = evaluateAgentSentinel({
-    capability: 'browser', mode: 'draft', risk: 'low', irreversible: false, approved: false,
+    capability: 'browser', mode: 'read', risk: 'low', irreversible: false, approved: false,
     instruction: target.objective, url: target.url, actionCount: 6,
   })
   if (!policy.allowed || !sentinel.allowed) {
@@ -218,7 +218,7 @@ export async function processLifecycleMonitor(action: any, event: any, telegramI
 
   const actor = await resolveActor(telegramId)
   if(resumeRunId)await releaseRunAuthHandoff(telegramId,resumeRunId)
-  const result = await runSecureBrowser({ reserveHumanHandoff:true, userId: actor.userId, url: target.url, mode: 'draft', objective: target.objective })
+  const result = await runSecureBrowser({ reserveHumanHandoff:true, userId: actor.userId, url: target.url, mode: 'read', objective: target.objective })
   if (result.status === 'blocked') {
     const runId = resumeRunId || await createCompletedRun(telegramId, event, action, safe(result.summary || 'This status page needs a secure human step.'), {
       monitor_url: target.url, blocked_reason: result.blockReason || 'human_auth_required', auth_reason: result.authReason || null,

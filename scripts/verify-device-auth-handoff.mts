@@ -851,3 +851,19 @@ assert.equal(draftObjectiveCovered('Fill the application — Country: "India", D
 assert.equal(draftObjectiveCovered('Fill draft — Custom field: "value"',{},[]),false)
 assert.equal(draftObjectiveCovered("Fill form — Country: 'India'",{},[]),false)
 assert.equal(draftObjectiveCovered('Fill form — Country = "India"',{},[]),false)
+
+const monitorIntegrations=await import('../lib/agent/life-event-integrations')
+let monitorReads=0,monitorUpdates:any[]=[]
+const monitorWorker=load('life-event-integration-worker.ts',{
+ '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{
+  const q:any={select:()=>q,eq:()=>q,update:(value:any)=>{monitorUpdates.push(value);return q},maybeSingle:async()=>({data:table==='users'?{id:'owner',telegram_id:17}: {level:'read'},error:null}),then:(resolve:any)=>Promise.resolve({data:null,error:null}).then(resolve)};return q
+ }}},
+ './life-event-integrations':monitorIntegrations,
+ './policy':{evaluateAgentExecutionPolicy:(params:any)=>{assert.equal(params.mode,'read');return {allowed:true}}},
+ './sentinel':{evaluateAgentSentinel:(params:any)=>{assert.equal(params.mode,'read');return {allowed:true}}},
+ './secure-computer':{runSecureBrowser:async(params:any)=>{assert.equal(params.mode,'read');assert.equal(params.reserveHumanHandoff,true);monitorReads++;return {status:'completed',title:'Flight status',pageText:'EY1 scheduled arrival 08:35; on time',actions:[]}}},
+})
+const monitorResult=await monitorWorker.processLifecycleMonitor({id:'watch',payload_json:{}},{id:'flight',event_type:'travel',subtype:'flight',title:'EY1',metadata_json:{flight_no:'EY1'}},'17')
+assert.equal(monitorResult.status,'deferred')
+assert.equal(monitorReads,1)
+assert.ok(monitorUpdates.some(value=>value.payload_json?.lastStatusText?.includes('EY1 scheduled arrival')))
