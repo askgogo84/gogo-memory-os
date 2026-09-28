@@ -22,19 +22,24 @@ const DEFAULT_BUSINESS_PACKING=['Laptop','Charger','Phone charger','Power bank',
 function safe(value:unknown,max=1200){return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))}
 function pad(n:number){return String(n).padStart(2,'0')}
 
-function explicitDates(text:string, defaultYear=new Date().getUTCFullYear()){
+export function explicitDates(text:string, defaultYear=new Date().getUTCFullYear(), upcomingFrom?:string){
   const out:string[]=[]
-  const add=(year:number,month:number,day:number)=>{
-    const d=new Date(Date.UTC(year,month-1,day))
-    if(d.getUTCFullYear()!==year||d.getUTCMonth()!==month-1||d.getUTCDate()!==day)return
-    const iso=`${year}-${pad(month)}-${pad(day)}`
-    if(!out.includes(iso))out.push(iso)
+  const add=(year:number,month:number,day:number,yearless=false)=>{
+    for(let offset=0;offset<(yearless&&upcomingFrom?9:1);offset++){
+      const candidateYear=year+offset
+      const d=new Date(Date.UTC(candidateYear,month-1,day))
+      if(d.getUTCFullYear()!==candidateYear||d.getUTCMonth()!==month-1||d.getUTCDate()!==day)continue
+      const iso=`${candidateYear}-${pad(month)}-${pad(day)}`
+      if(yearless&&upcomingFrom&&iso<upcomingFrom)continue
+      if(!out.includes(iso))out.push(iso)
+      return
+    }
   }
   let m:RegExpExecArray|null
   const dayMonth=/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(20\d{2}))?/gi
-  while((m=dayMonth.exec(text))){const month=MONTHS[m[2].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[1]))}
+  while((m=dayMonth.exec(text))){const month=MONTHS[m[2].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[1]),!m[3])}
   const monthDay=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})\b(?:[,\s]+(20\d{2}))?/gi
-  while((m=monthDay.exec(text))){const month=MONTHS[m[1].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[2]))}
+  while((m=monthDay.exec(text))){const month=MONTHS[m[1].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[2]),!m[3])}
   const iso=/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g
   while((m=iso.exec(text)))add(Number(m[1]),Number(m[2]),Number(m[3]))
   const numeric=/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/g
@@ -201,14 +206,17 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
   if(stepIntent==='unknown')throw new Error('mission_reminder_intent_unverified')
   if(stepIntent==='read'){
     const reviewText=`${step.title} ${step.instruction}`
-    const dates=explicitDates(reviewText)
+    const timezone=reminderTimezoneMetadata(reviewText).timezone||await actorTimezone(actor)
+    const localParts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
+    const localValues:Record<string,string>={};for(const part of localParts)localValues[part.type]=part.value
+    const localToday=`${localValues.year}-${localValues.month}-${localValues.day}`
+    const dates=explicitDates(reviewText,Number(localValues.year),localToday)
     const clocks=[...new Set([...reviewText.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter((clock):clock is string=>!!clock))]
     const clock=clocks[0]||null
     const relative=/\b(today|tomorrow)\b/i.exec(reviewText)?.[1].toLowerCase()
     const weekRelative=/\b(?:this|next) week\b/i.test(reviewText)
     let temporal: {timezone:string;dates:string[];clock:string|null;clocks:string[];pairs?:Array<{date:string;clock:string}>}|undefined
     if(dates.length||clock||relative||weekRelative){
-      const timezone=reminderTimezoneMetadata(reviewText).timezone||await actorTimezone(actor)
       if(weekRelative&&!dates.length){
         const window=calendarReadWindow(reviewText,new Date(),timezone)
         for(let day=new Date(`${window.startDate}T00:00:00Z`);day.toISOString().slice(0,10)<=window.endDate;day.setUTCDate(day.getUTCDate()+1))dates.push(day.toISOString().slice(0,10))
@@ -224,7 +232,7 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
       if(dates.length>1&&clocks.length>1&&!weekRelative){
         pairs=[]
         for(const clause of reviewText.replace(/(?<=\d),\s*(?=20\d{2}\b)/g,' ').split(/\band\b|[;,]/i).filter(clause=>clause.trim())){
-          const clauseDates=explicitDates(clause)
+          const clauseDates=explicitDates(clause,Number(localValues.year),localToday)
           const clauseClocks=[...new Set([...clause.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter((time):time is string=>!!time))]
           if(clauseDates.length===1&&clauseClocks.length===1)pairs.push({date:clauseDates[0],clock:clauseClocks[0]})
           else throw new Error('mission_reminder_paired_scope_unverified')

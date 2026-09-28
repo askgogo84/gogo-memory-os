@@ -171,8 +171,14 @@ async function processBoardingPassWatch(action: any, event: any, telegramId: str
   if (alreadyMatched) { await completeAction(action, { boardingPassDetected: true, duplicateSuppressed: true, gmailMessageId: boardingPass.gmailMessageId }); return { status: 'completed' as const, matched: true, duplicate: true } }
 
   const sourceRefs = Array.isArray(event.source_refs) ? event.source_refs : [], nextRefs = sourceRefs.some((x: any) => String(x?.gmailMessageId || '') === boardingPass.gmailMessageId) ? sourceRefs : [...sourceRefs, { source: 'gmail', gmailMessageId: boardingPass.gmailMessageId, kind: 'boarding_pass_or_checkin_confirmation' }]
-  const { error: eventError } = await supabaseAdmin.from('life_events').update({ lifecycle_state: 'watching', metadata_json: { ...existingMeta, boardingPass }, source_refs: nextRefs, updated_at: at }).eq('id', event.id).eq('telegram_id', telegramId)
+  const eventUpdate = supabaseAdmin.from('life_events').update({ lifecycle_state: 'watching', metadata_json: { ...existingMeta, boardingPass }, source_refs: nextRefs, updated_at: at }).eq('id', event.id).eq('telegram_id', telegramId)
+  const revision = existingMeta.ticketScheduleRevision
+  const fencedUpdate = typeof revision === 'string'
+    ? eventUpdate.eq('metadata_json->>ticketScheduleRevision', revision)
+    : eventUpdate.is('metadata_json->>ticketScheduleRevision', null)
+  const { data: updatedEvent, error: eventError } = await fencedUpdate.select('id').maybeSingle()
   if (eventError) throw new Error(`life_event_email_event_update_failed:${eventError.message}`)
+  if (!updatedEvent) throw new Error('life_event_schedule_changed')
   await completeAction(action, { boardingPassDetected: true, gmailMessageId: boardingPass.gmailMessageId, attachmentFilename: boardingPass.attachment?.filename || null })
 
   const runId = await createRun(telegramId, event, action, boardingPass.attachment?.filename ? `Boarding pass/check-in confirmation found in Gmail: ${boardingPass.attachment.filename}.` : 'Boarding pass/check-in confirmation found in Gmail.', { gmail_message_id: boardingPass.gmailMessageId, attachment_present: Boolean(boardingPass.attachment) })

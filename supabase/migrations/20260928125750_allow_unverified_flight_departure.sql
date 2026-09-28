@@ -96,7 +96,7 @@ begin
   ) values (
     new.telegram_id::text,v_type,new.type,new.source,v_title,v_provider,new.depart_at,new.arrive_at,new.depart_tz,v_location,
     new.pnr,case when new.depart_at is null then 'captured' else 'planned' end,to_jsonb(coalesce(new.passengers,array[]::text[])),
-    jsonb_build_object('travel_ticket_id',new.id,'flight_no',new.flight_no,'train_no',new.train_no,'seat',new.seat,'raw',coalesce(new.raw,'{}'::jsonb)),
+    jsonb_build_object('travel_ticket_id',new.id,'flight_no',new.flight_no,'train_no',new.train_no,'seat',new.seat,'raw',coalesce(new.raw,'{}'::jsonb))||case when v_timing_changed then jsonb_build_object('ticketScheduleRevision',gen_random_uuid()::text) else '{}'::jsonb end,
     jsonb_build_array(jsonb_build_object('kind','travel_ticket','id',new.id,'source',new.source)),
     v_key,
     case when new.type='flight' then v_checkin_at else new.depart_at - interval '3 hours' end

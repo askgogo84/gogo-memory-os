@@ -94,7 +94,7 @@ begin
   ) values (
     new.telegram_id::text,v_type,new.type,new.source,v_title,v_provider,new.depart_at,new.arrive_at,new.depart_tz,v_location,
     new.pnr,case when new.depart_at is null then 'captured' else 'planned' end,to_jsonb(coalesce(new.passengers,array[]::text[])),
-    jsonb_build_object('travel_ticket_id',new.id,'flight_no',new.flight_no,'train_no',new.train_no,'seat',new.seat,'raw',coalesce(new.raw,'{}'::jsonb)),
+    jsonb_build_object('travel_ticket_id',new.id,'flight_no',new.flight_no,'train_no',new.train_no,'seat',new.seat,'raw',coalesce(new.raw,'{}'::jsonb))||case when v_timing_changed then jsonb_build_object('ticketScheduleRevision',gen_random_uuid()::text) else '{}'::jsonb end,
     jsonb_build_array(jsonb_build_object('kind','travel_ticket','id',new.id,'source',new.source)),
     v_key,
     case when new.type='flight' then v_checkin_at else new.depart_at - interval '3 hours' end
@@ -321,6 +321,15 @@ do $test$ declare stale_payload jsonb; action_id uuid; begin
    raise exception 'stale deferred worker overwrote new claim';
  exception when serialization_failure then null;
  end;
+end $test$;
+do $test$ declare old_revision text; changed integer; begin
+ select metadata_json->>'ticketScheduleRevision' into old_revision from pg_temp.life_events where telegram_id='23';
+ update pg_temp.travel_tickets set depart_at=now()+interval '9 days' where telegram_id=23;
+ update pg_temp.life_events set metadata_json=metadata_json||'{"boardingPass":{"gmailMessageId":"stale-worker-pass"}}'::jsonb
+ where telegram_id='23' and metadata_json->>'ticketScheduleRevision' is not distinct from old_revision;
+ get diagnostics changed=row_count;
+ if changed<>0 then raise exception 'stale email worker overwrote corrected event';end if;
+ if exists(select 1 from pg_temp.life_events where telegram_id='23' and metadata_json->'boardingPass'->>'gmailMessageId'='stale-worker-pass') then raise exception 'stale boarding pass persisted';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;

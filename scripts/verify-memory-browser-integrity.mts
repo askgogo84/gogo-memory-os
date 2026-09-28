@@ -107,7 +107,12 @@ assert.equal(memoryIndex.recallableMemoryText('Divya passport S1234567','memorie
 console.log('Title-only observations, supported Indian airports, same-day arrivals and safe document recall passed')
 
 // A read step must not require a newly created reminder or invoke a mutation path.
-const {executeVerifiedMissionReminder,reminderStepIntent}=await import('../lib/agent/mission-tools')
+const {executeVerifiedMissionReminder,reminderStepIntent,explicitDates}=await import('../lib/agent/mission-tools')
+assert.deepEqual(explicitDates('January 5',2026,'2026-09-29'),['2027-01-05'])
+assert.deepEqual(explicitDates('5 January 2026',2026,'2026-09-29'),['2026-01-05'])
+assert.deepEqual(explicitDates('February 29',2026,'2026-09-29'),['2028-02-29'])
+assert.deepEqual(explicitDates('September 29',2026,'2026-09-29'),['2026-09-29'])
+assert.deepEqual(explicitDates('January 5',2027,'2027-01-01'),['2027-01-05'])
 const {supabaseAdmin}=await import('../lib/supabase-admin')
 const originalFrom=supabaseAdmin.from
 let reminderQueries=0,reminderReadFails=false
@@ -465,6 +470,11 @@ assert.equal(richUpdate.raw.arrival,currentTicket.raw.arrival)
 assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,richAlertCount,'restored identifiers rebuild matching reminder text instead of duplicating alerts')
 assert.ok(!ticketWrites.filter(write=>write.table==='reminders').slice(richAlertCount).some(write=>/undefined|null/.test(write.row.message)))
 console.log('Sparse re-forwards retain passenger/arrival metadata and reuse identifier-bearing reminders')
+await ticketModule.persistAndRemindTicket({type:'flight',flights:[{...knownNoIds.flights[0],arrival:currentTicket.raw.arrival}]},ticketCtx)
+assert.equal(updatedTickets.at(-1).arrive_at,currentTicket.arrive_at,'arrival clock with omitted date uses the saved arrival date')
+await ticketModule.persistAndRemindTicket({type:'flight',flights:[{...knownNoIds.flights[0],arrivalDate:'31 Feb 2040'}]},ticketCtx)
+assert.equal(updatedTickets.at(-1).arrive_at,null,'explicit invalid arrival date must not restore an older verified instant')
+
 
 const correctedClock={type:'flight',flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'11:00',airline:'United',flightNo:'UA123',pnr:'TEST99'}]}
 legacyTickets=[{...currentTicket,id:'clock-correction'}]
