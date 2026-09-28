@@ -242,7 +242,8 @@ async function createReminderIfAbsent(ctx: TicketContext, message: string, remin
   // A failed existence check must not silently drop the reminder — log and fall
   // through to insert (the DB unique-index backstop still guards against a dupe).
   if (selError) console.error('TRAVEL_REMINDER_DEDUPE_CHECK_FAILED:', selError.message)
-  const matched=(existing||[]).find((row:any)=>ticketAlertIdentity(String(row.message||''))===ticketAlertIdentity(message))
+  const matches=(existing||[]).filter((row:any)=>ticketAlertIdentity(String(row.message||''))===ticketAlertIdentity(message))
+  const matched=matches.find((row:any)=>!row.sent)||matches[0]
   if(matched){
     if(matched.sent)return 'already_sent'
     if(matched.message!==message||matched.timezone!==ctx.timezone||matched.remind_at!==iso){
