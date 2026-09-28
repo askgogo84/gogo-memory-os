@@ -363,7 +363,9 @@ export async function persistAndRemindTicket(
     reminderTail = `\n\n${parts.join(' · ')}`
   } else if (remindersFailed === 0 && openNowNotes.length === 0) {
     // Nothing scheduled and nothing failed/open-now → be honest rather than silent.
-    reminderTail = `\n\n⏰ No alerts set — the departure time has already passed.`
+    reminderTail = legs.some(leg=>!leg.departAt)
+      ? `\n\n⏰ I could not verify the departure date, time or airport timezone. No alerts were set for that leg; please confirm those details.`
+      : `\n\n⏰ No alerts set — the departure time has already passed.`
   }
   let reply = buildTicketReply(info, reminderTail)
 

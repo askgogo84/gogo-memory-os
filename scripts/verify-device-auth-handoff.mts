@@ -456,3 +456,15 @@ modelFailure=false
 modelText=JSON.stringify({complete:true,answer:'Three saved posts',evidence:['Unobserved private post content']})
 await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_objective_unverified/)
 console.log('Production browser rejects empty shells, model errors, and unsupported evidence')
+
+evidencePage={url:'https://provider.example',title:'Acme',text:'',forms:[]}
+modelText=JSON.stringify({complete:true,answer:'Acme',evidence:['Acme']})
+const titleResult=await evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective:'Read only. Inspect this exact page and report its current document title. Do not click, fill, submit, log in, or navigate away.'})
+assert.equal(titleResult.status,'completed')
+assert.equal(titleResult.title,'Acme')
+evidencePage={url:'https://provider.example',title:'Flights',text:'Flight EY1 departs at 02:35 and arrives at 08:35 on 28 September 2026.',forms:[]}
+modelText=JSON.stringify({complete:true,answer:evidencePage.text,evidence:[evidencePage.text]})
+const flightResult=await evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective:'Read this flight schedule'})
+assert.equal(flightResult.status,'completed')
+assert.equal(flightResult.pageText,evidencePage.text,'structured consumers retain the observed body')
+console.log('Title watchers and structured travel consumers retain verified observations')

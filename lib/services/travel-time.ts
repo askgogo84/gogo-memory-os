@@ -1,9 +1,13 @@
 import { timezoneFromCity, isValidTimezone, zonedLocalTimeToUtc, getLocalParts } from '@/lib/timezone'
 
+// India routes already supported by travel-research, plus Cochin.
+const indiaAirports=new Set(['BLR','BOM','DEL','HYD','MAA','CCU','PNQ','GOI','GOX','COK'])
+const indiaCities=new Set(['kochi','cochin','goa'])
 const airports:Record<string,string>={BLR:'Bengaluru',AUH:'Abu Dhabi',JFK:'New York',DEL:'Delhi',BOM:'Mumbai',DXB:'Dubai',LHR:'London',SIN:'Singapore'}
 export function ticketTimezone(city?:string, explicit?:string):string|null {
   if(explicit&&isValidTimezone(explicit))return explicit
   const name=String(city||'').trim()
+  if(indiaAirports.has(name.toUpperCase())||indiaCities.has(name.toLowerCase()))return 'Asia/Kolkata'
   return timezoneFromCity(airports[name.toUpperCase()]||name)
 }
 
@@ -26,7 +30,8 @@ export function flightInstants(f:{from:string;to:string;date:string;departure:st
   const arrivalTz=ticketTimezone(f.to,f.arrivalTimezone)||''
   const departAt=ticketInstant(f.date,f.departure,departTz)
   // An overnight/date-line itinerary cannot be dated from the clock alone.
-  const candidate=ticketInstant(f.arrivalDate,f.arrival,arrivalTz)
+  const arrivalDate=f.arrivalDate||(departTz&&departTz===arrivalTz?f.date:undefined)
+  const candidate=ticketInstant(arrivalDate,f.arrival,arrivalTz)
   const arriveAt=departAt&&candidate&&candidate>departAt?candidate:null
   return {departAt,arriveAt,departTz,arrivalTz}
 }

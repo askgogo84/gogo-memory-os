@@ -85,3 +85,15 @@ const disabled=await exports.buildContextPack({actor,text:'When does Divya arriv
 assert.equal(disabled.memoryEnabled,false)
 assert.ok(!queries.some(query=>['memories','memory_embeddings'].includes(query.table)))
 console.log('Embedding-outage fallback, owner isolation, secret filtering and memory consent passed')
+
+for(const from of ['MAA','HYD','CCU','COK','GOI','GOX','Chennai','Kochi']){
+ const leg=flightInstants({from,to:'BLR',date:'28 Sep 2026',departure:'10:00',arrival:'11:15'})
+ assert.equal(leg.departAt?.toISOString(),'2026-09-28T04:30:00.000Z',from)
+ assert.equal(leg.arriveAt?.toISOString(),'2026-09-28T05:45:00.000Z',from)
+}
+assert.equal(flightInstants({from:'MAA',to:'BLR',date:'28 Sep 2026',departure:'23:15',arrival:'00:15'}).arriveAt,null)
+assert.equal(verifiedBrowserAnswer({complete:true,answer:'Acme',evidence:['Acme']},'', 'Acme',true),'Acme')
+assert.equal(verifiedBrowserAnswer({complete:true,answer:'Three posts',evidence:['Instagram']},'', 'Instagram'),null)
+assert.equal(memoryIndex.recallableMemoryText('Divya passport S1234567 expires 12/09/2030','documents'),'Divya passport [redacted] expires [redacted]')
+assert.equal(memoryIndex.recallableMemoryText('Divya passport S1234567','memories'),null)
+console.log('Title-only observations, supported Indian airports, same-day arrivals and safe document recall passed')

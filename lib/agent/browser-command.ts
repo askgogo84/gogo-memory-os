@@ -362,7 +362,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:compact,error:null,completed_at:at}).eq('id',params.stepId)
     await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(`${result.summary} ${result.title}`,1600),progress:100,completed_at:at,error:null,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
     await activity(tg,params.runId,'run_completed',result.summary,{host:new URL(result.url).hostname,action_count:result.actions.length})
-    return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
+    return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${params.mode==='read'?'':safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
   }catch(err:any){
     if(pendingHandoffReservation)await (await import('./provider-browser-handoff')).cancelBrowserHandoffReservation(params.actor.userId,pendingHandoffReservation).catch(()=>{})
     if(runMetadata.browser_safe_to_retry===false){

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { embedText } from '@/lib/services/embeddings'
-import { isIndexable } from '@/lib/services/memory-index'
+import { isIndexable, recallableMemoryText } from '@/lib/services/memory-index'
 import { ticketTimezone } from '@/lib/services/travel-time'
 import { redactSecretShapedText, isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
@@ -410,8 +410,8 @@ async function loadLearnedFacts(actor:AgentActor,query:string,includeSemantic:bo
     for(const result of results){
       if(result.error){retrievalIncomplete=true;continue}
       for(const row of result.data||[]){
-        const content=String(row.content||'')
-        if(!isIndexable(content)||isSecretShapedMemory(content))continue
+        const content=recallableMemoryText(String(row.content||''),'source_table' in row?String(row.source_table):'memories')
+        if(!content)continue
         const relevance=lexicalScore(query,content)
         if(relevance===0)continue
         const id='source_id' in row?String(row.source_id):String(row.id)

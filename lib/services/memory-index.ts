@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import { embedText } from '@/lib/services/embeddings'
 
 // Content that should never be embedded/searched (system rows, JSON state, etc.)
@@ -38,6 +39,16 @@ function sanitizeSensitiveDocumentIndex(content: string, sourceTable?: string): 
     .replace(/\[redacted\](?:\s*·\s*\[redacted\])+/g, '[redacted]')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+// Sensitive documents remain discoverable by label/person, never by raw identifiers.
+export function recallableMemoryText(content:string,sourceTable?:string):string|null {
+  if(!isIndexable(content))return null
+  if(sourceTable==='documents'&&/\b(passport|identity\s*document|aadhaar|aadhar|pan\s*card|driving\s*licen[cs]e|payment\s*proof|bank\s*statement|account\s*statement)\b/i.test(content)){
+    if(/\b(password|passwd|passcode|otp|pin|cvv|cvc|api[ _-]?key|secret)\b/i.test(content))return null
+    return sanitizeSensitiveDocumentIndex(content,sourceTable)
+  }
+  return isSecretShapedMemory(content)?null:content
 }
 
 /**
