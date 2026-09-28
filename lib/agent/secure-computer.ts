@@ -319,9 +319,11 @@ const receiptCount=(text)=>{
 const after=receiptSnapshot();
 try{
  const old=JSON.parse(before).receiptRecords,current=JSON.parse(after).receiptRecords;
- if(Array.isArray(old)&&Array.isArray(current)&&old.every(item=>item&&typeof item.id==='string')){
-  const ids=new Set(old.map(item=>item.id));
-  if(current.some(item=>item&&typeof item.id==='string'&&!ids.has(item.id)))return true;
+ if(Array.isArray(old)&&Array.isArray(current)){
+  const ids=new Set(old.filter(item=>item?.id).map(item=>item.id));
+  const added=current.filter(item=>item?.id&&!ids.has(item.id));
+  const anonymousLoss=Math.max(0,old.filter(item=>!item?.id).length-current.filter(item=>!item?.id).length);
+  if(added.length>anonymousLoss)return true;
  }
 }catch{}
 return receiptCount(after)>receiptCount(before);
@@ -497,7 +499,9 @@ const records=(text:string)=>{
 };
 const previous=records(before),current=records(after);
 const oldIds=new Set(previous.map(item=>item.id));
-  const match=(previous.every(item=>item.id)?current.find(item=>item.id&&!oldIds.has(item.id)):null)||current[previous.length]
+const added=current.filter(item=>item.id&&!oldIds.has(item.id));
+const anonymousLoss=Math.max(0,previous.filter(item=>!item.id).length-current.filter(item=>!item.id).length);
+  const match=(added.length>anonymousLoss?added[anonymousLoss]:null)||current[previous.length]
   return match?safeText(match.line,1800):null
 }
 

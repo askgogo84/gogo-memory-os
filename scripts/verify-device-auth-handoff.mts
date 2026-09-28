@@ -796,3 +796,14 @@ const parentReceipts=['old-2','new-3'].map(id=>({innerText:'Order placed',getCli
 const nestedReceipts=parentReceipts.map((parent,i)=>({parent:i?'new-3':'old-2',innerText:'Order placed',getClientRects:()=>[{}],getAttribute:()=>null,contains:()=>false,closest:()=>parent}))
 assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:priorIds,pattern:'(?:order|purchase)'},document:{body:{innerText:'Order placed\nOrder placed'},querySelectorAll:(selector:string)=>selector.startsWith('[data-')?[...parentReceipts,...nestedReceipts]:[]}}),true)
 console.log('Nested receipt content preserves its enclosing provider identity')
+
+const mixedBefore=JSON.stringify({receiptRecords:[{id:'data-order-id:old-1',phrase:'Order placed'},{id:null,phrase:'Order placed'}]})
+const mixedAfter=JSON.stringify({receiptRecords:[{id:'data-order-id:new-3',phrase:'Order placed'},{id:null,phrase:'Order placed'}]})
+const mixedNodes=[{innerText:'Order placed',getClientRects:()=>[{}],contains:()=>false,getAttribute:()=> 'new-3'},{innerText:'Order placed',getClientRects:()=>[{}],contains:()=>false,getAttribute:()=>null}]
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:mixedBefore,pattern:'(?:order|purchase)'},document:{body:{innerText:'Order placed'},querySelectorAll:()=>mixedNodes}}),true)
+queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Order placed',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:mixedBefore,executionAfterText:mixedAfter}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,'Order placed')
+const hydrated=JSON.stringify({receiptRecords:[{id:'data-order-id:old-1',phrase:'Order placed'},{id:'data-order-id:new-3',phrase:'Order placed'}]})
+queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Order placed',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:mixedBefore,executionAfterText:hydrated}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'}),/browser_objective_unverified/)
+console.log('Anonymous status does not hide new IDs; enriching an anonymous old receipt alone is not new evidence')

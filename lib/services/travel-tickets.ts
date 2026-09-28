@@ -200,14 +200,15 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     // Printed labels can vary between parsers while the canonical flight stays
     // the same. Reuse its database dedupe identity after null-time reconciliation.
     if(!existing?.length&&leg.type==='flight'&&iso){
-      let canonical=supabaseAdmin.from('travel_tickets').select('id,depart_at')
-        .eq('telegram_id',ctx.telegramId).eq('type',leg.type).eq('depart_at',iso)
-      canonical=leg.pnr?canonical.eq('pnr',leg.pnr):canonical.or('pnr.is.null,pnr.eq.')
-      canonical=leg.flightNo?canonical.eq('flight_no',leg.flightNo):canonical.or('flight_no.is.null,flight_no.eq.')
-      if(!(leg.pnr&&leg.flightNo))canonical=canonical.eq('from_city',leg.fromCity).eq('to_city',leg.toCity).eq('leg_index',leg.legIndex)
-      const result=await canonical.limit(2)
+      const result=await supabaseAdmin.from('travel_tickets').select('id,depart_at,pnr,flight_no,leg_index,from_city,to_city')
+        .eq('telegram_id',ctx.telegramId).eq('type',leg.type).eq('depart_at',iso).limit(101)
       if(result.error)throw new Error(result.error.message)
-      existing=result.data
+      if((result.data?.length||0)>100)throw new Error('travel_ticket_identity_ambiguous')
+      existing=(result.data||[]).filter(row=>{
+        const compatible=(stored:string|null,incoming:string|undefined|null)=>incoming?(!stored||stored===incoming):!stored
+        if(!compatible(row.pnr,leg.pnr)||!compatible(row.flight_no,leg.flightNo))return false
+        return row.pnr&&row.flight_no||row.from_city===leg.fromCity&&row.to_city===leg.toCity&&row.leg_index===leg.legIndex
+      })
     }
     if(existing&&existing.length>1)throw new Error('travel_ticket_identity_ambiguous')
     const row={

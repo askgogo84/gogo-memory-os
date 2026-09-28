@@ -427,3 +427,11 @@ const weakUpdates=updatedTickets.length
 await ticketModule.persistAndRemindTicket({type:'flight',flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00'}]},ticketCtx)
 assert.equal(updatedTickets.length,weakUpdates,'weak canonical identity cannot overwrite another route at the same instant')
 console.log('Missing ticket identifiers are enriched; unrelated weak identities remain isolated')
+
+legacyTickets=[];legacyReminders=[]
+const knownNoIds={type:'flight',flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00'}]}
+await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
+await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds.flights[0],pnr:'ENRICHED',flightNo:'XX999'}]},ticketCtx)
+assert.equal(legacyTickets.length,1,'known-time canonical row is enriched instead of duplicated')
+assert.equal(updatedTickets.at(-1).pnr,'ENRICHED')
+console.log('Known-time ticket enrichment preserves the original record')
