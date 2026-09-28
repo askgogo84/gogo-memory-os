@@ -16,6 +16,76 @@ where depart_at is null and type = 'flight'
 
 create temporary table life_events (like public.life_events including defaults including constraints including indexes);
 create temporary table life_event_actions (like public.life_event_actions including defaults including constraints including indexes);
+create temporary table agent_runs (like public.agent_runs including defaults including constraints including indexes);
+create temporary table agent_activity (like public.agent_activity including defaults including constraints including indexes);
+
+-- Durable, revision-bound publication: all visible database effects commit together.
+create temporary table boarding_pass_outbox (
+  id uuid primary key default gen_random_uuid(),
+  telegram_id text not null,
+  life_event_id uuid not null references pg_temp.life_events(id) on delete cascade,
+  action_id uuid not null references pg_temp.life_event_actions(id) on delete cascade,
+  run_id uuid not null references pg_temp.agent_runs(id) on delete cascade,
+  schedule_revision text,
+  status text not null default 'pending' check(status in ('pending','claimed','sent','failed','cancelled')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique nulls not distinct (action_id,schedule_revision)
+);
+
+create or replace function pg_temp.gogo_publish_boarding_pass(p_action_id uuid,p_event_id uuid,p_telegram_id text,p_revision text,p_boarding_pass jsonb)
+returns uuid language plpgsql security invoker set search_path=pg_temp,public as $$
+declare e life_events%rowtype; a life_event_actions%rowtype; v_run uuid; v_meta jsonb;
+begin
+  -- Use the same event-before-action lock order as ticket propagation.
+  select * into e from life_events where id=p_event_id and telegram_id=p_telegram_id for update;
+  if not found then raise exception 'life_event_schedule_changed' using errcode='40001';end if;
+  select * into a from life_event_actions where id=p_action_id and life_event_id=p_event_id and telegram_id=p_telegram_id for update;
+  if not found or a.action_type<>'email_watch' or a.action_key<>'watch-boarding-pass-email'
+    or a.payload_json->>'scheduleRevision' is distinct from p_revision
+    or e.metadata_json->>'ticketScheduleRevision' is distinct from p_revision
+    or e.lifecycle_state in ('completed','cancelled','expired') then
+    raise exception 'life_event_schedule_changed' using errcode='40001';
+  end if;
+  select run_id into v_run from boarding_pass_outbox where action_id=a.id and schedule_revision is not distinct from p_revision;
+  if v_run is not null then return v_run;end if;
+  if a.status<>'running' or coalesce(p_boarding_pass->>'gmailMessageId','')='' then
+    raise exception 'life_event_schedule_changed' using errcode='40001';
+  end if;
+  update life_events set lifecycle_state='watching',metadata_json=metadata_json||jsonb_build_object('boardingPass',p_boarding_pass),
+    source_refs=source_refs||jsonb_build_array(jsonb_build_object('source','gmail','gmailMessageId',p_boarding_pass->>'gmailMessageId','kind','boarding_pass_or_checkin_confirmation')),updated_at=now()
+    where id=e.id;
+  update life_event_actions set status='completed',payload_json=payload_json||jsonb_build_object('boardingPassDetected',true,'gmailMessageId',p_boarding_pass->>'gmailMessageId','completedAt',now()),updated_at=now() where id=a.id;
+  v_meta=jsonb_build_object('plan_type','life_event_boarding_pass','life_event_id',e.id,'life_event_action_id',a.id,'action_key',a.action_key,'scheduleRevision',p_revision,'gmail_message_id',p_boarding_pass->>'gmailMessageId','recordedAt',now(),'scheduledDeparture',e.start_at);
+  insert into agent_runs(telegram_id,type,capability,status,title,summary,progress,why,source,metadata_json,started_at,completed_at,updated_at)
+    values(p_telegram_id,'life_event','email','completed','Gogo · '||left(e.title,140),'Boarding-pass/check-in evidence recorded from Gmail for the saved flight schedule.',100,'Background Gogo matched a connected Gmail message to a saved flight Life Event.','background_life_event',v_meta,now(),now(),now()) returning id into v_run;
+  insert into agent_activity(telegram_id,run_id,event_type,message,metadata_json)
+    values(p_telegram_id,v_run,'life_event_boarding_pass_found','Gogo recorded Gmail boarding-pass/check-in evidence for this flight schedule.',v_meta);
+  insert into boarding_pass_outbox(telegram_id,life_event_id,action_id,run_id,schedule_revision)
+    values(p_telegram_id,e.id,a.id,v_run,p_revision);
+  return v_run;
+end $$;
+
+create or replace function pg_temp.gogo_claim_boarding_pass_notice(p_id uuid)
+returns jsonb language plpgsql security invoker set search_path=pg_temp,public as $$
+declare o boarding_pass_outbox%rowtype; e life_events%rowtype; a life_event_actions%rowtype;
+begin
+  select * into o from boarding_pass_outbox where id=p_id;
+  if not found then return null;end if;
+  select * into e from life_events where id=o.life_event_id for update;
+  select * into a from life_event_actions where id=o.action_id for update;
+  select * into o from boarding_pass_outbox where id=p_id for update;
+  if o.status<>'pending' then return null;end if;
+  if e.id is null or a.id is null or a.status<>'completed'
+    or a.payload_json->>'scheduleRevision' is distinct from o.schedule_revision
+    or e.metadata_json->>'ticketScheduleRevision' is distinct from o.schedule_revision
+    or e.lifecycle_state in ('completed','cancelled','expired') then
+    update boarding_pass_outbox set status='cancelled',updated_at=now() where id=o.id;
+    return null;
+  end if;
+  update boarding_pass_outbox set status='claimed',updated_at=now() where id=o.id;
+  return jsonb_build_object('id',o.id,'telegramId',o.telegram_id,'runId',o.run_id,'lifeEventId',o.life_event_id,'scheduleRevision',o.schedule_revision);
+end $$;
 create or replace function pg_temp.gogo_promote_travel_ticket_test()
 returns trigger
 language plpgsql
@@ -107,6 +177,7 @@ begin
   returning id into v_event_id;
 
   if v_timing_changed then
+    update boarding_pass_outbox set status='cancelled',updated_at=now() where life_event_id=v_event_id and status='pending';
     update life_event_actions set
       payload_json=payload_json||jsonb_build_object('scheduleRevision',(select metadata_json->>'ticketScheduleRevision' from life_events where id=v_event_id))
         ||case when status='running' and action_type not in ('notify','monitor','email_watch','browser_prepare') then '{"scheduleCorrectionUncertain":true,"reconciliationRequired":true}'::jsonb else '{}'::jsonb end,
@@ -337,6 +408,34 @@ do $test$ declare old_revision text; changed integer; begin
  if exists(select 1 from pg_temp.life_event_actions a join pg_temp.life_events e on e.id=a.life_event_id where e.telegram_id='23' and a.due_at is not null and a.payload_json->>'scheduleRevision' is distinct from e.metadata_json->>'ticketScheduleRevision') then raise exception 'action and event schedule revisions disagree';end if;
 
  if exists(select 1 from pg_temp.life_events where telegram_id='23' and metadata_json->'boardingPass'->>'gmailMessageId'='stale-worker-pass') then raise exception 'stale boarding pass persisted';end if;
+end $test$;
+do $test$ declare aid uuid; eid uuid; rev text; rid uuid; oid uuid; before_runs integer; begin
+ select id,life_event_id,payload_json->>'scheduleRevision' into aid,eid,rev from pg_temp.life_event_actions where telegram_id='23' and action_type='email_watch';
+ update pg_temp.life_event_actions set status='running' where id=aid;
+ select count(*) into before_runs from pg_temp.agent_runs;
+ begin
+  perform pg_temp.gogo_publish_boarding_pass(aid,eid,'23','stale','{"gmailMessageId":"invalid-pass"}'::jsonb);
+  raise exception 'stale publication accepted';
+ exception when serialization_failure then null;end;
+ if (select count(*) from pg_temp.agent_runs)<>before_runs then raise exception 'stale run leaked';end if;
+ rid=pg_temp.gogo_publish_boarding_pass(aid,eid,'23',rev,'{"gmailMessageId":"valid-pass"}'::jsonb);
+ if not exists(select 1 from pg_temp.agent_activity where run_id=rid) or not exists(select 1 from pg_temp.boarding_pass_outbox where run_id=rid and status='pending') then raise exception 'atomic publication incomplete';end if;
+ if pg_temp.gogo_publish_boarding_pass(aid,eid,'23',rev,'{"gmailMessageId":"valid-pass"}'::jsonb)<>rid then raise exception 'publication retry duplicated run';end if;
+ if (select count(*) from pg_temp.agent_runs)<>before_runs+1 then raise exception 'publication duplicated';end if;
+ select id into oid from pg_temp.boarding_pass_outbox where run_id=rid;
+ update pg_temp.travel_tickets set depart_at=now()+interval '10 days' where telegram_id=23;
+ if pg_temp.gogo_claim_boarding_pass_notice(oid) is not null then raise exception 'corrected notice was delivered';end if;
+ if not exists(select 1 from pg_temp.boarding_pass_outbox where id=oid and status='cancelled') then raise exception 'corrected notice not cancelled';end if;
+ begin
+  perform pg_temp.gogo_publish_boarding_pass(aid,eid,'23',rev,'{"gmailMessageId":"late-old-pass"}'::jsonb);
+  raise exception 'publication after correction accepted';
+ exception when serialization_failure then null;end;
+ select payload_json->>'scheduleRevision' into rev from pg_temp.life_event_actions where id=aid;
+ update pg_temp.life_event_actions set status='running' where id=aid;
+ rid=pg_temp.gogo_publish_boarding_pass(aid,eid,'23',rev,'{"gmailMessageId":"corrected-pass"}'::jsonb);
+ select id into oid from pg_temp.boarding_pass_outbox where run_id=rid;
+ if pg_temp.gogo_claim_boarding_pass_notice(oid) is null then raise exception 'current notice could not be claimed';end if;
+ if pg_temp.gogo_claim_boarding_pass_notice(oid) is not null then raise exception 'claimed notice replayed';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;

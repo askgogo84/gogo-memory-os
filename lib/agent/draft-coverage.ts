@@ -1,8 +1,8 @@
-// Only explicit literal field assignments can be verified locally. Open-ended
-// prose, inferred values, and partial parses must never establish completion.
-export function draftObjectiveCovered(objective:string,page:any,actions:any[]):boolean{
+// Literal field requests require complete local coverage. Other draft workflows
+// retain their domain-specific checks; a partial literal parse is never accepted.
+export function draftObjectiveCovered(objective:string,page:any,actions:any[]):boolean|null{
   const match=objective.trim().match(/^(?:prepare|fill) (?:the )?(?:application|form|draft) with ([\s\S]+?)(?:\. (?:Do not submit|Stop before submit)\.?)?$/i)
-  if(!match)return false
+  if(!match)return /\b(?:name|email|field|address|phone)\s*:\s*"/i.test(objective)?false:null
   let rest=match[1].trim()
   const requirements:Array<{label:string;value:string}>=[]
   while(rest){

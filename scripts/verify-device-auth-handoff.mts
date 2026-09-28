@@ -842,3 +842,7 @@ assert.equal(draftObjectiveCovered('Prepare form with terms: "checked"',checkbox
 assert.equal(draftObjectiveCovered('Prepare form with terms: "true"',checkboxPage,[{kind:'check',selector:'#terms'}]),true)
 assert.equal(draftObjectiveCovered('Prepare form with terms: "false"',checkboxPage,[{kind:'check',selector:'#terms'}]),false)
 assert.equal(draftObjectiveCovered('Prepare form with terms: "checked"',{forms:[{inputs:[{selector:'#terms',name:'terms',type:'text'}]}]},[{kind:'check',selector:'#terms'}]),false)
+
+assert.equal(draftObjectiveCovered('Prepare web check-in for EY1. Booking reference/PNR: ABC123.',{},[]),null)
+assert.equal(draftObjectiveCovered('Read the current status for this booking.',{},[]),null)
+assert.equal(draftObjectiveCovered('Select product variant/size "M" and add exactly one item to the cart/bag.',{},[]),null)

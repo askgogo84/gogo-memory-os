@@ -131,29 +131,29 @@ export async function completeAction(action: any, extra: Record<string, unknown>
   if (!data?.id || (data.payload_json?.scheduleRevision??null)!==(revision??null)) throw new Error('life_event_schedule_changed')
 }
 
-export async function assertCompletedScheduleCurrent(action:any,event:any){
-  const {data,error}=await supabaseAdmin.from('life_event_actions')
-    .select('id,status,payload_json,life_events!inner(id,metadata_json)')
-    .eq('id',action.id).eq('life_event_id',event.id).eq('telegram_id',String(action.telegram_id)).maybeSingle()
-  if(error)throw new Error(`life_event_email_publication_check_failed:${error.message}`)
-  const currentEvent=Array.isArray(data?.life_events)?data.life_events[0]:data?.life_events
-  const revision=action.payload_json?.scheduleRevision??null
-  if(!data||data.status!=='completed'||!currentEvent
-    ||(data.payload_json?.scheduleRevision??null)!==revision
-    ||(currentEvent.metadata_json?.ticketScheduleRevision??null)!==revision){
-    throw new Error('life_event_schedule_changed')
+export async function publishBoardingPass(action:any,event:any,telegramId:string,boardingPass:any){
+  const {data,error}=await supabaseAdmin.rpc('gogo_publish_boarding_pass',{
+    p_action_id:action.id,p_event_id:event.id,p_telegram_id:telegramId,
+    p_revision:action.payload_json?.scheduleRevision??null,p_boarding_pass:boardingPass,
+  })
+  if(error||typeof data!=='string')throw new Error(`life_event_email_publish_failed:${error?.message||'missing_run'}`)
+  return data
+}
+
+export async function deliverBoardingPassNotices(){
+  const {data,error}=await supabaseAdmin.from('boarding_pass_outbox').select('id').eq('status','pending').order('created_at').limit(20)
+  if(error)throw new Error(`life_event_email_outbox_read_failed:${error.message}`)
+  for(const row of data||[]){
+    const {data:notice,error:claimError}=await supabaseAdmin.rpc('gogo_claim_boarding_pass_notice',{p_id:row.id})
+    if(claimError)throw new Error(`life_event_email_outbox_claim_failed:${claimError.message}`)
+    if(!notice)continue
+    // The notification is deliberately a historical update, not a claim that
+    // an old pass remains valid after a later schedule change. Never replay a
+    // claimed send automatically: delivery may have happened before a crash.
+    const result=await sendAgentPush(String(notice.telegramId),{title:'Saved flight update',body:'Gogo recorded a flight update. Open AskGogo for the current schedule and boarding-pass details.',path:'/dashboard/today',data:{runId:notice.runId,lifeEventId:notice.lifeEventId,scheduleRevision:notice.scheduleRevision}})
+    const {error:updateError}=await supabaseAdmin.from('boarding_pass_outbox').update({status:result.failed?'failed':'sent',updated_at:new Date().toISOString()}).eq('id',row.id).eq('status','claimed')
+    if(updateError)throw new Error(`life_event_email_outbox_finish_failed:${updateError.message}`)
   }
-}
-
-async function createRun(telegramId: string, event: any, action: any, summary: string, metadata: Record<string, unknown>) {
-  const at = new Date().toISOString()
-  const { data, error } = await supabaseAdmin.from('agent_runs').insert({ telegram_id: telegramId, type: 'life_event', capability: 'email', status: 'completed', title: `Gogo · ${safe(event.title, 140)}`, summary: safe(summary, 1200), progress: 100, why: 'Background Gogo matched a connected Gmail message to a saved flight Life Event.', source: 'background_life_event', metadata_json: { plan_type: 'life_event_boarding_pass', life_event_id: String(event.id), life_event_action_id: String(action.id), action_key: String(action.action_key), ...metadata }, started_at: at, completed_at: at, updated_at: at }).select('id').single()
-  if (error || !data?.id) throw new Error(`life_event_email_run_create_failed:${error?.message || 'unknown'}`)
-  return String(data.id)
-}
-
-async function activity(telegramId: string, runId: string | null, eventType: string, message: string, metadata: Record<string, unknown>) {
-  await supabaseAdmin.from('agent_activity').insert({ telegram_id: telegramId, run_id: runId, event_type: eventType, message: safe(message, 900), metadata_json: metadata })
 }
 
 export function eligibleBoardingPassMessages(messages:any[],action:any){
@@ -194,23 +194,7 @@ async function processBoardingPassWatch(action: any, event: any, telegramId: str
   const existingMeta = event.metadata_json || {}, alreadyMatched = String(existingMeta?.boardingPass?.gmailMessageId || '') === boardingPass.gmailMessageId
   if (alreadyMatched) { await completeAction(action, { boardingPassDetected: true, duplicateSuppressed: true, gmailMessageId: boardingPass.gmailMessageId }); return { status: 'completed' as const, matched: true, duplicate: true } }
 
-  const sourceRefs = Array.isArray(event.source_refs) ? event.source_refs : [], nextRefs = sourceRefs.some((x: any) => String(x?.gmailMessageId || '') === boardingPass.gmailMessageId) ? sourceRefs : [...sourceRefs, { source: 'gmail', gmailMessageId: boardingPass.gmailMessageId, kind: 'boarding_pass_or_checkin_confirmation' }]
-  const eventUpdate = supabaseAdmin.from('life_events').update({ lifecycle_state: 'watching', metadata_json: { ...existingMeta, boardingPass }, source_refs: nextRefs, updated_at: at }).eq('id', event.id).eq('telegram_id', telegramId)
-  const revision = existingMeta.ticketScheduleRevision
-  const fencedUpdate = typeof revision === 'string'
-    ? eventUpdate.eq('metadata_json->>ticketScheduleRevision', revision)
-    : eventUpdate.is('metadata_json->>ticketScheduleRevision', null)
-  const { data: updatedEvent, error: eventError } = await fencedUpdate.select('id').maybeSingle()
-  if (eventError) throw new Error(`life_event_email_event_update_failed:${eventError.message}`)
-  if (!updatedEvent) throw new Error('life_event_schedule_changed')
-  await completeAction(action, { boardingPassDetected: true, gmailMessageId: boardingPass.gmailMessageId, attachmentFilename: boardingPass.attachment?.filename || null })
-
-  await assertCompletedScheduleCurrent(action,event)
-  const runId = await createRun(telegramId, event, action, boardingPass.attachment?.filename ? `Boarding pass/check-in confirmation found in Gmail: ${boardingPass.attachment.filename}.` : 'Boarding pass/check-in confirmation found in Gmail.', { scheduleRevision: action.payload_json?.scheduleRevision??null, gmail_message_id: boardingPass.gmailMessageId, attachment_present: Boolean(boardingPass.attachment) })
-  await assertCompletedScheduleCurrent(action,event)
-  await activity(telegramId, runId, 'life_event_boarding_pass_found', 'Gogo matched a Gmail boarding-pass/check-in message to this flight.', { scheduleRevision: action.payload_json?.scheduleRevision??null, life_event_id: String(event.id), gmail_message_id: boardingPass.gmailMessageId, attachment_filename: boardingPass.attachment?.filename || null })
-  await assertCompletedScheduleCurrent(action,event)
-  await sendAgentPush(telegramId, { title: 'Your boarding pass is ready', body: boardingPass.attachment?.filename ? `${safe(event.title, 150)} · ${boardingPass.attachment.filename}` : `${safe(event.title, 180)} · check-in confirmation found in Gmail`, path: '/dashboard/today', data: { scheduleRevision: action.payload_json?.scheduleRevision??null, runId, lifeEventId: String(event.id), gmailMessageId: boardingPass.gmailMessageId } }).catch(() => {})
+  const runId=await publishBoardingPass(action,event,telegramId,boardingPass)
   return { status: 'completed' as const, matched: true, runId }
 }
 
@@ -242,5 +226,6 @@ export async function processDueLifeEventEmailWatches(limit = 10) {
       await deferAction(action, EMAIL_WATCH_ERROR_RETRY_MINUTES, { lastError: safe(error?.message || 'email_watch_failed', 400), lastCheckedAt: new Date().toISOString() }).catch(() => {})
     }
   }
+  await deliverBoardingPassNotices()
   return { checked, claimed, matched, completed, deferred, failed }
 }

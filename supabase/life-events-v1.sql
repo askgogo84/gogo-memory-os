@@ -145,6 +145,7 @@ begin
   returning id into v_event_id;
 
   if v_timing_changed then
+    update boarding_pass_outbox set status='cancelled',updated_at=now() where life_event_id=v_event_id and status='pending';
     update life_event_actions set
       payload_json=payload_json||jsonb_build_object('scheduleRevision',(select metadata_json->>'ticketScheduleRevision' from life_events where id=v_event_id))
         ||case when status='running' and action_type not in ('notify','monitor','email_watch','browser_prepare') then '{"scheduleCorrectionUncertain":true,"reconciliationRequired":true}'::jsonb else '{}'::jsonb end,
@@ -237,3 +238,84 @@ for each row execute function public.gogo_fence_life_event_schedule();
 
 alter table life_events enable row level security;
 alter table life_event_actions enable row level security;
+
+-- Durable, revision-bound publication: all visible database effects commit together.
+create table if not exists public.boarding_pass_outbox (
+  id uuid primary key default gen_random_uuid(),
+  telegram_id text not null,
+  life_event_id uuid not null references public.life_events(id) on delete cascade,
+  action_id uuid not null references public.life_event_actions(id) on delete cascade,
+  run_id uuid not null references public.agent_runs(id) on delete cascade,
+  schedule_revision text,
+  status text not null default 'pending' check(status in ('pending','claimed','sent','failed','cancelled')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique nulls not distinct (action_id,schedule_revision)
+);
+alter table public.boarding_pass_outbox enable row level security;
+drop policy if exists boarding_pass_outbox_service_only on public.boarding_pass_outbox;
+create policy boarding_pass_outbox_service_only on public.boarding_pass_outbox for all to service_role using(true) with check(true);
+create index if not exists boarding_pass_outbox_event_idx on public.boarding_pass_outbox(life_event_id);
+create index if not exists boarding_pass_outbox_run_idx on public.boarding_pass_outbox(run_id);
+
+revoke all on public.boarding_pass_outbox from public,anon,authenticated;
+grant all on public.boarding_pass_outbox to service_role;
+create index if not exists boarding_pass_outbox_pending_idx on public.boarding_pass_outbox(created_at) where status='pending';
+
+create or replace function public.gogo_publish_boarding_pass(p_action_id uuid,p_event_id uuid,p_telegram_id text,p_revision text,p_boarding_pass jsonb)
+returns uuid language plpgsql security definer set search_path=public as $$
+declare e life_events%rowtype; a life_event_actions%rowtype; v_run uuid; v_meta jsonb;
+begin
+  -- Use the same event-before-action lock order as ticket propagation.
+  select * into e from life_events where id=p_event_id and telegram_id=p_telegram_id for update;
+  if not found then raise exception 'life_event_schedule_changed' using errcode='40001';end if;
+  select * into a from life_event_actions where id=p_action_id and life_event_id=p_event_id and telegram_id=p_telegram_id for update;
+  if not found or a.action_type<>'email_watch' or a.action_key<>'watch-boarding-pass-email'
+    or a.payload_json->>'scheduleRevision' is distinct from p_revision
+    or e.metadata_json->>'ticketScheduleRevision' is distinct from p_revision
+    or e.lifecycle_state in ('completed','cancelled','expired') then
+    raise exception 'life_event_schedule_changed' using errcode='40001';
+  end if;
+  select run_id into v_run from boarding_pass_outbox where action_id=a.id and schedule_revision is not distinct from p_revision;
+  if v_run is not null then return v_run;end if;
+  if a.status<>'running' or coalesce(p_boarding_pass->>'gmailMessageId','')='' then
+    raise exception 'life_event_schedule_changed' using errcode='40001';
+  end if;
+  update life_events set lifecycle_state='watching',metadata_json=metadata_json||jsonb_build_object('boardingPass',p_boarding_pass),
+    source_refs=source_refs||jsonb_build_array(jsonb_build_object('source','gmail','gmailMessageId',p_boarding_pass->>'gmailMessageId','kind','boarding_pass_or_checkin_confirmation')),updated_at=now()
+    where id=e.id;
+  update life_event_actions set status='completed',payload_json=payload_json||jsonb_build_object('boardingPassDetected',true,'gmailMessageId',p_boarding_pass->>'gmailMessageId','completedAt',now()),updated_at=now() where id=a.id;
+  v_meta=jsonb_build_object('plan_type','life_event_boarding_pass','life_event_id',e.id,'life_event_action_id',a.id,'action_key',a.action_key,'scheduleRevision',p_revision,'gmail_message_id',p_boarding_pass->>'gmailMessageId','recordedAt',now(),'scheduledDeparture',e.start_at);
+  insert into agent_runs(telegram_id,type,capability,status,title,summary,progress,why,source,metadata_json,started_at,completed_at,updated_at)
+    values(p_telegram_id,'life_event','email','completed','Gogo · '||left(e.title,140),'Boarding-pass/check-in evidence recorded from Gmail for the saved flight schedule.',100,'Background Gogo matched a connected Gmail message to a saved flight Life Event.','background_life_event',v_meta,now(),now(),now()) returning id into v_run;
+  insert into agent_activity(telegram_id,run_id,event_type,message,metadata_json)
+    values(p_telegram_id,v_run,'life_event_boarding_pass_found','Gogo recorded Gmail boarding-pass/check-in evidence for this flight schedule.',v_meta);
+  insert into boarding_pass_outbox(telegram_id,life_event_id,action_id,run_id,schedule_revision)
+    values(p_telegram_id,e.id,a.id,v_run,p_revision);
+  return v_run;
+end $$;
+revoke all on function public.gogo_publish_boarding_pass(uuid,uuid,text,text,jsonb) from public,anon,authenticated;
+grant execute on function public.gogo_publish_boarding_pass(uuid,uuid,text,text,jsonb) to service_role;
+
+create or replace function public.gogo_claim_boarding_pass_notice(p_id uuid)
+returns jsonb language plpgsql security definer set search_path=public as $$
+declare o boarding_pass_outbox%rowtype; e life_events%rowtype; a life_event_actions%rowtype;
+begin
+  select * into o from boarding_pass_outbox where id=p_id;
+  if not found then return null;end if;
+  select * into e from life_events where id=o.life_event_id for update;
+  select * into a from life_event_actions where id=o.action_id for update;
+  select * into o from boarding_pass_outbox where id=p_id for update;
+  if o.status<>'pending' then return null;end if;
+  if e.id is null or a.id is null or a.status<>'completed'
+    or a.payload_json->>'scheduleRevision' is distinct from o.schedule_revision
+    or e.metadata_json->>'ticketScheduleRevision' is distinct from o.schedule_revision
+    or e.lifecycle_state in ('completed','cancelled','expired') then
+    update boarding_pass_outbox set status='cancelled',updated_at=now() where id=o.id;
+    return null;
+  end if;
+  update boarding_pass_outbox set status='claimed',updated_at=now() where id=o.id;
+  return jsonb_build_object('id',o.id,'telegramId',o.telegram_id,'runId',o.run_id,'lifeEventId',o.life_event_id,'scheduleRevision',o.schedule_revision);
+end $$;
+revoke all on function public.gogo_claim_boarding_pass_notice(uuid) from public,anon,authenticated;
+grant execute on function public.gogo_claim_boarding_pass_notice(uuid) to service_role;

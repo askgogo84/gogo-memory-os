@@ -691,7 +691,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     if(params.mode!=='read'&&(missingActionEvidence||actionLog.some(a=>a.status==='failed'||(params.mode==='execute'&&a.status!=='done'))))throw new Error('browser_objective_unverified')
     const executionEvidence=params.mode==='execute'&&typeof page.executionBeforeText==='string'&&typeof page.executionAfterText==='string'?localExecutionConfirmation(approvedOperation,page.executionBeforeText,page.executionAfterText,actionLog):null
     if(params.mode==='execute'&&!executionEvidence)throw new Error('browser_objective_unverified')
-    if(params.mode==='draft'&&(!draftReady||page.draftVerified!==true||!draftObjectiveCovered(params.objective,page,draftActions)))throw new Error('browser_objective_unverified')
+    if(params.mode==='draft'&&(!draftReady||page.draftVerified!==true||draftObjectiveCovered(params.objective,page,draftActions)===false))throw new Error('browser_objective_unverified')
     await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft'
     return {
