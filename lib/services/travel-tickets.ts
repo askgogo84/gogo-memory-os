@@ -211,7 +211,8 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
         const sameClock=printed&&ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed
         const correctionIdentity=leg.pnr&&row.pnr===leg.pnr||leg.flightNo&&row.flight_no===leg.flightNo
         if(printed&&!sameClock&&!correctionIdentity)return false
-        return !!printedDay&&ticketInstant(row.date_label,'00:00','UTC')?.toISOString()===printedDay
+        if(printedDay&&ticketInstant(row.date_label,'00:00','UTC')?.toISOString()===printedDay)return true
+        return !!(leg.pnr&&leg.flightNo&&row.pnr===leg.pnr&&row.flight_no===leg.flightNo&&row.from_city===leg.fromCity&&row.to_city===leg.toCity)
       })
     }
     // Printed labels can vary between parsers while the canonical flight stays

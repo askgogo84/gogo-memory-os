@@ -535,3 +535,13 @@ await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
 await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds.flights[0],departure:'11:00'}]},ticketCtx)
 assert.equal(legacyTickets.length,2,'distinct same-day clocks without a shared identifier remain separate flights')
 console.log('A clock change requires shared correction identity; anonymous same-day flights remain distinct')
+
+legacyTickets=[{...currentTicket,id:'postponed-ticket'}]
+legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`postponed-old-${i}`,sent:false}))
+const postponedInsertCount=ticketWrites.length
+const postponedUpdates=updatedLegacy.length
+await ticketModule.persistAndRemindTicket({...correctedClock,flights:[{...correctedClock.flights[0],date:'29 Sep 2040',departure:'10:00'}]},ticketCtx)
+assert.equal(ticketWrites.length,postponedInsertCount,'strong identity reschedule updates ticket and alerts instead of duplicating')
+assert.equal(updatedTickets.at(-1).depart_at,'2040-09-29T17:00:00.000Z')
+assert.equal(updatedLegacy.length-postponedUpdates,reminderWrites.length)
+console.log('Strong flight reschedules reconcile across printed departure dates')
