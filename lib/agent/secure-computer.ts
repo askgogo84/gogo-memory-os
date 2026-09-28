@@ -188,6 +188,7 @@ async function isConsequentialControl(page,selector){
   const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2']});
   const page=context.pages()[0]||await context.newPage();
   const log=[];
+  let executionBeforeText=null;
   try{
     await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
     await page.waitForTimeout(900);
@@ -202,16 +203,18 @@ async function isConsequentialControl(page,selector){
         else if(a.kind==='click'){
           consequential=await isConsequentialControl(page,a.selector);
           if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential});continue;}
+          if(consequential)executionBeforeText=(await model(page)).text;
           await page.locator(a.selector).first().click({timeout:10000});
         } else if(a.kind==='submit'){
           if(payload.mode!=='execute'){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
+          if(consequential)executionBeforeText=(await model(page)).text;
           await page.locator(a.selector).first().click({timeout:10000});
         }
         log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
         await page.waitForTimeout(650);
       }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential});}
     }
-    const out=await model(page); out.actions=log; console.log(JSON.stringify(out));
+    const out=await model(page); out.actions=log; out.executionBeforeText=executionBeforeText; console.log(JSON.stringify(out));
   } finally { await context.close(); }
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
 `
@@ -372,7 +375,6 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     releaseOwnerLock=first.releaseOwnerLock
     activeSandbox=first.sandbox
     let page=first.page
-    let initialPageText=String(page.text||'')
     let actionLog:any[]=[]
     let missingActionEvidence=false
     let vaultAttempted=false
@@ -488,7 +490,6 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
 
       const actions=await planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION')
       if(!actions.length)break
-      initialPageText=String(page.text||'')
       const currentUrl=String(page.url||target.toString())
       const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
       const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions})).toString('base64')
@@ -519,7 +520,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     if(params.mode==='read'&&!readAnswer)throw new Error('browser_objective_unverified')
     if(params.mode!=='read'&&!actionLog.some(a=>a.status==='done'&&['fill','select','check','click','submit'].includes(a.kind)))throw new Error('browser_objective_unverified')
     if(params.mode!=='read'&&(missingActionEvidence||actionLog.some(a=>a.status==='failed'||(params.mode==='execute'&&a.status!=='done'))))throw new Error('browser_objective_unverified')
-    const executionEvidence=params.mode==='execute'?localExecutionConfirmation(params.objective,initialPageText,String(page.text||''),actionLog):null
+    const executionEvidence=params.mode==='execute'&&typeof page.executionBeforeText==='string'?localExecutionConfirmation(params.objective,page.executionBeforeText,String(page.text||''),actionLog):null
     if(params.mode==='execute'&&!executionEvidence)throw new Error('browser_objective_unverified')
     await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft'

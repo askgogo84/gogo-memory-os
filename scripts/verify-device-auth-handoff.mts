@@ -240,6 +240,7 @@ for(const [label,throws,expected,mode] of [['Confirm reservation',false,true,'ex
   const page={goto:async()=>{},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://login.example',text:'Approve this sign-in'}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element),click:async()=>{if(throws)throw new Error('timeout after click')}})})}
   await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[page],close:async()=>{}})}}),
     process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode,actions:[{kind:'click',selector:'#action'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{output=JSON.parse(value)},error:console.error}})
+  assert.equal(output.executionBeforeText,expected&&mode==='execute'?'Approve this sign-in':null,'baseline captured inside the action browser before the consequential control')
   const actions=lockedComputer.normalizeActionLog(output.actions)
   assert.equal(actions[0].consequential,expected,'the executed DOM control determines replay safety')
   assert.equal(actions[0].status,mode==='read'?'skipped':throws?'failed':'done')
@@ -547,6 +548,7 @@ for(const mode of ['draft','execute']){
 }
 console.log('Write-mode runs cannot complete without observed action evidence')
 
+evidencePage.executionBeforeText='Review the requested operation.'
 modelText=JSON.stringify([{kind:'fill',selector:'#name',value:'Example'},{kind:'click',selector:'#confirm'}])
 evidencePage.actions=[{kind:'fill',status:'done'},{kind:'click',status:'failed',consequential:true}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode:'execute'}),/browser_objective_unverified/)
@@ -560,7 +562,7 @@ for(const confirmation of ['Reservation confirmed.','Reservation is not confirme
  if(confirmation==='Reservation confirmed.')assert.equal((await execute()).summary,'Reservation confirmed')
  else await assert.rejects(execute,/browser_objective_unverified/)
 }
-queuedObservations=[{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.'}]
+queuedObservations=[{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 console.log('Local confirmation requires new affirmative provider evidence, not stale, pending or conditional text')
 
@@ -571,7 +573,7 @@ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:ev
 console.log('Generic applications confirm locally; uncertain submissions carry a no-replay marker')
 
 evidenceCredential={username:'fixture',secret:'fixture-only',provider:'fixture',domain:'provider.example',credentialId:'fixture',telegramId:17}
-queuedObservations=[{url:'https://provider.example/login',title:'Sign in',text:'Enter your password',forms:[{inputs:[{type:'password'}]}]},{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.'}]
+queuedObservations=[{url:'https://provider.example/login',title:'Sign in',text:'Enter your password',forms:[{inputs:[{type:'password'}]}]},{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 assert.equal(queuedObservations.length,0,'execute after Vault login consumes the authenticated baseline')
 evidenceCredential=null
@@ -586,3 +588,7 @@ await assert.rejects(()=>command.executeBrowser({...params,mode:'execute'}),/rec
 assert.equal(browserExecutions,noReplayCount,'unknown submission cannot be automatically replayed')
 commandExecutionFailure=undefined
 console.log('Post-Vault baseline rejects stale confirmation and uncertain command state blocks replay')
+
+queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+console.log('Confirmation present only after the action-browser reload cannot count as new success')
