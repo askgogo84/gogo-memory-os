@@ -1,3 +1,4 @@
+import { draftObjectiveCovered } from './draft-coverage'
 import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from './browser-evidence'
 import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
@@ -537,6 +538,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     let page=first.page
     let approvedOperation:ApprovedBrowserOperation|null=null
     let draftReady=false
+    let draftActions:BrowserAction[]=[]
     let actionLog:any[]=[]
     let missingActionEvidence=false
     let vaultAttempted=false
@@ -656,6 +658,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       if(params.mode==='execute'&&(!plan.operation||actions.filter(a=>a.kind==='submit').length!==1))throw new Error('browser_objective_unverified')
       approvedOperation=plan.operation
       draftReady=plan.draftReady
+      draftActions=actions
       const currentUrl=String(page.url||target.toString())
       const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
       const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null})).toString('base64')
@@ -688,7 +691,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     if(params.mode!=='read'&&(missingActionEvidence||actionLog.some(a=>a.status==='failed'||(params.mode==='execute'&&a.status!=='done'))))throw new Error('browser_objective_unverified')
     const executionEvidence=params.mode==='execute'&&typeof page.executionBeforeText==='string'&&typeof page.executionAfterText==='string'?localExecutionConfirmation(approvedOperation,page.executionBeforeText,page.executionAfterText,actionLog):null
     if(params.mode==='execute'&&!executionEvidence)throw new Error('browser_objective_unverified')
-    if(params.mode==='draft'&&(!draftReady||page.draftVerified!==true))throw new Error('browser_objective_unverified')
+    if(params.mode==='draft'&&(!draftReady||page.draftVerified!==true||!draftObjectiveCovered(params.objective,page,draftActions)))throw new Error('browser_objective_unverified')
     await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft'
     return {

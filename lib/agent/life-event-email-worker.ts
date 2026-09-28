@@ -121,10 +121,14 @@ async function deferAction(action: any, minutes: number, extra: Record<string, u
   if (error) throw new Error(`life_event_email_defer_failed:${error.message}`)
 }
 
-async function completeAction(action: any, extra: Record<string, unknown> = {}) {
+export async function completeAction(action: any, extra: Record<string, unknown> = {}) {
   const at = new Date().toISOString()
-  const { error } = await supabaseAdmin.from('life_event_actions').update({ status: 'completed', updated_at: at, payload_json: { ...(action.payload_json || {}), ...extra, completedAt: at } }).eq('id', action.id).eq('status', 'running')
+  let query = supabaseAdmin.from('life_event_actions').update({ status: 'completed', updated_at: at, payload_json: { ...(action.payload_json || {}), ...extra, completedAt: at } }).eq('id', action.id).eq('status', 'running')
+  const revision=action.payload_json?.scheduleRevision
+  query=typeof revision==='string'?query.eq('payload_json->>scheduleRevision',revision):query.is('payload_json->>scheduleRevision',null)
+  const { data, error } = await query.select('id,payload_json').maybeSingle()
   if (error) throw new Error(`life_event_email_complete_failed:${error.message}`)
+  if (!data?.id || (data.payload_json?.scheduleRevision??null)!==(revision??null)) throw new Error('life_event_schedule_changed')
 }
 
 async function createRun(telegramId: string, event: any, action: any, summary: string, metadata: Record<string, unknown>) {

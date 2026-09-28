@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts, eligibleBoardingPassMessages, assertBoardingPassSchedule } from '../lib/agent/life-event-email-worker'
+import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts, eligibleBoardingPassMessages, assertBoardingPassSchedule, completeAction } from '../lib/agent/life-event-email-worker'
 
 const worker=fs.readFileSync('lib/agent/life-event-email-worker.ts','utf8')
 const route=fs.readFileSync('app/api/cron/life-events/route.ts','utf8')
@@ -41,3 +41,20 @@ assert.doesNotThrow(()=>assertBoardingPassSchedule({payload_json:{}},{metadata_j
 assert.doesNotThrow(()=>assertBoardingPassSchedule({payload_json:{scheduleRevision:'current'}},{metadata_json:{ticketScheduleRevision:'current'}}))
 assert.throws(()=>assertBoardingPassSchedule({payload_json:{}},{metadata_json:{ticketScheduleRevision:'corrected'}}),/life_event_schedule_changed/)
 assert.throws(()=>assertBoardingPassSchedule({payload_json:{scheduleRevision:'old'}},{metadata_json:{ticketScheduleRevision:'corrected'}}),/life_event_schedule_changed/)
+
+const {supabaseAdmin}=await import('../lib/supabase-admin')
+const savedFrom=supabaseAdmin.from
+try{
+ let result:any=null
+ const filters:any[]=[]
+ ;(supabaseAdmin as any).from=()=>{
+  const q:any={update:()=>q,eq:(...args:any[])=>{filters.push(args);return q},is:(...args:any[])=>{filters.push(args);return q},select:()=>q,maybeSingle:async()=>({data:result,error:null})}
+  return q
+ }
+ await assert.rejects(()=>completeAction({id:'watch',payload_json:{scheduleRevision:'old'}}),/life_event_schedule_changed/)
+ assert.ok(filters.some(([key,value])=>key==='payload_json->>scheduleRevision'&&value==='old'))
+ result={id:'watch',payload_json:{scheduleRevision:'old'}}
+ await completeAction({id:'watch',payload_json:{scheduleRevision:'old'}})
+ result={id:'watch',payload_json:{scheduleRevision:'new'}}
+ await assert.rejects(()=>completeAction({id:'watch',payload_json:{scheduleRevision:'old'}}),/life_event_schedule_changed/)
+}finally{(supabaseAdmin as any).from=savedFrom}

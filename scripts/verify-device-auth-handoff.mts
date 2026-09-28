@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { draftObjectiveCovered } from '../lib/agent/draft-coverage'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
@@ -9,7 +10,7 @@ function load(file: string, mocks: Record<string, any>, extra='', globals:Record
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
-  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
+  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./draft-coverage'?{draftObjectiveCovered}:undefined)||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
   return exports
 }
 
@@ -816,12 +817,22 @@ console.log('Unrelated anonymous status loss cannot cancel directly identified n
 plannedOperation=undefined
 modelText=JSON.stringify({approvedOperation:'none',draftReady:false,actions:[{kind:'click',selector:'#start'}]})
 queuedObservations=[{...evidencePage,text:'Start application'},{...evidencePage,text:'Application form',actions:[{kind:'click',status:'done'}],draftVerified:false}]
-await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Prepare application with name Example',mode:'draft'}),/browser_objective_unverified/)
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Prepare application with name: "Example"' ,mode:'draft'}),/browser_objective_unverified/)
 modelText=JSON.stringify({approvedOperation:'none',draftReady:true,actions:[{kind:'fill',selector:'#name',value:'Example'}]})
-queuedObservations=[{...evidencePage,text:'Application form'},{...evidencePage,text:'Application form',actions:[{kind:'fill',status:'done'}],draftVerified:true}]
-assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Prepare application with name Example',mode:'draft'})).status,'prepared')
+queuedObservations=[{...evidencePage,text:'Application form'},{...evidencePage,text:'Application form',forms:[{inputs:[{selector:'#name',name:'name',label:'Name'}]}],actions:[{kind:'fill',status:'done'}],draftVerified:true}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Prepare application with name: "Example"' ,mode:'draft'})).status,'prepared')
+queuedObservations=[{...evidencePage,text:'Application form'},{...evidencePage,text:'Application form',forms:[{inputs:[{selector:'#name',name:'name',label:'Name'},{selector:'#email',name:'email',label:'Email'}]}],actions:[{kind:'fill',status:'done'}],draftVerified:true}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Prepare application with name: "Example", email: "example@example.com"',mode:'draft'}),/browser_objective_unverified/)
 let draftFieldValue=''
 const draftPage={goto:async()=>{},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://provider.example',text:'Draft form'}),locator:()=>({first:()=>({fill:async(value:string)=>{draftFieldValue=value},inputValue:async()=>draftFieldValue})})}
 await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[draftPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'draft',actions:[{kind:'fill',selector:'#name',value:'Example'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
 assert.equal(boundaryOutput.draftVerified,true)
 console.log('Draft completion requires a complete field plan and final DOM value verification; opening a form is insufficient')
+
+const coveragePage={forms:[{inputs:[{selector:'#name',name:'name',label:'Name'},{selector:'#email',name:'email',label:'Email'}]}]}
+const nameAction={kind:'fill',selector:'#name',value:'Example'}
+assert.equal(draftObjectiveCovered('Prepare application with name: "Example", email: "example@example.com"',coveragePage,[nameAction]),false)
+assert.equal(draftObjectiveCovered('Prepare application with name: "Example", email: "example@example.com"',coveragePage,[nameAction,{kind:'fill',selector:'#email',value:'example@example.com'}]),true)
+assert.equal(draftObjectiveCovered('Prepare application with name: "Example" and also attach my CV',coveragePage,[nameAction]),false)
+assert.equal(draftObjectiveCovered('Prepare application with name: "Example"',coveragePage,[{...nameAction,selector:'#email'}]),false)
+assert.equal(draftObjectiveCovered('Prepare application with name: "Example"',coveragePage,[{...nameAction,value:'Wrong'}]),false)
