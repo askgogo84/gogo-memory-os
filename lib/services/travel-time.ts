@@ -1,14 +1,14 @@
 import { timezoneFromCity, isValidTimezone, zonedLocalTimeToUtc, getLocalParts } from '@/lib/timezone'
 
-// India routes already supported by travel-research, plus Cochin.
-const indiaAirports=new Set(['BLR','BOM','DEL','HYD','MAA','CCU','PNQ','GOI','GOX','COK'])
-const indiaCities=new Set(['kochi','cochin','goa'])
-const airports:Record<string,string>={BLR:'Bengaluru',AUH:'Abu Dhabi',JFK:'New York',DEL:'Delhi',BOM:'Mumbai',DXB:'Dubai',LHR:'London',SIN:'Singapore'}
+import airportData from '@/lib/data/airport-timezones.json'
+
+// Pinned worldwide data; ambiguous duplicate city names are excluded at generation.
+const airports=airportData as {iata:Record<string,string>;cities:Record<string,string>}
 export function ticketTimezone(city?:string, explicit?:string):string|null {
   if(explicit&&isValidTimezone(explicit))return explicit
   const name=String(city||'').trim()
-  if(indiaAirports.has(name.toUpperCase())||indiaCities.has(name.toLowerCase()))return 'Asia/Kolkata'
-  return timezoneFromCity(airports[name.toUpperCase()]||name)
+  const zone=timezoneFromCity(name)||airports.iata[name.toUpperCase()]||airports.cities[name.toLowerCase()]
+  return zone&&isValidTimezone(zone)?zone:null
 }
 
 /** Unknown zones and invalid/nonexistent local clocks must not silently become IST. */

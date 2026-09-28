@@ -38,7 +38,7 @@ assert.equal(verifiedBrowserAnswer({complete:true,answer:'Done',evidence:['Insta
 assert.equal(verifiedBrowserAnswer({complete:true,answer:'Three saved posts',evidence:['Saved post 1: a holiday']},'Instagram Sign in to see photos and videos from your friends.'),null)
 assert.equal(verifiedBrowserAnswer({complete:false,answer:'No result',evidence:[]},'Amul Taaza milk is available for delivery in your area.'),null)
 const observed='Amul Taaza toned milk 1 litre. Available at ₹60 in Indiranagar. Delivery fee ₹25.'
-assert.equal(verifiedBrowserAnswer({complete:true,answer:'Amul Taaza 1 litre: ₹60; delivery ₹25.',evidence:['Amul Taaza toned milk 1 litre.','Available at ₹60 in Indiranagar.','Delivery fee ₹25.']},observed),'Amul Taaza 1 litre: ₹60; delivery ₹25.')
+assert.equal(verifiedBrowserAnswer({complete:true,answer:'Amul Taaza 1 litre: ₹60; delivery ₹25.',evidence:['Amul Taaza toned milk 1 litre.','Available at ₹60 in Indiranagar.','Delivery fee ₹25.']},observed),'Amul Taaza toned milk 1 litre.\nAvailable at ₹60 in Indiranagar.\nDelivery fee ₹25.')
 console.log('Memory/browser integrity: international dates, passenger recall, invalid-arrival rejection, login shell, and observed evidence passed')
 
 const {recallQuery}=await import('../lib/agent/recall-query')
@@ -86,7 +86,7 @@ assert.equal(disabled.memoryEnabled,false)
 assert.ok(!queries.some(query=>['memories','memory_embeddings'].includes(query.table)))
 console.log('Embedding-outage fallback, owner isolation, secret filtering and memory consent passed')
 
-for(const from of ['MAA','HYD','CCU','COK','GOI','GOX','Chennai','Kochi']){
+for(const from of ['MAA','HYD','CCU','COK','GOI','GOX','Chennai']){
  const leg=flightInstants({from,to:'BLR',date:'28 Sep 2026',departure:'10:00',arrival:'11:15'})
  assert.equal(leg.departAt?.toISOString(),'2026-09-28T04:30:00.000Z',from)
  assert.equal(leg.arriveAt?.toISOString(),'2026-09-28T05:45:00.000Z',from)
@@ -133,3 +133,19 @@ console.log('Indian rail station codes retain IST departure parsing')
 const chicago=buildTravelPresenceFacts([{...rows[0],to_city:'Chicago',raw:{arrivalTimezone:'America/Chicago'}}],Date.parse('2026-09-28T06:00Z')).find(f=>f.source==='travel_ticket')!
 assert.match(chicago.summary,/07:35.*America\/Chicago/)
 console.log('Explicit arrival timezone survives recall for cities outside the built-in map')
+
+const {parseFlightTicketTextSafe}=await import('../lib/services/pdf-reader-whatsapp')
+const whatsappTicket=parseFlightTicketTextSafe('PNR: TEST99 EY239 BLR 22:15 27 Sep 2026 AUH 00:35 28 Sep 2026')!
+assert.equal(whatsappTicket.flights[0].arrivalDate,'28 Sep 2026')
+assert.equal(buildLegs(whatsappTicket)[0].arriveAt?.toISOString(),'2026-09-27T20:35:00.000Z')
+for(const [code,zone] of Object.entries({SFO:'America/Los_Angeles',LAX:'America/Los_Angeles',ORD:'America/Chicago',CDG:'Europe/Paris',DOH:'Asia/Qatar'})){
+ assert.equal(travelTime.ticketTimezone(code),zone)
+ assert.ok(flightInstants({from:code,to:'BLR',date:'28 Sep 2026',departure:'10:00'}).departAt,code)
+}
+const contradicted=verifiedBrowserAnswer({complete:true,answer:'Unavailable at ₹600',evidence:['Available at ₹60 in Indiranagar.']},observed)
+assert.equal(contradicted,'Available at ₹60 in Indiranagar.')
+assert.doesNotMatch(contradicted!,/600|Unavailable/)
+console.log('WhatsApp PDF ingestion, worldwide IATA codes and extractive browser answers passed')
+
+assert.equal(travelTime.ticketTimezone('Kochi'),null,'ambiguous India/Japan city names need an airport code or explicit zone')
+assert.equal(travelTime.ticketTimezone('Kochi','Asia/Kolkata'),'Asia/Kolkata')
