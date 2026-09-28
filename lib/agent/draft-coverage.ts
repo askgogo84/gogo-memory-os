@@ -26,6 +26,9 @@ export function draftObjectiveCovered(objective:string,page:any,actions:any[]):b
     const selectors=[...new Set<string>(candidates.map((input:any)=>String(input.selector||'')))]
     if(selectors.length!==1||!selectors[0]||used.has(selectors[0]))return false
     used.add(selectors[0])
-    return fieldActions.some(action=>['fill','select'].includes(action.kind)&&action.selector===selectors[0]&&action.value===required.value)
+    return fieldActions.some(action=>action.selector===selectors[0]&&(
+      ['fill','select'].includes(action.kind)&&action.value===required.value
+      ||action.kind==='check'&&/^(?:checked|true)$/i.test(required.value)&&candidates.every((input:any)=>input.type==='checkbox')
+    ))
   })
 }

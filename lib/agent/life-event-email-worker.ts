@@ -131,6 +131,20 @@ export async function completeAction(action: any, extra: Record<string, unknown>
   if (!data?.id || (data.payload_json?.scheduleRevision??null)!==(revision??null)) throw new Error('life_event_schedule_changed')
 }
 
+export async function assertCompletedScheduleCurrent(action:any,event:any){
+  const {data,error}=await supabaseAdmin.from('life_event_actions')
+    .select('id,status,payload_json,life_events!inner(id,metadata_json)')
+    .eq('id',action.id).eq('life_event_id',event.id).eq('telegram_id',String(action.telegram_id)).maybeSingle()
+  if(error)throw new Error(`life_event_email_publication_check_failed:${error.message}`)
+  const currentEvent=Array.isArray(data?.life_events)?data.life_events[0]:data?.life_events
+  const revision=action.payload_json?.scheduleRevision??null
+  if(!data||data.status!=='completed'||!currentEvent
+    ||(data.payload_json?.scheduleRevision??null)!==revision
+    ||(currentEvent.metadata_json?.ticketScheduleRevision??null)!==revision){
+    throw new Error('life_event_schedule_changed')
+  }
+}
+
 async function createRun(telegramId: string, event: any, action: any, summary: string, metadata: Record<string, unknown>) {
   const at = new Date().toISOString()
   const { data, error } = await supabaseAdmin.from('agent_runs').insert({ telegram_id: telegramId, type: 'life_event', capability: 'email', status: 'completed', title: `Gogo · ${safe(event.title, 140)}`, summary: safe(summary, 1200), progress: 100, why: 'Background Gogo matched a connected Gmail message to a saved flight Life Event.', source: 'background_life_event', metadata_json: { plan_type: 'life_event_boarding_pass', life_event_id: String(event.id), life_event_action_id: String(action.id), action_key: String(action.action_key), ...metadata }, started_at: at, completed_at: at, updated_at: at }).select('id').single()
@@ -191,9 +205,12 @@ async function processBoardingPassWatch(action: any, event: any, telegramId: str
   if (!updatedEvent) throw new Error('life_event_schedule_changed')
   await completeAction(action, { boardingPassDetected: true, gmailMessageId: boardingPass.gmailMessageId, attachmentFilename: boardingPass.attachment?.filename || null })
 
-  const runId = await createRun(telegramId, event, action, boardingPass.attachment?.filename ? `Boarding pass/check-in confirmation found in Gmail: ${boardingPass.attachment.filename}.` : 'Boarding pass/check-in confirmation found in Gmail.', { gmail_message_id: boardingPass.gmailMessageId, attachment_present: Boolean(boardingPass.attachment) })
-  await activity(telegramId, runId, 'life_event_boarding_pass_found', 'Gogo matched a Gmail boarding-pass/check-in message to this flight.', { life_event_id: String(event.id), gmail_message_id: boardingPass.gmailMessageId, attachment_filename: boardingPass.attachment?.filename || null })
-  await sendAgentPush(telegramId, { title: 'Your boarding pass is ready', body: boardingPass.attachment?.filename ? `${safe(event.title, 150)} · ${boardingPass.attachment.filename}` : `${safe(event.title, 180)} · check-in confirmation found in Gmail`, path: '/dashboard/today', data: { runId, lifeEventId: String(event.id), gmailMessageId: boardingPass.gmailMessageId } }).catch(() => {})
+  await assertCompletedScheduleCurrent(action,event)
+  const runId = await createRun(telegramId, event, action, boardingPass.attachment?.filename ? `Boarding pass/check-in confirmation found in Gmail: ${boardingPass.attachment.filename}.` : 'Boarding pass/check-in confirmation found in Gmail.', { scheduleRevision: action.payload_json?.scheduleRevision??null, gmail_message_id: boardingPass.gmailMessageId, attachment_present: Boolean(boardingPass.attachment) })
+  await assertCompletedScheduleCurrent(action,event)
+  await activity(telegramId, runId, 'life_event_boarding_pass_found', 'Gogo matched a Gmail boarding-pass/check-in message to this flight.', { scheduleRevision: action.payload_json?.scheduleRevision??null, life_event_id: String(event.id), gmail_message_id: boardingPass.gmailMessageId, attachment_filename: boardingPass.attachment?.filename || null })
+  await assertCompletedScheduleCurrent(action,event)
+  await sendAgentPush(telegramId, { title: 'Your boarding pass is ready', body: boardingPass.attachment?.filename ? `${safe(event.title, 150)} · ${boardingPass.attachment.filename}` : `${safe(event.title, 180)} · check-in confirmation found in Gmail`, path: '/dashboard/today', data: { scheduleRevision: action.payload_json?.scheduleRevision??null, runId, lifeEventId: String(event.id), gmailMessageId: boardingPass.gmailMessageId } }).catch(() => {})
   return { status: 'completed' as const, matched: true, runId }
 }
 

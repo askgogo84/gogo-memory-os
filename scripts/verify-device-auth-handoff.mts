@@ -836,3 +836,9 @@ assert.equal(draftObjectiveCovered('Prepare application with name: "Example", em
 assert.equal(draftObjectiveCovered('Prepare application with name: "Example" and also attach my CV',coveragePage,[nameAction]),false)
 assert.equal(draftObjectiveCovered('Prepare application with name: "Example"',coveragePage,[{...nameAction,selector:'#email'}]),false)
 assert.equal(draftObjectiveCovered('Prepare application with name: "Example"',coveragePage,[{...nameAction,value:'Wrong'}]),false)
+
+const checkboxPage={forms:[{inputs:[{selector:'#terms',name:'terms',label:'Terms',type:'checkbox'}]}]}
+assert.equal(draftObjectiveCovered('Prepare form with terms: "checked"',checkboxPage,[{kind:'check',selector:'#terms'}]),true)
+assert.equal(draftObjectiveCovered('Prepare form with terms: "true"',checkboxPage,[{kind:'check',selector:'#terms'}]),true)
+assert.equal(draftObjectiveCovered('Prepare form with terms: "false"',checkboxPage,[{kind:'check',selector:'#terms'}]),false)
+assert.equal(draftObjectiveCovered('Prepare form with terms: "checked"',{forms:[{inputs:[{selector:'#terms',name:'terms',type:'text'}]}]},[{kind:'check',selector:'#terms'}]),false)

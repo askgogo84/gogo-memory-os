@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts, eligibleBoardingPassMessages, assertBoardingPassSchedule, completeAction } from '../lib/agent/life-event-email-worker'
+import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts, eligibleBoardingPassMessages, assertBoardingPassSchedule, completeAction, assertCompletedScheduleCurrent } from '../lib/agent/life-event-email-worker'
 
 const worker=fs.readFileSync('lib/agent/life-event-email-worker.ts','utf8')
 const route=fs.readFileSync('app/api/cron/life-events/route.ts','utf8')
@@ -57,4 +57,17 @@ try{
  await completeAction({id:'watch',payload_json:{scheduleRevision:'old'}})
  result={id:'watch',payload_json:{scheduleRevision:'new'}}
  await assert.rejects(()=>completeAction({id:'watch',payload_json:{scheduleRevision:'old'}}),/life_event_schedule_changed/)
+}finally{(supabaseAdmin as any).from=savedFrom}
+
+try{
+ let current:any={id:'watch',status:'completed',payload_json:{scheduleRevision:'claimed'},life_events:{id:'event',metadata_json:{ticketScheduleRevision:'claimed'}}}
+ ;(supabaseAdmin as any).from=()=>{const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:current,error:null})};return q}
+ const claimed={id:'watch',telegram_id:'17',payload_json:{scheduleRevision:'claimed'}}
+ await assertCompletedScheduleCurrent(claimed,{id:'event'})
+ current={...current,status:'queued',payload_json:{scheduleRevision:'corrected'},life_events:{id:'event',metadata_json:{ticketScheduleRevision:'corrected'}}}
+ await assert.rejects(()=>assertCompletedScheduleCurrent(claimed,{id:'event'}),/life_event_schedule_changed/)
+ current={...current,status:'completed'}
+ await assert.rejects(()=>assertCompletedScheduleCurrent(claimed,{id:'event'}),/life_event_schedule_changed/)
+ current=null
+ await assert.rejects(()=>assertCompletedScheduleCurrent(claimed,{id:'event'}),/life_event_schedule_changed/)
 }finally{(supabaseAdmin as any).from=savedFrom}
