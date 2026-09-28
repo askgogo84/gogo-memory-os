@@ -117,6 +117,16 @@ function titleCaseLocation(value:unknown){
   return safe(value,180)
 }
 
+function requestedPassengerSeat(name:string,query:string){
+  if(!/\bseat(?:s|ing)?\b/i.test(query))return false
+  const normalize=(text:string)=>text.normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim()
+  const passenger=normalize(name),request=normalize(query)
+  if(!passenger)return false
+  // Exact full names support short names such as Bo Li. Partial names are
+  // candidates only for an explicit seat request, never broad family travel.
+  return ` ${request} `.includes(` ${passenger} `)||passenger.split(' ').some(part=>part.length>=3&&request.split(' ').includes(part))
+}
+
 export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=60,query=''):ContextFact[]{
   const flights=(rows||[])
     .filter((row:any)=>String(row?.type||'')==='flight')
@@ -179,7 +189,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     const flightFact=facts[facts.length-1]
     for(const detail of leg.seatObservations){
       for(const name of detail.names){
-        if(!query||lexicalScore(name,query)===0)continue
+        if(!requestedPassengerSeat(name,query))continue
         const label=detail.names.length===1?`Seat for ${name}: ${detail.seat}`:`Passenger ${name}: seat ${detail.seat} recorded on a group ticket; individual assignment unverified`
         facts.push({...flightFact,id:`travel-ticket:${leg.id}:seat:${hash(label)}`,summary:safe([label,leg.flightNo,`Flight ${leg.from} → ${leg.to}`].filter(Boolean).join(' · '),620)})
       }
@@ -324,7 +334,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
     })
   }
   const travelFacts=buildTravelPresenceFacts(ticketResult.data||[],now,horizonDays,query)
-    .map(f=>({...f,score:factScore({query,text:`${f.summary} ${f.location||''}`,base:f.source==='travel_presence'?0.52:0.48,startAt:f.startAt,now,horizonDays})}))
+    .map(f=>({...f,score:factScore({query,text:`${f.summary} ${f.location||''}`,base:f.id.includes(':seat:')?0.72:f.source==='travel_presence'?0.52:0.48,startAt:f.startAt,now,horizonDays})}))
 
   const typedFacts:ContextFact[]=[]
   if(typed){

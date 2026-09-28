@@ -650,3 +650,11 @@ const broadTravelFacts=buildTravelPresenceFacts([{...enrichedGroup,id:'large-gro
 assert.equal(broadTravelFacts.filter(f=>f.id.includes(':seat:')).length,0,'unrequested passenger facts cannot crowd out upcoming flights')
 assert.ok(broadTravelFacts.some(f=>f.id==='travel-ticket:next-flight'))
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'When are my dentist reminders?'},'When are my dentist reminders?').scopeTerms,['dentist'])
+
+const familyGroup=Array.from({length:30},(_,i)=>({passengers:[`Person${i} Smith`],seat:`${i+1}A`}))
+familyGroup.push({passengers:['Bo Li'],seat:'31A'})
+const familyTicket={...enrichedGroup,id:'family-group',passengers:familyGroup.flatMap(x=>x.passengers),raw:{...enrichedGroup.raw,passengerDetails:familyGroup}}
+const familyFacts=buildTravelPresenceFacts([familyTicket],Date.parse('2040-09-28T00:00:00Z'),60,"Show the Smith family's upcoming travel")
+assert.equal(familyFacts.filter(f=>f.id.includes(':seat:')).length,0)
+const shortNameFacts=buildTravelPresenceFacts([familyTicket],Date.parse('2040-09-28T00:00:00Z'),60,'What seat is Bo Li in?')
+assert.ok(shortNameFacts.some(f=>f.id.includes(':seat:')&&f.summary.includes('Seat for Bo Li: 31A')))
