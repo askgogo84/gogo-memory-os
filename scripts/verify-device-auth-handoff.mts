@@ -846,3 +846,8 @@ assert.equal(draftObjectiveCovered('Prepare form with terms: "checked"',{forms:[
 assert.equal(draftObjectiveCovered('Prepare web check-in for EY1. Booking reference/PNR: ABC123.',{},[]),null)
 assert.equal(draftObjectiveCovered('Read the current status for this booking.',{},[]),null)
 assert.equal(draftObjectiveCovered('Select product variant/size "M" and add exactly one item to the cart/bag.',{},[]),null)
+
+assert.equal(draftObjectiveCovered('Fill the application — Country: "India", DOB: "1990-01-01"',{},[]),false)
+assert.equal(draftObjectiveCovered('Fill draft — Custom field: "value"',{},[]),false)
+assert.equal(draftObjectiveCovered("Fill form — Country: 'India'",{},[]),false)
+assert.equal(draftObjectiveCovered('Fill form — Country = "India"',{},[]),false)

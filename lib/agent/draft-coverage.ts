@@ -2,7 +2,7 @@
 // retain their domain-specific checks; a partial literal parse is never accepted.
 export function draftObjectiveCovered(objective:string,page:any,actions:any[]):boolean|null{
   const match=objective.trim().match(/^(?:prepare|fill) (?:the )?(?:application|form|draft) with ([\s\S]+?)(?:\. (?:Do not submit|Stop before submit)\.?)?$/i)
-  if(!match)return /\b(?:name|email|field|address|phone)\s*:\s*"/i.test(objective)?false:null
+  if(!match)return /[:=：]\s*["“'‘]/u.test(objective)?false:null
   let rest=match[1].trim()
   const requirements:Array<{label:string;value:string}>=[]
   while(rest){
