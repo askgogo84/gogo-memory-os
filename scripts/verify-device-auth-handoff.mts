@@ -638,3 +638,11 @@ assert.equal(lockedComputer.approvedBrowserOperation('Open the site and then can
 queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Review reservation.',executionAfterText:'Reservation confirmed.'}]
 assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Book a refundable fare with free cancellation',mode:'execute'})).summary,'Reservation confirmed')
 console.log('Cancellation policy mentions and negated cancellation do not change the approved booking operation')
+
+for(const objective of ['Could you cancel my booking?',"I'd like to cancel my reservation",'Open the site, cancel my booking','Please cancel my booking']){
+ assert.equal(lockedComputer.approvedBrowserOperation(objective),'cancellation')
+ queuedObservations=[{...evidencePage,text:'Review cancellation.'},{...evidencePage,text:'Booking cancelled',executionBeforeText:'Review cancellation.',executionAfterText:'Booking cancelled'}]
+ assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'})).summary,'Booking cancelled')
+}
+for(const objective of ['Could you book this fare and not cancel my booking?',"Book it; don't cancel my reservation",'Click Cancel to dismiss the modal, then book the room','Book a fare with a Cancel option'])assert.equal(lockedComputer.approvedBrowserOperation(objective),'(?:booking|reservation)')
+console.log('Polite and comma-delimited cancellation requests work without treating negation or button labels as cancellation approval')

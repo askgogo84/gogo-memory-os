@@ -356,7 +356,14 @@ async function assessReadOutcome(objective:string,page:any):Promise<string|null>
 }
 
 function approvedBrowserOperation(objective:string){
-  return /(?:^|[.!?;]\s*|\b(?:please|then|and)\s+)cancel\b/i.test(objective)?'cancellation':/\b(check[ -]?in)\b/i.test(objective)?'check[ -]?in':/\b(pay|payment)\b/i.test(objective)?'payment':/\b(buy|purchase|order|checkout)\b/i.test(objective)?'(?:order|purchase)':/\b(book|booking|reserve|reservation)\b/i.test(objective)?'(?:booking|reservation)':/\b(submit|apply|application|form|send)\b/i.test(objective)?'(?:application|form|submission)':null
+  const cancellationRequested=[...objective.matchAll(/\bcancel\b/gi)].some(match=>{
+    const prefix=objective.slice(0,match.index).split(/[,.!?;]/).at(-1)||''
+    const suffix=objective.slice((match.index||0)+match[0].length)
+    if(/\b(?:not|never|without|don't|cannot|can't|avoid)\b/i.test(prefix))return false
+    if(/\b(?:click|press|tap|labelled|labeled)\s*["']?\s*$/i.test(prefix)||/^['"]?\s+(?:button|control|option|policy)\b/i.test(suffix))return false
+    return true
+  })
+  return cancellationRequested?'cancellation':/\b(check[ -]?in)\b/i.test(objective)?'check[ -]?in':/\b(pay|payment)\b/i.test(objective)?'payment':/\b(buy|purchase|order|checkout)\b/i.test(objective)?'(?:order|purchase)':/\b(book|booking|reserve|reservation)\b/i.test(objective)?'(?:booking|reservation)':/\b(submit|apply|application|form|send)\b/i.test(objective)?'(?:application|form|submission)':null
 }
 
 function localExecutionConfirmation(objective:string,before:string,after:string,actions:any[]):string|null{
