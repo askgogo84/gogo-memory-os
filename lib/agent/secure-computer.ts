@@ -189,6 +189,7 @@ async function isConsequentialControl(page,selector){
   const page=context.pages()[0]||await context.newPage();
   const log=[];
   let executionBeforeText=null;
+  let executionAfterText=null;
   try{
     await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
     await page.waitForTimeout(900);
@@ -212,9 +213,10 @@ async function isConsequentialControl(page,selector){
         }
         log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
         await page.waitForTimeout(650);
+        if(consequential)executionAfterText=(await model(page)).text;
       }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential});}
     }
-    const out=await model(page); out.actions=log; out.executionBeforeText=executionBeforeText; console.log(JSON.stringify(out));
+    const out=await model(page); out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; console.log(JSON.stringify(out));
   } finally { await context.close(); }
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
 `
@@ -520,7 +522,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     if(params.mode==='read'&&!readAnswer)throw new Error('browser_objective_unverified')
     if(params.mode!=='read'&&!actionLog.some(a=>a.status==='done'&&['fill','select','check','click','submit'].includes(a.kind)))throw new Error('browser_objective_unverified')
     if(params.mode!=='read'&&(missingActionEvidence||actionLog.some(a=>a.status==='failed'||(params.mode==='execute'&&a.status!=='done'))))throw new Error('browser_objective_unverified')
-    const executionEvidence=params.mode==='execute'&&typeof page.executionBeforeText==='string'?localExecutionConfirmation(params.objective,page.executionBeforeText,String(page.text||''),actionLog):null
+    const executionEvidence=params.mode==='execute'&&typeof page.executionBeforeText==='string'&&typeof page.executionAfterText==='string'?localExecutionConfirmation(params.objective,page.executionBeforeText,page.executionAfterText,actionLog):null
     if(params.mode==='execute'&&!executionEvidence)throw new Error('browser_objective_unverified')
     await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft'

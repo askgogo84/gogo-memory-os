@@ -549,6 +549,7 @@ for(const mode of ['draft','execute']){
 console.log('Write-mode runs cannot complete without observed action evidence')
 
 evidencePage.executionBeforeText='Review the requested operation.'
+evidencePage.executionAfterText='Awaiting provider response.'
 modelText=JSON.stringify([{kind:'fill',selector:'#name',value:'Example'},{kind:'click',selector:'#confirm'}])
 evidencePage.actions=[{kind:'fill',status:'done'},{kind:'click',status:'failed',consequential:true}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode:'execute'}),/browser_objective_unverified/)
@@ -557,23 +558,23 @@ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:ev
 console.log('Execute mode rejects partial failures and missing provider confirmation')
 
 for(const confirmation of ['Reservation confirmed.','Reservation is not confirmed.','If your reservation is confirmed, you will receive email.','Reservation pending.']){
- queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:confirmation}]
+ queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:confirmation,executionAfterText:confirmation}]
  const execute=()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'})
  if(confirmation==='Reservation confirmed.')assert.equal((await execute()).summary,'Reservation confirmed')
  else await assert.rejects(execute,/browser_objective_unverified/)
 }
-queuedObservations=[{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.'}]
+queuedObservations=[{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.',executionAfterText:'Reservation confirmed.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 console.log('Local confirmation requires new affirmative provider evidence, not stale, pending or conditional text')
 
-queuedObservations=[{...evidencePage,text:'Review application.'},{...evidencePage,text:'Application submitted successfully.'}]
+queuedObservations=[{...evidencePage,text:'Review application.'},{...evidencePage,text:'Application submitted successfully.',executionAfterText:'Application submitted successfully.'}]
 assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Submit this application',mode:'execute'})).summary,'Application submitted successfully')
 queuedObservations=[{...evidencePage,text:'Review application.'},{...evidencePage,text:'Awaiting provider response.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Submit this application',mode:'execute'}),(error:any)=>error.message==='browser_objective_unverified'&&error.browserExecutionStarted===true)
 console.log('Generic applications confirm locally; uncertain submissions carry a no-replay marker')
 
 evidenceCredential={username:'fixture',secret:'fixture-only',provider:'fixture',domain:'provider.example',credentialId:'fixture',telegramId:17}
-queuedObservations=[{url:'https://provider.example/login',title:'Sign in',text:'Enter your password',forms:[{inputs:[{type:'password'}]}]},{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.'}]
+queuedObservations=[{url:'https://provider.example/login',title:'Sign in',text:'Enter your password',forms:[{inputs:[{type:'password'}]}]},{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.',executionAfterText:'Reservation confirmed.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 assert.equal(queuedObservations.length,0,'execute after Vault login consumes the authenticated baseline')
 evidenceCredential=null
@@ -589,6 +590,16 @@ assert.equal(browserExecutions,noReplayCount,'unknown submission cannot be autom
 commandExecutionFailure=undefined
 console.log('Post-Vault baseline rejects stale confirmation and uncertain command state blocks replay')
 
-queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.'}]
+queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.',executionAfterText:'Reservation confirmed.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 console.log('Confirmation present only after the action-browser reload cannot count as new success')
+
+queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Review reservation.',executionAfterText:'Booking submission pending.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+let boundaryOutput:any,simulatedPage='Review reservation.'
+const boundaryPage={goto:async(url:string)=>{simulatedPage=url.endsWith('/history')?'Reservation confirmed.':'Review reservation.'},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://provider.example',text:simulatedPage}),locator:()=>({first:()=>({evaluate:async()=>true,click:async()=>{simulatedPage='Booking submission pending.'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[boundaryPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'click',selector:'#confirm'},{kind:'goto',url:'https://provider.example/history'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.text,'Reservation confirmed.')
+assert.equal(boundaryOutput.executionBeforeText,'Review reservation.')
+assert.equal(boundaryOutput.executionAfterText,'Booking submission pending.')
+console.log('Subsequent navigation cannot replace the immediate provider submission result')
