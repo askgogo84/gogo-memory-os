@@ -230,7 +230,7 @@ const lockedComputer=load('secure-computer.ts',{
   '@vercel/sandbox':{Sandbox:{getOrCreate:async(options:any)=>{assert.equal(options.networkPolicy,undefined);return {}}}},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>{throw new Error('browser_handoff_in_use')}},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{unexpectedBootstrap++}},
-},'\nexport { getComputer, BROWSER_SCRIPT, normalizeActionLog }')
+},'\nexport { getComputer, BROWSER_SCRIPT, normalizeActionLog, approvedBrowserOperation }')
 await assert.rejects(()=>lockedComputer.getComputer('user','https://provider.example'),/browser_handoff_in_use/)
 assert.equal(unexpectedBootstrap,0,'ordinary browser tasks must not bootstrap an active owner takeover')
 console.log('Automated browser reservations and direct handoff persistence failure verified')
@@ -630,3 +630,11 @@ await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{lau
 assert.equal(boundaryOutput.executionBeforeText,'Review the new reservation.')
 assert.equal(boundaryOutput.executionAfterText,'Reservation confirmed.')
 console.log('A plain Cancel dismissal cannot own evidence for an approved booking')
+
+assert.equal(lockedComputer.approvedBrowserOperation('Book a refundable fare with free cancellation'),'(?:booking|reservation)')
+assert.equal(lockedComputer.approvedBrowserOperation('Book this fare; do not cancel my existing booking'),'(?:booking|reservation)')
+assert.equal(lockedComputer.approvedBrowserOperation('Cancel my reservation'),'cancellation')
+assert.equal(lockedComputer.approvedBrowserOperation('Open the site and then cancel my booking'),'cancellation')
+queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Review reservation.',executionAfterText:'Reservation confirmed.'}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Book a refundable fare with free cancellation',mode:'execute'})).summary,'Reservation confirmed')
+console.log('Cancellation policy mentions and negated cancellation do not change the approved booking operation')

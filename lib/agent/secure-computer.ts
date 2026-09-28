@@ -355,9 +355,13 @@ async function assessReadOutcome(objective:string,page:any):Promise<string|null>
   try{return verifiedBrowserAnswer(JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g,'')),pageText,title,titleOnly)}catch{return null}
 }
 
+function approvedBrowserOperation(objective:string){
+  return /(?:^|[.!?;]\s*|\b(?:please|then|and)\s+)cancel\b/i.test(objective)?'cancellation':/\b(check[ -]?in)\b/i.test(objective)?'check[ -]?in':/\b(pay|payment)\b/i.test(objective)?'payment':/\b(buy|purchase|order|checkout)\b/i.test(objective)?'(?:order|purchase)':/\b(book|booking|reserve|reservation)\b/i.test(objective)?'(?:booking|reservation)':/\b(submit|apply|application|form|send)\b/i.test(objective)?'(?:application|form|submission)':null
+}
+
 function localExecutionConfirmation(objective:string,before:string,after:string,actions:any[]):string|null{
   if(!actions.some(a=>a.status==='done'&&(a.kind==='submit'||a.consequential===true)))return null
-  const operation=/\b(cancel)\b/i.test(objective)?'cancellation':/\b(check[ -]?in)\b/i.test(objective)?'check[ -]?in':/\b(pay|payment)\b/i.test(objective)?'payment':/\b(buy|purchase|order|checkout)\b/i.test(objective)?'(?:order|purchase)':/\b(book|booking|reserve|reservation)\b/i.test(objective)?'(?:booking|reservation)':/\b(submit|apply|application|form|send)\b/i.test(objective)?'(?:application|form|submission)':null
+  const operation=approvedBrowserOperation(objective)
   if(!operation)return null
   const confirmation=new RegExp('\\b'+operation+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i')
   for(const line of after.split(/[\n.!?]+/).map(line=>line.trim()).filter(Boolean)){
@@ -499,7 +503,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       if(!actions.length)break
       const currentUrl=String(page.url||target.toString())
       const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
-      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,cancelRequested:/\bcancel(?:lation)?\b/i.test(params.objective)})).toString('base64')
+      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,cancelRequested:approvedBrowserOperation(params.objective)==='cancellation'})).toString('base64')
       if(params.mode==='execute')executionStarted=true
       const result=await first.sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload]})
       if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
