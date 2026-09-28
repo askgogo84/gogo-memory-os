@@ -602,22 +602,27 @@ console.log('Confirmation present only after the action-browser reload cannot co
 
 queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Review reservation.',executionAfterText:'Booking submission pending.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+function evaluateObservation(fn:any,input:any,observation:any){
+ if(input?.confirmationSnapshot)return runInNewContext('('+fn.toString()+')(input)',{input,document:{body:{innerText:observation.text}}})
+ return {...observation,text:observation.text.slice(0,18000)}
+}
+
 let boundaryOutput:any,simulatedPage='Review reservation.'
-const boundaryPage={goto:async(url:string)=>{simulatedPage=url.endsWith('/history')?'Reservation confirmed.':'Review reservation.'},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async()=>({url:'https://provider.example',text:simulatedPage}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:'Confirm reservation',tagName:'BUTTON',id:'confirm',getAttribute:()=>null}),click:async()=>{simulatedPage='Booking submission pending.'}})})}
-await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[boundaryPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'submit',selector:'#confirm'},{kind:'goto',url:'https://provider.example/history'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+const boundaryPage={goto:async(url:string)=>{simulatedPage=url.endsWith('/history')?'Reservation confirmed.':'Review reservation.'},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async(fn:any,input:any)=>evaluateObservation(fn,input,{url:'https://provider.example',text:simulatedPage}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:'Confirm reservation',tagName:'BUTTON',id:'confirm',getAttribute:()=>null}),click:async()=>{simulatedPage='Booking submission pending.'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[boundaryPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:booking|reservation)',actions:[{kind:'submit',selector:'#confirm'},{kind:'goto',url:'https://provider.example/history'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
 assert.equal(boundaryOutput.text,'Reservation confirmed.')
-assert.equal(boundaryOutput.executionBeforeText,'Review reservation.')
-assert.equal(boundaryOutput.executionAfterText,'Booking submission pending.')
+assert.equal(boundaryOutput.executionBeforeText,'')
+assert.equal(boundaryOutput.executionAfterText,'')
 console.log('Subsequent navigation cannot replace the immediate provider submission result')
 
 simulatedPage='Review reservation.'
 let boundaryClicks=0
 const misleadingControlPage={...boundaryPage,locator:()=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:'Confirm reservation',tagName:'BUTTON',id:'confirm',getAttribute:()=>null}),click:async()=>{simulatedPage=++boundaryClicks===1?'Booking submission pending.':'Reservation confirmed.'}})})}
-await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[misleadingControlPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'submit',selector:'#confirm'},{kind:'click',selector:'#view-reservation'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[misleadingControlPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:booking|reservation)',actions:[{kind:'submit',selector:'#confirm'},{kind:'click',selector:'#view-reservation'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
 assert.equal(boundaryOutput.text,'Reservation confirmed.')
 assert.equal(boundaryOutput.actions.filter((action:any)=>action.consequential).length,2)
-assert.equal(boundaryOutput.executionBeforeText,'Review reservation.')
-assert.equal(boundaryOutput.executionAfterText,'Booking submission pending.')
+assert.equal(boundaryOutput.executionBeforeText,'')
+assert.equal(boundaryOutput.executionAfterText,'')
 console.log('Later consequential-labelled controls cannot overwrite the original submission evidence')
 
 for(const [objective,confirmation] of [['Cancel my booking','Booking cancelled'],['Cancel my reservation','Reservation canceled'],['Cancel my booking','Your booking has been cancelled'],['Check in for my flight','You are checked in'],['Check in for my flight','You are now checked in'],['Check in for my flight','Checked in successfully']]){
@@ -634,9 +639,9 @@ console.log('Normal cancellation/check-in verb confirmations work while negative
 
 simulatedPage='Dismiss this popup.'
 const dismissalPage={...boundaryPage,locator:(selector:string)=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:selector==='#dismiss'?'Cancel':'Confirm reservation',tagName:'BUTTON',id:selector,getAttribute:()=>null}),click:async()=>{simulatedPage=selector==='#dismiss'?'Review the new reservation.':'Reservation confirmed.'}})})}
-await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[dismissalPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',cancelRequested:false,actions:[{kind:'click',selector:'#dismiss'},{kind:'submit',selector:'#confirm'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
-assert.equal(boundaryOutput.executionBeforeText,'Review the new reservation.')
-assert.equal(boundaryOutput.executionAfterText,'Reservation confirmed.')
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[dismissalPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:booking|reservation)',actions:[{kind:'click',selector:'#dismiss'},{kind:'submit',selector:'#confirm'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.executionBeforeText,'')
+assert.equal(boundaryOutput.executionAfterText,'Reservation confirmed')
 console.log('A plain Cancel dismissal cannot own evidence for an approved booking')
 
 
@@ -666,10 +671,10 @@ for(const baseline of ['RESERVATION CONFIRMED','Reservation   confirmed','Reserv
 console.log('Case and whitespace changes cannot make stale confirmation evidence new')
 
 let applyStage='Open the application.'
-const applyPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async()=>({url:'https://provider.example',text:applyStage}),locator:(selector:string)=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:selector==='#apply'?'Apply':'Submit application',tagName:'BUTTON',id:selector,getAttribute:()=>null}),click:async()=>{applyStage=selector==='#apply'?'Application submitted previously. Fill this new form.':'Application submitted successfully.'}})})}
-await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[applyPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'click',selector:'#apply'},{kind:'submit',selector:'#submit'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
-assert.equal(boundaryOutput.executionBeforeText,'Application submitted previously. Fill this new form.')
-assert.equal(boundaryOutput.executionAfterText,'Application submitted successfully.')
+const applyPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async(fn:any,input:any)=>evaluateObservation(fn,input,{url:'https://provider.example',text:applyStage}),locator:(selector:string)=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:selector==='#apply'?'Apply':'Submit application',tagName:'BUTTON',id:selector,getAttribute:()=>null}),click:async()=>{applyStage=selector==='#apply'?'Application submitted previously. Fill this new form.':'Application submitted successfully.'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[applyPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:application|form|submission)',actions:[{kind:'click',selector:'#apply'},{kind:'submit',selector:'#submit'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.executionBeforeText,'Application submitted')
+assert.equal(boundaryOutput.executionAfterText,'Application submitted successfully')
 metadata={url:'https://provider.example',objective:'Submit application'}
 browserBlockReason='provider_access_limited';browserActions=[{kind:'submit',status:'done',consequential:true}];browserCompleted=false
 const blockedAfterSubmit=await command.executeBrowser({...params,mode:'execute'})
@@ -689,7 +694,7 @@ const asyncPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:asy
   if(ready){settled=true;return}
  }
  throw new Error('confirmation timeout')
-},evaluate:async()=>({url:'https://provider.example',text:asyncPageText}),locator:()=>({first:()=>({click:async()=>{asyncPageText='Processing your order'}})})}
+},evaluate:async(fn:any,input:any)=>evaluateObservation(fn,input,{url:'https://provider.example',text:asyncPageText}),locator:()=>({first:()=>({click:async()=>{asyncPageText='Processing your order'}})})}
 await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[asyncPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:order|purchase)',actions:[{kind:'submit',selector:'#place-order'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
 assert.equal(settled,true)
 assert.equal(boundaryOutput.executionAfterText,'Order placed')
@@ -710,3 +715,17 @@ for(const [operation,before,after] of [['payment','Review payment','Payment proc
  assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Complete the approved operation',mode:'execute'})).summary,after)
 }
 console.log('Stable confirmation phrases ignore mutable timestamps; direct processed payments work; negatives cannot become success')
+
+for(const stale of [true,false]){
+ let longBody='x'.repeat(20000)+(stale?'\nOrder placed':'\nReview purchase')
+ const longPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async(fn:any,input:any)=>evaluateObservation(fn,input,{url:'https://provider.example',text:longBody}),locator:()=>({first:()=>({click:async()=>{longBody=stale?'Order placed':'x'.repeat(20000)+'\nOrder placed'}})})}
+ await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[longPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:order|purchase)',actions:[{kind:'submit',selector:'#place-order'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+ assert.equal(boundaryOutput.executionBeforeText,stale?'Order placed':'')
+ assert.equal(boundaryOutput.executionAfterText,'Order placed')
+ plannedOperation='purchase';modelText=JSON.stringify([{kind:'submit',selector:'#place-order'}])
+ queuedObservations=[{...evidencePage,text:'Review purchase.'},boundaryOutput]
+ const execute=()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})
+ if(stale)await assert.rejects(execute,/browser_objective_unverified/)
+ else assert.equal((await execute()).summary,'Order placed')
+}
+console.log('Full-DOM phrase snapshots retain late confirmations and reject stale evidence moving into the text prefix')

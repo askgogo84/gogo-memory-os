@@ -174,6 +174,27 @@ async function model(page){
     };
   });
 }
+async function snapshotConfirmation(page,pattern){
+  return await page.evaluate(({pattern})=>{
+const normalize=(text)=>String(text||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').replace(/\b(?:has been|is|was|are|successfully)\s+/g,'').replace(/\b(?:confirmed|completed|placed|processed|successful|submitted|received)\b/g,'confirmed').replace(/\bcancelled\b/g,'canceled').replace(/\s+/g,' ').trim();
+const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|placed|processed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
+const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
+const extract=(text)=>{
+ const raw=String(text||'');
+ const matcher=new RegExp(confirmation.source+(verb?'|'+verb.source:''),'gi');
+ return [...raw.matchAll(matcher)].flatMap(match=>{
+  const start=match.index||0,end=start+match[0].length;
+  const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
+  const next=raw.slice(end).search(/[\n.!?]/);
+  const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
+  if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
+  return [{key:normalize(match[0]),line,phrase:match[0]}];
+ });
+};
+
+return [...new Set(extract(document.body?.innerText||'').map(item=>item.phrase.replace(/\s+/g,' ').trim()))].join('\n');
+  },{pattern,confirmationSnapshot:true});
+}
 async function isConsequentialControl(page,selector){
   try{return await page.locator(selector).first().evaluate(el=>{
     const t=(el.getAttribute('type')||'').toLowerCase();
@@ -211,7 +232,7 @@ async function isConsequentialControl(page,selector){
         } else if(a.kind==='submit'){
           if(payload.mode!=='execute'){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
           if(executionBeforeText!==null)throw new Error('multiple_submissions_forbidden');
-          executionBeforeText=(await model(page)).text;captureEvidence=true;
+          executionBeforeText=await snapshotConfirmation(page,payload.confirmationPattern);captureEvidence=true;
           await page.locator(a.selector).first().click({timeout:10000});
         }
         log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
@@ -230,13 +251,13 @@ const extract=(text)=>{
   const next=raw.slice(end).search(/[\n.!?]/);
   const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
   if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
-  return [{key:normalize(match[0]),line}];
+  return [{key:normalize(match[0]),line,phrase:match[0]}];
  });
 };
 const baseline=new Set(extract(before).map(item=>item.key));
 return extract(document.body?.innerText||'').some(item=>!baseline.has(item.key));
           },{before:executionBeforeText,pattern:payload.confirmationPattern},{timeout:15000,polling:250}).catch(()=>{});
-          executionAfterText=(await model(page)).text;
+          executionAfterText=await snapshotConfirmation(page,payload.confirmationPattern);
         }
       }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential});}
     }
@@ -392,7 +413,7 @@ const extract=(text:string)=>{
   const next=raw.slice(end).search(/[\n.!?]/);
   const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
   if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
-  return [{key:normalize(match[0]),line}];
+  return [{key:normalize(match[0]),line,phrase:match[0]}];
  });
 };
 const baseline=new Set(extract(before).map(item=>item.key));
