@@ -348,9 +348,9 @@ async function assessReadOutcome(objective:string,page:any):Promise<string|null>
 
 function localExecutionConfirmation(objective:string,before:string,after:string,actions:any[]):string|null{
   if(!actions.some(a=>a.status==='done'&&(a.kind==='submit'||a.consequential===true)))return null
-  const operation=/\b(cancel)\b/i.test(objective)?'cancellation':/\b(check[ -]?in)\b/i.test(objective)?'check[ -]?in':/\b(pay|payment)\b/i.test(objective)?'payment':/\b(buy|purchase|order|checkout)\b/i.test(objective)?'(?:order|purchase)':/\b(book|booking|reserve|reservation)\b/i.test(objective)?'(?:booking|reservation)':null
+  const operation=/\b(cancel)\b/i.test(objective)?'cancellation':/\b(check[ -]?in)\b/i.test(objective)?'check[ -]?in':/\b(pay|payment)\b/i.test(objective)?'payment':/\b(buy|purchase|order|checkout)\b/i.test(objective)?'(?:order|purchase)':/\b(book|booking|reserve|reservation)\b/i.test(objective)?'(?:booking|reservation)':/\b(submit|apply|application|form|send)\b/i.test(objective)?'(?:application|form|submission)':null
   if(!operation)return null
-  const confirmation=new RegExp('\\b'+operation+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|successful|successfully (?:completed|placed|confirmed|processed))\\b','i')
+  const confirmation=new RegExp('\\b'+operation+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i')
   for(const line of after.split(/[\n.!?]+/).map(line=>line.trim()).filter(Boolean)){
     if(confirmation.test(line)&&!before.includes(line)&&! /\b(not|pending|failed|if|when|once|will|would|could|should)\b/i.test(line))return line
   }
@@ -363,6 +363,7 @@ function normalizeActionLog(values:any[]){
 
 export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean}):Promise<SecureBrowserResult>{
   let releaseOwnerLock:BrowserOwnerRelease|undefined
+  let executionStarted=false
   let activeSandbox:{stop:()=>Promise<unknown>}|undefined
   try {
     const target=new URL(params.url)
@@ -371,7 +372,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     releaseOwnerLock=first.releaseOwnerLock
     activeSandbox=first.sandbox
     let page=first.page
-    const initialPageText=String(page.text||'')
+    let initialPageText=String(page.text||'')
     let actionLog:any[]=[]
     let missingActionEvidence=false
     let vaultAttempted=false
@@ -487,9 +488,11 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
 
       const actions=await planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION')
       if(!actions.length)break
+      initialPageText=String(page.text||'')
       const currentUrl=String(page.url||target.toString())
       const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
       const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions})).toString('base64')
+      if(params.mode==='execute')executionStarted=true
       const result=await first.sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload]})
       if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
       const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
@@ -529,7 +532,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     await activeSandbox?.stop().catch(()=>{})
     const safeError=safeText(error?.message||error,1000)
     console.error('SECURE_BROWSER_FAILED:',safeError)
-    throw new Error(safeError||'secure_browser_failed')
+    throw Object.assign(new Error(safeError||'secure_browser_failed'),{browserExecutionStarted:executionStarted})
   }finally{
     await releaseOwnerLock?.()
   }

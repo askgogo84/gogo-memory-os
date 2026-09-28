@@ -365,6 +365,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${params.mode==='read'?'':safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
   }catch(err:any){
     if(pendingHandoffReservation)await (await import('./provider-browser-handoff')).cancelBrowserHandoffReservation(params.actor.userId,pendingHandoffReservation).catch(()=>{})
+    if(err?.browserExecutionStarted===true)runMetadata.browser_safe_to_retry=false
     if(runMetadata.browser_safe_to_retry===false){
       const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
       return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}

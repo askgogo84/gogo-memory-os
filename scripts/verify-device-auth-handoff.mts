@@ -51,13 +51,14 @@ const db={from:(table:string)=>{
     then:(resolve:any)=>{if(directSaveFails&&change?.metadata_json?.handoff)return Promise.resolve({error:{message:'save failed'}}).then(resolve);if(change?.metadata_json)metadata=change.metadata_json;return Promise.resolve({error:null}).then(resolve)}}
   return q
 }}
+let commandExecutionFailure:any
 let browserCompleted=false,vaultCalls=0,browserActions:any[]=[],reconciliationEvidence:any,browserExecutions=0
 const command=load('browser-command.ts',{
-  './post-auth-outcome':{inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
+  './post-auth-outcome':{markAuthOutcomeUnknown:async(_tg:string,runId:string,meta:any)=>{metadata={...meta,browser_safe_to_retry:false};return {runId,status:'outcome_unknown'}},inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
   '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
-  './secure-computer':{runSecureBrowser:async()=>{browserExecutions++;return browserCompleted
+  './secure-computer':{runSecureBrowser:async()=>{browserExecutions++;if(commandExecutionFailure)throw commandExecutionFailure;return browserCompleted
     ? {status:'completed',url:'https://provider.example/account',title:'Account',summary:'Read account',forms:[],actions:[]}
     : {status:'blocked',blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}}},
   '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
@@ -435,6 +436,7 @@ let evidencePage:any={url:'https://www.instagram.com/accounts/login/',title:'Ins
 let modelFailure=false
 let modelText='[]'
 let queuedObservations:any[]=[]
+let evidenceCredential:any=null
 const evidenceComputer=load('secure-computer.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>{if(modelFailure)throw new Error('unavailable');return {content:[{type:'text',text:modelText}]}}}}},
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(queuedObservations.shift()??evidencePage)})})}},
@@ -442,7 +444,8 @@ const evidenceComputer=load('secure-computer.ts',{
   './browser-auth-gate':{detectHumanAuthGate},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{},{reserveHandoff:async()=>"transfer"})},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
-  '@/lib/vault/credential-store':{resolveVaultCredentialForBrowser:async()=>null},
+  '@/lib/vault/credential-store':{resolveVaultCredentialForBrowser:async()=>evidenceCredential,recordVaultBrowserOutcome:async()=>{}},
+  '@/lib/vault/session-store':{upsertVaultSession:async()=>{}},
   './trust':{canAuthorizeConsequentialAction:()=>false},
 })
 const readParams={userId:'owner',url:'https://www.instagram.com/',objective:'Show my three most recent saved posts',mode:'read',reserveHumanHandoff:true,reservePasswordHandoff:true}
@@ -560,3 +563,26 @@ for(const confirmation of ['Reservation confirmed.','Reservation is not confirme
 queuedObservations=[{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 console.log('Local confirmation requires new affirmative provider evidence, not stale, pending or conditional text')
+
+queuedObservations=[{...evidencePage,text:'Review application.'},{...evidencePage,text:'Application submitted successfully.'}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Submit this application',mode:'execute'})).summary,'Application submitted successfully')
+queuedObservations=[{...evidencePage,text:'Review application.'},{...evidencePage,text:'Awaiting provider response.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Submit this application',mode:'execute'}),(error:any)=>error.message==='browser_objective_unverified'&&error.browserExecutionStarted===true)
+console.log('Generic applications confirm locally; uncertain submissions carry a no-replay marker')
+
+evidenceCredential={username:'fixture',secret:'fixture-only',provider:'fixture',domain:'provider.example',credentialId:'fixture',telegramId:17}
+queuedObservations=[{url:'https://provider.example/login',title:'Sign in',text:'Enter your password',forms:[{inputs:[{type:'password'}]}]},{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+assert.equal(queuedObservations.length,0,'execute after Vault login consumes the authenticated baseline')
+evidenceCredential=null
+metadata={url:'https://provider.example',objective:'Submit application'}
+commandExecutionFailure=Object.assign(new Error('browser_objective_unverified'),{browserExecutionStarted:true})
+const uncertainSubmission=await command.executeBrowser({...params,mode:'execute'})
+assert.equal(uncertainSubmission.status,'outcome_unknown')
+assert.equal(metadata.browser_safe_to_retry,false)
+const noReplayCount=browserExecutions
+reconciliationEvidence=undefined
+await assert.rejects(()=>command.executeBrowser({...params,mode:'execute'}),/reconciliation/)
+assert.equal(browserExecutions,noReplayCount,'unknown submission cannot be automatically replayed')
+commandExecutionFailure=undefined
+console.log('Post-Vault baseline rejects stale confirmation and uncertain command state blocks replay')
