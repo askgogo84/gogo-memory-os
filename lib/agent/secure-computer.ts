@@ -363,10 +363,12 @@ function localExecutionConfirmation(approvedOperation:ApprovedBrowserOperation|n
   if(!actions.some(a=>a.status==='done'&&(a.kind==='submit'||a.consequential===true)))return null
   const operation=approvedOperation?operationPatterns[approvedOperation]:null
   if(!operation)return null
+  const normalizeEvidence=(text:string)=>text.normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim()
+  const baseline=normalizeEvidence(before)
   const confirmation=new RegExp('\\b'+operation+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i')
   for(const line of after.split(/[\n.!?]+/).map(line=>line.trim()).filter(Boolean)){
     const normalVerbConfirmation=operation==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has been)\s+)?cancel(?:led|ed)\b/i.test(line):operation==='check[ -]?in'?/^(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?$/i.test(line):false
-    if((confirmation.test(line)||normalVerbConfirmation)&&!before.includes(line)&&! /\b(not|pending|failed|if|when|once|will|would|could|should)\b/i.test(line))return safeText(line,1800)
+    if((confirmation.test(line)||normalVerbConfirmation)&&!baseline.includes(normalizeEvidence(line))&&! /\b(not|pending|failed|if|when|once|will|would|could|should)\b/i.test(line))return safeText(line,1800)
   }
   return null
 }

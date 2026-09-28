@@ -656,3 +656,10 @@ plannedOperation=undefined
 queuedObservations=[{...evidencePage,text:'Review the operation.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Book a fare',mode:'execute'}),(error:any)=>error.message==='browser_objective_unverified'&&error.browserExecutionStarted===false)
 console.log('Execution consistently uses the preclassified operation; missing classification fails before any action')
+
+plannedOperation='booking'
+for(const baseline of ['RESERVATION CONFIRMED','Reservation   confirmed','Reservation\nconfirmed']){
+ queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed',executionBeforeText:baseline,executionAfterText:'Reservation confirmed'}]
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+}
+console.log('Case and whitespace changes cannot make stale confirmation evidence new')
