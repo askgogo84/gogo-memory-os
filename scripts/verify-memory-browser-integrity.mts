@@ -54,7 +54,7 @@ const crypto=await import('node:crypto')
 const redaction=await import('../lib/bot/memory-redaction')
 const memoryIndex=await import('../lib/services/memory-index')
 const travelTime=await import('../lib/services/travel-time')
-let consentEnabled=true
+let consentEnabled=true,profileLookupFails=false,insightLookupFails=false,embeddingFails=true
 const queries:Array<{table:string;filters:Array<[string,unknown]>}>=[]
 const stores:Record<string,any[]>={
   memories:[{id:'old-fact',telegram_id:17,content:'Divyashree arrives in New York on 28 September',created_at:'2020-01-01'},
@@ -63,15 +63,15 @@ const stores:Record<string,any[]>={
     {id:'other-owner',telegram_id:18,content:'Divya lives elsewhere'}],
   memory_embeddings:[],
 }
-const database={from:(table:string)=>{
+const database={rpc:async()=>({data:[],error:null}),from:(table:string)=>{
   const filters:Array<[string,unknown]>=[]
   queries.push({table,filters})
-  const result=()=>({data:table==='user_consent_settings'?{memory_enabled:consentEnabled}:table==='user_memory_profile'?null:(stores[table]||[]).filter(row=>filters.every(([key,value])=>String(row[key])===String(value))),error:null})
+  const result=()=>({data:table==='user_consent_settings'?{memory_enabled:consentEnabled}:table==='user_memory_profile'?null:(stores[table]||[]).filter(row=>filters.every(([key,value])=>String(row[key])===String(value))),error:(table==='user_memory_profile'&&profileLookupFails||table==='user_insights'&&insightLookupFails)?{message:'fixture lookup outage'}:null})
   const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},is:()=>q,or:()=>q,in:()=>q,gte:()=>q,lte:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
   return q
 }}
 const exports:any={}
-const mocks:any={'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:database},'@/lib/services/embeddings':{embedText:async()=>{throw new Error('fixture embedding outage')}},'@/lib/bot/memory-redaction':redaction,'@/lib/services/memory-index':memoryIndex,'@/lib/services/travel-time':travelTime,'./typed-object-context':{latestTypedContext:async()=>null}}
+const mocks:any={'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:database},'@/lib/services/embeddings':{embedText:async()=>{if(embeddingFails)throw new Error('fixture embedding outage');return []}},'@/lib/bot/memory-redaction':redaction,'@/lib/services/memory-index':memoryIndex,'@/lib/services/travel-time':travelTime,'./typed-object-context':{latestTypedContext:async()=>null}}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/context-brain.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>mocks[name],console,Date,Intl})
 const actor={legacyTelegramId:17,userId:'fixture-owner'}
 const recalled=await exports.buildContextPack({actor,text:'When does Divya arrive in New York?'})
@@ -99,7 +99,7 @@ assert.equal(memoryIndex.recallableMemoryText('Divya passport S1234567','memorie
 console.log('Title-only observations, supported Indian airports, same-day arrivals and safe document recall passed')
 
 // A read step must not require a newly created reminder or invoke a mutation path.
-const {executeVerifiedMissionReminder}=await import('../lib/agent/mission-tools')
+const {executeVerifiedMissionReminder,reminderStepIntent}=await import('../lib/agent/mission-tools')
 const {supabaseAdmin}=await import('../lib/supabase-admin')
 const originalFrom=supabaseAdmin.from
 let reminderQueries=0,reminderReadFails=false
@@ -113,6 +113,8 @@ try{
  assert.ok('readOnly' in result.output&&result.output.readOnly===true)
  assert.equal(reminderQueries,1)
  assert.match(result.text,/No upcoming unsent reminders/)
+ const prefixed=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'For 28 Sep 2026 at 2:35 am, inspect the saved entries'},missionText:'Review the trip'})
+ assert.ok('readOnly' in prefixed.output&&prefixed.output.readOnly===true)
  const beforeMixed=reminderQueries
  await assert.rejects(()=>executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review and create reminders',instruction:'Check my reminders and create a reminder for 28 Sep 2026 at 5 pm'},missionText:'Review and create a reminder'}),/mixed_read_write_requires_separate_steps/)
  assert.equal(reminderQueries,beforeMixed,'mixed operations must not be falsely completed or partially mutated')
@@ -149,3 +151,14 @@ console.log('WhatsApp PDF ingestion, worldwide IATA codes and extractive browser
 
 assert.equal(travelTime.ticketTimezone('Kochi'),null,'ambiguous India/Japan city names need an airport code or explicit zone')
 assert.equal(travelTime.ticketTimezone('Kochi','Asia/Kolkata'),'Asia/Kolkata')
+
+assert.equal(reminderStepIntent({title:'Reminders',instruction:'For 28 Sep 2026 at 2:35 am, inspect the saved entries'}),'read')
+assert.equal(reminderStepIntent({title:'Create check-in reminder',instruction:'Create a reminder to review travel documents on 28 Sep 2026 at 5 pm'}),'write')
+assert.equal(reminderStepIntent({title:'Reminders',instruction:'28 Sep 2026 at 5 pm'}),'unknown')
+consentEnabled=true;embeddingFails=false
+for(const kind of ['profile','insight']){
+ profileLookupFails=kind==='profile';insightLookupFails=kind==='insight'
+ const pack=await exports.buildContextPack({actor,text:'What is my saved context?'})
+ assert.equal(pack.retrievalIncomplete,true,kind)
+}
+console.log('Whole-step reminder classification and partial profile/insight outage disclosure passed')

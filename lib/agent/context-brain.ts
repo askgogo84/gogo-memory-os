@@ -344,6 +344,11 @@ async function loadLearnedFacts(actor:AgentActor,query:string,includeSemantic:bo
       .eq('telegram_id',tg).maybeSingle(),
   ])
 
+  if(insightResult.error||profileResult.error){
+    retrievalIncomplete=true
+    console.error('CONTEXT_PROFILE_RETRIEVAL_INCOMPLETE')
+  }
+
   const insights:ContextFact[]=(insightResult.data||[]).map((row:any):ContextFact=>({
     id:`insight:${row.id}`,
     source:'memory_insight',

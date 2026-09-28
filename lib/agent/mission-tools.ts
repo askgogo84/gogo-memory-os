@@ -164,16 +164,26 @@ async function persistMissionReminder(params:{actor:AgentActor;date:string;time:
   return {text:`Created reminder for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(data.id),message:String(data.message||params.message),remindAt:String(data.remind_at),timezone:String(data.timezone||params.timezone),reused:false,verifiedStore:'reminders'}}
 }
 
+export function reminderStepIntent(step:{title:string;instruction:string}):'read'|'write'|'mixed'|'unknown'{
+  const reads=new Set(['review','list','show','find','retrieve','read','check','inspect','look up'])
+  const verbs=/(?<![\w-])(review|list|show|find|retrieve|read|check|inspect|look up|create|set|add|schedule|remind|move|reschedule|update|edit|delete|remove|cancel|complete)(?![\w-])/i
+  const intents=new Set<string>()
+  for(const text of [step.title,step.instruction]){
+    const positive=text.replace(/\b(?:do not|don't|never)\b[^.;!?]*(?=[.;!?]|$)/gi,'')
+    for(const clause of positive.split(/[.;!?]|\b(?:and|then)\b/i)){
+      const verb=clause.match(verbs)?.[1]?.toLowerCase()
+      if(verb)intents.add(reads.has(verb)?'read':'write')
+    }
+  }
+  return intents.size>1?'mixed':intents.has('read')?'read':intents.has('write')?'write':'unknown'
+}
+
 export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
   const {actor,step,missionText}=params
-  const reviewStep=/^(?:please\s+)?(?:review|list|show|find|retrieve|read|check|inspect|look up)\b/i.test(step.instruction.trim())&&/\breminders?\b/i.test(step.instruction)
-  // Prohibitions do not request writes. Mixed positive operations need distinct
-  // planner steps; never claim a combined deliverable completed after only a read.
-  const positiveInstruction=step.instruction.replace(/\b(?:do not|don't|never)\b[^.;!?]*(?=[.;!?]|$)/gi,'')
-  if(reviewStep&&/\b(create|set|add|schedule|remind|move|reschedule|update|edit|delete|remove|cancel|complete)\b/i.test(positiveInstruction)){
-    throw new Error('mission_reminder_mixed_read_write_requires_separate_steps')
-  }
-  if(reviewStep){
+  const stepIntent=reminderStepIntent(step)
+  if(stepIntent==='mixed')throw new Error('mission_reminder_mixed_read_write_requires_separate_steps')
+  if(stepIntent==='unknown')throw new Error('mission_reminder_intent_unverified')
+  if(stepIntent==='read'){
     const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone')
       .eq('telegram_id',actor.legacyTelegramId).eq('sent',false).gte('remind_at',new Date().toISOString())
       .order('remind_at',{ascending:true}).limit(50)
