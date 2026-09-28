@@ -214,7 +214,9 @@ const receiptSnapshot=()=>{
   const attr=attrs.find(key=>node.getAttribute?.(key));
   const reference=String(node.innerText||'').match(/\b(?:order|booking|confirmation|application|receipt)\s*(?:number|id|reference|ref|#)\s*[:#-]?\s*([a-z0-9][a-z0-9-]{3,})\b/i);
   const id=attr?attr+':'+node.getAttribute(attr):reference?'reference:'+reference[1].toLowerCase():null;
-  return {id,phrase:extract(node.innerText||'')[0].phrase.replace(/\s+/g,' ').trim()};
+  const registry=globalThis.__gogoReceiptNodes||(globalThis.__gogoReceiptNodes=new WeakMap());
+  if(!registry.has(node))registry.set(node,Date.now().toString(36)+':'+Math.random().toString(36).slice(2));
+  return {id,nodeKey:registry.get(node),phrase:extract(node.innerText||'')[0].phrase.replace(/\s+/g,' ').trim()};
  });
  return records.length?JSON.stringify({receiptRecords:records}):extract(document.body?.innerText||'').map(item=>item.phrase.replace(/\s+/g,' ').trim()).join('\n');
 };
@@ -307,7 +309,9 @@ const receiptSnapshot=()=>{
   const attr=attrs.find(key=>node.getAttribute?.(key));
   const reference=String(node.innerText||'').match(/\b(?:order|booking|confirmation|application|receipt)\s*(?:number|id|reference|ref|#)\s*[:#-]?\s*([a-z0-9][a-z0-9-]{3,})\b/i);
   const id=attr?attr+':'+node.getAttribute(attr):reference?'reference:'+reference[1].toLowerCase():null;
-  return {id,phrase:extract(node.innerText||'')[0].phrase.replace(/\s+/g,' ').trim()};
+  const registry=globalThis.__gogoReceiptNodes||(globalThis.__gogoReceiptNodes=new WeakMap());
+  if(!registry.has(node))registry.set(node,Date.now().toString(36)+':'+Math.random().toString(36).slice(2));
+  return {id,nodeKey:registry.get(node),phrase:extract(node.innerText||'')[0].phrase.replace(/\s+/g,' ').trim()};
  });
  return records.length?JSON.stringify({receiptRecords:records}):extract(document.body?.innerText||'').map(item=>item.phrase.replace(/\s+/g,' ').trim()).join('\n');
 };
@@ -321,9 +325,8 @@ try{
  const old=JSON.parse(before).receiptRecords,current=JSON.parse(after).receiptRecords;
  if(Array.isArray(old)&&Array.isArray(current)){
   const ids=new Set(old.filter(item=>item?.id).map(item=>item.id));
-  const added=current.filter(item=>item?.id&&!ids.has(item.id));
-  const anonymousLoss=Math.max(0,old.filter(item=>!item?.id).length-current.filter(item=>!item?.id).length);
-  if(added.length>anonymousLoss)return true;
+  const hydrated=new Set(old.filter(item=>!item?.id&&item?.nodeKey).map(item=>item.nodeKey));
+  if(current.some(item=>item?.id&&!ids.has(item.id)&&(!item.nodeKey||!hydrated.has(item.nodeKey))))return true;
  }
 }catch{}
 return receiptCount(after)>receiptCount(before);
@@ -494,14 +497,14 @@ const extract=(text:string)=>{
  return groups.sort((a,b)=>b.length-a.length)[0]||[];
 };
 const records=(text:string)=>{
- try{const parsed=JSON.parse(text);if(Array.isArray(parsed.receiptRecords))return parsed.receiptRecords.flatMap((item:any)=>{const phrase=typeof item==='string'?item:item?.phrase;return typeof phrase==='string'?extract(phrase).slice(0,1).map(match=>({...match,id:typeof item?.id==='string'?item.id:null})):[];});}catch{}
- return extract(text).map(match=>({...match,id:null as string|null}));
+ try{const parsed=JSON.parse(text);if(Array.isArray(parsed.receiptRecords))return parsed.receiptRecords.flatMap((item:any)=>{const phrase=typeof item==='string'?item:item?.phrase;return typeof phrase==='string'?extract(phrase).slice(0,1).map(match=>({...match,id:typeof item?.id==='string'?item.id:null,nodeKey:typeof item?.nodeKey==='string'?item.nodeKey:null})):[];});}catch{}
+ return extract(text).map(match=>({...match,id:null as string|null,nodeKey:null as string|null}));
 };
 const previous=records(before),current=records(after);
 const oldIds=new Set(previous.map(item=>item.id));
-const added=current.filter(item=>item.id&&!oldIds.has(item.id));
-const anonymousLoss=Math.max(0,previous.filter(item=>!item.id).length-current.filter(item=>!item.id).length);
-  const match=(added.length>anonymousLoss?added[anonymousLoss]:null)||current[previous.length]
+const hydrated=new Set(previous.filter(item=>!item.id&&item.nodeKey).map(item=>item.nodeKey));
+const added=current.filter(item=>item.id&&!oldIds.has(item.id)&&(!item.nodeKey||!hydrated.has(item.nodeKey)));
+  const match=added[0]||current[previous.length]
   return match?safeText(match.line,1800):null
 }
 

@@ -162,7 +162,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
   try {
     let sel = supabaseAdmin
       .from('travel_tickets')
-      .select('id,depart_at')
+      .select('id,depart_at,pnr,flight_no')
       .eq('telegram_id', ctx.telegramId)
       .eq('type', leg.type)
     if(leg.type==='flight'&&leg.pnr&&leg.flightNo&&leg.dateLabel){
@@ -180,7 +180,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
 
     let { data: existing, error: lookupError } = await sel.limit(2)
     if(lookupError)throw new Error(lookupError.message)
-    if(!existing?.length&&leg.type==='flight'&&iso){
+    if(!existing?.length&&leg.type==='flight'){
       let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city')
         .eq('telegram_id',ctx.telegramId).eq('type','flight').is('depart_at',null)
       // Missing stored identifiers may be enriched, but conflicting identifiers
@@ -191,9 +191,9 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       if((result.data?.length||0)>100)throw new Error('travel_ticket_identity_ambiguous')
       const printed=ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'UTC')?.toISOString()
       existing=(result.data||[]).filter(row=>{
-        const compatible=(stored:string|null,incoming:string|undefined|null)=>incoming?(!stored||stored===incoming):!stored
+        const compatible=(stored:string|null,incoming:string|undefined|null)=>!incoming||!stored||stored===incoming
         if(!compatible(row.pnr,leg.pnr)||!compatible(row.flight_no,leg.flightNo))return false
-        if(!(row.pnr&&row.flight_no)&& (row.from_city!==leg.fromCity||row.to_city!==leg.toCity))return false
+        if(!(row.pnr&&row.flight_no&&leg.pnr&&leg.flightNo)&& (row.from_city!==leg.fromCity||row.to_city!==leg.toCity))return false
         return printed&&ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed
       })
     }
@@ -205,12 +205,16 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       if(result.error)throw new Error(result.error.message)
       if((result.data?.length||0)>100)throw new Error('travel_ticket_identity_ambiguous')
       existing=(result.data||[]).filter(row=>{
-        const compatible=(stored:string|null,incoming:string|undefined|null)=>incoming?(!stored||stored===incoming):!stored
+        const compatible=(stored:string|null,incoming:string|undefined|null)=>!incoming||!stored||stored===incoming
         if(!compatible(row.pnr,leg.pnr)||!compatible(row.flight_no,leg.flightNo))return false
-        return row.pnr&&row.flight_no||row.from_city===leg.fromCity&&row.to_city===leg.toCity&&row.leg_index===leg.legIndex
+        return row.pnr&&row.flight_no&&leg.pnr&&leg.flightNo||row.from_city===leg.fromCity&&row.to_city===leg.toCity&&row.leg_index===leg.legIndex
       })
     }
     if(existing&&existing.length>1)throw new Error('travel_ticket_identity_ambiguous')
+    if(existing?.[0]){
+      leg.pnr=leg.pnr||existing[0].pnr||undefined
+      leg.flightNo=leg.flightNo||existing[0].flight_no||undefined
+    }
     const row={
       telegram_id: ctx.telegramId,
       whatsapp_to: ctx.whatsappTo,
@@ -225,12 +229,12 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       date_label: leg.dateLabel,
       depart_local: leg.departLocal,
       airline: leg.airline,
-      flight_no: leg.flightNo,
+      flight_no: leg.flightNo||existing?.[0]?.flight_no||null,
       train_no: leg.trainNo,
       train_name: leg.trainName,
       event_name: leg.eventName,
       venue: leg.venue,
-      pnr: leg.pnr,
+      pnr: leg.pnr||existing?.[0]?.pnr||null,
       seat: leg.seat,
       passengers: leg.passengers,
       source: ctx.source,

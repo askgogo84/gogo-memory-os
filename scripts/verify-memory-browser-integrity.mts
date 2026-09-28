@@ -435,3 +435,16 @@ await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds
 assert.equal(legacyTickets.length,1,'known-time canonical row is enriched instead of duplicated')
 assert.equal(updatedTickets.at(-1).pnr,'ENRICHED')
 console.log('Known-time ticket enrichment preserves the original record')
+
+legacyTickets=[];legacyReminders=[]
+await ticketModule.persistAndRemindTicket(missingIds,ticketCtx)
+await ticketModule.persistAndRemindTicket({...missingIds,flights:[{...missingIds.flights[0],pnr:'STILL-UNKNOWN',flightNo:'XX888'}]},ticketCtx)
+assert.equal(legacyTickets.length,1,'identifier enrichment does not require a resolved departure')
+assert.equal(updatedTickets.at(-1).pnr,'STILL-UNKNOWN')
+legacyTickets=[{...currentTicket,id:'strong-canonical',pnr:'KEEP-PNR',flight_no:'KEEP123'}];legacyReminders=[]
+const retainedCount=ticketWrites.filter(write=>write.table==='travel_tickets').length
+await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
+assert.equal(ticketWrites.filter(write=>write.table==='travel_tickets').length,retainedCount,'lower-quality re-forward reuses the saved canonical record')
+assert.equal(updatedTickets.at(-1).pnr,'KEEP-PNR')
+assert.equal(updatedTickets.at(-1).flight_no,'KEEP123')
+console.log('Unknown-time enrichment and lower-quality canonical re-forwards preserve ticket identity')
