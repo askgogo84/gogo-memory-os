@@ -48,7 +48,7 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
 
   const [{ data: event, error: eventError }, { data: action, error: actionError }, { data: approval, error: approvalError }] = await Promise.all([
     supabaseAdmin.from('life_events')
-      .select('id,event_type,subtype,title,provider,confirmation_ref,preferences_json,metadata_json')
+      .select('id,event_type,subtype,title,provider,start_at,confirmation_ref,preferences_json,metadata_json')
       .eq('id', lifeEventId).eq('telegram_id', tg).maybeSingle(),
     supabaseAdmin.from('life_event_actions')
       .select('id,status,payload_json')
@@ -75,6 +75,8 @@ export async function executeApprovedLifeEventCheckin(params: { actor: AgentActo
     lifeEventActionId:String(lifeEventActionId),
     checkinUrl:url,
     seatPolicy:String(meta.seat_policy||''),
+    departureAt:event.start_at,
+    scheduleRevision:event.metadata_json?.ticketScheduleRevision,
     provider:event.provider,
     title:event.title,
     confirmationRef:confirmation,

@@ -49,3 +49,9 @@ assert.match(readFileSync('lib/agent/life-event-approval-binding.ts','utf8'),/co
 assert.match(readFileSync('lib/agent/booking-calendar-execution.ts','utf8'),/status:'expired'/)
 
 console.log('exact approval binding verification passed')
+
+const scheduledCheckin={runId:'run',lifeEventId:'flight',lifeEventActionId:'action',checkinUrl:'https://airline.example/checkin',seatPolicy:'free_only',departureAt:'2040-09-28T10:00:00Z',scheduleRevision:'original'}
+const scheduledBinding=buildApprovalBinding(checkinApprovalFingerprintInput(scheduledCheckin))
+assert.throws(()=>assertApprovalBinding(checkinApprovalFingerprintInput({...scheduledCheckin,departureAt:'2040-09-29T10:00:00Z'}),scheduledBinding),/approval_action_changed/)
+assert.throws(()=>assertApprovalBinding(checkinApprovalFingerprintInput({...scheduledCheckin,scheduleRevision:'corrected'}),scheduledBinding),/approval_action_changed/)
+assert.doesNotThrow(()=>assertApprovalBinding(checkinApprovalFingerprintInput(scheduledCheckin),scheduledBinding))

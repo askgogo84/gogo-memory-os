@@ -18,6 +18,7 @@ create temporary table life_events (like public.life_events including defaults i
 create temporary table life_event_actions (like public.life_event_actions including defaults including constraints including indexes);
 create temporary table agent_runs (like public.agent_runs including defaults including constraints including indexes);
 create temporary table agent_activity (like public.agent_activity including defaults including constraints including indexes);
+create temporary table agent_approvals (like public.agent_approvals including defaults including constraints including indexes);
 
 -- Durable, revision-bound publication: all visible database effects commit together.
 create temporary table boarding_pass_outbox (
@@ -177,6 +178,21 @@ begin
   returning id into v_event_id;
 
   if v_timing_changed then
+    -- Old pending authorization cannot survive a changed itinerary.
+    update agent_runs r set
+      status=case when r.status in ('running','paused') then 'outcome_unknown' else 'failed' end,
+      error='flight_schedule_changed',summary='Flight schedule changed. Previous check-in approval is expired; prepare and approve the corrected itinerary before any new submission.',updated_at=now()
+      where r.telegram_id=new.telegram_id::text and r.status in ('queued','waiting_approval','running','paused')
+        and exists(select 1 from agent_approvals ap join life_event_actions a on ap.execution_payload->>'lifeEventActionId'=a.id::text
+          where ap.run_id=r.id and ap.telegram_id=r.telegram_id and ap.status in ('pending','approved')
+            and a.life_event_id=v_event_id and a.action_key='checkin-submit-approval');
+    update agent_approvals ap set status='expired',resolved_at=now(),resolution_note='Flight schedule changed; fresh preparation and approval required.'
+      where ap.telegram_id=new.telegram_id::text and ap.status in ('pending','approved')
+        and exists(select 1 from life_event_actions a where a.life_event_id=v_event_id and a.action_key='checkin-submit-approval' and ap.execution_payload->>'lifeEventActionId'=a.id::text);
+    update life_event_actions set status='queued',payload_json=payload_json-'runId'-'approvalId',updated_at=now()
+      where life_event_id=v_event_id and action_key='checkin-submit-approval' and status='waiting_approval';
+    update life_events set lifecycle_state=case when new.depart_at is null then 'captured' else 'planned' end
+      where id=v_event_id and lifecycle_state='waiting_approval';
     update boarding_pass_outbox set status='cancelled',updated_at=now() where life_event_id=v_event_id and status='pending';
     update life_event_actions set
       payload_json=payload_json||jsonb_build_object('scheduleRevision',(select metadata_json->>'ticketScheduleRevision' from life_events where id=v_event_id))
@@ -436,6 +452,20 @@ do $test$ declare aid uuid; eid uuid; rev text; rid uuid; oid uuid; before_runs 
  select id into oid from pg_temp.boarding_pass_outbox where run_id=rid;
  if pg_temp.gogo_claim_boarding_pass_notice(oid) is null then raise exception 'current notice could not be claimed';end if;
  if pg_temp.gogo_claim_boarding_pass_notice(oid) is not null then raise exception 'claimed notice replayed';end if;
+end $test$;
+do $test$ declare aid uuid; eid uuid; rid uuid; apid uuid; begin
+ select id,life_event_id into aid,eid from pg_temp.life_event_actions where telegram_id='23' and action_key='checkin-submit-approval';
+ insert into pg_temp.agent_runs(telegram_id,type,capability,status,title,metadata_json) values('23','life_event','travel','waiting_approval','Review old itinerary',jsonb_build_object('plan_type','life_event_checkin','life_event_id',eid)) returning id into rid;
+ insert into pg_temp.agent_approvals(telegram_id,run_id,action_type,title,description,risk_level,status,execution_payload)
+ values('23',rid,'booking','Old check-in approval','Old schedule','high','pending',jsonb_build_object('lifeEventActionId',aid,'action','submit_web_checkin')) returning id into apid;
+ update pg_temp.life_event_actions set status='waiting_approval',payload_json=payload_json||jsonb_build_object('runId',rid,'approvalId',apid) where id=aid;
+ update pg_temp.life_event_actions set status='completed' where life_event_id=eid and action_key='prepare-web-checkin';
+ update pg_temp.life_events set lifecycle_state='waiting_approval' where id=eid;
+ update pg_temp.travel_tickets set depart_at=now()+interval '11 days' where telegram_id=23;
+ if not exists(select 1 from pg_temp.agent_approvals where id=apid and status='expired') then raise exception 'old check-in approval remained usable';end if;
+ if not exists(select 1 from pg_temp.agent_runs where id=rid and status='failed' and error='flight_schedule_changed') then raise exception 'old approval run remained actionable';end if;
+ if not exists(select 1 from pg_temp.life_event_actions where id=aid and status='queued' and not payload_json ? 'approvalId' and not payload_json ? 'runId') then raise exception 'new schedule did not require a new approval';end if;
+ if not exists(select 1 from pg_temp.life_event_actions where life_event_id=eid and action_key='prepare-web-checkin' and status='queued') then raise exception 'fresh preparation was not required';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;

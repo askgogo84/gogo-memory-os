@@ -199,7 +199,7 @@ async function requestFlightCheckinApproval(params: { telegramId: string; event:
     .eq('action_key', 'prepare-web-checkin')
     .maybeSingle()
   if (prepared.error) throw new Error(`life_event_prepare_state_failed:${prepared.error.message}`)
-  if (prepared.data?.status !== 'completed') {
+  if (prepared.data?.status !== 'completed' || (prepared.data.payload_json?.scheduleRevision??null)!==(event.metadata_json?.ticketScheduleRevision??null)) {
     await deferAction(action, 5, { waitingFor: 'prepare-web-checkin' })
     return { status: 'deferred' as const }
   }
@@ -232,6 +232,8 @@ async function requestFlightCheckinApproval(params: { telegramId: string; event:
     lifeEventActionId:String(action.id),
     checkinUrl,
     seatPolicy:seat.policy,
+    departureAt:event.start_at,
+    scheduleRevision:event.metadata_json?.ticketScheduleRevision,
     provider:event.provider,
     title:event.title,
     confirmationRef:event.confirmation_ref,
@@ -255,6 +257,7 @@ async function requestFlightCheckinApproval(params: { telegramId: string; event:
       description: 'Gogo has prepared the airline check-in flow. Approval allows Gogo to submit check-in using the saved booking context. Paid seats/add-ons, payment authentication, OTPs, CAPTCHAs, passkeys and other human-auth steps remain separate and will stop for you.',
       payload_preview: [
         { label: 'Flight', value: safe(event.title, 180) },
+        { label: 'Scheduled departure', value: String(event.start_at||'Unverified') },
         { label: 'Airline', value: safe(event.provider || 'Airline', 120) },
         { label: 'Seat policy', value: seat.label },
         { label: 'Payment', value: 'No paid seat/add-on without separate approval' },

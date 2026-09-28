@@ -109,6 +109,21 @@ begin
   returning id into v_event_id;
 
   if v_timing_changed then
+    -- Old pending authorization cannot survive a changed itinerary.
+    update agent_runs r set
+      status=case when r.status in ('running','paused') then 'outcome_unknown' else 'failed' end,
+      error='flight_schedule_changed',summary='Flight schedule changed. Previous check-in approval is expired; prepare and approve the corrected itinerary before any new submission.',updated_at=now()
+      where r.telegram_id=new.telegram_id::text and r.status in ('queued','waiting_approval','running','paused')
+        and exists(select 1 from agent_approvals ap join life_event_actions a on ap.execution_payload->>'lifeEventActionId'=a.id::text
+          where ap.run_id=r.id and ap.telegram_id=r.telegram_id and ap.status in ('pending','approved')
+            and a.life_event_id=v_event_id and a.action_key='checkin-submit-approval');
+    update agent_approvals ap set status='expired',resolved_at=now(),resolution_note='Flight schedule changed; fresh preparation and approval required.'
+      where ap.telegram_id=new.telegram_id::text and ap.status in ('pending','approved')
+        and exists(select 1 from life_event_actions a where a.life_event_id=v_event_id and a.action_key='checkin-submit-approval' and ap.execution_payload->>'lifeEventActionId'=a.id::text);
+    update life_event_actions set status='queued',payload_json=payload_json-'runId'-'approvalId',updated_at=now()
+      where life_event_id=v_event_id and action_key='checkin-submit-approval' and status='waiting_approval';
+    update life_events set lifecycle_state=case when new.depart_at is null then 'captured' else 'planned' end
+      where id=v_event_id and lifecycle_state='waiting_approval';
     update boarding_pass_outbox set status='cancelled',updated_at=now() where life_event_id=v_event_id and status='pending';
     update life_event_actions set
       payload_json=payload_json||jsonb_build_object('scheduleRevision',(select metadata_json->>'ticketScheduleRevision' from life_events where id=v_event_id))
