@@ -199,6 +199,8 @@ try{
  assert.deepEqual(scoped.reminders.map(row=>row.id),['100'])
  assert.deepEqual(pageOffsets,[0,100])
  await assert.rejects(()=>readScopedReminders(17,{title:'Review reminders',instruction:'Review reminders for this trip'},'Review this trip'),/scope_unverified/)
+ const multiple=await readScopedReminders(17,{title:'Review reminders',instruction:'Review reminders for New York and Mumbai'},'Review both trips')
+ assert.equal(multiple.reminders.length,101)
  const all=await readScopedReminders(17,{title:'Review reminders',instruction:'List all my reminders'},'List all reminders')
  assert.equal(all.reminders.length,101)
 }finally{(supabaseAdmin as any).from=originalFrom}

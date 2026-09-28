@@ -8,9 +8,11 @@ function terms(text:string){return text.toLowerCase().replace(/newyork/g,'new yo
 export function reminderScope(step:{title:string;instruction:string},mission:string){
   const stepText=`${step.title} ${step.instruction}`
   const scoped=/\b(for|about|related to|trip|checklist|flight|this|that)\b/i.test(stepText)
-  const stepTerms=terms(stepText)
-  const scopeTerms=stepTerms.length?stepTerms:scoped?terms(mission):[]
-  return {scopeTerms:[...new Set(scopeTerms)],unresolved:scoped&&!scopeTerms.length}
+  const groups=(text:string)=>text.split(/\b(?:and|or)\b|[,;→]/i).map(part=>[...new Set(terms(part))]).filter(group=>group.length)
+  const stepGroups=groups(stepText)
+  const scopeGroups=stepGroups.length?stepGroups:scoped?groups(mission):[]
+  const scopeTerms=[...new Set(scopeGroups.flat())]
+  return {scopeTerms,scopeGroups,unresolved:scoped&&!scopeTerms.length}
 }
 
 export async function readScopedReminders(ownerId:number,step:{title:string;instruction:string},mission:string){
@@ -27,7 +29,7 @@ export async function readScopedReminders(ownerId:number,step:{title:string;inst
     for(const row of data||[]){
       const message=redactSecretShapedText(String(row.message||''))
       const words=message.toLowerCase().replace(/newyork/g,'new york').match(/[a-z][a-z0-9]*/g)||[]
-      if(!scope.scopeTerms.every(term=>words.some(word=>word===term||(term.length>=4&&word.startsWith(term)))))continue
+      if(scope.scopeGroups.length&&!scope.scopeGroups.some(group=>group.every(term=>words.some(word=>word===term||(term.length>=4&&word.startsWith(term))))))continue
       reminders.push({id:String(row.id),message:message.slice(0,500),remindAt:String(row.remind_at),timezone:String(row.timezone||'UTC')})
     }
     if((data||[]).length<100)break
