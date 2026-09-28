@@ -244,7 +244,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       refreshFlightReminderText(priorLeg)
       leg.previousReminderMessages=[priorLeg.reminderMsg,priorLeg.checkinMsg].filter((value):value is string=>!!value)
       leg.previousReminderDecisions=planLegReminders(priorLeg,Number.NEGATIVE_INFINITY).filter((decision):decision is Extract<TicketReminderDecision,{remindAt:Date}>=>'remindAt' in decision)
-      const mergeWeakPassengers=leg.type==='flight'&&!leg.pnr&&!saved.pnr
+      const preservePassengerDetails=leg.type==='flight'
       const incomingPassengers=leg.passengers||[]
       const incomingSeat=leg.seat
       leg.pnr=leg.pnr||saved.pnr||null
@@ -255,7 +255,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       leg.passengers=leg.passengers?.length?leg.passengers:saved.passengers||null
       const incomingRaw=leg.raw||{}
       leg.raw={...(saved.raw||{}),...Object.fromEntries(Object.entries(incomingRaw).filter(([,value])=>value!==null&&value!==undefined&&value!==''))}
-      if(mergeWeakPassengers){
+      if(preservePassengerDetails){
         const passengerNames=new Map<string,string>()
         for(const name of [...(saved.passengers||[]),...incomingPassengers]){
           const clean=String(name||'').replace(/\s+/g,' ').trim()

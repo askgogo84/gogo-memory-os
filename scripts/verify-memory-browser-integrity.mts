@@ -217,6 +217,10 @@ try{
  assert.equal(multiple.reminders.length,101)
  const all=await readScopedReminders(17,{title:'Review reminders',instruction:'List all my reminders'},'List all reminders')
  assert.equal(all.reminders.length,101)
+ for(const prompt of ['Do I have any reminders?','Are there any reminders?','Can you please show me my reminders?','Look for reminders that I have coming up']){
+  const result=await readScopedReminders(17,{title:'Review reminders',instruction:prompt},prompt)
+  assert.equal(result.reminders.length,101,prompt)
+ }
 }finally{(supabaseAdmin as any).from=originalFrom}
 
 assert.equal(reminderStepIntent({title:'Review reminders',instruction:'Review active reminders without creating, editing, or deleting anything'}),'read')
@@ -463,7 +467,7 @@ legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`rich-alert-${i}
 const richAlertCount=ticketWrites.filter(write=>write.table==='reminders').length
 await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
 const richUpdate=updatedTickets.at(-1)
-assert.deepEqual(richUpdate.passengers,['Saved Passenger'])
+assert.deepEqual(JSON.parse(JSON.stringify(richUpdate.passengers)),['Saved Passenger'])
 assert.equal(richUpdate.arrive_at,currentTicket.arrive_at)
 assert.equal(richUpdate.seat,'14A')
 assert.equal(richUpdate.airline,currentTicket.airline)
@@ -610,3 +614,27 @@ legacyTickets=[{...mergedPassengers,id:'weak-passenger-flight'}]
 await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Later Passenger'],flights:[{...knownNoIds.flights[0],flightNo:currentTicket.flight_no,seat:'16C'}]},ticketCtx)
 assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).passengers)),['Earlier Passenger','Later Passenger'])
 assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).raw.passengerDetails)),[{passengers:['Earlier Passenger'],seat:'12A'},{passengers:['Later Passenger'],seat:'16C'}])
+
+for(const prompt of ['Do I have any reminders?','Are there any reminders?','Can you please show me my reminders?','Look for reminders that I have coming up']){
+  const scope=reminderScope({title:'Review reminders',instruction:prompt},prompt)
+  assert.deepEqual(scope.scopeTerms,[],prompt)
+  assert.equal(scope.unresolved,false,prompt)
+}
+assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Do I have any dentist reminders?'},'Do I have any dentist reminders?').scopeTerms,['dentist'])
+legacyTickets=[{...updatedTickets.at(-1),id:'weak-passenger-flight'}]
+await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Later Passenger'],flights:[{...knownNoIds.flights[0],flightNo:currentTicket.flight_no,pnr:'ENRICHED-GROUP'}]},ticketCtx)
+const enrichedGroup=updatedTickets.at(-1)
+assert.deepEqual(JSON.parse(JSON.stringify(enrichedGroup.passengers)),['Earlier Passenger','Later Passenger'])
+assert.deepEqual(JSON.parse(JSON.stringify(enrichedGroup.raw.passengerDetails)),[{passengers:['Earlier Passenger'],seat:'12A'},{passengers:['Later Passenger'],seat:'16C'}])
+const seatFacts=buildTravelPresenceFacts([{...enrichedGroup,id:'seat-recall'}],Date.parse('2040-09-28T00:00:00Z'))
+assert.ok(seatFacts.some(fact=>fact.summary.includes('Seat for Later Passenger: 16C')&&fact.summary.includes('Seat for Earlier Passenger: 12A')))
+console.log('Passenger and seat recall survive booking enrichment; account-wide reminder questions remain unfiltered')
+
+const seatBlock=renderContextBlock({query:'What seat is Later Passenger in?',generatedAt:new Date().toISOString(),memoryEnabled:true,facts:seatFacts,provenance:{lifeEvents:0,travelTickets:1,openLoops:0,semanticMemories:0,insights:0,typedContext:0}})
+assert.match(seatBlock,/Seat for Later Passenger: 16C/)
+const groupSeatFacts=buildTravelPresenceFacts([{...enrichedGroup,id:'group-seat',raw:{...enrichedGroup.raw,passengerDetails:[{passengers:['Earlier Passenger','Later Passenger'],seat:'12A'}]}}],Date.parse('2040-09-28T00:00:00Z'))
+assert.ok(groupSeatFacts.some(fact=>fact.summary.includes('individual assignment unverified')))
+legacyTickets=[{...enrichedGroup,id:'weak-passenger-flight'}]
+await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Later Passenger'],flights:[{...knownNoIds.flights[0],flightNo:currentTicket.flight_no,pnr:'ENRICHED-GROUP',seat:'18D'}]},ticketCtx)
+assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).passengers)),['Earlier Passenger','Later Passenger'])
+assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).raw.passengerDetails)),[{passengers:['Earlier Passenger'],seat:'12A'},{passengers:['Later Passenger'],seat:'18D'}])
