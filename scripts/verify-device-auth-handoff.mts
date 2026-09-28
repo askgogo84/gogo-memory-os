@@ -434,9 +434,10 @@ let inspectionOutput:string|undefined
 let evidencePage:any={url:'https://www.instagram.com/accounts/login/',title:'Instagram',text:'',forms:[]}
 let modelFailure=false
 let modelText='[]'
+let queuedObservations:any[]=[]
 const evidenceComputer=load('secure-computer.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>{if(modelFailure)throw new Error('unavailable');return {content:[{type:'text',text:modelText}]}}}}},
-  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(evidencePage)})})}},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(queuedObservations.shift()??evidencePage)})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{},{reserveHandoff:async()=>"transfer"})},
@@ -542,3 +543,20 @@ for(const mode of ['draft','execute']){
  }
 }
 console.log('Write-mode runs cannot complete without observed action evidence')
+
+modelText=JSON.stringify([{kind:'fill',selector:'#name',value:'Example'},{kind:'click',selector:'#confirm'}])
+evidencePage.actions=[{kind:'fill',status:'done'},{kind:'click',status:'failed',consequential:true}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode:'execute'}),/browser_objective_unverified/)
+evidencePage.actions=[{kind:'fill',status:'done'},{kind:'click',status:'done',consequential:true}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode:'execute'}),/browser_objective_unverified/)
+console.log('Execute mode rejects partial failures and missing provider confirmation')
+
+for(const confirmation of ['Reservation confirmed.','Reservation is not confirmed.','If your reservation is confirmed, you will receive email.','Reservation pending.']){
+ queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:confirmation}]
+ const execute=()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'})
+ if(confirmation==='Reservation confirmed.')assert.equal((await execute()).summary,'Reservation confirmed')
+ else await assert.rejects(execute,/browser_objective_unverified/)
+}
+queuedObservations=[{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+console.log('Local confirmation requires new affirmative provider evidence, not stale, pending or conditional text')

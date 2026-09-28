@@ -132,7 +132,7 @@ begin
   on conflict (life_event_id,action_key) do update set updated_at=now();
 
   if new.depart_at is null then
-    update life_event_actions set status='cancelled',updated_at=now() where life_event_id=v_event_id and due_at is not null and status in ('queued','ready','waiting_approval','blocked');
+    update life_event_actions set status='cancelled',payload_json=payload_json||'{"timing_unverified":true}'::jsonb,updated_at=now() where life_event_id=v_event_id and due_at is not null and status in ('queued','ready','waiting_approval','blocked');
     return new;
   end if;
 
@@ -144,18 +144,18 @@ begin
       (v_event_id,new.telegram_id::text,'watch-boarding-pass-email','email_watch','email','Watch connected email for boarding pass or check-in confirmation',v_checkin_at,false,false,jsonb_build_object('read_only',true,'pnr',new.pnr)),
       (v_event_id,new.telegram_id::text,'departure-readiness','notify','travel','Prepare for departure',new.depart_at - interval '3 hours',false,false,jsonb_build_object('from',new.from_city,'to',new.to_city)),
       (v_event_id,new.telegram_id::text,'travel-disruption-watch','monitor','travel','Watch for meaningful flight changes',new.depart_at - interval '24 hours',false,false,jsonb_build_object('notify_only_on_material_change',true))
-    on conflict (life_event_id,action_key) do update set due_at=excluded.due_at,payload_json=excluded.payload_json,updated_at=now();
+    on conflict (life_event_id,action_key) do update set due_at=excluded.due_at,payload_json=excluded.payload_json,status=case when life_event_actions.status='cancelled' and life_event_actions.payload_json->>'timing_unverified'='true' then 'queued' else life_event_actions.status end,updated_at=now();
   elsif new.type = 'event' then
     insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
     values
       (v_event_id,new.telegram_id::text,'event-calendar-draft','calendar_draft','calendar','Prepare calendar entry for this event',null,true,false,jsonb_build_object('mutation','create_event','approval_required',true)),
       (v_event_id,new.telegram_id::text,'event-readiness','prepare','travel','Prepare venue, travel and ticket readiness',new.depart_at - interval '3 hours',false,false,jsonb_build_object('venue',new.venue)),
       (v_event_id,new.telegram_id::text,'event-change-watch','monitor','browser','Watch for meaningful event timing or venue changes',new.depart_at - interval '24 hours',false,false,jsonb_build_object('notify_only_on_material_change',true))
-    on conflict (life_event_id,action_key) do update set due_at=excluded.due_at,payload_json=excluded.payload_json,updated_at=now();
+    on conflict (life_event_id,action_key) do update set due_at=excluded.due_at,payload_json=excluded.payload_json,status=case when life_event_actions.status='cancelled' and life_event_actions.payload_json->>'timing_unverified'='true' then 'queued' else life_event_actions.status end,updated_at=now();
   else
     insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
     values (v_event_id,new.telegram_id::text,'departure-readiness','notify','travel','Prepare for departure',new.depart_at - interval '3 hours',false,false,jsonb_build_object('from',new.from_city,'to',new.to_city))
-    on conflict (life_event_id,action_key) do update set due_at=excluded.due_at,payload_json=excluded.payload_json,updated_at=now();
+    on conflict (life_event_id,action_key) do update set due_at=excluded.due_at,payload_json=excluded.payload_json,status=case when life_event_actions.status='cancelled' and life_event_actions.payload_json->>'timing_unverified'='true' then 'queued' else life_event_actions.status end,updated_at=now();
   end if;
 
   return new;

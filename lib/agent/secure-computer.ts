@@ -346,6 +346,17 @@ async function assessReadOutcome(objective:string,page:any):Promise<string|null>
   try{return verifiedBrowserAnswer(JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g,'')),pageText,title,titleOnly)}catch{return null}
 }
 
+function localExecutionConfirmation(objective:string,before:string,after:string,actions:any[]):string|null{
+  if(!actions.some(a=>a.status==='done'&&(a.kind==='submit'||a.consequential===true)))return null
+  const operation=/\b(cancel)\b/i.test(objective)?'cancellation':/\b(check[ -]?in)\b/i.test(objective)?'check[ -]?in':/\b(pay|payment)\b/i.test(objective)?'payment':/\b(buy|purchase|order|checkout)\b/i.test(objective)?'(?:order|purchase)':/\b(book|booking|reserve|reservation)\b/i.test(objective)?'(?:booking|reservation)':null
+  if(!operation)return null
+  const confirmation=new RegExp('\\b'+operation+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|successful|successfully (?:completed|placed|confirmed|processed))\\b','i')
+  for(const line of after.split(/[\n.!?]+/).map(line=>line.trim()).filter(Boolean)){
+    if(confirmation.test(line)&&!before.includes(line)&&! /\b(not|pending|failed|if|when|once|will|would|could|should)\b/i.test(line))return line
+  }
+  return null
+}
+
 function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
@@ -360,7 +371,9 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     releaseOwnerLock=first.releaseOwnerLock
     activeSandbox=first.sandbox
     let page=first.page
+    const initialPageText=String(page.text||'')
     let actionLog:any[]=[]
+    let missingActionEvidence=false
     let vaultAttempted=false
     let credentialSelectionRequired=false
 
@@ -482,6 +495,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]))
+      if(!Array.isArray(page.actions)||page.actions.length!==actions.length||actions.some((a,i)=>page.actions[i]?.kind!==a.kind))missingActionEvidence=true
       const doneCount=(page.actions||[]).filter((a:any)=>a.status==='done').length
       if(doneCount===0)break
     }
@@ -501,11 +515,14 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     const readAnswer=params.mode==='read'?await assessReadOutcome(params.objective,page):null
     if(params.mode==='read'&&!readAnswer)throw new Error('browser_objective_unverified')
     if(params.mode!=='read'&&!actionLog.some(a=>a.status==='done'&&['fill','select','check','click','submit'].includes(a.kind)))throw new Error('browser_objective_unverified')
+    if(params.mode!=='read'&&(missingActionEvidence||actionLog.some(a=>a.status==='failed'||(params.mode==='execute'&&a.status!=='done'))))throw new Error('browser_objective_unverified')
+    const executionEvidence=params.mode==='execute'?localExecutionConfirmation(params.objective,initialPageText,String(page.text||''),actionLog):null
+    if(params.mode==='execute'&&!executionEvidence)throw new Error('browser_objective_unverified')
     await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft'
     return {
       status:prepared?'prepared':'completed',url:safeText(page.url||target,1200),title:safeText(page.title,300),
-      summary:params.mode==='read'?readAnswer!:prepared?'Gogo prepared the browser flow and stopped before submit.':'Gogo completed the approved browser flow.',
+      summary:params.mode==='read'?readAnswer!:prepared?'Gogo prepared the browser flow and stopped before submit.':executionEvidence!,
       pageText:safeText(page.text,9000),forms:Array.isArray(page.forms)?page.forms.slice(0,12).map((form:any)=>({...form,action:safeText(form?.action,1200)})):[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
     }
   } catch (error:any) {
