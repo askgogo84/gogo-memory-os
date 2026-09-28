@@ -12,7 +12,7 @@ export function isTitleOnlyObjective(objective:string):boolean {
     .replace(/https?:\/\/[^\s]+/g,' ')
     .replace(/do not click, fill, submit, log in, or navigate away[.!]?/g,' ')
     .replace(/['’]s\b/g,'')
-  const words=text.match(/[a-z]+/g)||[]
+  const words:string[]=text.match(/[a-z]+/g)||[]
   const allowed=new Set('open visit navigate to read inspect report show tell me give get what is whats the title of this that its a an website page site document tab current exact only and then please'.split(' '))
   return words.includes('title')&&words.every(word=>allowed.has(word))
 }
