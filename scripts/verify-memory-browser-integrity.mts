@@ -113,6 +113,11 @@ try{
  assert.ok('readOnly' in result.output&&result.output.readOnly===true)
  assert.equal(reminderQueries,1)
  assert.match(result.text,/No upcoming unsent reminders/)
+ const beforeMixed=reminderQueries
+ await assert.rejects(()=>executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review and create reminders',instruction:'Check my reminders and create a reminder for 28 Sep 2026 at 5 pm'},missionText:'Review and create a reminder'}),/mixed_read_write_requires_separate_steps/)
+ assert.equal(reminderQueries,beforeMixed,'mixed operations must not be falsely completed or partially mutated')
+ const prohibited=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review only',instruction:'Review active reminders. Do not create, edit or delete anything.'},missionText:'Review only'})
+ assert.ok('readOnly' in prohibited.output&&prohibited.output.readOnly===true)
  reminderReadFails=true
  await assert.rejects(()=>executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Review active reminders'},missionText:'Review the trip'}),/mission_reminder_read_failed/)
 }finally{(supabaseAdmin as any).from=originalFrom}
@@ -124,3 +129,7 @@ for(const from of ['NDLS','SBC','New Delhi']){
  assert.equal(leg.departAt?.toISOString(),'2026-09-28T04:30:00.000Z',from)
 }
 console.log('Indian rail station codes retain IST departure parsing')
+
+const chicago=buildTravelPresenceFacts([{...rows[0],to_city:'Chicago',raw:{arrivalTimezone:'America/Chicago'}}],Date.parse('2026-09-28T06:00Z')).find(f=>f.source==='travel_ticket')!
+assert.match(chicago.summary,/07:35.*America\/Chicago/)
+console.log('Explicit arrival timezone survives recall for cities outside the built-in map')

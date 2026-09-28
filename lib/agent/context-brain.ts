@@ -130,7 +130,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
       flightNo:safe(row.flight_no,60),
       bookingGroup:safe(row.booking_group,120),
       passengers:(Array.isArray(row.passengers)?row.passengers:[]).map((name:unknown)=>safe(name,100)).filter(Boolean),
-      arrivalTz:ticketTimezone(row.to_city),
+      arrivalTz:ticketTimezone(row.to_city,row.raw?.arrivalTimezone),
     }))
     .filter((row:any)=>row.id&&row.departAt)
     .sort((a:any,b:any)=>Date.parse(a.departAt)-Date.parse(b.departAt))
@@ -216,7 +216,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       .order('updated_at',{ascending:false})
       .limit(30),
     supabaseAdmin.from('travel_tickets')
-      .select('id,type,booking_group,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,depart_tz')
+      .select('id,type,booking_group,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,depart_tz,raw')
       .eq('telegram_id',Number(actor.legacyTelegramId))
       .gte('depart_at',lower)
       .lte('depart_at',upper)

@@ -166,7 +166,14 @@ async function persistMissionReminder(params:{actor:AgentActor;date:string;time:
 
 export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
   const {actor,step,missionText}=params
-  if(/^(?:please\s+)?(?:review|list|show|find|retrieve|read|check|inspect|look up)\b/i.test(step.instruction.trim())&&/\breminders?\b/i.test(step.instruction)){
+  const reviewStep=/^(?:please\s+)?(?:review|list|show|find|retrieve|read|check|inspect|look up)\b/i.test(step.instruction.trim())&&/\breminders?\b/i.test(step.instruction)
+  // Prohibitions do not request writes. Mixed positive operations need distinct
+  // planner steps; never claim a combined deliverable completed after only a read.
+  const positiveInstruction=step.instruction.replace(/\b(?:do not|don't|never)\b[^.;!?]*(?=[.;!?]|$)/gi,'')
+  if(reviewStep&&/\b(create|set|add|schedule|remind|move|reschedule|update|edit|delete|remove|cancel|complete)\b/i.test(positiveInstruction)){
+    throw new Error('mission_reminder_mixed_read_write_requires_separate_steps')
+  }
+  if(reviewStep){
     const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone')
       .eq('telegram_id',actor.legacyTelegramId).eq('sent',false).gte('remind_at',new Date().toISOString())
       .order('remind_at',{ascending:true}).limit(50)
