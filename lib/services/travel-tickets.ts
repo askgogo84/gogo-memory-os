@@ -1,3 +1,4 @@
+import { ticketTimezone, ticketInstant, flightInstants } from './travel-time'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToList } from '@/lib/lists'
 import { buildTicketReply, type TicketInfo, type FlightInfo, type TrainInfo, type EventInfo } from './pdf-reader'
@@ -13,41 +14,10 @@ import { AIRLINES, checkInOpensHours, checkInLink, DEFAULT_CHECKIN_OPENS_HOURS }
 // Idempotent: re-forwarding the same ticket makes zero duplicate legs and zero
 // duplicate reminders (explicit existence checks + a DB unique-index backstop).
 
-const MONTHS: Record<string, number> = {
-  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+function resolveDepartTz(city?: string): string {
+  return city ? ticketTimezone(city) || '' : 'Asia/Kolkata'
 }
-
-// Domestic-exact tz map. Everything is IST for now; origin-city → IANA mapping
-// is a phase-2 extension. Unknown zones fall back to IST with a logged warning.
-const TZ_OFFSET_MIN: Record<string, number> = {
-  'Asia/Kolkata': 330,
-}
-
-function resolveDepartTz(_city?: string): string {
-  return 'Asia/Kolkata'
-}
-
-// Convert a ticket's local wall-clock (date + "HH:MM") to a UTC instant. For IST
-// this yields Date.UTC(y,mo,d,h-5,m-30) — identical to the legacy getReminderTime
-// departure calc, so the T-3h reminder is unchanged.
-function computeDepartAt(dateStr?: string, timeStr?: string, tz: string = 'Asia/Kolkata'): Date | null {
-  if (!dateStr || !timeStr) return null
-  try {
-    const parts = dateStr.toLowerCase().replace(/,/g, '').split(/\s+/)
-    const day = parseInt(parts[0], 10)
-    const month = MONTHS[parts[1]?.slice(0, 3)] ?? -1
-    const year = parseInt(parts[2], 10)
-    const [h, m] = timeStr.split(':').map(Number)
-    if (isNaN(day) || month < 0 || isNaN(year) || isNaN(h)) return null
-    const offset = TZ_OFFSET_MIN[tz]
-    if (offset == null) console.warn('TRAVEL_TZ_FALLBACK_IST:', tz)
-    const offMin = offset ?? 330
-    return new Date(Date.UTC(year, month, day, h, m || 0, 0, 0) - offMin * 60000)
-  } catch {
-    return null
-  }
-}
+const computeDepartAt = ticketInstant
 
 // Derive the IATA carrier code from a stored flight number: strip non-alphanumerics,
 // uppercase, take the leading two chars. Returns a code only when it maps to a known
@@ -59,21 +29,6 @@ function iataFromFlightNo(flightNo: string | null): string | null {
   if (cleaned.length < 2) return null
   const code = cleaned.slice(0, 2)
   return code in AIRLINES ? code : null
-}
-
-// Format a departure instant as an absolute IST date label, e.g. "Thu 14 Aug".
-// Absolute wording reads correctly at any check-in offset (24h/48h), unlike the old
-// relative "tomorrow". Returns null when the instant is missing so the caller can
-// fall back to the raw date label.
-function formatDepartDateIST(d: Date | null): string | null {
-  if (!d) return null
-  try {
-    return new Intl.DateTimeFormat('en-GB', {
-      weekday: 'short', day: '2-digit', month: 'short', timeZone: 'Asia/Kolkata',
-    }).format(d).replace(/,/g, '')
-  } catch {
-    return null
-  }
 }
 
 // Absolute IST date + 24h time for naming a specific alert's fire time, e.g.
@@ -130,9 +85,8 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
     const fi = info as FlightInfo
     const group = fi.flights[0]?.pnr || null
     fi.flights.forEach((f, i) => {
-      const tz = resolveDepartTz(f.from)
-      const departAt = computeDepartAt(f.date, f.departure, tz)
-      const departLabel = formatDepartDateIST(departAt) || f.date
+      const { departAt, arriveAt, departTz: tz } = flightInstants(f)
+      const departLabel = f.date
       const link = checkInLink(iataFromFlightNo(f.flightNo))
       legs.push({
         type: 'flight',
@@ -140,7 +94,7 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
         bookingGroup: f.pnr || group,
         fromCity: f.from, toCity: f.to,
         departAt,
-        arriveAt: computeDepartAt(f.date, f.arrival, tz),
+        arriveAt,
         departTz: tz,
         dateLabel: f.date, departLocal: f.departure,
         airline: f.airline, flightNo: f.flightNo,
@@ -148,10 +102,10 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
         pnr: f.pnr, seat: f.seat || null,
         passengers: fi.passengers || null,
         raw: f,
-        reminderMsg: `✈️ ${f.from} → ${f.to} departs in 3 hours at ${f.departure}! PNR: ${f.pnr}`,
+        reminderMsg: `✈️ ${f.from} → ${f.to} departs in 3 hours at ${f.departure} (${tz || "timezone unverified"})! PNR: ${f.pnr}`,
         checkinMsg:
           `🧳 Web check-in open — ${f.airline} ${f.flightNo} (${f.from} → ${f.to}) ` +
-          `departs ${departLabel} at ${f.departure}. Check in now to pick your seat. PNR: ${f.pnr}` +
+          `departs ${departLabel} at ${f.departure} (${tz || "timezone unverified"}). Check in now to pick your seat. PNR: ${f.pnr}` +
           (link ? `\n${link}` : ''),
       })
     })

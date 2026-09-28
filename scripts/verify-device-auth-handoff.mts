@@ -2,13 +2,14 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+import { isLoginDestination, verifiedBrowserAnswer } from '../lib/agent/browser-evidence'
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
 
 function load(file: string, mocks: Record<string, any>, extra='', globals:Record<string,any>={}) {
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
-  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||{},process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
+  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./browser-evidence'?{isLoginDestination,verifiedBrowserAnswer}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
   return exports
 }
 
@@ -426,3 +427,32 @@ for(const kind of ['flight_execute','restaurant']){
   assert.match(result.text,/Verify directly/)
   assert.doesNotMatch(result.text,/Take control/)
 }
+
+// Reported Instagram shell: zero actions/forms must pause at login, never complete.
+let evidencePage:any={url:'https://www.instagram.com/accounts/login/',title:'Instagram',text:'',forms:[]}
+let modelFailure=false
+let modelText='[]'
+const evidenceComputer=load('secure-computer.ts',{
+  '@anthropic-ai/sdk':{default:class {messages={create:async()=>{if(modelFailure)throw new Error('unavailable');return {content:[{type:'text',text:modelText}]}}}}},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{},runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(evidencePage)})})}},
+  './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
+  './browser-auth-gate':{detectHumanAuthGate},
+  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{},{reserveHandoff:async()=>"transfer"})},
+  './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
+  '@/lib/vault/credential-store':{resolveVaultCredentialForBrowser:async()=>null},
+  './trust':{canAuthorizeConsequentialAction:()=>false},
+})
+const readParams={userId:'owner',url:'https://www.instagram.com/',objective:'Show my three most recent saved posts',mode:'read',reserveHumanHandoff:true,reservePasswordHandoff:true}
+const loginShell=await evidenceComputer.runSecureBrowser(readParams)
+assert.equal(loginShell.status,'blocked')
+assert.equal(loginShell.authReason,'password')
+assert.equal(loginShell.handoffReservation,'transfer')
+evidencePage={url:'https://www.instagram.com/',title:'Instagram',text:'',forms:[]}
+await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_objective_unverified/)
+evidencePage.text='Instagram photos and videos. Explore the community and find friends.'
+modelFailure=true
+await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_planning_failed/)
+modelFailure=false
+modelText=JSON.stringify({complete:true,answer:'Three saved posts',evidence:['Unobserved private post content']})
+await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_objective_unverified/)
+console.log('Production browser rejects empty shells, model errors, and unsupported evidence')

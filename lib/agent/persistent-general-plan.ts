@@ -82,7 +82,7 @@ async function loadDefinition(context: AutonomousToolContext): Promise<GeneralPl
 }
 
 async function verifiedSameBrainRead(context: AutonomousToolContext, step: GeneralPlanStep) {
-  const result = await dispatchThroughSameBrain({
+  const result = await dispatchThroughSameBrain({internalStep:true,
     actor: context.actor,
     text: step.instruction,
     messageId: `persistent-${context.idempotencyKey.slice(0, 24)}`,

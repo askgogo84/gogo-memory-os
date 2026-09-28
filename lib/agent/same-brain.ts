@@ -151,6 +151,7 @@ async function tryWorkspaceRead(actor:AgentActor,text:string):Promise<string|nul
  * planner → router → planner recursion and split one user outcome into nested runs.
  */
 export async function dispatchThroughSameBrain(params: {
+  internalStep?: boolean
   actor: AgentActor
   text: string
   messageId?: string | number | null
@@ -174,7 +175,7 @@ export async function dispatchThroughSameBrain(params: {
   })
 
   if (featureReply) {
-    await saveFeatureConversation(params.actor.legacyTelegramId, text, featureReply)
+    if(!params.internalStep)await saveFeatureConversation(params.actor.legacyTelegramId, text, featureReply)
     return {
       text: redactSecretShapedText(featureReply),
       mediaUrl: null,
@@ -184,6 +185,7 @@ export async function dispatchThroughSameBrain(params: {
   }
 
   const result = await processIncomingMessage({
+    internalStep: params.internalStep,
     channel: 'whatsapp',
     externalUserId: params.actor.whatsappId,
     text,

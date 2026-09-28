@@ -187,7 +187,7 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
   }
 
   const startedAt=new Date().toISOString()
-  const result=await dispatchThroughSameBrain({actor,text:step.instruction,messageId:params.messageId})
+  const result=await dispatchThroughSameBrain({internalStep:true,actor,text:step.instruction,messageId:params.messageId})
   const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone,created_at')
     .eq('telegram_id',actor.legacyTelegramId).gte('created_at',startedAt).order('created_at',{ascending:false}).limit(1).maybeSingle()
   if(error)throw new Error(`mission_reminder_verify_failed:${error.message}`)
@@ -305,7 +305,7 @@ export async function executeVerifiedMissionMemory(params:{actor:AgentActor;step
     }
     return {text:'No saved flight matched this mission’s route/date. Continuing without an old ticket.',output:{found:false,matchedRoute:context.routeLabel,verifiedRelevance:true}}
   }
-  const result=await dispatchThroughSameBrain({actor:params.actor,text:params.step.instruction,messageId:params.messageId})
+  const result=await dispatchThroughSameBrain({internalStep:true,actor:params.actor,text:params.step.instruction,messageId:params.messageId})
   return {text:result.text,output:{reply:String(result.text||'').slice(0,3500),handledBy:result.handledBy}}
 }
 

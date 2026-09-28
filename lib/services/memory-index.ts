@@ -3,7 +3,7 @@ import { embedText } from '@/lib/services/embeddings'
 
 // Content that should never be embedded/searched (system rows, JSON state, etc.)
 // Mirrors the isInternalMemory filter in memory-control.ts.
-function isIndexable(content: string): boolean {
+export function isIndexable(content: string): boolean {
   const lower = (content || '').toLowerCase().trim()
   if (!lower) return false
   if (lower.startsWith('{') || lower.startsWith('[')) return false
@@ -56,7 +56,7 @@ export async function indexMemory(params: {
     const content = sanitizeSensitiveDocumentIndex(raw, params.sourceTable)
     if (!isIndexable(content)) return
     const embedding = await embedText(content)
-    await supabaseAdmin.from('memory_embeddings').upsert(
+    const {error} = await supabaseAdmin.from('memory_embeddings').upsert(
       {
         telegram_id: params.telegramId,
         source_table: params.sourceTable || 'memories',
@@ -68,6 +68,7 @@ export async function indexMemory(params: {
       },
       { onConflict: 'source_table,source_id' }
     )
+    if(error)throw error
   } catch (err: any) {
     console.error('[memory-index] non-fatal embedding failure:', err?.message)
   }

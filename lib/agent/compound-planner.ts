@@ -415,7 +415,7 @@ async function tryRunListReminderPlan(params: {
     await runState(runId, params.actor.legacyTelegramId, { progress: 50 })
 
     await stepState(ids[1], 'running')
-    const reminderResult = await dispatchThroughSameBrain({ actor: params.actor, text: plan.reminderCommand, messageId: params.messageId })
+    const reminderResult = await dispatchThroughSameBrain({internalStep:true, actor: params.actor, text: plan.reminderCommand, messageId: params.messageId })
     await stepState(ids[1], 'completed', { command: plan.reminderCommand, handledBy: reminderResult.handledBy, verified: true })
 
     const completedAt = new Date().toISOString()
@@ -543,7 +543,7 @@ export async function tryRunExpiryReminderPlan(params: {
 
     await stepState(ids[3], 'running')
     const reminderCommand = `remind me on ${dateText} at 9:00 AM to check my ${plan.target} before it expires`
-    const result = await dispatchThroughSameBrain({ actor: params.actor, text: reminderCommand, messageId: params.messageId })
+    const result = await dispatchThroughSameBrain({internalStep:true, actor: params.actor, text: reminderCommand, messageId: params.messageId })
     await stepState(ids[3], 'completed', { created: true })
 
     const completedAt = new Date().toISOString()

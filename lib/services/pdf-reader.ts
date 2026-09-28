@@ -10,6 +10,9 @@ export interface FlightInfo {
     date: string
     departure: string
     arrival: string
+    arrivalDate?: string
+    departureTimezone?: string
+    arrivalTimezone?: string
     airline: string
     flightNo: string
     pnr: string
@@ -54,7 +57,7 @@ If TRAIN:
 If EVENT:
 {"type":"event","name":"Event Name","date":"15 May 2026","time":"18:00","venue":"Venue"}
 
-Extract ALL flights for round-trips. Extract ALL passenger names. Include seat and arrival when present (omit the field if unknown). Return ONLY the JSON. If this is NOT a flight, train, or event ticket, return exactly: null`
+For flights preserve the separate arrivalDate when printed (same date format as date), especially overnight legs. departure and arrival are local clocks at their respective airports. Include departureTimezone and arrivalTimezone only when explicitly known as IANA zones. Never invent an arrival date. Extract ALL flights for round-trips. Extract ALL passenger names. Include seat and arrival when present (omit the field if unknown). Return ONLY the JSON. If this is NOT a flight, train, or event ticket, return exactly: null`
 
 function parseTicketJson(text: string): TicketInfo {
   const clean = text.replace(/```json|```/g, '').trim()
@@ -135,6 +138,7 @@ export function parseFlightTicketText(text:string):FlightInfo|null{
       date:match[3].replace(/\s+/g,' ').trim(),
       departure:match[2],
       arrival:match[5],
+      arrivalDate:match[6].replace(/\s+/g,' ').trim(),
       airline:airlineNameFromPrefix(flight.prefix),
       flightNo:`${flight.prefix}${flight.number}`,
       pnr,
