@@ -10,7 +10,7 @@ on pg_temp.travel_tickets (telegram_id, type, pnr, flight_no, date_label, leg_in
 where depart_at is null and type = 'flight'
   and coalesce(pnr, '') <> '' and coalesce(flight_no, '') <> '' and coalesce(date_label, '') <> '';
 create unique index travel_tickets_unverified_fallback_identity_idx
-on pg_temp.travel_tickets (telegram_id, type, from_city, to_city, date_label, depart_local, flight_no) nulls not distinct
+on pg_temp.travel_tickets (telegram_id, type, from_city, to_city, date_label, depart_local, flight_no, pnr) nulls not distinct
 where depart_at is null and type = 'flight'
   and (coalesce(pnr, '') = '' or coalesce(flight_no, '') = '' or coalesce(date_label, '') = '');
 
@@ -173,5 +173,12 @@ do $test$ begin
  end;
 end $test$;
 
+
+insert into pg_temp.travel_tickets (telegram_id,type,pnr,from_city,to_city,depart_at,depart_tz,date_label,depart_local,source)
+values (19,'flight','PNR-A','UNKNOWN A','UNKNOWN B',null,'','28 Sep 2040','10:00','pdf'),
+(19,'flight','PNR-B','UNKNOWN A','UNKNOWN B',null,'','28 Sep 2040','10:00','pdf');
+do $test$ begin
+ if (select count(*) from pg_temp.travel_tickets where telegram_id=19)<>2 then raise exception 'distinct PNRs collided'; end if;
+end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;

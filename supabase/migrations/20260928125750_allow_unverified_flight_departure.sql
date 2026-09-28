@@ -12,7 +12,7 @@ on public.travel_tickets (telegram_id, type, pnr, flight_no, date_label, leg_ind
 where depart_at is null and type = 'flight'
   and coalesce(pnr, '') <> '' and coalesce(flight_no, '') <> '' and coalesce(date_label, '') <> '';
 create unique index travel_tickets_unverified_fallback_identity_idx
-on public.travel_tickets (telegram_id, type, from_city, to_city, date_label, depart_local, flight_no) nulls not distinct
+on public.travel_tickets (telegram_id, type, from_city, to_city, date_label, depart_local, flight_no, pnr) nulls not distinct
 where depart_at is null and type = 'flight'
   and (coalesce(pnr, '') = '' or coalesce(flight_no, '') = '' or coalesce(date_label, '') = '');
 

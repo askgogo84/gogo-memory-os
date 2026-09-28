@@ -154,9 +154,8 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
   return legs
 }
 
-// Insert a leg unless an identical one already exists (same user, type, exact
-// departure instant, and identifier). Tolerates the table being absent so a
-// code-first deploy degrades gracefully.
+// Reconcile printed flight identity independently of timing verification;
+// non-flight records retain their exact departure identity. Writes fail closed.
 async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined> {
   if (!leg.departAt&&leg.type!=='flight') return
   const iso = leg.departAt?.toISOString()||null
@@ -168,8 +167,13 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       .eq('type', leg.type)
     if(leg.type==='flight'&&leg.pnr&&leg.flightNo&&leg.dateLabel){
       sel=sel.eq('pnr',leg.pnr).eq('date_label',leg.dateLabel).eq('leg_index',leg.legIndex).eq('from_city',leg.fromCity).eq('to_city',leg.toCity)
+    }else if(leg.type==='flight'){
+      sel=sel.eq('from_city',leg.fromCity).eq('to_city',leg.toCity)
+      sel=leg.dateLabel==null?sel.is('date_label',null):sel.eq('date_label',leg.dateLabel)
+      sel=leg.departLocal==null?sel.is('depart_local',null):sel.eq('depart_local',leg.departLocal)
+      sel=leg.pnr==null?sel.is('pnr',null):sel.eq('pnr',leg.pnr)
+      if(leg.flightNo==null)sel=sel.is('flight_no',null)
     }else if(iso)sel=sel.eq('depart_at',iso)
-    else sel=sel.is('depart_at',null).eq('from_city',leg.fromCity).eq('to_city',leg.toCity).eq('date_label',leg.dateLabel).eq('depart_local',leg.departLocal)
     if (leg.flightNo) sel = sel.eq('flight_no', leg.flightNo)
     else if (leg.trainNo) sel = sel.eq('train_no', leg.trainNo)
     else if (leg.eventName) sel = sel.eq('event_name', leg.eventName)
