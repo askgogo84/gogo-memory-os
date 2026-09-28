@@ -170,8 +170,8 @@ export function reminderStepIntent(step:{title:string;instruction:string}):'read
   const kind=(verb:string)=>/^(review|list|show|find|retriev|read|check|inspect|look)/i.test(verb)?'read':/^(creat|mak|set|add|schedul|remind)/i.test(verb)?'write':'unsupported'
   const intents=new Set<string>()
   for(const text of [step.title,step.instruction]){
-    const positive=text.replace(/\b(?:do not|don't|never|without)\b(?:(?!\b(?:then|but|afterwards?|subsequently)\b)[^.;!?])*/gi,'')
-      .replace(/\b(?:scheduled|created|added|set|updated)\s+(?=reminders?\b)/gi,'')
+    const positive=text.replace(/\b(?:do not|don't|never|without)\b(?:(?!\b(?:then|but|afterwards?|subsequently|and\s+(?:create|make|set|add|schedule|remind|review|list|show|find|retrieve|read|check|inspect|move|reschedule|update|edit|delete|remove|cancel|complete))\b)[^.;!?])*/gi,'')
+      .replace(/\b(?:scheduled|created|added|updated)\s+(?=reminders?\b)/gi,'')
       .replace(/\b(reminders?\s+)(?:(?:that\s+)?(?:were|are)\s+)?(?:scheduled|created|added|set|updated)\b/gi,'$1')
     let creations=0
     for(const clause of positive.split(/[.;!?]|\b(?:and|then)\b/i)){
@@ -204,7 +204,8 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
     const relative=/\b(today|tomorrow)\b/i.exec(reviewText)?.[1].toLowerCase()
     let temporal: {timezone:string;dates:string[];clock:string|null}|undefined
     if(dates.length||clock||relative){
-      const timezone=await actorTimezone(actor)
+      const explicitZone=reviewText.match(/\b(?:[A-Za-z_]+\/[A-Za-z_]+(?:\/[A-Za-z_]+)?|IST|UTC|GMT)\b/)?.[0]
+      const timezone=explicitZone?normalizeTimezone(explicitZone==='IST'?'Asia/Kolkata':explicitZone):await actorTimezone(actor)
       if(relative&&!dates.length){
         const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
         const values:Record<string,string>={};for(const part of parts)values[part.type]=part.value
