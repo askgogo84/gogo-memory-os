@@ -597,7 +597,7 @@ console.log('Confirmation present only after the action-browser reload cannot co
 queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Review reservation.',executionAfterText:'Booking submission pending.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 let boundaryOutput:any,simulatedPage='Review reservation.'
-const boundaryPage={goto:async(url:string)=>{simulatedPage=url.endsWith('/history')?'Reservation confirmed.':'Review reservation.'},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://provider.example',text:simulatedPage}),locator:()=>({first:()=>({evaluate:async()=>true,click:async()=>{simulatedPage='Booking submission pending.'}})})}
+const boundaryPage={goto:async(url:string)=>{simulatedPage=url.endsWith('/history')?'Reservation confirmed.':'Review reservation.'},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://provider.example',text:simulatedPage}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:'Confirm reservation',tagName:'BUTTON',id:'confirm',getAttribute:()=>null}),click:async()=>{simulatedPage='Booking submission pending.'}})})}
 await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[boundaryPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'click',selector:'#confirm'},{kind:'goto',url:'https://provider.example/history'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
 assert.equal(boundaryOutput.text,'Reservation confirmed.')
 assert.equal(boundaryOutput.executionBeforeText,'Review reservation.')
@@ -606,7 +606,7 @@ console.log('Subsequent navigation cannot replace the immediate provider submiss
 
 simulatedPage='Review reservation.'
 let boundaryClicks=0
-const misleadingControlPage={...boundaryPage,locator:()=>({first:()=>({evaluate:async()=>true,click:async()=>{simulatedPage=++boundaryClicks===1?'Booking submission pending.':'Reservation confirmed.'}})})}
+const misleadingControlPage={...boundaryPage,locator:()=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:'Confirm reservation',tagName:'BUTTON',id:'confirm',getAttribute:()=>null}),click:async()=>{simulatedPage=++boundaryClicks===1?'Booking submission pending.':'Reservation confirmed.'}})})}
 await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[misleadingControlPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'click',selector:'#confirm'},{kind:'click',selector:'#view-reservation'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
 assert.equal(boundaryOutput.text,'Reservation confirmed.')
 assert.equal(boundaryOutput.actions.filter((action:any)=>action.consequential).length,2)
@@ -623,3 +623,10 @@ for(const [objective,confirmation] of [['Cancel my booking','Your booking is not
  await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'}),/browser_objective_unverified/)
 }
 console.log('Normal cancellation/check-in verb confirmations work while negatives and conditions remain unverified')
+
+simulatedPage='Dismiss this popup.'
+const dismissalPage={...boundaryPage,locator:(selector:string)=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:selector==='#dismiss'?'Cancel':'Confirm reservation',tagName:'BUTTON',id:selector,getAttribute:()=>null}),click:async()=>{simulatedPage=selector==='#dismiss'?'Review the new reservation.':'Reservation confirmed.'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[dismissalPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',cancelRequested:false,actions:[{kind:'click',selector:'#dismiss'},{kind:'click',selector:'#confirm'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.executionBeforeText,'Review the new reservation.')
+assert.equal(boundaryOutput.executionAfterText,'Reservation confirmed.')
+console.log('A plain Cancel dismissal cannot own evidence for an approved booking')

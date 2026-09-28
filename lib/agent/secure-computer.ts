@@ -172,6 +172,9 @@ async function model(page){
     };
   });
 }
+async function isBareCancelControl(page,selector){
+  try{return await page.locator(selector).first().evaluate(el=>/^cancel$/i.test(String(el.getAttribute('aria-label')||el.textContent||el.getAttribute('value')||'').trim()));}catch{return false;}
+}
 async function isConsequentialControl(page,selector){
   try{return await page.locator(selector).first().evaluate(el=>{
     const t=(el.getAttribute('type')||'').toLowerCase();
@@ -195,6 +198,7 @@ async function isConsequentialControl(page,selector){
     await page.waitForTimeout(900);
     for(const a of (payload.actions||[])){
       let consequential=a.kind==='submit';
+      let captureEvidence=false;
       try{
         if(a.kind==='goto') await page.goto(a.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
         else if(a.kind==='fill') await page.locator(a.selector).first().fill(a.value,{timeout:10000});
@@ -204,16 +208,16 @@ async function isConsequentialControl(page,selector){
         else if(a.kind==='click'){
           consequential=await isConsequentialControl(page,a.selector);
           if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential});continue;}
-          if(consequential&&executionBeforeText===null)executionBeforeText=(await model(page)).text;
+          if(consequential&&executionBeforeText===null&&(payload.cancelRequested===true||!await isBareCancelControl(page,a.selector))){executionBeforeText=(await model(page)).text;captureEvidence=true;}
           await page.locator(a.selector).first().click({timeout:10000});
         } else if(a.kind==='submit'){
           if(payload.mode!=='execute'){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
-          if(consequential&&executionBeforeText===null)executionBeforeText=(await model(page)).text;
+          if(consequential&&executionBeforeText===null&&(payload.cancelRequested===true||!await isBareCancelControl(page,a.selector))){executionBeforeText=(await model(page)).text;captureEvidence=true;}
           await page.locator(a.selector).first().click({timeout:10000});
         }
         log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
         await page.waitForTimeout(650);
-        if(consequential&&executionAfterText===null)executionAfterText=(await model(page)).text;
+        if(captureEvidence)executionAfterText=(await model(page)).text;
       }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential});}
     }
     const out=await model(page); out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; console.log(JSON.stringify(out));
@@ -495,7 +499,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       if(!actions.length)break
       const currentUrl=String(page.url||target.toString())
       const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
-      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions})).toString('base64')
+      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,cancelRequested:/\bcancel(?:lation)?\b/i.test(params.objective)})).toString('base64')
       if(params.mode==='execute')executionStarted=true
       const result=await first.sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload]})
       if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
