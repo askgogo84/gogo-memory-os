@@ -361,7 +361,6 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     activeSandbox=first.sandbox
     let page=first.page
     let actionLog:any[]=[]
-    let anyPlannedSubmit=false
     let vaultAttempted=false
     let credentialSelectionRequired=false
 
@@ -475,7 +474,6 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
 
       const actions=await planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION')
       if(!actions.length)break
-      if(actions.some(a=>a.kind==='submit'))anyPlannedSubmit=true
       const currentUrl=String(page.url||target.toString())
       const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
       const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions})).toString('base64')
@@ -502,8 +500,9 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     if(finalProviderBlock)return {status:'blocked',url:safeText(page.url||target,1200),title:safeText(page.title,300),summary:finalProviderBlock,pageText:'',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
     const readAnswer=params.mode==='read'?await assessReadOutcome(params.objective,page):null
     if(params.mode==='read'&&!readAnswer)throw new Error('browser_objective_unverified')
+    if(params.mode!=='read'&&!actionLog.some(a=>a.status==='done'&&['fill','select','check','click','submit'].includes(a.kind)))throw new Error('browser_objective_unverified')
     await first.sandbox.stop().catch(()=>{})
-    const prepared=params.mode==='draft' && anyPlannedSubmit
+    const prepared=params.mode==='draft'
     return {
       status:prepared?'prepared':'completed',url:safeText(page.url||target,1200),title:safeText(page.title,300),
       summary:params.mode==='read'?readAnswer!:prepared?'Gogo prepared the browser flow and stopped before submit.':'Gogo completed the approved browser flow.',

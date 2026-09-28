@@ -376,3 +376,15 @@ assert.deepEqual(throughRows.map(row=>[row.leg_index,row.from_city,row.to_city])
 assert.equal(buildTravelPresenceFacts([{...legacyArrival,from_city:'Unknown airport',depart_at:null,raw:{date:'28 Sep 2020',departure:'10:00'}}],Date.parse('2040-09-28T00:00Z')).length,0,'old null-time identities cannot enter current context')
 
 await assert.rejects(()=>executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Set reminders',instruction:'Set reminders on 28 Sep 2030 at 5 pm and 29 Sep 2030 at 6 pm'},missionText:'Set reminders'}),/multiple_instants_require_separate_steps/)
+
+const unverifiedInfo={type:'flight',passengers:['Named Passenger'],flights:[{from:'Unknown airport',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'Example',flightNo:'XX123',pnr:'UNKNOWN99'}]}
+const priorInstant=new Date('2040-09-28T04:30:00Z')
+legacyTickets=[{...unknownWrites[0].row,id:'legacy-unknown',depart_at:priorInstant.toISOString()}]
+const unknownLeg=ticketModule.buildLegs(unverifiedInfo)[0]
+const priorDecisions=ticketModule.planLegReminders({...unknownLeg,departAt:priorInstant},Number.NEGATIVE_INFINITY).filter((d:any)=>d.remindAt)
+legacyReminders=priorDecisions.map((d:any,i:number)=>({id:`unverified-${i}`,telegram_id:17,message:d.message,remind_at:d.remindAt.toISOString(),sent:false}))
+legacyReminders.push({...legacyReminders[0],id:'unverified-sent-history',sent:true})
+await ticketModule.persistAndRemindTicket(unverifiedInfo,{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
+assert.equal(updatedTickets.at(-1).depart_at,null,'withdraw the untrusted stored departure')
+assert.equal(legacyReminders.map(row=>row.id).join(','),'unverified-sent-history','retire pending unverified alerts while preserving sent history')
+console.log('Unverified corrections withdraw old timestamps and pending alerts')

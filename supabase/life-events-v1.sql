@@ -120,11 +120,21 @@ begin
     lifecycle_state=case when life_events.lifecycle_state in ('completed','cancelled','expired') then life_events.lifecycle_state else excluded.lifecycle_state end, next_action_at=excluded.next_action_at, updated_at=now()
   returning id into v_event_id;
 
+  if exists(select 1 from life_events where id=v_event_id and lifecycle_state in ('completed','cancelled','expired')) then
+    update life_events set next_action_at=null where id=v_event_id;
+    update life_event_actions set status='cancelled',updated_at=now() where life_event_id=v_event_id and status in ('queued','ready','waiting_approval','blocked');
+    return new;
+  end if;
+
+
   insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
   values (v_event_id,new.telegram_id::text,'remember','remember','memory','Keep this ticket and its source context together',null,false,false,jsonb_build_object('travel_ticket_id',new.id))
   on conflict (life_event_id,action_key) do update set updated_at=now();
 
-  if new.depart_at is null then return new; end if;
+  if new.depart_at is null then
+    update life_event_actions set status='cancelled',updated_at=now() where life_event_id=v_event_id and due_at is not null and status in ('queued','ready','waiting_approval','blocked');
+    return new;
+  end if;
 
   if new.type = 'flight' then
     insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)

@@ -532,3 +532,13 @@ for(const mode of ['draft','execute']){
  assert.equal(evidenceStops,before+1,`${mode} planning failure stops its sandbox`)
 }
 modelFailure=false
+
+for(const mode of ['draft','execute']){
+ for(const plan of ['[]','invalid-json','[{"kind":"unsupported"}]']){
+  modelText=plan
+  const before=evidenceStops
+  await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode}),/browser_objective_unverified/)
+  assert.equal(evidenceStops,before+1,'unverified write mode stops sandbox')
+ }
+}
+console.log('Write-mode runs cannot complete without observed action evidence')
