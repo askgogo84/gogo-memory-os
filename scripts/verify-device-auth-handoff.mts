@@ -430,12 +430,13 @@ for(const kind of ['flight_execute','restaurant']){
 
 // Reported Instagram shell: zero actions/forms must pause at login, never complete.
 let evidenceStops=0
+let inspectionOutput:string|undefined
 let evidencePage:any={url:'https://www.instagram.com/accounts/login/',title:'Instagram',text:'',forms:[]}
 let modelFailure=false
 let modelText='[]'
 const evidenceComputer=load('secure-computer.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>{if(modelFailure)throw new Error('unavailable');return {content:[{type:'text',text:modelText}]}}}}},
-  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(evidencePage)})})}},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(evidencePage)})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{},{reserveHandoff:async()=>"transfer"})},
@@ -514,3 +515,11 @@ for(const body of ['Loading...','Please wait','Just a moment','Loading products.
 evidencePage={url:'https://provider.example/status',title:'OK',text:'OK',forms:[]}
 modelText=JSON.stringify({complete:true,evidence:['OK']})
 assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Read the service status'})).summary,'OK')
+
+for(const badOutput of ['', 'invalid-json']){
+ const before=evidenceStops
+ inspectionOutput=badOutput
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams))
+ assert.equal(evidenceStops,before+1,'initial inspection failure must stop the sandbox')
+}
+inspectionOutput=undefined

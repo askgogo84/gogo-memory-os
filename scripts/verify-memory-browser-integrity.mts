@@ -231,6 +231,8 @@ try{
  assert.match(timed.text,/17:00.*Asia\/Kolkata/)
  const explicitZone=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for 28 Sept 2030 at 17:00 ist'},missionText:'Review reminders'})
  assert.deepEqual((explicitZone.output as any).reminders.map((row:any)=>row.id),['five'])
+ const multipleClocks=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders at 5 pm and 6 pm'},missionText:'Review reminders'})
+ assert.deepEqual((multipleClocks.output as any).reminders.map((row:any)=>row.id),['five','six'])
  const tomorrow=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:"Show tomorrow's reminders"},missionText:'Review reminders'})
  assert.equal((tomorrow.output as any).reminders.length,0,'tomorrow must not include unrelated 2030 reminders')
  const clockOnly=await readScopedReminders(17,{title:'Show reminders',instruction:'Show reminders set for 5 pm'},'Review reminders',{timezone:'Asia/Kolkata',dates:[],clock:'17:00'})
@@ -273,3 +275,7 @@ await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],
 assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,beforeReforward,'legacy re-forward must not duplicate alerts')
 assert.equal(updatedLegacy.length,reminderWrites.length)
 assert.ok(updatedLegacy.every(row=>row.timezone==='America/Los_Angeles'))
+
+assert.equal(reminderStepIntent({title:'Create reminder',instruction:'Create and schedule a reminder for 5 pm'}),'write')
+assert.equal(reminderStepIntent({title:'Create reminder',instruction:'Make sure a reminder is set for 5 pm'}),'write')
+assert.equal(reminderStepIntent({title:'Create reminders',instruction:'Create a reminder for 5 pm and add another for 6 pm'}),'mixed')

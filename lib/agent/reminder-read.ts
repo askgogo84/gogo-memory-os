@@ -27,7 +27,7 @@ export function reminderScope(step:{title:string;instruction:string},mission:str
   return {scopeTerms,scopeGroups,unresolved:scoped&&!scopeTerms.length}
 }
 
-export async function readScopedReminders(ownerId:number,step:{title:string;instruction:string},mission:string,temporal?:{timezone:string;dates:string[];clock:string|null}){
+export async function readScopedReminders(ownerId:number,step:{title:string;instruction:string},mission:string,temporal?:{timezone:string;dates:string[];clock:string|null;clocks?:string[]}){
   const scope=reminderScope(step,mission)
   const reminders:Array<{id:string;message:string;remindAt:string;timezone:string}>=[]
   const now=new Date().toISOString()
@@ -44,7 +44,8 @@ export async function readScopedReminders(ownerId:number,step:{title:string;inst
         const date=`${local.year}-${String(local.month).padStart(2,'0')}-${String(local.day).padStart(2,'0')}`
         const clock=`${String(local.hour).padStart(2,'0')}:${String(local.minute).padStart(2,'0')}`
         if(temporal.dates.length&&!temporal.dates.includes(date))continue
-        if(temporal.clock&&clock!==temporal.clock)continue
+        const clocks=temporal.clocks||(temporal.clock?[temporal.clock]:[])
+        if(clocks.length&&!clocks.includes(clock))continue
       }
       const message=redactSecretShapedText(String(row.message||''))
       const words=message.toLowerCase().replace(/newyork/g,'new york').match(/[a-z][a-z0-9]*/g)||[]

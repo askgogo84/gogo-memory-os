@@ -189,7 +189,7 @@ export function reminderStepIntent(step:{title:string;instruction:string}):'read
         if(action==='write')creations++
       }
     }
-    if(creations>1)return 'mixed'
+    if(creations>1&&(positive.match(/\b(?:reminders?|one|another)\b/gi)||[]).length>1)return 'mixed'
   }
   return intents.size>1?'mixed':intents.has('read')?'read':intents.has('write')?'write':'unknown'
 }
@@ -202,9 +202,10 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
   if(stepIntent==='read'){
     const reviewText=`${step.title} ${step.instruction}`
     const dates=explicitDates(reviewText)
-    const clock=explicitMissionClock(reviewText)
+    const clocks=[...new Set([...reviewText.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter((clock):clock is string=>!!clock))]
+    const clock=clocks[0]||null
     const relative=/\b(today|tomorrow)\b/i.exec(reviewText)?.[1].toLowerCase()
-    let temporal: {timezone:string;dates:string[];clock:string|null}|undefined
+    let temporal: {timezone:string;dates:string[];clock:string|null;clocks:string[]}|undefined
     if(dates.length||clock||relative){
       const timezone=reminderTimezoneMetadata(reviewText).timezone||await actorTimezone(actor)
       if(relative&&!dates.length){
@@ -214,7 +215,7 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
         if(relative==='tomorrow')date.setUTCDate(date.getUTCDate()+1)
         dates.push(date.toISOString().slice(0,10))
       }
-      temporal={timezone,dates,clock}
+      temporal={timezone,dates,clock,clocks}
     }
     const {reminders,truncated,scopeTerms}=await readScopedReminders(actor.legacyTelegramId,step,missionText,temporal)
     return {text:(reminders.length

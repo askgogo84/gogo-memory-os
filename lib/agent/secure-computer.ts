@@ -233,7 +233,7 @@ async function getComputer(userId:string,targetUrl:string){
   const {allow}=allowedHosts(targetUrl)
   await sandbox.updateNetworkPolicy({allow} as any)
   return {sandbox,name,releaseOwnerLock}
-  }catch(error){await releaseOwnerLock();throw error}
+  }catch(error){await sandbox.stop().catch(()=>{});await releaseOwnerLock();throw error}
 }
 
 function parseJsonLoose(text:string){
@@ -297,7 +297,7 @@ async function inspect(userId:string,url:string){
   if(!lines.length)throw new Error('secure_browser_empty_output')
   const parsed=JSON.parse(lines[lines.length-1])
   return {sandbox,name,page:parsed,releaseOwnerLock}
-  }catch(error){await releaseOwnerLock();throw error}
+  }catch(error){await sandbox.stop().catch(()=>{});await releaseOwnerLock();throw error}
 }
 
 function detectProviderAccessBlock(page:any){
