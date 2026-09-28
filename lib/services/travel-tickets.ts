@@ -78,6 +78,16 @@ type Leg = {
   checkinMsg: string | null
 }
 
+
+function refreshFlightReminderText(leg:Leg){
+  if(leg.type!=='flight')return
+  const zone=leg.departTz||'timezone unverified',pnr=leg.pnr||'not recorded'
+  const service=[leg.airline,leg.flightNo].filter(Boolean).join(' ')||'Flight'
+  const link=checkInLink(iataFromFlightNo(leg.flightNo))
+  leg.reminderMsg=`✈️ ${leg.fromCity} → ${leg.toCity} departs in 3 hours at ${leg.departLocal} (${zone})! PNR: ${pnr}`
+  leg.checkinMsg=`🧳 Web check-in open — ${service} (${leg.fromCity} → ${leg.toCity}) departs ${leg.dateLabel} at ${leg.departLocal} (${zone}). Check in now to pick your seat. PNR: ${pnr}`+(link?`\n${link}`:'')
+}
+
 export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
   const legs: Leg[] = []
 
@@ -151,6 +161,7 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
     })
   }
 
+  legs.forEach(refreshFlightReminderText)
   return legs
 }
 
@@ -162,7 +173,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
   try {
     let sel = supabaseAdmin
       .from('travel_tickets')
-      .select('id,depart_at,pnr,flight_no')
+      .select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,raw')
       .eq('telegram_id', ctx.telegramId)
       .eq('type', leg.type)
     if(leg.type==='flight'&&leg.pnr&&leg.flightNo&&leg.dateLabel){
@@ -181,7 +192,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     let { data: existing, error: lookupError } = await sel.limit(2)
     if(lookupError)throw new Error(lookupError.message)
     if(!existing?.length&&leg.type==='flight'){
-      let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city')
+      let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,raw')
         .eq('telegram_id',ctx.telegramId).eq('type','flight').is('depart_at',null)
       // Missing stored identifiers may be enriched, but conflicting identifiers
       // never match. Compare locally without interpolating parser text in filters.
@@ -200,7 +211,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     // Printed labels can vary between parsers while the canonical flight stays
     // the same. Reuse its database dedupe identity after null-time reconciliation.
     if(!existing?.length&&leg.type==='flight'&&iso){
-      const result=await supabaseAdmin.from('travel_tickets').select('id,depart_at,pnr,flight_no,leg_index,from_city,to_city')
+      const result=await supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,raw')
         .eq('telegram_id',ctx.telegramId).eq('type',leg.type).eq('depart_at',iso).limit(101)
       if(result.error)throw new Error(result.error.message)
       if((result.data?.length||0)>100)throw new Error('travel_ticket_identity_ambiguous')
@@ -212,9 +223,22 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     }
     if(existing&&existing.length>1)throw new Error('travel_ticket_identity_ambiguous')
     if(existing?.[0]){
-      leg.pnr=leg.pnr||existing[0].pnr||undefined
-      leg.flightNo=leg.flightNo||existing[0].flight_no||undefined
+      const saved=existing[0]
+      leg.pnr=leg.pnr||saved.pnr||null
+      leg.flightNo=leg.flightNo||saved.flight_no||null
+      leg.airline=leg.airline||saved.airline||null
+      leg.seat=leg.seat||saved.seat||null
+      leg.bookingGroup=leg.bookingGroup||saved.booking_group||null
+      leg.passengers=leg.passengers?.length?leg.passengers:saved.passengers||null
+      const incomingRaw=leg.raw||{}
+      leg.raw={...(saved.raw||{}),...Object.fromEntries(Object.entries(incomingRaw).filter(([,value])=>value!==null&&value!==undefined&&value!==''))}
+      if(!incomingRaw.arrival&&saved.arrive_at&&leg.departAt){
+        const previousArrival=new Date(saved.arrive_at)
+        const normalized=saved.raw?.timeNormalizationVersion===2?previousArrival:flightInstants(leg.raw).arriveAt
+        if(normalized&&normalized>leg.departAt)leg.arriveAt=normalized
+      }
     }
+    refreshFlightReminderText(leg)
     const row={
       telegram_id: ctx.telegramId,
       whatsapp_to: ctx.whatsappTo,

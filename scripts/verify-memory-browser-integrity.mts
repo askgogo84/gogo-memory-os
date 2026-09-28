@@ -448,3 +448,18 @@ assert.equal(ticketWrites.filter(write=>write.table==='travel_tickets').length,r
 assert.equal(updatedTickets.at(-1).pnr,'KEEP-PNR')
 assert.equal(updatedTickets.at(-1).flight_no,'KEEP123')
 console.log('Unknown-time enrichment and lower-quality canonical re-forwards preserve ticket identity')
+
+legacyTickets=[{...currentTicket,id:'rich-ticket',passengers:['Saved Passenger'],seat:'14A',booking_group:'TEST99'}]
+legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`rich-alert-${i}`,sent:false}))
+const richAlertCount=ticketWrites.filter(write=>write.table==='reminders').length
+await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
+const richUpdate=updatedTickets.at(-1)
+assert.deepEqual(richUpdate.passengers,['Saved Passenger'])
+assert.equal(richUpdate.arrive_at,currentTicket.arrive_at)
+assert.equal(richUpdate.seat,'14A')
+assert.equal(richUpdate.airline,currentTicket.airline)
+assert.equal(richUpdate.booking_group,'TEST99')
+assert.equal(richUpdate.raw.arrival,currentTicket.raw.arrival)
+assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,richAlertCount,'restored identifiers rebuild matching reminder text instead of duplicating alerts')
+assert.ok(!ticketWrites.filter(write=>write.table==='reminders').slice(richAlertCount).some(write=>/undefined|null/.test(write.row.message)))
+console.log('Sparse re-forwards retain passenger/arrival metadata and reuse identifier-bearing reminders')
