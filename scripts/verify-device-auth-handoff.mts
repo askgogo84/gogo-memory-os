@@ -613,3 +613,13 @@ assert.equal(boundaryOutput.actions.filter((action:any)=>action.consequential).l
 assert.equal(boundaryOutput.executionBeforeText,'Review reservation.')
 assert.equal(boundaryOutput.executionAfterText,'Booking submission pending.')
 console.log('Later consequential-labelled controls cannot overwrite the original submission evidence')
+
+for(const [objective,confirmation] of [['Cancel my booking','Booking cancelled'],['Cancel my reservation','Reservation canceled'],['Cancel my booking','Your booking has been cancelled'],['Check in for my flight','You are checked in'],['Check in for my flight','You are now checked in'],['Check in for my flight','Checked in successfully']]){
+ queuedObservations=[{...evidencePage,text:'Review the operation.'},{...evidencePage,text:confirmation,executionBeforeText:'Review the operation.',executionAfterText:confirmation}]
+ assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'})).summary,confirmation)
+}
+for(const [objective,confirmation] of [['Cancel my booking','Your booking is not cancelled'],['Cancel my reservation','When reservation canceled, contact us'],['Check in for my flight','You are not checked in'],['Check in for my flight','Once checked in, print the pass']]){
+ queuedObservations=[{...evidencePage,text:'Review the operation.'},{...evidencePage,text:confirmation,executionBeforeText:'Review the operation.',executionAfterText:confirmation}]
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'}),/browser_objective_unverified/)
+}
+console.log('Normal cancellation/check-in verb confirmations work while negatives and conditions remain unverified')

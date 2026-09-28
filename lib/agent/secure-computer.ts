@@ -357,7 +357,8 @@ function localExecutionConfirmation(objective:string,before:string,after:string,
   if(!operation)return null
   const confirmation=new RegExp('\\b'+operation+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i')
   for(const line of after.split(/[\n.!?]+/).map(line=>line.trim()).filter(Boolean)){
-    if(confirmation.test(line)&&!before.includes(line)&&! /\b(not|pending|failed|if|when|once|will|would|could|should)\b/i.test(line))return line
+    const normalVerbConfirmation=operation==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has been)\s+)?cancel(?:led|ed)\b/i.test(line):operation==='check[ -]?in'?/^(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?$/i.test(line):false
+    if((confirmation.test(line)||normalVerbConfirmation)&&!before.includes(line)&&! /\b(not|pending|failed|if|when|once|will|would|could|should)\b/i.test(line))return line
   }
   return null
 }
