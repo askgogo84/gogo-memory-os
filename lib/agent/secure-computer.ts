@@ -216,7 +216,10 @@ async function isConsequentialControl(page,selector){
         }
         log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
         await page.waitForTimeout(650);
-        if(captureEvidence)executionAfterText=(await model(page)).text;
+        if(captureEvidence){
+          await page.waitForLoadState('networkidle',{timeout:15000}).catch(()=>{});
+          executionAfterText=(await model(page)).text;
+        }
       }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential});}
     }
     const out=await model(page); out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; console.log(JSON.stringify(out));
@@ -362,7 +365,7 @@ function localExecutionConfirmation(approvedOperation:ApprovedBrowserOperation|n
   if(!operation)return null
   const normalizeEvidence=(text:string)=>text.normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim()
   const baseline=normalizeEvidence(before)
-  const confirmation=new RegExp('\\b'+operation+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i')
+  const confirmation=new RegExp('\\b'+operation+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|placed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i')
   for(const line of after.split(/[\n.!?]+/).map(line=>line.trim()).filter(Boolean)){
     const normalVerbConfirmation=operation==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has been)\s+)?cancel(?:led|ed)\b/i.test(line):operation==='check[ -]?in'?/^(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?$/i.test(line):false
     if((confirmation.test(line)||normalVerbConfirmation)&&!baseline.includes(normalizeEvidence(line))&&! /\b(not|pending|failed|if|when|once|will|would|could|should)\b/i.test(line))return safeText(line,1800)
