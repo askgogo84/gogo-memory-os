@@ -892,3 +892,9 @@ for(const id of ['manage-booking','manage_booking','manageBooking']){
 }
 const mixedNavigationElement={textContent:'Manage booking',tagName:'BUTTON',id:'cancel-booking',getAttribute:()=>null}
 assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page:{locator:()=>({first:()=>({evaluate:(fn:any)=>fn(mixedNavigationElement)})})}}),true)
+
+for(const [id,expected] of [['booking-confirmation',false],['reservation_confirmation',false],['bookingConfirmation',false],['booking-confirmation-pay',true],['booking-confirmation-cancel',true]] as const){
+ const element={textContent:'View booking confirmation',tagName:'BUTTON',id,getAttribute:()=>null}
+ const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
+ assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page}),expected,id)
+}
