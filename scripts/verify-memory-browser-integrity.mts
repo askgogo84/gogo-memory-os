@@ -258,9 +258,9 @@ assert.equal(reminderStepIntent({title:'List reminders',instruction:'List remind
 const ticketWrites:Array<{table:string;row:any}>=[]
 let legacyReminders:any[]=[],legacyTickets:any[]=[]
 const updatedTickets:any[]=[]
-const updatedLegacy:any[]=[]
+const updatedLegacy:any[]=[],deletedLegacy:string[]=[]
 const ticketDb={from:(table:string)=>{
- const filters:any={};const q:any={select:()=>q,eq:(key:string,value:any)=>{filters[key]=value;return q},in:(key:string,value:any)=>{filters[key]=value;return q},limit:async()=>({data:(table==='reminders'?legacyReminders:legacyTickets).filter(row=>Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value)),error:null}),update:(row:any)=>{(table==='reminders'?updatedLegacy:updatedTickets).push(row);return q},then:(resolve:any)=>Promise.resolve({error:null}).then(resolve),insert:async(row:any)=>{ticketWrites.push({table,row});return {error:null}}};return q
+ const filters:any={};let deleting=false;const q:any={select:()=>q,eq:(key:string,value:any)=>{filters[key]=value;return q},in:(key:string,value:any)=>{filters[key]=value;return q},limit:async()=>({data:(table==='reminders'?legacyReminders:legacyTickets).filter(row=>Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value)),error:null}),update:(row:any)=>{(table==='reminders'?updatedLegacy:updatedTickets).push(row);return q},delete:()=>{deleting=true;return q},then:(resolve:any)=>{if(deleting){legacyReminders=legacyReminders.filter(row=>{const match=Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value);if(match)deletedLegacy.push(row.id);return !match})}return Promise.resolve({error:null}).then(resolve)},insert:async(row:any)=>{ticketWrites.push({table,row});return {error:null}}};return q
 }}
 const ticketModule:any={}
 const airlineCheckin=await import('../lib/services/airline-checkin')
@@ -321,6 +321,12 @@ assert.match(pendingReply.reply,/Departure alert/)
 assert.doesNotMatch(pendingReply.reply,/No new alerts scheduled/)
 
 legacyReminders=legacyReminders.map(row=>({...row,sent:false}))
+legacyReminders.push({...legacyReminders[0],id:'sent-history',sent:true})
 const canonicalUpdatesBefore=updatedLegacy.length
 await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
 assert.equal(updatedLegacy.length,canonicalUpdatesBefore,'canonical pending rows must be preferred over earlier legacy pending rows')
+
+assert.equal(legacyReminders.filter(row=>!row.sent).length,reminderWrites.length,'retire extra pending legacy matches')
+assert.equal(deletedLegacy.length,reminderWrites.length)
+assert.ok(legacyReminders.some(row=>row.id==='sent-history'&&row.sent),'preserve sent history')
+assert.ok(legacyReminders.filter(row=>!row.sent).every(row=>row.id.startsWith('pending-')))

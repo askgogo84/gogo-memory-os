@@ -250,6 +250,11 @@ async function createReminderIfAbsent(ctx: TicketContext, message: string, remin
       const {error}=await supabaseAdmin.from('reminders').update({message,timezone:ctx.timezone,remind_at:iso}).eq('telegram_id',ctx.telegramId).eq('id',matched.id)
       if(error)return 'failed'
     }
+    const duplicateIds=matches.filter((row:any)=>!row.sent&&row.id!==matched.id).map((row:any)=>row.id)
+    if(duplicateIds.length){
+      const {error}=await supabaseAdmin.from('reminders').delete().eq('telegram_id',ctx.telegramId).eq('sent',false).in('id',duplicateIds)
+      if(error)return 'failed'
+    }
     return 'exists'
   }
 
