@@ -315,6 +315,10 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:compact,error:blockReason,completed_at:at}).eq('id',params.stepId)
       await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:blockReason,metadata_json:runMetadata,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
       await activity(tg,params.runId,blockReason,blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
+      if(blockReason==='provider_access_limited'&&runMetadata.browser_safe_to_retry===false){
+        const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
+        return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}
+      }
       if(blockReason==='human_auth_required'){
         if((result.handoffReservation||(result.authReason&&result.authReason!=='password'))&&!result.credentialSelectionRequired){
           const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')

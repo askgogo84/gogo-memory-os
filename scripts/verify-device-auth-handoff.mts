@@ -52,6 +52,7 @@ const db={from:(table:string)=>{
   return q
 }}
 let commandExecutionFailure:any
+let browserBlockReason='human_auth_required'
 let browserCompleted=false,vaultCalls=0,browserActions:any[]=[],reconciliationEvidence:any,browserExecutions=0
 const command=load('browser-command.ts',{
   './post-auth-outcome':{markAuthOutcomeUnknown:async(_tg:string,runId:string,meta:any)=>{metadata={...meta,browser_safe_to_retry:false};return {runId,status:'outcome_unknown'}},inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
@@ -60,7 +61,7 @@ const command=load('browser-command.ts',{
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
   './secure-computer':{runSecureBrowser:async()=>{browserExecutions++;if(commandExecutionFailure)throw commandExecutionFailure;return browserCompleted
     ? {status:'completed',url:'https://provider.example/account',title:'Account',summary:'Read account',forms:[],actions:[]}
-    : {status:'blocked',blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}}},
+    : {status:'blocked',blockReason:browserBlockReason,authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}}},
   '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff,cancelProviderBrowserHandoff:async()=>{directCancelled++}},
   './browser-handoff':{releaseBrowserHandoff:async(_url:string,options:any)=>{assert.equal(options.allowExpired,true);released++;return {ok:false,expired:true}}},
@@ -141,7 +142,7 @@ for(const kind of ['flight_prepare','flight_execute','restaurant','lifecycle_mon
 assert.deepEqual(dispatched,['flight_prepare','flight_execute','restaurant','lifecycle_monitor'])
 for(const action of [
   {kind:'click',status:'done',consequential:true},
-  {kind:'click',status:'failed',consequential:true},
+  {kind:'submit',status:'failed',consequential:true},
   {kind:'submit',status:'done'},
 ]){
   await shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'restaurant',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://login.example',originalUrl:'https://provider.example',actions:[action]}})
@@ -240,16 +241,16 @@ for(const [label,throws,expected,mode] of [['Cancel booking',false,true,'execute
   const page={goto:async()=>{},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://login.example',text:'Approve this sign-in'}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element),click:async()=>{if(throws)throw new Error('timeout after click')}})})}
   await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[page],close:async()=>{}})}}),
     process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode,actions:[{kind:'click',selector:'#action'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{output=JSON.parse(value)},error:console.error}})
-  assert.equal(output.executionBeforeText,expected&&mode==='execute'?'Approve this sign-in':null,'baseline captured inside the action browser before the consequential control')
+  assert.equal(output.executionBeforeText,null,'baseline captured inside the action browser before the consequential control')
   const actions=lockedComputer.normalizeActionLog(output.actions)
   assert.equal(actions[0].consequential,expected,'the executed DOM control determines replay safety')
   assert.equal(actions[0].status,mode==='read'?'skipped':throws?'failed':'done')
 }
 console.log('Production browser script records consequential clicks and uncertain click outcomes')
 let browserReads=0,finalStops=0,finalUnlocks=0
-let finalChallenge:any={url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'click',detail:'#confirm',status:'done',consequential:true}]}
+let finalChallenge:any={url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'submit',detail:'#confirm',status:'done',consequential:true}]}
 const finalGateComputer=load('secure-computer.ts',{
-  '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[{type:'text',text:'{"approvedOperation":"booking","actions":[{"kind":"click","selector":"#confirm"}]}'}]})}}},
+  '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[{type:'text',text:'{"approvedOperation":"booking","actions":[{"kind":"submit","selector":"#confirm"}]}'}]})}}},
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{finalStops++},
     runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(browserReads++===0
       ? {url:'https://provider.example',title:'Reservation',text:'Review reservation',forms:[]}
@@ -448,7 +449,7 @@ const evidenceComputer=load('secure-computer.ts',{
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
   '@/lib/vault/credential-store':{resolveVaultCredentialForBrowser:async()=>evidenceCredential,recordVaultBrowserOutcome:async()=>{}},
   '@/lib/vault/session-store':{upsertVaultSession:async()=>{}},
-  './trust':{canAuthorizeConsequentialAction:()=>false},
+  './trust':{canAuthorizeConsequentialAction:({mode}:any)=>mode==='execute'},
 })
 const readParams={userId:'owner',url:'https://www.instagram.com/',objective:'Show my three most recent saved posts',mode:'read',reserveHumanHandoff:true,reservePasswordHandoff:true}
 const loginShell=await evidenceComputer.runSecureBrowser(readParams)
@@ -552,10 +553,10 @@ console.log('Write-mode runs cannot complete without observed action evidence')
 plannedOperation='booking'
 evidencePage.executionBeforeText='Review the requested operation.'
 evidencePage.executionAfterText='Awaiting provider response.'
-modelText=JSON.stringify([{kind:'fill',selector:'#name',value:'Example'},{kind:'click',selector:'#confirm'}])
-evidencePage.actions=[{kind:'fill',status:'done'},{kind:'click',status:'failed',consequential:true}]
+modelText=JSON.stringify([{kind:'fill',selector:'#name',value:'Example'},{kind:'submit',selector:'#confirm'}])
+evidencePage.actions=[{kind:'fill',status:'done'},{kind:'submit',status:'failed',consequential:true}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode:'execute'}),/browser_objective_unverified/)
-evidencePage.actions=[{kind:'fill',status:'done'},{kind:'click',status:'done',consequential:true}]
+evidencePage.actions=[{kind:'fill',status:'done'},{kind:'submit',status:'done',consequential:true}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode:'execute'}),/browser_objective_unverified/)
 console.log('Execute mode rejects partial failures and missing provider confirmation')
 
@@ -603,7 +604,7 @@ queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePag
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 let boundaryOutput:any,simulatedPage='Review reservation.'
 const boundaryPage={goto:async(url:string)=>{simulatedPage=url.endsWith('/history')?'Reservation confirmed.':'Review reservation.'},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://provider.example',text:simulatedPage}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:'Confirm reservation',tagName:'BUTTON',id:'confirm',getAttribute:()=>null}),click:async()=>{simulatedPage='Booking submission pending.'}})})}
-await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[boundaryPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'click',selector:'#confirm'},{kind:'goto',url:'https://provider.example/history'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[boundaryPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'submit',selector:'#confirm'},{kind:'goto',url:'https://provider.example/history'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
 assert.equal(boundaryOutput.text,'Reservation confirmed.')
 assert.equal(boundaryOutput.executionBeforeText,'Review reservation.')
 assert.equal(boundaryOutput.executionAfterText,'Booking submission pending.')
@@ -612,7 +613,7 @@ console.log('Subsequent navigation cannot replace the immediate provider submiss
 simulatedPage='Review reservation.'
 let boundaryClicks=0
 const misleadingControlPage={...boundaryPage,locator:()=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:'Confirm reservation',tagName:'BUTTON',id:'confirm',getAttribute:()=>null}),click:async()=>{simulatedPage=++boundaryClicks===1?'Booking submission pending.':'Reservation confirmed.'}})})}
-await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[misleadingControlPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'click',selector:'#confirm'},{kind:'click',selector:'#view-reservation'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[misleadingControlPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'submit',selector:'#confirm'},{kind:'click',selector:'#view-reservation'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
 assert.equal(boundaryOutput.text,'Reservation confirmed.')
 assert.equal(boundaryOutput.actions.filter((action:any)=>action.consequential).length,2)
 assert.equal(boundaryOutput.executionBeforeText,'Review reservation.')
@@ -633,7 +634,7 @@ console.log('Normal cancellation/check-in verb confirmations work while negative
 
 simulatedPage='Dismiss this popup.'
 const dismissalPage={...boundaryPage,locator:(selector:string)=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:selector==='#dismiss'?'Cancel':'Confirm reservation',tagName:'BUTTON',id:selector,getAttribute:()=>null}),click:async()=>{simulatedPage=selector==='#dismiss'?'Review the new reservation.':'Reservation confirmed.'}})})}
-await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[dismissalPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',cancelRequested:false,actions:[{kind:'click',selector:'#dismiss'},{kind:'click',selector:'#confirm'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[dismissalPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',cancelRequested:false,actions:[{kind:'click',selector:'#dismiss'},{kind:'submit',selector:'#confirm'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
 assert.equal(boundaryOutput.executionBeforeText,'Review the new reservation.')
 assert.equal(boundaryOutput.executionAfterText,'Reservation confirmed.')
 console.log('A plain Cancel dismissal cannot own evidence for an approved booking')
@@ -663,3 +664,15 @@ for(const baseline of ['RESERVATION CONFIRMED','Reservation   confirmed','Reserv
  await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 }
 console.log('Case and whitespace changes cannot make stale confirmation evidence new')
+
+let applyStage='Open the application.'
+const applyPage={goto:async()=>{},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://provider.example',text:applyStage}),locator:(selector:string)=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:selector==='#apply'?'Apply':'Submit application',tagName:'BUTTON',id:selector,getAttribute:()=>null}),click:async()=>{applyStage=selector==='#apply'?'Application submitted previously. Fill this new form.':'Application submitted successfully.'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[applyPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'click',selector:'#apply'},{kind:'submit',selector:'#submit'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.executionBeforeText,'Application submitted previously. Fill this new form.')
+assert.equal(boundaryOutput.executionAfterText,'Application submitted successfully.')
+metadata={url:'https://provider.example',objective:'Submit application'}
+browserBlockReason='provider_access_limited';browserActions=[{kind:'submit',status:'done',consequential:true}];browserCompleted=false
+const blockedAfterSubmit=await command.executeBrowser({...params,mode:'execute'})
+assert.equal(blockedAfterSubmit.status,'outcome_unknown')
+assert.equal(metadata.browser_safe_to_retry,false)
+console.log('Application entry cannot own final-submit evidence; provider blocks after submission preserve uncertainty')
