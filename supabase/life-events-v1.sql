@@ -145,6 +145,14 @@ begin
   returning id into v_event_id;
 
   if v_timing_changed then
+    update agent_runs r set status='failed',error='flight_schedule_changed',
+      summary='This paused preparation used an old flight schedule. Gogo will prepare the corrected itinerary again.',updated_at=now()
+      where r.telegram_id=new.telegram_id::text and r.status in ('paused','queued','running','waiting_approval')
+        and exists(select 1 from life_event_actions a where a.life_event_id=v_event_id and a.action_type='browser_prepare' and a.status='blocked'
+          and r.id::text=coalesce(a.payload_json->>'browserRunId',a.payload_json->>'runId'));
+    update life_event_actions set status='queued',
+      payload_json=(payload_json-'browserRunId'-'runId'-'approvalId'-'blockedReason'-'authReason')||jsonb_build_object('supersededPreparationRunId',coalesce(payload_json->>'browserRunId',payload_json->>'runId',payload_json->>'supersededPreparationRunId')),
+      updated_at=now() where life_event_id=v_event_id and action_type='browser_prepare' and status='blocked';
     -- Old pending authorization cannot survive a changed itinerary.
     update agent_runs r set
       status=case when r.status in ('running','paused') then 'outcome_unknown' else 'failed' end,

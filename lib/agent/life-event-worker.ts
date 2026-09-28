@@ -153,6 +153,7 @@ export async function prepareFlightCheckin(params: { telegramId: string; event: 
     return { status: 'blocked' as const, runId }
   }
 
+  if(payload.supersededPreparationRunId)await releaseRunAuthHandoff(telegramId,String(payload.supersededPreparationRunId))
   const actor = await resolveActor(telegramId)
   const runId = params.resumeRunId || await createRun({
     telegramId, event, action, status: 'running',

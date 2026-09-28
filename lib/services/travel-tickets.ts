@@ -209,20 +209,21 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     if(!existing?.length&&leg.type==='flight'){
       let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,depart_tz,raw')
         .eq('telegram_id',ctx.telegramId).eq('type','flight')
-      // Missing stored identifiers may be enriched, but conflicting identifiers
-      // never match. Compare locally without interpolating parser text in filters.
+      // Missing identifiers may be enriched. A unique same-PNR route/leg can
+      // also be reissued under a replacement flight number.
       unknown=unknown.eq('leg_index',leg.legIndex)
       const printed=ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'UTC')?.toISOString()
       const printedDay=ticketInstant(leg.dateLabel||undefined,'00:00','UTC')?.toISOString()
       existing=await matchingTicketRows(unknown,row=>{
         const compatible=(stored:string|null,incoming:string|undefined|null)=>!incoming||!stored||stored===incoming
-        if(!compatible(row.pnr,leg.pnr)||!compatible(row.flight_no,leg.flightNo))return false
+        const reissuedLeg=!!(leg.pnr&&row.pnr===leg.pnr&&row.from_city===leg.fromCity&&row.to_city===leg.toCity&&row.leg_index===leg.legIndex)
+        if(!compatible(row.pnr,leg.pnr)||(!compatible(row.flight_no,leg.flightNo)&&!reissuedLeg))return false
         if(!(row.pnr&&row.flight_no&&leg.pnr&&leg.flightNo)&& (row.from_city!==leg.fromCity||row.to_city!==leg.toCity))return false
         const sameClock=printed&&ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed
         const correctionIdentity=leg.pnr&&row.pnr===leg.pnr||leg.flightNo&&row.flight_no===leg.flightNo
         if(printed&&!sameClock&&!correctionIdentity)return false
         if(printedDay&&ticketInstant(row.date_label,'00:00','UTC')?.toISOString()===printedDay)return true
-        return !!(leg.pnr&&leg.flightNo&&row.pnr===leg.pnr&&row.flight_no===leg.flightNo&&row.from_city===leg.fromCity&&row.to_city===leg.toCity)
+        return reissuedLeg
       })
     }
     // Printed labels can vary between parsers while the canonical flight stays

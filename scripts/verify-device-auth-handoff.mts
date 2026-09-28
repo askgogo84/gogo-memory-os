@@ -867,3 +867,13 @@ const monitorResult=await monitorWorker.processLifecycleMonitor({id:'watch',payl
 assert.equal(monitorResult.status,'deferred')
 assert.equal(monitorReads,1)
 assert.ok(monitorUpdates.some(value=>value.payload_json?.lastStatusText?.includes('EY1 scheduled arrival')))
+
+let obsoletePreparationReleased=''
+const obsoletePreparation=load('life-event-worker.ts',{
+ '@/lib/supabase-admin':{supabaseAdmin:{from:()=>{const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{level:'draft'},error:null})};return q}}},
+ './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
+ './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async(_owner:string,runId:string)=>{obsoletePreparationReleased=runId;throw new Error('fixture release unavailable')}},
+})
+await assert.rejects(()=>obsoletePreparation.prepareFlightCheckin({telegramId:'17',event:{confirmation_ref:'ABC123'},action:{payload_json:{checkInUrl:'https://airline.example/checkin',supersededPreparationRunId:'old-preparation'}}}),/fixture release unavailable/)
+assert.equal(obsoletePreparationReleased,'old-preparation','obsolete human takeover must be released before any new preparation')

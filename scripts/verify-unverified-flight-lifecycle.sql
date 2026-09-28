@@ -178,6 +178,14 @@ begin
   returning id into v_event_id;
 
   if v_timing_changed then
+    update agent_runs r set status='failed',error='flight_schedule_changed',
+      summary='This paused preparation used an old flight schedule. Gogo will prepare the corrected itinerary again.',updated_at=now()
+      where r.telegram_id=new.telegram_id::text and r.status in ('paused','queued','running','waiting_approval')
+        and exists(select 1 from life_event_actions a where a.life_event_id=v_event_id and a.action_type='browser_prepare' and a.status='blocked'
+          and r.id::text=coalesce(a.payload_json->>'browserRunId',a.payload_json->>'runId'));
+    update life_event_actions set status='queued',
+      payload_json=(payload_json-'browserRunId'-'runId'-'approvalId'-'blockedReason'-'authReason')||jsonb_build_object('supersededPreparationRunId',coalesce(payload_json->>'browserRunId',payload_json->>'runId',payload_json->>'supersededPreparationRunId')),
+      updated_at=now() where life_event_id=v_event_id and action_type='browser_prepare' and status='blocked';
     -- Old pending authorization cannot survive a changed itinerary.
     update agent_runs r set
       status=case when r.status in ('running','paused') then 'outcome_unknown' else 'failed' end,
@@ -466,6 +474,14 @@ do $test$ declare aid uuid; eid uuid; rid uuid; apid uuid; begin
  if not exists(select 1 from pg_temp.agent_runs where id=rid and status='failed' and error='flight_schedule_changed') then raise exception 'old approval run remained actionable';end if;
  if not exists(select 1 from pg_temp.life_event_actions where id=aid and status='queued' and not payload_json ? 'approvalId' and not payload_json ? 'runId') then raise exception 'new schedule did not require a new approval';end if;
  if not exists(select 1 from pg_temp.life_event_actions where life_event_id=eid and action_key='prepare-web-checkin' and status='queued') then raise exception 'fresh preparation was not required';end if;
+end $test$;
+do $test$ declare aid uuid; eid uuid; rid uuid; begin
+ select id,life_event_id into aid,eid from pg_temp.life_event_actions where telegram_id='23' and action_key='prepare-web-checkin';
+ insert into pg_temp.agent_runs(telegram_id,type,capability,status,title,metadata_json) values('23','life_event','browser','paused','Old login preparation','{"handoff":{"releaseUrl":"https://fixture.invalid/release"}}'::jsonb) returning id into rid;
+ update pg_temp.life_event_actions set status='blocked',payload_json=payload_json||jsonb_build_object('browserRunId',rid,'blockedReason','human_auth_required') where id=aid;
+ update pg_temp.travel_tickets set depart_at=now()+interval '12 days' where telegram_id=23;
+ if not exists(select 1 from pg_temp.agent_runs where id=rid and status='failed' and error='flight_schedule_changed') then raise exception 'old preparation run remains resumable';end if;
+ if not exists(select 1 from pg_temp.life_event_actions where id=aid and status='queued' and payload_json->>'supersededPreparationRunId'=rid::text and not payload_json ? 'browserRunId') then raise exception 'blocked preparation did not requeue with cleanup reference';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;

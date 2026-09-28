@@ -572,3 +572,15 @@ assert.equal(updatedTickets.at(-1).depart_tz,'Asia/Kolkata')
 await ticketModule.persistAndRemindTicket({...explicitZone,flights:[{...explicitZone.flights[0],departureTimezone:undefined,departure:'invalid'}]},ticketCtx)
 assert.equal(updatedTickets.at(-1).depart_at,null,'invalid printed clock still clears the departure')
 console.log('Sparse timezone metadata preserves verified timing without hiding invalid clocks')
+
+legacyTickets=[{...currentTicket,id:'reissued-ticket'}];legacyReminders=[]
+const beforeReissue=ticketWrites.filter(write=>write.table==='travel_tickets').length
+await ticketModule.persistAndRemindTicket({...correctedClock,flights:[{...correctedClock.flights[0],date:'30 Sep 2040',departure:'12:00',flightNo:'UA999'}]},ticketCtx)
+assert.equal(ticketWrites.filter(write=>write.table==='travel_tickets').length,beforeReissue,'same PNR route and leg reconcile a replacement flight number')
+assert.equal(updatedTickets.at(-1).flight_no,'UA999')
+assert.equal(updatedTickets.at(-1).depart_at,'2040-09-30T19:00:00.000Z')
+legacyTickets=[{...currentTicket,id:'ambiguous-first'},{...currentTicket,id:'ambiguous-second',flight_no:'UA998'}]
+const beforeAmbiguous=updatedTickets.length
+await assert.rejects(()=>ticketModule.persistAndRemindTicket({...correctedClock,flights:[{...correctedClock.flights[0],date:'30 Sep 2040',flightNo:'UA999'}]},ticketCtx),/travel_ticket_persist_failed/)
+
+assert.equal(updatedTickets.length,beforeAmbiguous,'ambiguous reissue must not update either saved flight')
