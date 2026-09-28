@@ -193,7 +193,8 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     if(lookupError)throw new Error(lookupError.message)
     if(!existing?.length&&leg.type==='flight'){
       let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,raw')
-        .eq('telegram_id',ctx.telegramId).eq('type','flight').is('depart_at',null)
+        .eq('telegram_id',ctx.telegramId).eq('type','flight')
+      if(iso)unknown=unknown.is('depart_at',null)
       // Missing stored identifiers may be enriched, but conflicting identifiers
       // never match. Compare locally without interpolating parser text in filters.
       unknown=unknown.eq('leg_index',leg.legIndex)
@@ -201,11 +202,13 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       if(result.error)throw new Error(result.error.message)
       if((result.data?.length||0)>100)throw new Error('travel_ticket_identity_ambiguous')
       const printed=ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'UTC')?.toISOString()
+      const printedDay=ticketInstant(leg.dateLabel||undefined,'00:00','UTC')?.toISOString()
       existing=(result.data||[]).filter(row=>{
         const compatible=(stored:string|null,incoming:string|undefined|null)=>!incoming||!stored||stored===incoming
         if(!compatible(row.pnr,leg.pnr)||!compatible(row.flight_no,leg.flightNo))return false
         if(!(row.pnr&&row.flight_no&&leg.pnr&&leg.flightNo)&& (row.from_city!==leg.fromCity||row.to_city!==leg.toCity))return false
-        return printed&&ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed
+        return printed?ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed:
+          !!printedDay&&ticketInstant(row.date_label,'00:00','UTC')?.toISOString()===printedDay
       })
     }
     // Printed labels can vary between parsers while the canonical flight stays
@@ -295,9 +298,9 @@ function ticketAlertIdentity(message:string){
     .replace(/\s+/g,' ').trim()
 }
 
-async function retireUnverifiedTicketAlerts(ctx:TicketContext,leg:Leg,previousDeparture?:Date){
+async function retireUnverifiedTicketAlerts(ctx:TicketContext,leg:Leg,previousDeparture?:Date,retireKinds?:Set<string>){
   const departures=[previousDeparture,ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata')].filter((date):date is Date=>!!date)
-  const decisions=departures.flatMap(departAt=>planLegReminders({...leg,departAt},Number.NEGATIVE_INFINITY)).filter((decision):decision is Extract<TicketReminderDecision,{remindAt:Date}>=>'remindAt' in decision)
+  const decisions=departures.flatMap(departAt=>planLegReminders({...leg,departAt},Number.NEGATIVE_INFINITY)).filter((decision):decision is Extract<TicketReminderDecision,{remindAt:Date}>=>'remindAt' in decision).filter(decision=>!retireKinds||retireKinds.has(decision.kind))
   if(!decisions.length)return
   const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,sent').eq('telegram_id',ctx.telegramId).eq('sent',false).in('remind_at',[...new Set(decisions.map(d=>d.remindAt.toISOString()))]).limit(1000)
   if(error)throw new Error('travel_unverified_alert_cleanup_failed')
@@ -439,7 +442,14 @@ export async function persistAndRemindTicket(
 
   for (const leg of legs) {
     const previousDeparture=await persistLeg(ctx, leg)
-    if(leg.type==='flight'&&!leg.departAt)await retireUnverifiedTicketAlerts(ctx,leg,previousDeparture)
+    if(leg.type==='flight'){
+      if(!leg.departAt)await retireUnverifiedTicketAlerts(ctx,leg,previousDeparture)
+      else if(previousDeparture){
+        const scheduledKinds=new Set(planLegReminders(leg,now).filter(decision=>'remindAt' in decision).map(decision=>decision.kind))
+        const retiredKinds=new Set(['departure','checkin'].filter(kind=>!scheduledKinds.has(kind as 'departure'|'checkin')))
+        if(retiredKinds.size)await retireUnverifiedTicketAlerts(ctx,leg,previousDeparture,retiredKinds)
+      }
+    }
 
     for (const decision of planLegReminders(leg, now)) {
       if (decision.kind === 'checkin_open_now') {

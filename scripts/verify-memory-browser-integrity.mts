@@ -485,3 +485,18 @@ legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`clock-invalid-$
 await ticketModule.persistAndRemindTicket({...correctedClock,flights:[{...correctedClock.flights[0],departure:'invalid'}]},ticketCtx)
 assert.equal(legacyReminders.length,0,'invalid replacement clock retires pending prior-instant alerts')
 console.log('Clock corrections reconcile pending alerts and schedule revised times without rearming sent history')
+
+legacyTickets=[];legacyReminders=[]
+const weakBefore=ticketWrites.length
+await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
+legacyReminders=ticketWrites.slice(weakBefore).filter(write=>write.table==='reminders').map((write,i)=>({...write.row,id:`weak-invalid-${i}`,sent:false}))
+await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds.flights[0],departure:'invalid'}]},ticketCtx)
+assert.equal(legacyTickets.length,1,'invalid weak clock correction reuses the saved ticket')
+assert.equal(legacyReminders.length,0,'invalid weak clock correction retires the saved pending alerts')
+const yesterday=new Date(Date.now()-86400000)
+const printedYesterday=`${yesterday.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][yesterday.getUTCMonth()]} ${yesterday.getUTCFullYear()}`
+legacyTickets=[{...currentTicket,id:'moved-into-past',date_label:printedYesterday}]
+legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`obsolete-future-${i}`,sent:false}))
+await ticketModule.persistAndRemindTicket({...correctedClock,flights:[{...correctedClock.flights[0],date:printedYesterday}]},ticketCtx)
+assert.equal(legacyReminders.length,0,'valid correction into the past retires both obsolete future alerts')
+console.log('Weak invalid-clock corrections and elapsed scheduling windows retire obsolete alerts')
