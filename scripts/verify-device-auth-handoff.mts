@@ -603,7 +603,7 @@ console.log('Confirmation present only after the action-browser reload cannot co
 queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Review reservation.',executionAfterText:'Booking submission pending.'}]
 await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 function evaluateObservation(fn:any,input:any,observation:any){
- if(input?.confirmationSnapshot)return runInNewContext('('+fn.toString()+')(input)',{input,document:{body:{innerText:observation.text}}})
+ if(input?.confirmationSnapshot)return runInNewContext('('+fn.toString()+')(input)',{input,document:observation.receiptDocument||{body:{innerText:observation.text}}})
  return {...observation,text:observation.text.slice(0,18000)}
 }
 
@@ -759,3 +759,27 @@ for(const [before,after] of [
  assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before,pattern:'(?:order|purchase)'},document:{body:{innerText:after}}}),false)
 }
 console.log('Receipt reflow across sentences and words never creates new confirmation evidence')
+
+// Real DOM-shaped receipt records preserve mixed confirmation wording without
+// treating synonymous text inside a single receipt as separate records.
+const receiptDocument=(texts:string[])=>{
+ const nodes=texts.map(innerText=>({innerText,getClientRects:()=>[{}],contains:(other:any)=>false}))
+ return {body:{innerText:texts.join('\n')},querySelectorAll:()=>nodes}
+}
+const oldReceipts=JSON.stringify({receiptRecords:['Order placed','Order placed']})
+const newReceipts=JSON.stringify({receiptRecords:['Order placed','Order placed','Thank you for your order']})
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:oldReceipts,pattern:'(?:order|purchase)'},document:receiptDocument(['Order placed','Order placed','Thank you for your order'])}),true)
+for(const wrapped of ['Order placed. Thank you for your order','Order placed.\nThank you for your order']){
+ assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:JSON.stringify({receiptRecords:['Order placed']}),pattern:'(?:order|purchase)'},document:receiptDocument([wrapped])}),false)
+}
+plannedOperation='purchase';modelText=JSON.stringify([{kind:'submit',selector:'#place-order'}])
+queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Thank you for your order',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:oldReceipts,executionAfterText:newReceipts}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,'Thank you for your order')
+console.log('Separate DOM receipt records preserve a new differently worded receipt alongside older history')
+
+let receiptTexts=['Order placed','Order placed']
+const recordPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async(fn:any,input:any)=>evaluateObservation(fn,input,{url:'https://provider.example',text:receiptTexts.join('\n'),receiptDocument:receiptDocument(receiptTexts)}),locator:()=>({first:()=>({click:async()=>{receiptTexts.push('Thank you for your order')}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[recordPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:order|purchase)',actions:[{kind:'submit',selector:'#place-order'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(JSON.parse(boundaryOutput.executionBeforeText).receiptRecords.length,2)
+assert.equal(JSON.parse(boundaryOutput.executionAfterText).receiptRecords.length,3)
+console.log('Actual browser script preserves the full receipt-record snapshots at submission')

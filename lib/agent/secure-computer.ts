@@ -198,7 +198,26 @@ const extract=(text)=>{
  return groups.sort((a,b)=>b.length-a.length)[0]||[];
 };
 
-return extract(document.body?.innerText||'').map(item=>item.phrase.replace(/\s+/g,' ').trim()).join('\n');
+
+const receiptSnapshot=()=>{
+ // Semantic receipt containers separate history records; each container counts
+ // once regardless of aliases, wrapping or the amount of explanatory copy.
+ const visibleMatches=selector=>Array.from(document.querySelectorAll?.(selector)||[])
+  .filter(node=>node.getClientRects().length>0&&extract(node.innerText||'').length>0);
+ const containers=visibleMatches('[data-order-id],[data-booking-id],[data-confirmation-id],[data-application-id],article,li,tr');
+ const recordsNodes=containers.filter(node=>!containers.some(child=>child!==node&&node.contains(child)));
+ const standalone=visibleMatches('[role="status"],[role="alert"],dialog')
+  .filter(node=>!recordsNodes.some(record=>record.contains(node)||node.contains(record)));
+ const nodes=[...recordsNodes,...standalone.filter(node=>!standalone.some(parent=>parent!==node&&parent.contains(node)))];
+ const records=[...new Set(nodes)].map(node=>extract(node.innerText||'')[0].phrase.replace(/\s+/g,' ').trim());
+ return records.length?JSON.stringify({receiptRecords:records}):extract(document.body?.innerText||'').map(item=>item.phrase.replace(/\s+/g,' ').trim()).join('\n');
+};
+const receiptCount=(text)=>{
+ try{const parsed=JSON.parse(text);if(Array.isArray(parsed.receiptRecords))return parsed.receiptRecords.length;}catch{}
+ return extract(text).length;
+};
+
+return receiptSnapshot();
   },{pattern,confirmationSnapshot:true});
 }
 async function isConsequentialControl(page,selector){
@@ -266,8 +285,26 @@ const extract=(text)=>{
  const groups=matches.map(item=>matches.filter(other=>other.phrase.toLowerCase().replace(/\s+/g,' ')===item.phrase.toLowerCase().replace(/\s+/g,' ')));
  return groups.sort((a,b)=>b.length-a.length)[0]||[];
 };
-const baselineCount=extract(before).length;
-return extract(document.body?.innerText||'').length>baselineCount;
+
+const receiptSnapshot=()=>{
+ // Semantic receipt containers separate history records; each container counts
+ // once regardless of aliases, wrapping or the amount of explanatory copy.
+ const visibleMatches=selector=>Array.from(document.querySelectorAll?.(selector)||[])
+  .filter(node=>node.getClientRects().length>0&&extract(node.innerText||'').length>0);
+ const containers=visibleMatches('[data-order-id],[data-booking-id],[data-confirmation-id],[data-application-id],article,li,tr');
+ const recordsNodes=containers.filter(node=>!containers.some(child=>child!==node&&node.contains(child)));
+ const standalone=visibleMatches('[role="status"],[role="alert"],dialog')
+  .filter(node=>!recordsNodes.some(record=>record.contains(node)||node.contains(record)));
+ const nodes=[...recordsNodes,...standalone.filter(node=>!standalone.some(parent=>parent!==node&&parent.contains(node)))];
+ const records=[...new Set(nodes)].map(node=>extract(node.innerText||'')[0].phrase.replace(/\s+/g,' ').trim());
+ return records.length?JSON.stringify({receiptRecords:records}):extract(document.body?.innerText||'').map(item=>item.phrase.replace(/\s+/g,' ').trim()).join('\n');
+};
+const receiptCount=(text)=>{
+ try{const parsed=JSON.parse(text);if(Array.isArray(parsed.receiptRecords))return parsed.receiptRecords.length;}catch{}
+ return extract(text).length;
+};
+
+return receiptCount(receiptSnapshot())>receiptCount(before);
           },{before:executionBeforeText,pattern:payload.confirmationPattern},{timeout:15000,polling:250}).catch(()=>{});
           executionAfterText=await snapshotConfirmation(page,payload.confirmationPattern);
         }
@@ -434,8 +471,12 @@ const extract=(text:string)=>{
  const groups=matches.map(item=>matches.filter(other=>other.phrase.toLowerCase().replace(/\s+/g,' ')===item.phrase.toLowerCase().replace(/\s+/g,' ')));
  return groups.sort((a,b)=>b.length-a.length)[0]||[];
 };
-const baselineCount=extract(before).length;
-  const match=extract(after)[baselineCount]
+const records=(text:string)=>{
+ try{const parsed=JSON.parse(text);if(Array.isArray(parsed.receiptRecords))return parsed.receiptRecords.flatMap((phrase:unknown)=>typeof phrase==='string'?extract(phrase).slice(0,1):[]);}catch{}
+ return extract(text);
+};
+const baselineCount=records(before).length;
+  const match=records(after)[baselineCount]
   return match?safeText(match.line,1800):null
 }
 
