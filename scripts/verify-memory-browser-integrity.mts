@@ -299,6 +299,16 @@ assert.deepEqual(updatedLegacy.slice(-reminderWrites.length).map(row=>row.remind
  const q:any={select:()=>q,eq:()=>q,gte:()=>q,order:()=>q,range:async()=>({data:rows,error:null})};return q
 }
 try{
+ const commaDates=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for Sep 28, 2030 at 5 pm and Sep 29, 2030 at 6 pm'},missionText:'Review reminders'})
+ assert.deepEqual((commaDates.output as any).reminders.map((row:any)=>row.id),['28-11:30','29-12:30'])
  const paired=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm and 29 Sep 2030 at 6 pm'},missionText:'Review reminders'})
  assert.deepEqual((paired.output as any).reminders.map((row:any)=>row.id),['28-11:30','29-12:30'])
 }finally{(supabaseAdmin as any).from=originalFrom}
+
+legacyReminders=legacyReminders.map(row=>({...row,sent:true}))
+const sentUpdatesBefore=updatedLegacy.length
+const sentReply=await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
+assert.equal(sentReply.remindersSet,0)
+assert.equal(updatedLegacy.length,sentUpdatesBefore)
+assert.match(sentReply.reply,/already sent and were not rearmed/)
+assert.doesNotMatch(sentReply.reply,/Departure alert|Check-in alert/)

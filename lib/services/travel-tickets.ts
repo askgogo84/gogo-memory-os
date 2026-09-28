@@ -216,7 +216,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
 
 // Result of an attempted reminder write. 'failed' is distinct from 'exists' so the
 // caller can warn the user instead of silently claiming the alert was set.
-type ReminderWriteResult = 'inserted' | 'exists' | 'failed'
+type ReminderWriteResult = 'inserted' | 'exists' | 'already_sent' | 'failed'
 
 // Create a reminder unless one with the same message + remind_at already exists.
 // The insert MUST mirror the columns the primary writer createReminder
@@ -244,7 +244,7 @@ async function createReminderIfAbsent(ctx: TicketContext, message: string, remin
   if (selError) console.error('TRAVEL_REMINDER_DEDUPE_CHECK_FAILED:', selError.message)
   const matched=(existing||[]).find((row:any)=>ticketAlertIdentity(String(row.message||''))===ticketAlertIdentity(message))
   if(matched){
-    if(matched.sent)return 'exists'
+    if(matched.sent)return 'already_sent'
     if(matched.message!==message||matched.timezone!==ctx.timezone||matched.remind_at!==iso){
       const {error}=await supabaseAdmin.from('reminders').update({message,timezone:ctx.timezone,remind_at:iso}).eq('telegram_id',ctx.telegramId).eq('id',matched.id)
       if(error)return 'failed'
@@ -340,6 +340,7 @@ export async function persistAndRemindTicket(
   const legs = buildLegs(info)
   let remindersSet = 0
   let remindersFailed = 0
+  let remindersAlreadySent = 0
   const openNowNotes: string[] = []
   // Alerts that are actually scheduled (inserted now OR already present on a re-forward)
   // so the confirmation can name each with its real fire time. 'failed' is excluded —
@@ -357,6 +358,7 @@ export async function persistAndRemindTicket(
       const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, previousDeparture&&leg.departAt?new Date(previousDeparture.getTime()+decision.remindAt.getTime()-leg.departAt.getTime()):undefined)
       if (res === 'inserted') remindersSet++
       else if (res === 'failed') remindersFailed++
+      else if (res === 'already_sent') remindersAlreadySent++
       if (res === 'inserted' || res === 'exists') {
         scheduledAlerts.push({ kind: decision.kind, legType: leg.type, remindAt: decision.remindAt, timezone:leg.departTz||ctx.timezone })
       }
@@ -382,7 +384,9 @@ export async function persistAndRemindTicket(
     reminderTail = `\n\n${parts.join(' · ')}`
   } else if (remindersFailed === 0 && openNowNotes.length === 0) {
     // Nothing scheduled and nothing failed/open-now → be honest rather than silent.
-    reminderTail = legs.some(leg=>!leg.departAt)
+    reminderTail = remindersAlreadySent>0
+      ? '\n\nNo new alerts scheduled — the matching alerts were already sent and were not rearmed.'
+      : legs.some(leg=>!leg.departAt)
       ? `\n\n⏰ I could not verify the departure date, time or airport timezone. No alerts were set for that leg; please confirm those details.`
       : `\n\n⏰ No alerts set — the departure time has already passed.`
   }

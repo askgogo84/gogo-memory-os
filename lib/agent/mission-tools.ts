@@ -223,7 +223,7 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
       let pairs:Array<{date:string;clock:string}>|undefined
       if(dates.length>1&&clocks.length>1&&!weekRelative){
         pairs=[]
-        for(const clause of reviewText.split(/\band\b|[;,]/i)){
+        for(const clause of reviewText.replace(/(?<=\d),\s*(?=20\d{2}\b)/g,' ').split(/\band\b|[;,]/i)){
           const clauseDates=explicitDates(clause)
           const clauseClocks=[...new Set([...clause.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter((time):time is string=>!!time))]
           if(clauseDates.length===1&&clauseClocks.length===1)pairs.push({date:clauseDates[0],clock:clauseClocks[0]})
