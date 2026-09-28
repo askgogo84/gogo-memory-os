@@ -740,3 +740,10 @@ for(const [before,after] of [['Thank you for your order','Order placed'],['Order
  await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'}),/browser_objective_unverified/)
 }
 console.log('Thank-you/reversed receipts confirm purchases, while changing confirmation wording alone remains stale')
+
+plannedOperation='application';modelText=JSON.stringify([{kind:'submit',selector:'#submit'}])
+queuedObservations=[{...evidencePage,text:'Application submitted'},{...evidencePage,text:'Application submitted\nApplication submitted',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:'Application submitted',executionAfterText:'Application submitted\nApplication submitted'}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Submit the new application',mode:'execute'})).summary,'Application submitted')
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:'Application submitted',pattern:'(?:application|form|submission)'},document:{body:{innerText:'Application submitted\nApplication submitted'}}}),true)
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:'Order placed',pattern:'(?:order|purchase)'},document:{body:{innerText:'Order placed. Thank you for your order'}}}),false,'synonymous wording on the same receipt line is one occurrence')
+console.log('A new confirmation occurrence is retained alongside old records without double-counting same-line receipt wording')
