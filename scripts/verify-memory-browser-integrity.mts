@@ -319,3 +319,8 @@ legacyReminders.push(...reminderWrites.map((write,i)=>({...write.row,id:`pending
 const pendingReply=await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
 assert.match(pendingReply.reply,/Departure alert/)
 assert.doesNotMatch(pendingReply.reply,/No new alerts scheduled/)
+
+legacyReminders=legacyReminders.map(row=>({...row,sent:false}))
+const canonicalUpdatesBefore=updatedLegacy.length
+await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
+assert.equal(updatedLegacy.length,canonicalUpdatesBefore,'canonical pending rows must be preferred over earlier legacy pending rows')
