@@ -231,13 +231,13 @@ function ticketAlertIdentity(message:string){
     .replace(/\s+/g,' ').trim()
 }
 
-async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date, previousRemindAt?:Date): Promise<ReminderWriteResult> {
+async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date, previousRemindAt:Date[]=[]): Promise<ReminderWriteResult> {
   const iso = remindAt.toISOString()
   const { data: existing, error: selError } = await supabaseAdmin
     .from('reminders')
     .select('id,message,timezone,remind_at,sent')
     .eq('telegram_id', ctx.telegramId)
-    .in('remind_at', [...new Set([iso,...(previousRemindAt?[previousRemindAt.toISOString()]:[])])])
+    .in('remind_at', [...new Set([iso,...previousRemindAt.map(date=>date.toISOString())])])
     .limit(1000)
   // A failed existence check must not silently drop the reminder — log and fall
   // through to insert (the DB unique-index backstop still guards against a dupe).
@@ -361,7 +361,7 @@ export async function persistAndRemindTicket(
         openNowNotes.push(decision.message)
         continue
       }
-      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, previousDeparture&&leg.departAt?new Date(previousDeparture.getTime()+decision.remindAt.getTime()-leg.departAt.getTime()):undefined)
+      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, leg.departAt?[previousDeparture,leg.type==='flight'?ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata'):null].filter((date):date is Date=>!!date).map(date=>new Date(date.getTime()+decision.remindAt.getTime()-leg.departAt!.getTime())):[])
       if (res === 'inserted') remindersSet++
       else if (res === 'failed') remindersFailed++
       else if (res === 'already_sent') remindersAlreadySent++

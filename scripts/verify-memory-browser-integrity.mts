@@ -330,3 +330,9 @@ assert.equal(legacyReminders.filter(row=>!row.sent).length,reminderWrites.length
 assert.equal(deletedLegacy.length,reminderWrites.length)
 assert.ok(legacyReminders.some(row=>row.id==='sent-history'&&row.sent),'preserve sent history')
 assert.ok(legacyReminders.filter(row=>!row.sent).every(row=>row.id.startsWith('pending-')))
+
+legacyTickets=[{...currentTicket,id:'already-corrected-flight'}]
+legacyReminders=[...reminderWrites.map((write,i)=>({...write.row,id:`leftover-${i}`,remind_at:new Date(Date.parse(write.row.remind_at)+shift).toISOString(),timezone:'Asia/Kolkata',sent:false})),...reminderWrites.map((write,i)=>({...write.row,id:`correct-${i}`,sent:false}))]
+await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
+assert.equal(legacyReminders.length,reminderWrites.length)
+assert.ok(legacyReminders.every(row=>row.id.startsWith('correct-')),'find legacy IST alerts even when the ticket was already corrected')
