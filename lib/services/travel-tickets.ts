@@ -199,7 +199,7 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
       seat: leg.seat,
       passengers: leg.passengers,
       source: ctx.source,
-      raw: leg.raw,
+      raw: {...leg.raw,timeNormalizationVersion:2},
     }
     if(existing?.[0]){
       const previous=new Date(existing[0].depart_at)

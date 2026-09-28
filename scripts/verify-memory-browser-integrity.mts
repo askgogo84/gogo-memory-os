@@ -18,7 +18,7 @@ assert.equal(flightInstants({from:'BLR',to:'AUH',date:'27 Sep 2026',departure:'2
 const parsed=parseFlightTicketText('PNR: TEST99 EY239 BLR 22:15 27 Sep 2026 AUH 00:35 28 Sep 2026')
 assert.equal(parsed?.flights[0]?.arrivalDate,'28 Sep 2026')
 
-const rows=[{id:'leg',type:'flight',from_city:'Abu Dhabi',to_city:'New York',depart_at:second.departAt!.toISOString(),arrive_at:second.arriveAt!.toISOString(),passengers:['Divyashree Example'],flight_no:'EY1',booking_group:'trip'}]
+const rows=[{id:'leg',type:'flight',from_city:'Abu Dhabi',to_city:'New York',depart_at:second.departAt!.toISOString(),arrive_at:second.arriveAt!.toISOString(),passengers:['Divyashree Example'],flight_no:'EY1',booking_group:'trip',raw:{timeNormalizationVersion:2}}]
 const facts=buildTravelPresenceFacts(rows,Date.parse('2026-09-28T06:00Z'))
 const ticket=facts.find(f=>f.source==='travel_ticket')!
 assert.match(ticket.summary,/Divyashree Example/)
@@ -141,7 +141,7 @@ for(const from of ['NDLS','SBC','New Delhi']){
 }
 console.log('Indian rail station codes retain IST departure parsing')
 
-const chicago=buildTravelPresenceFacts([{...rows[0],to_city:'Chicago',raw:{arrivalTimezone:'America/Chicago'}}],Date.parse('2026-09-28T06:00Z')).find(f=>f.source==='travel_ticket')!
+const chicago=buildTravelPresenceFacts([{...rows[0],to_city:'Chicago',raw:{arrivalTimezone:'America/Chicago',timeNormalizationVersion:2}}],Date.parse('2026-09-28T06:00Z')).find(f=>f.source==='travel_ticket')!
 assert.match(chicago.summary,/07:35.*America\/Chicago/)
 console.log('Explicit arrival timezone survives recall for cities outside the built-in map')
 
@@ -336,3 +336,12 @@ legacyReminders=[...reminderWrites.map((write,i)=>({...write.row,id:`leftover-${
 await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
 assert.equal(legacyReminders.length,reminderWrites.length)
 assert.ok(legacyReminders.every(row=>row.id.startsWith('correct-')),'find legacy IST alerts even when the ticket was already corrected')
+
+const legacyArrival={id:'legacy-arrival',type:'flight',from_city:'SFO',to_city:'JFK',depart_at:'2040-09-28T04:30:00Z',arrive_at:'2040-09-28T12:30:00Z',depart_tz:'Asia/Kolkata',raw:{date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040'}}
+const recomputed=buildTravelPresenceFacts([legacyArrival],Date.parse('2040-09-28T00:00Z')).find(f=>f.source==='travel_ticket')!
+assert.equal(recomputed.startAt,'2040-09-28T17:00:00.000Z')
+assert.equal(recomputed.endAt,'2040-09-28T22:00:00.000Z')
+assert.match(recomputed.summary,/18:00.*America\/New_York/)
+const incompleteLegacy=buildTravelPresenceFacts([{...legacyArrival,raw:{...legacyArrival.raw,arrivalDate:undefined}}],Date.parse('2040-09-28T00:00Z'))
+assert.equal(incompleteLegacy.find(f=>f.source==='travel_ticket')!.endAt,null)
+assert.ok(!incompleteLegacy.some(f=>f.source==='travel_presence'))

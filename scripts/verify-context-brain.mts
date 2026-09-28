@@ -15,12 +15,12 @@ assert.equal(lexicalScore('restaurant booking', 'Gmail follow up'), 0)
 const flights=[
   {
     id:'leg-1',type:'flight',from_city:'Bengaluru',to_city:'Abu Dhabi',
-    depart_at:'2026-09-27T16:45:00.000Z',arrive_at:'2026-09-27T20:30:00.000Z',
+    raw:{timeNormalizationVersion:2},depart_at:'2026-09-27T16:45:00.000Z',arrive_at:'2026-09-27T20:30:00.000Z',
     airline:'Etihad',flight_no:'EY239',booking_group:'trip-ny',
   },
   {
     id:'leg-2',type:'flight',from_city:'Abu Dhabi',to_city:'New York',
-    depart_at:'2026-09-27T22:35:00.000Z',arrive_at:'2026-09-28T12:35:00.000Z',
+    raw:{timeNormalizationVersion:2},depart_at:'2026-09-27T22:35:00.000Z',arrive_at:'2026-09-28T12:35:00.000Z',
     airline:'Etihad',flight_no:'EY1',booking_group:'trip-ny',
   },
 ]

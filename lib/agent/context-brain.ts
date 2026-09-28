@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { embedText } from '@/lib/services/embeddings'
 import { isIndexable, recallableMemoryText } from '@/lib/services/memory-index'
-import { ticketTimezone } from '@/lib/services/travel-time'
+import { ticketTimezone, flightInstants } from '@/lib/services/travel-time'
 import { redactSecretShapedText, isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
 import { latestTypedContext } from './typed-object-context'
@@ -120,18 +120,22 @@ function titleCaseLocation(value:unknown){
 export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=60):ContextFact[]{
   const flights=(rows||[])
     .filter((row:any)=>String(row?.type||'')==='flight')
-    .map((row:any)=>({
+    .map((row:any)=>{
+      const raw=row.raw||{}
+      const parsed=raw.date&&raw.departure?flightInstants({...raw,from:row.from_city,to:row.to_city}):null
+      const canonical=raw.timeNormalizationVersion===2
+      return {
       id:String(row.id||''),
       from:safe(row.from_city,100),
       to:safe(row.to_city,100),
-      departAt:validIso(row.depart_at),
-      arriveAt:validIso(row.arrive_at),
+      departAt:parsed?.departAt?.toISOString()||validIso(row.depart_at),
+      arriveAt:parsed?parsed.arriveAt?.toISOString()||null:canonical?validIso(row.arrive_at):null,
       airline:safe(row.airline,100),
       flightNo:safe(row.flight_no,60),
       bookingGroup:safe(row.booking_group,120),
       passengers:(Array.isArray(row.passengers)?row.passengers:[]).map((name:unknown)=>safe(name,100)).filter(Boolean),
       arrivalTz:ticketTimezone(row.to_city,row.raw?.arrivalTimezone),
-    }))
+    }})
     .filter((row:any)=>row.id&&row.departAt)
     .sort((a:any,b:any)=>Date.parse(a.departAt)-Date.parse(b.departAt))
 
