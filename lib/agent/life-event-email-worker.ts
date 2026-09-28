@@ -30,6 +30,12 @@ function cutoffAt(startAt: unknown) {
   return new Date(d.getTime() + BOARDING_PASS_CUTOFF_HOURS_AFTER_DEPARTURE * 3600_000).toISOString()
 }
 
+export function assertBoardingPassSchedule(action:any,event:any){
+  if((action.payload_json?.scheduleRevision??null)!==(event.metadata_json?.ticketScheduleRevision??null)){
+    throw new Error('life_event_schedule_changed')
+  }
+}
+
 export type BoardingPassMatchInput = {
   subject?: string
   from?: string
@@ -205,6 +211,7 @@ export async function processDueLifeEventEmailWatches(limit = 10) {
       const { data: event, error } = await supabaseAdmin.from('life_events').select('id,telegram_id,event_type,subtype,title,provider,start_at,confirmation_ref,lifecycle_state,metadata_json,source_refs').eq('id', action.life_event_id).eq('telegram_id', String(action.telegram_id)).maybeSingle()
       if (error) throw new Error(`life_event_email_event_read_failed:${error.message}`)
       if (!event) throw new Error('life_event_email_event_missing')
+      assertBoardingPassSchedule(action,event)
       if (event.event_type !== 'travel' || event.subtype !== 'flight' || action.action_key !== 'watch-boarding-pass-email') { await completeAction(action, { skippedReason: 'unsupported_email_watch' }); completed++; continue }
       const result = await processBoardingPassWatch(action, event, String(action.telegram_id))
       if (result.status === 'completed') { completed++; if (result.matched) matched++ } else deferred++

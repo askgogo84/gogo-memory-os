@@ -146,7 +146,7 @@ begin
 
   if v_timing_changed then
     update life_event_actions set
-      payload_json=payload_json||jsonb_build_object('scheduleRevision',gen_random_uuid()::text)
+      payload_json=payload_json||jsonb_build_object('scheduleRevision',(select metadata_json->>'ticketScheduleRevision' from life_events where id=v_event_id))
         ||case when status='running' and action_type not in ('notify','monitor','email_watch','browser_prepare') then '{"scheduleCorrectionUncertain":true,"reconciliationRequired":true}'::jsonb else '{}'::jsonb end,
       status=case when status='running' then case when action_type in ('notify','monitor','email_watch','browser_prepare') then 'queued' else 'blocked' end else status end,
       updated_at=now()
@@ -190,6 +190,11 @@ begin
     values (v_event_id,new.telegram_id::text,'departure-readiness','notify','travel','Prepare for departure',new.depart_at - interval '3 hours',false,false,jsonb_build_object('from',new.from_city,'to',new.to_city))
     on conflict (life_event_id,action_key) do update set due_at=case when v_timing_changed then excluded.due_at else life_event_actions.due_at end,payload_json=(case when v_timing_changed and excluded.due_at>=now() then life_event_actions.payload_json-'timing_unverified'-'timing_elapsed' else life_event_actions.payload_json end)||excluded.payload_json,status=case when life_event_actions.status='completed' and v_timing_changed and excluded.due_at>=now() and life_event_actions.action_type in ('notify','monitor','email_watch','browser_prepare') then 'queued' when life_event_actions.status='cancelled' and v_timing_changed and excluded.due_at>=now() and (life_event_actions.payload_json->>'timing_unverified'='true' or life_event_actions.payload_json->>'timing_elapsed'='true') then 'queued' else life_event_actions.status end,updated_at=now();
   end if;
+
+  update life_event_actions set payload_json=payload_json||jsonb_build_object('scheduleRevision',(select metadata_json->>'ticketScheduleRevision' from life_events where id=v_event_id))
+  where life_event_id=v_event_id and due_at is not null
+    and (select metadata_json->>'ticketScheduleRevision' from life_events where id=v_event_id) is not null
+    and payload_json->>'scheduleRevision' is distinct from (select metadata_json->>'ticketScheduleRevision' from life_events where id=v_event_id);
 
   if v_timing_changed then
     update life_event_actions set payload_json=payload_json||jsonb_build_object(

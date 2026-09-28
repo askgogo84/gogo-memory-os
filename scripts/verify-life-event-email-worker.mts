@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts, eligibleBoardingPassMessages } from '../lib/agent/life-event-email-worker'
+import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts, eligibleBoardingPassMessages, assertBoardingPassSchedule } from '../lib/agent/life-event-email-worker'
 
 const worker=fs.readFileSync('lib/agent/life-event-email-worker.ts','utf8')
 const route=fs.readFileSync('app/api/cron/life-events/route.ts','utf8')
@@ -36,3 +36,8 @@ const rescheduledWatch={payload_json:{excludedGmailMessageIds:['old-pass',null,'
 assert.deepEqual(eligibleBoardingPassMessages([{id:'old-pass'},{id:'new-pass'}],rescheduledWatch).map(row=>row.id),['new-pass'])
 assert.deepEqual(eligibleBoardingPassMessages([{id:'old-pass'},{id:'older-pass'}],rescheduledWatch),[],'only old boarding passes must leave the watch searching')
 console.log('Rescheduled boarding-pass watches exclude previous matches before scoring or attachment reads')
+
+assert.doesNotThrow(()=>assertBoardingPassSchedule({payload_json:{}},{metadata_json:{}}))
+assert.doesNotThrow(()=>assertBoardingPassSchedule({payload_json:{scheduleRevision:'current'}},{metadata_json:{ticketScheduleRevision:'current'}}))
+assert.throws(()=>assertBoardingPassSchedule({payload_json:{}},{metadata_json:{ticketScheduleRevision:'corrected'}}),/life_event_schedule_changed/)
+assert.throws(()=>assertBoardingPassSchedule({payload_json:{scheduleRevision:'old'}},{metadata_json:{ticketScheduleRevision:'corrected'}}),/life_event_schedule_changed/)
