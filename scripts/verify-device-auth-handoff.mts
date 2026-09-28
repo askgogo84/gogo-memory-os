@@ -877,3 +877,10 @@ const obsoletePreparation=load('life-event-worker.ts',{
 })
 await assert.rejects(()=>obsoletePreparation.prepareFlightCheckin({telegramId:'17',event:{confirmation_ref:'ABC123'},action:{payload_json:{checkInUrl:'https://airline.example/checkin',supersededPreparationRunId:'old-preparation'}}}),/fixture release unavailable/)
 assert.equal(obsoletePreparationReleased,'old-preparation','obsolete human takeover must be released before any new preparation')
+
+const controlClassifier=lockedComputer.BROWSER_SCRIPT.slice(lockedComputer.BROWSER_SCRIPT.indexOf('async function isConsequentialControl'),lockedComputer.BROWSER_SCRIPT.indexOf('(async()=>'))
+for(const [label,expected] of [['View booking',false],['Manage booking',false],['Booking details',false],['View my reservation',false],['Confirm booking',true],['Cancel booking',true],['Pay for booking',true],['View booking and cancel',true],['Submit booking',true]] as const){
+ const element={textContent:label,tagName:'BUTTON',id:'',getAttribute:(key:string)=>key==='type'?'submit':null}
+ const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
+ assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page}),expected,label)
+}

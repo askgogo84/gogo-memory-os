@@ -30,7 +30,8 @@ export function reminderScope(step:{title:string;instruction:string},mission:str
     // Remove request/question grammar as a prefix, retaining a descriptive
     // subject such as dentist in "How many dentist reminders do I have?".
     const prefix=rawPrefix.replace(/^\s*(?:(?:please|tell\s+me|show\s+me|can\s+you|could\s+you|would\s+you)\s+)*(?:(?:how(?:\s+many)?|what|which|when|where|why|who)(?:\s+(?:are|is|do|does))?|(?:do|does|did)\s+(?:i|we|you)\s+have|(?:are|is)\s+there)\b\s*/i,'')
-    return [...groups(prefix),...(qualifier?groups(qualifier[1]):[])]
+    const subject=prefix.replace(/^\s*(?:(?:please|can\s+you|could\s+you|would\s+you)\s+)*(?:get|search|fetch|display|list|show|find|retrieve|read|check|inspect|review|look)(?:\s+(?:for|up))?\b\s*/i,'')
+    return [...groups(subject),...(qualifier?groups(qualifier[1]):[])]
   }
   const stepGroups=[...subjectGroups(step.title),...subjectGroups(step.instruction)]
   const scopeGroups=stepGroups.length?stepGroups:scoped?groups(mission):[]
