@@ -229,7 +229,7 @@ try{
  assert.ok('reminders' in timed.output)
  assert.deepEqual((timed.output as any).reminders.map((row:any)=>row.id),['five'])
  assert.match(timed.text,/17:00.*Asia\/Kolkata/)
- const explicitZone=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for 28 Sept 2030 at 5 pm ist'},missionText:'Review reminders'})
+ const explicitZone=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for 28 Sept 2030 at 17:00 ist'},missionText:'Review reminders'})
  assert.deepEqual((explicitZone.output as any).reminders.map((row:any)=>row.id),['five'])
  const tomorrow=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:"Show tomorrow's reminders"},missionText:'Review reminders'})
  assert.equal((tomorrow.output as any).reminders.length,0,'tomorrow must not include unrelated 2030 reminders')
@@ -252,8 +252,10 @@ assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show remin
 assert.equal(reminderStepIntent({title:'Show reminders',instruction:'Show reminders I created for the conference'}),'read')
 assert.equal(reminderStepIntent({title:'List reminders',instruction:'List reminders I added yesterday'}),'read')
 const ticketWrites:Array<{table:string;row:any}>=[]
+let legacyReminders:any[]=[]
+const updatedLegacy:any[]=[]
 const ticketDb={from:(table:string)=>{
- const q:any={select:()=>q,eq:()=>q,limit:async()=>({data:[],error:null}),insert:async(row:any)=>{ticketWrites.push({table,row});return {error:null}}};return q
+ const filters:any={};const q:any={select:()=>q,eq:(key:string,value:any)=>{filters[key]=value;return q},limit:async()=>({data:table==='reminders'?legacyReminders.filter(row=>Object.entries(filters).every(([key,value])=>row[key]===value)):[],error:null}),update:(row:any)=>{updatedLegacy.push(row);return q},then:(resolve:any)=>Promise.resolve({error:null}).then(resolve),insert:async(row:any)=>{ticketWrites.push({table,row});return {error:null}}};return q
 }}
 const ticketModule:any={}
 const airlineCheckin=await import('../lib/services/airline-checkin')
@@ -264,3 +266,10 @@ const reminderWrites=ticketWrites.filter(write=>write.table==='reminders')
 assert.ok(reminderWrites.length>0)
 assert.ok(reminderWrites.every(write=>write.row.timezone==='America/Los_Angeles'))
 assert.match(ticketReply.reply,/America\/Los_Angeles/)
+
+legacyReminders=reminderWrites.map((write,i)=>({...write.row,id:`legacy-${i}`,timezone:'Asia/Kolkata',message:write.row.message.replace(/ \(America\/Los_Angeles\)(?=[!.])/g,'').replace('departs 28 Sep 2040','departs Fri 28 Sep')}))
+const beforeReforward=ticketWrites.filter(write=>write.table==='reminders').length
+await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Example'],flights:[{from:'SFO',to:'JFK',date:'28 Sep 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 Sep 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},{telegramId:17,whatsappTo:null,timezone:'Asia/Kolkata',source:'pdf'})
+assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,beforeReforward,'legacy re-forward must not duplicate alerts')
+assert.equal(updatedLegacy.length,reminderWrites.length)
+assert.ok(updatedLegacy.every(row=>row.timezone==='America/Los_Angeles'))

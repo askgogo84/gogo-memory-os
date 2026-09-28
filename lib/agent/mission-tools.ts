@@ -58,6 +58,8 @@ export function explicitMissionClock(text:string){
   if(withMinutes)return to24Hour(Number(withMinutes[1]),Number(withMinutes[2]),withMinutes[3])
   const hourOnly=text.match(/\b(\d{1,2})\s*(am|pm)\b/i)
   if(hourOnly)return to24Hour(Number(hourOnly[1]),0,hourOnly[2])
+  const clock24=text.match(/\b(\d{1,2}):(\d{2})\b/)
+  if(clock24)return to24Hour(Number(clock24[1]),Number(clock24[2]),'')
   return null
 }
 

@@ -429,12 +429,13 @@ for(const kind of ['flight_execute','restaurant']){
 }
 
 // Reported Instagram shell: zero actions/forms must pause at login, never complete.
+let evidenceStops=0
 let evidencePage:any={url:'https://www.instagram.com/accounts/login/',title:'Instagram',text:'',forms:[]}
 let modelFailure=false
 let modelText='[]'
 const evidenceComputer=load('secure-computer.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>{if(modelFailure)throw new Error('unavailable');return {content:[{type:'text',text:modelText}]}}}}},
-  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{},runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(evidencePage)})})}},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(evidencePage)})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{},{reserveHandoff:async()=>"transfer"})},
@@ -447,11 +448,14 @@ const loginShell=await evidenceComputer.runSecureBrowser(readParams)
 assert.equal(loginShell.status,'blocked')
 assert.equal(loginShell.authReason,'password')
 assert.equal(loginShell.handoffReservation,'transfer')
+assert.equal(evidenceStops,0,'human handoff must keep the browser alive')
 evidencePage={url:'https://www.instagram.com/',title:'Instagram',text:'',forms:[]}
 await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_objective_unverified/)
+assert.equal(evidenceStops,1,'failed read must stop the browser')
 evidencePage.text='Instagram photos and videos. Explore the community and find friends.'
 modelFailure=true
 await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_planning_failed/)
+assert.equal(evidenceStops,2,'planning failure must stop the read browser')
 modelFailure=false
 modelText=JSON.stringify({complete:true,answer:'Three saved posts',evidence:['Unobserved private post content']})
 await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_objective_unverified/)

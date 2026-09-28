@@ -219,19 +219,31 @@ type ReminderWriteResult = 'inserted' | 'exists' | 'failed'
 // createReminder's own `createReminder(telegramId, telegramId, ...)` calls: for a
 // Telegram private chat the chat id equals the user id, and on WhatsApp the cron
 // delivers via whatsapp_to, so telegramId is the correct, constraint-satisfying value.
+function ticketAlertIdentity(message:string){
+  return message.replace(/\s+\((?:[A-Za-z_]+\/[A-Za-z0-9_+\/-]+|timezone unverified)\)(?=[!.])/g,'')
+    .replace(/(\bdeparts )[^\n]+?( at \d{1,2}:\d{2})/gi,'$1$2')
+    .replace(/\s+/g,' ').trim()
+}
+
 async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date): Promise<ReminderWriteResult> {
   const iso = remindAt.toISOString()
   const { data: existing, error: selError } = await supabaseAdmin
     .from('reminders')
-    .select('id')
+    .select('id,message,timezone')
     .eq('telegram_id', ctx.telegramId)
-    .eq('message', message)
     .eq('remind_at', iso)
-    .limit(1)
+    .limit(1000)
   // A failed existence check must not silently drop the reminder — log and fall
   // through to insert (the DB unique-index backstop still guards against a dupe).
   if (selError) console.error('TRAVEL_REMINDER_DEDUPE_CHECK_FAILED:', selError.message)
-  if (existing && existing.length) return 'exists'
+  const matched=(existing||[]).find((row:any)=>ticketAlertIdentity(String(row.message||''))===ticketAlertIdentity(message))
+  if(matched){
+    if(matched.message!==message||matched.timezone!==ctx.timezone){
+      const {error}=await supabaseAdmin.from('reminders').update({message,timezone:ctx.timezone}).eq('telegram_id',ctx.telegramId).eq('id',matched.id)
+      if(error)return 'failed'
+    }
+    return 'exists'
+  }
 
   const { error } = await supabaseAdmin.from('reminders').insert({
     telegram_id: ctx.telegramId,
