@@ -30,7 +30,7 @@ export function reminderScope(step:{title:string;instruction:string},mission:str
     // Remove request/question grammar as a prefix, retaining a descriptive
     // subject such as dentist in "How many dentist reminders do I have?".
     const prefix=rawPrefix.replace(/^\s*(?:(?:please|tell\s+me|show\s+me|can\s+you|could\s+you|would\s+you)\s+)*(?:(?:how(?:\s+many)?|what|which|when|where|why|who)(?:\s+(?:are|is|do|does))?|(?:do|does|did)\s+(?:i|we|you)\s+have|(?:are|is)\s+there)\b\s*/i,'')
-    const subject=prefix.replace(/^.*\b(?:my|our)\s+/i,'').replace(/^\s*(?:(?:please|can\s+you|could\s+you|would\s+you)\s+)*(?:get|search|fetch|display|see|view|list|show|find|retrieve|read|check|inspect|review|look|tell|give|provide|bring|pull|return|count|enumerate)(?:\s+(?:me|us|for|up|out|back))*\b\s*/i,'')
+    const subject=prefix.replace(/^.*?\b(?:my|our)\s+/i,'').replace(/^\s*(?:(?:please|can\s+you|could\s+you|would\s+you)\s+)*(?:get|search|fetch|display|see|view|list|show|find|retrieve|read|check|inspect|review|look|tell|give|provide|bring|pull|return|count|enumerate)(?:\s+(?:me|us|for|up|out|back))*\b\s*/i,'')
     return [...groups(subject),...(qualifier?groups(qualifier[1]):[])]
   }
   const stepGroups=[...subjectGroups(step.title),...subjectGroups(step.instruction)]

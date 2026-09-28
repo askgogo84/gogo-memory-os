@@ -671,3 +671,5 @@ assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Find out i
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Give me my dentist reminders'},'Give me my dentist reminders').scopeTerms,['dentist'])
 
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'I would like to see my dentist reminders'},'I would like to see my dentist reminders').scopeTerms,['dentist'])
+
+assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show my dentist and my insurance reminders'},'Show my dentist and my insurance reminders').scopeGroups,[['dentist'],['insurance']])
