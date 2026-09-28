@@ -517,3 +517,14 @@ const enrichingAlerts=ticketWrites.filter(write=>write.table==='reminders').leng
 await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds.flights[0],pnr:'ENRICHED',flightNo:'XX999',airline:'Example'}]},ticketCtx)
 assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,enrichingAlerts,'matched ticket supplies prior reminder identities during enrichment')
 console.log('Valid weak corrections and identifier enrichment reconcile existing alerts')
+
+legacyTickets=[];legacyReminders=[]
+const carrierStart=ticketWrites.length
+await ticketModule.persistAndRemindTicket(knownNoIds,ticketCtx)
+legacyReminders=ticketWrites.slice(carrierStart).filter(write=>write.table==='reminders').map((write,i)=>({...write.row,id:`carrier-old-${i}`,sent:false}))
+const carrierAlertCount=ticketWrites.filter(write=>write.table==='reminders').length
+const carrierUpdates=updatedLegacy.length
+await ticketModule.persistAndRemindTicket({...knownNoIds,flights:[{...knownNoIds.flights[0],pnr:'CARRIER-NEW',flightNo:'AI123',airline:'Air India'}]},ticketCtx)
+assert.equal(ticketWrites.filter(write=>write.table==='reminders').length,carrierAlertCount,'new carrier window updates old reminder rather than inserting another')
+assert.ok(updatedLegacy.slice(carrierUpdates).some(row=>row.message.includes('check-in')&&row.remind_at==='2040-09-26T17:00:00.000Z'))
+console.log('Carrier enrichment searches the previous check-in window and moves its existing alert')

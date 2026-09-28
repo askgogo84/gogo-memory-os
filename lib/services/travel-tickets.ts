@@ -76,6 +76,7 @@ type Leg = {
   raw: any
   reminderMsg: string
   previousReminderMessages?: string[]
+  previousReminderDecisions?: {kind:string;message:string;remindAt:Date}[]
   checkinMsg: string | null
 }
 
@@ -226,9 +227,10 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     if(existing&&existing.length>1)throw new Error('travel_ticket_identity_ambiguous')
     if(existing?.[0]){
       const saved=existing[0]
-      const priorLeg={...leg,pnr:saved.pnr,flightNo:saved.flight_no,airline:saved.airline,fromCity:saved.from_city,toCity:saved.to_city,dateLabel:saved.date_label,departLocal:saved.depart_local,departTz:saved.depart_tz}
+      const priorLeg={...leg,departAt:saved.depart_at?new Date(saved.depart_at):null,pnr:saved.pnr,flightNo:saved.flight_no,airline:saved.airline,fromCity:saved.from_city,toCity:saved.to_city,dateLabel:saved.date_label,departLocal:saved.depart_local,departTz:saved.depart_tz}
       refreshFlightReminderText(priorLeg)
       leg.previousReminderMessages=[priorLeg.reminderMsg,priorLeg.checkinMsg].filter((value):value is string=>!!value)
+      leg.previousReminderDecisions=planLegReminders(priorLeg,Number.NEGATIVE_INFINITY).filter((decision):decision is Extract<TicketReminderDecision,{remindAt:Date}>=>'remindAt' in decision)
       leg.pnr=leg.pnr||saved.pnr||null
       leg.flightNo=leg.flightNo||saved.flight_no||null
       leg.airline=leg.airline||saved.airline||null
@@ -302,7 +304,7 @@ function ticketAlertIdentity(message:string){
 
 async function retireUnverifiedTicketAlerts(ctx:TicketContext,leg:Leg,previousDeparture?:Date,retireKinds?:Set<string>){
   const departures=[previousDeparture,ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata')].filter((date):date is Date=>!!date)
-  const decisions=departures.flatMap(departAt=>planLegReminders({...leg,departAt},Number.NEGATIVE_INFINITY)).filter((decision):decision is Extract<TicketReminderDecision,{remindAt:Date}>=>'remindAt' in decision).filter(decision=>!retireKinds||retireKinds.has(decision.kind))
+  const decisions=[...departures.flatMap(departAt=>planLegReminders({...leg,departAt},Number.NEGATIVE_INFINITY)),...(leg.previousReminderDecisions||[])].filter((decision):decision is Extract<TicketReminderDecision,{remindAt:Date}>=>'remindAt' in decision).filter(decision=>!retireKinds||retireKinds.has(decision.kind))
   if(!decisions.length)return
   const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,sent').eq('telegram_id',ctx.telegramId).eq('sent',false).in('remind_at',[...new Set(decisions.map(d=>d.remindAt.toISOString()))]).limit(1000)
   if(error)throw new Error('travel_unverified_alert_cleanup_failed')
@@ -459,7 +461,8 @@ export async function persistAndRemindTicket(
         openNowNotes.push(decision.message)
         continue
       }
-      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, leg.departAt?[previousDeparture,leg.type==='flight'?ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata'):null].filter((date):date is Date=>!!date).map(date=>new Date(date.getTime()+decision.remindAt.getTime()-leg.departAt!.getTime())):[],leg.previousReminderMessages)
+      const priorDecisionDates=(leg.previousReminderDecisions||[]).filter(prior=>prior.kind===decision.kind).map(prior=>prior.remindAt)
+      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, [...(leg.departAt?[previousDeparture,leg.type==='flight'?ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata'):null].filter((date):date is Date=>!!date).map(date=>new Date(date.getTime()+decision.remindAt.getTime()-leg.departAt!.getTime())):[]),...priorDecisionDates],leg.previousReminderMessages)
       if (res === 'inserted') remindersSet++
       else if (res === 'failed') remindersFailed++
       else if (res === 'already_sent') remindersAlreadySent++

@@ -100,7 +100,12 @@ begin
         and lifecycle_state not in ('completed','cancelled','expired');
     update life_events set dedupe_key=v_key where id=v_event_id and telegram_id=new.telegram_id::text;
   end if;
-  v_checkin_at := case when new.type = 'flight' then new.depart_at - interval '24 hours' else null end;
+  -- Mirror checkInOpensHours(code, false) from lib/services/airline-checkin.ts.
+  v_checkin_at := case when new.type = 'flight' then new.depart_at - make_interval(hours =>
+    case left(upper(regexp_replace(coalesce(new.flight_no,''),'[^a-zA-Z0-9]','','g')),2)
+      when '6E' then 48 when 'AI' then 48 when 'IX' then 48 when 'QP' then 48
+      when 'SG' then 48 when 'UK' then 48 when 'EK' then 48 when 'SQ' then 48
+      when 'LH' then 23 else 24 end) else null end;
 
   insert into life_events (
     telegram_id,event_type,subtype,source,title,provider,start_at,end_at,timezone,location,

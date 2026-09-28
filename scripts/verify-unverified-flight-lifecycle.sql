@@ -62,7 +62,12 @@ begin
         and lifecycle_state not in ('completed','cancelled','expired');
     update life_events set dedupe_key=v_key where id=v_event_id and telegram_id=new.telegram_id::text;
   end if;
-  v_checkin_at := case when new.type = 'flight' then new.depart_at - interval '24 hours' else null end;
+  -- Mirror checkInOpensHours(code, false) from lib/services/airline-checkin.ts.
+  v_checkin_at := case when new.type = 'flight' then new.depart_at - make_interval(hours =>
+    case left(upper(regexp_replace(coalesce(new.flight_no,''),'[^a-zA-Z0-9]','','g')),2)
+      when '6E' then 48 when 'AI' then 48 when 'IX' then 48 when 'QP' then 48
+      when 'SG' then 48 when 'UK' then 48 when 'EK' then 48 when 'SQ' then 48
+      when 'LH' then 23 else 24 end) else null end;
 
   insert into life_events (
     telegram_id,event_type,subtype,source,title,provider,start_at,end_at,timezone,location,
@@ -190,6 +195,14 @@ end $test$;
 update pg_temp.travel_tickets set depart_at=now()-interval '2 days' where telegram_id=17 and leg_index=0;
 do $test$ begin
  if exists(select 1 from pg_temp.life_event_actions a join pg_temp.life_events e on e.id=a.life_event_id where e.telegram_id='17' and a.due_at<=now() and a.status in ('queued','ready','waiting_approval','blocked')) then raise exception 'elapsed corrected actions remained executable';end if;
+end $test$;
+
+insert into pg_temp.travel_tickets (telegram_id,type,pnr,flight_no,from_city,to_city,depart_at,depart_tz,date_label,depart_local,source)
+values (20,'flight','AIR-INDIA','AI123','DEL','BOM','2040-09-28T04:30:00Z','Asia/Kolkata','28 Sep 2040','10:00','pdf'),
+(21,'flight','LUFTHANSA','LH123','FRA','JFK','2040-09-28T04:30:00Z','Europe/Berlin','28 Sep 2040','06:30','pdf');
+do $test$ begin
+ if not exists(select 1 from pg_temp.life_event_actions where telegram_id='20' and action_key='prepare-web-checkin' and due_at='2040-09-26T04:30:00Z') then raise exception '48h carrier lifecycle window lost';end if;
+ if not exists(select 1 from pg_temp.life_event_actions where telegram_id='21' and action_key='prepare-web-checkin' and due_at='2040-09-27T05:30:00Z') then raise exception '23h carrier lifecycle window lost';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;
