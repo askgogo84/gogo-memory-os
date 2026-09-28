@@ -260,7 +260,7 @@ let legacyReminders:any[]=[],legacyTickets:any[]=[]
 const updatedTickets:any[]=[]
 const updatedLegacy:any[]=[],deletedLegacy:string[]=[]
 const ticketDb={from:(table:string)=>{
- const filters:any={};let deleting=false;const q:any={select:()=>q,is:(key:string,value:any)=>{filters[key]=value;return q},eq:(key:string,value:any)=>{filters[key]=value;return q},in:(key:string,value:any)=>{filters[key]=value;return q},limit:async()=>({data:(table==='reminders'?legacyReminders:legacyTickets).filter(row=>Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value)),error:null}),update:(row:any)=>{(table==='reminders'?updatedLegacy:updatedTickets).push(row);return q},delete:()=>{deleting=true;return q},then:(resolve:any)=>{if(deleting){legacyReminders=legacyReminders.filter(row=>{const match=Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value);if(match)deletedLegacy.push(row.id);return !match})}return Promise.resolve({error:null}).then(resolve)},insert:async(row:any)=>{ticketWrites.push({table,row});if(table==='travel_tickets')legacyTickets.push({...row,flight_no:row.flight_no??null,pnr:row.pnr??null,id:`stored-${ticketWrites.length}`});return {error:null}}};return q
+ const filters:any={};let deleting=false;const q:any={select:()=>q,or:(clause:string)=>{filters[clause.split('.')[0]]=[null,''];return q},is:(key:string,value:any)=>{filters[key]=value;return q},eq:(key:string,value:any)=>{filters[key]=value;return q},in:(key:string,value:any)=>{filters[key]=value;return q},limit:async()=>({data:(table==='reminders'?legacyReminders:legacyTickets).filter(row=>Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value)),error:null}),update:(row:any)=>{(table==='reminders'?updatedLegacy:updatedTickets).push(row);return q},delete:()=>{deleting=true;return q},then:(resolve:any)=>{if(deleting){legacyReminders=legacyReminders.filter(row=>{const match=Object.entries(filters).every(([key,value])=>Array.isArray(value)?value.includes(row[key]):row[key]===value);if(match)deletedLegacy.push(row.id);return !match})}return Promise.resolve({error:null}).then(resolve)},insert:async(row:any)=>{ticketWrites.push({table,row});if(table==='travel_tickets')legacyTickets.push({...row,flight_no:row.flight_no??null,pnr:row.pnr??null,id:`stored-${ticketWrites.length}`});return {error:null}}};return q
 }}
 const ticketModule:any={}
 const airlineCheckin=await import('../lib/services/airline-checkin')
@@ -401,3 +401,10 @@ assert.equal(updatedTickets.at(-1).depart_at,'2040-09-28T04:30:00.000Z')
 await ticketModule.persistAndRemindTicket({...partialTicket,flights:[{...partialTicket.flights[0],pnr:'PARTIAL-B'}]},ticketCtx)
 assert.equal(legacyTickets.length,2,'different available PNRs must not overwrite each other')
 console.log('Partial flight identity survives timing correction and preserves distinct PNRs')
+
+legacyTickets=[{...currentTicket,id:'canonical-flight'}];legacyReminders=[]
+const canonicalBefore=ticketWrites.filter(write=>write.table==='travel_tickets').length
+await ticketModule.persistAndRemindTicket({type:'flight',flights:[{from:'San Francisco',to:'JFK',date:'28 September 2040',departure:'10:00',arrival:'18:00',arrivalDate:'28 September 2040',airline:'United',flightNo:'UA123',pnr:'TEST99'}]},ticketCtx)
+assert.equal(ticketWrites.filter(write=>write.table==='travel_tickets').length,canonicalBefore,'parser label changes reuse canonical departure identity')
+assert.equal(updatedTickets.at(-1).from_city,'San Francisco')
+console.log('Equivalent printed city/date labels reuse the canonical saved flight')

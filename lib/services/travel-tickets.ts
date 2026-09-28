@@ -178,8 +178,19 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined>
     else if (leg.trainNo) sel = sel.eq('train_no', leg.trainNo)
     else if (leg.eventName) sel = sel.eq('event_name', leg.eventName)
 
-    const { data: existing, error: lookupError } = await sel.limit(2)
+    let { data: existing, error: lookupError } = await sel.limit(2)
     if(lookupError)throw new Error(lookupError.message)
+    // Printed labels can vary between parsers while the canonical flight stays
+    // the same. Reuse its database dedupe identity after null-time reconciliation.
+    if(!existing?.length&&leg.type==='flight'&&iso){
+      let canonical=supabaseAdmin.from('travel_tickets').select('id,depart_at')
+        .eq('telegram_id',ctx.telegramId).eq('type',leg.type).eq('depart_at',iso)
+      canonical=leg.pnr?canonical.eq('pnr',leg.pnr):canonical.or('pnr.is.null,pnr.eq.')
+      canonical=leg.flightNo?canonical.eq('flight_no',leg.flightNo):canonical.or('flight_no.is.null,flight_no.eq.')
+      const result=await canonical.limit(2)
+      if(result.error)throw new Error(result.error.message)
+      existing=result.data
+    }
     if(existing&&existing.length>1)throw new Error('travel_ticket_identity_ambiguous')
     const row={
       telegram_id: ctx.telegramId,
