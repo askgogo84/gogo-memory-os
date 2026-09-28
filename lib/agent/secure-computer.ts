@@ -217,7 +217,16 @@ async function isConsequentialControl(page,selector){
         log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
         await page.waitForTimeout(650);
         if(captureEvidence){
-          await page.waitForLoadState('networkidle',{timeout:15000}).catch(()=>{});
+          await page.waitForFunction(({before,pattern})=>{
+            const normalize=text=>String(text||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
+            const baseline=normalize(before);
+            const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|placed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
+            return String(document.body?.innerText||'').split(/[\n.!?]+/).some(value=>{
+              const line=value.trim();
+              const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has been)\s+)?cancel(?:led|ed)\b/i.test(line):pattern==='check[ -]?in'?/^(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?$/i.test(line):false;
+              return line&&!baseline.includes(normalize(line))&&(confirmation.test(line)||verb)&&! /\b(not|pending|failed|if|when|once|will|would|could|should)\b/i.test(line);
+            });
+          },{before:executionBeforeText,pattern:payload.confirmationPattern},{timeout:15000,polling:250}).catch(()=>{});
           executionAfterText=(await model(page)).text;
         }
       }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential});}
@@ -509,7 +518,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       approvedOperation=plan.operation
       const currentUrl=String(page.url||target.toString())
       const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
-      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions})).toString('base64')
+      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null})).toString('base64')
       if(params.mode==='execute')executionStarted=true
       const result=await first.sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload]})
       if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
