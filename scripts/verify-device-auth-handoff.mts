@@ -234,7 +234,7 @@ const lockedComputer=load('secure-computer.ts',{
 await assert.rejects(()=>lockedComputer.getComputer('user','https://provider.example'),/browser_handoff_in_use/)
 assert.equal(unexpectedBootstrap,0,'ordinary browser tasks must not bootstrap an active owner takeover')
 console.log('Automated browser reservations and direct handoff persistence failure verified')
-for(const [label,throws,expected,mode] of [['Confirm reservation',false,true,'execute'],['Confirm reservation',true,true,'execute'],['Search',false,false,'execute'],['Confirm reservation',false,true,'read']] as const){
+for(const [label,throws,expected,mode] of [['Cancel booking',false,true,'execute'],['Cancel reservation',false,true,'execute'],['Cancel booking',false,true,'read'],['Confirm reservation',false,true,'execute'],['Confirm reservation',true,true,'execute'],['Search',false,false,'execute'],['Confirm reservation',false,true,'read']] as const){
   let output:any
   const element={textContent:label,tagName:'BUTTON',id:'action',getAttribute:(name:string)=>name==='type'?'button':null}
   const page={goto:async()=>{},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://login.example',text:'Approve this sign-in'}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element),click:async()=>{if(throws)throw new Error('timeout after click')}})})}
