@@ -217,7 +217,7 @@ try{
  assert.equal(multiple.reminders.length,101)
  const all=await readScopedReminders(17,{title:'Review reminders',instruction:'List all my reminders'},'List all reminders')
  assert.equal(all.reminders.length,101)
- for(const prompt of ['Do I have any reminders?','Are there any reminders?','Can you please show me my reminders?','Look for reminders that I have coming up','How many reminders do I have?','Can you tell me how many reminders I have?']){
+ for(const prompt of ['Do I have any reminders?','Are there any reminders?','Can you please show me my reminders?','Look for reminders that I have coming up','How many reminders do I have?','Can you tell me how many reminders I have?','When are my reminders?','Where are my reminders?']){
   const result=await readScopedReminders(17,{title:'Review reminders',instruction:prompt},prompt)
   assert.equal(result.reminders.length,101,prompt)
  }
@@ -615,7 +615,7 @@ await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Later Pass
 assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).passengers)),['Earlier Passenger','Later Passenger'])
 assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).raw.passengerDetails)),[{passengers:['Earlier Passenger'],seat:'12A'},{passengers:['Later Passenger'],seat:'16C'}])
 
-for(const prompt of ['Do I have any reminders?','Are there any reminders?','Can you please show me my reminders?','Look for reminders that I have coming up','How many reminders do I have?','Can you tell me how many reminders I have?']){
+for(const prompt of ['Do I have any reminders?','Are there any reminders?','Can you please show me my reminders?','Look for reminders that I have coming up','How many reminders do I have?','Can you tell me how many reminders I have?','When are my reminders?','Where are my reminders?']){
   const scope=reminderScope({title:'Review reminders',instruction:prompt},prompt)
   assert.deepEqual(scope.scopeTerms,[],prompt)
   assert.equal(scope.unresolved,false,prompt)
@@ -641,7 +641,12 @@ assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).raw.passengerDe
 
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'How many dentist reminders do I have?'},'How many dentist reminders do I have?').scopeTerms,['dentist'])
 const largeGroup=Array.from({length:30},(_,i)=>({passengers:[`Passenger${i} Family${i}`],seat:`${i+1}A`}))
-const largeSeatFacts=buildTravelPresenceFacts([{...enrichedGroup,id:'large-group',passengers:largeGroup.flatMap(x=>x.passengers),raw:{...enrichedGroup.raw,passengerDetails:largeGroup}}],Date.parse('2040-09-28T00:00:00Z'))
+const largeSeatFacts=buildTravelPresenceFacts([{...enrichedGroup,id:'large-group',passengers:largeGroup.flatMap(x=>x.passengers),raw:{...enrichedGroup.raw,passengerDetails:largeGroup}}],Date.parse('2040-09-28T00:00:00Z'),60,'What seat is Passenger29 Family29 in?')
 const relevantSeatFacts=largeSeatFacts.sort((a,b)=>lexicalScore('What seat is Passenger29 Family29 in?',b.summary)-lexicalScore('What seat is Passenger29 Family29 in?',a.summary)).slice(0,12)
 const largeSeatBlock=renderContextBlock({query:'What seat is Passenger29 Family29 in?',generatedAt:new Date().toISOString(),memoryEnabled:true,facts:relevantSeatFacts,provenance:{lifeEvents:0,travelTickets:1,openLoops:0,semanticMemories:0,insights:0,typedContext:0}})
 assert.match(largeSeatBlock,/Seat for Passenger29 Family29: 30A/)
+
+const broadTravelFacts=buildTravelPresenceFacts([{...enrichedGroup,id:'large-group',passengers:largeGroup.flatMap(x=>x.passengers),raw:{...enrichedGroup.raw,passengerDetails:largeGroup}},{...enrichedGroup,id:'next-flight'}],Date.parse('2040-09-28T00:00:00Z'),60,'Show my upcoming travel')
+assert.equal(broadTravelFacts.filter(f=>f.id.includes(':seat:')).length,0,'unrequested passenger facts cannot crowd out upcoming flights')
+assert.ok(broadTravelFacts.some(f=>f.id==='travel-ticket:next-flight'))
+assert.deepEqual(reminderScope({title:'Review reminders',instruction:'When are my dentist reminders?'},'When are my dentist reminders?').scopeTerms,['dentist'])

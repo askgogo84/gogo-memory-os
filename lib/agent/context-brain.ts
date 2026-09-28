@@ -117,7 +117,7 @@ function titleCaseLocation(value:unknown){
   return safe(value,180)
 }
 
-export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=60):ContextFact[]{
+export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=60,query=''):ContextFact[]{
   const flights=(rows||[])
     .filter((row:any)=>String(row?.type||'')==='flight')
     .map((row:any)=>{
@@ -179,6 +179,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     const flightFact=facts[facts.length-1]
     for(const detail of leg.seatObservations){
       for(const name of detail.names){
+        if(!query||lexicalScore(name,query)===0)continue
         const label=detail.names.length===1?`Seat for ${name}: ${detail.seat}`:`Passenger ${name}: seat ${detail.seat} recorded on a group ticket; individual assignment unverified`
         facts.push({...flightFact,id:`travel-ticket:${leg.id}:seat:${hash(label)}`,summary:safe([label,leg.flightNo,`Flight ${leg.from} → ${leg.to}`].filter(Boolean).join(' · '),620)})
       }
@@ -322,7 +323,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       sourceRefs:[{type:'goal',id:String((row as any).id)}],
     })
   }
-  const travelFacts=buildTravelPresenceFacts(ticketResult.data||[],now,horizonDays)
+  const travelFacts=buildTravelPresenceFacts(ticketResult.data||[],now,horizonDays,query)
     .map(f=>({...f,score:factScore({query,text:`${f.summary} ${f.location||''}`,base:f.source==='travel_presence'?0.52:0.48,startAt:f.startAt,now,horizonDays})}))
 
   const typedFacts:ContextFact[]=[]
