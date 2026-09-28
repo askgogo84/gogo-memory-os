@@ -204,16 +204,16 @@ async function isConsequentialControl(page,selector){
         else if(a.kind==='click'){
           consequential=await isConsequentialControl(page,a.selector);
           if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential});continue;}
-          if(consequential)executionBeforeText=(await model(page)).text;
+          if(consequential&&executionBeforeText===null)executionBeforeText=(await model(page)).text;
           await page.locator(a.selector).first().click({timeout:10000});
         } else if(a.kind==='submit'){
           if(payload.mode!=='execute'){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
-          if(consequential)executionBeforeText=(await model(page)).text;
+          if(consequential&&executionBeforeText===null)executionBeforeText=(await model(page)).text;
           await page.locator(a.selector).first().click({timeout:10000});
         }
         log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
         await page.waitForTimeout(650);
-        if(consequential)executionAfterText=(await model(page)).text;
+        if(consequential&&executionAfterText===null)executionAfterText=(await model(page)).text;
       }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential});}
     }
     const out=await model(page); out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; console.log(JSON.stringify(out));

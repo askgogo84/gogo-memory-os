@@ -603,3 +603,13 @@ assert.equal(boundaryOutput.text,'Reservation confirmed.')
 assert.equal(boundaryOutput.executionBeforeText,'Review reservation.')
 assert.equal(boundaryOutput.executionAfterText,'Booking submission pending.')
 console.log('Subsequent navigation cannot replace the immediate provider submission result')
+
+simulatedPage='Review reservation.'
+let boundaryClicks=0
+const misleadingControlPage={...boundaryPage,locator:()=>({first:()=>({evaluate:async()=>true,click:async()=>{simulatedPage=++boundaryClicks===1?'Booking submission pending.':'Reservation confirmed.'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[misleadingControlPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',actions:[{kind:'click',selector:'#confirm'},{kind:'click',selector:'#view-reservation'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.text,'Reservation confirmed.')
+assert.equal(boundaryOutput.actions.filter((action:any)=>action.consequential).length,2)
+assert.equal(boundaryOutput.executionBeforeText,'Review reservation.')
+assert.equal(boundaryOutput.executionAfterText,'Booking submission pending.')
+console.log('Later consequential-labelled controls cannot overwrite the original submission evidence')
