@@ -884,3 +884,11 @@ for(const [label,expected] of [['View booking',false],['View booking confirmatio
  const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
  assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page}),expected,label)
 }
+
+for(const id of ['manage-booking','manage_booking','manageBooking']){
+ const element={textContent:'Manage booking',tagName:'BUTTON',id,getAttribute:(key:string)=>key==='type'?'submit':key==='name'?id:null}
+ const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
+ assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page}),false,id)
+}
+const mixedNavigationElement={textContent:'Manage booking',tagName:'BUTTON',id:'cancel-booking',getAttribute:()=>null}
+assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page:{locator:()=>({first:()=>({evaluate:(fn:any)=>fn(mixedNavigationElement)})})}}),true)

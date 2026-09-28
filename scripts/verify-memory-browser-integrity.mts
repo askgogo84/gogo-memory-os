@@ -217,7 +217,7 @@ try{
  assert.equal(multiple.reminders.length,101)
  const all=await readScopedReminders(17,{title:'Review reminders',instruction:'List all my reminders'},'List all reminders')
  assert.equal(all.reminders.length,101)
- for(const prompt of ['Do I have any reminders?','Are there any reminders?','Can you please show me my reminders?','Look for reminders that I have coming up','How many reminders do I have?','Can you tell me how many reminders I have?','When are my reminders?','Where are my reminders?','Get my reminders','Search for my reminders','Please fetch my reminders','Find out if I have any reminders','Find out whether I have any reminders','Give me my reminders','Provide my reminders','Bring up my reminders']){
+ for(const prompt of ['Do I have any reminders?','Are there any reminders?','Can you please show me my reminders?','Look for reminders that I have coming up','How many reminders do I have?','Can you tell me how many reminders I have?','When are my reminders?','Where are my reminders?','Get my reminders','Search for my reminders','Please fetch my reminders','Find out if I have any reminders','Find out whether I have any reminders','Give me my reminders','Provide my reminders','Bring up my reminders','Tell me my reminders','Can you tell me my reminders']){
   const result=await readScopedReminders(17,{title:'Review reminders',instruction:prompt},prompt)
   assert.equal(result.reminders.length,101,prompt)
  }
@@ -615,7 +615,7 @@ await ticketModule.persistAndRemindTicket({type:'flight',passengers:['Later Pass
 assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).passengers)),['Earlier Passenger','Later Passenger'])
 assert.deepEqual(JSON.parse(JSON.stringify(updatedTickets.at(-1).raw.passengerDetails)),[{passengers:['Earlier Passenger'],seat:'12A'},{passengers:['Later Passenger'],seat:'16C'}])
 
-for(const prompt of ['Do I have any reminders?','Are there any reminders?','Can you please show me my reminders?','Look for reminders that I have coming up','How many reminders do I have?','Can you tell me how many reminders I have?','When are my reminders?','Where are my reminders?','Get my reminders','Search for my reminders','Please fetch my reminders','Find out if I have any reminders','Find out whether I have any reminders','Give me my reminders','Provide my reminders','Bring up my reminders']){
+for(const prompt of ['Do I have any reminders?','Are there any reminders?','Can you please show me my reminders?','Look for reminders that I have coming up','How many reminders do I have?','Can you tell me how many reminders I have?','When are my reminders?','Where are my reminders?','Get my reminders','Search for my reminders','Please fetch my reminders','Find out if I have any reminders','Find out whether I have any reminders','Give me my reminders','Provide my reminders','Bring up my reminders','Tell me my reminders','Can you tell me my reminders']){
   const scope=reminderScope({title:'Review reminders',instruction:prompt},prompt)
   assert.deepEqual(scope.scopeTerms,[],prompt)
   assert.equal(scope.unresolved,false,prompt)

@@ -232,7 +232,7 @@ return receiptSnapshot();
 async function isConsequentialControl(page,selector){
   try{return await page.locator(selector).first().evaluate(el=>{
     const t=(el.getAttribute('type')||'').toLowerCase();
-    const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
+    const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
     const safeResearch=/\b(search|find|show|filter|apply filters|see results|view results|check availability|update results|go)\b/i.test(text);
     const navigation=/\b(?:(?:view|manage|open|show|see)\s+(?:(?:my|your|the)\s+)?(?:booking|reservation)s?(?:\s+(?:details|confirmation))?|(?:booking|reservation)\s+details)\b/gi;
     const commitText=text.replace(navigation,' ');
