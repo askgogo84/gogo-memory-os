@@ -150,7 +150,9 @@ begin
       when '6E' then 48 when 'AI' then 48 when 'IX' then 48 when 'QP' then 48
       when 'SG' then 48 when 'UK' then 48 when 'EK' then 48 when 'SQ' then 48
       when 'LH' then 23 else 24 end) else null end;
-    v_timing_changed := old.depart_at is distinct from new.depart_at or v_previous_checkin_at is distinct from v_checkin_at;
+    v_timing_changed := old.depart_at is distinct from new.depart_at or v_previous_checkin_at is distinct from v_checkin_at
+      or (new.type='flight' and (old.pnr is distinct from new.pnr or old.flight_no is distinct from new.flight_no
+        or old.airline is distinct from new.airline or old.from_city is distinct from new.from_city or old.to_city is distinct from new.to_city));
   end if;
 
   -- Check-in is an open window, not a missed one-shot alarm. Corrections to
@@ -482,6 +484,16 @@ do $test$ declare aid uuid; eid uuid; rid uuid; begin
  update pg_temp.travel_tickets set depart_at=now()+interval '12 days' where telegram_id=23;
  if not exists(select 1 from pg_temp.agent_runs where id=rid and status='failed' and error='flight_schedule_changed') then raise exception 'old preparation run remains resumable';end if;
  if not exists(select 1 from pg_temp.life_event_actions where id=aid and status='queued' and payload_json->>'supersededPreparationRunId'=rid::text and not payload_json ? 'browserRunId') then raise exception 'blocked preparation did not requeue with cleanup reference';end if;
+end $test$;
+do $test$ declare aid uuid; eid uuid; old_revision text; begin
+ select id,life_event_id,payload_json->>'scheduleRevision' into aid,eid,old_revision from pg_temp.life_event_actions where telegram_id='23' and action_key='prepare-web-checkin';
+ update pg_temp.life_event_actions set status='blocked',payload_json=payload_json||'{"blockedReason":"missing_checkin_url_or_confirmation"}'::jsonb where id=aid;
+ update pg_temp.travel_tickets set pnr='ENRICHED-PNR' where telegram_id=23;
+ if not exists(select 1 from pg_temp.life_event_actions where id=aid and status='queued' and payload_json->>'scheduleRevision' is distinct from old_revision) then raise exception 'PNR enrichment did not retry blocked preparation';end if;
+ select payload_json->>'scheduleRevision' into old_revision from pg_temp.life_event_actions where id=aid;
+ update pg_temp.life_event_actions set status='completed' where id=aid;
+ update pg_temp.travel_tickets set flight_no='AI999' where telegram_id=23;
+ if not exists(select 1 from pg_temp.life_event_actions where id=aid and status='queued' and payload_json->>'scheduleRevision' is distinct from old_revision) then raise exception 'replacement flight without time change retained old preparation';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;

@@ -81,7 +81,9 @@ begin
       when '6E' then 48 when 'AI' then 48 when 'IX' then 48 when 'QP' then 48
       when 'SG' then 48 when 'UK' then 48 when 'EK' then 48 when 'SQ' then 48
       when 'LH' then 23 else 24 end) else null end;
-    v_timing_changed := old.depart_at is distinct from new.depart_at or v_previous_checkin_at is distinct from v_checkin_at;
+    v_timing_changed := old.depart_at is distinct from new.depart_at or v_previous_checkin_at is distinct from v_checkin_at
+      or (new.type='flight' and (old.pnr is distinct from new.pnr or old.flight_no is distinct from new.flight_no
+        or old.airline is distinct from new.airline or old.from_city is distinct from new.from_city or old.to_city is distinct from new.to_city));
   end if;
 
   -- Check-in is an open window, not a missed one-shot alarm. Corrections to
