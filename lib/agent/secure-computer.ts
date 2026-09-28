@@ -218,14 +218,23 @@ async function isConsequentialControl(page,selector){
         await page.waitForTimeout(650);
         if(captureEvidence){
           await page.waitForFunction(({before,pattern})=>{
-            const normalize=text=>String(text||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
-            const baseline=normalize(before);
-            const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|placed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
-            return String(document.body?.innerText||'').split(/[\n.!?]+/).some(value=>{
-              const line=value.trim();
-              const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has been)\s+)?cancel(?:led|ed)\b/i.test(line):pattern==='check[ -]?in'?/^(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?$/i.test(line):false;
-              return line&&!baseline.includes(normalize(line))&&(confirmation.test(line)||verb)&&! /\b(not|pending|failed|if|when|once|will|would|could|should)\b/i.test(line);
-            });
+const normalize=(text)=>String(text||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').replace(/\b(?:has been|is|was|are|successfully)\s+/g,'').replace(/\b(?:confirmed|completed|placed|processed|successful|submitted|received)\b/g,'confirmed').replace(/\bcancelled\b/g,'canceled').replace(/\s+/g,' ').trim();
+const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|placed|processed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
+const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
+const extract=(text)=>{
+ const raw=String(text||'');
+ const matcher=new RegExp(confirmation.source+(verb?'|'+verb.source:''),'gi');
+ return [...raw.matchAll(matcher)].flatMap(match=>{
+  const start=match.index||0,end=start+match[0].length;
+  const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
+  const next=raw.slice(end).search(/[\n.!?]/);
+  const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
+  if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
+  return [{key:normalize(match[0]),line}];
+ });
+};
+const baseline=new Set(extract(before).map(item=>item.key));
+return extract(document.body?.innerText||'').some(item=>!baseline.has(item.key));
           },{before:executionBeforeText,pattern:payload.confirmationPattern},{timeout:15000,polling:250}).catch(()=>{});
           executionAfterText=(await model(page)).text;
         }
@@ -369,17 +378,26 @@ async function assessReadOutcome(objective:string,page:any):Promise<string|null>
 }
 
 function localExecutionConfirmation(approvedOperation:ApprovedBrowserOperation|null,before:string,after:string,actions:any[]):string|null{
-  if(!actions.some(a=>a.status==='done'&&a.kind==='submit'))return null
-  const operation=approvedOperation?operationPatterns[approvedOperation]:null
-  if(!operation)return null
-  const normalizeEvidence=(text:string)=>text.normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim()
-  const baseline=normalizeEvidence(before)
-  const confirmation=new RegExp('\\b'+operation+'\\s+(?:(?:is|was|has been)\\s+)?(?:confirmed|completed|placed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i')
-  for(const line of after.split(/[\n.!?]+/).map(line=>line.trim()).filter(Boolean)){
-    const normalVerbConfirmation=operation==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has been)\s+)?cancel(?:led|ed)\b/i.test(line):operation==='check[ -]?in'?/^(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?$/i.test(line):false
-    if((confirmation.test(line)||normalVerbConfirmation)&&!baseline.includes(normalizeEvidence(line))&&! /\b(not|pending|failed|if|when|once|will|would|could|should)\b/i.test(line))return safeText(line,1800)
-  }
-  return null
+  if(!actions.some(a=>a.status==='done'&&a.kind==='submit')||!approvedOperation)return null
+  const pattern=operationPatterns[approvedOperation]
+const normalize=(text:string)=>String(text||'').normalize('NFKC').toLowerCase().replace(/\s+/g,' ').replace(/\b(?:has been|is|was|are|successfully)\s+/g,'').replace(/\b(?:confirmed|completed|placed|processed|successful|submitted|received)\b/g,'confirmed').replace(/\bcancelled\b/g,'canceled').replace(/\s+/g,' ').trim();
+const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|placed|processed|successful|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
+const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
+const extract=(text:string)=>{
+ const raw=String(text||'');
+ const matcher=new RegExp(confirmation.source+(verb?'|'+verb.source:''),'gi');
+ return [...raw.matchAll(matcher)].flatMap(match=>{
+  const start=match.index||0,end=start+match[0].length;
+  const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
+  const next=raw.slice(end).search(/[\n.!?]/);
+  const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
+  if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
+  return [{key:normalize(match[0]),line}];
+ });
+};
+const baseline=new Set(extract(before).map(item=>item.key));
+  const match=extract(after).find(item=>!baseline.has(item.key))
+  return match?safeText(match.line,1800):null
 }
 
 function normalizeActionLog(values:any[]){

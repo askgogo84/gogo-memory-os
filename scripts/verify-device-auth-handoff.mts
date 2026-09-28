@@ -659,7 +659,7 @@ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:ev
 console.log('Execution consistently uses the preclassified operation; missing classification fails before any action')
 
 plannedOperation='booking'
-for(const baseline of ['RESERVATION CONFIRMED','Reservation   confirmed','Reservation\nconfirmed']){
+for(const baseline of ['RESERVATION CONFIRMED','Reservation   confirmed','Reservation\nconfirmed','Reservation has\nbeen confirmed']){
  queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed',executionBeforeText:baseline,executionAfterText:'Reservation confirmed'}]
  await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
 }
@@ -677,8 +677,10 @@ assert.equal(blockedAfterSubmit.status,'outcome_unknown')
 assert.equal(metadata.browser_safe_to_retry,false)
 console.log('Application entry cannot own final-submit evidence; provider blocks after submission preserve uncertainty')
 
+let capturedConfirmationPredicate:any
 let asyncPageText='Review purchase.',settled=false
 const asyncPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async(predicate:any,input:any,options:any)=>{
+ capturedConfirmationPredicate=predicate
  assert.equal(options.timeout,15000);assert.equal(options.polling,250)
  for(let poll=0;poll<10;poll++){
   if(poll===5)asyncPageText='Order placed'
@@ -695,3 +697,16 @@ plannedOperation='purchase'
 queuedObservations=[{...evidencePage,text:'Review purchase.'},{...evidencePage,text:'Order placed',executionBeforeText:'Review purchase.',executionAfterText:'Order placed'}]
 assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my approved order',mode:'execute'})).summary,'Order placed')
 console.log('Delayed post-submit DOM confirmation is polled before capture; an idle intermediate page cannot finish the wait')
+
+plannedOperation='purchase'
+for(const [before,after] of [['Order placed · updated 2 minutes ago','Order placed · updated 3 minutes ago'],['Order has been placed','Order placed'],['Order successfully placed','Order placed'],['Review order','No order placed'],['Review order','Order placed unsuccessfully'],['Review order','Order placed?']]){
+ queuedObservations=[{...evidencePage,text:before},{...evidencePage,text:after,executionBeforeText:before,executionAfterText:after}]
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'}),/browser_objective_unverified/)
+ assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before,pattern:'(?:order|purchase)'},document:{body:{innerText:after}}}),false)
+}
+for(const [operation,before,after] of [['payment','Review payment','Payment processed'],['payment','Review payment','Payment has been processed'],['purchase','No order placed','Order placed']]){
+ plannedOperation=operation
+ queuedObservations=[{...evidencePage,text:before},{...evidencePage,text:after,executionBeforeText:before,executionAfterText:after}]
+ assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Complete the approved operation',mode:'execute'})).summary,after)
+}
+console.log('Stable confirmation phrases ignore mutable timestamps; direct processed payments work; negatives cannot become success')
