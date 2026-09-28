@@ -1,32 +1,26 @@
--- Retain flight identity when a printed local clock cannot be verified.
--- Existing rows and access policies are unchanged. Apply before deploying the writer.
-alter table public.travel_tickets alter column depart_at drop not null;
-alter table public.travel_tickets add constraint travel_ticket_departure_known_unless_flight
-  check (depart_at is not null or type = 'flight');
-
+-- Rollback-only regression: run against a database with travel/lifecycle tables.
+begin;
+create temporary table travel_tickets (like public.travel_tickets including defaults including constraints including indexes);
+alter table pg_temp.travel_tickets alter column depart_at drop not null;
 
 -- Unknown-time flights need atomic uniqueness too (ordinary NULL timestamps
 -- are distinct). Match the writer's strong printed-leg and fallback identities.
 create unique index travel_tickets_unverified_strong_identity_idx
-on public.travel_tickets (telegram_id, type, pnr, flight_no, date_label, leg_index, from_city, to_city) nulls not distinct
+on pg_temp.travel_tickets (telegram_id, type, pnr, flight_no, date_label, leg_index, from_city, to_city) nulls not distinct
 where depart_at is null and type = 'flight'
   and coalesce(pnr, '') <> '' and coalesce(flight_no, '') <> '' and coalesce(date_label, '') <> '';
 create unique index travel_tickets_unverified_fallback_identity_idx
-on public.travel_tickets (telegram_id, type, from_city, to_city, date_label, depart_local, flight_no) nulls not distinct
+on pg_temp.travel_tickets (telegram_id, type, from_city, to_city, date_label, depart_local, flight_no) nulls not distinct
 where depart_at is null and type = 'flight'
   and (coalesce(pnr, '') = '' or coalesce(flight_no, '') = '' or coalesce(date_label, '') = '');
 
--- Upgrade only installations that already enabled ticket lifecycle promotion.
--- The main production project currently has no ticket trigger.
-do $migration$
-begin
-  if to_regprocedure('public.gogo_promote_travel_ticket_to_life_event()') is not null then
-    execute $trigger_update$
-create or replace function gogo_promote_travel_ticket_to_life_event()
+create temporary table life_events (like public.life_events including defaults including constraints including indexes);
+create temporary table life_event_actions (like public.life_event_actions including defaults including constraints including indexes);
+create or replace function pg_temp.gogo_promote_travel_ticket_test()
 returns trigger
 language plpgsql
-security definer
-set search_path = public
+security invoker
+set search_path = pg_temp, public
 as $$
 declare
   v_event_id uuid;
@@ -129,8 +123,55 @@ begin
   return new;
 end;
 $$;
-$trigger_update$;
-    execute 'revoke all on function public.gogo_promote_travel_ticket_to_life_event() from public, anon, authenticated';
-  end if;
-end;
-$migration$;
+create trigger ticket_test after insert or update on pg_temp.travel_tickets for each row execute function pg_temp.gogo_promote_travel_ticket_test();
+insert into pg_temp.travel_tickets (telegram_id,type,pnr,flight_no,leg_index,from_city,to_city,depart_at,depart_tz,date_label,depart_local,source) values
+(17,'flight','REGRESSION','XX222',0,'BLR','AUH',null,'','28 Sep 2040','10:00','pdf'),
+(17,'flight','REGRESSION','XX222',1,'AUH','JFK',null,'','28 Sep 2040','14:00','pdf');
+do $test$ begin
+ if (select count(*) from pg_temp.life_events)<>2 then raise exception 'null legs collided';end if;
+ if (select count(*) from pg_temp.life_event_actions where action_key<>'remember')<>0 then raise exception 'unverified timed actions';end if;
+end $test$;
+
+do $test$ begin
+ begin
+  insert into pg_temp.travel_tickets (telegram_id,type,pnr,flight_no,leg_index,from_city,to_city,depart_at,depart_tz,date_label,depart_local,source)
+  values (17,'flight','REGRESSION','XX222',0,'BLR','AUH',null,'','28 Sep 2040','11:00','pdf');
+  raise exception 'duplicate strong identity accepted';
+ exception when unique_violation then null;
+ end;
+end $test$;
+
+update pg_temp.life_events set dedupe_key='legacy:'||id::text;
+update pg_temp.travel_tickets set depart_at='2040-09-28T04:30:00Z',depart_tz='Asia/Kolkata' where leg_index=0;
+do $test$ begin
+ if (select count(*) from pg_temp.life_events)<>2 then raise exception 'legacy event duplicated';end if;
+ if (select count(*) from pg_temp.life_events where start_at='2040-09-28T04:30:00Z')<>1 then raise exception 'event time not corrected';end if;
+end $test$;
+update pg_temp.travel_tickets set depart_at=null where leg_index=0;
+do $test$ begin
+ if exists(select 1 from pg_temp.life_event_actions where due_at is not null and status='queued') then raise exception 'unknown time retained queued actions';end if;
+end $test$;
+update pg_temp.travel_tickets set depart_at='2040-09-28T04:30:00Z' where leg_index=0;
+do $test$ begin
+ if (select count(*) from pg_temp.life_event_actions where due_at is not null and status='queued')<>5 then raise exception 'timing correction did not resume actions';end if;
+end $test$;
+update pg_temp.life_events set lifecycle_state='cancelled' where start_at is null;
+update pg_temp.travel_tickets set depart_at='2040-09-28T10:00:00Z',depart_tz='Asia/Dubai' where leg_index=1;
+do $test$ begin
+ if exists(select 1 from pg_temp.life_events e join pg_temp.life_event_actions a on a.life_event_id=e.id where e.lifecycle_state='cancelled' and a.status='queued') then raise exception 'cancelled trip queued actions';end if;
+ if not exists(select 1 from pg_temp.life_events where lifecycle_state='cancelled' and next_action_at is null) then raise exception 'terminal state lost';end if;
+end $test$;
+
+insert into pg_temp.travel_tickets (telegram_id,type,from_city,to_city,depart_at,depart_tz,date_label,depart_local,source)
+values (18,'flight','UNKNOWN A','UNKNOWN B',null,'','28 Sep 2040','10:00','pdf');
+do $test$ begin
+ begin
+  insert into pg_temp.travel_tickets (telegram_id,type,from_city,to_city,depart_at,depart_tz,date_label,depart_local,source)
+  values (18,'flight','UNKNOWN A','UNKNOWN B',null,'','28 Sep 2040','10:00','pdf');
+  raise exception 'duplicate fallback identity accepted';
+ exception when unique_violation then null;
+ end;
+end $test$;
+
+rollback;
+select 'temporary trigger regressions passed; all changes rolled back' as result;

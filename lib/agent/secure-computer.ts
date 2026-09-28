@@ -182,19 +182,20 @@ const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|proce
 const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
 const extract=(text)=>{
  const raw=String(text||'').normalize('NFKC');
- const seenLines=new Set();
+
  const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:''),'gi');
- return [...raw.matchAll(matcher)].flatMap(match=>{
+ const matches=[...raw.matchAll(matcher)].flatMap(match=>{
   const start=match.index||0,end=start+match[0].length;
   const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
   const next=raw.slice(end).search(/[\n.!?]/);
   const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
   if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
-  const sourceLine=raw.lastIndexOf('\n',start-1);
-  if(seenLines.has(sourceLine))return [];
-  seenLines.add(sourceLine);
   return [{key:pattern,line,phrase:match[0]}];
  });
+ // A receipt can contain several synonymous phrases. Conservatively retain only
+ // the largest identical-phrase group; whitespace and reflow never add evidence.
+ const groups=matches.map(item=>matches.filter(other=>other.phrase.toLowerCase().replace(/\s+/g,' ')===item.phrase.toLowerCase().replace(/\s+/g,' ')));
+ return groups.sort((a,b)=>b.length-a.length)[0]||[];
 };
 
 return extract(document.body?.innerText||'').map(item=>item.phrase.replace(/\s+/g,' ').trim()).join('\n');
@@ -250,19 +251,20 @@ const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|proce
 const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
 const extract=(text)=>{
  const raw=String(text||'').normalize('NFKC');
- const seenLines=new Set();
+
  const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:''),'gi');
- return [...raw.matchAll(matcher)].flatMap(match=>{
+ const matches=[...raw.matchAll(matcher)].flatMap(match=>{
   const start=match.index||0,end=start+match[0].length;
   const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
   const next=raw.slice(end).search(/[\n.!?]/);
   const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
   if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
-  const sourceLine=raw.lastIndexOf('\n',start-1);
-  if(seenLines.has(sourceLine))return [];
-  seenLines.add(sourceLine);
   return [{key:pattern,line,phrase:match[0]}];
  });
+ // A receipt can contain several synonymous phrases. Conservatively retain only
+ // the largest identical-phrase group; whitespace and reflow never add evidence.
+ const groups=matches.map(item=>matches.filter(other=>other.phrase.toLowerCase().replace(/\s+/g,' ')===item.phrase.toLowerCase().replace(/\s+/g,' ')));
+ return groups.sort((a,b)=>b.length-a.length)[0]||[];
 };
 const baselineCount=extract(before).length;
 return extract(document.body?.innerText||'').length>baselineCount;
@@ -417,19 +419,20 @@ const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|proce
 const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
 const extract=(text:string)=>{
  const raw=String(text||'').normalize('NFKC');
- const seenLines=new Set<number>();
+
  const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:''),'gi');
- return [...raw.matchAll(matcher)].flatMap(match=>{
+ const matches=[...raw.matchAll(matcher)].flatMap(match=>{
   const start=match.index||0,end=start+match[0].length;
   const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
   const next=raw.slice(end).search(/[\n.!?]/);
   const line=raw.slice(left+1,next<0?raw.length:end+next+1).trim().replace(/[.!]+$/,'');
   if(/[?]/.test(line)||/\b(no|not|never|pending|failed|unsuccessful(?:ly)?|declined|rejected|if|when|once|will|would|could|should)\b/i.test(line)||/\b(?:no|not|never)\s*$/i.test(raw.slice(0,start)))return [];
-  const sourceLine=raw.lastIndexOf('\n',start-1);
-  if(seenLines.has(sourceLine))return [];
-  seenLines.add(sourceLine);
   return [{key:pattern,line,phrase:match[0]}];
  });
+ // A receipt can contain several synonymous phrases. Conservatively retain only
+ // the largest identical-phrase group; whitespace and reflow never add evidence.
+ const groups=matches.map(item=>matches.filter(other=>other.phrase.toLowerCase().replace(/\s+/g,' ')===item.phrase.toLowerCase().replace(/\s+/g,' ')));
+ return groups.sort((a,b)=>b.length-a.length)[0]||[];
 };
 const baselineCount=extract(before).length;
   const match=extract(after)[baselineCount]

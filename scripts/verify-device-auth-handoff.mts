@@ -747,3 +747,15 @@ assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidenc
 assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:'Application submitted',pattern:'(?:application|form|submission)'},document:{body:{innerText:'Application submitted\nApplication submitted'}}}),true)
 assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:'Order placed',pattern:'(?:order|purchase)'},document:{body:{innerText:'Order placed. Thank you for your order'}}}),false,'synonymous wording on the same receipt line is one occurrence')
 console.log('A new confirmation occurrence is retained alongside old records without double-counting same-line receipt wording')
+
+plannedOperation='purchase'
+for(const [before,after] of [
+ ['Order placed. Thank you for your order','Order placed.\nThank you for your order'],
+ ['Order placed.\nThank you for your order','Order placed. Thank you for your order'],
+ ['Order placed. Thank you for your order','Order\nplaced.\nThank you for your order'],
+]){
+ queuedObservations=[{...evidencePage,text:before},{...evidencePage,text:after,actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:before,executionAfterText:after}]
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'}),/browser_objective_unverified/)
+ assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before,pattern:'(?:order|purchase)'},document:{body:{innerText:after}}}),false)
+}
+console.log('Receipt reflow across sentences and words never creates new confirmation evidence')
