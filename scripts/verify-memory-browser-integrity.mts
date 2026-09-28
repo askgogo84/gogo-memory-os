@@ -229,7 +229,7 @@ try{
  assert.ok('reminders' in timed.output)
  assert.deepEqual((timed.output as any).reminders.map((row:any)=>row.id),['five'])
  assert.match(timed.text,/17:00.*Asia\/Kolkata/)
- const explicitZone=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm IST'},missionText:'Review reminders'})
+ const explicitZone=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm ist'},missionText:'Review reminders'})
  assert.deepEqual((explicitZone.output as any).reminders.map((row:any)=>row.id),['five'])
  const tomorrow=await executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Review reminders',instruction:"Show tomorrow's reminders"},missionText:'Review reminders'})
  assert.equal((tomorrow.output as any).reminders.length,0,'tomorrow must not include unrelated 2030 reminders')
@@ -242,3 +242,9 @@ assert.equal(reminderStepIntent({title:'Reminders',instruction:'Review reminders
 assert.equal(reminderStepIntent({title:'Review reminders',instruction:'Review reminders without creating, editing, and deleting anything'}),'read')
 const {reminderScope}=await import('../lib/agent/reminder-read')
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm IST'},'Review reminders').scopeTerms,[])
+
+const {reminderTimezoneMetadata}=await import('../lib/agent/reminder-read')
+assert.ok(['Asia/Kolkata','Asia/Calcutta'].includes(reminderTimezoneMetadata('5 pm ist').timezone!))
+assert.equal(reminderTimezoneMetadata('5 pm America/Port-au-Prince').timezone,'America/Port-au-Prince')
+assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm America/Port-au-Prince'},'Review reminders').scopeTerms,[])
+assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show reminders for 28 Sep 2030 at 5 pm ist'},'Review reminders').scopeTerms,[])

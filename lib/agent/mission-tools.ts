@@ -1,4 +1,4 @@
-import { readScopedReminders } from './reminder-read'
+import { readScopedReminders, reminderTimezoneMetadata } from './reminder-read'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { refreshAccessToken } from '@/lib/google-calendar'
@@ -204,8 +204,7 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
     const relative=/\b(today|tomorrow)\b/i.exec(reviewText)?.[1].toLowerCase()
     let temporal: {timezone:string;dates:string[];clock:string|null}|undefined
     if(dates.length||clock||relative){
-      const explicitZone=reviewText.match(/\b(?:[A-Za-z_]+\/[A-Za-z_]+(?:\/[A-Za-z_]+)?|IST|UTC|GMT)\b/)?.[0]
-      const timezone=explicitZone?normalizeTimezone(explicitZone==='IST'?'Asia/Kolkata':explicitZone):await actorTimezone(actor)
+      const timezone=reminderTimezoneMetadata(reviewText).timezone||await actorTimezone(actor)
       if(relative&&!dates.length){
         const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
         const values:Record<string,string>={};for(const part of parts)values[part.type]=part.value
