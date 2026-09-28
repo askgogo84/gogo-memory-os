@@ -18,10 +18,10 @@ assert.equal(flightInstants({from:'BLR',to:'AUH',date:'27 Sep 2026',departure:'2
 const parsed=parseFlightTicketText('PNR: TEST99 EY239 BLR 22:15 27 Sep 2026 AUH 00:35 28 Sep 2026')
 assert.equal(parsed?.flights[0]?.arrivalDate,'28 Sep 2026')
 
-const rows=[{id:'leg',type:'flight',from_city:'Abu Dhabi',to_city:'New York',depart_at:second.departAt!.toISOString(),arrive_at:second.arriveAt!.toISOString(),passengers:['Divyashree Urs'],flight_no:'EY1',booking_group:'trip'}]
+const rows=[{id:'leg',type:'flight',from_city:'Abu Dhabi',to_city:'New York',depart_at:second.departAt!.toISOString(),arrive_at:second.arriveAt!.toISOString(),passengers:['Divyashree Example'],flight_no:'EY1',booking_group:'trip'}]
 const facts=buildTravelPresenceFacts(rows,Date.parse('2026-09-28T06:00Z'))
 const ticket=facts.find(f=>f.source==='travel_ticket')!
-assert.match(ticket.summary,/Divyashree Urs/)
+assert.match(ticket.summary,/Divyashree Example/)
 assert.match(ticket.summary,/08:35.*America\/New_York/)
 assert.ok(lexicalScore('What time Divya is landing in newyork',ticket.summary)>0.3)
 assert.doesNotMatch(facts.find(f=>f.source==='travel_presence')!.summary,/places the user/)
@@ -29,7 +29,7 @@ const invalid=buildTravelPresenceFacts([{...rows[0],arrive_at:'2026-09-26T00:00Z
 assert.equal(invalid.filter(f=>f.source==='travel_presence').length,0)
 assert.equal(invalid[0].endAt,null)
 const block=renderContextBlock({query:'Divya landing',generatedAt:new Date().toISOString(),memoryEnabled:true,retrievalIncomplete:true,facts:[ticket],provenance:{lifeEvents:0,travelTickets:1,openLoops:0,semanticMemories:0,insights:0,typedContext:0}})
-assert.match(block,/Divyashree Urs/)
+assert.match(block,/Divyashree Example/)
 assert.match(block,/Retrieval is incomplete/)
 
 assert.equal(isLoginDestination({url:'https://www.instagram.com/accounts/login/',title:'Instagram',text:''}),true)
