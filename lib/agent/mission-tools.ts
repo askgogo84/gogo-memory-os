@@ -241,6 +241,9 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
       +(truncated?'\nThe review reached its 1,000-reminder limit; later reminders were not checked.':''),
       output:{reminders,readOnly:true,scope:'requested_reminders',scopeTerms,truncated,verifiedStore:'reminders'}}
   }
+  const writeDates=explicitDates(step.instruction)
+  const writeClocks=[...new Set([...step.instruction.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter(Boolean))]
+  if(writeDates.length>1||writeClocks.length>1)throw new Error('mission_reminder_multiple_instants_require_separate_steps')
   const exactDate=explicitDate(step.instruction)||await relativeMissionDate(step.instruction,actor)
   const exactTime=explicitMissionClock(step.instruction)
   if(exactDate&&exactTime){

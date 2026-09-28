@@ -374,3 +374,5 @@ const throughRows=ticketWrites.slice(throughBefore).filter(write=>write.table===
 assert.equal(throughRows.length,2)
 assert.deepEqual(throughRows.map(row=>[row.leg_index,row.from_city,row.to_city]),[[0,'BLR','AUH'],[1,'AUH','JFK']])
 assert.equal(buildTravelPresenceFacts([{...legacyArrival,from_city:'Unknown airport',depart_at:null,raw:{date:'28 Sep 2020',departure:'10:00'}}],Date.parse('2040-09-28T00:00Z')).length,0,'old null-time identities cannot enter current context')
+
+await assert.rejects(()=>executeVerifiedMissionReminder({actor:actor as any,step:{tool:'reminders',title:'Set reminders',instruction:'Set reminders on 28 Sep 2030 at 5 pm and 29 Sep 2030 at 6 pm'},missionText:'Set reminders'}),/multiple_instants_require_separate_steps/)

@@ -3,3 +3,112 @@
 alter table public.travel_tickets alter column depart_at drop not null;
 alter table public.travel_tickets add constraint travel_ticket_departure_known_unless_flight
   check (depart_at is not null or type = 'flight');
+
+-- Upgrade only installations that already enabled ticket lifecycle promotion.
+-- The main production project currently has no ticket trigger.
+do $migration$
+begin
+  if to_regprocedure('public.gogo_promote_travel_ticket_to_life_event()') is not null then
+    execute $trigger_update$
+create or replace function gogo_promote_travel_ticket_to_life_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_event_id uuid;
+  v_type text;
+  v_title text;
+  v_provider text;
+  v_location text;
+  v_key text;
+  v_checkin_at timestamptz;
+begin
+  v_type := case when new.type = 'event' then 'event' else 'travel' end;
+  v_provider := case
+    when new.type = 'flight' then new.airline
+    when new.type = 'train' then new.train_name
+    else null
+  end;
+  v_location := case
+    when new.type = 'event' then new.venue
+    else concat_ws(' → ', new.from_city, new.to_city)
+  end;
+  v_title := case
+    when new.type = 'flight' then concat_ws(' ', coalesce(new.airline,'Flight'), new.flight_no, concat_ws(' → ',new.from_city,new.to_city))
+    when new.type = 'train' then concat_ws(' ', coalesce(new.train_name,'Train'), new.train_no, concat_ws(' → ',new.from_city,new.to_city))
+    else coalesce(new.event_name,'Event')
+  end;
+  v_key := 'travel-ticket:' || new.id::text;
+  select id into v_event_id from life_events
+    where telegram_id=new.telegram_id::text
+      and (dedupe_key=v_key or metadata_json->>'travel_ticket_id'=new.id::text)
+    order by (dedupe_key=v_key) desc, created_at asc limit 1;
+  if v_event_id is not null then
+    -- Reuse the existing lifecycle and its action IDs when clocks are corrected.
+    update life_event_actions set status='cancelled',updated_at=now()
+      where life_event_id in (select id from life_events
+        where telegram_id=new.telegram_id::text and metadata_json->>'travel_ticket_id'=new.id::text and id<>v_event_id)
+        and status in ('queued','ready','waiting_approval','blocked');
+    update life_events set lifecycle_state='cancelled',next_action_at=null,updated_at=now()
+      where telegram_id=new.telegram_id::text and metadata_json->>'travel_ticket_id'=new.id::text and id<>v_event_id
+        and lifecycle_state not in ('completed','cancelled','expired');
+    update life_events set dedupe_key=v_key where id=v_event_id and telegram_id=new.telegram_id::text;
+  end if;
+  v_checkin_at := case when new.type = 'flight' then new.depart_at - interval '24 hours' else null end;
+
+  insert into life_events (
+    telegram_id,event_type,subtype,source,title,provider,start_at,end_at,timezone,location,
+    confirmation_ref,lifecycle_state,participants,metadata_json,source_refs,dedupe_key,next_action_at
+  ) values (
+    new.telegram_id::text,v_type,new.type,new.source,v_title,v_provider,new.depart_at,new.arrive_at,new.depart_tz,v_location,
+    new.pnr,case when new.depart_at is null then 'captured' else 'planned' end,to_jsonb(coalesce(new.passengers,array[]::text[])),
+    jsonb_build_object('travel_ticket_id',new.id,'flight_no',new.flight_no,'train_no',new.train_no,'seat',new.seat,'raw',coalesce(new.raw,'{}'::jsonb)),
+    jsonb_build_array(jsonb_build_object('kind','travel_ticket','id',new.id,'source',new.source)),
+    v_key,
+    case when new.type='flight' then v_checkin_at else new.depart_at - interval '3 hours' end
+  )
+  on conflict (telegram_id,dedupe_key) do update set
+    title=excluded.title, provider=excluded.provider, start_at=excluded.start_at, end_at=excluded.end_at,
+    timezone=excluded.timezone, location=excluded.location, confirmation_ref=excluded.confirmation_ref,
+    participants=excluded.participants, metadata_json=excluded.metadata_json, source_refs=excluded.source_refs,
+    lifecycle_state=case when life_events.lifecycle_state in ('completed','cancelled','expired') then life_events.lifecycle_state else excluded.lifecycle_state end, next_action_at=excluded.next_action_at, updated_at=now()
+  returning id into v_event_id;
+
+  insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
+  values (v_event_id,new.telegram_id::text,'remember','remember','memory','Keep this ticket and its source context together',null,false,false,jsonb_build_object('travel_ticket_id',new.id))
+  on conflict (life_event_id,action_key) do update set updated_at=now();
+
+  if new.depart_at is null then return new; end if;
+
+  if new.type = 'flight' then
+    insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
+    values
+      (v_event_id,new.telegram_id::text,'prepare-web-checkin','browser_prepare','browser','Prepare airline web check-in',v_checkin_at,false,false,jsonb_build_object('pnr',new.pnr,'flight_no',new.flight_no,'prepare_only',true)),
+      (v_event_id,new.telegram_id::text,'checkin-submit-approval','approval','travel','Ask before airline check-in is submitted',v_checkin_at,true,true,jsonb_build_object('approval_type','booking','never_auto_submit',true)),
+      (v_event_id,new.telegram_id::text,'watch-boarding-pass-email','email_watch','email','Watch connected email for boarding pass or check-in confirmation',v_checkin_at,false,false,jsonb_build_object('read_only',true,'pnr',new.pnr)),
+      (v_event_id,new.telegram_id::text,'departure-readiness','notify','travel','Prepare for departure',new.depart_at - interval '3 hours',false,false,jsonb_build_object('from',new.from_city,'to',new.to_city)),
+      (v_event_id,new.telegram_id::text,'travel-disruption-watch','monitor','travel','Watch for meaningful flight changes',new.depart_at - interval '24 hours',false,false,jsonb_build_object('notify_only_on_material_change',true))
+    on conflict (life_event_id,action_key) do update set due_at=excluded.due_at,payload_json=excluded.payload_json,updated_at=now();
+  elsif new.type = 'event' then
+    insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
+    values
+      (v_event_id,new.telegram_id::text,'event-calendar-draft','calendar_draft','calendar','Prepare calendar entry for this event',null,true,false,jsonb_build_object('mutation','create_event','approval_required',true)),
+      (v_event_id,new.telegram_id::text,'event-readiness','prepare','travel','Prepare venue, travel and ticket readiness',new.depart_at - interval '3 hours',false,false,jsonb_build_object('venue',new.venue)),
+      (v_event_id,new.telegram_id::text,'event-change-watch','monitor','browser','Watch for meaningful event timing or venue changes',new.depart_at - interval '24 hours',false,false,jsonb_build_object('notify_only_on_material_change',true))
+    on conflict (life_event_id,action_key) do update set due_at=excluded.due_at,payload_json=excluded.payload_json,updated_at=now();
+  else
+    insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
+    values (v_event_id,new.telegram_id::text,'departure-readiness','notify','travel','Prepare for departure',new.depart_at - interval '3 hours',false,false,jsonb_build_object('from',new.from_city,'to',new.to_city))
+    on conflict (life_event_id,action_key) do update set due_at=excluded.due_at,payload_json=excluded.payload_json,updated_at=now();
+  end if;
+
+  return new;
+end;
+$$;
+$trigger_update$;
+    execute 'revoke all on function public.gogo_promote_travel_ticket_to_life_event() from public, anon, authenticated';
+  end if;
+end;
+$migration$;

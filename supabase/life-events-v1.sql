@@ -84,7 +84,22 @@ begin
     when new.type = 'train' then concat_ws(' ', coalesce(new.train_name,'Train'), new.train_no, concat_ws(' → ',new.from_city,new.to_city))
     else coalesce(new.event_name,'Event')
   end;
-  v_key := md5(concat_ws('|', new.telegram_id::text, new.type, coalesce(new.pnr,''), coalesce(new.flight_no,''), coalesce(new.train_no,''), coalesce(new.event_name,''), new.depart_at::text));
+  v_key := 'travel-ticket:' || new.id::text;
+  select id into v_event_id from life_events
+    where telegram_id=new.telegram_id::text
+      and (dedupe_key=v_key or metadata_json->>'travel_ticket_id'=new.id::text)
+    order by (dedupe_key=v_key) desc, created_at asc limit 1;
+  if v_event_id is not null then
+    -- Reuse the existing lifecycle and its action IDs when clocks are corrected.
+    update life_event_actions set status='cancelled',updated_at=now()
+      where life_event_id in (select id from life_events
+        where telegram_id=new.telegram_id::text and metadata_json->>'travel_ticket_id'=new.id::text and id<>v_event_id)
+        and status in ('queued','ready','waiting_approval','blocked');
+    update life_events set lifecycle_state='cancelled',next_action_at=null,updated_at=now()
+      where telegram_id=new.telegram_id::text and metadata_json->>'travel_ticket_id'=new.id::text and id<>v_event_id
+        and lifecycle_state not in ('completed','cancelled','expired');
+    update life_events set dedupe_key=v_key where id=v_event_id and telegram_id=new.telegram_id::text;
+  end if;
   v_checkin_at := case when new.type = 'flight' then new.depart_at - interval '24 hours' else null end;
 
   insert into life_events (
@@ -92,7 +107,7 @@ begin
     confirmation_ref,lifecycle_state,participants,metadata_json,source_refs,dedupe_key,next_action_at
   ) values (
     new.telegram_id::text,v_type,new.type,new.source,v_title,v_provider,new.depart_at,new.arrive_at,new.depart_tz,v_location,
-    new.pnr,'planned',to_jsonb(coalesce(new.passengers,array[]::text[])),
+    new.pnr,case when new.depart_at is null then 'captured' else 'planned' end,to_jsonb(coalesce(new.passengers,array[]::text[])),
     jsonb_build_object('travel_ticket_id',new.id,'flight_no',new.flight_no,'train_no',new.train_no,'seat',new.seat,'raw',coalesce(new.raw,'{}'::jsonb)),
     jsonb_build_array(jsonb_build_object('kind','travel_ticket','id',new.id,'source',new.source)),
     v_key,
@@ -102,12 +117,14 @@ begin
     title=excluded.title, provider=excluded.provider, start_at=excluded.start_at, end_at=excluded.end_at,
     timezone=excluded.timezone, location=excluded.location, confirmation_ref=excluded.confirmation_ref,
     participants=excluded.participants, metadata_json=excluded.metadata_json, source_refs=excluded.source_refs,
-    lifecycle_state='planned', next_action_at=excluded.next_action_at, updated_at=now()
+    lifecycle_state=case when life_events.lifecycle_state in ('completed','cancelled','expired') then life_events.lifecycle_state else excluded.lifecycle_state end, next_action_at=excluded.next_action_at, updated_at=now()
   returning id into v_event_id;
 
   insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
   values (v_event_id,new.telegram_id::text,'remember','remember','memory','Keep this ticket and its source context together',null,false,false,jsonb_build_object('travel_ticket_id',new.id))
   on conflict (life_event_id,action_key) do update set updated_at=now();
+
+  if new.depart_at is null then return new; end if;
 
   if new.type = 'flight' then
     insert into life_event_actions (life_event_id,telegram_id,action_key,action_type,capability,title,due_at,requires_approval,irreversible,payload_json)
@@ -134,6 +151,7 @@ begin
   return new;
 end;
 $$;
+revoke all on function gogo_promote_travel_ticket_to_life_event() from public, anon, authenticated;
 
 drop trigger if exists travel_ticket_promote_life_event on travel_tickets;
 create trigger travel_ticket_promote_life_event
