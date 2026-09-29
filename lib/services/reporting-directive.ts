@@ -21,16 +21,19 @@ const QUALIFIER =
 
 // A benign reporting directive: "report back" or "report [qualifiers] <result-noun>".
 const DIRECTIVE_BODY = `report\\s+back\\b|report(?:\\s+(?:${QUALIFIER}))*\\s+(?:${RESULT_NOUN})\\b`
-// The clause-leading boundary that marks "report" used as a verb (not inside a title).
-const CLAUSE_LEAD = `(?:^|[.!?;,]|\\b(?:and|then|to)\\b)\\s*(?:please\\s+)?`
+// The clause-leading boundary that marks "report" used as a verb (not a noun inside a
+// title). Leading adverbs ("only report …", "just report …") are part of the verb
+// phrase, so they may precede "report".
+const CLAUSE_LEAD = `(?:^|[.!?;,]|\\b(?:and|then|to)\\b)\\s*(?:(?:please|kindly|only|just|now|also|then)\\s+)*`
 
 // Reasons that turn "report X as/for <reason>" into an unambiguous flag/abuse mutation.
 const ABUSE_REASON =
   'spam|abuse|abusive|inappropriate|offensive|fake|fraud|fraudulent|scam|harmful|harassment|harassing|bullying|violation|violating|misleading|counterfeit|objectionable|nudity|violence|hate|impersonation|self[\\s-]?harm|misinformation'
-// "report X as spam" / "report X for harassment" are always provider mutations,
-// regardless of the noun in between (covers "report the status/post/listing …").
+// "report X as spam" / "report X for harassment" are provider mutations — but only
+// when "report" is the clause-leading VERB, so a content noun ("find the report for
+// harassment prevention") is not misread as a flag action.
 const REPORT_ABUSE_MUTATION_RE = new RegExp(
-  `\\breport\\b[^.!?;,]*\\b(?:as|for)\\s+(?:${ABUSE_REASON})\\b`,
+  `${CLAUSE_LEAD}report\\b[^.!?;,]*\\b(?:as|for)\\s+(?:${ABUSE_REASON})\\b`,
   'i',
 )
 

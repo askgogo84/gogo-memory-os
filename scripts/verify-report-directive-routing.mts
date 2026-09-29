@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { parseConnectedProviderReadCommand } from '../lib/agent/browser-command'
 import { shouldAttemptNaturalAssetRetrieval } from '../lib/services/asset-natural-retrieval'
+import { hasLeadingReportMutation, stripReportingDirectives } from '../lib/services/reporting-directive'
 
 // ── Regression: the "Report only verified results" directive class ────────────
 // PROVEN production incident (deployed 0e0ea3d3, WhatsApp turn 2026-09-29T06:01:08Z):
@@ -91,5 +92,21 @@ assert.equal(shouldAttemptNaturalAssetRetrieval('Find my hotel report'), true)
 assert.equal(shouldAttemptNaturalAssetRetrieval('Show me my flight delay report'), true)
 assert.equal(shouldAttemptNaturalAssetRetrieval('Find my hotel report summary'), true)
 assert.equal(shouldAttemptNaturalAssetRetrieval('Open my flight incident report status'), true)
+
+// 6. Codex P2 (round 4) — helper-level invariants.
+//    (a) The abuse guard is clause-leading: "report" as a content NOUN is not a flag.
+assert.equal(hasLeadingReportMutation('Open LinkedIn and find the report for harassment prevention'), false)
+assert.equal(hasLeadingReportMutation('find the incident report for abuse training'), false)
+//    (b) but the leading-verb flag actions are still mutations.
+assert.equal(hasLeadingReportMutation('report the status for harassment'), true)
+assert.equal(hasLeadingReportMutation('and report this post as spam'), true)
+//    (c) A directive with a leading adverb ("Only report verified results") is stripped.
+assert.doesNotMatch(stripReportingDirectives('check availability. Only report verified results.'), /\breport\b/i)
+assert.doesNotMatch(stripReportingDirectives('Just report the findings'), /\breport\b/i)
+//    (d) so an operational read ending with that directive does not hijack Asset Memory.
+assert.equal(
+  shouldAttemptNaturalAssetRetrieval('Open the flight booking page and check availability. Only report verified results.'),
+  false,
+)
 
 console.log('✅ Report-directive routing regression passed: explicit browser actions with "Report only verified results" reach the secure browser and cannot be hijacked by Asset Memory')
