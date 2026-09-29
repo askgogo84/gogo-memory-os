@@ -214,7 +214,7 @@ assert.equal(
 
 const browser=await import('node:fs').then(fs=>fs.readFileSync('lib/agent/browser-command.ts','utf8'))
 assert.match(browser,/parseConnectedProviderReadCommand/)
-assert.match(browser,/parseBrowserCommand\(params\.text\)\|\|parseConnectedProviderReadCommand\(params\.text\)/)
+assert.match(browser,/parseBrowserCommand\(params\.text\)\|\|parseConnectedProviderCartAction\(params\.text\)\|\|parseConnectedProviderReadCommand\(params\.text\)/)
 assert.match(browser,/writeTokens/)
 assert.match(browser,/readTokens/)
 assert.match(browser,/mode:'read'/)
@@ -235,7 +235,7 @@ assert.ok(
 )
 
 const whatsappRoute=await import('node:fs').then(fs=>fs.readFileSync('app/api/webhooks/whatsapp/route.ts','utf8'))
-const providerPreflight=whatsappRoute.indexOf('if (parseConnectedProviderReadCommand(text))')
+const providerPreflight=whatsappRoute.indexOf('if (parseConnectedProviderReadCommand(text) || parseConnectedProviderCartAction(text))')
 const legacyFeature=whatsappRoute.indexOf('const featureReply = await routeFeatureIntent')
 assert.ok(providerPreflight>=0,'WhatsApp must have a provider-browser preflight')
 assert.ok(legacyFeature>providerPreflight,'Vault-backed provider tasks must beat legacy feature routing on WhatsApp')

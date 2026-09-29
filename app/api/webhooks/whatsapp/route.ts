@@ -53,7 +53,7 @@ import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, captureJ
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { isGmailVerificationQuery } from '@/lib/agent/gmail-verification'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
-import { parseConnectedProviderReadCommand, isExplicitProviderBrowserRead } from '@/lib/agent/browser-command'
+import { parseConnectedProviderReadCommand, parseConnectedProviderCartAction, isExplicitProviderBrowserRead } from '@/lib/agent/browser-command'
 import { isRestaurantReservationRequest } from '@/lib/agent/restaurant-reservation'
 import {
   isAudioContentType,
@@ -1358,7 +1358,7 @@ _"${originalText}"_
     // "Find the AI reels I saved recently on Instagram" contains words such as
     // "saved" that legacy media-memory handlers can mistake for a save command.
     // Give the provider browser specialist first refusal before routeFeatureIntent.
-    if (parseConnectedProviderReadCommand(text)) {
+    if (parseConnectedProviderReadCommand(text) || parseConnectedProviderCartAction(text)) {
       const providerAgent = await tryRunWhatsAppAgent({
         user: resolvedUser,
         text,

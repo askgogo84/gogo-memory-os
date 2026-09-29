@@ -2,6 +2,7 @@ import { draftObjectiveCovered } from './draft-coverage'
 import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from './browser-evidence'
 import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
+import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
 import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
@@ -66,7 +67,25 @@ function allowedHosts(url:string){
   if(u.protocol!=='https:'&&u.protocol!=='http:')throw new Error('browser_url_not_http')
   const hostname=u.hostname.toLowerCase()
   if(!hostname||hostname==='localhost'||hostname.endsWith('.local'))throw new Error('browser_private_host_blocked')
-  return {hostname,allow:{[hostname]:[],[`*.${hostname}`]:[]}}
+  const allow:Record<string,string[]>={[hostname]:[],[`*.${hostname}`]:[]}
+  // When this target egresses through a residential proxy, the sandbox firewall must
+  // permit the tunnel to the proxy host as well as the provider host.
+  if(resolveBrowserProxy(url)){
+    const proxyHost=proxyAllowlistHost()
+    if(proxyHost){allow[proxyHost]=[];allow[`*.${proxyHost}`]=[]}
+  }
+  return {hostname,allow}
+}
+
+// Env passed to the in-sandbox browser command so its Playwright launch uses the
+// residential proxy — set ONLY for targets that require it (cost/scope control).
+function browserProxyEnv(url:string):Record<string,string>{
+  const proxy=resolveBrowserProxy(url)
+  if(!proxy)return {}
+  const env:Record<string,string>={GOGO_BROWSER_PROXY_URL:proxy.server}
+  if(proxy.username)env.GOGO_BROWSER_PROXY_USERNAME=proxy.username
+  if(proxy.password)env.GOGO_BROWSER_PROXY_PASSWORD=proxy.password
+  return env
 }
 
 const VAULT_LOGIN_SCRIPT=String.raw`
@@ -108,7 +127,10 @@ async function model(page){
 }
 
 (async()=>{
-  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2']});
+  const __env=(process&&process.env)||{};
+  const __proxyServer=(__env.GOGO_BROWSER_PROXY_URL||'').trim();
+  const __proxy=__proxyServer?{server:__proxyServer,username:(__env.GOGO_BROWSER_PROXY_USERNAME||'').trim()||undefined,password:(__env.GOGO_BROWSER_PROXY_PASSWORD||'').trim()||undefined}:undefined;
+  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
   const page=context.pages()[0]||await context.newPage();
   let usernameFilled=false,passwordFilled=false,submitted=false;
   try{
@@ -252,7 +274,10 @@ async function isConsequentialControl(page,selector){
   });}catch{return true;}
 }
 (async()=>{
-  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2']});
+  const __env=(process&&process.env)||{};
+  const __proxyServer=(__env.GOGO_BROWSER_PROXY_URL||'').trim();
+  const __proxy=__proxyServer?{server:__proxyServer,username:(__env.GOGO_BROWSER_PROXY_USERNAME||'').trim()||undefined,password:(__env.GOGO_BROWSER_PROXY_PASSWORD||'').trim()||undefined}:undefined;
+  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
   const page=context.pages()[0]||await context.newPage();
   const log=[];
   let executionBeforeText=null;
@@ -438,7 +463,7 @@ async function inspect(userId:string,url:string){
   const {sandbox,name,releaseOwnerLock}=await getComputer(userId,url)
   try{
   const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[]})).toString('base64')
-  const result=await sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload]})
+  const result=await sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload],env:browserProxyEnv(url)} as any)
   if(result.exitCode!==0)throw new Error(`secure_browser_read_failed:${safeText(await result.stderr(),700)}`)
   const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
   if(!lines.length)throw new Error('secure_browser_empty_output')
@@ -673,7 +698,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
       const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null})).toString('base64')
       if(params.mode==='execute')executionStarted=true
-      const result=await first.sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload]})
+      const result=await first.sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload],env:browserProxyEnv(currentUrl)} as any)
       if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
       const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
