@@ -114,8 +114,8 @@ const rows:any={agent_runs:{id:'run',telegram_id:'1',status:'paused',metadata_js
 let tokenSaveFails=false,cancelledHandoffs=0
 const scopedDb={from:(table:string)=>{
   const filters:Array<[string,any]>=[];let change:any
-  const execute=()=>{const row=rows[table];if(!row||!filters.every(([k,v])=>Array.isArray(v)?v.includes(row[k]):row[k]===v))return {data:null,error:null};if(tokenSaveFails&&change?.metadata_json?.handoff)return {data:null,error:{message:'save failed'}};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
-  const q:any={select:()=>q,order:()=>q,limit:()=>q,insert:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},in:(k:string,v:any[])=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
+  const execute=()=>{const row=rows[table];if(!row||!filters.every(([k,v])=>Array.isArray(v)?v.includes(row[k]):(row[k]??null)===v))return {data:null,error:null};if(tokenSaveFails&&change?.metadata_json?.handoff)return {data:null,error:{message:'save failed'}};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
+  const q:any={select:()=>q,order:()=>q,limit:()=>q,insert:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},is:(k:string,v:any)=>{filters.push([k,v]);return q},in:(k:string,v:any[])=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
     maybeSingle:async()=>execute(),then:(resolve:any)=>Promise.resolve(execute()).then(resolve)}
   return q
 }}
@@ -934,3 +934,9 @@ await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:
 assert.equal(rows.agent_runs.status,'failed','resume recovery must not revive a superseded preparation')
 assert.equal(rows.life_event_actions.status,'queued','resume recovery must not block the corrected preparation')
 preparationSuperseded=false
+
+rows.agent_runs.status='running';rows.agent_runs.metadata_json={life_event_id:'event',life_event_action_id:'action'}
+rows.life_event_actions.status='running';rows.life_event_actions['payload_json->>scheduleRevision']='corrected'
+await assert.rejects(()=>shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'flight_prepare',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[]}}),/auth_handoff_action_save_failed/)
+assert.equal(rows.life_event_actions.status,'running','a legacy unversioned handoff cannot pause a corrected action')
+delete rows.life_event_actions['payload_json->>scheduleRevision']

@@ -29,7 +29,7 @@ async function attachSecondaryAuthHandoffImpl(params:{userId:string;telegramId:s
   if(saveError||!savedRun)throw new Error('auth_handoff_save_failed')
   let pauseAction=supabaseAdmin.from('life_event_actions').update({status:'blocked'})
     .eq('id',metadata.life_event_action_id).eq('telegram_id',params.telegramId).in('status',['running','blocked'])
-  if(params.kind==='flight_prepare'&&metadata.scheduleRevision)pauseAction=pauseAction.eq('payload_json->>scheduleRevision',metadata.scheduleRevision)
+  if(params.kind==='flight_prepare')pauseAction=metadata.scheduleRevision?pauseAction.eq('payload_json->>scheduleRevision',metadata.scheduleRevision):pauseAction.is('payload_json->>scheduleRevision',null)
   const {data:pausedAction,error:actionError}=await pauseAction.select('id').maybeSingle()
   if(actionError||params.kind==='flight_prepare'&&!pausedAction)throw new Error('auth_handoff_action_save_failed')
   // Provisioning is retryable; the run/action are already safely paused.
