@@ -93,17 +93,27 @@ assert.equal(shouldAttemptNaturalAssetRetrieval('Show me my flight delay report'
 assert.equal(shouldAttemptNaturalAssetRetrieval('Find my hotel report summary'), true)
 assert.equal(shouldAttemptNaturalAssetRetrieval('Open my flight incident report status'), true)
 
-// 6. Codex P2 (round 4) — helper-level invariants.
+// 6. Codex P2 (rounds 4–5) — helper-level invariants for the PURE/WEAK result split.
 //    (a) The abuse guard is clause-leading: "report" as a content NOUN is not a flag.
 assert.equal(hasLeadingReportMutation('Open LinkedIn and find the report for harassment prevention'), false)
 assert.equal(hasLeadingReportMutation('find the incident report for abuse training'), false)
-//    (b) but the leading-verb flag actions are still mutations.
+//    (b) leading-verb flag actions are mutations (as/for reason, non-pure objects).
 assert.equal(hasLeadingReportMutation('report the status for harassment'), true)
 assert.equal(hasLeadingReportMutation('and report this post as spam'), true)
-//    (c) A directive with a leading adverb ("Only report verified results") is stripped.
+assert.equal(hasLeadingReportMutation('report the post as inappropriate'), true)
+//    (c) demonstrative + WEAK result noun is a provider object, not a directive.
+assert.equal(hasLeadingReportMutation('report this status'), true)
+assert.equal(hasLeadingReportMutation('report that price'), true)
+//    (d) demonstrative + PURE result noun is a benign directive (round 2).
+assert.equal(hasLeadingReportMutation('report this information only'), false)
+assert.equal(hasLeadingReportMutation('report my results'), false)
+//    (e) an abuse word used as a PURPOSE after a PURE result is benign (round 5).
+assert.equal(hasLeadingReportMutation('report only verified results for harassment prevention'), false)
+//    (f) leading-adverb directives are stripped; report-as-noun titles are not.
 assert.doesNotMatch(stripReportingDirectives('check availability. Only report verified results.'), /\breport\b/i)
 assert.doesNotMatch(stripReportingDirectives('Just report the findings'), /\breport\b/i)
-//    (d) so an operational read ending with that directive does not hijack Asset Memory.
+assert.match(stripReportingDirectives('Find my hotel report summary'), /\breport\b/i)
+//    (g) so an operational read ending with that directive does not hijack Asset Memory.
 assert.equal(
   shouldAttemptNaturalAssetRetrieval('Open the flight booking page and check availability. Only report verified results.'),
   false,

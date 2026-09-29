@@ -9,33 +9,41 @@
 //   • shouldAttemptNaturalAssetRetrieval (Asset Memory operational-flow guard)
 // Keeping the grammar in one place stops the two copies from drifting apart.
 
-// Result/answer nouns a reporting directive reports back to the user.
-const RESULT_NOUN =
-  'results?|findings?|finding|status|information|info|details?|summary|summaries|prices?|costs?|availability|stock|answers?|answer|figures?|numbers?|readings?|outcomes?'
+// PURE result nouns are only ever the thing Gogo reports back — never a provider
+// object. A directive built on them is always benign ("report my results", even
+// "report results for harassment prevention" where the abuse word is a purpose).
+const PURE_RESULT =
+  'results?|findings?|finding|information|info|summary|summaries|answers?|answer|figures?|numbers?|readings?|outcomes?|details?|data'
+// WEAK result nouns double as provider objects on social sites (a "status"/"price"
+// post/attribute). "report the status" (order status) is benign, but "report this
+// status" (demonstrative → object) and "report the status for harassment" (abuse
+// suffix) are mutations.
+const WEAK_RESULT = 'status|prices?|costs?|availability|stock'
 
-// Qualifiers (determiners, possessives, demonstratives, adverbs, adjectives) that may
-// sit between "report" and the result noun. Determiners this/my/our/the are included
-// because "report my results" / "report this information" are ordinary directives.
+// Qualifiers between "report" and the result noun. Demonstratives (this/that/these/
+// those) are allowed before a PURE result ("report this information") but NOT before a
+// WEAK one, where a demonstrative signals a provider object ("report this status").
 const QUALIFIER =
   'back|only|just|now|please|the|this|that|these|those|a|an|my|our|your|its|their|his|her|me|to|us|with|of|all|any|verified|unverified|actual|current|final|live|real|confirmed|exact|relevant|accurate|precise|available|latest|updated|complete|full|raw'
+const SAFE_QUAL = // QUALIFIER minus demonstratives
+  'back|only|just|now|please|the|a|an|my|our|your|its|their|his|her|me|to|us|with|of|all|any|verified|unverified|actual|current|final|live|real|confirmed|exact|relevant|accurate|precise|available|latest|updated|complete|full|raw'
 
-// A benign reporting directive: "report back" or "report [qualifiers] <result-noun>".
-const DIRECTIVE_BODY = `report\\s+back\\b|report(?:\\s+(?:${QUALIFIER}))*\\s+(?:${RESULT_NOUN})\\b`
-// The clause-leading boundary that marks "report" used as a verb (not a noun inside a
-// title). Leading adverbs ("only report …", "just report …") are part of the verb
-// phrase, so they may precede "report".
-const CLAUSE_LEAD = `(?:^|[.!?;,]|\\b(?:and|then|to)\\b)\\s*(?:(?:please|kindly|only|just|now|also|then)\\s+)*`
-
-// Reasons that turn "report X as/for <reason>" into an unambiguous flag/abuse mutation.
 const ABUSE_REASON =
   'spam|abuse|abusive|inappropriate|offensive|fake|fraud|fraudulent|scam|harmful|harassment|harassing|bullying|violation|violating|misleading|counterfeit|objectionable|nudity|violence|hate|impersonation|self[\\s-]?harm|misinformation'
-// "report X as spam" / "report X for harassment" are provider mutations — but only
-// when "report" is the clause-leading VERB, so a content noun ("find the report for
-// harassment prevention") is not misread as a flag action.
-const REPORT_ABUSE_MUTATION_RE = new RegExp(
-  `${CLAUSE_LEAD}report\\b[^.!?;,]*\\b(?:as|for)\\s+(?:${ABUSE_REASON})\\b`,
-  'i',
-)
+
+// The clause-leading boundary that marks "report" used as a verb (not a noun inside a
+// title). Leading adverbs ("only report …") are part of the verb phrase.
+const CLAUSE_LEAD = `(?:^|[.!?;,]|\\b(?:and|then|to)\\b)\\s*(?:(?:please|kindly|only|just|now|also|then)\\s+)*`
+
+// A WEAK-result directive is benign only when it is NOT immediately flagged
+// "as/for <abuse reason>" ("report the status for harassment" is a mutation).
+const WEAK_NOT_ABUSE = `(?!(?:\\s+\\w+){0,3}\\s+(?:as|for)\\s+(?:${ABUSE_REASON})\\b)`
+
+// Benign reporting-directive body (the part after the clause-leading boundary).
+const DIRECTIVE_BODY =
+  `report\\s+back\\b` +
+  `|report(?:\\s+(?:${QUALIFIER}))*\\s+(?:${PURE_RESULT})\\b` +
+  `|report(?:\\s+(?:${SAFE_QUAL}))*\\s+(?:${WEAK_RESULT})\\b${WEAK_NOT_ABUSE}`
 
 /** Remove clause-leading reporting directives so downstream noun/intent checks don't see "report". */
 export function stripReportingDirectives(text: string): string {
@@ -46,15 +54,17 @@ export function stripReportingDirectives(text: string): string {
 
 /**
  * True when a clause-leading "report" is a provider MUTATION rather than a reporting
- * directive. Judged per occurrence so a benign trailing directive can never mask a
- * leading mutation ("report the seller … report only verified results").
+ * directive. A leading "report" is a mutation unless it is "report back" or a benign
+ * PURE/WEAK result directive. Judged per occurrence so a benign trailing directive can
+ * never mask a leading mutation ("report the seller … report only verified results").
  */
 export function hasLeadingReportMutation(text: string): boolean {
-  const t = String(text || '')
-  if (REPORT_ABUSE_MUTATION_RE.test(t)) return true
   const leading = new RegExp(
-    `${CLAUSE_LEAD}report\\b(?!\\s+back\\b)(?!(?:\\s+(?:${QUALIFIER}))*\\s+(?:${RESULT_NOUN})\\b)`,
+    `${CLAUSE_LEAD}report\\b` +
+      `(?!\\s+back\\b)` +
+      `(?!(?:\\s+(?:${QUALIFIER}))*\\s+(?:${PURE_RESULT})\\b)` +
+      `(?!(?:\\s+(?:${SAFE_QUAL}))*\\s+(?:${WEAK_RESULT})\\b${WEAK_NOT_ABUSE})`,
     'i',
   )
-  return leading.test(t)
+  return leading.test(String(text || ''))
 }
