@@ -229,10 +229,18 @@ export function parseConnectedProviderCartAction(text:string):BrowserCommand|nul
   const wantsCart=/\badd\b[^.!?;,]*\bto\s+(?:my\s+|the\s+)?(?:cart|basket)\b/i.test(lower)
   if(!wantsCart)return null
   if(explicitlyNegates(lower,'add'))return null
-  // Never let a cart action carry an order/payment/checkout. Those are human-only and
-  // must be refused here rather than downgraded into a cart click.
-  if(!explicitlyNegates(lower,'order|buy|purchase|checkout|check\\s*out|pay|payment|place')
-     && /\b(?:order|buy|purchase|checkout|check\s*out|\bpay\b|payment|place\s+(?:the\s+|my\s+|an\s+|a\s+)?order)\b/i.test(lower))return null
+  // Never let a cart action carry an order/payment/checkout. Those are human-only. Check
+  // EACH forbidden action independently: a cart request is refused if ANY of them is
+  // present and not explicitly negated (so "add to cart; do not order, but checkout and
+  // pay" is refused because checkout/pay are affirmative even though order is negated).
+  const forbiddenActions=['order','buy','purchase','checkout','check\\s*out','pay','payment']
+  for(const verb of forbiddenActions){
+    if(new RegExp(`\\b(?:${verb})\\b`,'i').test(lower) && !explicitlyNegates(lower,verb))return null
+  }
+  if(/\bplace\s+(?:the\s+|my\s+|an?\s+)?order\b/i.test(lower) && !explicitlyNegates(lower,'place'))return null
+  // A contrast marker re-introduces an affirmative action even if an earlier clause
+  // negated one ("do not order, BUT checkout and pay" must be refused).
+  if(/\b(?:but|however|instead|yet|except)\b[^.!?]*\b(?:order|buy|purchase|checkout|check\s*out|pay|payment)\b/i.test(lower))return null
   const shoppingSites=[
     {alias:/\bblinkit\b/i,loginUrl:'https://blinkit.com/'},
     {alias:/\b(?:swiggy\s+)?instamart\b/i,loginUrl:'https://www.swiggy.com/instamart'},

@@ -143,12 +143,20 @@ assert.equal(
   assert.equal(parseConnectedProviderReadCommand('Open Blinkit and add Amul Taaza toned milk to my cart. Do not order.'), null)
 }
 // A cart action that also orders/checks out/pays is refused outright (human-only).
+// Each forbidden action is checked independently: negating ONE must not smuggle another.
 for (const text of [
   'Open Blinkit and add Amul Taaza to cart and place the order.',
   'Open Blinkit and add Amul Taaza to cart, then checkout and pay.',
   'Open Blinkit and add Amul Taaza to cart and buy it.',
+  'Open Blinkit and add milk to my cart; do not order, but checkout and pay.',
+  'Open Blinkit and add milk to my cart. Do not place the order. Then buy it.',
 ]) {
   assert.equal(parseConnectedProviderCartAction(text), null, `cart+order must be refused: ${text.slice(0, 40)}...`)
+}
+// All consequential actions explicitly negated -> a pure authorized cart add is allowed.
+{
+  const ok = parseConnectedProviderCartAction('Open Blinkit and add Amul Taaza toned milk 1 litre to my cart. Do not order, checkout, or pay.')
+  assert.ok(ok && ok.mode === 'execute', 'a cart add with all consequential actions negated is an approval-gated execute')
 }
 // A pure price read is not a cart action; a negated cart is not a cart action.
 assert.equal(parseConnectedProviderCartAction('Open Blinkit and check the price of Amul Taaza toned milk. Report only verified results.'), null)
