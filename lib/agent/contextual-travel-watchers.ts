@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCostBudget } from '@/lib/services/cost-guard'
+import { ticketTimezone } from '@/lib/services/travel-time'
+import { isValidTimezone } from '@/lib/timezone'
 
 type TravelRow={
   id:string
@@ -38,8 +40,14 @@ function rootFor(rows:TravelRow[]){
   const ids=rows.map(row=>String(row.id)).sort().join('|')
   return 'travel:'+createHash('sha256').update(ids).digest('hex').slice(0,24)
 }
-function dateLabel(value:string){
-  return new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',day:'numeric',month:'long',year:'numeric'}).format(new Date(value))
+// Format the calendar date the way the traveller experiences it: in the leg/destination's
+// own timezone. A UTC-only label misdates an evening departure whose local date differs
+// from the UTC date (e.g. 2026-09-27T22:35Z is 28 September locally), which then makes the
+// verifier reject a correctly-dated status/weather result. Falls back to UTC when the zone
+// can't be resolved, preserving prior behaviour for unknown cities.
+function dateLabel(value:string,timezone?:string|null){
+  const zone=timezone&&isValidTimezone(timezone)?timezone:'UTC'
+  return new Intl.DateTimeFormat('en-GB',{timeZone:zone,day:'numeric',month:'long',year:'numeric'}).format(new Date(value))
 }
 function sourceRefs(rows:TravelRow[]){
   return rows.slice(0,8).map(row=>({type:'travel_ticket' as const,id:String(row.id)}))
@@ -98,12 +106,21 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
   // is home. Falls back to the last arrival city for a simple one-way.
   const destination=(stay?.city||clean(last?.to_city,100))||'destination'
   const connection=rows.length>1?clean(rows[0]?.to_city,100):''
-  const departDate=dateLabel(first.depart_at)
-  const arrivalDate=dateLabel(last.arrive_at||last.depart_at)
+  const departDate=dateLabel(first.depart_at,ticketTimezone(first.from_city))
+  // The date the traveller is actually AT the destination: the away-stay arrival for a round
+  // trip, the final arrival for a one-way — formatted in the destination's own timezone. Using
+  // the last leg's arrival would be the return-home date on a round trip, which then rejects
+  // correctly-dated destination weather/ground results as a date mismatch.
+  const stayArriveIso=stay?new Date(stay.arriveMs).toISOString():String(last.arrive_at||last.depart_at||'')
+  const destinationDate=dateLabel(stayArriveIso,ticketTimezone(destination))
   // Every leg's dates, so a disruption reported for a later/overnight leg with ITS own
   // date still verifies (the flight-status query previously carried only the first date).
+  // Each leg's depart/arrive is labelled in that endpoint's own timezone.
   const legDates=Array.from(new Set(
-    rows.flatMap(row=>[row.depart_at,row.arrive_at]).filter(Boolean).map(value=>dateLabel(String(value)))
+    rows.flatMap(row=>[
+      row.depart_at?dateLabel(String(row.depart_at),ticketTimezone(row.from_city)):'',
+      row.arrive_at?dateLabel(String(row.arrive_at),ticketTimezone(row.to_city)):'',
+    ]).filter(Boolean)
   )).join(' ')
   const refs=sourceRefs(rows)
   const base=(contextClass:ContextMeta['contextClass'],reason:string):ContextMeta=>({
@@ -120,7 +137,7 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
         delivery:'both',cadenceMinutes:180,burstUntil:null,
         // Per-leg "flightNo @ departure date" so a disruption is verified against the
         // date of the SPECIFIC leg whose flight number the result cites (not any leg date).
-        flightLegs:rows.map(row=>`${clean(row.flight_no,30)} @ ${dateLabel(String(row.depart_at||row.arrive_at||''))}`).filter(s=>!s.startsWith(' @')),
+        flightLegs:rows.map(row=>`${clean(row.flight_no,30)} @ ${dateLabel(String(row.depart_at||row.arrive_at||''),ticketTimezone(row.from_city))}`).filter(s=>!s.startsWith(' @')),
         ...base('flight_status','Watch only for material changes to the saved flight legs before and during departure.'),
       },
     },
@@ -129,8 +146,8 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
       condition:{
         title:`Trip connection & ground transit · ${connection||destination}`,
         query:connection
-          ? `${connection} airport connection disruption ${destination} airport ground transit disruption ${departDate} ${arrivalDate}`
-          : `${destination} airport ground transit disruption ${arrivalDate}`,
+          ? `${connection} airport connection disruption ${destination} airport ground transit disruption ${departDate} ${destinationDate}`
+          : `${destination} airport ground transit disruption ${destinationDate}`,
         triggerKeywords:['airport closure','terminal change','security disruption','strike','service suspended','major delay','ground transport disruption'],
         delivery:'both',cadenceMinutes:360,burstUntil:null,
         ...base('connection_ground','Watch for high-signal airport/connection or arrival ground-transit disruption tied to this itinerary.'),
@@ -140,7 +157,7 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
       type:'web_search',
       condition:{
         title:`Trip weather · ${destination}`,
-        query:`${destination} weather travel conditions ${arrivalDate}`,
+        query:`${destination} weather travel conditions ${destinationDate}`,
         triggerKeywords:['weather warning','storm','heavy rain','snow','flood','extreme heat','severe weather','travel advisory'],
         delivery:'both',cadenceMinutes:360,burstUntil:null,
         // Weather follows the destination stay, not the outbound leg's completion.

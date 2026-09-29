@@ -133,7 +133,10 @@ function requestedPassengerSeat(name:string,query:string){
 // queries so ordinary present/future turns stay tightly scoped.
 export function isRetrospectiveTravelQuery(query:string):boolean{
   const q=String(query||'').toLowerCase()
-  const past=/\b(was|were|did|had|has|have|already|yet|last|previous|earlier|recent|ago|history|historical|past|landed|arrived|flew|flown|boarded)\b/.test(q)
+  // Genuinely retrospective wording only. Bare "has"/"have" is possession, not tense —
+  // "what flights do I have?" / "do I have a flight tomorrow?" are present/future and must
+  // keep the tight 2-day window rather than widening lookback to 120 days.
+  const past=/\b(was|were|did|had|already|yet|last|previous|earlier|recent|ago|history|historical|past|landed|arrived|flew|flown|boarded)\b/.test(q)
   const travel=/\b(flight|flights|land(?:ed|ing)?|arriv(?:e|ed|es|al|ing)|depart(?:ed|ure)?|trip|travel|itinerary|pnr|boarding|seat|airline|fly|flew|flown|airport)\b/.test(q)
   return past&&travel
 }
