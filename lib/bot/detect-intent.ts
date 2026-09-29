@@ -158,6 +158,18 @@ export function detectIntent(text: string): DetectedIntent {
   if (lower.includes('ipl table') || lower.includes('points table') || lower.includes('table toppers') || lower.includes('ipl standings') || lower.includes('ipl topper')) return { type: 'sports_standings', confidence: 'high' }
   if ((lower.includes('rcb') && lower.includes('match')) || (lower.includes('ipl') && lower.includes('match')) || lower.includes('next rcb match') || lower.includes('when is the next rcb match')) return { type: 'sports_schedule', confidence: 'high' }
 
+  // Live flight status ("has EY1 landed?", "status of AI 505", "is 6E203 on time tomorrow?")
+  // must attempt an actual lookup, not be delegated to the user. This runs BEFORE the broad
+  // reminder matcher (which would otherwise claim it on "tomorrow"/a weekday/a time). Only a
+  // message that (a) names a concrete flight, (b) asks about status/landing, and (c) is NOT
+  // an explicit reminder/watch-creation request routes here; a pronoun-only "has it landed?"
+  // stays on the recall path, which already refuses to claim a landing from schedule alone.
+  if (!/\b(remind me|remind to|set (?:a )?reminder|reminder for|alert me|notify me|let me know when|keep me posted|keep (?:me )?tracking|watch (?:this|the|my))\b/i.test(lower) &&
+      /\b(?:[a-z]{2}|[a-z]\d|\d[a-z])\s?\d{1,4}\b/i.test(lower) &&
+      /\b(land(?:s|ed|ing)?|arriv(?:e|ed|es|al|ing)|(?:flight )?status|delay(?:ed|s)?|on[- ]time|diverted|departed|take[n]?\s?off|tracker|track(?:ing)?)\b/i.test(lower) &&
+      /\bflight\b|\b(?:[a-z]{2}|[a-z]\d|\d[a-z])\s?\d{1,4}\b/i.test(lower))
+    return { type: 'web_search', confidence: 'high' }
+
   if (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ') || lower.includes('set a reminder') || lower.includes('set reminder') || lower.includes('reminder for') || /\b(on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower) || /\b(tomorrow|tmrw|tmr)\b/i.test(lower) || /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(lower) || /\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(lower)) return { type: 'set_reminder', confidence: 'high' }
 
   if (lower === 'show all lists' || lower === 'list all' || lower === 'show my lists') return { type: 'list_show_all', confidence: 'high' }
@@ -170,15 +182,6 @@ export function detectIntent(text: string): DetectedIntent {
   if (checkVerb) return { type: checkVerb, confidence: 'medium' }
   if (lower.startsWith('clear ') || lower.startsWith('delete list ') || lower.startsWith('remove list ')) return { type: 'list_clear', confidence: 'medium' }
   if (lower.startsWith('remember ') || lower.includes('remember that ') || lower.includes('save this memory')) return { type: 'save_memory', confidence: 'high' }
-  // Live flight status ("has EY1 landed?", "status of AI 505", "is 6E203 delayed") must
-  // attempt an actual lookup instead of being delegated back to the user. Only route when
-  // a concrete flight identifier is present in THIS message, so the web search is
-  // grounded (a pronoun-only "has it landed?" stays on the recall path, which already
-  // refuses to claim a landing from schedule alone).
-  if (/\b(?:[a-z]{2}|[a-z]\d|\d[a-z])\s?\d{1,4}\b/i.test(lower) &&
-      /\b(land(?:s|ed|ing)?|arriv(?:e|ed|es|al|ing)|(?:flight )?status|delay(?:ed|s)?|on[- ]time|diverted|departed|take[n]?\s?off|tracker|track(?:ing)?)\b/i.test(lower) &&
-      /\bflight\b|\b(?:[a-z]{2}|[a-z]\d|\d[a-z])\s?\d{1,4}\b/i.test(lower))
-    return { type: 'web_search', confidence: 'high' }
   if (SEARCH_HINTS.some((k) => lower.includes(k))) return { type: 'web_search', confidence: 'medium' }
 
   // Media memory commands

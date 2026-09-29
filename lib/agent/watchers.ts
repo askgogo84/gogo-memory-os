@@ -1028,26 +1028,30 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       occurrence: occurrenceFor(result),
     }),
   }))
-  const candidate = assessments.find(item => item.quality.eligible) || null
   // A keyword hit alone is not a confirmed disruption. For contextual travel watchers,
-  // verify the candidate actually concerns this occurrence (flight number+date /
-  // destination+date) before it can alert.
-  const contextVerification = candidate
-    ? verifyContextualDisruption({
-        contextClass: (condition as any).contextClass,
-        query: condition.query,
-        title: condition.title,
-        resultTitle: candidate.result.title,
-        resultSnippet: candidate.result.snippet,
-      })
-    : { verified: true, reason: 'no_candidate' }
+  // pick the first eligible result that ALSO passes occurrence verification (flight
+  // number+date / destination+date) — an earlier eligible-but-wrong result (another
+  // flight/date/city) must not veto a later correct one in the same poll.
+  const contextClass = String((condition as any).contextClass || '')
+  const contextual = contextClass === 'flight_status' || contextClass === 'destination_weather'
+  const verifyItem = (item: any) => verifyContextualDisruption({
+    contextClass, query: condition.query, title: condition.title,
+    resultTitle: item.result.title, resultSnippet: item.result.snippet,
+  })
+  let candidate: any = null
+  let sawUnverified = false
+  for (const item of assessments) {
+    if (!item.quality.eligible) continue
+    if (contextual && !verifyItem(item).verified) { sawUnverified = true; continue }
+    candidate = item; break
+  }
   const alertGate = webWatchAlertAllowed({
     now,
     lastAlertAt: watcher.last_state_json?.lastAlertAt || watcher.last_state_json?.lastTriggeredAt || null,
     alertTimes: Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : [],
   })
-  const material = !isBaseline && Boolean(candidate) && contextVerification.verified && alertGate.allowed
-  const suppressedReason = !isBaseline && candidate && !contextVerification.verified ? contextVerification.reason
+  const material = !isBaseline && Boolean(candidate) && alertGate.allowed
+  const suppressedReason = !isBaseline && !candidate && sawUnverified ? 'unverified_context'
     : !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
   const quietChecks = material || isBaseline ? 0 : currentQuiet + 1
   const cadenceMinutes = adaptiveWatcherCadence({

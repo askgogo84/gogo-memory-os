@@ -336,6 +336,11 @@ assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:fq
 const wq = 'New York weather travel conditions 2 October'
 assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:wq, title:'Trip weather · New York', resultTitle:'Storm warning for New York on 2 October', resultSnippet:'severe weather' }).verified, true)
 assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:wq, title:'Trip weather · New York', resultTitle:'Storm warning for Chicago', resultSnippet:'severe weather in Chicago' }).verified, false, 'a storm in a different city must not confirm')
+// A later/overnight leg reported with ITS OWN date must still verify when the watcher
+// query carries every leg's date (not just the first).
+const multiLegQ = 'EY239 EY1 flight status 27 September 28 September Bengaluru New York'
+assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:multiLegQ, resultTitle:'EY 1 delayed on 28 September', resultSnippet:'overnight leg running late' }).verified, true, 'a later leg date present in the query must verify')
+assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:multiLegQ, resultTitle:'EY 1 delayed on 15 August', resultSnippet:'unrelated earlier date' }).verified, false, 'a date on no leg must not verify')
 // Non-contextual watches are not gated by this verifier.
 assert.equal(verifyContextualDisruption({ contextClass:'', query:'anything', resultTitle:'x', resultSnippet:'y' }).verified, true)
 
