@@ -42,7 +42,7 @@ export async function GET(request: Request) {
   const tg = session.telegramId
 
   const [runs, steps, watchers, goals, ideas, approvals, permissions, artifacts] = await Promise.all([
-    supabaseAdmin.from('agent_runs').select('id, goal_id, title, summary, status, capability, progress, started_at, updated_at, next_check_at, why').eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(20),
+    supabaseAdmin.from('agent_runs').select('id, goal_id, title, summary, status, capability, progress, started_at, updated_at, next_check_at, why, error, metadata_json').eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_steps').select('id, run_id, ordinal, tool_name, title, status, output_json, error, started_at, completed_at').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(120),
     supabaseAdmin.from('agent_watchers').select('id, goal_id, type, condition_json, cadence_minutes, active, last_checked_at, next_check_at, created_at, updated_at').eq('telegram_id', tg).eq('active', true).order('created_at', { ascending: false }).limit(30),
     supabaseAdmin.from('agent_goals').select('id, title, outcome, status, progress, deadline, next_action, blockers').eq('telegram_id', tg).neq('status', 'cancelled').order('updated_at', { ascending: false }).limit(20),

@@ -19,6 +19,19 @@ export function extractFlightCodes(text: string): string[] {
   return Array.from(out).sort()
 }
 
+// Date tokens in a result ("2026-09-27", "2 October", "Oct 2") normalised to a stable
+// form. Added to the occurrence key so the SAME flight number on DIFFERENT dates is a
+// distinct event (a delay on the return leg is not suppressed by the outbound delay).
+const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec'
+export function extractDateTokens(text: string): string[] {
+  const t = String(text || '').toLowerCase()
+  const out = new Set<string>()
+  for (const m of t.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) out.add(`${m[1]}-${m[2]}-${m[3]}`)
+  for (const m of t.matchAll(new RegExp(`\\b(\\d{1,2})\\s+(${MONTHS})[a-z]*\\b`, 'g'))) out.add(`${m[2].slice(0, 3)}-${m[1].padStart(2, '0')}`)
+  for (const m of t.matchAll(new RegExp(`\\b(${MONTHS})[a-z]*\\s+(\\d{1,2})\\b`, 'g'))) out.add(`${m[1].slice(0, 3)}-${m[2].padStart(2, '0')}`)
+  return Array.from(out).sort()
+}
+
 // Dedup history entries are stored "value|ms". Only a trailing |<digits> is treated as
 // a timestamp, so values that themselves contain "|" (e.g. a URL query) are preserved.
 function parseStamped(entry: string): { value: string; ms: number } {

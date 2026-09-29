@@ -14,6 +14,7 @@ import {
   watcherResultSignature,
   webWatchAlertAllowed,
   extractFlightCodes,
+  extractDateTokens,
   activeEventKeys,
   recordEventKey,
   activeStamped,
@@ -1000,7 +1001,10 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       const spaced = code.replace(/^([a-z]{1,2}|\d[a-z])(\d)/i, '$1 $2')
       return hay.includes(code) || hay.includes(spaced)
     })
-    return `${contextScope}:${cited.join('+')}`
+    // Include the date the result is about so the SAME flight number on different dates
+    // (e.g. an outbound and a return leg) is a distinct event and both can alert.
+    const dates = extractDateTokens(`${result.title} ${result.snippet || ''}`)
+    return `${contextScope}:${cited.join('+')}:${dates.join('+')}`
   }
 
   // URL/topic dedup expires on the same re-arm clock as event keys, so a recurring

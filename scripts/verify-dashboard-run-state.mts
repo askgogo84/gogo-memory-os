@@ -9,15 +9,22 @@ assert.deepEqual(summarizeActiveRunState([{ status: 'running' }]).label, 'Workin
 assert.deepEqual(summarizeActiveRunState([{ status: 'queued' }]).label, 'Working')
 
 // The exact incident: a paused (provider-blocked) run must NOT read as "Working".
-// `paused` is ambiguous (rejected approval vs terminal block), so it is neither
-// Working nor a standing "Waiting for you" prompt.
+// A bare/rejected paused run is neither Working nor a standing "Waiting for you" prompt.
 const blocked = summarizeActiveRunState([{ status: 'paused' }])
 assert.notEqual(blocked.label, 'Working')
 assert.equal(blocked.working, 0)
 assert.equal(blocked.waiting, 0)
 
+// A rejected-approval paused run must NOT linger as "Waiting for you".
+assert.equal(summarizeActiveRunState([{ status: 'paused', error: 'approval_rejected' }]).label, 'Ready')
+
 // An explicit approval wait is the one unambiguous "waiting on the user" state.
 assert.equal(summarizeActiveRunState([{ status: 'waiting_approval' }]).label, 'Waiting for you')
+
+// A paused run stopped at a human-action boundary (sign-in / secure handoff) IS
+// actionable and must read "Waiting for you", not "Ready".
+assert.equal(summarizeActiveRunState([{ status: 'paused', error: 'human_auth_required' }]).label, 'Waiting for you')
+assert.equal(summarizeActiveRunState([{ status: 'paused', metadata_json: { handoff: { releaseUrl: 'x' } } }]).label, 'Waiting for you')
 
 // Terminal states are neither working nor waiting.
 assert.equal(summarizeActiveRunState([{ status: 'completed' }]).label, 'Ready')

@@ -206,7 +206,10 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
       for(const name of detail.names){
         if(!requestedPassengerSeat(name,query))continue
         const label=detail.names.length===1?`Seat for ${name}: ${detail.seat}`:`Passenger ${name}: seat ${detail.seat} recorded on a group ticket; individual assignment unverified`
-        facts.push({...flightFact,id:`travel-ticket:${leg.id}:seat:${hash(label)}`,summary:safe([label,leg.flightNo,`Flight ${leg.from} → ${leg.to}`].filter(Boolean).join(' · '),620)})
+        // Carry the past-leg status into the passenger-specific fact too — a "what time
+        // was she scheduled to land" follow-up selects this fact, and it must not lose
+        // the past-leg/booked-schedule warning.
+        facts.push({...flightFact,id:`travel-ticket:${leg.id}:seat:${hash(label)}`,summary:safe([label,leg.flightNo,`Flight ${leg.from} → ${leg.to}`,timeStatusLabel].filter(Boolean).join(' · '),620)})
       }
     }
 

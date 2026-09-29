@@ -7,6 +7,7 @@ import {
   watcherResultSignature,
   watcherEventKey,
   extractFlightCodes,
+  extractDateTokens,
   activeEventKeys,
   recordEventKey,
   activeStamped,
@@ -282,6 +283,15 @@ assert.deepEqual(extractFlightCodes('trip: EY239 then EY1'), ['ey1', 'ey239'])
 // Different occurrences (leg EY239 vs leg EY1) with the SAME disruption keyword are
 // distinct events and both alert; the same occurrence re-alerts only after re-arm.
 assert.notEqual(watcherEventKey(['delay'], 'trip-ny:flight_status:ey239'), watcherEventKey(['delay'], 'trip-ny:flight_status:ey1'))
+// Codex P1 (round 3): the SAME flight number on DIFFERENT dates is a distinct event.
+assert.deepEqual(extractDateTokens('EY 1 delayed on 2026-09-27'), ['2026-09-27'])
+assert.deepEqual(extractDateTokens('EY 1 status for 2 October'), ['oct-02'])
+assert.deepEqual(extractDateTokens('EY 1 delayed Oct 2'), ['oct-02'])
+assert.notEqual(
+  watcherEventKey(['delay'], 'trip:ey1:oct-02'),
+  watcherEventKey(['delay'], 'trip:ey1:oct-16'),
+  'same flight number on different dates must be distinct events',
+)
 
 // Event-key re-arm: an expired key no longer suppresses; a fresh one does.
 const t0 = new Date('2026-09-01T00:00:00Z')
