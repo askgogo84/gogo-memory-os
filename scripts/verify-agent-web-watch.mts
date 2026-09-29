@@ -12,6 +12,7 @@ import {
   recordEventKey,
   activeStamped,
   mergeStamped,
+  verifyContextualDisruption,
   webWatchAlertAllowed,
   WEB_WATCH_MAX_ALERTS_24H,
   WEB_WATCH_MIN_ALERT_INTERVAL_MS,
@@ -324,6 +325,38 @@ const refreshed = mergeStamped(urlHist, ['https://tracker.example.com/ey1'], rec
 assert.deepEqual(activeStamped(refreshed, later), [], 're-seeing a URL must not reset its expiry clock')
 // Legacy bare URL entries stay deduped (no spam burst) until re-stamped.
 assert.deepEqual(activeStamped(['https://legacy.example.com/x'], later), ['https://legacy.example.com/x'])
+
+// A keyword hit alone must not confirm a disruption — the result must concern THIS
+// occurrence (flight number + date / destination + date).
+const fq = 'EY1 flight status 2 October Bengaluru New York'
+assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:fq, resultTitle:'Etihad EY 1 delayed on 2 October', resultSnippet:'EY 1 running late' }).verified, true)
+assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:fq, resultTitle:'Etihad EY 45 delayed', resultSnippet:'a different flight' }).verified, false, 'a different flight number must not confirm')
+assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:fq, resultTitle:'EY 1 delayed on 27 September', resultSnippet:'earlier occurrence' }).verified, false, 'a different date for the same number must not confirm')
+assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:fq, resultTitle:'Airline strike news', resultSnippet:'generic delays across airports' }).verified, false, 'generic delay news must not confirm a specific flight')
+const wq = 'New York weather travel conditions 2 October'
+assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:wq, title:'Trip weather · New York', resultTitle:'Storm warning for New York on 2 October', resultSnippet:'severe weather' }).verified, true)
+assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:wq, title:'Trip weather · New York', resultTitle:'Storm warning for Chicago', resultSnippet:'severe weather in Chicago' }).verified, false, 'a storm in a different city must not confirm')
+// Per-leg binding: a result's date is checked against the date of the SPECIFIC leg whose
+// flight number it cites, so right-flight-wrong-leg-date is rejected.
+const legs = ['EY 239 @ 27 September 2026', 'EY 1 @ 28 September 2026']
+const withLegs = (title: string) => verifyContextualDisruption({ contextClass:'flight_status', query:'EY239 EY1 flight status', flightLegs:legs, resultTitle:title, resultSnippet:'' })
+assert.equal(withLegs('EY 1 delayed on 28 September').verified, true, 'right flight on its own leg date verifies')
+assert.equal(withLegs('EY 239 cancelled on 27 September').verified, true, 'the earlier leg on its own date verifies')
+assert.equal(withLegs('EY 1 delayed on 27 September').verified, false, 'right flight number with a DIFFERENT leg date must be rejected')
+assert.equal(withLegs('EY 45 delayed on 28 September').verified, false, 'a flight not in the itinerary must be rejected')
+assert.equal(withLegs('EY 1 delayed').verified, true, 'right flight with no date is accepted (nothing to contradict)')
+// Year is preserved when BOTH sides carry one: a same-month/day delay from a PRIOR year
+// (a recurring flight) must not verify this year's leg.
+assert.equal(withLegs('EY 1 delayed on 28 September 2026').verified, true, 'right flight on its own leg date and year verifies')
+assert.equal(withLegs('EY 1 delayed on 28 September 2025').verified, false, 'same month/day in a different YEAR must be rejected')
+assert.equal(withLegs('EY 1 delayed on 28 September, 2025').verified, false, 'year rejection is spelling-agnostic')
+// Complete destination identity: a multi-token destination is not satisfied by a single
+// generic shared token ("city"); every distinctive token must appear.
+const mcq = 'Mexico City weather travel conditions 2 October'
+assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:mcq, title:'Trip weather · Mexico City', resultTitle:'Storm warning for Mexico City on 2 October', resultSnippet:'severe weather' }).verified, true, 'the full destination verifies')
+assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:mcq, title:'Trip weather · Mexico City', resultTitle:'Boston city flooding on 2 October', resultSnippet:'severe weather in the city' }).verified, false, 'sharing only the generic token "city" must not confirm')
+// Non-contextual watches are not gated by this verifier.
+assert.equal(verifyContextualDisruption({ contextClass:'', query:'anything', resultTitle:'x', resultSnippet:'y' }).verified, true)
 
 const now = new Date('2026-09-11T03:00:00Z')
 const withinCooldown = webWatchAlertAllowed({

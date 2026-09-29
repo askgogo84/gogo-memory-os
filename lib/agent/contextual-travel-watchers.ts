@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCostBudget } from '@/lib/services/cost-guard'
+import { ticketTimezone } from '@/lib/services/travel-time'
+import { isValidTimezone } from '@/lib/timezone'
 
 type TravelRow={
   id:string
@@ -38,8 +40,14 @@ function rootFor(rows:TravelRow[]){
   const ids=rows.map(row=>String(row.id)).sort().join('|')
   return 'travel:'+createHash('sha256').update(ids).digest('hex').slice(0,24)
 }
-function dateLabel(value:string){
-  return new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',day:'numeric',month:'long',year:'numeric'}).format(new Date(value))
+// Format the calendar date the way the traveller experiences it: in the leg/destination's
+// own timezone. A UTC-only label misdates an evening departure whose local date differs
+// from the UTC date (e.g. 2026-09-27T22:35Z is 28 September locally), which then makes the
+// verifier reject a correctly-dated status/weather result. Falls back to UTC when the zone
+// can't be resolved, preserving prior behaviour for unknown cities.
+function dateLabel(value:string,timezone?:string|null){
+  const zone=timezone&&isValidTimezone(timezone)?timezone:'UTC'
+  return new Intl.DateTimeFormat('en-GB',{timeZone:zone,day:'numeric',month:'long',year:'numeric'}).format(new Date(value))
 }
 function sourceRefs(rows:TravelRow[]){
   return rows.slice(0,8).map(row=>({type:'travel_ticket' as const,id:String(row.id)}))
@@ -58,14 +66,62 @@ function tripExpiry(rows:TravelRow[]){
   // ticket will create its own context. This is bounded and automatically expires.
   return new Date(end+72*3600_000).toISOString()
 }
+// The destination "stay" is the city with the longest gap between an arrival and the next
+// departure from that same city. For a round trip that is the away city (bounded by the
+// return departure); for a one-way it is the final arrival city (open-ended stay). This
+// correctly handles chronologically-sorted round trips where the LAST leg returns home.
+function awayStay(rows:TravelRow[]):{city:string;arriveMs:number;endMs:number}|null{
+  // You don't "stay" at your origin, so a round trip's final arrival home is not a
+  // destination candidate — otherwise its open-ended (no onward leg) gap would always win.
+  const originCity=clean(rows[0]?.from_city,100)
+  let best:{city:string;arriveMs:number;endMs:number;stayMs:number}|null=null
+  for(let i=0;i<rows.length;i++){
+    const city=clean(rows[i]?.to_city,100)
+    const arriveMs=Date.parse(String(rows[i]?.arrive_at||rows[i]?.depart_at||''))
+    if(!city||city===originCity||!Number.isFinite(arriveMs))continue
+    const onward=rows.slice(i+1).find(row=>clean(row.from_city,100)===city&&Date.parse(String(row.depart_at||''))>arriveMs)
+    const endMs=onward?Date.parse(String(onward.depart_at)):NaN
+    const stayMs=Number.isFinite(endMs)?endMs-arriveMs:Number.POSITIVE_INFINITY // final destination = open-ended
+    if(!best||stayMs>best.stayMs)best={city,arriveMs,endMs,stayMs}
+  }
+  return best?{city:best.city,arriveMs:best.arriveMs,endMs:best.endMs}:null
+}
+// Destination weather tracks the STAY, not the outbound leg. Bounded by the return
+// departure when known; a one-way (open-ended) stay extends to a reasonable horizon
+// instead of ending 72h after arrival.
+function destinationStayExpiry(rows:TravelRow[],fallbackExpiresAt:string){
+  const stay=awayStay(rows)
+  if(!stay)return fallbackExpiresAt
+  if(Number.isFinite(stay.endMs))return new Date(stay.endMs+24*3600_000).toISOString()
+  const oneWayStay=new Date(stay.arriveMs+7*24*3600_000).toISOString()
+  return Date.parse(oneWayStay)>Date.parse(fallbackExpiresAt)?oneWayStay:fallbackExpiresAt
+}
 function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
   const first=rows[0],last=rows[rows.length-1]
   const flights=flightLabel(rows)
   const route=routeLabel(rows)
-  const destination=clean(last?.to_city,100)||'destination'
+  const stay=awayStay(rows)
+  // The destination is the city the traveller actually stays in (longest gap between an
+  // arrival and the next departure), NOT the final leg's arrival — which for a round trip
+  // is home. Falls back to the last arrival city for a simple one-way.
+  const destination=(stay?.city||clean(last?.to_city,100))||'destination'
   const connection=rows.length>1?clean(rows[0]?.to_city,100):''
-  const departDate=dateLabel(first.depart_at)
-  const arrivalDate=dateLabel(last.arrive_at||last.depart_at)
+  const departDate=dateLabel(first.depart_at,ticketTimezone(first.from_city))
+  // The date the traveller is actually AT the destination: the away-stay arrival for a round
+  // trip, the final arrival for a one-way — formatted in the destination's own timezone. Using
+  // the last leg's arrival would be the return-home date on a round trip, which then rejects
+  // correctly-dated destination weather/ground results as a date mismatch.
+  const stayArriveIso=stay?new Date(stay.arriveMs).toISOString():String(last.arrive_at||last.depart_at||'')
+  const destinationDate=dateLabel(stayArriveIso,ticketTimezone(destination))
+  // Every leg's dates, so a disruption reported for a later/overnight leg with ITS own
+  // date still verifies (the flight-status query previously carried only the first date).
+  // Each leg's depart/arrive is labelled in that endpoint's own timezone.
+  const legDates=Array.from(new Set(
+    rows.flatMap(row=>[
+      row.depart_at?dateLabel(String(row.depart_at),ticketTimezone(row.from_city)):'',
+      row.arrive_at?dateLabel(String(row.arrive_at),ticketTimezone(row.to_city)):'',
+    ]).filter(Boolean)
+  )).join(' ')
   const refs=sourceRefs(rows)
   const base=(contextClass:ContextMeta['contextClass'],reason:string):ContextMeta=>({
     contextual:true,contextualKind:'travel',contextKey:`${root}:${contextClass}`,contextRoot:root,
@@ -76,9 +132,12 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
       type:'web_search',
       condition:{
         title:`Trip flight status · ${flights||route}`,
-        query:`${flights} flight status ${departDate} ${route}`.replace(/\s+/g,' ').trim(),
+        query:`${flights} flight status ${legDates||departDate} ${route}`.replace(/\s+/g,' ').trim(),
         triggerKeywords:['delay','delayed','cancelled','cancellation','gate change','schedule change','diverted'],
         delivery:'both',cadenceMinutes:180,burstUntil:null,
+        // Per-leg "flightNo @ departure date" so a disruption is verified against the
+        // date of the SPECIFIC leg whose flight number the result cites (not any leg date).
+        flightLegs:rows.map(row=>`${clean(row.flight_no,30)} @ ${dateLabel(String(row.depart_at||row.arrive_at||''),ticketTimezone(row.from_city))}`).filter(s=>!s.startsWith(' @')),
         ...base('flight_status','Watch only for material changes to the saved flight legs before and during departure.'),
       },
     },
@@ -87,8 +146,8 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
       condition:{
         title:`Trip connection & ground transit · ${connection||destination}`,
         query:connection
-          ? `${connection} airport connection disruption ${destination} airport ground transit disruption ${departDate} ${arrivalDate}`
-          : `${destination} airport ground transit disruption ${arrivalDate}`,
+          ? `${connection} airport connection disruption ${destination} airport ground transit disruption ${departDate} ${destinationDate}`
+          : `${destination} airport ground transit disruption ${destinationDate}`,
         triggerKeywords:['airport closure','terminal change','security disruption','strike','service suspended','major delay','ground transport disruption'],
         delivery:'both',cadenceMinutes:360,burstUntil:null,
         ...base('connection_ground','Watch for high-signal airport/connection or arrival ground-transit disruption tied to this itinerary.'),
@@ -98,10 +157,12 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
       type:'web_search',
       condition:{
         title:`Trip weather · ${destination}`,
-        query:`${destination} weather travel conditions ${arrivalDate}`,
+        query:`${destination} weather travel conditions ${destinationDate}`,
         triggerKeywords:['weather warning','storm','heavy rain','snow','flood','extreme heat','severe weather','travel advisory'],
         delivery:'both',cadenceMinutes:360,burstUntil:null,
+        // Weather follows the destination stay, not the outbound leg's completion.
         ...base('destination_weather','Watch destination weather only for conditions likely to affect this saved trip.'),
+        expiresAt:destinationStayExpiry(rows,expiresAt),
       },
     },
   ]

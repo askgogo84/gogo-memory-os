@@ -19,6 +19,7 @@ import {
   recordEventKey,
   activeStamped,
   mergeStamped,
+  verifyContextualDisruption,
 } from './watcher-quality'
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
@@ -33,6 +34,7 @@ export type ContextualWatcherMeta = {
   expiresAt?: string|null
   sourceRefs?: Array<Record<string,unknown>>
   userStoppedAt?: string|null
+  flightLegs?: string[]
 }
 
 export type DeadlineWatcherCondition = {
@@ -99,6 +101,7 @@ function normalizeContextualMeta(input:any):ContextualWatcherMeta {
     expiresAt,
     sourceRefs:Array.isArray(input?.sourceRefs)?input.sourceRefs.slice(0,12):[],
     userStoppedAt:input?.userStoppedAt?validDate(input.userStoppedAt):null,
+    flightLegs:Array.isArray(input?.flightLegs)?input.flightLegs.map((x:any)=>String(x||'').slice(0,80)).filter(Boolean).slice(0,12):undefined,
   }
 }
 
@@ -1027,14 +1030,32 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       occurrence: occurrenceFor(result),
     }),
   }))
-  const candidate = assessments.find(item => item.quality.eligible) || null
+  // A keyword hit alone is not a confirmed disruption. For contextual travel watchers,
+  // pick the first eligible result that ALSO passes occurrence verification (flight
+  // number+date / destination+date) — an earlier eligible-but-wrong result (another
+  // flight/date/city) must not veto a later correct one in the same poll.
+  const contextClass = String((condition as any).contextClass || '')
+  const contextual = contextClass === 'flight_status' || contextClass === 'destination_weather'
+  const verifyItem = (item: any) => verifyContextualDisruption({
+    contextClass, query: condition.query, title: condition.title,
+    resultTitle: item.result.title, resultSnippet: item.result.snippet,
+    flightLegs: (condition as any).flightLegs,
+  })
+  let candidate: any = null
+  let sawUnverified = false
+  for (const item of assessments) {
+    if (!item.quality.eligible) continue
+    if (contextual && !verifyItem(item).verified) { sawUnverified = true; continue }
+    candidate = item; break
+  }
   const alertGate = webWatchAlertAllowed({
     now,
     lastAlertAt: watcher.last_state_json?.lastAlertAt || watcher.last_state_json?.lastTriggeredAt || null,
     alertTimes: Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : [],
   })
   const material = !isBaseline && Boolean(candidate) && alertGate.allowed
-  const suppressedReason = !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
+  const suppressedReason = !isBaseline && !candidate && sawUnverified ? 'unverified_context'
+    : !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
   const quietChecks = material || isBaseline ? 0 : currentQuiet + 1
   const cadenceMinutes = adaptiveWatcherCadence({
     budget,
@@ -1064,8 +1085,15 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
 
   const currentUrls = topResults.map(result => canonicalWatcherUrl(result.url)).filter(Boolean)
   const currentSignatures = topResults.map(result => watcherResultSignature(result.title, result.snippet || ''))
-  const seenUrls = mergeStamped(priorSeenUrls, currentUrls, now)
-  const seenSignatures = mergeStamped(priorSeenSignatures, currentSignatures, now)
+  // Only record dedup entries for results we'd actually act on. For contextual watchers a
+  // context-rejected result (wrong flight/date/city) must NOT enter seenUrls/seenSignatures:
+  // if that same stable tracker or weather URL is later updated to describe the watched
+  // occurrence, it must remain eligible to alert instead of being suppressed as "seen".
+  const recordable = contextual ? assessments.filter(item => verifyItem(item).verified).map(item => item.result) : topResults
+  const recordUrls = recordable.map(result => canonicalWatcherUrl(result.url)).filter(Boolean)
+  const recordSignatures = recordable.map(result => watcherResultSignature(result.title, result.snippet || ''))
+  const seenUrls = mergeStamped(priorSeenUrls, recordUrls, now)
+  const seenSignatures = mergeStamped(priorSeenSignatures, recordSignatures, now)
   // Record the disruption identity (with a timestamp) only when we actually alert, so
   // the same event is suppressed on later polls but re-arms after the window. Expiry is
   // applied at read time via activeEventKeys, so non-alert polls keep the prior list.

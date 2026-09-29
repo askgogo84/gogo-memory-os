@@ -39,6 +39,91 @@ export function extractDateTokens(text: string): string[] {
   return Array.from(out).sort()
 }
 
+// Year-qualified date tokens ("sep-28-2026") — only emitted when a 4-digit year sits with
+// the date. Used ONLY for verification (not dedup): a recurring flight's delay reported for
+// the same month/day in a DIFFERENT year must not verify this year's leg. When either side
+// lacks a year we fall back to month/day so we never over-reject a legitimately dateless
+// snippet.
+export function extractDateTokensYear(text: string): string[] {
+  const t = String(text || '').toLowerCase()
+  const out = new Set<string>()
+  for (const m of t.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) { const mon = MONTH_BY_NUM[m[2]]; if (mon) out.add(`${mon}-${m[3]}-${m[1]}`) }
+  for (const m of t.matchAll(new RegExp(`\\b(\\d{1,2})\\s+(${MONTHS})[a-z]*,?\\s+(\\d{4})\\b`, 'g'))) out.add(`${m[2].slice(0, 3)}-${m[1].padStart(2, '0')}-${m[3]}`)
+  for (const m of t.matchAll(new RegExp(`\\b(${MONTHS})[a-z]*\\s+(\\d{1,2}),?\\s+(\\d{4})\\b`, 'g'))) out.add(`${m[1].slice(0, 3)}-${m[2].padStart(2, '0')}-${m[3]}`)
+  return Array.from(out).sort()
+}
+
+// True when both texts carry a date but none coincide. If both also carry a year, the year
+// must match (so Sep-28-2025 does not verify a Sep-28-2026 leg); otherwise month/day decides.
+// When either side is dateless we return false — there is nothing to contradict.
+function datesContradict(knownText: string, resultText: string): boolean {
+  const known = extractDateTokens(knownText)
+  const got = extractDateTokens(resultText)
+  if (!known.length || !got.length) return false
+  const knownY = extractDateTokensYear(knownText)
+  const gotY = extractDateTokensYear(resultText)
+  if (knownY.length && gotY.length) return !gotY.some(d => knownY.includes(d))
+  return !got.some(d => known.includes(d))
+}
+
+// A keyword hit alone must not become a confirmed disruption alert. For contextual
+// travel watchers, verify the retrieved result actually concerns THIS occurrence:
+//  • flight_status — the result must name one of the watch's flight numbers, and if both
+//    sides carry a date it must match (an old EY 1 delay, or a different EY flight, is
+//    rejected).
+//  • destination_weather — the result must name the destination, and if both sides carry
+//    a date it must match (a storm on an unrelated date is rejected).
+// Other classes are not gated here. Returns verified:true when there is nothing to check
+// against (missing known flight/destination) so we never over-suppress genuine matches.
+export function verifyContextualDisruption(params: {
+  contextClass?: string
+  query: string
+  title?: string
+  resultTitle: string
+  resultSnippet?: string
+  flightLegs?: string[]
+}): { verified: boolean; reason: string } {
+  const cls = String(params.contextClass || '')
+  const hay = `${params.resultTitle} ${params.resultSnippet || ''}`
+  if (cls === 'flight_status') {
+    // Preferred: per-leg "flightNo @ date" pairs, so a result's date is checked against
+    // the date of the SPECIFIC leg whose flight number the result cites — not any leg date.
+    const legs = (params.flightLegs || [])
+      .map(leg => ({ text: leg, codes: extractFlightCodes(leg) }))
+      .filter(leg => leg.codes.length)
+    if (legs.length) {
+      const got = extractFlightCodes(hay)
+      const citedLegs = legs.filter(leg => leg.codes.some(code => got.includes(code)))
+      if (!citedLegs.length) return { verified: false, reason: 'flight_number_mismatch' }
+      // Verified only if the result's date is consistent with a cited leg's own date
+      // (year-aware). A dateless leg or dateless result can't contradict, so it passes.
+      if (!citedLegs.some(leg => !datesContradict(leg.text, hay))) {
+        return { verified: false, reason: 'flight_leg_date_mismatch' }
+      }
+      return { verified: true, reason: 'flight_leg_verified' }
+    }
+    // Fallback (no structured legs): flight number + any known date.
+    const known = extractFlightCodes(params.query)
+    if (!known.length) return { verified: true, reason: 'no_known_flight' }
+    const got = extractFlightCodes(hay)
+    if (!got.some(code => known.includes(code))) return { verified: false, reason: 'flight_number_mismatch' }
+    if (datesContradict(params.query, hay)) return { verified: false, reason: 'flight_date_mismatch' }
+    return { verified: true, reason: 'flight_verified' }
+  }
+  if (cls === 'destination_weather') {
+    const dest = String(params.title || '').split('·').pop()?.trim() || String(params.query || '').split(/\bweather\b/i)[0] || ''
+    const destTokens = words(dest).filter(t => t.length >= 3)
+    if (!destTokens.length) return { verified: true, reason: 'no_known_destination' }
+    const hayTokens = new Set(words(hay))
+    // Require the COMPLETE destination identity: every distinctive token must appear, so a
+    // "Mexico City" watcher is not satisfied by a Boston result that merely contains "city".
+    if (!destTokens.every(t => hayTokens.has(t))) return { verified: false, reason: 'destination_mismatch' }
+    if (datesContradict(params.query, hay)) return { verified: false, reason: 'weather_date_mismatch' }
+    return { verified: true, reason: 'weather_verified' }
+  }
+  return { verified: true, reason: 'no_context_gate' }
+}
+
 // Dedup history entries are stored "value|ms". Only a trailing |<digits> is treated as
 // a timestamp, so values that themselves contain "|" (e.g. a URL query) are preserved.
 function parseStamped(entry: string): { value: string; ms: number } {

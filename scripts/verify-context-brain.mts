@@ -6,6 +6,7 @@ import {
   lexicalScore,
   renderContextBlock,
   travelContextAt,
+  isRetrospectiveTravelQuery,
   type ContextPack,
 } from '../lib/agent/context-brain'
 
@@ -44,6 +45,23 @@ assert.match(pastLeg!.summary,/not verified live arrival|do not claim it landed/
 // A future leg must NOT be labelled past.
 const futureLeg=facts.find(f=>f.source==='travel_ticket'&&f.summary.includes('Abu Dhabi → New York'))
 assert.ok(futureLeg&&!/STATUS: .*past/i.test(futureLeg.summary),'a future leg must not be labelled as past')
+
+// Historical itinerary recall + "she" follow-up: a retrospective/name-anchored query
+// must reach a COMPLETED trip (past the default 2-day window) so the passenger is present
+// for the model to bind the pronoun; an ordinary turn must NOT surface old trips.
+assert.equal(isRetrospectiveTravelQuery('what time was she scheduled to land'), true)
+assert.equal(isRetrospectiveTravelQuery("when did Divya's flight arrive"), true)
+assert.equal(isRetrospectiveTravelQuery('remind me to buy milk tonight'), false)
+const completedTrip=[{
+  id:'old-1',type:'flight',from_city:'Bengaluru',to_city:'New York',
+  raw:{timeNormalizationVersion:2},depart_at:'2026-09-10T16:45:00.000Z',arrive_at:'2026-09-11T08:35:00.000Z',
+  airline:'Etihad',flight_no:'EY1',booking_group:'trip-past',passengers:['Divyashree Urs'],
+}]
+const nowLate=Date.parse('2026-09-20T00:00:00.000Z') // 9 days after arrival — outside the 2-day window
+const retro=buildTravelPresenceFacts(completedTrip,nowLate,60,'what time was she scheduled to land in New York')
+assert.ok(retro.some(f=>f.source==='travel_ticket'&&/Divyashree Urs/.test(f.summary)),'retrospective query must recall the completed trip with its passenger')
+const nonRetro=buildTravelPresenceFacts(completedTrip,nowLate,60,'what should I cook tonight')
+assert.ok(!nonRetro.some(f=>f.source==='travel_ticket'),'an unrelated present-tense turn must not surface an old completed trip')
 
 const pack:ContextPack={
   query:'Book Naru Noodle Bar for 2 at the next available slot',

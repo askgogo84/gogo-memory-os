@@ -127,7 +127,23 @@ function requestedPassengerSeat(name:string,query:string){
   return ` ${request} `.includes(` ${passenger} `)||passenger.split(' ').some(part=>part.length>=3&&request.split(' ').includes(part))
 }
 
+// A retrospective/historical travel question ("what time was she scheduled to land",
+// "when did Divya's flight arrive", "her last trip") must be able to recall a COMPLETED
+// trip — the default 2-day past window drops it. Widen the lookback only for these
+// queries so ordinary present/future turns stay tightly scoped.
+export function isRetrospectiveTravelQuery(query:string):boolean{
+  const q=String(query||'').toLowerCase()
+  // Genuinely retrospective wording only. Bare "has"/"have" is possession, not tense —
+  // "what flights do I have?" / "do I have a flight tomorrow?" are present/future and must
+  // keep the tight 2-day window rather than widening lookback to 120 days.
+  const past=/\b(was|were|did|had|already|yet|last|previous|earlier|recent|ago|history|historical|past|landed|arrived|flew|flown|boarded)\b/.test(q)
+  const travel=/\b(flight|flights|land(?:ed|ing)?|arriv(?:e|ed|es|al|ing)|depart(?:ed|ure)?|trip|travel|itinerary|pnr|boarding|seat|airline|fly|flew|flown|airport)\b/.test(q)
+  return past&&travel
+}
+export const RETROSPECTIVE_TRAVEL_LOOKBACK_DAYS=120
+
 export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=60,query=''):ContextFact[]{
+  const pastWindowMs=(isRetrospectiveTravelQuery(query)?RETROSPECTIVE_TRAVEL_LOOKBACK_DAYS:2)*86400_000
   const flights=(rows||[])
     .filter((row:any)=>String(row?.type||'')==='flight')
     .map((row:any)=>{
@@ -162,9 +178,9 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     const departMs=Date.parse(leg.departAt)
     if(!leg.departAt){
       const printedMs=Date.parse(leg.printedDate)
-      if(!Number.isFinite(printedMs)||printedMs>horizonEnd+86400_000||printedMs<now-3*86400_000)continue
+      if(!Number.isFinite(printedMs)||printedMs>horizonEnd+86400_000||printedMs<now-pastWindowMs)continue
     }
-    if(departMs>horizonEnd||departMs<now-2*86400_000)continue
+    if(departMs>horizonEnd||departMs<now-pastWindowMs)continue
     const validArrival=leg.arriveAt&&Date.parse(leg.arriveAt)>departMs?leg.arriveAt:null
     const passengerLabel=leg.passengers.length?`Passengers: ${leg.passengers.join(', ')}`:'Passenger identity not recorded'
     const arrivalLabel=validArrival?`Arrival ${new Intl.DateTimeFormat('en-GB',{timeZone:leg.arrivalTz||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(validArrival))} (${leg.arrivalTz||'UTC'})`:'Arrival instant unverified; check source ticket'
@@ -249,6 +265,9 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   const now=Date.now()
   const lower=new Date(now-2*86400_000).toISOString()
   const upper=new Date(now+horizonDays*86400_000).toISOString()
+  // A retrospective travel question must be able to reach a completed trip, so the
+  // ticket query widens its lookback; other fact types keep the tight 2-day window.
+  const ticketLower=new Date(now-(isRetrospectiveTravelQuery(query)?RETROSPECTIVE_TRAVEL_LOOKBACK_DAYS:2)*86400_000).toISOString()
 
   const [lifeResult,loopResult,goalResult,ticketResult,typed]=await Promise.all([
     supabaseAdmin.from('life_events')
@@ -272,7 +291,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
     supabaseAdmin.from('travel_tickets')
       .select('id,type,booking_group,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,seat,depart_tz,date_label,raw')
       .eq('telegram_id',Number(actor.legacyTelegramId))
-      .or(`depart_at.is.null,and(depart_at.gte.${lower},depart_at.lte.${upper})`)
+      .or(`depart_at.is.null,and(depart_at.gte.${ticketLower},depart_at.lte.${upper})`)
       .order('depart_at',{ascending:true})
       .limit(80),
     latestTypedContext(actor.legacyTelegramId).catch(()=>null),
