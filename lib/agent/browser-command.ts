@@ -216,6 +216,51 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
     risk:'low',
   }
 }
+// Explicitly-authorized "add to cart" on a shopping provider. This is a consequential
+// action, so it returns an EXECUTE command with an approvalAction — it must pass through
+// the approval gate before anything is added, and it must NOT place an order / pay /
+// checkout (those stay human-only / rejected). Kept separate from the read parser so the
+// delicate read path stays strictly read-only.
+export function parseConnectedProviderCartAction(text:string):BrowserCommand|null{
+  const raw=String(text||'').trim()
+  if(!raw)return null
+  const lower=raw.toLowerCase()
+  // Must be an explicit, affirmative "add <item> to cart/basket" — not negated.
+  const wantsCart=/\badd\b[^.!?;,]*\bto\s+(?:my\s+|the\s+)?(?:cart|basket)\b/i.test(lower)
+  if(!wantsCart)return null
+  if(explicitlyNegates(lower,'add'))return null
+  // Never let a cart action carry an order/payment/checkout. Those are human-only. Check
+  // EACH forbidden action independently: a cart request is refused if ANY of them is
+  // present and not explicitly negated (so "add to cart; do not order, but checkout and
+  // pay" is refused because checkout/pay are affirmative even though order is negated).
+  const forbiddenActions=['order','buy','purchase','checkout','check\\s*out','pay','payment']
+  for(const verb of forbiddenActions){
+    if(new RegExp(`\\b(?:${verb})\\b`,'i').test(lower) && !explicitlyNegates(lower,verb))return null
+  }
+  if(/\bplace\s+(?:the\s+|my\s+|an?\s+)?order\b/i.test(lower) && !explicitlyNegates(lower,'place'))return null
+  // A contrast marker re-introduces an affirmative action even if an earlier clause
+  // negated one ("do not order, BUT checkout and pay" must be refused).
+  if(/\b(?:but|however|instead|yet|except)\b[^.!?]*\b(?:order|buy|purchase|checkout|check\s*out|pay|payment)\b/i.test(lower))return null
+  const shoppingSites=[
+    {alias:/\bblinkit\b/i,loginUrl:'https://blinkit.com/'},
+    {alias:/\b(?:swiggy\s+)?instamart\b/i,loginUrl:'https://www.swiggy.com/instamart'},
+    {alias:/\bzepto\b/i,loginUrl:'https://www.zepto.com/'},
+  ].filter(site=>site.alias.test(raw))
+  const vaultCandidates=Object.values(VAULT_PROVIDERS).map(provider=>({
+    alias:new RegExp('\\b(?:'+(provider.aliases||[provider.key]).map(name=>name.replace(/\./g,'\\.')).join('|')+')\\b','i'),
+    loginUrl:provider.loginUrl,
+  })).filter(provider=>provider.alias.test(raw))
+  const candidates=[...shoppingSites,...vaultCandidates]
+  if(candidates.length!==1)return null
+  return {
+    url:candidates[0].loginUrl,
+    objective:safe(raw.replace(/\b(ask\s+(?:me\s+)?for\s+(?:my\s+)?area\s+and\s+)pin\s+code(?=\s+if\s+(?:needed|required)\b)/gi,'$1postal code'),1800),
+    mode:'execute',
+    risk:'high',
+    approvalAction:'submit_form',
+  }
+}
+
 export function isExplicitProviderBrowserRead(text:string){
   const raw=String(text||'').trim()
   const providerSearch=providerContentSearch(raw)
@@ -392,7 +437,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
 }
 
 export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:AgentSurface;text:string}){
-  const command=parseBrowserCommand(params.text)||parseConnectedProviderReadCommand(params.text);if(!command)return null
+  const command=parseConnectedProviderCartAction(params.text)||parseBrowserCommand(params.text)||parseConnectedProviderReadCommand(params.text);if(!command)return null
   const sentinel=evaluateAgentSentinel({capability:'browser',mode:command.mode,risk:command.risk,irreversible:command.mode==='execute',approved:false,instruction:command.objective,url:command.url,actionCount:12})
   if(!sentinel.allowed && sentinel.reason!=='approval_missing'){
     return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Sentinel blocked this browser request: ${sentinel.reason}`,handledBy:'secure-browser' as const}

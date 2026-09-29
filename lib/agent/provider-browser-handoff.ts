@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto'
 import { BROWSER_HANDOFF_PORT, HANDOFF_SERVER, getPersistentBrowserSandbox, releaseBrowserHandoff } from './browser-handoff'
 import { ensureBrowserRuntime } from './secure-browser-bootstrap'
+import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
 
 export async function cancelBrowserHandoffReservation(userId:string,token:string){
   const {sandbox}=await getPersistentBrowserSandbox(userId,{bootstrap:false})
@@ -21,6 +22,18 @@ export async function startProviderBrowserHandoff(params:{userId:string;url:stri
   const hosts=[target,...(params.originalUrl?[new URL(params.originalUrl)]:[])]
   if(hosts.some(url=>!['https:','http:'].includes(url.protocol)))throw new Error('browser_url_not_http')
   const allow=Object.fromEntries(hosts.flatMap(url=>[[url.hostname,[]],[`*.${url.hostname}`,[]]]))
+  // If this provider egresses through the residential proxy, the takeover browser needs
+  // the same egress — allow the proxy host and pass its credentials to the handoff server
+  // so the human takeover isn't 403'd by the provider's datacenter block.
+  const proxy=resolveBrowserProxy(params.url)
+  const proxyEnv:Record<string,string>={}
+  if(proxy){
+    const proxyHost=proxyAllowlistHost()
+    if(proxyHost){allow[proxyHost]=[];allow[`*.${proxyHost}`]=[]}
+    proxyEnv.GOGO_BROWSER_PROXY_URL=proxy.server
+    if(proxy.username)proxyEnv.GOGO_BROWSER_PROXY_USERNAME=proxy.username
+    if(proxy.password)proxyEnv.GOGO_BROWSER_PROXY_PASSWORD=proxy.password
+  }
   const {sandbox,name}=await getPersistentBrowserSandbox(params.userId,{bootstrap:false})
   const token=params.reservationToken||randomBytes(24).toString('base64url')
   try{
@@ -39,7 +52,7 @@ const timer=setInterval(()=>{let abort='';try{abort=fs.readFileSync('gogo-handof
 if(abort===token||(!launched&&Date.now()>deadline))process.exit(1);
 let ready='';try{ready=fs.readFileSync('gogo-handoff-go','utf8')}catch{}
 if(!launched&&ready===token){launched=true;process.argv=['node','gogo-handoff.js',token,url];require('./gogo-handoff.js')}},100);`
-  await sandbox.runCommand({cmd:'flock',args:['-n','--close','gogo-handoff.lock','node','-e',launch,token,encoded,params.reservationToken?'required':'new'],detached:true} as any)
+  await sandbox.runCommand({cmd:'flock',args:['-n','--close','gogo-handoff.lock','node','-e',launch,token,encoded,params.reservationToken?'required':'new'],detached:true,...(Object.keys(proxyEnv).length?{env:proxyEnv}:{})} as any)
   await new Promise(r=>setTimeout(r,500))
   const reservation=await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');let value='';try{value=fs.readFileSync('gogo-handoff-reserved','utf8')}catch{};process.exit(value===process.argv[1]?0:1)",token]})
   if(reservation.exitCode!==0)throw new Error('browser_handoff_in_use')

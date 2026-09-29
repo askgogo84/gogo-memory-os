@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { parseConnectedProviderReadCommand } from '../lib/agent/browser-command'
+import { parseConnectedProviderReadCommand, parseConnectedProviderCartAction } from '../lib/agent/browser-command'
 import { shouldAttemptNaturalAssetRetrieval } from '../lib/services/asset-natural-retrieval'
 import { hasLeadingReportMutation, stripReportingDirectives } from '../lib/services/reporting-directive'
 
@@ -128,5 +128,38 @@ assert.equal(
   shouldAttemptNaturalAssetRetrieval('Open the flight booking page and check availability. Only report verified results.'),
   false,
 )
+
+// ── Explicitly-authorized cart action ────────────────────────────────────────
+// An explicit "add <item> to cart, do not order" on a shopping provider is a
+// consequential EXECUTE action that must route through the approval gate — never a
+// silent read, and never a purchase.
+{
+  const cart = parseConnectedProviderCartAction('Open Blinkit and add Amul Taaza toned milk 1 litre to my cart. Do not order. Report only verified results.')
+  assert.ok(cart, 'authorized add-to-cart must be recognized')
+  assert.equal(cart!.mode, 'execute', 'cart action must be execute mode (approval-gated), not read')
+  assert.equal(cart!.approvalAction, 'submit_form', 'cart action must require approval before anything is added')
+  assert.match(cart!.url, /blinkit\.com/)
+  // The read parser must still NOT treat an add-to-cart as a read.
+  assert.equal(parseConnectedProviderReadCommand('Open Blinkit and add Amul Taaza toned milk to my cart. Do not order.'), null)
+}
+// A cart action that also orders/checks out/pays is refused outright (human-only).
+// Each forbidden action is checked independently: negating ONE must not smuggle another.
+for (const text of [
+  'Open Blinkit and add Amul Taaza to cart and place the order.',
+  'Open Blinkit and add Amul Taaza to cart, then checkout and pay.',
+  'Open Blinkit and add Amul Taaza to cart and buy it.',
+  'Open Blinkit and add milk to my cart; do not order, but checkout and pay.',
+  'Open Blinkit and add milk to my cart. Do not place the order. Then buy it.',
+]) {
+  assert.equal(parseConnectedProviderCartAction(text), null, `cart+order must be refused: ${text.slice(0, 40)}...`)
+}
+// All consequential actions explicitly negated -> a pure authorized cart add is allowed.
+{
+  const ok = parseConnectedProviderCartAction('Open Blinkit and add Amul Taaza toned milk 1 litre to my cart. Do not order, checkout, or pay.')
+  assert.ok(ok && ok.mode === 'execute', 'a cart add with all consequential actions negated is an approval-gated execute')
+}
+// A pure price read is not a cart action; a negated cart is not a cart action.
+assert.equal(parseConnectedProviderCartAction('Open Blinkit and check the price of Amul Taaza toned milk. Report only verified results.'), null)
+assert.equal(parseConnectedProviderCartAction('Open Blinkit and check the price. Do not add anything to my cart.'), null)
 
 console.log('✅ Report-directive routing regression passed: explicit browser actions with "Report only verified results" reach the secure browser and cannot be hijacked by Asset Memory')

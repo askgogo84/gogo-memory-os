@@ -10,7 +10,7 @@ function load(file: string, mocks: Record<string, any>, extra='', globals:Record
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
-  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./draft-coverage'?{draftObjectiveCovered}:undefined)||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
+  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./draft-coverage'?{draftObjectiveCovered}:undefined)||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:undefined)||(name==='./browser-proxy'?{resolveBrowserProxy:()=>null,proxyAllowlistHost:()=>null}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
   return exports
 }
 
