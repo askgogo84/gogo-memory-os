@@ -10,7 +10,11 @@ const SENSITIVE_REVEAL_CONFIRM_RE = /^\s*show\s+(?:the\s+)?(?:passport|id|refere
 // "open", "create", "booking" and "confirm" are action vocabulary, not document
 // identity. Explicit document/file retrieval still remains eligible below.
 const OPERATIONAL_FLOW_RE = /\b(appointment|provider|live\s+slots?|availability|book(?:ing)?|reserve|reservation|flight|airline|concert|movie|event\s+tickets?|bus\s+tickets?|train\s+tickets?|cab|hotel|check[- ]?in|checkout|payment|purchase)\b/i
-const EXPLICIT_ASSET_NOUN_RE = /\b(passport|payment|proof|screenshot|receipt|invoice|estimate|estimation|quotation|slip|document|pdf|file|\bid\b|licen[cs]e|statement|policy|aadhaar|pan|lease|agreement|contract|bill|certificate|report|letter|warranty|prescription)\b/i
+// NOTE: "report" is deliberately NOT an explicit-asset noun. The user's standard
+// operational directive "Report only verified results" would otherwise satisfy this
+// escape hatch and let Asset Memory hijack an operational browser turn (the Blinkit
+// incident). A genuine saved report is still reachable by title via the lexical path.
+const EXPLICIT_ASSET_NOUN_RE = /\b(passport|payment|proof|screenshot|receipt|invoice|estimate|estimation|quotation|slip|document|pdf|file|\bid\b|licen[cs]e|statement|policy|aadhaar|pan|lease|agreement|contract|bill|certificate|letter|warranty|prescription)\b/i
 
 const STOP = new Set([
   'show', 'me', 'find', 'send', 'get', 'pull', 'up', 'do', 'you', 'have', 'where', 'is',
