@@ -336,11 +336,15 @@ assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:fq
 const wq = 'New York weather travel conditions 2 October'
 assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:wq, title:'Trip weather · New York', resultTitle:'Storm warning for New York on 2 October', resultSnippet:'severe weather' }).verified, true)
 assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:wq, title:'Trip weather · New York', resultTitle:'Storm warning for Chicago', resultSnippet:'severe weather in Chicago' }).verified, false, 'a storm in a different city must not confirm')
-// A later/overnight leg reported with ITS OWN date must still verify when the watcher
-// query carries every leg's date (not just the first).
-const multiLegQ = 'EY239 EY1 flight status 27 September 28 September Bengaluru New York'
-assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:multiLegQ, resultTitle:'EY 1 delayed on 28 September', resultSnippet:'overnight leg running late' }).verified, true, 'a later leg date present in the query must verify')
-assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:multiLegQ, resultTitle:'EY 1 delayed on 15 August', resultSnippet:'unrelated earlier date' }).verified, false, 'a date on no leg must not verify')
+// Per-leg binding: a result's date is checked against the date of the SPECIFIC leg whose
+// flight number it cites, so right-flight-wrong-leg-date is rejected.
+const legs = ['EY 239 @ 27 September 2026', 'EY 1 @ 28 September 2026']
+const withLegs = (title: string) => verifyContextualDisruption({ contextClass:'flight_status', query:'EY239 EY1 flight status', flightLegs:legs, resultTitle:title, resultSnippet:'' })
+assert.equal(withLegs('EY 1 delayed on 28 September').verified, true, 'right flight on its own leg date verifies')
+assert.equal(withLegs('EY 239 cancelled on 27 September').verified, true, 'the earlier leg on its own date verifies')
+assert.equal(withLegs('EY 1 delayed on 27 September').verified, false, 'right flight number with a DIFFERENT leg date must be rejected')
+assert.equal(withLegs('EY 45 delayed on 28 September').verified, false, 'a flight not in the itinerary must be rejected')
+assert.equal(withLegs('EY 1 delayed').verified, true, 'right flight with no date is accepted (nothing to contradict)')
 // Non-contextual watches are not gated by this verifier.
 assert.equal(verifyContextualDisruption({ contextClass:'', query:'anything', resultTitle:'x', resultSnippet:'y' }).verified, true)
 

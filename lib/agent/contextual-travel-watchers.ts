@@ -63,11 +63,14 @@ function tripExpiry(rows:TravelRow[]){
 // return departure); for a one-way it is the final arrival city (open-ended stay). This
 // correctly handles chronologically-sorted round trips where the LAST leg returns home.
 function awayStay(rows:TravelRow[]):{city:string;arriveMs:number;endMs:number}|null{
+  // You don't "stay" at your origin, so a round trip's final arrival home is not a
+  // destination candidate — otherwise its open-ended (no onward leg) gap would always win.
+  const originCity=clean(rows[0]?.from_city,100)
   let best:{city:string;arriveMs:number;endMs:number;stayMs:number}|null=null
   for(let i=0;i<rows.length;i++){
     const city=clean(rows[i]?.to_city,100)
     const arriveMs=Date.parse(String(rows[i]?.arrive_at||rows[i]?.depart_at||''))
-    if(!city||!Number.isFinite(arriveMs))continue
+    if(!city||city===originCity||!Number.isFinite(arriveMs))continue
     const onward=rows.slice(i+1).find(row=>clean(row.from_city,100)===city&&Date.parse(String(row.depart_at||''))>arriveMs)
     const endMs=onward?Date.parse(String(onward.depart_at)):NaN
     const stayMs=Number.isFinite(endMs)?endMs-arriveMs:Number.POSITIVE_INFINITY // final destination = open-ended
@@ -115,6 +118,9 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
         query:`${flights} flight status ${legDates||departDate} ${route}`.replace(/\s+/g,' ').trim(),
         triggerKeywords:['delay','delayed','cancelled','cancellation','gate change','schedule change','diverted'],
         delivery:'both',cadenceMinutes:180,burstUntil:null,
+        // Per-leg "flightNo @ departure date" so a disruption is verified against the
+        // date of the SPECIFIC leg whose flight number the result cites (not any leg date).
+        flightLegs:rows.map(row=>`${clean(row.flight_no,30)} @ ${dateLabel(String(row.depart_at||row.arrive_at||''))}`).filter(s=>!s.startsWith(' @')),
         ...base('flight_status','Watch only for material changes to the saved flight legs before and during departure.'),
       },
     },

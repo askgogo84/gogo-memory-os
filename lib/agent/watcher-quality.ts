@@ -54,16 +54,32 @@ export function verifyContextualDisruption(params: {
   title?: string
   resultTitle: string
   resultSnippet?: string
+  flightLegs?: string[]
 }): { verified: boolean; reason: string } {
   const cls = String(params.contextClass || '')
   const hay = `${params.resultTitle} ${params.resultSnippet || ''}`
   if (cls === 'flight_status') {
+    const gotDates = extractDateTokens(hay)
+    // Preferred: per-leg "flightNo @ date" pairs, so a result's date is checked against
+    // the date of the SPECIFIC leg whose flight number the result cites — not any leg date.
+    const legs = (params.flightLegs || [])
+      .map(leg => ({ codes: extractFlightCodes(leg), dates: extractDateTokens(leg) }))
+      .filter(leg => leg.codes.length)
+    if (legs.length) {
+      const got = extractFlightCodes(hay)
+      const citedLegs = legs.filter(leg => leg.codes.some(code => got.includes(code)))
+      if (!citedLegs.length) return { verified: false, reason: 'flight_number_mismatch' }
+      if (gotDates.length && !citedLegs.some(leg => leg.dates.length === 0 || leg.dates.some(d => gotDates.includes(d)))) {
+        return { verified: false, reason: 'flight_leg_date_mismatch' }
+      }
+      return { verified: true, reason: 'flight_leg_verified' }
+    }
+    // Fallback (no structured legs): flight number + any known date.
     const known = extractFlightCodes(params.query)
     if (!known.length) return { verified: true, reason: 'no_known_flight' }
     const got = extractFlightCodes(hay)
     if (!got.some(code => known.includes(code))) return { verified: false, reason: 'flight_number_mismatch' }
     const knownDates = extractDateTokens(params.query)
-    const gotDates = extractDateTokens(hay)
     if (knownDates.length && gotDates.length && !gotDates.some(d => knownDates.includes(d))) return { verified: false, reason: 'flight_date_mismatch' }
     return { verified: true, reason: 'flight_verified' }
   }

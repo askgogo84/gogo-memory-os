@@ -34,6 +34,7 @@ export type ContextualWatcherMeta = {
   expiresAt?: string|null
   sourceRefs?: Array<Record<string,unknown>>
   userStoppedAt?: string|null
+  flightLegs?: string[]
 }
 
 export type DeadlineWatcherCondition = {
@@ -100,6 +101,7 @@ function normalizeContextualMeta(input:any):ContextualWatcherMeta {
     expiresAt,
     sourceRefs:Array.isArray(input?.sourceRefs)?input.sourceRefs.slice(0,12):[],
     userStoppedAt:input?.userStoppedAt?validDate(input.userStoppedAt):null,
+    flightLegs:Array.isArray(input?.flightLegs)?input.flightLegs.map((x:any)=>String(x||'').slice(0,80)).filter(Boolean).slice(0,12):undefined,
   }
 }
 
@@ -1037,6 +1039,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   const verifyItem = (item: any) => verifyContextualDisruption({
     contextClass, query: condition.query, title: condition.title,
     resultTitle: item.result.title, resultSnippet: item.result.snippet,
+    flightLegs: (condition as any).flightLegs,
   })
   let candidate: any = null
   let sawUnverified = false
