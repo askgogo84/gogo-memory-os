@@ -58,6 +58,20 @@ function tripExpiry(rows:TravelRow[]){
   // ticket will create its own context. This is bounded and automatically expires.
   return new Date(end+72*3600_000).toISOString()
 }
+// Destination weather must track the STAY, not the outbound leg. A round trip bounds the
+// stay by the return departure; a one-way booking has no return leg in the group, so a
+// 72h-after-arrival window would wrongly end the weather watch while the user is still at
+// the destination — extend it to a reasonable stay horizon instead.
+function destinationStayExpiry(rows:TravelRow[],fallbackExpiresAt:string){
+  const last=rows[rows.length-1]
+  const dest=clean(last?.to_city,100)
+  const arriveMs=Date.parse(String(last?.arrive_at||last?.depart_at||''))
+  if(!dest||!Number.isFinite(arriveMs))return fallbackExpiresAt
+  const ret=rows.find(row=>clean(row.from_city,100)===dest&&Date.parse(String(row.depart_at||''))>arriveMs)
+  if(ret){const d=Date.parse(String(ret.depart_at));if(Number.isFinite(d))return new Date(d+24*3600_000).toISOString()}
+  const oneWayStay=new Date(arriveMs+7*24*3600_000).toISOString()
+  return Date.parse(oneWayStay)>Date.parse(fallbackExpiresAt)?oneWayStay:fallbackExpiresAt
+}
 function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
   const first=rows[0],last=rows[rows.length-1]
   const flights=flightLabel(rows)
@@ -101,7 +115,9 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
         query:`${destination} weather travel conditions ${arrivalDate}`,
         triggerKeywords:['weather warning','storm','heavy rain','snow','flood','extreme heat','severe weather','travel advisory'],
         delivery:'both',cadenceMinutes:360,burstUntil:null,
+        // Weather follows the destination stay, not the outbound leg's completion.
         ...base('destination_weather','Watch destination weather only for conditions likely to affect this saved trip.'),
+        expiresAt:destinationStayExpiry(rows,expiresAt),
       },
     },
   ]

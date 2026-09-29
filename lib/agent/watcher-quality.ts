@@ -39,6 +39,48 @@ export function extractDateTokens(text: string): string[] {
   return Array.from(out).sort()
 }
 
+// A keyword hit alone must not become a confirmed disruption alert. For contextual
+// travel watchers, verify the retrieved result actually concerns THIS occurrence:
+//  • flight_status — the result must name one of the watch's flight numbers, and if both
+//    sides carry a date it must match (an old EY 1 delay, or a different EY flight, is
+//    rejected).
+//  • destination_weather — the result must name the destination, and if both sides carry
+//    a date it must match (a storm on an unrelated date is rejected).
+// Other classes are not gated here. Returns verified:true when there is nothing to check
+// against (missing known flight/destination) so we never over-suppress genuine matches.
+export function verifyContextualDisruption(params: {
+  contextClass?: string
+  query: string
+  title?: string
+  resultTitle: string
+  resultSnippet?: string
+}): { verified: boolean; reason: string } {
+  const cls = String(params.contextClass || '')
+  const hay = `${params.resultTitle} ${params.resultSnippet || ''}`
+  if (cls === 'flight_status') {
+    const known = extractFlightCodes(params.query)
+    if (!known.length) return { verified: true, reason: 'no_known_flight' }
+    const got = extractFlightCodes(hay)
+    if (!got.some(code => known.includes(code))) return { verified: false, reason: 'flight_number_mismatch' }
+    const knownDates = extractDateTokens(params.query)
+    const gotDates = extractDateTokens(hay)
+    if (knownDates.length && gotDates.length && !gotDates.some(d => knownDates.includes(d))) return { verified: false, reason: 'flight_date_mismatch' }
+    return { verified: true, reason: 'flight_verified' }
+  }
+  if (cls === 'destination_weather') {
+    const dest = String(params.title || '').split('·').pop()?.trim() || String(params.query || '').split(/\bweather\b/i)[0] || ''
+    const destTokens = words(dest).filter(t => t.length >= 3)
+    if (!destTokens.length) return { verified: true, reason: 'no_known_destination' }
+    const hayTokens = new Set(words(hay))
+    if (!destTokens.some(t => hayTokens.has(t))) return { verified: false, reason: 'destination_mismatch' }
+    const knownDates = extractDateTokens(params.query)
+    const gotDates = extractDateTokens(hay)
+    if (knownDates.length && gotDates.length && !gotDates.some(d => knownDates.includes(d))) return { verified: false, reason: 'weather_date_mismatch' }
+    return { verified: true, reason: 'weather_verified' }
+  }
+  return { verified: true, reason: 'no_context_gate' }
+}
+
 // Dedup history entries are stored "value|ms". Only a trailing |<digits> is treated as
 // a timestamp, so values that themselves contain "|" (e.g. a URL query) are preserved.
 function parseStamped(entry: string): { value: string; ms: number } {

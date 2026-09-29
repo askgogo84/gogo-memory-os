@@ -42,6 +42,10 @@ assert.match(compiler,/connection_ground/)
 assert.match(compiler,/destination_weather/)
 assert.match(compiler,/travel_email/)
 assert.match(compiler,/72\*3600_000/,'contextual travel monitoring must have a bounded post-arrival expiry')
+// Destination weather follows the destination STAY, not the outbound leg's completion:
+// a one-way booking extends to a stay horizon instead of ending 72h after arrival.
+assert.match(compiler,/destinationStayExpiry/,'destination weather must derive its own stay-based expiry')
+assert.match(compiler,/7\*24\*3600_000/,'one-way destination weather must extend to a stay horizon, not just 72h')
 assert.doesNotMatch(compiler,/\$\{destination\}\s+news/i,'contextual proactivity must not create generic destination-news watches')
 assert.match(compiler,/gmail_connected/)
 assert.match(watchers,/context_window_ended/)

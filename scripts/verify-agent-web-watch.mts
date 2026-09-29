@@ -12,6 +12,7 @@ import {
   recordEventKey,
   activeStamped,
   mergeStamped,
+  verifyContextualDisruption,
   webWatchAlertAllowed,
   WEB_WATCH_MAX_ALERTS_24H,
   WEB_WATCH_MIN_ALERT_INTERVAL_MS,
@@ -324,6 +325,19 @@ const refreshed = mergeStamped(urlHist, ['https://tracker.example.com/ey1'], rec
 assert.deepEqual(activeStamped(refreshed, later), [], 're-seeing a URL must not reset its expiry clock')
 // Legacy bare URL entries stay deduped (no spam burst) until re-stamped.
 assert.deepEqual(activeStamped(['https://legacy.example.com/x'], later), ['https://legacy.example.com/x'])
+
+// A keyword hit alone must not confirm a disruption — the result must concern THIS
+// occurrence (flight number + date / destination + date).
+const fq = 'EY1 flight status 2 October Bengaluru New York'
+assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:fq, resultTitle:'Etihad EY 1 delayed on 2 October', resultSnippet:'EY 1 running late' }).verified, true)
+assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:fq, resultTitle:'Etihad EY 45 delayed', resultSnippet:'a different flight' }).verified, false, 'a different flight number must not confirm')
+assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:fq, resultTitle:'EY 1 delayed on 27 September', resultSnippet:'earlier occurrence' }).verified, false, 'a different date for the same number must not confirm')
+assert.equal(verifyContextualDisruption({ contextClass:'flight_status', query:fq, resultTitle:'Airline strike news', resultSnippet:'generic delays across airports' }).verified, false, 'generic delay news must not confirm a specific flight')
+const wq = 'New York weather travel conditions 2 October'
+assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:wq, title:'Trip weather · New York', resultTitle:'Storm warning for New York on 2 October', resultSnippet:'severe weather' }).verified, true)
+assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:wq, title:'Trip weather · New York', resultTitle:'Storm warning for Chicago', resultSnippet:'severe weather in Chicago' }).verified, false, 'a storm in a different city must not confirm')
+// Non-contextual watches are not gated by this verifier.
+assert.equal(verifyContextualDisruption({ contextClass:'', query:'anything', resultTitle:'x', resultSnippet:'y' }).verified, true)
 
 const now = new Date('2026-09-11T03:00:00Z')
 const withinCooldown = webWatchAlertAllowed({

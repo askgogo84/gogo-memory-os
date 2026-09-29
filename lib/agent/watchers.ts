@@ -19,6 +19,7 @@ import {
   recordEventKey,
   activeStamped,
   mergeStamped,
+  verifyContextualDisruption,
 } from './watcher-quality'
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
@@ -1028,13 +1029,26 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     }),
   }))
   const candidate = assessments.find(item => item.quality.eligible) || null
+  // A keyword hit alone is not a confirmed disruption. For contextual travel watchers,
+  // verify the candidate actually concerns this occurrence (flight number+date /
+  // destination+date) before it can alert.
+  const contextVerification = candidate
+    ? verifyContextualDisruption({
+        contextClass: (condition as any).contextClass,
+        query: condition.query,
+        title: condition.title,
+        resultTitle: candidate.result.title,
+        resultSnippet: candidate.result.snippet,
+      })
+    : { verified: true, reason: 'no_candidate' }
   const alertGate = webWatchAlertAllowed({
     now,
     lastAlertAt: watcher.last_state_json?.lastAlertAt || watcher.last_state_json?.lastTriggeredAt || null,
     alertTimes: Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : [],
   })
-  const material = !isBaseline && Boolean(candidate) && alertGate.allowed
-  const suppressedReason = !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
+  const material = !isBaseline && Boolean(candidate) && contextVerification.verified && alertGate.allowed
+  const suppressedReason = !isBaseline && candidate && !contextVerification.verified ? contextVerification.reason
+    : !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
   const quietChecks = material || isBaseline ? 0 : currentQuiet + 1
   const cadenceMinutes = adaptiveWatcherCadence({
     budget,

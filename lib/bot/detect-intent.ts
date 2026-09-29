@@ -170,6 +170,15 @@ export function detectIntent(text: string): DetectedIntent {
   if (checkVerb) return { type: checkVerb, confidence: 'medium' }
   if (lower.startsWith('clear ') || lower.startsWith('delete list ') || lower.startsWith('remove list ')) return { type: 'list_clear', confidence: 'medium' }
   if (lower.startsWith('remember ') || lower.includes('remember that ') || lower.includes('save this memory')) return { type: 'save_memory', confidence: 'high' }
+  // Live flight status ("has EY1 landed?", "status of AI 505", "is 6E203 delayed") must
+  // attempt an actual lookup instead of being delegated back to the user. Only route when
+  // a concrete flight identifier is present in THIS message, so the web search is
+  // grounded (a pronoun-only "has it landed?" stays on the recall path, which already
+  // refuses to claim a landing from schedule alone).
+  if (/\b(?:[a-z]{2}|[a-z]\d|\d[a-z])\s?\d{1,4}\b/i.test(lower) &&
+      /\b(land(?:s|ed|ing)?|arriv(?:e|ed|es|al|ing)|(?:flight )?status|delay(?:ed|s)?|on[- ]time|diverted|departed|take[n]?\s?off|tracker|track(?:ing)?)\b/i.test(lower) &&
+      /\bflight\b|\b(?:[a-z]{2}|[a-z]\d|\d[a-z])\s?\d{1,4}\b/i.test(lower))
+    return { type: 'web_search', confidence: 'high' }
   if (SEARCH_HINTS.some((k) => lower.includes(k))) return { type: 'web_search', confidence: 'medium' }
 
   // Media memory commands
