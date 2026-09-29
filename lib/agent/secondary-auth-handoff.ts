@@ -103,14 +103,16 @@ export async function resumeSecondaryAuthRun(params:{actor:AgentActor;runId:stri
     }
     return {...result,runId:params.runId,text:result.text||'Gogo continued this same task using its saved constraints.'}
   }catch(error){
-    if(preparation&&String((error as any)?.message||error)==='flight_schedule_changed')throw error
+    if(preparation&&/(?:flight|life_event)_schedule_changed/.test(String((error as any)?.message||error)))throw error
     // Keep a denied/failed continuation available without discarding its context.
     let restoreRun=supabaseAdmin.from('agent_runs').update({status:'paused',updated_at:new Date().toISOString(),
       ...(preparation?{metadata_json:{...meta,handoff:null,secondary_auth:meta.secondary_auth||{...auth,reason:'device_approval'}}}:{}),
     }).eq('id',params.runId).eq('telegram_id',tg).in('status',preparation?['running','failed']:['queued'])
     if(preparation)restoreRun=restoreRun.or('error.is.null,error.neq.flight_schedule_changed')
     await restoreRun
-    await supabaseAdmin.from('life_event_actions').update({status:'blocked',...(preparation?{payload_json:action.payload_json||{}}:{})}).eq('id',action.id).eq('telegram_id',tg).in('status',preparation?['running','blocked']:[actionStatus])
+    let restoreAction=supabaseAdmin.from('life_event_actions').update({status:'blocked',...(preparation?{payload_json:action.payload_json||{}}:{})}).eq('id',action.id).eq('telegram_id',tg).in('status',preparation?['running','blocked']:[actionStatus])
+    if(preparation)restoreAction=action.payload_json?.scheduleRevision?restoreAction.eq('payload_json->>scheduleRevision',action.payload_json.scheduleRevision):restoreAction.is('payload_json->>scheduleRevision',null)
+    await restoreAction
     throw error
   }
 }

@@ -122,7 +122,7 @@ const scopedDb={from:(table:string)=>{
 const dispatched:string[]=[]
 let correctionDuringProvision=false,reservationCancellations=0
 let provisioningFails=false
-let preparationFails=false,preparationSuperseded=false
+let preparationFails=false,preparationSuperseded=false,monitorRecoveryError=''
 const shared=load('secondary-auth-handoff.ts',{
   './post-auth-outcome':{inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')},markAuthOutcomeUnknown:async(...args:any[])=>outcomeReader.markAuthOutcomeUnknown(...args)},
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
@@ -130,7 +130,7 @@ const shared=load('secondary-auth-handoff.ts',{
   './browser-handoff':{releaseBrowserHandoff:async()=>({ok:true})},
   './life-event-worker':{prepareFlightCheckin:async(p:any)=>{assert.equal(p.resumeRunId,'run');if(preparationSuperseded){rows.agent_runs.status='failed';rows.agent_runs.error='flight_schedule_changed';rows.life_event_actions.status='queued';throw new Error('flight_schedule_changed')};if(preparationFails){rows.agent_runs.status='failed';rows.life_event_actions.status='blocked';delete rows.agent_runs.metadata_json.secondary_auth;throw new Error('temporary browser contention')};dispatched.push('flight_prepare');return {status:'completed'}}},
   './life-event-execution':{executeApprovedLifeEventCheckin:async(p:any)=>{assert.equal(p.runId,'run');dispatched.push('flight_execute');return {status:'completed'}}},
-  './life-event-integration-worker':{processLifecycleMonitor:async(_a:any,_e:any,_t:any,runId:string)=>{assert.equal(runId,'run');dispatched.push('lifecycle_monitor');return {status:'completed'}}},
+  './life-event-integration-worker':{processLifecycleMonitor:async(_a:any,_e:any,_t:any,runId:string)=>{assert.equal(runId,'run');if(monitorRecoveryError){rows.agent_runs.status='failed';rows.agent_runs.error='flight_schedule_changed';rows.life_event_actions.status='running';rows.life_event_actions.payload_json={scheduleRevision:'new'};rows.life_event_actions['payload_json->>scheduleRevision']='new';throw new Error(monitorRecoveryError)};dispatched.push('lifecycle_monitor');return {status:'completed'}}},
   './restaurant-reservation-worker':{processOne:async(p:any)=>{assert.equal(p.id,'action');dispatched.push('restaurant');return {status:'completed'}}},
 })
 for(const kind of ['flight_prepare','flight_execute','restaurant','lifecycle_monitor']){
@@ -963,3 +963,35 @@ const staleMonitor=load('life-event-integration-worker.ts',{
 await assert.rejects(()=>staleMonitor.processLifecycleMonitor({id:'watch',payload_json:{scheduleRevision:'old'}},{id:'flight',event_type:'travel',subtype:'flight',title:'EY1',metadata_json:{flight_no:'EY1'}},'17'),/flight_schedule_changed/)
 assert.equal(staleMonitorReservationReleased,1)
 assert.equal(staleMonitorAttached,0)
+
+for(const failure of ['life_event_monitor_publication_failed:life_event_schedule_changed','temporary publication failure']){
+ rows.agent_runs.status='paused';rows.agent_runs.error=null;rows.agent_runs.metadata_json={life_event_id:'event',life_event_action_id:'action',auth_resume:{kind:'lifecycle_monitor',safeToRetry:true}}
+ rows.life_event_actions.status='blocked';rows.life_event_actions.payload_json={scheduleRevision:'old'};rows.life_event_actions['payload_json->>scheduleRevision']='old'
+ monitorRecoveryError=failure
+ await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'}))
+ assert.equal(rows.agent_runs.status,'failed')
+ assert.equal(rows.life_event_actions.status,'running','resume recovery must not block a corrected running monitor')
+ assert.equal(rows.life_event_actions.payload_json.scheduleRevision,'new')
+}
+monitorRecoveryError=''
+let finalMonitorRevision='old',finalMonitorWrites=0,finalMonitorReservationReleased=0
+const finalMonitorRace=load('life-event-integration-worker.ts',{
+ '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{
+  let change:any;const filters:any[]=[]
+  const execute=()=>{
+   if(table==='life_event_actions'&&change){if(filters.some(([key,value])=>key==='payload_json->>scheduleRevision'&&value!==finalMonitorRevision))return {data:null,error:null};finalMonitorWrites++;finalMonitorRevision=change.payload_json.scheduleRevision}
+   return {data:table==='users'?{id:'owner',telegram_id:17}:table==='agent_permissions'?{level:'read'}:table==='life_event_actions'?{id:'watch',status:'running',payload_json:{scheduleRevision:finalMonitorRevision}}:{id:'monitor-run'},error:null}
+  }
+  const q:any={select:()=>q,eq:(key:string,value:any)=>{filters.push([key,value]);return q},is:(key:string,value:any)=>{filters.push([key,value]);return q},in:()=>q,insert:()=>q,update:(value:any)=>{change=value;return q},single:async()=>execute(),maybeSingle:async()=>execute(),then:(resolve:any)=>Promise.resolve(execute()).then(resolve)};return q
+ }}},
+ './life-event-integrations':monitorIntegrations,
+ './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
+ './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
+ './provider-browser-handoff':{cancelBrowserHandoffReservation:async()=>{finalMonitorReservationReleased++}},
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{},attachSecondaryAuthHandoff:async()=>{finalMonitorRevision='new';return 'https://fixture.invalid/handoff'}},
+ './secure-computer':{runSecureBrowser:async()=>({status:'blocked',handoffReservation:'reservation',blockReason:'human_auth_required',authReason:'device_approval',actions:[]})},
+})
+await assert.rejects(()=>finalMonitorRace.processLifecycleMonitor({id:'watch',payload_json:{scheduleRevision:'old'}},{id:'flight',event_type:'travel',subtype:'flight',title:'EY1',metadata_json:{flight_no:'EY1'}},'17'),/flight_schedule_changed/)
+assert.equal(finalMonitorWrites,0)
+assert.equal(finalMonitorRevision,'new')
+assert.equal(finalMonitorReservationReleased,1)

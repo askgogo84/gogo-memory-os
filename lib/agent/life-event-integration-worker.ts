@@ -235,10 +235,12 @@ export async function processLifecycleMonitor(action: any, event: any, telegramI
       },'running')
       await assertCurrent()
       const handoffUrl=await attachSecondaryAuthHandoff({userId:actor.userId,telegramId,runId,kind:'lifecycle_monitor',result})
-      const blocked=await supabaseAdmin.from('life_event_actions').update({
+      let blockAction=supabaseAdmin.from('life_event_actions').update({
         status:'blocked', updated_at:new Date().toISOString(),
         payload_json:{...(action.payload_json||{}),browserRunId:runId,monitorState:'human_auth_required',blockedReason:result.blockReason||'human_auth_required',authReason:result.authReason||null},
-      }).eq('id',action.id).eq('telegram_id',telegramId).in('status',['running','blocked']).select('id').maybeSingle()
+      }).eq('id',action.id).eq('telegram_id',telegramId).in('status',['running','blocked'])
+      blockAction=action.payload_json?.scheduleRevision?blockAction.eq('payload_json->>scheduleRevision',action.payload_json.scheduleRevision):blockAction.is('payload_json->>scheduleRevision',null)
+      const blocked=await blockAction.select('id').maybeSingle()
       if(blocked.error||!blocked.data)throw new Error('flight_schedule_changed')
       const paused=await supabaseAdmin.from('agent_runs').update({status:'paused',progress:55,completed_at:null,updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',telegramId).in('status',['running','paused']).select('id').maybeSingle()
       if(paused.error||!paused.data)throw new Error('flight_schedule_changed')
