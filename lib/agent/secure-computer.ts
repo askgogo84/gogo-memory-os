@@ -203,10 +203,11 @@ const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?
 const gratitude=pattern!=='cancellation'&&pattern!=='check[ -]?in'?new RegExp('\\b(?:thank\\s+you|thanks)\\s+for\\s+(?:your|the)\\s+'+pattern+'\\b','i'):null;
 const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|processed|confirmed)\\s+(?:(?:your|the|this)\\s+)?'+pattern+'\\b','i');
 const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
+const cartState=/(?:cart|basket)/i.test(pattern)?/\b(?:added?\s+to\s+(?:cart|basket)|in\s+(?:cart|basket)|(?:cart|basket)\s*\(?\s*[1-9])/i:null;
 const extract=(text)=>{
  const raw=String(text||'').normalize('NFKC');
 
- const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:''),'gi');
+ const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:'')+(cartState?'|'+cartState.source:''),'gi');
  const matches=[...raw.matchAll(matcher)].flatMap(match=>{
   const start=match.index||0,end=start+match[0].length;
   const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
@@ -312,10 +313,11 @@ const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?
 const gratitude=pattern!=='cancellation'&&pattern!=='check[ -]?in'?new RegExp('\\b(?:thank\\s+you|thanks)\\s+for\\s+(?:your|the)\\s+'+pattern+'\\b','i'):null;
 const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|processed|confirmed)\\s+(?:(?:your|the|this)\\s+)?'+pattern+'\\b','i');
 const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
+const cartState=/(?:cart|basket)/i.test(pattern)?/\b(?:added?\s+to\s+(?:cart|basket)|in\s+(?:cart|basket)|(?:cart|basket)\s*\(?\s*[1-9])/i:null;
 const extract=(text)=>{
  const raw=String(text||'').normalize('NFKC');
 
- const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:''),'gi');
+ const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:'')+(cartState?'|'+cartState.source:''),'gi');
  const matches=[...raw.matchAll(matcher)].flatMap(match=>{
   const start=match.index||0,end=start+match[0].length;
   const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
