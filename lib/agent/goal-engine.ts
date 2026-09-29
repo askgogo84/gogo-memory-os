@@ -141,7 +141,7 @@ export async function processGoalReviewWatcher(watcher:any,now:Date){
         await notify(actor,`${goal.title}\n\nI need your approval before: ${step.title}\n\nOpen AskGogo to review.`)
         triggered=true
       }else{
-        const result=await dispatchThroughSameBrain({actor,text:step.instruction,messageId:`goal:${goalId}:${step.id}`})
+        const result=await dispatchThroughSameBrain({internalStep:true,actor,text:step.instruction,messageId:`goal:${goalId}:${step.id}`})
         step.status='completed';step.result={reply:clean(result.text,2500),handledBy:result.handledBy};triggered=true
       }
     }

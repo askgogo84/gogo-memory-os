@@ -1,59 +1,23 @@
--- Universal Life Event Engine v1
--- Converts inbound tickets/documents/appointments into durable lifecycle objects.
--- No client-side access. Server routes use the service-role client and scope by telegram_id.
+-- Retain flight identity when a printed local clock cannot be verified.
+-- Existing rows and access policies are unchanged. Apply before deploying the writer.
+alter table public.travel_tickets alter column depart_at drop not null;
+alter table public.travel_tickets add constraint travel_ticket_departure_known_unless_flight
+  check (depart_at is not null or type = 'flight');
 
-create table if not exists life_events (
-  id uuid primary key default gen_random_uuid(),
-  telegram_id text not null,
-  event_type text not null check (event_type in ('travel','event','appointment','reservation','purchase','delivery','bill','subscription','application','document','other')),
-  subtype text not null default 'other',
-  source text not null default 'unknown',
-  title text not null check (char_length(title) between 1 and 240),
-  provider text,
-  start_at timestamptz,
-  end_at timestamptz,
-  timezone text,
-  location text,
-  confirmation_ref text,
-  lifecycle_state text not null default 'captured' check (lifecycle_state in ('captured','planned','watching','waiting_approval','in_progress','completed','cancelled','expired')),
-  participants jsonb not null default '[]'::jsonb,
-  preferences_json jsonb not null default '{}'::jsonb,
-  metadata_json jsonb not null default '{}'::jsonb,
-  source_refs jsonb not null default '[]'::jsonb,
-  dedupe_key text not null,
-  next_action_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (telegram_id, dedupe_key)
-);
 
-create index if not exists life_events_user_time_idx on life_events (telegram_id, start_at desc nulls last, updated_at desc);
-create index if not exists life_events_due_idx on life_events (lifecycle_state, next_action_at) where next_action_at is not null;
+-- Unknown-time flights need atomic uniqueness too (ordinary NULL timestamps
+-- are distinct). Match the writer's strong printed-leg and fallback identities.
+create unique index travel_tickets_unverified_strong_identity_idx
+on public.travel_tickets (telegram_id, type, pnr, flight_no, date_label, leg_index, from_city, to_city) nulls not distinct
+where depart_at is null and type = 'flight'
+  and coalesce(pnr, '') <> '' and coalesce(flight_no, '') <> '' and coalesce(date_label, '') <> '';
+create unique index travel_tickets_unverified_fallback_identity_idx
+on public.travel_tickets (telegram_id, type, from_city, to_city, date_label, depart_local, flight_no, pnr) nulls not distinct
+where depart_at is null and type = 'flight'
+  and (coalesce(pnr, '') = '' or coalesce(flight_no, '') = '' or coalesce(date_label, '') = '');
 
-create table if not exists life_event_actions (
-  id uuid primary key default gen_random_uuid(),
-  life_event_id uuid not null references life_events(id) on delete cascade,
-  telegram_id text not null,
-  action_key text not null,
-  action_type text not null check (action_type in ('remember','prepare','monitor','notify','calendar_draft','browser_prepare','email_watch','approval','complete')),
-  capability text not null check (capability in ('memory','files','email','calendar','browser','contacts','travel','payments')),
-  title text not null,
-  due_at timestamptz,
-  requires_approval boolean not null default false,
-  irreversible boolean not null default false,
-  status text not null default 'queued' check (status in ('queued','ready','waiting_approval','running','completed','blocked','cancelled','skipped')),
-  payload_json jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (life_event_id, action_key)
-);
-
-create index if not exists life_event_actions_due_idx on life_event_actions (status, due_at) where status in ('queued','ready');
-create index if not exists life_event_actions_user_idx on life_event_actions (telegram_id, updated_at desc);
-
--- Existing WhatsApp ticket ingestion already writes travel_tickets. Promote those
--- inserts automatically so PDFs/images immediately become durable Gogo missions
--- without changing the proven ticket parser/reminder path.
+-- Install correction propagation on all deployments, including those previously
+-- relying on the backfill bridge. Existing source-linked lifecycles are reused.
 create or replace function gogo_promote_travel_ticket_to_life_event()
 returns trigger
 language plpgsql
@@ -247,6 +211,7 @@ create trigger travel_ticket_promote_life_event
 after insert or update on travel_tickets
 for each row execute function gogo_promote_travel_ticket_to_life_event();
 
+
 create or replace function public.gogo_fence_life_event_schedule()
 returns trigger language plpgsql set search_path = public as $$
 begin
@@ -264,8 +229,6 @@ drop trigger if exists life_event_schedule_fence on public.life_event_actions;
 create trigger life_event_schedule_fence before update on public.life_event_actions
 for each row execute function public.gogo_fence_life_event_schedule();
 
-alter table life_events enable row level security;
-alter table life_event_actions enable row level security;
 
 -- Durable, revision-bound publication: all visible database effects commit together.
 create table if not exists public.boarding_pass_outbox (

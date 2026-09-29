@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts } from '../lib/agent/life-event-email-worker'
+import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts, eligibleBoardingPassMessages, assertBoardingPassSchedule, completeAction, publishBoardingPass } from '../lib/agent/life-event-email-worker'
 
 const worker=fs.readFileSync('lib/agent/life-event-email-worker.ts','utf8')
 const route=fs.readFileSync('app/api/cron/life-events/route.ts','utf8')
@@ -31,3 +31,42 @@ const genericPos=route.indexOf('processDueLifeEventActions()')
 assert.ok(emailPos>=0&&genericPos>emailPos,'email watches must run before the generic life-event worker in the same cron invocation')
 
 console.log('✅ Gmail boarding-pass lifecycle regression passed')
+
+const rescheduledWatch={payload_json:{excludedGmailMessageIds:['old-pass',null,'older-pass']}}
+assert.deepEqual(eligibleBoardingPassMessages([{id:'old-pass'},{id:'new-pass'}],rescheduledWatch).map(row=>row.id),['new-pass'])
+assert.deepEqual(eligibleBoardingPassMessages([{id:'old-pass'},{id:'older-pass'}],rescheduledWatch),[],'only old boarding passes must leave the watch searching')
+console.log('Rescheduled boarding-pass watches exclude previous matches before scoring or attachment reads')
+
+assert.doesNotThrow(()=>assertBoardingPassSchedule({payload_json:{}},{metadata_json:{}}))
+assert.doesNotThrow(()=>assertBoardingPassSchedule({payload_json:{scheduleRevision:'current'}},{metadata_json:{ticketScheduleRevision:'current'}}))
+assert.throws(()=>assertBoardingPassSchedule({payload_json:{}},{metadata_json:{ticketScheduleRevision:'corrected'}}),/life_event_schedule_changed/)
+assert.throws(()=>assertBoardingPassSchedule({payload_json:{scheduleRevision:'old'}},{metadata_json:{ticketScheduleRevision:'corrected'}}),/life_event_schedule_changed/)
+
+const {supabaseAdmin}=await import('../lib/supabase-admin')
+const savedFrom=supabaseAdmin.from
+try{
+ let result:any=null
+ const filters:any[]=[]
+ ;(supabaseAdmin as any).from=()=>{
+  const q:any={update:()=>q,eq:(...args:any[])=>{filters.push(args);return q},is:(...args:any[])=>{filters.push(args);return q},select:()=>q,maybeSingle:async()=>({data:result,error:null})}
+  return q
+ }
+ await assert.rejects(()=>completeAction({id:'watch',payload_json:{scheduleRevision:'old'}}),/life_event_schedule_changed/)
+ assert.ok(filters.some(([key,value])=>key==='payload_json->>scheduleRevision'&&value==='old'))
+ result={id:'watch',payload_json:{scheduleRevision:'old'}}
+ await completeAction({id:'watch',payload_json:{scheduleRevision:'old'}})
+ result={id:'watch',payload_json:{scheduleRevision:'new'}}
+ await assert.rejects(()=>completeAction({id:'watch',payload_json:{scheduleRevision:'old'}}),/life_event_schedule_changed/)
+}finally{(supabaseAdmin as any).from=savedFrom}
+
+const savedRpc=supabaseAdmin.rpc
+try{
+ ;(supabaseAdmin as any).rpc=async(name:string,args:any)=>{
+  assert.equal(name,'gogo_publish_boarding_pass')
+  assert.equal(args.p_revision,'claimed')
+  return {data:'recorded-run',error:null}
+ }
+ assert.equal(await publishBoardingPass({id:'watch',payload_json:{scheduleRevision:'claimed'}},{id:'event'},'17',{gmailMessageId:'pass'}),'recorded-run')
+ ;(supabaseAdmin as any).rpc=async()=>({data:null,error:{message:'life_event_schedule_changed'}})
+ await assert.rejects(()=>publishBoardingPass({id:'watch'},{id:'event'},'17',{}),/life_event_schedule_changed/)
+}finally{(supabaseAdmin as any).rpc=savedRpc}

@@ -1,9 +1,10 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import { embedText } from '@/lib/services/embeddings'
 
 // Content that should never be embedded/searched (system rows, JSON state, etc.)
 // Mirrors the isInternalMemory filter in memory-control.ts.
-function isIndexable(content: string): boolean {
+export function isIndexable(content: string): boolean {
   const lower = (content || '').toLowerCase().trim()
   if (!lower) return false
   if (lower.startsWith('{') || lower.startsWith('[')) return false
@@ -40,6 +41,16 @@ function sanitizeSensitiveDocumentIndex(content: string, sourceTable?: string): 
     .trim()
 }
 
+// Sensitive documents remain discoverable by label/person, never by raw identifiers.
+export function recallableMemoryText(content:string,sourceTable?:string):string|null {
+  if(!isIndexable(content))return null
+  if(sourceTable==='documents'&&/\b(passport|identity\s*document|aadhaar|aadhar|pan\s*card|driving\s*licen[cs]e|payment\s*proof|bank\s*statement|account\s*statement)\b/i.test(content)){
+    if(/\b(password|passwd|passcode|otp|pin|cvv|cvc|api[ _-]?key|secret)\b/i.test(content))return null
+    return sanitizeSensitiveDocumentIndex(content,sourceTable)
+  }
+  return isSecretShapedMemory(content)?null:content
+}
+
 /**
  * Fire-and-forget: embed a saved memory and upsert into memory_embeddings.
  * NEVER throws — an embedding failure must not affect the user-facing save.
@@ -56,7 +67,7 @@ export async function indexMemory(params: {
     const content = sanitizeSensitiveDocumentIndex(raw, params.sourceTable)
     if (!isIndexable(content)) return
     const embedding = await embedText(content)
-    await supabaseAdmin.from('memory_embeddings').upsert(
+    const {error} = await supabaseAdmin.from('memory_embeddings').upsert(
       {
         telegram_id: params.telegramId,
         source_table: params.sourceTable || 'memories',
@@ -68,6 +79,7 @@ export async function indexMemory(params: {
       },
       { onConflict: 'source_table,source_id' }
     )
+    if(error)throw error
   } catch (err: any) {
     console.error('[memory-index] non-fatal embedding failure:', err?.message)
   }

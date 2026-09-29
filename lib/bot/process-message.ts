@@ -32,7 +32,8 @@ import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from '
 import { buildGmailConnectReply, buildGmailReadReply } from './handlers/gmail-read'
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
-import { indexMemory } from '@/lib/services/memory-index'
+import { recallQuery } from '@/lib/agent/recall-query'
+import { indexMemory, isIndexable } from '@/lib/services/memory-index'
 import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePreference, listPreferences, forgetPreference, getPreferenceBlock, MAX_RULES } from '@/lib/bot/handlers/preferences'
 import { detectFriendReminder, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, cap0 } from '@/lib/bot/handlers/friend-reminders'
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
@@ -150,6 +151,7 @@ async function recordWebSearch(
 }
 
 export type ProcessIncomingParams = {
+  internalStep?: boolean
   channel: Channel
   externalUserId: string
   text: string
@@ -181,7 +183,7 @@ async function getConversationHistory(telegramId: number): Promise<Message[]> {
     .reverse() // restore chronological order for Claude context
 }
 
-async function saveConversation(telegramId: number, role: 'user' | 'assistant', content: string) {
+async function persistConversation(telegramId: number, role: 'user' | 'assistant', content: string) {
   await supabaseAdmin.from('conversations').insert({ telegram_id: telegramId, role, content })
 }
 
@@ -191,20 +193,21 @@ async function getMemories(telegramId: number): Promise<string[]> {
     .select('content')
     .eq('telegram_id', telegramId)
     .order('created_at', { ascending: false })
-    .limit(20)
+    .limit(200)
 
   const rows = ((data || []) as any[]).map((m) => m.content).filter(Boolean)
   // Belt-and-braces: never surface secret-shaped memories in the LLM prompt. Defense in
   // depth behind the structural guarantee that vault plaintext never lands in `memories`.
-  return stripSecretShapedMemories(rows)
+  return stripSecretShapedMemories(rows.filter(isIndexable)).slice(0,20)
 }
 
 async function saveMemory(telegramId: number, content: string, topic: string | null = null) {
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('memories')
     .insert({ telegram_id: telegramId, content })
     .select('id')
     .single()
+  if(error||!data?.id)throw new Error('memory_save_failed')
   // Awaited semantic index (survives serverless response). Never blocks the save on failure.
   if (data?.id) {
     await indexMemory({ telegramId, sourceId: String(data.id), content, topic })
@@ -361,6 +364,10 @@ function isUsageCommand(text: string) {
 }
 
 export async function processIncomingMessage(params: ProcessIncomingParams): Promise<ProcessIncomingResult> {
+  // Generated plan instructions are not user-authored conversation evidence.
+  const saveConversation = async (telegramId:number,role:'user'|'assistant',content:string) => {
+    if(!params.internalStep)await persistConversation(telegramId,role,content)
+  }
   console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
   const resolvedUser = await resolveUser({ channel: params.channel, externalUserId: params.externalUserId, userName: params.userName })
 
@@ -1230,10 +1237,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       whatsappId:String(resolvedUser.whatsappId||''),
       name:resolvedUser.name||'Gogo',
     },
-    text:incomingText,
+    text:recallQuery(incomingText,history),
     options:{includeSemantic:true,maxFacts:12,horizonDays:60},
   }).catch(()=>null)
-  const contextualBlock = contextPack ? renderContextBlock(contextPack,3200) : ''
+  const contextualBlock = contextPack ? renderContextBlock(contextPack,3200) : 'Saved-context lookup failed. Tell the user retrieval is unavailable; do not claim no saved record exists.'
   const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name, preferenceBlock, contextualBlock)
   const parsed = parseClaudeResponse(rawClaude)
   let finalReply = rawClaude

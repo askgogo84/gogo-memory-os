@@ -326,7 +326,7 @@ async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPla
   if (step.tool === 'reminders') return executeVerifiedMissionReminder({actor,step,missionText:params.missionText,messageId:params.messageId})
   if (step.tool === 'memory') return executeVerifiedMissionMemory({actor,step,missionText:params.missionText,messageId:params.messageId})
   if (step.tool === 'calendar') return executeVerifiedMissionCalendar({actor,step,missionText:params.missionText,runId:params.runId})
-  const result = await dispatchThroughSameBrain({ actor, text:step.instruction, messageId:params.messageId })
+  const result = await dispatchThroughSameBrain({internalStep:true, actor, text:step.instruction, messageId:params.messageId })
   return { text:result.text, output:{ reply:String(result.text || '').slice(0,3500), handledBy:result.handledBy } }
 }
 

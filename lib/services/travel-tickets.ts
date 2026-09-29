@@ -1,3 +1,4 @@
+import { ticketTimezone, ticketInstant, flightInstants } from './travel-time'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToList } from '@/lib/lists'
 import { buildTicketReply, type TicketInfo, type FlightInfo, type TrainInfo, type EventInfo } from './pdf-reader'
@@ -13,41 +14,10 @@ import { AIRLINES, checkInOpensHours, checkInLink, DEFAULT_CHECKIN_OPENS_HOURS }
 // Idempotent: re-forwarding the same ticket makes zero duplicate legs and zero
 // duplicate reminders (explicit existence checks + a DB unique-index backstop).
 
-const MONTHS: Record<string, number> = {
-  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+function resolveDepartTz(city?: string): string {
+  return city ? ticketTimezone(city) || '' : 'Asia/Kolkata'
 }
-
-// Domestic-exact tz map. Everything is IST for now; origin-city → IANA mapping
-// is a phase-2 extension. Unknown zones fall back to IST with a logged warning.
-const TZ_OFFSET_MIN: Record<string, number> = {
-  'Asia/Kolkata': 330,
-}
-
-function resolveDepartTz(_city?: string): string {
-  return 'Asia/Kolkata'
-}
-
-// Convert a ticket's local wall-clock (date + "HH:MM") to a UTC instant. For IST
-// this yields Date.UTC(y,mo,d,h-5,m-30) — identical to the legacy getReminderTime
-// departure calc, so the T-3h reminder is unchanged.
-function computeDepartAt(dateStr?: string, timeStr?: string, tz: string = 'Asia/Kolkata'): Date | null {
-  if (!dateStr || !timeStr) return null
-  try {
-    const parts = dateStr.toLowerCase().replace(/,/g, '').split(/\s+/)
-    const day = parseInt(parts[0], 10)
-    const month = MONTHS[parts[1]?.slice(0, 3)] ?? -1
-    const year = parseInt(parts[2], 10)
-    const [h, m] = timeStr.split(':').map(Number)
-    if (isNaN(day) || month < 0 || isNaN(year) || isNaN(h)) return null
-    const offset = TZ_OFFSET_MIN[tz]
-    if (offset == null) console.warn('TRAVEL_TZ_FALLBACK_IST:', tz)
-    const offMin = offset ?? 330
-    return new Date(Date.UTC(year, month, day, h, m || 0, 0, 0) - offMin * 60000)
-  } catch {
-    return null
-  }
-}
+const computeDepartAt = ticketInstant
 
 // Derive the IATA carrier code from a stored flight number: strip non-alphanumerics,
 // uppercase, take the leading two chars. Returns a code only when it maps to a known
@@ -61,30 +31,15 @@ function iataFromFlightNo(flightNo: string | null): string | null {
   return code in AIRLINES ? code : null
 }
 
-// Format a departure instant as an absolute IST date label, e.g. "Thu 14 Aug".
-// Absolute wording reads correctly at any check-in offset (24h/48h), unlike the old
-// relative "tomorrow". Returns null when the instant is missing so the caller can
-// fall back to the raw date label.
-function formatDepartDateIST(d: Date | null): string | null {
-  if (!d) return null
-  try {
-    return new Intl.DateTimeFormat('en-GB', {
-      weekday: 'short', day: '2-digit', month: 'short', timeZone: 'Asia/Kolkata',
-    }).format(d).replace(/,/g, '')
-  } catch {
-    return null
-  }
-}
-
-// Absolute IST date + 24h time for naming a specific alert's fire time, e.g.
+// Local date + 24h time in the departure timezone for naming a specific alert's fire time, e.g.
 // "Thu 27 Aug 11:30". Used only in the confirmation copy, so on any formatter error
 // it degrades to the raw ISO rather than throwing.
-function formatAlertWhenIST(d: Date): string {
+function formatAlertWhen(d: Date, timezone: string): string {
   try {
     return new Intl.DateTimeFormat('en-GB', {
       weekday: 'short', day: '2-digit', month: 'short',
       hour: '2-digit', minute: '2-digit', hour12: false,
-      timeZone: 'Asia/Kolkata',
+      timeZone: timezone,
     }).format(d).replace(/,/g, '')
   } catch {
     return d.toISOString()
@@ -120,7 +75,19 @@ type Leg = {
   passengers: string[] | null
   raw: any
   reminderMsg: string
+  previousReminderMessages?: string[]
+  previousReminderDecisions?: {kind:string;message:string;remindAt:Date}[]
   checkinMsg: string | null
+}
+
+
+function refreshFlightReminderText(leg:Leg){
+  if(leg.type!=='flight')return
+  const zone=leg.departTz||'timezone unverified',pnr=leg.pnr||'not recorded'
+  const service=[leg.airline,leg.flightNo].filter(Boolean).join(' ')||'Flight'
+  const link=checkInLink(iataFromFlightNo(leg.flightNo))
+  leg.reminderMsg=`✈️ ${leg.fromCity} → ${leg.toCity} departs in 3 hours at ${leg.departLocal} (${zone})! PNR: ${pnr}`
+  leg.checkinMsg=`🧳 Web check-in open — ${service} (${leg.fromCity} → ${leg.toCity}) departs ${leg.dateLabel} at ${leg.departLocal} (${zone}). Check in now to pick your seat. PNR: ${pnr}`+(link?`\n${link}`:'')
 }
 
 export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
@@ -130,9 +97,8 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
     const fi = info as FlightInfo
     const group = fi.flights[0]?.pnr || null
     fi.flights.forEach((f, i) => {
-      const tz = resolveDepartTz(f.from)
-      const departAt = computeDepartAt(f.date, f.departure, tz)
-      const departLabel = formatDepartDateIST(departAt) || f.date
+      const { departAt, arriveAt, departTz: tz } = flightInstants(f)
+      const departLabel = f.date
       const link = checkInLink(iataFromFlightNo(f.flightNo))
       legs.push({
         type: 'flight',
@@ -140,7 +106,7 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
         bookingGroup: f.pnr || group,
         fromCity: f.from, toCity: f.to,
         departAt,
-        arriveAt: computeDepartAt(f.date, f.arrival, tz),
+        arriveAt,
         departTz: tz,
         dateLabel: f.date, departLocal: f.departure,
         airline: f.airline, flightNo: f.flightNo,
@@ -148,16 +114,16 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
         pnr: f.pnr, seat: f.seat || null,
         passengers: fi.passengers || null,
         raw: f,
-        reminderMsg: `✈️ ${f.from} → ${f.to} departs in 3 hours at ${f.departure}! PNR: ${f.pnr}`,
+        reminderMsg: `✈️ ${f.from} → ${f.to} departs in 3 hours at ${f.departure} (${tz || "timezone unverified"})! PNR: ${f.pnr}`,
         checkinMsg:
           `🧳 Web check-in open — ${f.airline} ${f.flightNo} (${f.from} → ${f.to}) ` +
-          `departs ${departLabel} at ${f.departure}. Check in now to pick your seat. PNR: ${f.pnr}` +
+          `departs ${departLabel} at ${f.departure} (${tz || "timezone unverified"}). Check in now to pick your seat. PNR: ${f.pnr}` +
           (link ? `\n${link}` : ''),
       })
     })
   } else if (info.type === 'train') {
     const t = info as TrainInfo
-    const tz = resolveDepartTz(t.from)
+    const tz = resolveDepartTz(t.from) || 'Asia/Kolkata' // Indian rail station codes retain the established IST default.
     legs.push({
       type: 'train',
       legIndex: 0,
@@ -197,33 +163,145 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
     })
   }
 
+  legs.forEach(refreshFlightReminderText)
   return legs
 }
 
-// Insert a leg unless an identical one already exists (same user, type, exact
-// departure instant, and identifier). Tolerates the table being absent so a
-// code-first deploy degrades gracefully.
-async function persistLeg(ctx: TicketContext, leg: Leg): Promise<void> {
-  if (!leg.departAt) return
-  const iso = leg.departAt.toISOString()
+// Reconcile printed flight identity independently of timing verification;
+// non-flight records retain their exact departure identity. Writes fail closed.
+async function matchingTicketRows(query:any,matches:(row:any)=>boolean):Promise<any[]>{
+  const found:any[]=[]
+  const pageSize=200
+  for(let offset=0;;offset+=pageSize){
+    const {data,error}=await query.order('id',{ascending:true}).range(offset,offset+pageSize-1)
+    if(error)throw new Error(error.message)
+    const page=data||[]
+    found.push(...page.filter(matches))
+    if(found.length>1)return found.slice(0,2)
+    if(page.length<pageSize)return found
+  }
+}
+
+async function persistLeg(ctx: TicketContext, leg: Leg): Promise<Date|undefined> {
+  if (!leg.departAt&&leg.type!=='flight') return
+  let iso = leg.departAt?.toISOString()||null
   try {
     let sel = supabaseAdmin
       .from('travel_tickets')
-      .select('id')
+      .select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,depart_tz,raw')
       .eq('telegram_id', ctx.telegramId)
       .eq('type', leg.type)
-      .eq('depart_at', iso)
+    if(leg.type==='flight'&&leg.pnr&&leg.flightNo&&leg.dateLabel){
+      sel=sel.eq('pnr',leg.pnr).eq('date_label',leg.dateLabel).eq('leg_index',leg.legIndex).eq('from_city',leg.fromCity).eq('to_city',leg.toCity)
+    }else if(leg.type==='flight'){
+      sel=sel.eq('from_city',leg.fromCity).eq('to_city',leg.toCity)
+      sel=leg.dateLabel==null?sel.is('date_label',null):sel.eq('date_label',leg.dateLabel)
+      sel=leg.departLocal==null?sel.is('depart_local',null):sel.eq('depart_local',leg.departLocal)
+      sel=leg.pnr==null?sel.is('pnr',null):sel.eq('pnr',leg.pnr)
+      if(leg.flightNo==null)sel=sel.is('flight_no',null)
+    }else if(iso)sel=sel.eq('depart_at',iso)
     if (leg.flightNo) sel = sel.eq('flight_no', leg.flightNo)
     else if (leg.trainNo) sel = sel.eq('train_no', leg.trainNo)
     else if (leg.eventName) sel = sel.eq('event_name', leg.eventName)
 
-    const { data: existing } = await sel.limit(1)
-    if (existing && existing.length) {
-      console.log('TRAVEL_TICKET_DEDUPE_SKIP:', { type: leg.type, depart_at: iso })
-      return
+    let { data: existing, error: lookupError } = await sel.limit(2)
+    if(lookupError)throw new Error(lookupError.message)
+    if(!existing?.length&&leg.type==='flight'){
+      let unknown=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,depart_tz,raw')
+        .eq('telegram_id',ctx.telegramId).eq('type','flight')
+      // Missing identifiers may be enriched. A unique same-PNR route/leg can
+      // also be reissued under a replacement flight number.
+      unknown=unknown.eq('leg_index',leg.legIndex)
+      const printed=ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'UTC')?.toISOString()
+      const printedDay=ticketInstant(leg.dateLabel||undefined,'00:00','UTC')?.toISOString()
+      existing=await matchingTicketRows(unknown,row=>{
+        const compatible=(stored:string|null,incoming:string|undefined|null)=>!incoming||!stored||stored===incoming
+        const reissuedLeg=!!(leg.pnr&&row.pnr===leg.pnr&&row.from_city===leg.fromCity&&row.to_city===leg.toCity&&row.leg_index===leg.legIndex)
+        if(!compatible(row.pnr,leg.pnr)||(!compatible(row.flight_no,leg.flightNo)&&!reissuedLeg))return false
+        if(!(row.pnr&&row.flight_no&&leg.pnr&&leg.flightNo)&& (row.from_city!==leg.fromCity||row.to_city!==leg.toCity))return false
+        const sameClock=printed&&ticketInstant(row.date_label,row.depart_local,'UTC')?.toISOString()===printed
+        const correctionIdentity=leg.pnr&&row.pnr===leg.pnr||leg.flightNo&&row.flight_no===leg.flightNo
+        if(printed&&!sameClock&&!correctionIdentity)return false
+        if(printedDay&&ticketInstant(row.date_label,'00:00','UTC')?.toISOString()===printedDay)return true
+        return reissuedLeg
+      })
     }
-
-    const { error } = await supabaseAdmin.from('travel_tickets').insert({
+    // Printed labels can vary between parsers while the canonical flight stays
+    // the same. Reuse its database dedupe identity after null-time reconciliation.
+    if(!existing?.length&&leg.type==='flight'&&iso){
+      const canonical=supabaseAdmin.from('travel_tickets').select('id,depart_at,date_label,depart_local,pnr,flight_no,leg_index,from_city,to_city,passengers,arrive_at,seat,airline,booking_group,depart_tz,raw')
+        .eq('telegram_id',ctx.telegramId).eq('type',leg.type).eq('depart_at',iso)
+      existing=await matchingTicketRows(canonical,row=>{
+        const compatible=(stored:string|null,incoming:string|undefined|null)=>!incoming||!stored||stored===incoming
+        if(!compatible(row.pnr,leg.pnr)||!compatible(row.flight_no,leg.flightNo))return false
+        return !!(row.pnr&&row.flight_no&&leg.pnr&&leg.flightNo||row.from_city===leg.fromCity&&row.to_city===leg.toCity&&row.leg_index===leg.legIndex)
+      })
+    }
+    if(existing&&existing.length>1)throw new Error('travel_ticket_identity_ambiguous')
+    if(existing?.[0]){
+      const saved=existing[0]
+      const priorLeg={...leg,departAt:saved.depart_at?new Date(saved.depart_at):null,pnr:saved.pnr,flightNo:saved.flight_no,airline:saved.airline,fromCity:saved.from_city,toCity:saved.to_city,dateLabel:saved.date_label,departLocal:saved.depart_local,departTz:saved.depart_tz}
+      refreshFlightReminderText(priorLeg)
+      leg.previousReminderMessages=[priorLeg.reminderMsg,priorLeg.checkinMsg].filter((value):value is string=>!!value)
+      leg.previousReminderDecisions=planLegReminders(priorLeg,Number.NEGATIVE_INFINITY).filter((decision):decision is Extract<TicketReminderDecision,{remindAt:Date}>=>'remindAt' in decision)
+      const preservePassengerDetails=leg.type==='flight'
+      const incomingPassengers=leg.passengers||[]
+      const incomingSeat=leg.seat
+      leg.pnr=leg.pnr||saved.pnr||null
+      leg.flightNo=leg.flightNo||saved.flight_no||null
+      leg.airline=leg.airline||saved.airline||null
+      leg.seat=leg.seat||saved.seat||null
+      leg.bookingGroup=leg.bookingGroup||saved.booking_group||null
+      leg.passengers=leg.passengers?.length?leg.passengers:saved.passengers||null
+      const incomingRaw=leg.raw||{}
+      leg.raw={...(saved.raw||{}),...Object.fromEntries(Object.entries(incomingRaw).filter(([,value])=>value!==null&&value!==undefined&&value!==''))}
+      if(preservePassengerDetails){
+        const passengerNames=new Map<string,string>()
+        for(const name of [...(saved.passengers||[]),...incomingPassengers]){
+          const clean=String(name||'').replace(/\s+/g,' ').trim()
+          if(clean)passengerNames.set(clean.toLowerCase(),clean)
+        }
+        leg.passengers=[...passengerNames.values()]
+        const observations=new Map<string,{passengers:string[];seat:string|null}>()
+        const addObservation=(passengers:unknown,seat:unknown)=>{
+          if(!Array.isArray(passengers)||!passengers.length)return
+          const names=passengers.map(name=>String(name||'').trim()).filter(Boolean)
+          if(!names.length)return
+          const key=names.map(name=>name.toLowerCase()).sort().join('|')
+          const prior=observations.get(key)
+          observations.set(key,{passengers:names,seat:typeof seat==='string'&&seat.trim()?seat:prior?.seat||null})
+        }
+        const previousDetails=Array.isArray(saved.raw?.passengerDetails)?saved.raw.passengerDetails:[]
+        for(const detail of previousDetails)addObservation(detail?.passengers,detail?.seat)
+        if(!previousDetails.length)addObservation(saved.passengers,saved.seat)
+        addObservation(incomingPassengers,incomingSeat)
+        leg.raw.passengerDetails=[...observations.values()]
+        // A single row-level seat must not be attributed to every passenger.
+        if(observations.size>1)leg.seat=null
+        leg.raw.seat=leg.seat
+      }
+      if(leg.type==='flight'&&!leg.departAt&&!incomingRaw.departureTimezone&&saved.from_city===leg.fromCity){
+        const savedZone=saved.raw?.departureTimezone||(saved.raw?.timeNormalizationVersion===2?saved.depart_tz:null)
+        if(savedZone){
+          const normalized=flightInstants({...leg.raw,departureTimezone:savedZone})
+          leg.departAt=normalized.departAt
+          leg.departTz=normalized.departTz
+          leg.arriveAt=normalized.arriveAt
+          leg.raw.departureTimezone=savedZone
+          iso=leg.departAt?.toISOString()||null
+        }
+      }
+      if(leg.type==='flight'&&!leg.arriveAt&&leg.departAt){
+        leg.arriveAt=flightInstants({...leg.raw,departureTimezone:leg.departTz}).arriveAt
+      }
+      if(!leg.arriveAt&&!incomingRaw.arrival&&!incomingRaw.arrivalDate&&!incomingRaw.arrivalTimezone&&saved.arrive_at&&leg.departAt){
+        const previousArrival=new Date(saved.arrive_at)
+        const normalized=saved.raw?.timeNormalizationVersion===2?previousArrival:flightInstants(leg.raw).arriveAt
+        if(normalized&&normalized>leg.departAt)leg.arriveAt=normalized
+      }
+    }
+    refreshFlightReminderText(leg)
+    const row={
       telegram_id: ctx.telegramId,
       whatsapp_to: ctx.whatsappTo,
       type: leg.type,
@@ -237,26 +315,34 @@ async function persistLeg(ctx: TicketContext, leg: Leg): Promise<void> {
       date_label: leg.dateLabel,
       depart_local: leg.departLocal,
       airline: leg.airline,
-      flight_no: leg.flightNo,
+      flight_no: leg.flightNo||existing?.[0]?.flight_no||null,
       train_no: leg.trainNo,
       train_name: leg.trainName,
       event_name: leg.eventName,
       venue: leg.venue,
-      pnr: leg.pnr,
+      pnr: leg.pnr||existing?.[0]?.pnr||null,
       seat: leg.seat,
       passengers: leg.passengers,
       source: ctx.source,
-      raw: leg.raw,
-    })
-    if (error) console.error('TRAVEL_TICKET_INSERT_FAILED:', error.message)
+      raw: {...leg.raw,timeNormalizationVersion:2},
+    }
+    if(existing?.[0]){
+      const previous=existing[0].depart_at?new Date(existing[0].depart_at):null
+      const {error}=await supabaseAdmin.from('travel_tickets').update(row).eq('telegram_id',ctx.telegramId).eq('id',existing[0].id)
+      if(error)throw new Error(error.message)
+      return previous&&Number.isFinite(previous.getTime())?previous:undefined
+    }
+    const {error}=await supabaseAdmin.from('travel_tickets').insert(row)
+    if(error)throw new Error(error.message)
   } catch (err: any) {
     console.error('TRAVEL_TICKET_PERSIST_ERROR:', err?.message || err)
+    throw new Error('travel_ticket_persist_failed')
   }
 }
 
 // Result of an attempted reminder write. 'failed' is distinct from 'exists' so the
 // caller can warn the user instead of silently claiming the alert was set.
-type ReminderWriteResult = 'inserted' | 'exists' | 'failed'
+type ReminderWriteResult = 'inserted' | 'exists' | 'already_sent' | 'failed'
 
 // Create a reminder unless one with the same message + remind_at already exists.
 // The insert MUST mirror the columns the primary writer createReminder
@@ -265,19 +351,59 @@ type ReminderWriteResult = 'inserted' | 'exists' | 'failed'
 // createReminder's own `createReminder(telegramId, telegramId, ...)` calls: for a
 // Telegram private chat the chat id equals the user id, and on WhatsApp the cron
 // delivers via whatsapp_to, so telegramId is the correct, constraint-satisfying value.
-async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date): Promise<ReminderWriteResult> {
+function ticketAlertIdentity(message:string){
+  return message.replace(/\s+\((?:[A-Za-z_]+\/[A-Za-z0-9_+\/-]+|timezone unverified)\)(?=[!.])/g,'')
+    .replace(/(\bdeparts )[^!.\n]+(?=[!.])/gi,'$1<departure>')
+    .replace(/\s+/g,' ').trim()
+}
+
+async function retireUnverifiedTicketAlerts(ctx:TicketContext,leg:Leg,previousDeparture?:Date,retireKinds?:Set<string>){
+  const departures=[previousDeparture,ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata')].filter((date):date is Date=>!!date)
+  const decisions=[...departures.flatMap(departAt=>planLegReminders({...leg,departAt},Number.NEGATIVE_INFINITY)),...(leg.previousReminderDecisions||[])].filter((decision):decision is Extract<TicketReminderDecision,{remindAt:Date}>=>'remindAt' in decision).filter(decision=>!retireKinds||retireKinds.has(decision.kind))
+  if(!decisions.length)return
+  const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,sent').eq('telegram_id',ctx.telegramId).eq('sent',false).in('remind_at',[...new Set(decisions.map(d=>d.remindAt.toISOString()))]).limit(1000)
+  if(error)throw new Error('travel_unverified_alert_cleanup_failed')
+  const ids=(data||[]).filter((row:any)=>decisions.some(d=>d.remindAt.toISOString()===row.remind_at&&[d.message,...(leg.previousReminderMessages||[])].some(message=>ticketAlertIdentity(message)===ticketAlertIdentity(String(row.message||''))))).map((row:any)=>row.id)
+  if(ids.length){
+    const {error}=await supabaseAdmin.from('reminders').delete().eq('telegram_id',ctx.telegramId).eq('sent',false).in('id',ids)
+    if(error)throw new Error('travel_unverified_alert_cleanup_failed')
+  }
+}
+
+async function createReminderIfAbsent(ctx: TicketContext, message: string, remindAt: Date, previousRemindAt:Date[]=[],previousMessages:string[]=[]): Promise<ReminderWriteResult> {
   const iso = remindAt.toISOString()
   const { data: existing, error: selError } = await supabaseAdmin
     .from('reminders')
-    .select('id')
+    .select('id,message,timezone,remind_at,sent')
     .eq('telegram_id', ctx.telegramId)
-    .eq('message', message)
-    .eq('remind_at', iso)
-    .limit(1)
+    .in('remind_at', [...new Set([iso,...previousRemindAt.map(date=>date.toISOString())])])
+    .limit(1000)
   // A failed existence check must not silently drop the reminder — log and fall
   // through to insert (the DB unique-index backstop still guards against a dupe).
   if (selError) console.error('TRAVEL_REMINDER_DEDUPE_CHECK_FAILED:', selError.message)
-  if (existing && existing.length) return 'exists'
+  const identities=new Set([message,...previousMessages].map(ticketAlertIdentity))
+  const matches=(existing||[]).filter((row:any)=>identities.has(ticketAlertIdentity(String(row.message||''))))
+  if(matches.some((row:any)=>row.sent&&row.remind_at===iso)){
+    const obsoleteIds=matches.filter((row:any)=>!row.sent).map((row:any)=>row.id)
+    if(obsoleteIds.length){
+      const {error}=await supabaseAdmin.from('reminders').delete().eq('telegram_id',ctx.telegramId).eq('sent',false).in('id',obsoleteIds)
+      if(error)return 'failed'
+    }
+    return 'already_sent'
+  }
+  const matched=matches.find((row:any)=>!row.sent&&row.remind_at===iso)||matches.find((row:any)=>!row.sent)
+  if(matched){
+    if(matched.message!==message||matched.timezone!==ctx.timezone||matched.remind_at!==iso){
+      const {error}=await supabaseAdmin.from('reminders').update({message,timezone:ctx.timezone,remind_at:iso}).eq('telegram_id',ctx.telegramId).eq('id',matched.id)
+      if(error)return 'failed'
+    }
+    const duplicateIds=matches.filter((row:any)=>!row.sent&&row.id!==matched.id).map((row:any)=>row.id)
+    if(duplicateIds.length){
+      const {error}=await supabaseAdmin.from('reminders').delete().eq('telegram_id',ctx.telegramId).eq('sent',false).in('id',duplicateIds)
+      if(error)return 'failed'
+    }
+    return 'exists'
+  }
 
   const { error } = await supabaseAdmin.from('reminders').insert({
     telegram_id: ctx.telegramId,
@@ -367,25 +493,36 @@ export async function persistAndRemindTicket(
   const legs = buildLegs(info)
   let remindersSet = 0
   let remindersFailed = 0
+  let remindersAlreadySent = 0
   const openNowNotes: string[] = []
   // Alerts that are actually scheduled (inserted now OR already present on a re-forward)
   // so the confirmation can name each with its real fire time. 'failed' is excluded —
   // it's surfaced separately below so we never claim an alert that didn't land.
-  const scheduledAlerts: { kind: 'departure' | 'checkin'; legType: Leg['type']; remindAt: Date }[] = []
+  const scheduledAlerts: { kind: 'departure' | 'checkin'; legType: Leg['type']; remindAt: Date; timezone:string }[] = []
 
   for (const leg of legs) {
-    await persistLeg(ctx, leg)
+    const previousDeparture=await persistLeg(ctx, leg)
+    if(leg.type==='flight'){
+      if(!leg.departAt)await retireUnverifiedTicketAlerts(ctx,leg,previousDeparture)
+      else if(previousDeparture){
+        const scheduledKinds=new Set(planLegReminders(leg,now).filter(decision=>'remindAt' in decision).map(decision=>decision.kind))
+        const retiredKinds=new Set(['departure','checkin'].filter(kind=>!scheduledKinds.has(kind as 'departure'|'checkin')))
+        if(retiredKinds.size)await retireUnverifiedTicketAlerts(ctx,leg,previousDeparture,retiredKinds)
+      }
+    }
 
     for (const decision of planLegReminders(leg, now)) {
       if (decision.kind === 'checkin_open_now') {
         openNowNotes.push(decision.message)
         continue
       }
-      const res = await createReminderIfAbsent(ctx, decision.message, decision.remindAt)
+      const priorDecisionDates=(leg.previousReminderDecisions||[]).filter(prior=>prior.kind===decision.kind).map(prior=>prior.remindAt)
+      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, [...(leg.departAt?[previousDeparture,leg.type==='flight'?ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata'):null].filter((date):date is Date=>!!date).map(date=>new Date(date.getTime()+decision.remindAt.getTime()-leg.departAt!.getTime())):[]),...priorDecisionDates],leg.previousReminderMessages)
       if (res === 'inserted') remindersSet++
       else if (res === 'failed') remindersFailed++
+      else if (res === 'already_sent') remindersAlreadySent++
       if (res === 'inserted' || res === 'exists') {
-        scheduledAlerts.push({ kind: decision.kind, legType: leg.type, remindAt: decision.remindAt })
+        scheduledAlerts.push({ kind: decision.kind, legType: leg.type, remindAt: decision.remindAt, timezone:leg.departTz||ctx.timezone })
       }
     }
   }
@@ -397,19 +534,23 @@ export async function persistAndRemindTicket(
     console.error('TRAVEL_TICKET_NOTE_FAILED:', err?.message || err)
   }
 
-  // Name every alert that's actually scheduled with its real IST fire time, instead of
+  // Name every alert that's actually scheduled with its local fire time, instead of
   // the old blanket "3 hours before each departure" (which lied about the check-in alert).
   let reminderTail = ''
   if (scheduledAlerts.length) {
     const parts = scheduledAlerts.map((a) => {
-      const when = formatAlertWhenIST(a.remindAt)
+      const when = `${formatAlertWhen(a.remindAt,a.timezone)} (${a.timezone})`
       if (a.kind === 'checkin') return `🧳 Check-in alert ${when}`
       return `⏰ ${a.legType === 'event' ? 'Event' : 'Departure'} alert ${when}`
     })
     reminderTail = `\n\n${parts.join(' · ')}`
   } else if (remindersFailed === 0 && openNowNotes.length === 0) {
     // Nothing scheduled and nothing failed/open-now → be honest rather than silent.
-    reminderTail = `\n\n⏰ No alerts set — the departure time has already passed.`
+    reminderTail = remindersAlreadySent>0
+      ? '\n\nNo new alerts scheduled — the matching alerts were already sent and were not rearmed.'
+      : legs.some(leg=>!leg.departAt)
+      ? `\n\n⏰ I could not verify the departure date, time or airport timezone. No alerts were set for that leg; please confirm those details.`
+      : `\n\n⏰ No alerts set — the departure time has already passed.`
   }
   let reply = buildTicketReply(info, reminderTail)
 

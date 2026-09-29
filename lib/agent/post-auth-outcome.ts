@@ -6,7 +6,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export async function markAuthOutcomeUnknown(telegramId:string,runId:string,metadata:any){
   const {handoff,secondary_auth,auth_resume,browser_waiting,...remaining}=metadata
-  const summary='The retained browser is unavailable after a possible submission. Verify the outcome directly with the provider before taking any further action. Gogo will not repeat the action.'
+  const summary='The provider outcome could not be verified after a possible submission. Verify the outcome directly with the provider before taking any further action. Gogo will not repeat the action.'
   const {error}=await supabaseAdmin.from('agent_runs').update({status:'outcome_unknown',error:'auth_reconciliation_unavailable',summary,
     metadata_json:{...remaining,browser_safe_to_retry:false,auth_reconciliation_required:true},updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',telegramId)
   if(error)throw new Error('auth_reconciliation_state_save_failed')

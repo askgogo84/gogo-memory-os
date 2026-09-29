@@ -97,6 +97,7 @@ export function parseFlightTicketTextSafe(text: string): FlightInfo | null {
       date: match[3].replace(/\s+/g, ' ').trim(),
       departure: match[2],
       arrival: match[5],
+      arrivalDate: match[6].replace(/\s+/g, ' ').trim(),
       airline: airlineNameFromPrefix(flight.prefix),
       flightNo: `${flight.prefix}${flight.number}`,
       pnr,

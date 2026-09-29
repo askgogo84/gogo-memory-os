@@ -13,6 +13,8 @@ export function checkinApprovalFingerprintInput(params:{
   provider?:string|null
   title?:string|null
   confirmationRef?:string|null
+  departureAt?:string|null
+  scheduleRevision?:string|null
 }){
   let target='airline-checkin'
   try{
@@ -27,6 +29,8 @@ export function checkinApprovalFingerprintInput(params:{
     target,
     payload:{
       action:'submit_web_checkin',
+      departureAt:params.departureAt||null,
+      scheduleRevision:params.scheduleRevision||null,
       lifeEventId:String(params.lifeEventId),
       provider:String(params.provider||''),
       title:String(params.title||''),

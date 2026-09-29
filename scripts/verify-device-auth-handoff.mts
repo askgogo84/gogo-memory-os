@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict'
+import { draftObjectiveCovered } from '../lib/agent/draft-coverage'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from '../lib/agent/browser-evidence'
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
 
 function load(file: string, mocks: Record<string, any>, extra='', globals:Record<string,any>={}) {
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
-  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||{},process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
+  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./draft-coverage'?{draftObjectiveCovered}:undefined)||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
   return exports
 }
 
@@ -50,15 +52,17 @@ const db={from:(table:string)=>{
     then:(resolve:any)=>{if(directSaveFails&&change?.metadata_json?.handoff)return Promise.resolve({error:{message:'save failed'}}).then(resolve);if(change?.metadata_json)metadata=change.metadata_json;return Promise.resolve({error:null}).then(resolve)}}
   return q
 }}
+let commandExecutionFailure:any
+let browserBlockReason='human_auth_required'
 let browserCompleted=false,vaultCalls=0,browserActions:any[]=[],reconciliationEvidence:any,browserExecutions=0
 const command=load('browser-command.ts',{
-  './post-auth-outcome':{inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
+  './post-auth-outcome':{markAuthOutcomeUnknown:async(_tg:string,runId:string,meta:any)=>{metadata={...meta,browser_safe_to_retry:false};return {runId,status:'outcome_unknown'}},inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
   '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
-  './secure-computer':{runSecureBrowser:async()=>{browserExecutions++;return browserCompleted
+  './secure-computer':{runSecureBrowser:async()=>{browserExecutions++;if(commandExecutionFailure)throw commandExecutionFailure;return browserCompleted
     ? {status:'completed',url:'https://provider.example/account',title:'Account',summary:'Read account',forms:[],actions:[]}
-    : {status:'blocked',blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}}},
+    : {status:'blocked',blockReason:browserBlockReason,authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}}},
   '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff,cancelProviderBrowserHandoff:async()=>{directCancelled++}},
   './browser-handoff':{releaseBrowserHandoff:async(_url:string,options:any)=>{assert.equal(options.allowExpired,true);released++;return {ok:false,expired:true}}},
@@ -109,23 +113,24 @@ const rows:any={agent_runs:{id:'run',telegram_id:'1',status:'paused',metadata_js
   life_events:{id:'event',telegram_id:'1'},life_event_actions:{id:'action',telegram_id:'1',life_event_id:'event',status:'blocked'}}
 let tokenSaveFails=false,cancelledHandoffs=0
 const scopedDb={from:(table:string)=>{
-  const filters:Array<[string,any]>=[];let change:any
-  const execute=()=>{const row=rows[table];if(!row||!filters.every(([k,v])=>Array.isArray(v)?v.includes(row[k]):row[k]===v))return {data:null,error:null};if(tokenSaveFails&&change?.metadata_json?.handoff)return {data:null,error:{message:'save failed'}};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
-  const q:any={select:()=>q,order:()=>q,limit:()=>q,insert:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},in:(k:string,v:any[])=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
+  const filters:Array<[string,any]>=[];let change:any,excludeCorrected=false
+  const execute=()=>{const row=rows[table];if(!row||excludeCorrected&&row.error==='flight_schedule_changed'||!filters.every(([k,v])=>Array.isArray(v)?v.includes(row[k]):(row[k]??null)===v))return {data:null,error:null};if(tokenSaveFails&&change?.metadata_json?.handoff)return {data:null,error:{message:'save failed'}};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
+  const q:any={select:()=>q,order:()=>q,limit:()=>q,or:()=>{excludeCorrected=true;return q},insert:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},is:(k:string,v:any)=>{filters.push([k,v]);return q},in:(k:string,v:any[])=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
     maybeSingle:async()=>execute(),then:(resolve:any)=>Promise.resolve(execute()).then(resolve)}
   return q
 }}
 const dispatched:string[]=[]
+let correctionDuringProvision=false,reservationCancellations=0
 let provisioningFails=false
-let preparationFails=false
+let preparationFails=false,preparationSuperseded=false,monitorRecoveryError=''
 const shared=load('secondary-auth-handoff.ts',{
   './post-auth-outcome':{inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')},markAuthOutcomeUnknown:async(...args:any[])=>outcomeReader.markAuthOutcomeUnknown(...args)},
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
-  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{if(provisioningFails)throw new Error('temporary domain failure');return handoff},cancelProviderBrowserHandoff:async()=>{cancelledHandoffs++}},
+  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{if(provisioningFails)throw new Error('temporary domain failure');if(correctionDuringProvision){rows.agent_runs.status='failed';rows.life_event_actions.status='queued'};return handoff},cancelProviderBrowserHandoff:async()=>{cancelledHandoffs++},cancelBrowserHandoffReservation:async()=>{reservationCancellations++}},
   './browser-handoff':{releaseBrowserHandoff:async()=>({ok:true})},
-  './life-event-worker':{prepareFlightCheckin:async(p:any)=>{assert.equal(p.resumeRunId,'run');if(preparationFails){rows.agent_runs.status='failed';rows.life_event_actions.status='blocked';delete rows.agent_runs.metadata_json.secondary_auth;throw new Error('temporary browser contention')};dispatched.push('flight_prepare');return {status:'completed'}}},
+  './life-event-worker':{prepareFlightCheckin:async(p:any)=>{assert.equal(p.resumeRunId,'run');if(preparationSuperseded){rows.agent_runs.status='failed';rows.agent_runs.error='flight_schedule_changed';rows.life_event_actions.status='queued';throw new Error('flight_schedule_changed')};if(preparationFails){rows.agent_runs.status='failed';rows.life_event_actions.status='blocked';delete rows.agent_runs.metadata_json.secondary_auth;throw new Error('temporary browser contention')};dispatched.push('flight_prepare');return {status:'completed'}}},
   './life-event-execution':{executeApprovedLifeEventCheckin:async(p:any)=>{assert.equal(p.runId,'run');dispatched.push('flight_execute');return {status:'completed'}}},
-  './life-event-integration-worker':{processLifecycleMonitor:async(_a:any,_e:any,_t:any,runId:string)=>{assert.equal(runId,'run');dispatched.push('lifecycle_monitor');return {status:'completed'}}},
+  './life-event-integration-worker':{processLifecycleMonitor:async(_a:any,_e:any,_t:any,runId:string)=>{assert.equal(runId,'run');if(monitorRecoveryError){rows.agent_runs.status='failed';rows.agent_runs.error='flight_schedule_changed';rows.life_event_actions.status='running';rows.life_event_actions.payload_json={scheduleRevision:'new'};rows.life_event_actions['payload_json->>scheduleRevision']='new';throw new Error(monitorRecoveryError)};dispatched.push('lifecycle_monitor');return {status:'completed'}}},
   './restaurant-reservation-worker':{processOne:async(p:any)=>{assert.equal(p.id,'action');dispatched.push('restaurant');return {status:'completed'}}},
 })
 for(const kind of ['flight_prepare','flight_execute','restaurant','lifecycle_monitor']){
@@ -139,7 +144,7 @@ for(const kind of ['flight_prepare','flight_execute','restaurant','lifecycle_mon
 assert.deepEqual(dispatched,['flight_prepare','flight_execute','restaurant','lifecycle_monitor'])
 for(const action of [
   {kind:'click',status:'done',consequential:true},
-  {kind:'click',status:'failed',consequential:true},
+  {kind:'submit',status:'failed',consequential:true},
   {kind:'submit',status:'done'},
 ]){
   await shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'restaurant',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://login.example',originalUrl:'https://provider.example',actions:[action]}})
@@ -232,21 +237,22 @@ const lockedComputer=load('secure-computer.ts',{
 await assert.rejects(()=>lockedComputer.getComputer('user','https://provider.example'),/browser_handoff_in_use/)
 assert.equal(unexpectedBootstrap,0,'ordinary browser tasks must not bootstrap an active owner takeover')
 console.log('Automated browser reservations and direct handoff persistence failure verified')
-for(const [label,throws,expected,mode] of [['Confirm reservation',false,true,'execute'],['Confirm reservation',true,true,'execute'],['Search',false,false,'execute'],['Confirm reservation',false,true,'read']] as const){
+for(const [label,throws,expected,mode] of [['Cancel booking',false,true,'execute'],['Cancel reservation',false,true,'execute'],['Cancel booking',false,true,'read'],['Confirm reservation',false,true,'execute'],['Confirm reservation',true,true,'execute'],['Search',false,false,'execute'],['Confirm reservation',false,true,'read']] as const){
   let output:any
   const element={textContent:label,tagName:'BUTTON',id:'action',getAttribute:(name:string)=>name==='type'?'button':null}
-  const page={goto:async()=>{},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://login.example',text:'Approve this sign-in'}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element),click:async()=>{if(throws)throw new Error('timeout after click')}})})}
+  const page={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async()=>({url:'https://login.example',text:'Approve this sign-in'}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element),click:async()=>{if(throws)throw new Error('timeout after click')}})})}
   await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[page],close:async()=>{}})}}),
     process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode,actions:[{kind:'click',selector:'#action'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{output=JSON.parse(value)},error:console.error}})
+  assert.equal(output.executionBeforeText,null,'baseline captured inside the action browser before the consequential control')
   const actions=lockedComputer.normalizeActionLog(output.actions)
   assert.equal(actions[0].consequential,expected,'the executed DOM control determines replay safety')
   assert.equal(actions[0].status,mode==='read'?'skipped':throws?'failed':'done')
 }
 console.log('Production browser script records consequential clicks and uncertain click outcomes')
 let browserReads=0,finalStops=0,finalUnlocks=0
-let finalChallenge:any={url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'click',detail:'#confirm',status:'done',consequential:true}]}
+let finalChallenge:any={url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'submit',detail:'#confirm',status:'done',consequential:true}]}
 const finalGateComputer=load('secure-computer.ts',{
-  '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[{type:'text',text:'[{"kind":"click","selector":"#confirm"}]'}]})}}},
+  '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[{type:'text',text:'{"approvedOperation":"booking","actions":[{"kind":"submit","selector":"#confirm"}]}'}]})}}},
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{finalStops++},
     runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(browserReads++===0
       ? {url:'https://provider.example',title:'Reservation',text:'Review reservation',forms:[]}
@@ -426,3 +432,566 @@ for(const kind of ['flight_execute','restaurant']){
   assert.match(result.text,/Verify directly/)
   assert.doesNotMatch(result.text,/Take control/)
 }
+
+// Reported Instagram shell: zero actions/forms must pause at login, never complete.
+let evidenceStops=0
+let inspectionOutput:string|undefined
+let evidencePage:any={url:'https://www.instagram.com/accounts/login/',title:'Instagram',text:'',forms:[]}
+let modelFailure=false
+let modelText='[]'
+let plannedOperation:string|undefined
+let queuedObservations:any[]=[]
+let evidenceCredential:any=null
+const evidenceComputer=load('secure-computer.ts',{
+  '@anthropic-ai/sdk':{default:class {messages={create:async()=>{if(modelFailure)throw new Error('unavailable');let response=modelText;try{const parsed=JSON.parse(modelText);if(plannedOperation&&Array.isArray(parsed))response=JSON.stringify({approvedOperation:plannedOperation,actions:parsed})}catch{};return {content:[{type:'text',text:response}]}}}}},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(queuedObservations.shift()??evidencePage)})})}},
+  './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
+  './browser-auth-gate':{detectHumanAuthGate},
+  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{},{reserveHandoff:async()=>"transfer"})},
+  './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
+  '@/lib/vault/credential-store':{resolveVaultCredentialForBrowser:async()=>evidenceCredential,recordVaultBrowserOutcome:async()=>{}},
+  '@/lib/vault/session-store':{upsertVaultSession:async()=>{}},
+  './trust':{canAuthorizeConsequentialAction:({mode}:any)=>mode==='execute'},
+})
+const readParams={userId:'owner',url:'https://www.instagram.com/',objective:'Show my three most recent saved posts',mode:'read',reserveHumanHandoff:true,reservePasswordHandoff:true}
+const loginShell=await evidenceComputer.runSecureBrowser(readParams)
+assert.equal(loginShell.status,'blocked')
+assert.equal(loginShell.authReason,'password')
+assert.equal(loginShell.handoffReservation,'transfer')
+assert.equal(evidenceStops,0,'human handoff must keep the browser alive')
+evidencePage={url:'https://www.instagram.com/',title:'Instagram',text:'',forms:[]}
+await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_objective_unverified/)
+assert.equal(evidenceStops,1,'failed read must stop the browser')
+evidencePage.text='Instagram photos and videos. Explore the community and find friends.'
+modelFailure=true
+await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_planning_failed/)
+assert.equal(evidenceStops,2,'planning failure must stop the read browser')
+modelFailure=false
+modelText=JSON.stringify({complete:true,answer:'Three saved posts',evidence:['Unobserved private post content']})
+await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_objective_unverified/)
+console.log('Production browser rejects empty shells, model errors, and unsupported evidence')
+
+evidencePage={url:'https://provider.example',title:'Acme',text:'',forms:[]}
+modelText=JSON.stringify({complete:true,answer:'Acme',evidence:['Acme']})
+const titleResult=await evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective:'Read only. Inspect this exact page and report its current document title. Do not click, fill, submit, log in, or navigate away.'})
+assert.equal(titleResult.status,'completed')
+assert.equal(titleResult.title,'Acme')
+evidencePage={url:'https://provider.example',title:'Flights',text:'Flight EY1 departs at 02:35 and arrives at 08:35 on 28 September 2026.',forms:[]}
+modelText=JSON.stringify({complete:true,answer:evidencePage.text,evidence:[evidencePage.text]})
+const flightResult=await evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective:'Read this flight schedule'})
+assert.equal(flightResult.status,'completed')
+assert.equal(flightResult.pageText,evidencePage.text,'structured consumers retain the observed body')
+console.log('Title watchers and structured travel consumers retain verified observations')
+
+evidencePage={url:'https://provider.example',title:'Acme',text:'',forms:[]}
+modelText=JSON.stringify({complete:true,evidence:['Acme']})
+for(const objective of ['Open https://provider.example and report the page title','What is the title of this website?','Read the document title','Open this page and tell me its title','Get the webpage title']){
+ const result=await evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective})
+ assert.equal(result.status,'completed',objective)
+ assert.equal(result.summary,'Acme')
+}
+console.log('Equivalent direct page-title requests accept the observed title')
+
+for(const objective of ['Report the page title and current price','Show the title plus availability','Read the title, stock and delivery fees']){
+ modelText=JSON.stringify({complete:true,evidence:['Acme']})
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective}),/browser_objective_unverified/,objective)
+}
+evidencePage={url:'https://provider.example',title:'Acme',text:'Amul Taaza toned milk 1 litre is available at ₹60.',forms:[]}
+modelText=JSON.stringify({complete:true,evidence:['Acme',evidencePage.text]})
+const combined=await evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective:'Report the page title and current price'})
+assert.equal(combined.status,'completed')
+assert.match(combined.summary,/₹60/)
+console.log('Compound title requests require actual body evidence')
+
+evidencePage={url:'https://provider.example/status',title:'Status',text:'Status: operational',forms:[]}
+modelText=JSON.stringify({complete:true,evidence:[evidencePage.text]})
+const shortResult=await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Read the service status'})
+assert.equal(shortResult.status,'completed')
+assert.equal(shortResult.summary,'Status: operational')
+
+for(const body of ['OK','UP','Healthy']){
+ evidencePage={url:'https://provider.example/status',title:'Status',text:body,forms:[]}
+ modelText=JSON.stringify({complete:true,evidence:[body]})
+ const result=await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Read the service status'})
+ assert.equal(result.summary,body)
+}
+
+for(const body of ['Loading...','Please wait','Just a moment','Loading products...','Please wait while we fetch availability']){
+ evidencePage={url:'https://provider.example/status',title:'Status',text:body,forms:[]}
+ modelText=JSON.stringify({complete:true,evidence:[body]})
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Read the service status'}),/browser_objective_unverified/)
+}
+evidencePage={url:'https://provider.example/status',title:'OK',text:'OK',forms:[]}
+modelText=JSON.stringify({complete:true,evidence:['OK']})
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Read the service status'})).summary,'OK')
+
+for(const badOutput of ['', 'invalid-json']){
+ const before=evidenceStops
+ inspectionOutput=badOutput
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams))
+ assert.equal(evidenceStops,before+1,'initial inspection failure must stop the sandbox')
+}
+inspectionOutput=undefined
+
+evidencePage={url:'https://provider.example',title:'Provider',text:'The provider page is loaded and ready for the requested action.',forms:[]}
+modelFailure=true
+for(const mode of ['draft','execute']){
+ const before=evidenceStops
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode}),/browser_planning_failed/)
+ assert.equal(evidenceStops,before+1,`${mode} planning failure stops its sandbox`)
+}
+modelFailure=false
+
+for(const mode of ['draft','execute']){
+ for(const plan of ['[]','invalid-json','[{"kind":"unsupported"}]']){
+  modelText=plan
+  const before=evidenceStops
+  await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode}),/browser_objective_unverified/)
+  assert.equal(evidenceStops,before+1,'unverified write mode stops sandbox')
+ }
+}
+console.log('Write-mode runs cannot complete without observed action evidence')
+
+plannedOperation='booking'
+evidencePage.executionBeforeText='Review the requested operation.'
+evidencePage.executionAfterText='Awaiting provider response.'
+modelText=JSON.stringify([{kind:'fill',selector:'#name',value:'Example'},{kind:'submit',selector:'#confirm'}])
+evidencePage.actions=[{kind:'fill',status:'done'},{kind:'submit',status:'failed',consequential:true}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode:'execute'}),/browser_objective_unverified/)
+evidencePage.actions=[{kind:'fill',status:'done'},{kind:'submit',status:'done',consequential:true}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,mode:'execute'}),/browser_objective_unverified/)
+console.log('Execute mode rejects partial failures and missing provider confirmation')
+
+for(const confirmation of ['Reservation confirmed.','Reservation is not confirmed.','If your reservation is confirmed, you will receive email.','Reservation pending.']){
+ queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:confirmation,executionAfterText:confirmation}]
+ const execute=()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'})
+ if(confirmation==='Reservation confirmed.')assert.equal((await execute()).summary,'Reservation confirmed')
+ else await assert.rejects(execute,/browser_objective_unverified/)
+}
+queuedObservations=[{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.',executionAfterText:'Reservation confirmed.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+console.log('Local confirmation requires new affirmative provider evidence, not stale, pending or conditional text')
+
+plannedOperation='application'
+queuedObservations=[{...evidencePage,text:'Review application.'},{...evidencePage,text:'Application submitted successfully.',executionAfterText:'Application submitted successfully.'}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Submit this application',mode:'execute'})).summary,'Application submitted successfully')
+plannedOperation='application'
+queuedObservations=[{...evidencePage,text:'Review application.'},{...evidencePage,text:'Awaiting provider response.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Submit this application',mode:'execute'}),(error:any)=>error.message==='browser_objective_unverified'&&error.browserExecutionStarted===true)
+console.log('Generic applications confirm locally; uncertain submissions carry a no-replay marker')
+
+plannedOperation='booking'
+evidenceCredential={username:'fixture',secret:'fixture-only',provider:'fixture',domain:'provider.example',credentialId:'fixture',telegramId:17}
+queuedObservations=[{url:'https://provider.example/login',title:'Sign in',text:'Enter your password',forms:[{inputs:[{type:'password'}]}]},{...evidencePage,text:'Reservation confirmed.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.',executionAfterText:'Reservation confirmed.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+assert.equal(queuedObservations.length,0,'execute after Vault login consumes the authenticated baseline')
+evidenceCredential=null
+metadata={url:'https://provider.example',objective:'Submit application'}
+commandExecutionFailure=Object.assign(new Error('browser_objective_unverified'),{browserExecutionStarted:true})
+const uncertainSubmission=await command.executeBrowser({...params,mode:'execute'})
+assert.equal(uncertainSubmission.status,'outcome_unknown')
+assert.equal(metadata.browser_safe_to_retry,false)
+const noReplayCount=browserExecutions
+reconciliationEvidence=undefined
+await assert.rejects(()=>command.executeBrowser({...params,mode:'execute'}),/reconciliation/)
+assert.equal(browserExecutions,noReplayCount,'unknown submission cannot be automatically replayed')
+commandExecutionFailure=undefined
+console.log('Post-Vault baseline rejects stale confirmation and uncertain command state blocks replay')
+
+queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Reservation confirmed.',executionAfterText:'Reservation confirmed.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+console.log('Confirmation present only after the action-browser reload cannot count as new success')
+
+queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed.',executionBeforeText:'Review reservation.',executionAfterText:'Booking submission pending.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+function evaluateObservation(fn:any,input:any,observation:any){
+ if(input?.confirmationSnapshot)return runInNewContext('('+fn.toString()+')(input)',{input,document:observation.receiptDocument||{body:{innerText:observation.text}}})
+ return {...observation,text:observation.text.slice(0,18000)}
+}
+
+let boundaryOutput:any,simulatedPage='Review reservation.'
+const boundaryPage={goto:async(url:string)=>{simulatedPage=url.endsWith('/history')?'Reservation confirmed.':'Review reservation.'},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async(fn:any,input:any)=>evaluateObservation(fn,input,{url:'https://provider.example',text:simulatedPage}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:'Confirm reservation',tagName:'BUTTON',id:'confirm',getAttribute:()=>null}),click:async()=>{simulatedPage='Booking submission pending.'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[boundaryPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:booking|reservation)',actions:[{kind:'submit',selector:'#confirm'},{kind:'goto',url:'https://provider.example/history'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.text,'Reservation confirmed.')
+assert.equal(boundaryOutput.executionBeforeText,'')
+assert.equal(boundaryOutput.executionAfterText,'')
+console.log('Subsequent navigation cannot replace the immediate provider submission result')
+
+simulatedPage='Review reservation.'
+let boundaryClicks=0
+const misleadingControlPage={...boundaryPage,locator:()=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:'Confirm reservation',tagName:'BUTTON',id:'confirm',getAttribute:()=>null}),click:async()=>{simulatedPage=++boundaryClicks===1?'Booking submission pending.':'Reservation confirmed.'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[misleadingControlPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:booking|reservation)',actions:[{kind:'submit',selector:'#confirm'},{kind:'click',selector:'#view-reservation'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.text,'Reservation confirmed.')
+assert.equal(boundaryOutput.actions.filter((action:any)=>action.consequential).length,2)
+assert.equal(boundaryOutput.executionBeforeText,'')
+assert.equal(boundaryOutput.executionAfterText,'')
+console.log('Later consequential-labelled controls cannot overwrite the original submission evidence')
+
+for(const [objective,confirmation] of [['Cancel my booking','Booking cancelled'],['Cancel my reservation','Reservation canceled'],['Cancel my booking','Your booking has been cancelled'],['Check in for my flight','You are checked in'],['Check in for my flight','You are now checked in'],['Check in for my flight','Checked in successfully']]){
+ plannedOperation=objective.startsWith('Cancel')?'cancellation':'check_in'
+ queuedObservations=[{...evidencePage,text:'Review the operation.'},{...evidencePage,text:confirmation,executionBeforeText:'Review the operation.',executionAfterText:confirmation}]
+ assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'})).summary,confirmation)
+}
+for(const [objective,confirmation] of [['Cancel my booking','Your booking is not cancelled'],['Cancel my reservation','When reservation canceled, contact us'],['Check in for my flight','You are not checked in'],['Check in for my flight','Once checked in, print the pass']]){
+ plannedOperation=objective.startsWith('Cancel')?'cancellation':'check_in'
+ queuedObservations=[{...evidencePage,text:'Review the operation.'},{...evidencePage,text:confirmation,executionBeforeText:'Review the operation.',executionAfterText:confirmation}]
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'}),/browser_objective_unverified/)
+}
+console.log('Normal cancellation/check-in verb confirmations work while negatives and conditions remain unverified')
+
+simulatedPage='Dismiss this popup.'
+const dismissalPage={...boundaryPage,locator:(selector:string)=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:selector==='#dismiss'?'Cancel':'Confirm reservation',tagName:'BUTTON',id:selector,getAttribute:()=>null}),click:async()=>{simulatedPage=selector==='#dismiss'?'Review the new reservation.':'Reservation confirmed.'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[dismissalPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:booking|reservation)',actions:[{kind:'click',selector:'#dismiss'},{kind:'submit',selector:'#confirm'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.executionBeforeText,'')
+assert.equal(boundaryOutput.executionAfterText,'Reservation confirmed')
+console.log('A plain Cancel dismissal cannot own evidence for an approved booking')
+
+
+for(const [objective,operation,confirmation] of [
+ ['Book a refundable fare with free cancellation','booking','Reservation confirmed'],
+ ['Book a fare I can cancel for free','booking','Reservation confirmed'],
+ ["I can't travel so please cancel my booking",'cancellation','Booking cancelled'],
+ ['Could you cancel my booking?','cancellation','Booking cancelled'],
+ ["I'd like to cancel my reservation",'cancellation','Booking cancelled'],
+ ['Open the site, cancel my booking','cancellation','Booking cancelled'],
+ ['Book this fare; do not cancel my existing booking','booking','Reservation confirmed'],
+ ['Click Cancel to dismiss the modal, then book the room','booking','Reservation confirmed']]){
+ plannedOperation=operation
+ queuedObservations=[{...evidencePage,text:'Review the approved operation.'},{...evidencePage,text:confirmation,executionBeforeText:'Review the approved operation.',executionAfterText:confirmation}]
+ assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective,mode:'execute'})).summary,confirmation)
+}
+plannedOperation=undefined
+queuedObservations=[{...evidencePage,text:'Review the operation.'}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Book a fare',mode:'execute'}),(error:any)=>error.message==='browser_objective_unverified'&&error.browserExecutionStarted===false)
+console.log('Execution consistently uses the preclassified operation; missing classification fails before any action')
+
+plannedOperation='booking'
+for(const baseline of ['RESERVATION CONFIRMED','Reservation   confirmed','Reservation\nconfirmed','Reservation has\nbeen confirmed']){
+ queuedObservations=[{...evidencePage,text:'Review reservation.'},{...evidencePage,text:'Reservation confirmed',executionBeforeText:baseline,executionAfterText:'Reservation confirmed'}]
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Confirm my reservation',mode:'execute'}),/browser_objective_unverified/)
+}
+console.log('Case and whitespace changes cannot make stale confirmation evidence new')
+
+let applyStage='Open the application.'
+const applyPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async(fn:any,input:any)=>evaluateObservation(fn,input,{url:'https://provider.example',text:applyStage}),locator:(selector:string)=>({first:()=>({evaluate:async(fn:any)=>fn({textContent:selector==='#apply'?'Apply':'Submit application',tagName:'BUTTON',id:selector,getAttribute:()=>null}),click:async()=>{applyStage=selector==='#apply'?'Application submitted previously. Fill this new form.':'Application submitted successfully.'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[applyPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:application|form|submission)',actions:[{kind:'click',selector:'#apply'},{kind:'submit',selector:'#submit'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.executionBeforeText,'Application submitted')
+assert.equal(boundaryOutput.executionAfterText,'Application submitted successfully')
+metadata={url:'https://provider.example',objective:'Submit application'}
+browserBlockReason='provider_access_limited';browserActions=[{kind:'submit',status:'done',consequential:true}];browserCompleted=false
+const blockedAfterSubmit=await command.executeBrowser({...params,mode:'execute'})
+assert.equal(blockedAfterSubmit.status,'outcome_unknown')
+assert.equal(metadata.browser_safe_to_retry,false)
+console.log('Application entry cannot own final-submit evidence; provider blocks after submission preserve uncertainty')
+
+let capturedConfirmationPredicate:any
+let asyncPageText='Review purchase.',settled=false
+const asyncPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async(predicate:any,input:any,options:any)=>{
+ capturedConfirmationPredicate=predicate
+ assert.equal(options.timeout,15000);assert.equal(options.polling,250)
+ for(let poll=0;poll<10;poll++){
+  if(poll===5)asyncPageText='Order placed'
+  const ready=runInNewContext('('+predicate.toString()+')(input)',{input,document:{body:{innerText:asyncPageText}}})
+  if(poll<5)assert.equal(ready,false,'an idle intermediate page cannot finish the wait')
+  if(ready){settled=true;return}
+ }
+ throw new Error('confirmation timeout')
+},evaluate:async(fn:any,input:any)=>evaluateObservation(fn,input,{url:'https://provider.example',text:asyncPageText}),locator:()=>({first:()=>({click:async()=>{asyncPageText='Processing your order'}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[asyncPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:order|purchase)',actions:[{kind:'submit',selector:'#place-order'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(settled,true)
+assert.equal(boundaryOutput.executionAfterText,'Order placed')
+plannedOperation='purchase'
+queuedObservations=[{...evidencePage,text:'Review purchase.'},{...evidencePage,text:'Order placed',executionBeforeText:'Review purchase.',executionAfterText:'Order placed'}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my approved order',mode:'execute'})).summary,'Order placed')
+console.log('Delayed post-submit DOM confirmation is polled before capture; an idle intermediate page cannot finish the wait')
+
+plannedOperation='purchase'
+for(const [before,after] of [['Order placed · updated 2 minutes ago','Order placed · updated 3 minutes ago'],['Order has been placed','Order placed'],['Order successfully placed','Order placed'],['Review order','No order placed'],['Review order','Order placed unsuccessfully'],['Review order','Order placed?']]){
+ queuedObservations=[{...evidencePage,text:before},{...evidencePage,text:after,executionBeforeText:before,executionAfterText:after}]
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'}),/browser_objective_unverified/)
+ assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before,pattern:'(?:order|purchase)'},document:{body:{innerText:after}}}),false)
+}
+for(const [operation,before,after] of [['payment','Review payment','Payment processed'],['payment','Review payment','Payment has been processed'],['purchase','No order placed','Order placed']]){
+ plannedOperation=operation
+ queuedObservations=[{...evidencePage,text:before},{...evidencePage,text:after,executionBeforeText:before,executionAfterText:after}]
+ assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Complete the approved operation',mode:'execute'})).summary,after)
+}
+console.log('Stable confirmation phrases ignore mutable timestamps; direct processed payments work; negatives cannot become success')
+
+for(const stale of [true,false]){
+ let longBody='x'.repeat(20000)+(stale?'\nOrder placed':'\nReview purchase')
+ const longPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async(fn:any,input:any)=>evaluateObservation(fn,input,{url:'https://provider.example',text:longBody}),locator:()=>({first:()=>({click:async()=>{longBody=stale?'Order placed':'x'.repeat(20000)+'\nOrder placed'}})})}
+ await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[longPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:order|purchase)',actions:[{kind:'submit',selector:'#place-order'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+ assert.equal(boundaryOutput.executionBeforeText,stale?'Order placed':'')
+ assert.equal(boundaryOutput.executionAfterText,'Order placed')
+ plannedOperation='purchase';modelText=JSON.stringify([{kind:'submit',selector:'#place-order'}])
+ queuedObservations=[{...evidencePage,text:'Review purchase.'},boundaryOutput]
+ const execute=()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})
+ if(stale)await assert.rejects(execute,/browser_objective_unverified/)
+ else assert.equal((await execute()).summary,'Order placed')
+}
+console.log('Full-DOM phrase snapshots retain late confirmations and reject stale evidence moving into the text prefix')
+
+plannedOperation='purchase';modelText=JSON.stringify([{kind:'submit',selector:'#place-order'}])
+for(const confirmation of ['Thank you for your order','Thanks for your purchase','Successfully placed your order','Order complete']){
+ queuedObservations=[{...evidencePage,text:'Review purchase.'},{...evidencePage,text:confirmation,actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:'',executionAfterText:confirmation}]
+ assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,confirmation)
+}
+for(const [before,after] of [['Thank you for your order','Order placed'],['Order placed','Thanks for your purchase']]){
+ queuedObservations=[{...evidencePage,text:'Review purchase.'},{...evidencePage,text:after,actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:before,executionAfterText:after}]
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'}),/browser_objective_unverified/)
+}
+console.log('Thank-you/reversed receipts confirm purchases, while changing confirmation wording alone remains stale')
+
+plannedOperation='application';modelText=JSON.stringify([{kind:'submit',selector:'#submit'}])
+queuedObservations=[{...evidencePage,text:'Application submitted'},{...evidencePage,text:'Application submitted\nApplication submitted',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:'Application submitted',executionAfterText:'Application submitted\nApplication submitted'}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Submit the new application',mode:'execute'})).summary,'Application submitted')
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:'Application submitted',pattern:'(?:application|form|submission)'},document:{body:{innerText:'Application submitted\nApplication submitted'}}}),true)
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:'Order placed',pattern:'(?:order|purchase)'},document:{body:{innerText:'Order placed. Thank you for your order'}}}),false,'synonymous wording on the same receipt line is one occurrence')
+console.log('A new confirmation occurrence is retained alongside old records without double-counting same-line receipt wording')
+
+plannedOperation='purchase'
+for(const [before,after] of [
+ ['Order placed. Thank you for your order','Order placed.\nThank you for your order'],
+ ['Order placed.\nThank you for your order','Order placed. Thank you for your order'],
+ ['Order placed. Thank you for your order','Order\nplaced.\nThank you for your order'],
+]){
+ queuedObservations=[{...evidencePage,text:before},{...evidencePage,text:after,actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:before,executionAfterText:after}]
+ await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'}),/browser_objective_unverified/)
+ assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before,pattern:'(?:order|purchase)'},document:{body:{innerText:after}}}),false)
+}
+console.log('Receipt reflow across sentences and words never creates new confirmation evidence')
+
+// Real DOM-shaped receipt records preserve mixed confirmation wording without
+// treating synonymous text inside a single receipt as separate records.
+const receiptDocument=(texts:string[])=>{
+ const nodes=texts.map(innerText=>({innerText,getClientRects:()=>[{}],contains:(other:any)=>false}))
+ return {body:{innerText:texts.join('\n')},querySelectorAll:()=>nodes}
+}
+const oldReceipts=JSON.stringify({receiptRecords:['Order placed','Order placed']})
+const newReceipts=JSON.stringify({receiptRecords:['Order placed','Order placed','Thank you for your order']})
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:oldReceipts,pattern:'(?:order|purchase)'},document:receiptDocument(['Order placed','Order placed','Thank you for your order'])}),true)
+for(const wrapped of ['Order placed. Thank you for your order','Order placed.\nThank you for your order']){
+ assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:JSON.stringify({receiptRecords:['Order placed']}),pattern:'(?:order|purchase)'},document:receiptDocument([wrapped])}),false)
+}
+plannedOperation='purchase';modelText=JSON.stringify([{kind:'submit',selector:'#place-order'}])
+queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Thank you for your order',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:oldReceipts,executionAfterText:newReceipts}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,'Thank you for your order')
+console.log('Separate DOM receipt records preserve a new differently worded receipt alongside older history')
+
+let receiptTexts=['Order placed','Order placed']
+const recordPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async(fn:any,input:any)=>evaluateObservation(fn,input,{url:'https://provider.example',text:receiptTexts.join('\n'),receiptDocument:receiptDocument(receiptTexts)}),locator:()=>({first:()=>({click:async()=>{receiptTexts.push('Thank you for your order')}})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[recordPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'execute',confirmationPattern:'(?:order|purchase)',actions:[{kind:'submit',selector:'#place-order'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(JSON.parse(boundaryOutput.executionBeforeText).receiptRecords.length,2)
+assert.equal(JSON.parse(boundaryOutput.executionAfterText).receiptRecords.length,3)
+console.log('Actual browser script preserves the full receipt-record snapshots at submission')
+
+const priorIds=JSON.stringify({receiptRecords:[{id:'data-order-id:old-1',phrase:'Order placed'},{id:'data-order-id:old-2',phrase:'Order placed'}]})
+const afterIds=JSON.stringify({receiptRecords:[{id:'data-order-id:old-2',phrase:'Order placed'},{id:'data-order-id:new-3',phrase:'Thank you for your order'}]})
+const cappedNodes=['old-2','new-3'].map((id,i)=>({innerText:i?'Thank you for your order':'Order placed',getClientRects:()=>[{}],contains:(other:any)=>false,getAttribute:(key:string)=>key==='data-order-id'?id:null}))
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:priorIds,pattern:'(?:order|purchase)'},document:{body:{innerText:'Order placed\nThank you for your order'},querySelectorAll:()=>cappedNodes}}),true)
+queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Thank you for your order',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:priorIds,executionAfterText:afterIds}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,'Thank you for your order')
+console.log('Stable provider receipt identities detect new results in capped history')
+
+const parentReceipts=['old-2','new-3'].map(id=>({innerText:'Order placed',getClientRects:()=>[{}],getAttribute:(key:string)=>key==='data-order-id'?id:null,contains:(node:any)=>node.parent===id}))
+const nestedReceipts=parentReceipts.map((parent,i)=>({parent:i?'new-3':'old-2',innerText:'Order placed',getClientRects:()=>[{}],getAttribute:()=>null,contains:()=>false,closest:()=>parent}))
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:priorIds,pattern:'(?:order|purchase)'},document:{body:{innerText:'Order placed\nOrder placed'},querySelectorAll:(selector:string)=>selector.startsWith('[data-')?[...parentReceipts,...nestedReceipts]:[]}}),true)
+console.log('Nested receipt content preserves its enclosing provider identity')
+
+const mixedBefore=JSON.stringify({receiptRecords:[{id:'data-order-id:old-1',phrase:'Order placed'},{id:null,nodeKey:'anonymous-node',phrase:'Order placed'}]})
+const mixedAfter=JSON.stringify({receiptRecords:[{id:'data-order-id:new-3',phrase:'Order placed'},{id:null,phrase:'Order placed'}]})
+const mixedNodes=[{innerText:'Order placed',getClientRects:()=>[{}],contains:()=>false,getAttribute:()=> 'new-3'},{innerText:'Order placed',getClientRects:()=>[{}],contains:()=>false,getAttribute:()=>null}]
+assert.equal(runInNewContext('('+capturedConfirmationPredicate.toString()+')(input)',{input:{before:mixedBefore,pattern:'(?:order|purchase)'},document:{body:{innerText:'Order placed'},querySelectorAll:()=>mixedNodes}}),true)
+queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Order placed',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:mixedBefore,executionAfterText:mixedAfter}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,'Order placed')
+const hydrated=JSON.stringify({receiptRecords:[{id:'data-order-id:old-1',phrase:'Order placed'},{id:'data-order-id:new-3',nodeKey:'anonymous-node',phrase:'Order placed'}]})
+queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Order placed',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:mixedBefore,executionAfterText:hydrated}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'}),/browser_objective_unverified/)
+console.log('Anonymous status does not hide new IDs; enriching an anonymous old receipt alone is not new evidence')
+
+const unrelatedStatusGone=JSON.stringify({receiptRecords:[{id:'data-order-id:old-1',phrase:'Order placed'},{id:'data-order-id:new-3',nodeKey:'new-receipt-node',phrase:'Order placed'}]})
+queuedObservations=[{...evidencePage,text:'Review purchase'},{...evidencePage,text:'Order placed',actions:[{kind:'submit',status:'done',consequential:true}],executionBeforeText:mixedBefore,executionAfterText:unrelatedStatusGone}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Place my order',mode:'execute'})).summary,'Order placed')
+console.log('Unrelated anonymous status loss cannot cancel directly identified new receipt evidence')
+
+plannedOperation=undefined
+modelText=JSON.stringify({approvedOperation:'none',draftReady:false,actions:[{kind:'click',selector:'#start'}]})
+queuedObservations=[{...evidencePage,text:'Start application'},{...evidencePage,text:'Application form',actions:[{kind:'click',status:'done'}],draftVerified:false}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Prepare application with name: "Example"' ,mode:'draft'}),/browser_objective_unverified/)
+modelText=JSON.stringify({approvedOperation:'none',draftReady:true,actions:[{kind:'fill',selector:'#name',value:'Example'}]})
+queuedObservations=[{...evidencePage,text:'Application form'},{...evidencePage,text:'Application form',forms:[{inputs:[{selector:'#name',name:'name',label:'Name'}]}],actions:[{kind:'fill',status:'done'}],draftVerified:true}]
+assert.equal((await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Prepare application with name: "Example"' ,mode:'draft'})).status,'prepared')
+queuedObservations=[{...evidencePage,text:'Application form'},{...evidencePage,text:'Application form',forms:[{inputs:[{selector:'#name',name:'name',label:'Name'},{selector:'#email',name:'email',label:'Email'}]}],actions:[{kind:'fill',status:'done'}],draftVerified:true}]
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Prepare application with name: "Example", email: "example@example.com"',mode:'draft'}),/browser_objective_unverified/)
+let draftFieldValue=''
+const draftPage={goto:async()=>{},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://provider.example',text:'Draft form'}),locator:()=>({first:()=>({fill:async(value:string)=>{draftFieldValue=value},inputValue:async()=>draftFieldValue})})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[draftPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'draft',actions:[{kind:'fill',selector:'#name',value:'Example'}]})).toString('base64')],exit:()=>{throw new Error('unexpected script exit')}},Buffer,console:{log:(value:string)=>{boundaryOutput=JSON.parse(value)},error:console.error}})
+assert.equal(boundaryOutput.draftVerified,true)
+console.log('Draft completion requires a complete field plan and final DOM value verification; opening a form is insufficient')
+
+const coveragePage={forms:[{inputs:[{selector:'#name',name:'name',label:'Name'},{selector:'#email',name:'email',label:'Email'}]}]}
+const nameAction={kind:'fill',selector:'#name',value:'Example'}
+assert.equal(draftObjectiveCovered('Prepare application with name: "Example", email: "example@example.com"',coveragePage,[nameAction]),false)
+assert.equal(draftObjectiveCovered('Prepare application with name: "Example", email: "example@example.com"',coveragePage,[nameAction,{kind:'fill',selector:'#email',value:'example@example.com'}]),true)
+assert.equal(draftObjectiveCovered('Prepare application with name: "Example" and also attach my CV',coveragePage,[nameAction]),false)
+assert.equal(draftObjectiveCovered('Prepare application with name: "Example"',coveragePage,[{...nameAction,selector:'#email'}]),false)
+assert.equal(draftObjectiveCovered('Prepare application with name: "Example"',coveragePage,[{...nameAction,value:'Wrong'}]),false)
+
+const checkboxPage={forms:[{inputs:[{selector:'#terms',name:'terms',label:'Terms',type:'checkbox'}]}]}
+assert.equal(draftObjectiveCovered('Prepare form with terms: "checked"',checkboxPage,[{kind:'check',selector:'#terms'}]),true)
+assert.equal(draftObjectiveCovered('Prepare form with terms: "true"',checkboxPage,[{kind:'check',selector:'#terms'}]),true)
+assert.equal(draftObjectiveCovered('Prepare form with terms: "false"',checkboxPage,[{kind:'check',selector:'#terms'}]),false)
+assert.equal(draftObjectiveCovered('Prepare form with terms: "checked"',{forms:[{inputs:[{selector:'#terms',name:'terms',type:'text'}]}]},[{kind:'check',selector:'#terms'}]),false)
+
+assert.equal(draftObjectiveCovered('Prepare web check-in for EY1. Booking reference/PNR: ABC123.',{},[]),null)
+assert.equal(draftObjectiveCovered('Read the current status for this booking.',{},[]),null)
+assert.equal(draftObjectiveCovered('Select product variant/size "M" and add exactly one item to the cart/bag.',{},[]),null)
+
+assert.equal(draftObjectiveCovered('Fill the application — Country: "India", DOB: "1990-01-01"',{},[]),false)
+assert.equal(draftObjectiveCovered('Fill draft — Custom field: "value"',{},[]),false)
+assert.equal(draftObjectiveCovered("Fill form — Country: 'India'",{},[]),false)
+assert.equal(draftObjectiveCovered('Fill form — Country = "India"',{},[]),false)
+
+const monitorIntegrations=await import('../lib/agent/life-event-integrations')
+let monitorReads=0,monitorUpdates:any[]=[],monitorReleases:string[]=[]
+const monitorWorker=load('life-event-integration-worker.ts',{
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async(_tg:string,id:string)=>{monitorReleases.push(id)}},
+ '@/lib/supabase-admin':{supabaseAdmin:{rpc:async(name:string,args:any)=>{assert.equal(name,'gogo_publish_lifecycle_monitor');monitorUpdates.push({payload_json:{lastStatusText:args.p_text}});return {data:{status:'deferred'},error:null}},from:(table:string)=>{
+  const q:any={select:()=>q,eq:()=>q,update:(value:any)=>{monitorUpdates.push(value);return q},maybeSingle:async()=>({data:table==='users'?{id:'owner',telegram_id:17}: {level:'read'},error:null}),then:(resolve:any)=>Promise.resolve({data:null,error:null}).then(resolve)};return q
+ }}},
+ './life-event-integrations':monitorIntegrations,
+ './policy':{evaluateAgentExecutionPolicy:(params:any)=>{assert.equal(params.mode,'read');return {allowed:true}}},
+ './sentinel':{evaluateAgentSentinel:(params:any)=>{assert.equal(params.mode,'read');return {allowed:true}}},
+ './secure-computer':{runSecureBrowser:async(params:any)=>{assert.equal(params.mode,'read');assert.equal(params.reserveHumanHandoff,true);monitorReads++;return {status:'completed',title:'Flight status',pageText:'EY1 scheduled arrival 08:35; on time',actions:[]}}},
+})
+const monitorResult=await monitorWorker.processLifecycleMonitor({id:'watch',payload_json:{supersededMonitorRunId:'old-monitor'}},{id:'flight',event_type:'travel',subtype:'flight',title:'EY1',metadata_json:{flight_no:'EY1'}},'17')
+assert.equal(monitorResult.status,'deferred')
+assert.equal(monitorReads,1)
+assert.deepEqual(monitorReleases,['old-monitor'])
+assert.ok(monitorUpdates.some(value=>value.payload_json?.lastStatusText?.includes('EY1 scheduled arrival')))
+
+let obsoletePreparationReleased=''
+const obsoletePreparation=load('life-event-worker.ts',{
+ '@/lib/supabase-admin':{supabaseAdmin:{from:()=>{const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{level:'draft'},error:null})};return q}}},
+ './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
+ './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async(_owner:string,runId:string)=>{obsoletePreparationReleased=runId;throw new Error('fixture release unavailable')}},
+})
+await assert.rejects(()=>obsoletePreparation.prepareFlightCheckin({telegramId:'17',event:{confirmation_ref:'ABC123'},action:{payload_json:{checkInUrl:'https://airline.example/checkin',supersededPreparationRunId:'old-preparation'}}}),/fixture release unavailable/)
+assert.equal(obsoletePreparationReleased,'old-preparation','obsolete human takeover must be released before any new preparation')
+
+const controlClassifier=lockedComputer.BROWSER_SCRIPT.slice(lockedComputer.BROWSER_SCRIPT.indexOf('async function isConsequentialControl'),lockedComputer.BROWSER_SCRIPT.indexOf('(async()=>'))
+for(const [label,expected] of [['Apply filters',false],['Apply filters and submit',true],['Apply now',true],['View confirmation',false],['Open confirmation',false],['See confirmation details',false],['View payment receipt',false],['Review application status',false],['View confirmation and submit',true],['View booking',false],['View booking confirmation',false],['Show reservation confirmation',false],['View booking confirmation and pay',true],['Manage booking',false],['Booking details',false],['View my reservation',false],['Confirm booking',true],['Cancel booking',true],['Pay for booking',true],['View booking and cancel',true],['Submit booking',true]] as const){
+ const element={textContent:label,tagName:'BUTTON',id:'',getAttribute:(key:string)=>key==='type'?'submit':null}
+ const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
+ assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page}),expected,label)
+}
+
+for(const id of ['manage-booking','manage_booking','manageBooking']){
+ const element={textContent:'Manage booking',tagName:'BUTTON',id,getAttribute:(key:string)=>key==='type'?'submit':key==='name'?id:null}
+ const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
+ assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page}),false,id)
+}
+const mixedNavigationElement={textContent:'Manage booking',tagName:'BUTTON',id:'cancel-booking',getAttribute:()=>null}
+assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page:{locator:()=>({first:()=>({evaluate:(fn:any)=>fn(mixedNavigationElement)})})}}),true)
+
+for(const [id,expected] of [['booking',false],['reservation',false],['confirmation',false],['confirm-booking',true],['submit-booking',true],['booking-confirmation',false],['reservation_confirmation',false],['bookingConfirmation',false],['booking-confirmation-pay',true],['booking-confirmation-cancel',true]] as const){
+ const element={textContent:'View booking confirmation',tagName:'BUTTON',id,getAttribute:()=>null}
+ const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
+ assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page}),expected,id)
+}
+
+rows.agent_runs.status='failed'
+await assert.rejects(()=>shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'flight_prepare',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[],handoffReservation:'obsolete-reservation'}}),/flight_schedule_changed/)
+assert.equal(reservationCancellations,1,'obsolete reservation is released before provisioning')
+rows.agent_runs.status='running';rows.life_event_actions.status='running'
+rows.agent_runs.metadata_json={life_event_id:'event',life_event_action_id:'action'}
+provisioningFails=false;correctionDuringProvision=true
+const cancellationsBefore=cancelledHandoffs
+await shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'flight_prepare',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[]}})
+assert.equal(cancelledHandoffs,cancellationsBefore+1,'a handoff created concurrently with correction is cancelled')
+assert.equal(rows.agent_runs.status,'failed','obsolete preparation must not be resurrected')
+correctionDuringProvision=false
+let currentPreparationRevision='old',staleReservationReleased=0,staleAttached=0,staleActionWrites=0
+const stalePreparation=load('life-event-worker.ts',{
+ '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{
+  const result=()=>({data:table==='users'?{id:'owner',telegram_id:17}:table==='agent_permissions'?{level:'draft'}:table==='life_event_actions'?{status:'running',payload_json:{scheduleRevision:currentPreparationRevision}}:{id:'obsolete-run'},error:null})
+  const q:any={select:()=>q,eq:()=>q,in:()=>q,insert:()=>q,update:()=>{if(table==='life_event_actions')staleActionWrites++;return q},single:async()=>result(),maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)};return q
+ }}},
+ './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
+ './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
+ './provider-browser-handoff':{cancelBrowserHandoffReservation:async()=>{staleReservationReleased++}},
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{},attachSecondaryAuthHandoff:async()=>{staleAttached++}},
+ './secure-computer':{runSecureBrowser:async()=>{currentPreparationRevision='new';return {status:'blocked',handoffReservation:'old-reservation',blockReason:'human_auth_required',authReason:'device_approval',actions:[]}}},
+})
+await assert.rejects(()=>stalePreparation.prepareFlightCheckin({telegramId:'17',event:{id:'event',confirmation_ref:'ABC123'},action:{id:'prepare',payload_json:{scheduleRevision:'old',checkInUrl:'https://airline.example'}}}),/flight_schedule_changed/)
+assert.equal(staleReservationReleased,1)
+assert.equal(staleAttached,0)
+assert.equal(staleActionWrites,0,'stale preparation cannot overwrite the corrected action')
+
+rows.agent_runs.status='paused';rows.agent_runs.metadata_json={life_event_id:'event',life_event_action_id:'action',auth_resume:{kind:'flight_prepare',safeToRetry:true}}
+rows.life_event_actions.status='blocked';preparationSuperseded=true
+await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'}),/flight_schedule_changed/)
+assert.equal(rows.agent_runs.status,'failed','resume recovery must not revive a superseded preparation')
+assert.equal(rows.life_event_actions.status,'queued','resume recovery must not block the corrected preparation')
+preparationSuperseded=false
+
+rows.agent_runs.status='running';rows.agent_runs.metadata_json={life_event_id:'event',life_event_action_id:'action'}
+rows.life_event_actions.status='running';rows.life_event_actions['payload_json->>scheduleRevision']='corrected'
+await assert.rejects(()=>shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'flight_prepare',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[]}}),/auth_handoff_action_save_failed/)
+assert.equal(rows.life_event_actions.status,'running','a legacy unversioned handoff cannot pause a corrected action')
+delete rows.life_event_actions['payload_json->>scheduleRevision']
+
+rows.agent_runs.status='running';rows.agent_runs.metadata_json={life_event_id:'event',life_event_action_id:'action',scheduleRevision:'old'}
+rows.life_event_actions.status='running';rows.life_event_actions['payload_json->>scheduleRevision']='corrected'
+await assert.rejects(()=>shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'lifecycle_monitor',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[]}}),/auth_handoff_action_save_failed/)
+assert.equal(rows.life_event_actions.status,'running','stale monitor cannot pause a corrected action')
+delete rows.life_event_actions['payload_json->>scheduleRevision']
+let staleMonitorReservationReleased=0,staleMonitorAttached=0
+const staleMonitor=load('life-event-integration-worker.ts',{
+ '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{
+  const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:table==='users'?{id:'owner',telegram_id:17}:table==='agent_permissions'?{level:'read'}:{status:'running',payload_json:{scheduleRevision:'new'}},error:null})};return q
+ }}},
+ './life-event-integrations':monitorIntegrations,
+ './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
+ './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
+ './provider-browser-handoff':{cancelBrowserHandoffReservation:async()=>{staleMonitorReservationReleased++}},
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{},attachSecondaryAuthHandoff:async()=>{staleMonitorAttached++}},
+ './secure-computer':{runSecureBrowser:async()=>({status:'blocked',handoffReservation:'old-monitor-reservation',blockReason:'human_auth_required',authReason:'device_approval',actions:[]})},
+})
+await assert.rejects(()=>staleMonitor.processLifecycleMonitor({id:'watch',payload_json:{scheduleRevision:'old'}},{id:'flight',event_type:'travel',subtype:'flight',title:'EY1',metadata_json:{flight_no:'EY1'}},'17'),/flight_schedule_changed/)
+assert.equal(staleMonitorReservationReleased,1)
+assert.equal(staleMonitorAttached,0)
+
+for(const failure of ['life_event_monitor_publication_failed:life_event_schedule_changed','temporary publication failure']){
+ rows.agent_runs.status='paused';rows.agent_runs.error=null;rows.agent_runs.metadata_json={life_event_id:'event',life_event_action_id:'action',auth_resume:{kind:'lifecycle_monitor',safeToRetry:true}}
+ rows.life_event_actions.status='blocked';rows.life_event_actions.payload_json={scheduleRevision:'old'};rows.life_event_actions['payload_json->>scheduleRevision']='old'
+ monitorRecoveryError=failure
+ await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'}))
+ assert.equal(rows.agent_runs.status,'failed')
+ assert.equal(rows.life_event_actions.status,'running','resume recovery must not block a corrected running monitor')
+ assert.equal(rows.life_event_actions.payload_json.scheduleRevision,'new')
+}
+monitorRecoveryError=''
+let finalMonitorRevision='old',finalMonitorWrites=0,finalMonitorReservationReleased=0
+const finalMonitorRace=load('life-event-integration-worker.ts',{
+ '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{
+  let change:any;const filters:any[]=[]
+  const execute=()=>{
+   if(table==='life_event_actions'&&change){if(filters.some(([key,value])=>key==='payload_json->>scheduleRevision'&&value!==finalMonitorRevision))return {data:null,error:null};finalMonitorWrites++;finalMonitorRevision=change.payload_json.scheduleRevision}
+   return {data:table==='users'?{id:'owner',telegram_id:17}:table==='agent_permissions'?{level:'read'}:table==='life_event_actions'?{id:'watch',status:'running',payload_json:{scheduleRevision:finalMonitorRevision}}:{id:'monitor-run'},error:null}
+  }
+  const q:any={select:()=>q,eq:(key:string,value:any)=>{filters.push([key,value]);return q},is:(key:string,value:any)=>{filters.push([key,value]);return q},in:()=>q,insert:()=>q,update:(value:any)=>{change=value;return q},single:async()=>execute(),maybeSingle:async()=>execute(),then:(resolve:any)=>Promise.resolve(execute()).then(resolve)};return q
+ }}},
+ './life-event-integrations':monitorIntegrations,
+ './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
+ './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
+ './provider-browser-handoff':{cancelBrowserHandoffReservation:async()=>{finalMonitorReservationReleased++}},
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{},attachSecondaryAuthHandoff:async()=>{finalMonitorRevision='new';return 'https://fixture.invalid/handoff'}},
+ './secure-computer':{runSecureBrowser:async()=>({status:'blocked',handoffReservation:'reservation',blockReason:'human_auth_required',authReason:'device_approval',actions:[]})},
+})
+await assert.rejects(()=>finalMonitorRace.processLifecycleMonitor({id:'watch',payload_json:{scheduleRevision:'old'}},{id:'flight',event_type:'travel',subtype:'flight',title:'EY1',metadata_json:{flight_no:'EY1'}},'17'),/flight_schedule_changed/)
+assert.equal(finalMonitorWrites,0)
+assert.equal(finalMonitorRevision,'new')
+assert.equal(finalMonitorReservationReleased,1)

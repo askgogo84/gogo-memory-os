@@ -1,3 +1,4 @@
+import { readScopedReminders, reminderTimezoneMetadata } from './reminder-read'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { refreshAccessToken } from '@/lib/google-calendar'
@@ -5,7 +6,7 @@ import { addToListDetailed, getAllLists, getList, normalizeListName } from '@/li
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { dispatchThroughSameBrain } from './same-brain'
-import { executeReadOnlyCalendarStep } from './calendar-read'
+import { executeReadOnlyCalendarStep, calendarReadWindow } from './calendar-read'
 import { buildTravelResearchContext, curateTravelResults, isPublicTravelResearchRequest } from './travel-research'
 import type { AgentActor } from './actor'
 
@@ -21,19 +22,24 @@ const DEFAULT_BUSINESS_PACKING=['Laptop','Charger','Phone charger','Power bank',
 function safe(value:unknown,max=1200){return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))}
 function pad(n:number){return String(n).padStart(2,'0')}
 
-function explicitDates(text:string, defaultYear=new Date().getUTCFullYear()){
+export function explicitDates(text:string, defaultYear=new Date().getUTCFullYear(), upcomingFrom?:string){
   const out:string[]=[]
-  const add=(year:number,month:number,day:number)=>{
-    const d=new Date(Date.UTC(year,month-1,day))
-    if(d.getUTCFullYear()!==year||d.getUTCMonth()!==month-1||d.getUTCDate()!==day)return
-    const iso=`${year}-${pad(month)}-${pad(day)}`
-    if(!out.includes(iso))out.push(iso)
+  const add=(year:number,month:number,day:number,yearless=false)=>{
+    for(let offset=0;offset<(yearless&&upcomingFrom?9:1);offset++){
+      const candidateYear=year+offset
+      const d=new Date(Date.UTC(candidateYear,month-1,day))
+      if(d.getUTCFullYear()!==candidateYear||d.getUTCMonth()!==month-1||d.getUTCDate()!==day)continue
+      const iso=`${candidateYear}-${pad(month)}-${pad(day)}`
+      if(yearless&&upcomingFrom&&iso<upcomingFrom)continue
+      if(!out.includes(iso))out.push(iso)
+      return
+    }
   }
   let m:RegExpExecArray|null
   const dayMonth=/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(20\d{2}))?/gi
-  while((m=dayMonth.exec(text))){const month=MONTHS[m[2].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[1]))}
-  const monthDay=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:[,\s]+(20\d{2}))?/gi
-  while((m=monthDay.exec(text))){const month=MONTHS[m[1].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[2]))}
+  while((m=dayMonth.exec(text))){const month=MONTHS[m[2].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[1]),!m[3])}
+  const monthDay=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})\b(?:[,\s]+(20\d{2}))?/gi
+  while((m=monthDay.exec(text))){const month=MONTHS[m[1].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[2]),!m[3])}
   const iso=/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g
   while((m=iso.exec(text)))add(Number(m[1]),Number(m[2]),Number(m[3]))
   const numeric=/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/g
@@ -57,6 +63,8 @@ export function explicitMissionClock(text:string){
   if(withMinutes)return to24Hour(Number(withMinutes[1]),Number(withMinutes[2]),withMinutes[3])
   const hourOnly=text.match(/\b(\d{1,2})\s*(am|pm)\b/i)
   if(hourOnly)return to24Hour(Number(hourOnly[1]),0,hourOnly[2])
+  const clock24=text.match(/\b(\d{1,2}):(\d{2})\b/)
+  if(clock24)return to24Hour(Number(clock24[1]),Number(clock24[2]),'')
   return null
 }
 
@@ -164,8 +172,86 @@ async function persistMissionReminder(params:{actor:AgentActor;date:string;time:
   return {text:`Created reminder for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(data.id),message:String(data.message||params.message),remindAt:String(data.remind_at),timezone:String(data.timezone||params.timezone),reused:false,verifiedStore:'reminders'}}
 }
 
+export function reminderStepIntent(step:{title:string;instruction:string}):'read'|'write'|'mixed'|'unknown'{
+  const verbs=/(?<![\w-])(review(?:ing|ed)?|list(?:ing|ed)?|show(?:ing|n)?|find(?:ing)?|retriev(?:e|ing|ed)|read(?:ing)?|check(?:ing|ed)?|inspect(?:ing|ed)?|look(?:ing)? up|creat(?:e|ing|ed)|mak(?:e|ing)|set(?:ting)?|add(?:ing|ed)?|schedul(?:e|ing|ed)|remind(?:ing|ed)?|mov(?:e|ing|ed)|reschedul(?:e|ing|ed)|updat(?:e|ing|ed)|edit(?:ing|ed)?|delet(?:e|ing|ed)|remov(?:e|ing|ed)|cancel(?:ling|ing|led|ed)?|complet(?:e|ing|ed))(?![\w-])/gi
+  const kind=(verb:string)=>/^(review|list|show|find|retriev|read|check|inspect|look)/i.test(verb)?'read':/^(creat|mak|set|add|schedul|remind)/i.test(verb)?'write':'unsupported'
+  const intents=new Set<string>()
+  for(const text of [step.title,step.instruction]){
+    const positive=text.replace(/\b(?:do not|don't|never|without)\b(?:(?!\b(?:then|but|afterwards?|subsequently|and\s+(?:create|make|set|add|schedule|remind|review|list|show|find|retrieve|read|check|inspect|move|reschedule|update|edit|delete|remove|cancel|complete))\b)[^.;!?])*/gi,'')
+      .replace(/\b(?:scheduled|created|added|updated)\s+(?=reminders?\b)/gi,'')
+      .replace(/\b(reminders?\s+)(?:(?:that\s+)?(?:(?:were|are|was|is|has been|have been|had been)|(?:I|we|you|they)(?:\s+(?:have|had))?)\s+)?(?:scheduled|created|added|set|updated)\b/gi,'$1')
+    let creations=0
+    for(const clause of positive.split(/[.;!?]|\b(?:and|then)\b/i)){
+      let matches=[...clause.matchAll(verbs)]
+      // In an explicit creation, "reminder to review documents" is the reminder
+      // content. In a review, later verbs still describe outstanding operations.
+      if(matches[0]&&kind(matches[0][1])==='write'){
+        const payload=clause.search(/\breminders?\b[\s\S]*?\bto\b/i)
+        if(payload>=0)matches=matches.filter(match=>(match.index||0)<payload)
+      }
+      for(const match of matches){
+        const action=kind(match[1]);intents.add(action)
+        if(action==='write')creations++
+      }
+    }
+    if(creations>1&&(positive.match(/\b(?:reminders?|one|another)\b/gi)||[]).length>1)return 'mixed'
+  }
+  return intents.size>1?'mixed':intents.has('read')?'read':intents.has('write')?'write':'unknown'
+}
+
 export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
   const {actor,step,missionText}=params
+  const stepIntent=reminderStepIntent(step)
+  if(stepIntent==='mixed')throw new Error('mission_reminder_mixed_read_write_requires_separate_steps')
+  if(stepIntent==='unknown')throw new Error('mission_reminder_intent_unverified')
+  if(stepIntent==='read'){
+    const reviewText=`${step.title} ${step.instruction}`
+    const timezone=reminderTimezoneMetadata(reviewText).timezone||await actorTimezone(actor)
+    const localParts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
+    const localValues:Record<string,string>={};for(const part of localParts)localValues[part.type]=part.value
+    const localToday=`${localValues.year}-${localValues.month}-${localValues.day}`
+    const dates=explicitDates(reviewText,Number(localValues.year),localToday)
+    const clocks=[...new Set([...reviewText.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter((clock):clock is string=>!!clock))]
+    const clock=clocks[0]||null
+    const relative=/\b(today|tomorrow)\b/i.exec(reviewText)?.[1].toLowerCase()
+    const weekRelative=/\b(?:this|next) week\b/i.test(reviewText)
+    let temporal: {timezone:string;dates:string[];clock:string|null;clocks:string[];pairs?:Array<{date:string;clock:string}>}|undefined
+    if(dates.length||clock||relative||weekRelative){
+      if(weekRelative&&!dates.length){
+        const window=calendarReadWindow(reviewText,new Date(),timezone)
+        for(let day=new Date(`${window.startDate}T00:00:00Z`);day.toISOString().slice(0,10)<=window.endDate;day.setUTCDate(day.getUTCDate()+1))dates.push(day.toISOString().slice(0,10))
+      }
+      if(relative&&!dates.length){
+        const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
+        const values:Record<string,string>={};for(const part of parts)values[part.type]=part.value
+        const date=new Date(`${values.year}-${values.month}-${values.day}T00:00:00Z`)
+        if(relative==='tomorrow')date.setUTCDate(date.getUTCDate()+1)
+        dates.push(date.toISOString().slice(0,10))
+      }
+      let pairs:Array<{date:string;clock:string}>|undefined
+      if(dates.length>1&&clocks.length>1&&!weekRelative){
+        pairs=[]
+        for(const clause of reviewText.replace(/(?<=\d),\s*(?=20\d{2}\b)/g,' ').split(/\band\b|[;,]/i).filter(clause=>clause.trim())){
+          const clauseDates=explicitDates(clause,Number(localValues.year),localToday)
+          const clauseClocks=[...new Set([...clause.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter((time):time is string=>!!time))]
+          if(clauseDates.length===1&&clauseClocks.length===1)pairs.push({date:clauseDates[0],clock:clauseClocks[0]})
+          else throw new Error('mission_reminder_paired_scope_unverified')
+        }
+        if(!dates.every(date=>pairs!.some(pair=>pair.date===date))||!clocks.every(time=>pairs!.some(pair=>pair.clock===time)))throw new Error('mission_reminder_paired_scope_unverified')
+      }
+      temporal={timezone,dates,clock,clocks,pairs}
+    }
+    const {reminders,truncated,scopeTerms}=await readScopedReminders(actor.legacyTelegramId,step,missionText,temporal)
+    return {text:(reminders.length
+      ? `Pending saved reminders${scopeTerms.length?` matching ${scopeTerms.join(' ')}`:''}:\n${reminders.map(row=>`${row.message} — ${new Intl.DateTimeFormat('en-GB',{timeZone:normalizeTimezone(row.timezone),dateStyle:'medium',timeStyle:'short'}).format(new Date(row.remindAt))} (${normalizeTimezone(row.timezone)})`).join('\n')}`
+      : 'No upcoming unsent reminders matching the requested text were found. This does not establish that the trip checklist is complete.')
+      +(scopeTerms.length?'\nMatched saved reminder text; reminders without these names or labels may not be included.':'')
+      +(truncated?'\nThe review reached its 1,000-reminder limit; later reminders were not checked.':''),
+      output:{reminders,readOnly:true,scope:'requested_reminders',scopeTerms,truncated,verifiedStore:'reminders'}}
+  }
+  const writeDates=explicitDates(step.instruction)
+  const writeClocks=[...new Set([...step.instruction.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter(Boolean))]
+  if(writeDates.length>1||writeClocks.length>1)throw new Error('mission_reminder_multiple_instants_require_separate_steps')
   const exactDate=explicitDate(step.instruction)||await relativeMissionDate(step.instruction,actor)
   const exactTime=explicitMissionClock(step.instruction)
   if(exactDate&&exactTime){
@@ -187,7 +273,7 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
   }
 
   const startedAt=new Date().toISOString()
-  const result=await dispatchThroughSameBrain({actor,text:step.instruction,messageId:params.messageId})
+  const result=await dispatchThroughSameBrain({internalStep:true,actor,text:step.instruction,messageId:params.messageId})
   const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone,created_at')
     .eq('telegram_id',actor.legacyTelegramId).gte('created_at',startedAt).order('created_at',{ascending:false}).limit(1).maybeSingle()
   if(error)throw new Error(`mission_reminder_verify_failed:${error.message}`)
@@ -305,7 +391,7 @@ export async function executeVerifiedMissionMemory(params:{actor:AgentActor;step
     }
     return {text:'No saved flight matched this mission’s route/date. Continuing without an old ticket.',output:{found:false,matchedRoute:context.routeLabel,verifiedRelevance:true}}
   }
-  const result=await dispatchThroughSameBrain({actor:params.actor,text:params.step.instruction,messageId:params.messageId})
+  const result=await dispatchThroughSameBrain({internalStep:true,actor:params.actor,text:params.step.instruction,messageId:params.messageId})
   return {text:result.text,output:{reply:String(result.text||'').slice(0,3500),handledBy:result.handledBy}}
 }
 

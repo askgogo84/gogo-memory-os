@@ -302,7 +302,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   let pendingHandoffReservation:string|undefined
   try{
-    const result=reconciledResult||await runSecureBrowser({reserveHumanHandoff:true,userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null})
+    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null})
     pendingHandoffReservation=result.handoffReservation
     const at=new Date().toISOString()
 
@@ -315,8 +315,12 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:compact,error:blockReason,completed_at:at}).eq('id',params.stepId)
       await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:blockReason,metadata_json:runMetadata,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
       await activity(tg,params.runId,blockReason,blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
+      if(blockReason==='provider_access_limited'&&runMetadata.browser_safe_to_retry===false){
+        const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
+        return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}
+      }
       if(blockReason==='human_auth_required'){
-        if(result.authReason&&result.authReason!=='password'){
+        if((result.handoffReservation||(result.authReason&&result.authReason!=='password'))&&!result.credentialSelectionRequired){
           const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
           const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:result.url,originalUrl:params.command.url,reservationToken:result.handoffReservation})
           const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff},completed_at:null}).eq('id',params.runId).eq('telegram_id',String(tg))
@@ -362,9 +366,10 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:compact,error:null,completed_at:at}).eq('id',params.stepId)
     await supabaseAdmin.from('agent_runs').update({status:'completed',summary:safe(`${result.summary} ${result.title}`,1600),progress:100,completed_at:at,error:null,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
     await activity(tg,params.runId,'run_completed',result.summary,{host:new URL(result.url).hostname,action_count:result.actions.length})
-    return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
+    return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${params.mode==='read'?'':safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
   }catch(err:any){
     if(pendingHandoffReservation)await (await import('./provider-browser-handoff')).cancelBrowserHandoffReservation(params.actor.userId,pendingHandoffReservation).catch(()=>{})
+    if(err?.browserExecutionStarted===true)runMetadata.browser_safe_to_retry=false
     if(runMetadata.browser_safe_to_retry===false){
       const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
       return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}
@@ -373,6 +378,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),completed_at:at}).eq('id',params.stepId)).catch(()=>{})
     await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the secure browser session.',error:safe(message,500),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
     await activity(tg,params.runId,'run_failed','Secure browser session failed.',{error:safe(message,250)})
+    if(message==='browser_objective_unverified'||message==='browser_planning_failed')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:'I could not verify the information you requested from the provider page. This task is not complete; I have no verified result to report.',handledBy:'secure-browser' as const}
     throw err
   }
 }
