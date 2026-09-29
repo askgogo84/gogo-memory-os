@@ -9,6 +9,8 @@ import {
   extractFlightCodes,
   activeEventKeys,
   recordEventKey,
+  activeStamped,
+  mergeStamped,
   webWatchAlertAllowed,
   WEB_WATCH_MAX_ALERTS_24H,
   WEB_WATCH_MIN_ALERT_INTERVAL_MS,
@@ -292,6 +294,23 @@ assert.deepEqual(activeEventKeys(stored, later), [], 'a key past the re-arm wind
 assert.ok(EVENT_KEY_REARM_MS > 0)
 // Legacy undated entries remain armed (back-compat).
 assert.deepEqual(activeEventKeys(['legacyKey'], later), ['legacyKey'])
+
+// Codex P1 (round 2): URL/topic dedup must re-arm too, or a recurring event at a STABLE
+// URL is suppressed forever even after the event key expires. mergeStamped time-stamps
+// seenUrls/seenSignatures; activeStamped drops them past the window.
+const urlHist = mergeStamped([], ['https://tracker.example.com/ey1'], t0)
+assert.ok(urlHist[0].startsWith('https://tracker.example.com/ey1|'))
+assert.deepEqual(activeStamped(urlHist, recent), ['https://tracker.example.com/ey1'], 'a recent URL stays deduped')
+assert.deepEqual(activeStamped(urlHist, later), [], 'a stable URL re-arms after the window so a recurring event can alert')
+// A URL containing "|" is preserved (only a trailing |<digits> is a timestamp).
+const pipeUrl = mergeStamped([], ['https://x.example.com/a|b'], t0)
+assert.deepEqual(activeStamped(pipeUrl, recent), ['https://x.example.com/a|b'])
+// Re-seeing a URL keeps its ORIGINAL timestamp (does not refresh), so continuous
+// presence still expires on schedule.
+const refreshed = mergeStamped(urlHist, ['https://tracker.example.com/ey1'], recent)
+assert.deepEqual(activeStamped(refreshed, later), [], 're-seeing a URL must not reset its expiry clock')
+// Legacy bare URL entries stay deduped (no spam burst) until re-stamped.
+assert.deepEqual(activeStamped(['https://legacy.example.com/x'], later), ['https://legacy.example.com/x'])
 
 const now = new Date('2026-09-11T03:00:00Z')
 const withinCooldown = webWatchAlertAllowed({

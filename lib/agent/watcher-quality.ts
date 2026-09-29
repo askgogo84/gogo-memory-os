@@ -19,27 +19,58 @@ export function extractFlightCodes(text: string): string[] {
   return Array.from(out).sort()
 }
 
-// seenEventKeys entries are stored "key|ms". Return the still-armed bare keys.
-export function activeEventKeys(entries: string[] | undefined, now: Date): string[] {
+// Dedup history entries are stored "value|ms". Only a trailing |<digits> is treated as
+// a timestamp, so values that themselves contain "|" (e.g. a URL query) are preserved.
+function parseStamped(entry: string): { value: string; ms: number } {
+  const m = String(entry || '').match(/^(.*)\|(\d{6,})$/)
+  return m ? { value: m[1], ms: Number(m[2]) } : { value: String(entry || ''), ms: NaN }
+}
+
+// Return the still-armed bare values (undated legacy entries stay armed for back-compat).
+export function activeStamped(entries: string[] | undefined, now: Date): string[] {
   const cutoff = now.getTime() - EVENT_KEY_REARM_MS
   const set = new Set<string>()
   for (const entry of entries || []) {
-    const [key, ms] = String(entry).split('|')
-    if (!key) continue
-    const t = Number(ms)
-    if (!Number.isFinite(t) || t >= cutoff) set.add(key) // undated legacy entries stay armed
+    const { value, ms } = parseStamped(entry)
+    if (!value) continue
+    if (!Number.isFinite(ms) || ms >= cutoff) set.add(value)
   }
   return Array.from(set)
 }
 
-// Record a freshly-alerted event key with a timestamp, pruning expired entries.
+// Merge freshly-seen values into stamped history: keep the earliest timestamp per value,
+// stamp legacy/new values with `now`, drop values past the re-arm window, and bound size.
+// This gives seenUrls / seenSignatures the same time-expiry as event keys, so a recurring
+// event reported at a stable URL can alert again after the window instead of forever.
+export function mergeStamped(prior: string[] | undefined, values: string[], now: Date): string[] {
+  const cutoff = now.getTime() - EVENT_KEY_REARM_MS
+  const map = new Map<string, number>()
+  for (const entry of prior || []) {
+    const { value, ms } = parseStamped(entry)
+    if (!value) continue
+    const t = Number.isFinite(ms) ? ms : now.getTime() // legacy bare → stamp now (self-heals within a window)
+    if (t >= cutoff) map.set(value, Math.min(map.get(value) ?? t, t))
+  }
+  for (const raw of values) {
+    const value = String(raw || '')
+    if (value && !map.has(value)) map.set(value, now.getTime())
+  }
+  return Array.from(map.entries()).map(([value, ms]) => `${value}|${ms}`).slice(-WEB_WATCH_MAX_HISTORY)
+}
+
+// seenEventKeys entries are stored "key|ms". Return the still-armed bare keys.
+export function activeEventKeys(entries: string[] | undefined, now: Date): string[] {
+  return activeStamped(entries, now)
+}
+
+// Record a freshly-alerted event key with a fresh timestamp, pruning expired entries.
 export function recordEventKey(entries: string[] | undefined, key: string, now: Date): string[] {
   if (!key) return entries || []
   const cutoff = now.getTime() - EVENT_KEY_REARM_MS
   const kept = (entries || []).filter(entry => {
-    const t = Number(String(entry).split('|')[1])
-    return !Number.isFinite(t) || t >= cutoff
-  }).filter(entry => String(entry).split('|')[0] !== key)
+    const { value, ms } = parseStamped(entry)
+    return value !== key && (!Number.isFinite(ms) || ms >= cutoff)
+  })
   return [...kept, `${key}|${now.getTime()}`].slice(-WEB_WATCH_MAX_HISTORY)
 }
 

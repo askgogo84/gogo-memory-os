@@ -183,7 +183,10 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     facts.push({
       id:`travel-ticket:${leg.id}`,
       source:'travel_ticket',
-      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,leg.airline,leg.flightNo,passengerLabel,...leg.seatObservations.map((detail:any)=>detail.names.length===1?`Seat for ${detail.names[0]}: ${detail.seat}`:`Seat ${detail.seat} recorded with ${detail.names.join(', ')}; individual assignment unverified`),...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel,timeStatusLabel].filter(Boolean).join(' · '),700),
+      // timeStatusLabel is placed BEFORE unbounded passenger/seat details so a large
+      // group booking can never truncate away the past-leg warning that suppresses
+      // stale check-in countdowns and unverified landing claims.
+      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,timeStatusLabel,leg.airline,leg.flightNo,passengerLabel,...leg.seatObservations.map((detail:any)=>detail.names.length===1?`Seat for ${detail.names[0]}: ${detail.seat}`:`Seat ${detail.seat} recorded with ${detail.names.join(', ')}; individual assignment unverified`),...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel].filter(Boolean).join(' · '),700),
       score:0.8,
       confidence:0.98,
       startAt:leg.departAt,

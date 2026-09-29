@@ -9,7 +9,6 @@ import { listRecentWorkspaceInbox } from './google-workspace-read'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
 import type { AgentActor } from './actor'
 import {
-  appendBoundedHistory,
   assessWebWatchResult,
   canonicalWatcherUrl,
   watcherResultSignature,
@@ -17,6 +16,8 @@ import {
   extractFlightCodes,
   activeEventKeys,
   recordEventKey,
+  activeStamped,
+  mergeStamped,
 } from './watcher-quality'
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
@@ -1002,6 +1003,12 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     return `${contextScope}:${cited.join('+')}`
   }
 
+  // URL/topic dedup expires on the same re-arm clock as event keys, so a recurring
+  // event at a stable URL can alert again after the window instead of being suppressed
+  // forever (legacy bare entries stay armed until re-stamped).
+  const armedUrls = activeStamped(priorSeenUrls, now)
+  const armedSignatures = activeStamped(priorSeenSignatures, now)
+
   const assessments = topResults.map(result => ({
     result,
     quality: assessWebWatchResult({
@@ -1010,8 +1017,8 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       snippet: result.snippet,
       url: result.url,
       triggerKeywords: condition.triggerKeywords,
-      seenUrls: priorSeenUrls,
-      seenSignatures: priorSeenSignatures,
+      seenUrls: armedUrls,
+      seenSignatures: armedSignatures,
       seenEventKeys: armedEventKeys,
       occurrence: occurrenceFor(result),
     }),
@@ -1053,8 +1060,8 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
 
   const currentUrls = topResults.map(result => canonicalWatcherUrl(result.url)).filter(Boolean)
   const currentSignatures = topResults.map(result => watcherResultSignature(result.title, result.snippet || ''))
-  const seenUrls = appendBoundedHistory(priorSeenUrls, currentUrls)
-  const seenSignatures = appendBoundedHistory(priorSeenSignatures, currentSignatures)
+  const seenUrls = mergeStamped(priorSeenUrls, currentUrls, now)
+  const seenSignatures = mergeStamped(priorSeenSignatures, currentSignatures, now)
   // Record the disruption identity (with a timestamp) only when we actually alert, so
   // the same event is suppressed on later polls but re-arms after the window. Expiry is
   // applied at read time via activeEventKeys, so non-alert polls keep the prior list.
