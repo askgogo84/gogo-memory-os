@@ -54,6 +54,9 @@ for (const text of [
   // though the noun is whitelisted — "as spam" is unambiguous.
   'Open Facebook and report the status as spam.',
   'Open Facebook and report the post as inappropriate.',
+  // Codex P2 (round 3): the "for <reason>" flag syntax is equally a mutation.
+  'Open Facebook and report the status for harassment.',
+  'Open Instagram and report this account for abuse.',
 ]) {
   assert.equal(parseConnectedProviderReadCommand(text), null, `real provider mutation must be declined: ${text.slice(0, 48)}...`)
 }
@@ -81,9 +84,12 @@ assert.equal(shouldAttemptNaturalAssetRetrieval('Open my flight invoice document
 assert.equal(shouldAttemptNaturalAssetRetrieval('Find my hotel receipt'), true)
 assert.equal(shouldAttemptNaturalAssetRetrieval('Show me Jopasu Dashboard & Tyre Polish'), true)
 
-// 5b. Codex P2 (round 2): a genuine saved "report" with an operational-word title
-//     must remain retrievable — the reporting-directive strip must not remove it.
+// 5b. Codex P2 (round 2/3): a genuine saved "report" with an operational-word title
+//     must remain retrievable — the reporting-directive strip is clause-leading only,
+//     so a "report" NOUN followed by a result noun in a title is left intact.
 assert.equal(shouldAttemptNaturalAssetRetrieval('Find my hotel report'), true)
 assert.equal(shouldAttemptNaturalAssetRetrieval('Show me my flight delay report'), true)
+assert.equal(shouldAttemptNaturalAssetRetrieval('Find my hotel report summary'), true)
+assert.equal(shouldAttemptNaturalAssetRetrieval('Open my flight incident report status'), true)
 
 console.log('✅ Report-directive routing regression passed: explicit browser actions with "Report only verified results" reach the secure browser and cannot be hijacked by Asset Memory')

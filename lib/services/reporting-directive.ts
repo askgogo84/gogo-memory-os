@@ -19,22 +19,26 @@ const RESULT_NOUN =
 const QUALIFIER =
   'back|only|just|now|please|the|this|that|these|those|a|an|my|our|your|its|their|his|her|me|to|us|with|of|all|any|verified|unverified|actual|current|final|live|real|confirmed|exact|relevant|accurate|precise|available|latest|updated|complete|full|raw'
 
-// "report X as spam/abuse/…" is unambiguously a provider mutation regardless of the
-// noun in between (covers "report the status/post/listing as spam").
-const REPORT_AS_MUTATION_RE =
-  /\breport\b[^.!?;,]*\bas\s+(?:spam|abuse|abusive|inappropriate|offensive|fake|fraud|fraudulent|scam|harmful|harassment|violation|violating|misleading|counterfeit|objectionable)\b/i
-
 // A benign reporting directive: "report back" or "report [qualifiers] <result-noun>".
-const REPORTING_DIRECTIVE_SRC = `\\breport\\s+back\\b|\\breport(?:\\s+(?:${QUALIFIER}))*\\s+(?:${RESULT_NOUN})\\b`
+const DIRECTIVE_BODY = `report\\s+back\\b|report(?:\\s+(?:${QUALIFIER}))*\\s+(?:${RESULT_NOUN})\\b`
+// The clause-leading boundary that marks "report" used as a verb (not inside a title).
+const CLAUSE_LEAD = `(?:^|[.!?;,]|\\b(?:and|then|to)\\b)\\s*(?:please\\s+)?`
 
-/** True when `text` contains a benign reporting directive ("report only verified results"). */
-export function containsReportingDirective(text: string): boolean {
-  return new RegExp(REPORTING_DIRECTIVE_SRC, 'i').test(String(text || ''))
-}
+// Reasons that turn "report X as/for <reason>" into an unambiguous flag/abuse mutation.
+const ABUSE_REASON =
+  'spam|abuse|abusive|inappropriate|offensive|fake|fraud|fraudulent|scam|harmful|harassment|harassing|bullying|violation|violating|misleading|counterfeit|objectionable|nudity|violence|hate|impersonation|self[\\s-]?harm|misinformation'
+// "report X as spam" / "report X for harassment" are always provider mutations,
+// regardless of the noun in between (covers "report the status/post/listing …").
+const REPORT_ABUSE_MUTATION_RE = new RegExp(
+  `\\breport\\b[^.!?;,]*\\b(?:as|for)\\s+(?:${ABUSE_REASON})\\b`,
+  'i',
+)
 
-/** Remove reporting directives so downstream noun/intent checks don't see the word "report". */
+/** Remove clause-leading reporting directives so downstream noun/intent checks don't see "report". */
 export function stripReportingDirectives(text: string): string {
-  return String(text || '').replace(new RegExp(REPORTING_DIRECTIVE_SRC, 'gi'), ' ')
+  // Anchored to a clause-leading "report" so a title where "report" is a NOUN
+  // ("my hotel report summary") is left intact for the asset-noun escape.
+  return String(text || '').replace(new RegExp(`${CLAUSE_LEAD}(?:${DIRECTIVE_BODY})`, 'gi'), ' ')
 }
 
 /**
@@ -44,9 +48,9 @@ export function stripReportingDirectives(text: string): string {
  */
 export function hasLeadingReportMutation(text: string): boolean {
   const t = String(text || '')
-  if (REPORT_AS_MUTATION_RE.test(t)) return true
+  if (REPORT_ABUSE_MUTATION_RE.test(t)) return true
   const leading = new RegExp(
-    `(?:^|[.!?;,]|\\b(?:and|then|to)\\b)\\s*(?:please\\s+)?report\\b(?!\\s+back\\b)(?!(?:\\s+(?:${QUALIFIER}))*\\s+(?:${RESULT_NOUN})\\b)`,
+    `${CLAUSE_LEAD}report\\b(?!\\s+back\\b)(?!(?:\\s+(?:${QUALIFIER}))*\\s+(?:${RESULT_NOUN})\\b)`,
     'i',
   )
   return leading.test(t)
