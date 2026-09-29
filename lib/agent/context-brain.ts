@@ -168,10 +168,22 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     const validArrival=leg.arriveAt&&Date.parse(leg.arriveAt)>departMs?leg.arriveAt:null
     const passengerLabel=leg.passengers.length?`Passengers: ${leg.passengers.join(', ')}`:'Passenger identity not recorded'
     const arrivalLabel=validArrival?`Arrival ${new Intl.DateTimeFormat('en-GB',{timeZone:leg.arrivalTz||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(validArrival))} (${leg.arrivalTz||'UTC'})`:'Arrival instant unverified; check source ticket'
+    // A leg whose departure instant is already in the past must be labelled as such,
+    // so the reply layer recomputes status against the current clock instead of
+    // replaying a stale relative check-in countdown ("check-in opens in 6 days …"
+    // shown after the flight had already departed).
+    const arrivedMs=validArrival?Date.parse(validArrival):NaN
+    const departed=Number.isFinite(departMs)&&departMs<now
+    const arrived=Number.isFinite(arrivedMs)&&arrivedMs<now
+    const timeStatusLabel=arrived
+      ? 'STATUS: scheduled arrival time is already in the past (per the current clock); this is the booked schedule, not verified live arrival — do not claim it landed without a live check, and do not state a check-in countdown'
+      : departed
+        ? 'STATUS: departure time is already in the past (per the current clock); check-in has closed — do not state a check-in countdown'
+        : null
     facts.push({
       id:`travel-ticket:${leg.id}`,
       source:'travel_ticket',
-      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,leg.airline,leg.flightNo,passengerLabel,...leg.seatObservations.map((detail:any)=>detail.names.length===1?`Seat for ${detail.names[0]}: ${detail.seat}`:`Seat ${detail.seat} recorded with ${detail.names.join(', ')}; individual assignment unverified`),...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel].filter(Boolean).join(' · '),620),
+      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,leg.airline,leg.flightNo,passengerLabel,...leg.seatObservations.map((detail:any)=>detail.names.length===1?`Seat for ${detail.names[0]}: ${detail.seat}`:`Seat ${detail.seat} recorded with ${detail.names.join(', ')}; individual assignment unverified`),...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel,timeStatusLabel].filter(Boolean).join(' · '),700),
       score:0.8,
       confidence:0.98,
       startAt:leg.departAt,

@@ -981,6 +981,10 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     ? watcher.last_state_json.seenUrls
     : Array.isArray(watcher.last_state_json?.urls) ? watcher.last_state_json.urls : []
   const priorSeenSignatures = Array.isArray(watcher.last_state_json?.seenSignatures) ? watcher.last_state_json.seenSignatures : []
+  const priorSeenEventKeys = Array.isArray(watcher.last_state_json?.seenEventKeys) ? watcher.last_state_json.seenEventKeys : []
+  // Scope the disruption identity to this specific occurrence (a flight leg, a
+  // destination stay) so re-retrieval of the same event cannot re-alert.
+  const occurrenceKey = String((condition as any).contextKey || condition.title || '')
 
   const assessments = topResults.map(result => ({
     result,
@@ -992,6 +996,8 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       triggerKeywords: condition.triggerKeywords,
       seenUrls: priorSeenUrls,
       seenSignatures: priorSeenSignatures,
+      seenEventKeys: priorSeenEventKeys,
+      occurrence: occurrenceKey,
     }),
   }))
   const candidate = assessments.find(item => item.quality.eligible) || null
@@ -1033,6 +1039,11 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   const currentSignatures = topResults.map(result => watcherResultSignature(result.title, result.snippet || ''))
   const seenUrls = appendBoundedHistory(priorSeenUrls, currentUrls)
   const seenSignatures = appendBoundedHistory(priorSeenSignatures, currentSignatures)
+  // Only record the disruption identity once we actually alert on it, so the same
+  // event (any synonym/rewording) is suppressed on every later poll.
+  const seenEventKeys = material && candidate?.quality.eventKey
+    ? appendBoundedHistory(priorSeenEventKeys, [candidate.quality.eventKey])
+    : priorSeenEventKeys
   const alertTimes = material
     ? [...alertGate.recentAlertTimes, now.toISOString()]
     : alertGate.recentAlertTimes
@@ -1047,6 +1058,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       urls:currentUrls,
       seenUrls,
       seenSignatures,
+      seenEventKeys,
       quietChecks,
       baselineAt:watcher.last_state_json?.baselineAt || now.toISOString(),
       lastTriggeredAt:material ? now.toISOString() : watcher.last_state_json?.lastTriggeredAt || null,

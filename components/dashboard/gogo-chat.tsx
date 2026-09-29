@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
+import { summarizeActiveRunState } from '@/lib/dashboard/run-state'
 
 type ChatMessage={
   role:'user'|'assistant'
@@ -123,6 +124,12 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
   const archived=useMemo(()=>messages.slice(0,Math.max(0,messages.length-12)),[messages])
   const visible=historyOpen?messages:messages.slice(-12)
   const activeRun=snapshot.runs.find(r=>['running','queued','paused','waiting_approval'].includes(r.status))||null
+  // "Working" must mean Gogo is actively executing. A paused/blocked/approval run is
+  // waiting on the user and must not read as working (blocked Blinkit run showed
+  // "Working" despite a dead-end reply).
+  const runState=summarizeActiveRunState(snapshot.runs)
+  const runStateLabel=runState.label
+  const runStateDot=runState.tone==='working'?'bg-[#2fb8a6]':runState.tone==='waiting'?'bg-[#D9A441]':'bg-[#6a6a6a]'
 
   async function submit(value?:string){
     const next=String(value??text).trim()
@@ -196,7 +203,7 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
         <Avatar/>
         <div>
           <div className="text-[13px] font-medium text-[#f2efea]">Gogo</div>
-          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-[#9a9a9a]"><span className={`h-2 w-2 rounded-full ${activeRun?'bg-[#2fb8a6]':'bg-[#6a6a6a]'}`}/>{activeRun?'Working':'Ready'}</div>
+          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-[#9a9a9a]"><span className={`h-2 w-2 rounded-full ${runStateDot}`}/>{runStateLabel}</div>
         </div>
       </div>
 

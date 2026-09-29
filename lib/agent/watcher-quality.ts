@@ -6,11 +6,45 @@ export const WEB_WATCH_MAX_HISTORY = 40
 
 export type WebWatchQualityResult = {
   eligible: boolean
-  reason: 'eligible' | 'duplicate_url' | 'duplicate_topic' | 'low_relevance' | 'keyword_miss'
+  reason: 'eligible' | 'duplicate_url' | 'duplicate_topic' | 'duplicate_event' | 'low_relevance' | 'keyword_miss'
   canonicalUrl: string
   signature: string
   relevance: number
   matchedKeywords: string[]
+  eventKey: string
+}
+
+// A disruption is the same EVENT regardless of which synonym the search snippet used
+// ("delay" vs "delayed") or how the snippet was reworded between polls. Collapse
+// synonyms to a canonical stem so the SAME disruption cannot re-alert as a new match
+// (the production incident emitted "delay" then "delay, delayed" for one EY 1 delay).
+const KEYWORD_STEMS: Array<[RegExp, string]> = [
+  [/^delay(ed|s|ing)?$/, 'delay'],
+  [/^cancel(led|ed|s|lation|lations|ling)?$/, 'cancel'],
+  [/^divert(ed|s|ing|ed)?$|^diversion$/, 'divert'],
+  [/^reschedul(e|ed|es|ing)$/, 'reschedule'],
+  [/^storm(s|ing|y)?$|^thunderstorms?$/, 'storm'],
+  [/^snow(storm|ing|s)?$|^blizzards?$/, 'snow'],
+  [/^flood(s|ing|ed)?$/, 'flood'],
+  [/^strike[sd]?$|^striking$/, 'strike'],
+  [/^gate\s*change[sd]?$/, 'gate change'],
+]
+function stemKeyword(keyword: string): string {
+  const k = String(keyword || '').toLowerCase().trim()
+  for (const [re, stem] of KEYWORD_STEMS) if (re.test(k)) return stem
+  return k
+}
+/**
+ * Canonical identity of the disruption being alerted: the set of matched trigger
+ * keywords collapsed to synonym stems, optionally scoped to a specific occurrence
+ * (e.g. a flight number + date). Superset keyword sets ({delay} ⊂ {delay,delayed})
+ * map to the SAME key so repeated retrieval of one event cannot duplicate.
+ */
+export function watcherEventKey(matchedKeywords: string[], occurrence = ''): string {
+  const stems = Array.from(new Set((matchedKeywords || []).map(stemKeyword).filter(Boolean))).sort()
+  if (!stems.length) return ''
+  const base = `${String(occurrence || '').toLowerCase().trim()}::${stems.join(',')}`
+  return createHash('sha256').update(base).digest('hex').slice(0, 24)
 }
 
 const STOP_WORDS = new Set([
@@ -64,14 +98,17 @@ export function assessWebWatchResult(params: {
   triggerKeywords?: string[]
   seenUrls?: string[]
   seenSignatures?: string[]
+  seenEventKeys?: string[]
+  occurrence?: string
 }): WebWatchQualityResult {
   const canonicalUrl = canonicalWatcherUrl(params.url)
   const signature = watcherResultSignature(params.title, params.snippet || '')
   const seenUrls = new Set((params.seenUrls || []).map(canonicalWatcherUrl))
   const seenSignatures = new Set(params.seenSignatures || [])
+  const seenEventKeys = new Set((params.seenEventKeys || []).filter(Boolean))
 
-  if (seenUrls.has(canonicalUrl)) return { eligible:false, reason:'duplicate_url', canonicalUrl, signature, relevance:0, matchedKeywords:[] }
-  if (seenSignatures.has(signature)) return { eligible:false, reason:'duplicate_topic', canonicalUrl, signature, relevance:0, matchedKeywords:[] }
+  if (seenUrls.has(canonicalUrl)) return { eligible:false, reason:'duplicate_url', canonicalUrl, signature, relevance:0, matchedKeywords:[], eventKey:'' }
+  if (seenSignatures.has(signature)) return { eligible:false, reason:'duplicate_topic', canonicalUrl, signature, relevance:0, matchedKeywords:[], eventKey:'' }
 
   const resultTokens = new Set(words(`${params.title} ${params.snippet || ''}`))
   const { all: queryTokens, anchors } = intentTokens(params.query)
@@ -82,17 +119,24 @@ export function assessWebWatchResult(params: {
   // Search providers frequently rotate generic listicles into the top results. Treat those as noise.
   // A useful update must cover most of the watch intent and, when present, retain a distinctive query anchor.
   if (!anchorHit || (queryTokens.length >= 3 ? relevance < 0.72 : relevance < 0.5)) {
-    return { eligible:false, reason:'low_relevance', canonicalUrl, signature, relevance, matchedKeywords:[] }
+    return { eligible:false, reason:'low_relevance', canonicalUrl, signature, relevance, matchedKeywords:[], eventKey:'' }
   }
 
   const triggerKeywords = Array.from(new Set((params.triggerKeywords || []).map(x => String(x || '').trim().toLowerCase()).filter(Boolean)))
   const haystack = `${params.title} ${params.snippet || ''} ${params.url}`.toLowerCase()
   const matchedKeywords = triggerKeywords.filter(keyword => haystack.includes(keyword))
   if (triggerKeywords.length && matchedKeywords.length === 0) {
-    return { eligible:false, reason:'keyword_miss', canonicalUrl, signature, relevance, matchedKeywords }
+    return { eligible:false, reason:'keyword_miss', canonicalUrl, signature, relevance, matchedKeywords, eventKey:'' }
   }
 
-  return { eligible:true, reason:'eligible', canonicalUrl, signature, relevance, matchedKeywords }
+  // Same disruption, re-retrieved with a reworded snippet or a superset of synonyms,
+  // must not alert twice. This is the semantic backstop the URL/signature keys miss.
+  const eventKey = watcherEventKey(matchedKeywords, params.occurrence)
+  if (eventKey && seenEventKeys.has(eventKey)) {
+    return { eligible:false, reason:'duplicate_event', canonicalUrl, signature, relevance, matchedKeywords, eventKey }
+  }
+
+  return { eligible:true, reason:'eligible', canonicalUrl, signature, relevance, matchedKeywords, eventKey }
 }
 
 export function webWatchAlertAllowed(params: {

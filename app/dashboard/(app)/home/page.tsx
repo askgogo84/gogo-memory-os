@@ -5,6 +5,7 @@ import { getTodayReminders, getLists } from '@/lib/dashboard/queries'
 import { getDashboardMemory } from '@/lib/dashboard/memory'
 import { CommandBar } from '@/components/dashboard/command-bar'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
+import { summarizeActiveRunState } from '@/lib/dashboard/run-state'
 
 export const dynamic='force-dynamic'
 
@@ -42,7 +43,7 @@ export default async function HomePage(){
     session?getDashboardMemory(tg):Promise.resolve({ok:true as const,items:[]}),
     session?supabaseAdmin.from('agent_approvals').select('id,title,description,risk_level,created_at').eq('telegram_id',tg).eq('status','pending').order('created_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
     session?supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,active').eq('telegram_id',tg).eq('active',true).order('next_check_at',{ascending:true}).limit(4):Promise.resolve({data:[] as any[]}),
-    session?supabaseAdmin.from('agent_runs').select('id,title,summary,status,updated_at').eq('telegram_id',tg).in('status',['running','queued','waiting_approval']).order('updated_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
+    session?supabaseAdmin.from('agent_runs').select('id,title,summary,status,updated_at').eq('telegram_id',tg).in('status',['running','queued','waiting_approval','paused']).order('updated_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
   ])
 
   const tz=user?.timezone||'Asia/Kolkata'
@@ -53,6 +54,9 @@ export default async function HomePage(){
   const approvalRows=approvals.data||[]
   const watcherRows=watchers.data||[]
   const runRows=runs.data||[]
+  // Distinguish actively-executing runs from runs that are paused/blocked/awaiting the
+  // user: only the former is "Working". A provider-blocked (paused) run is waiting.
+  const runState=summarizeActiveRunState(runRows)
   const contextBits=[
     memory.ok?`${memory.items.length} memories`:null,
     lists.ok?`${lists.lists.length} lists`:null,
@@ -61,8 +65,10 @@ export default async function HomePage(){
 
   const summary=approvalRows.length
     ? `You have ${approvalRows.length} thing${approvalRows.length===1?'':'s'} waiting for your say-so. Gogo is keeping the rest moving in the background.`
-    : runRows.length
-      ? `Gogo is working on ${runRows.length} active task${runRows.length===1?'':'s'}. You can leave — it will stop if anything needs your approval.`
+    : runState.working
+      ? `Gogo is working on ${runState.working} active task${runState.working===1?'':'s'}. You can leave — it will stop if anything needs your approval.`
+      : runState.waiting
+      ? `${runState.waiting} task${runState.waiting===1?' is':'s are'} waiting for you to continue.`
       : pending.length
         ? `You have ${pending.length} reminder${pending.length===1?'':'s'} today. Gogo is quiet unless something changes or needs you.`
         : 'Your day is clear. Tell Gogo what matters and it will carry the next safe steps.'
@@ -70,10 +76,10 @@ export default async function HomePage(){
   return <div className="mx-auto w-full max-w-[1180px] pb-10">
     <header className="flex items-center justify-between gap-4 border-b border-[#1f1f1f] pb-4">
       <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-full bg-[#f2efea]"><GogoCharacter state={approvalRows.length?'approval':runRows.length?'acting':watcherRows.length?'watching':'calm'} size={38} showStatus={false}/></div>
+        <div className="grid h-10 w-10 place-items-center rounded-full bg-[#f2efea]"><GogoCharacter state={approvalRows.length?'approval':runState.working?'acting':runState.waiting?'approval':watcherRows.length?'watching':'calm'} size={38} showStatus={false}/></div>
         <div>
           <div className="text-[13px] font-medium text-[#f2efea]">Gogo</div>
-          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-[#6a6a6a]"><span className={`h-1.5 w-1.5 rounded-full ${runRows.length||watcherRows.length?'bg-[#2fb8a6]':'bg-[#6a6a6a]'}`}/>{runRows.length?'Working':watcherRows.length?'Watching':'Ready'}</div>
+          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-[#6a6a6a]"><span className={`h-1.5 w-1.5 rounded-full ${runState.working?'bg-[#2fb8a6]':runState.waiting?'bg-[#D9A441]':watcherRows.length?'bg-[#2fb8a6]':'bg-[#6a6a6a]'}`}/>{runState.working?'Working':runState.waiting?'Waiting for you':watcherRows.length?'Watching':'Ready'}</div>
         </div>
       </div>
       <div className="text-right text-[10px] text-[#6a6a6a]">Safe mode on<br/><span className="text-[#9a9a9a]">WhatsApp + Dashboard</span></div>

@@ -5,6 +5,7 @@ import {
   assessWebWatchResult,
   canonicalWatcherUrl,
   watcherResultSignature,
+  watcherEventKey,
   webWatchAlertAllowed,
   WEB_WATCH_MAX_ALERTS_24H,
   WEB_WATCH_MIN_ALERT_INTERVAL_MS,
@@ -220,6 +221,52 @@ const keywordHit = assessWebWatchResult({
 })
 assert.equal(keywordHit.eligible, true)
 assert.deepEqual(keywordHit.matchedKeywords, ['in stock'])
+
+// Production incident: one EY 1 delay alerted twice — "delay" then "delay, delayed" —
+// because dedup keyed only on volatile URL/snippet signatures, never on the event.
+// Synonym stems must collapse to one key so the SAME disruption cannot re-alert.
+assert.equal(watcherEventKey(['delay']), watcherEventKey(['delay', 'delayed']), 'synonym superset must share one event key')
+assert.equal(watcherEventKey(['delay'], 'ey1:flight_status'), watcherEventKey(['delayed', 'delay'], 'ey1:flight_status'))
+assert.notEqual(watcherEventKey(['delay'], 'ey1'), watcherEventKey(['storm'], 'ey1'), 'different disruptions are distinct events')
+assert.equal(watcherEventKey([]), '', 'no keywords → no event key')
+
+const firstDelay = assessWebWatchResult({
+  query:'EY 1 flight status',
+  title:'Etihad EY 1 flight status',
+  snippet:'Flight EY 1 status is running with a delay today.',
+  url:'https://flights.example.com/ey1-status',
+  triggerKeywords:['delay','cancelled','gate change'],
+  occurrence:'ey1:flight_status',
+})
+assert.equal(firstDelay.eligible, true)
+assert.deepEqual(firstDelay.matchedKeywords, ['delay'])
+assert.ok(firstDelay.eventKey)
+
+// Same delay, re-retrieved later with a reworded snippet (new URL + new signature +
+// superset of synonyms) must NOT alert again — the event key already fired.
+const repeatDelay = assessWebWatchResult({
+  query:'EY 1 flight status',
+  title:'EY 1 flight status delayed — latest',
+  snippet:'EY 1 flight status delayed; the earlier delay continues per the airline.',
+  url:'https://tracker.example.net/ey1-delayed',
+  triggerKeywords:['delay','cancelled','gate change'],
+  occurrence:'ey1:flight_status',
+  seenEventKeys:[firstDelay.eventKey],
+})
+assert.equal(repeatDelay.eligible, false, 'repeat of the same disruption must be suppressed')
+assert.equal(repeatDelay.reason, 'duplicate_event')
+
+// A genuinely new disruption (cancellation) on the same occurrence still alerts.
+const newDisruption = assessWebWatchResult({
+  query:'EY 1 flight status',
+  title:'EY 1 flight status: cancelled',
+  snippet:'Etihad EY 1 flight status: cancelled for today.',
+  url:'https://flights.example.com/ey1-cancelled',
+  triggerKeywords:['delay','cancelled','gate change'],
+  occurrence:'ey1:flight_status',
+  seenEventKeys:[firstDelay.eventKey],
+})
+assert.equal(newDisruption.eligible, true, 'a distinct disruption on the same occurrence still alerts')
 
 const now = new Date('2026-09-11T03:00:00Z')
 const withinCooldown = webWatchAlertAllowed({
