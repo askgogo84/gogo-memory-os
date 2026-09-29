@@ -43,14 +43,29 @@ for (const text of [
   'Open Blinkit and return my last order. Report only verified results.',
   'Open Blinkit and refund my order. Report only verified results.',
   'Open Blinkit and rate the product 5 stars.',
-  // Codex P2: the report-mutation target set is open-ended — do NOT enumerate it.
-  // Any clause-leading "report <entity>" that is not a reporting directive must decline.
+  // Codex P2 (round 1): the report-mutation target set is open-ended — do NOT
+  // enumerate it. Any clause-leading "report <entity>" that is not a reporting
+  // directive must decline.
   'Open Instagram and report this story as spam.',
   'Open Instagram and report this reel.',
   'Open Instagram and report this message.',
   'Open Instagram and report this account. Report only verified results.',
+  // Codex P2 (round 2): "report <result-noun> as spam" is still a mutation even
+  // though the noun is whitelisted — "as spam" is unambiguous.
+  'Open Facebook and report the status as spam.',
+  'Open Facebook and report the post as inappropriate.',
 ]) {
   assert.equal(parseConnectedProviderReadCommand(text), null, `real provider mutation must be declined: ${text.slice(0, 48)}...`)
+}
+
+// 3b. Codex P2 (round 2): determiners this/my/our must stay valid in directives, so
+//     ordinary reads with those directives still reach the browser.
+for (const text of [
+  'Open Blinkit and check availability of Amul milk. Report this information only.',
+  'Open Blinkit and check the price of Amul milk. Report my results.',
+  'Open Blinkit and check the price of Amul milk. Report our findings.',
+]) {
+  assert.ok(parseConnectedProviderReadCommand(text), `directive with determiner must not block read: ${text.slice(0, 48)}...`)
 }
 
 // 4. Asset Memory must not hijack an operational browser turn just because it ends
@@ -65,5 +80,10 @@ assert.equal(
 assert.equal(shouldAttemptNaturalAssetRetrieval('Open my flight invoice document'), true)
 assert.equal(shouldAttemptNaturalAssetRetrieval('Find my hotel receipt'), true)
 assert.equal(shouldAttemptNaturalAssetRetrieval('Show me Jopasu Dashboard & Tyre Polish'), true)
+
+// 5b. Codex P2 (round 2): a genuine saved "report" with an operational-word title
+//     must remain retrievable — the reporting-directive strip must not remove it.
+assert.equal(shouldAttemptNaturalAssetRetrieval('Find my hotel report'), true)
+assert.equal(shouldAttemptNaturalAssetRetrieval('Show me my flight delay report'), true)
 
 console.log('✅ Report-directive routing regression passed: explicit browser actions with "Report only verified results" reach the secure browser and cannot be hijacked by Asset Memory')
