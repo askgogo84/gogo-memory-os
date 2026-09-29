@@ -8,12 +8,15 @@ import { summarizeActiveRunState } from '../lib/dashboard/run-state'
 assert.deepEqual(summarizeActiveRunState([{ status: 'running' }]).label, 'Working')
 assert.deepEqual(summarizeActiveRunState([{ status: 'queued' }]).label, 'Working')
 
-// The exact incident: a paused (provider-blocked) run must read as waiting, not working.
+// The exact incident: a paused (provider-blocked) run must NOT read as "Working".
+// `paused` is ambiguous (rejected approval vs terminal block), so it is neither
+// Working nor a standing "Waiting for you" prompt.
 const blocked = summarizeActiveRunState([{ status: 'paused' }])
-assert.equal(blocked.label, 'Waiting for you')
-assert.equal(blocked.tone, 'waiting')
+assert.notEqual(blocked.label, 'Working')
 assert.equal(blocked.working, 0)
+assert.equal(blocked.waiting, 0)
 
+// An explicit approval wait is the one unambiguous "waiting on the user" state.
 assert.equal(summarizeActiveRunState([{ status: 'waiting_approval' }]).label, 'Waiting for you')
 
 // Terminal states are neither working nor waiting.
@@ -22,10 +25,16 @@ assert.equal(summarizeActiveRunState([{ status: 'failed' }]).label, 'Ready')
 assert.equal(summarizeActiveRunState([]).label, 'Ready')
 assert.equal(summarizeActiveRunState(null).label, 'Ready')
 
-// A genuinely-running run wins over a paused one (Gogo is actively doing something).
+// A genuinely-running run reads as Working even alongside a paused one.
 const mixed = summarizeActiveRunState([{ status: 'paused' }, { status: 'running' }])
 assert.equal(mixed.label, 'Working')
 assert.equal(mixed.working, 1)
-assert.equal(mixed.waiting, 1)
+
+// A running run must win over more-recent waiting_approval rows (home must not report
+// "Waiting" while execution is active).
+const runningPlusApprovals = summarizeActiveRunState([
+  { status: 'waiting_approval' }, { status: 'waiting_approval' }, { status: 'running' },
+])
+assert.equal(runningPlusApprovals.label, 'Working')
 
 console.log('✅ dashboard run-state indicator: paused/blocked runs read as waiting, not working')

@@ -14,7 +14,11 @@ export type RunStateSummary = {
 }
 
 const WORKING = new Set(['running', 'queued'])
-const WAITING = new Set(['paused', 'waiting_approval'])
+// Only an explicit approval wait is unambiguously "waiting on the user". A `paused`
+// run is ambiguous — a rejected approval and a terminal provider block both leave the
+// run `paused` — so it is neither "Working" (the bug we fix) nor a standing "Waiting
+// for you" prompt (which would linger forever after a rejection).
+const WAITING = new Set(['waiting_approval'])
 
 export function summarizeActiveRunState(runs: RunStatusLike[] | null | undefined): RunStateSummary {
   const list = Array.isArray(runs) ? runs : []

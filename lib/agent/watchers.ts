@@ -14,6 +14,9 @@ import {
   canonicalWatcherUrl,
   watcherResultSignature,
   webWatchAlertAllowed,
+  extractFlightCodes,
+  activeEventKeys,
+  recordEventKey,
 } from './watcher-quality'
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
@@ -982,9 +985,22 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     : Array.isArray(watcher.last_state_json?.urls) ? watcher.last_state_json.urls : []
   const priorSeenSignatures = Array.isArray(watcher.last_state_json?.seenSignatures) ? watcher.last_state_json.seenSignatures : []
   const priorSeenEventKeys = Array.isArray(watcher.last_state_json?.seenEventKeys) ? watcher.last_state_json.seenEventKeys : []
-  // Scope the disruption identity to this specific occurrence (a flight leg, a
-  // destination stay) so re-retrieval of the same event cannot re-alert.
-  const occurrenceKey = String((condition as any).contextKey || condition.title || '')
+  const armedEventKeys = activeEventKeys(priorSeenEventKeys, now)
+  // Scope the disruption identity to the SPECIFIC occurrence the result is about: the
+  // watcher context plus whichever of the watch's known flight codes the result cites.
+  // A delay on one leg then a delay on a different leg are distinct events; the same
+  // flight's delay re-retrieved is one event. Weather watchers have no flight code, so
+  // they fall back to the context key and rely on the re-arm window.
+  const contextScope = String((condition as any).contextKey || condition.title || '')
+  const knownFlightCodes = extractFlightCodes(condition.query)
+  const occurrenceFor = (result: WebSearchResult) => {
+    const hay = `${result.title} ${result.snippet || ''}`.toLowerCase().replace(/\s+/g, ' ')
+    const cited = knownFlightCodes.filter(code => {
+      const spaced = code.replace(/^([a-z]{1,2}|\d[a-z])(\d)/i, '$1 $2')
+      return hay.includes(code) || hay.includes(spaced)
+    })
+    return `${contextScope}:${cited.join('+')}`
+  }
 
   const assessments = topResults.map(result => ({
     result,
@@ -996,8 +1012,8 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       triggerKeywords: condition.triggerKeywords,
       seenUrls: priorSeenUrls,
       seenSignatures: priorSeenSignatures,
-      seenEventKeys: priorSeenEventKeys,
-      occurrence: occurrenceKey,
+      seenEventKeys: armedEventKeys,
+      occurrence: occurrenceFor(result),
     }),
   }))
   const candidate = assessments.find(item => item.quality.eligible) || null
@@ -1039,10 +1055,11 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   const currentSignatures = topResults.map(result => watcherResultSignature(result.title, result.snippet || ''))
   const seenUrls = appendBoundedHistory(priorSeenUrls, currentUrls)
   const seenSignatures = appendBoundedHistory(priorSeenSignatures, currentSignatures)
-  // Only record the disruption identity once we actually alert on it, so the same
-  // event (any synonym/rewording) is suppressed on every later poll.
+  // Record the disruption identity (with a timestamp) only when we actually alert, so
+  // the same event is suppressed on later polls but re-arms after the window. Expiry is
+  // applied at read time via activeEventKeys, so non-alert polls keep the prior list.
   const seenEventKeys = material && candidate?.quality.eventKey
-    ? appendBoundedHistory(priorSeenEventKeys, [candidate.quality.eventKey])
+    ? recordEventKey(priorSeenEventKeys, candidate.quality.eventKey, now)
     : priorSeenEventKeys
   const alertTimes = material
     ? [...alertGate.recentAlertTimes, now.toISOString()]

@@ -6,9 +6,13 @@ import {
   canonicalWatcherUrl,
   watcherResultSignature,
   watcherEventKey,
+  extractFlightCodes,
+  activeEventKeys,
+  recordEventKey,
   webWatchAlertAllowed,
   WEB_WATCH_MAX_ALERTS_24H,
   WEB_WATCH_MIN_ALERT_INTERVAL_MS,
+  EVENT_KEY_REARM_MS,
 } from '../lib/agent/watcher-quality'
 
 const cases = [
@@ -267,6 +271,27 @@ const newDisruption = assessWebWatchResult({
   seenEventKeys:[firstDelay.eventKey],
 })
 assert.equal(newDisruption.eligible, true, 'a distinct disruption on the same occurrence still alerts')
+
+// Codex P1: dedup must be scoped to the actual flight occurrence, not the whole
+// multi-leg watcher, or a delay on one leg silently suppresses a delay on another.
+assert.deepEqual(extractFlightCodes('Etihad EY 1 flight status delayed'), ['ey1'])
+assert.deepEqual(extractFlightCodes('6E 203 cancelled today'), ['6e203'])
+assert.deepEqual(extractFlightCodes('trip: EY239 then EY1'), ['ey1', 'ey239'])
+// Different occurrences (leg EY239 vs leg EY1) with the SAME disruption keyword are
+// distinct events and both alert; the same occurrence re-alerts only after re-arm.
+assert.notEqual(watcherEventKey(['delay'], 'trip-ny:flight_status:ey239'), watcherEventKey(['delay'], 'trip-ny:flight_status:ey1'))
+
+// Event-key re-arm: an expired key no longer suppresses; a fresh one does.
+const t0 = new Date('2026-09-01T00:00:00Z')
+const recent = new Date('2026-09-05T00:00:00Z')
+const later = new Date('2026-09-20T00:00:00Z') // > 10-day re-arm window after t0
+const stored = recordEventKey([], 'k1', t0)
+assert.ok(stored[0].startsWith('k1|'))
+assert.deepEqual(activeEventKeys(stored, recent), ['k1'], 'a fresh key stays armed')
+assert.deepEqual(activeEventKeys(stored, later), [], 'a key past the re-arm window expires')
+assert.ok(EVENT_KEY_REARM_MS > 0)
+// Legacy undated entries remain armed (back-compat).
+assert.deepEqual(activeEventKeys(['legacyKey'], later), ['legacyKey'])
 
 const now = new Date('2026-09-11T03:00:00Z')
 const withinCooldown = webWatchAlertAllowed({

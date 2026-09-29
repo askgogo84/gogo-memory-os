@@ -5,7 +5,6 @@ import { getTodayReminders, getLists } from '@/lib/dashboard/queries'
 import { getDashboardMemory } from '@/lib/dashboard/memory'
 import { CommandBar } from '@/components/dashboard/command-bar'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
-import { summarizeActiveRunState } from '@/lib/dashboard/run-state'
 
 export const dynamic='force-dynamic'
 
@@ -36,7 +35,7 @@ export default async function HomePage(){
   const session=await getSession()
   const tg=session?.telegramId||''
   const tgNum=parseInt(tg,10)
-  const [{data:user},today,lists,memory,approvals,watchers,runs]=await Promise.all([
+  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,waitingCountRes]=await Promise.all([
     Number.isFinite(tgNum)?supabaseAdmin.from('users').select('name,timezone').eq('telegram_id',tgNum).maybeSingle():Promise.resolve({data:null as any}),
     session?getTodayReminders(tg):Promise.resolve({ok:true as const,reminders:[]}),
     session?getLists(tg):Promise.resolve({ok:true as const,lists:[]}),
@@ -44,6 +43,10 @@ export default async function HomePage(){
     session?supabaseAdmin.from('agent_approvals').select('id,title,description,risk_level,created_at').eq('telegram_id',tg).eq('status','pending').order('created_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
     session?supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,active').eq('telegram_id',tg).eq('active',true).order('next_check_at',{ascending:true}).limit(4):Promise.resolve({data:[] as any[]}),
     session?supabaseAdmin.from('agent_runs').select('id,title,summary,status,updated_at').eq('telegram_id',tg).in('status',['running','queued','waiting_approval','paused']).order('updated_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
+    // Indicator counts come from untruncated head-counts, not the limited display list,
+    // so a running row can never be hidden behind more-recent paused/waiting rows.
+    session?supabaseAdmin.from('agent_runs').select('id',{count:'exact',head:true}).eq('telegram_id',tg).in('status',['running','queued']):Promise.resolve({count:0}),
+    session?supabaseAdmin.from('agent_runs').select('id',{count:'exact',head:true}).eq('telegram_id',tg).eq('status','waiting_approval'):Promise.resolve({count:0}),
   ])
 
   const tz=user?.timezone||'Asia/Kolkata'
@@ -54,9 +57,10 @@ export default async function HomePage(){
   const approvalRows=approvals.data||[]
   const watcherRows=watchers.data||[]
   const runRows=runs.data||[]
-  // Distinguish actively-executing runs from runs that are paused/blocked/awaiting the
-  // user: only the former is "Working". A provider-blocked (paused) run is waiting.
-  const runState=summarizeActiveRunState(runRows)
+  // Distinguish actively-executing runs from runs awaiting an approval. Counts come from
+  // untruncated head-counts so active work is never hidden by the display limit; only
+  // running/queued is "Working" (a paused/blocked run must not read as working).
+  const runState={ working:Number(workingCountRes?.count||0), waiting:Number(waitingCountRes?.count||0) }
   const contextBits=[
     memory.ok?`${memory.items.length} memories`:null,
     lists.ok?`${lists.lists.length} lists`:null,

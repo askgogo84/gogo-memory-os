@@ -3,6 +3,45 @@ import { createHash } from 'node:crypto'
 export const WEB_WATCH_MIN_ALERT_INTERVAL_MS = 6 * 60 * 60 * 1000
 export const WEB_WATCH_MAX_ALERTS_24H = 2
 export const WEB_WATCH_MAX_HISTORY = 40
+// Event-key dedup re-arms after this window so a genuinely NEW disruption of the same
+// kind (a later storm, a delay on a different date) can alert again, while the same
+// event re-retrieved over the following days stays suppressed.
+export const EVENT_KEY_REARM_MS = 10 * 24 * 60 * 60 * 1000
+
+// Airline/flight codes as they appear in search snippets ("EY 1", "EY239", "6E 203").
+// Used to scope an event key to the specific flight the RESULT is about, so a delay on
+// one leg does not suppress a delay on a different leg of the same trip watcher.
+export function extractFlightCodes(text: string): string[] {
+  const out = new Set<string>()
+  const re = /\b([a-z]{2}|[a-z]\d|\d[a-z])\s?(\d{1,4})\b/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(String(text || '')))) out.add(`${m[1]}${m[2]}`.toLowerCase())
+  return Array.from(out).sort()
+}
+
+// seenEventKeys entries are stored "key|ms". Return the still-armed bare keys.
+export function activeEventKeys(entries: string[] | undefined, now: Date): string[] {
+  const cutoff = now.getTime() - EVENT_KEY_REARM_MS
+  const set = new Set<string>()
+  for (const entry of entries || []) {
+    const [key, ms] = String(entry).split('|')
+    if (!key) continue
+    const t = Number(ms)
+    if (!Number.isFinite(t) || t >= cutoff) set.add(key) // undated legacy entries stay armed
+  }
+  return Array.from(set)
+}
+
+// Record a freshly-alerted event key with a timestamp, pruning expired entries.
+export function recordEventKey(entries: string[] | undefined, key: string, now: Date): string[] {
+  if (!key) return entries || []
+  const cutoff = now.getTime() - EVENT_KEY_REARM_MS
+  const kept = (entries || []).filter(entry => {
+    const t = Number(String(entry).split('|')[1])
+    return !Number.isFinite(t) || t >= cutoff
+  }).filter(entry => String(entry).split('|')[0] !== key)
+  return [...kept, `${key}|${now.getTime()}`].slice(-WEB_WATCH_MAX_HISTORY)
+}
 
 export type WebWatchQualityResult = {
   eligible: boolean
