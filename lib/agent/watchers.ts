@@ -1085,8 +1085,15 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
 
   const currentUrls = topResults.map(result => canonicalWatcherUrl(result.url)).filter(Boolean)
   const currentSignatures = topResults.map(result => watcherResultSignature(result.title, result.snippet || ''))
-  const seenUrls = mergeStamped(priorSeenUrls, currentUrls, now)
-  const seenSignatures = mergeStamped(priorSeenSignatures, currentSignatures, now)
+  // Only record dedup entries for results we'd actually act on. For contextual watchers a
+  // context-rejected result (wrong flight/date/city) must NOT enter seenUrls/seenSignatures:
+  // if that same stable tracker or weather URL is later updated to describe the watched
+  // occurrence, it must remain eligible to alert instead of being suppressed as "seen".
+  const recordable = contextual ? assessments.filter(item => verifyItem(item).verified).map(item => item.result) : topResults
+  const recordUrls = recordable.map(result => canonicalWatcherUrl(result.url)).filter(Boolean)
+  const recordSignatures = recordable.map(result => watcherResultSignature(result.title, result.snippet || ''))
+  const seenUrls = mergeStamped(priorSeenUrls, recordUrls, now)
+  const seenSignatures = mergeStamped(priorSeenSignatures, recordSignatures, now)
   // Record the disruption identity (with a timestamp) only when we actually alert, so
   // the same event is suppressed on later polls but re-arms after the window. Expiry is
   // applied at read time via activeEventKeys, so non-alert polls keep the prior list.

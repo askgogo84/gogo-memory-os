@@ -33,4 +33,15 @@ for (const text of [
   assert.notEqual(detectIntent(text).type, 'web_search', `non-status mention must not route to web_search: ${text}`)
 }
 
+// A concrete flight-status question that also MENTIONS weather must resolve to the flight
+// lookup, not a generic weather forecast — the flight branch runs before the weather matcher.
+for (const text of [
+  'is EY1 delayed due to weather?',
+  'is 6E203 on time despite the rain?',
+]) {
+  assert.equal(detectIntent(text).type, 'web_search', `flight status mentioning weather must still look up the flight: ${text}`)
+}
+// A pure weather question with no flight identifier still routes to weather.
+assert.equal(detectIntent('what is the weather in New York?').type, 'weather_live', 'plain weather question stays weather_live')
+
 console.log('✅ live flight-status: identifier-bearing status questions attempt a real lookup; pronoun-only stays on recall')

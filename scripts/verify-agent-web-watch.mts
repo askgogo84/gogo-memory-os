@@ -345,6 +345,16 @@ assert.equal(withLegs('EY 239 cancelled on 27 September').verified, true, 'the e
 assert.equal(withLegs('EY 1 delayed on 27 September').verified, false, 'right flight number with a DIFFERENT leg date must be rejected')
 assert.equal(withLegs('EY 45 delayed on 28 September').verified, false, 'a flight not in the itinerary must be rejected')
 assert.equal(withLegs('EY 1 delayed').verified, true, 'right flight with no date is accepted (nothing to contradict)')
+// Year is preserved when BOTH sides carry one: a same-month/day delay from a PRIOR year
+// (a recurring flight) must not verify this year's leg.
+assert.equal(withLegs('EY 1 delayed on 28 September 2026').verified, true, 'right flight on its own leg date and year verifies')
+assert.equal(withLegs('EY 1 delayed on 28 September 2025').verified, false, 'same month/day in a different YEAR must be rejected')
+assert.equal(withLegs('EY 1 delayed on 28 September, 2025').verified, false, 'year rejection is spelling-agnostic')
+// Complete destination identity: a multi-token destination is not satisfied by a single
+// generic shared token ("city"); every distinctive token must appear.
+const mcq = 'Mexico City weather travel conditions 2 October'
+assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:mcq, title:'Trip weather · Mexico City', resultTitle:'Storm warning for Mexico City on 2 October', resultSnippet:'severe weather' }).verified, true, 'the full destination verifies')
+assert.equal(verifyContextualDisruption({ contextClass:'destination_weather', query:mcq, title:'Trip weather · Mexico City', resultTitle:'Boston city flooding on 2 October', resultSnippet:'severe weather in the city' }).verified, false, 'sharing only the generic token "city" must not confirm')
 // Non-contextual watches are not gated by this verifier.
 assert.equal(verifyContextualDisruption({ contextClass:'', query:'anything', resultTitle:'x', resultSnippet:'y' }).verified, true)
 

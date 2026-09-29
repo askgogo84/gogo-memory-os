@@ -47,6 +47,7 @@ assert.match(compiler,/72\*3600_000/,'contextual travel monitoring must have a b
 assert.match(compiler,/destinationStayExpiry/,'destination weather must derive its own stay-based expiry')
 assert.match(compiler,/7\*24\*3600_000/,'one-way destination weather must extend to a stay horizon, not just 72h')
 assert.match(compiler,/function awayStay/,'destination must be the longest-stay city, not the final (home) arrival on a round trip')
+assert.match(compiler,/city===originCity/,'away-stay must exclude the itinerary origin so a round trip does not pick the home arrival as destination')
 assert.match(compiler,/legDates/,'the flight-status query must carry every leg date so later legs verify')
 assert.doesNotMatch(compiler,/\$\{destination\}\s+news/i,'contextual proactivity must not create generic destination-news watches')
 assert.match(compiler,/gmail_connected/)
