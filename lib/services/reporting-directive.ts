@@ -20,30 +20,32 @@ const PURE_RESULT =
 // suffix) are mutations.
 const WEAK_RESULT = 'status|prices?|costs?|availability|stock'
 
-// Qualifiers between "report" and the result noun. Demonstratives (this/that/these/
-// those) are allowed before a PURE result ("report this information") but NOT before a
-// WEAK one, where a demonstrative signals a provider object ("report this status").
-const QUALIFIER =
-  'back|only|just|now|please|the|this|that|these|those|a|an|my|our|your|its|their|his|her|me|to|us|with|of|all|any|verified|unverified|actual|current|final|live|real|confirmed|exact|relevant|accurate|precise|available|latest|updated|complete|full|raw'
-const SAFE_QUAL = // QUALIFIER minus demonstratives
-  'back|only|just|now|please|the|a|an|my|our|your|its|their|his|her|me|to|us|with|of|all|any|verified|unverified|actual|current|final|live|real|confirmed|exact|relevant|accurate|precise|available|latest|updated|complete|full|raw'
-
+// Reasons that turn "report <weak object> as/for <reason>" into a flag/abuse mutation.
+// Necessarily non-exhaustive — it is a preflight signal, not the final safety gate
+// (the secure browser runs read-only and any consequential action needs approval).
 const ABUSE_REASON =
-  'spam|abuse|abusive|inappropriate|offensive|fake|fraud|fraudulent|scam|harmful|harassment|harassing|bullying|violation|violating|misleading|counterfeit|objectionable|nudity|violence|hate|impersonation|self[\\s-]?harm|misinformation'
+  'spam|abuse|abusive|inappropriate|offensive|fake|fraud|fraudulent|scam|harmful|harassment|harassing|bullying|violation|violating|misleading|counterfeit|objectionable|nudity|violence|violent|hate|hateful|impersonation|self[\\s-]?harm|misinformation|disinformation|terrorism|terrorist|extremis(?:m|t)|weapons?|drugs?|illegal|csam|exploitation|phishing|threats?|doxx?ing|incitement|defamation|infringement|copyright|graphic|sexual|racism|racist'
 
 // The clause-leading boundary that marks "report" used as a verb (not a noun inside a
 // title). Leading adverbs ("only report …") are part of the verb phrase.
 const CLAUSE_LEAD = `(?:^|[.!?;,]|\\b(?:and|then|to)\\b)\\s*(?:(?:please|kindly|only|just|now|also|then)\\s+)*`
 
-// A WEAK-result directive is benign only when it is NOT immediately flagged
-// "as/for <abuse reason>" ("report the status for harassment" is a mutation).
-const WEAK_NOT_ABUSE = `(?!(?:\\s+\\w+){0,3}\\s+(?:as|for)\\s+(?:${ABUSE_REASON})\\b)`
+// Bounded arbitrary modifiers between "report" and the result noun. Any adjective/
+// determiner is allowed ("the matching verified results"), but the run stops at a
+// clause joint or an "as/for" flag suffix so it can't bridge over a mutation object.
+const PURE_MOD = `(?:\\s+(?!(?:and|then|but|or|as|for)\\b)[a-z0-9'-]+){0,6}`
+// WEAK modifiers additionally exclude demonstratives: "report this status" targets a
+// provider object, not an order status attribute.
+const WEAK_MOD = `(?:\\s+(?!(?:and|then|but|or|as|for|this|that|these|those)\\b)[a-z0-9'-]+){0,6}`
+// A WEAK-result directive is benign only when it is NOT flagged "as/for <abuse reason>"
+// ("report the status for harassment" is a mutation).
+const WEAK_NOT_ABUSE = `(?!(?:\\s+[a-z0-9'-]+){0,3}\\s+(?:as|for)\\s+(?:${ABUSE_REASON})\\b)`
 
 // Benign reporting-directive body (the part after the clause-leading boundary).
 const DIRECTIVE_BODY =
   `report\\s+back\\b` +
-  `|report(?:\\s+(?:${QUALIFIER}))*\\s+(?:${PURE_RESULT})\\b` +
-  `|report(?:\\s+(?:${SAFE_QUAL}))*\\s+(?:${WEAK_RESULT})\\b${WEAK_NOT_ABUSE}`
+  `|report${PURE_MOD}\\s+(?:${PURE_RESULT})\\b` +
+  `|report${WEAK_MOD}\\s+(?:${WEAK_RESULT})\\b${WEAK_NOT_ABUSE}`
 
 /** Remove clause-leading reporting directives so downstream noun/intent checks don't see "report". */
 export function stripReportingDirectives(text: string): string {
@@ -62,8 +64,8 @@ export function hasLeadingReportMutation(text: string): boolean {
   const leading = new RegExp(
     `${CLAUSE_LEAD}report\\b` +
       `(?!\\s+back\\b)` +
-      `(?!(?:\\s+(?:${QUALIFIER}))*\\s+(?:${PURE_RESULT})\\b)` +
-      `(?!(?:\\s+(?:${SAFE_QUAL}))*\\s+(?:${WEAK_RESULT})\\b${WEAK_NOT_ABUSE})`,
+      `(?!${PURE_MOD}\\s+(?:${PURE_RESULT})\\b)` +
+      `(?!${WEAK_MOD}\\s+(?:${WEAK_RESULT})\\b${WEAK_NOT_ABUSE})`,
     'i',
   )
   return leading.test(String(text || ''))

@@ -109,6 +109,12 @@ assert.equal(hasLeadingReportMutation('report this information only'), false)
 assert.equal(hasLeadingReportMutation('report my results'), false)
 //    (e) an abuse word used as a PURPOSE after a PURE result is benign (round 5).
 assert.equal(hasLeadingReportMutation('report only verified results for harassment prevention'), false)
+//    (e2) arbitrary adjectives before a result noun stay benign; unlisted flag reasons
+//         and demonstrative weak objects are still mutations (round 6).
+assert.equal(hasLeadingReportMutation('report the matching results only'), false)
+assert.equal(hasLeadingReportMutation('report the price for milk'), false)
+assert.equal(hasLeadingReportMutation('report the status for terrorism'), true)
+assert.equal(hasLeadingReportMutation('report the account for csam'), true)
 //    (f) leading-adverb directives are stripped; report-as-noun titles are not.
 assert.doesNotMatch(stripReportingDirectives('check availability. Only report verified results.'), /\breport\b/i)
 assert.doesNotMatch(stripReportingDirectives('Just report the findings'), /\breport\b/i)
