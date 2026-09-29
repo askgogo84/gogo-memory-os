@@ -18,20 +18,20 @@ async function attachSecondaryAuthHandoffImpl(params:{userId:string;telegramId:s
   if(params.result.blockReason!=='human_auth_required'||!params.result.authReason||params.result.authReason==='password')return null
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('status,metadata_json').eq('id',params.runId).eq('telegram_id',params.telegramId).maybeSingle()
   if(error||!run)throw new Error('auth_handoff_run_missing')
-  if(params.kind==='flight_prepare'&&!['running','paused'].includes(run.status))throw new Error('flight_schedule_changed')
+  if(['flight_prepare','lifecycle_monitor'].includes(params.kind)&&!['running','paused'].includes(run.status))throw new Error('flight_schedule_changed')
   const safeToRetry=!params.result.actions.some(action=>(action.kind==='submit'||action.consequential===true)&&action.status!=='skipped')
   const marker={kind:params.kind,reason:params.result.authReason,safeToRetry}
   const metadata={...run.metadata_json,browser_url:params.result.url,handoff:null,secondary_auth:marker,auth_resume:{kind:params.kind,safeToRetry},auth_action_log:params.result.actions,auth_original_url:params.result.originalUrl}
   let saveRun=supabaseAdmin.from('agent_runs').update({status:'paused',error:'human_auth_required',summary:params.result.summary,metadata_json:metadata,completed_at:null})
     .eq('id',params.runId).eq('telegram_id',params.telegramId)
-  if(params.kind==='flight_prepare')saveRun=saveRun.in('status',['running','paused'])
+  if(['flight_prepare','lifecycle_monitor'].includes(params.kind))saveRun=saveRun.in('status',['running','paused'])
   const {data:savedRun,error:saveError}=await saveRun.select('id').maybeSingle()
   if(saveError||!savedRun)throw new Error('auth_handoff_save_failed')
   let pauseAction=supabaseAdmin.from('life_event_actions').update({status:'blocked'})
     .eq('id',metadata.life_event_action_id).eq('telegram_id',params.telegramId).in('status',['running','blocked'])
-  if(params.kind==='flight_prepare')pauseAction=metadata.scheduleRevision?pauseAction.eq('payload_json->>scheduleRevision',metadata.scheduleRevision):pauseAction.is('payload_json->>scheduleRevision',null)
+  if(['flight_prepare','lifecycle_monitor'].includes(params.kind))pauseAction=metadata.scheduleRevision?pauseAction.eq('payload_json->>scheduleRevision',metadata.scheduleRevision):pauseAction.is('payload_json->>scheduleRevision',null)
   const {data:pausedAction,error:actionError}=await pauseAction.select('id').maybeSingle()
-  if(actionError||params.kind==='flight_prepare'&&!pausedAction)throw new Error('auth_handoff_action_save_failed')
+  if(actionError||['flight_prepare','lifecycle_monitor'].includes(params.kind)&&!pausedAction)throw new Error('auth_handoff_action_save_failed')
   // Provisioning is retryable; the run/action are already safely paused.
   let createdHandoff:Awaited<ReturnType<typeof startProviderBrowserHandoff>>|undefined
   try{
@@ -103,12 +103,14 @@ export async function resumeSecondaryAuthRun(params:{actor:AgentActor;runId:stri
     }
     return {...result,runId:params.runId,text:result.text||'Gogo continued this same task using its saved constraints.'}
   }catch(error){
-    if(auth.kind==='flight_prepare'&&String((error as any)?.message||error)==='flight_schedule_changed')throw error
+    if(preparation&&String((error as any)?.message||error)==='flight_schedule_changed')throw error
     // Keep a denied/failed continuation available without discarding its context.
-    await supabaseAdmin.from('agent_runs').update({status:'paused',updated_at:new Date().toISOString(),
+    let restoreRun=supabaseAdmin.from('agent_runs').update({status:'paused',updated_at:new Date().toISOString(),
       ...(preparation?{metadata_json:{...meta,handoff:null,secondary_auth:meta.secondary_auth||{...auth,reason:'device_approval'}}}:{}),
     }).eq('id',params.runId).eq('telegram_id',tg).in('status',preparation?['running','failed']:['queued'])
-    await supabaseAdmin.from('life_event_actions').update({status:'blocked'}).eq('id',action.id).eq('telegram_id',tg).in('status',preparation?['running','blocked']:[actionStatus])
+    if(preparation)restoreRun=restoreRun.or('error.is.null,error.neq.flight_schedule_changed')
+    await restoreRun
+    await supabaseAdmin.from('life_event_actions').update({status:'blocked',...(preparation?{payload_json:action.payload_json||{}}:{})}).eq('id',action.id).eq('telegram_id',tg).in('status',preparation?['running','blocked']:[actionStatus])
     throw error
   }
 }

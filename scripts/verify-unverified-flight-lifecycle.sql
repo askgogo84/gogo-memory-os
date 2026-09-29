@@ -242,14 +242,14 @@ begin
   if v_timing_changed then
     update agent_activity set metadata_json=metadata_json||'{"notificationState":"cancelled"}'::jsonb where event_type='life_event_status_changed' and metadata_json->>'life_event_id'=v_event_id::text and metadata_json->>'notificationState'='pending';
     with invalidated as (update agent_runs r set status='failed',error='flight_schedule_changed',
-      summary='This preparation used an old flight schedule. Gogo will prepare the corrected itinerary again.',updated_at=now()
+      summary='This browser task used an old flight schedule. Gogo will retry with the corrected itinerary.',updated_at=now()
       where r.telegram_id=new.telegram_id::text and r.status in ('paused','queued','running','waiting_approval')
-        and exists(select 1 from life_event_actions a where a.life_event_id=v_event_id and a.action_type='browser_prepare'
+        and exists(select 1 from life_event_actions a where a.life_event_id=v_event_id and a.action_type in ('browser_prepare','monitor')
           and (r.id::text=coalesce(a.payload_json->>'browserRunId',a.payload_json->>'runId') or (r.metadata_json->>'life_event_action_id'=a.id::text and r.metadata_json->>'life_event_id'=v_event_id::text))) returning r.id)
     select coalesce(array_agg(id),array[]::uuid[]) into v_preparation_run_ids from invalidated;
     update life_event_actions set status='queued',
-      payload_json=(payload_json-'browserRunId'-'runId'-'approvalId'-'blockedReason'-'authReason')||jsonb_build_object('supersededPreparationRunId',coalesce((select r.id::text from agent_runs r where r.id=any(v_preparation_run_ids) and (r.id::text=coalesce(life_event_actions.payload_json->>'browserRunId',life_event_actions.payload_json->>'runId') or r.metadata_json->>'life_event_action_id'=life_event_actions.id::text) order by r.updated_at desc limit 1),payload_json->>'browserRunId',payload_json->>'runId',payload_json->>'supersededPreparationRunId')),
-      updated_at=now() where life_event_id=v_event_id and action_type='browser_prepare' and status in ('blocked','running');
+      payload_json=(payload_json-'browserRunId'-'runId'-'approvalId'-'blockedReason'-'authReason')||jsonb_build_object(case when action_type='monitor' then 'supersededMonitorRunId' else 'supersededPreparationRunId' end,coalesce((select r.id::text from agent_runs r where r.id=any(v_preparation_run_ids) and (r.id::text=coalesce(life_event_actions.payload_json->>'browserRunId',life_event_actions.payload_json->>'runId') or r.metadata_json->>'life_event_action_id'=life_event_actions.id::text) order by r.updated_at desc limit 1),payload_json->>'browserRunId',payload_json->>'runId',payload_json->>'supersededPreparationRunId',payload_json->>'supersededMonitorRunId')),
+      updated_at=now() where life_event_id=v_event_id and action_type in ('browser_prepare','monitor') and status in ('blocked','running');
     -- Old pending authorization cannot survive a changed itinerary.
     update agent_runs r set
       status=case when r.status in ('running','paused') then 'outcome_unknown' else 'failed' end,
@@ -599,6 +599,15 @@ do $test$ declare aid uuid; eid uuid; rid uuid; begin
  update pg_temp.travel_tickets set depart_at=now()+interval '15 days' where telegram_id=23;
  if not exists(select 1 from pg_temp.agent_runs where id=rid and status='failed' and error='flight_schedule_changed') then raise exception 'running old preparation remained active';end if;
  if not exists(select 1 from pg_temp.life_event_actions where id=aid and status='queued' and payload_json->>'supersededPreparationRunId'=rid::text) then raise exception 'running preparation lost its cleanup reference';end if;
+end $test$;
+
+do $test$ declare aid uuid; eid uuid; rid uuid; begin
+ select id,life_event_id into aid,eid from pg_temp.life_event_actions where telegram_id='23' and action_key='travel-disruption-watch';
+ insert into pg_temp.agent_runs(telegram_id,type,capability,status,title,metadata_json) values('23','life_event','browser','paused','Paused old monitor',jsonb_build_object('life_event_action_id',aid,'life_event_id',eid)) returning id into rid;
+ update pg_temp.life_event_actions set status='blocked',payload_json=payload_json||jsonb_build_object('browserRunId',rid,'blockedReason','human_auth_required') where id=aid;
+ update pg_temp.travel_tickets set depart_at=now()+interval '16 days' where telegram_id=23;
+ if not exists(select 1 from pg_temp.agent_runs where id=rid and status='failed' and error='flight_schedule_changed') then raise exception 'paused old monitor remained active';end if;
+ if not exists(select 1 from pg_temp.life_event_actions where id=aid and status='queued' and payload_json->>'supersededMonitorRunId'=rid::text and not payload_json ? 'browserRunId') then raise exception 'blocked monitor was not requeued with cleanup';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;

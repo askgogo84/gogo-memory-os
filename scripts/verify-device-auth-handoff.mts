@@ -113,9 +113,9 @@ const rows:any={agent_runs:{id:'run',telegram_id:'1',status:'paused',metadata_js
   life_events:{id:'event',telegram_id:'1'},life_event_actions:{id:'action',telegram_id:'1',life_event_id:'event',status:'blocked'}}
 let tokenSaveFails=false,cancelledHandoffs=0
 const scopedDb={from:(table:string)=>{
-  const filters:Array<[string,any]>=[];let change:any
-  const execute=()=>{const row=rows[table];if(!row||!filters.every(([k,v])=>Array.isArray(v)?v.includes(row[k]):(row[k]??null)===v))return {data:null,error:null};if(tokenSaveFails&&change?.metadata_json?.handoff)return {data:null,error:{message:'save failed'}};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
-  const q:any={select:()=>q,order:()=>q,limit:()=>q,insert:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},is:(k:string,v:any)=>{filters.push([k,v]);return q},in:(k:string,v:any[])=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
+  const filters:Array<[string,any]>=[];let change:any,excludeCorrected=false
+  const execute=()=>{const row=rows[table];if(!row||excludeCorrected&&row.error==='flight_schedule_changed'||!filters.every(([k,v])=>Array.isArray(v)?v.includes(row[k]):(row[k]??null)===v))return {data:null,error:null};if(tokenSaveFails&&change?.metadata_json?.handoff)return {data:null,error:{message:'save failed'}};if(change)Object.assign(row,change);return {data:structuredClone(row),error:null}}
+  const q:any={select:()=>q,order:()=>q,limit:()=>q,or:()=>{excludeCorrected=true;return q},insert:()=>q,eq:(k:string,v:any)=>{filters.push([k,v]);return q},is:(k:string,v:any)=>{filters.push([k,v]);return q},in:(k:string,v:any[])=>{filters.push([k,v]);return q},update:(v:any)=>{change=v;return q},
     maybeSingle:async()=>execute(),then:(resolve:any)=>Promise.resolve(execute()).then(resolve)}
   return q
 }}
@@ -854,8 +854,9 @@ assert.equal(draftObjectiveCovered("Fill form — Country: 'India'",{},[]),false
 assert.equal(draftObjectiveCovered('Fill form — Country = "India"',{},[]),false)
 
 const monitorIntegrations=await import('../lib/agent/life-event-integrations')
-let monitorReads=0,monitorUpdates:any[]=[]
+let monitorReads=0,monitorUpdates:any[]=[],monitorReleases:string[]=[]
 const monitorWorker=load('life-event-integration-worker.ts',{
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async(_tg:string,id:string)=>{monitorReleases.push(id)}},
  '@/lib/supabase-admin':{supabaseAdmin:{rpc:async(name:string,args:any)=>{assert.equal(name,'gogo_publish_lifecycle_monitor');monitorUpdates.push({payload_json:{lastStatusText:args.p_text}});return {data:{status:'deferred'},error:null}},from:(table:string)=>{
   const q:any={select:()=>q,eq:()=>q,update:(value:any)=>{monitorUpdates.push(value);return q},maybeSingle:async()=>({data:table==='users'?{id:'owner',telegram_id:17}: {level:'read'},error:null}),then:(resolve:any)=>Promise.resolve({data:null,error:null}).then(resolve)};return q
  }}},
@@ -864,9 +865,10 @@ const monitorWorker=load('life-event-integration-worker.ts',{
  './sentinel':{evaluateAgentSentinel:(params:any)=>{assert.equal(params.mode,'read');return {allowed:true}}},
  './secure-computer':{runSecureBrowser:async(params:any)=>{assert.equal(params.mode,'read');assert.equal(params.reserveHumanHandoff,true);monitorReads++;return {status:'completed',title:'Flight status',pageText:'EY1 scheduled arrival 08:35; on time',actions:[]}}},
 })
-const monitorResult=await monitorWorker.processLifecycleMonitor({id:'watch',payload_json:{}},{id:'flight',event_type:'travel',subtype:'flight',title:'EY1',metadata_json:{flight_no:'EY1'}},'17')
+const monitorResult=await monitorWorker.processLifecycleMonitor({id:'watch',payload_json:{supersededMonitorRunId:'old-monitor'}},{id:'flight',event_type:'travel',subtype:'flight',title:'EY1',metadata_json:{flight_no:'EY1'}},'17')
 assert.equal(monitorResult.status,'deferred')
 assert.equal(monitorReads,1)
+assert.deepEqual(monitorReleases,['old-monitor'])
 assert.ok(monitorUpdates.some(value=>value.payload_json?.lastStatusText?.includes('EY1 scheduled arrival')))
 
 let obsoletePreparationReleased=''
@@ -940,3 +942,24 @@ rows.life_event_actions.status='running';rows.life_event_actions['payload_json->
 await assert.rejects(()=>shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'flight_prepare',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[]}}),/auth_handoff_action_save_failed/)
 assert.equal(rows.life_event_actions.status,'running','a legacy unversioned handoff cannot pause a corrected action')
 delete rows.life_event_actions['payload_json->>scheduleRevision']
+
+rows.agent_runs.status='running';rows.agent_runs.metadata_json={life_event_id:'event',life_event_action_id:'action',scheduleRevision:'old'}
+rows.life_event_actions.status='running';rows.life_event_actions['payload_json->>scheduleRevision']='corrected'
+await assert.rejects(()=>shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'lifecycle_monitor',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[]}}),/auth_handoff_action_save_failed/)
+assert.equal(rows.life_event_actions.status,'running','stale monitor cannot pause a corrected action')
+delete rows.life_event_actions['payload_json->>scheduleRevision']
+let staleMonitorReservationReleased=0,staleMonitorAttached=0
+const staleMonitor=load('life-event-integration-worker.ts',{
+ '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{
+  const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:table==='users'?{id:'owner',telegram_id:17}:table==='agent_permissions'?{level:'read'}:{status:'running',payload_json:{scheduleRevision:'new'}},error:null})};return q
+ }}},
+ './life-event-integrations':monitorIntegrations,
+ './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
+ './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
+ './provider-browser-handoff':{cancelBrowserHandoffReservation:async()=>{staleMonitorReservationReleased++}},
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{},attachSecondaryAuthHandoff:async()=>{staleMonitorAttached++}},
+ './secure-computer':{runSecureBrowser:async()=>({status:'blocked',handoffReservation:'old-monitor-reservation',blockReason:'human_auth_required',authReason:'device_approval',actions:[]})},
+})
+await assert.rejects(()=>staleMonitor.processLifecycleMonitor({id:'watch',payload_json:{scheduleRevision:'old'}},{id:'flight',event_type:'travel',subtype:'flight',title:'EY1',metadata_json:{flight_no:'EY1'}},'17'),/flight_schedule_changed/)
+assert.equal(staleMonitorReservationReleased,1)
+assert.equal(staleMonitorAttached,0)
