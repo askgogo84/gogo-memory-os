@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildAssetRetrievalReply, isAssetRetrievalCommand } from '@/lib/services/asset-memory'
+import { stripReportingDirectives } from '@/lib/services/reporting-directive'
 
 const RETRIEVAL_VERB_RE = /\b(show me|find|send me|get me|pull up|do you have|where'?s|where is|open(?: my| the)?|retrieve)\b/i
 const RESERVED_RETRIEVAL_RE = /^(?:show|open|find|get|send)(?:\s+me)?\s+(?:my\s+)?(?:reminders?|tasks?|to-?dos?|lists?|calendar|events?|cards?|credit\s*cards?|emails?|mail|weather|briefing|today|memory|memories|preferences?|rules?|contacts?|expenses?|spending|saved\s+(?:reels?|videos?|posts?))\s*[?.!]*$/i
@@ -10,6 +11,10 @@ const SENSITIVE_REVEAL_CONFIRM_RE = /^\s*show\s+(?:the\s+)?(?:passport|id|refere
 // "open", "create", "booking" and "confirm" are action vocabulary, not document
 // identity. Explicit document/file retrieval still remains eligible below.
 const OPERATIONAL_FLOW_RE = /\b(appointment|provider|live\s+slots?|availability|book(?:ing)?|reserve|reservation|flight|airline|concert|movie|event\s+tickets?|bus\s+tickets?|train\s+tickets?|cab|hotel|check[- ]?in|checkout|payment|purchase)\b/i
+// "report" stays an explicit-asset noun so a genuine saved report with an operational
+// title ("my hotel report") still escapes the operational-flow guard below. The
+// reporting DIRECTIVE ("Report only verified results") is stripped before this test
+// (see shouldAttemptNaturalAssetRetrieval) so it can no longer satisfy the escape.
 const EXPLICIT_ASSET_NOUN_RE = /\b(passport|payment|proof|screenshot|receipt|invoice|estimate|estimation|quotation|slip|document|pdf|file|\bid\b|licen[cs]e|statement|policy|aadhaar|pan|lease|agreement|contract|bill|certificate|report|letter|warranty|prescription)\b/i
 
 const STOP = new Set([
@@ -57,7 +62,9 @@ export function shouldAttemptNaturalAssetRetrieval(text: string): boolean {
   // If this is an operational booking/travel/event flow, only permit Asset Memory to
   // claim it when the user explicitly asks for an asset-shaped object (document,
   // passport, receipt, file, etc.). Otherwise the real booking agent owns the turn.
-  if (OPERATIONAL_FLOW_RE.test(raw) && !EXPLICIT_ASSET_NOUN_RE.test(raw)) return false
+  // Strip reporting directives first ("Report only verified results") so they cannot
+  // satisfy the asset-noun escape, while a genuine "my hotel report" still does.
+  if (OPERATIONAL_FLOW_RE.test(raw) && !EXPLICIT_ASSET_NOUN_RE.test(stripReportingDirectives(raw))) return false
   return true
 }
 
