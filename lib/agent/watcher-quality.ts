@@ -23,10 +23,17 @@ export function extractFlightCodes(text: string): string[] {
 // form. Added to the occurrence key so the SAME flight number on DIFFERENT dates is a
 // distinct event (a delay on the return leg is not suppressed by the outbound delay).
 const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec'
+const MONTH_BY_NUM: Record<string, string> = {
+  '01': 'jan', '02': 'feb', '03': 'mar', '04': 'apr', '05': 'may', '06': 'jun',
+  '07': 'jul', '08': 'aug', '09': 'sep', '10': 'oct', '11': 'nov', '12': 'dec',
+}
+// All spellings collapse to one canonical "mon-dd" token (year dropped — different
+// years of the same month/day are >10 days apart, so the re-arm window separates them),
+// so "2026-10-02", "Oct 2" and "2 October" describe the SAME occurrence and hash alike.
 export function extractDateTokens(text: string): string[] {
   const t = String(text || '').toLowerCase()
   const out = new Set<string>()
-  for (const m of t.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) out.add(`${m[1]}-${m[2]}-${m[3]}`)
+  for (const m of t.matchAll(/\b\d{4}-(\d{2})-(\d{2})\b/g)) { const mon = MONTH_BY_NUM[m[1]]; if (mon) out.add(`${mon}-${m[2]}`) }
   for (const m of t.matchAll(new RegExp(`\\b(\\d{1,2})\\s+(${MONTHS})[a-z]*\\b`, 'g'))) out.add(`${m[2].slice(0, 3)}-${m[1].padStart(2, '0')}`)
   for (const m of t.matchAll(new RegExp(`\\b(${MONTHS})[a-z]*\\s+(\\d{1,2})\\b`, 'g'))) out.add(`${m[1].slice(0, 3)}-${m[2].padStart(2, '0')}`)
   return Array.from(out).sort()

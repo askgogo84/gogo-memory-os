@@ -21,10 +21,13 @@ const WORKING = new Set(['running', 'queued'])
 // IS actionable and should read "Waiting for you", not "Ready".
 const ACTIONABLE_PAUSE = /human_auth_required|secondary_auth|awaiting_user|take[_\s-]?control|handoff|resume/i
 
-function isActionablePause(run: RunStatusLike): boolean {
+export function isActionablePause(run: RunStatusLike): boolean {
   if (String(run?.status || '') !== 'paused') return false
-  const meta = run?.metadata || run?.metadata_json || {}
-  if (meta && (meta.handoff || meta.awaiting || meta.secondary_auth)) return true
+  const meta = (run?.metadata || run?.metadata_json || {}) as any
+  // Actionable pauses can be signalled by metadata (handoff, secure-browser waiting,
+  // auth-resume) OR by an error reason, and some producers clear one while setting the
+  // other — so check both.
+  if (meta && (meta.handoff || meta.awaiting || meta.secondary_auth || meta.browser_waiting || meta.auth_resume)) return true
   return ACTIONABLE_PAUSE.test(String(run?.error || ''))
 }
 

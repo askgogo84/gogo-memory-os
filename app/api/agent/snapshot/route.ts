@@ -91,6 +91,9 @@ export async function GET(request: Request) {
       id: r.id, goalId: r.goal_id, title: r.title, summary: r.summary, status: r.status,
       capability: r.capability, progress: r.progress, startedAt: r.started_at,
       updatedAt: r.updated_at, nextCheckAt: r.next_check_at, why: r.why,
+      // error + metadata let the client tell an actionable pause (sign-in / secure
+      // handoff / browser-waiting) from a rejected or terminal pause.
+      error: r.error || null, metadata: r.metadata_json || null,
       steps: stepsByRun.get(String(r.id)) || [],
     })),
     watchers: (watchers.data || []).map((w: any) => ({

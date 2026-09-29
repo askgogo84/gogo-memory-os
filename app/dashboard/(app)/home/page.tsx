@@ -5,6 +5,7 @@ import { getTodayReminders, getLists } from '@/lib/dashboard/queries'
 import { getDashboardMemory } from '@/lib/dashboard/memory'
 import { CommandBar } from '@/components/dashboard/command-bar'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
+import { isActionablePause } from '@/lib/dashboard/run-state'
 
 export const dynamic='force-dynamic'
 
@@ -35,7 +36,7 @@ export default async function HomePage(){
   const session=await getSession()
   const tg=session?.telegramId||''
   const tgNum=parseInt(tg,10)
-  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,waitingCountRes,actionablePausedRes]=await Promise.all([
+  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,waitingCountRes,pausedRunsRes]=await Promise.all([
     Number.isFinite(tgNum)?supabaseAdmin.from('users').select('name,timezone').eq('telegram_id',tgNum).maybeSingle():Promise.resolve({data:null as any}),
     session?getTodayReminders(tg):Promise.resolve({ok:true as const,reminders:[]}),
     session?getLists(tg):Promise.resolve({ok:true as const,lists:[]}),
@@ -47,9 +48,10 @@ export default async function HomePage(){
     // so a running row can never be hidden behind more-recent paused/waiting rows.
     session?supabaseAdmin.from('agent_runs').select('id',{count:'exact',head:true}).eq('telegram_id',tg).in('status',['running','queued']):Promise.resolve({count:0}),
     session?supabaseAdmin.from('agent_runs').select('id',{count:'exact',head:true}).eq('telegram_id',tg).eq('status','waiting_approval'):Promise.resolve({count:0}),
-    // A paused run stopped at a human-action boundary (sign-in / secure handoff) is
-    // actionable and counts as waiting; a rejected/terminal paused run does not.
-    session?supabaseAdmin.from('agent_runs').select('id',{count:'exact',head:true}).eq('telegram_id',tg).eq('status','paused').eq('error','human_auth_required'):Promise.resolve({count:0}),
+    // A paused run stopped at a human-action boundary (sign-in / secure handoff /
+    // browser-waiting) is actionable and counts as waiting; a rejected/terminal paused
+    // run does not. The signal lives in error OR metadata, so fetch rows and classify.
+    session?supabaseAdmin.from('agent_runs').select('id,error,metadata_json,status').eq('telegram_id',tg).eq('status','paused').order('updated_at',{ascending:false}).limit(50):Promise.resolve({data:[] as any[]}),
   ])
 
   const tz=user?.timezone||'Asia/Kolkata'
@@ -63,7 +65,8 @@ export default async function HomePage(){
   // Distinguish actively-executing runs from runs awaiting an approval. Counts come from
   // untruncated head-counts so active work is never hidden by the display limit; only
   // running/queued is "Working" (a paused/blocked run must not read as working).
-  const runState={ working:Number(workingCountRes?.count||0), waiting:Number(waitingCountRes?.count||0)+Number(actionablePausedRes?.count||0) }
+  const actionablePaused=((pausedRunsRes as any)?.data||[]).filter((r:any)=>isActionablePause(r)).length
+  const runState={ working:Number(workingCountRes?.count||0), waiting:Number(waitingCountRes?.count||0)+actionablePaused }
   const contextBits=[
     memory.ok?`${memory.items.length} memories`:null,
     lists.ok?`${lists.lists.length} lists`:null,

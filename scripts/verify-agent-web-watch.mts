@@ -284,9 +284,12 @@ assert.deepEqual(extractFlightCodes('trip: EY239 then EY1'), ['ey1', 'ey239'])
 // distinct events and both alert; the same occurrence re-alerts only after re-arm.
 assert.notEqual(watcherEventKey(['delay'], 'trip-ny:flight_status:ey239'), watcherEventKey(['delay'], 'trip-ny:flight_status:ey1'))
 // Codex P1 (round 3): the SAME flight number on DIFFERENT dates is a distinct event.
-assert.deepEqual(extractDateTokens('EY 1 delayed on 2026-09-27'), ['2026-09-27'])
+// Codex P1 (round 4): equivalent date spellings must normalise to ONE token so the same
+// occurrence in different formats does not slip through as a new event.
+assert.deepEqual(extractDateTokens('EY 1 delayed on 2026-10-02'), ['oct-02'])
 assert.deepEqual(extractDateTokens('EY 1 status for 2 October'), ['oct-02'])
 assert.deepEqual(extractDateTokens('EY 1 delayed Oct 2'), ['oct-02'])
+assert.deepEqual(extractDateTokens('EY 1 delayed 2026-10-02'), extractDateTokens('EY 1 delayed Oct 2'), 'ISO and Mon-D spellings must match')
 assert.notEqual(
   watcherEventKey(['delay'], 'trip:ey1:oct-02'),
   watcherEventKey(['delay'], 'trip:ey1:oct-16'),

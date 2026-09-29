@@ -25,6 +25,8 @@ assert.equal(summarizeActiveRunState([{ status: 'waiting_approval' }]).label, 'W
 // actionable and must read "Waiting for you", not "Ready".
 assert.equal(summarizeActiveRunState([{ status: 'paused', error: 'human_auth_required' }]).label, 'Waiting for you')
 assert.equal(summarizeActiveRunState([{ status: 'paused', metadata_json: { handoff: { releaseUrl: 'x' } } }]).label, 'Waiting for you')
+// Secure-browser-waiting handoffs signal via metadata (error cleared) — still actionable.
+assert.equal(summarizeActiveRunState([{ status: 'paused', error: null, metadata_json: { browser_waiting: true, auth_resume: { kind: 'flight_execute' } } }]).label, 'Waiting for you')
 
 // Terminal states are neither working nor waiting.
 assert.equal(summarizeActiveRunState([{ status: 'completed' }]).label, 'Ready')
