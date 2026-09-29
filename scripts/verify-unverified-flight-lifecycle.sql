@@ -163,6 +163,7 @@ declare
   v_timing_changed boolean := false;
   v_previous_checkin_at timestamptz;
   v_existing_timed_actions uuid[] := array[]::uuid[];
+  v_preparation_run_ids uuid[] := array[]::uuid[];
 begin
   v_type := case when new.type = 'event' then 'event' else 'travel' end;
   v_provider := case
@@ -240,14 +241,15 @@ begin
 
   if v_timing_changed then
     update agent_activity set metadata_json=metadata_json||'{"notificationState":"cancelled"}'::jsonb where event_type='life_event_status_changed' and metadata_json->>'life_event_id'=v_event_id::text and metadata_json->>'notificationState'='pending';
-    update agent_runs r set status='failed',error='flight_schedule_changed',
-      summary='This paused preparation used an old flight schedule. Gogo will prepare the corrected itinerary again.',updated_at=now()
+    with invalidated as (update agent_runs r set status='failed',error='flight_schedule_changed',
+      summary='This preparation used an old flight schedule. Gogo will prepare the corrected itinerary again.',updated_at=now()
       where r.telegram_id=new.telegram_id::text and r.status in ('paused','queued','running','waiting_approval')
-        and exists(select 1 from life_event_actions a where a.life_event_id=v_event_id and a.action_type='browser_prepare' and a.status='blocked'
-          and (r.id::text=coalesce(a.payload_json->>'browserRunId',a.payload_json->>'runId') or (r.metadata_json->>'life_event_action_id'=a.id::text and r.metadata_json->>'life_event_id'=v_event_id::text)));
+        and exists(select 1 from life_event_actions a where a.life_event_id=v_event_id and a.action_type='browser_prepare'
+          and (r.id::text=coalesce(a.payload_json->>'browserRunId',a.payload_json->>'runId') or (r.metadata_json->>'life_event_action_id'=a.id::text and r.metadata_json->>'life_event_id'=v_event_id::text))) returning r.id)
+    select coalesce(array_agg(id),array[]::uuid[]) into v_preparation_run_ids from invalidated;
     update life_event_actions set status='queued',
-      payload_json=(payload_json-'browserRunId'-'runId'-'approvalId'-'blockedReason'-'authReason')||jsonb_build_object('supersededPreparationRunId',coalesce(payload_json->>'browserRunId',payload_json->>'runId',payload_json->>'supersededPreparationRunId')),
-      updated_at=now() where life_event_id=v_event_id and action_type='browser_prepare' and status='blocked';
+      payload_json=(payload_json-'browserRunId'-'runId'-'approvalId'-'blockedReason'-'authReason')||jsonb_build_object('supersededPreparationRunId',coalesce((select r.id::text from agent_runs r where r.id=any(v_preparation_run_ids) and (r.id::text=coalesce(life_event_actions.payload_json->>'browserRunId',life_event_actions.payload_json->>'runId') or r.metadata_json->>'life_event_action_id'=life_event_actions.id::text) order by r.updated_at desc limit 1),payload_json->>'browserRunId',payload_json->>'runId',payload_json->>'supersededPreparationRunId')),
+      updated_at=now() where life_event_id=v_event_id and action_type='browser_prepare' and status in ('blocked','running');
     -- Old pending authorization cannot survive a changed itinerary.
     update agent_runs r set
       status=case when r.status in ('running','paused') then 'outcome_unknown' else 'failed' end,
@@ -587,6 +589,16 @@ do $test$ declare aid uuid; eid uuid; rev text; runs_before integer; output json
  select id into notice from pg_temp.agent_activity where run_id=(output->>'runId')::uuid and event_type='life_event_status_changed';
  if pg_temp.gogo_claim_monitor_notice(notice) is null then raise exception 'current terminal notice was not claimed';end if;
  if pg_temp.gogo_claim_monitor_notice(notice) is not null then raise exception 'monitor notice replayed';end if;
+end $test$;
+
+do $test$ declare aid uuid; eid uuid; rid uuid; begin
+ select id,life_event_id into aid,eid from pg_temp.life_event_actions where telegram_id='23' and action_key='prepare-web-checkin';
+ update pg_temp.life_events set lifecycle_state='planned' where id=eid;
+ insert into pg_temp.agent_runs(telegram_id,type,capability,status,title,metadata_json) values('23','life_event','browser','running','Running old preparation',jsonb_build_object('life_event_action_id',aid,'life_event_id',eid)) returning id into rid;
+ update pg_temp.life_event_actions set status='running',payload_json=payload_json-'browserRunId'-'runId'-'supersededPreparationRunId' where id=aid;
+ update pg_temp.travel_tickets set depart_at=now()+interval '15 days' where telegram_id=23;
+ if not exists(select 1 from pg_temp.agent_runs where id=rid and status='failed' and error='flight_schedule_changed') then raise exception 'running old preparation remained active';end if;
+ if not exists(select 1 from pg_temp.life_event_actions where id=aid and status='queued' and payload_json->>'supersededPreparationRunId'=rid::text) then raise exception 'running preparation lost its cleanup reference';end if;
 end $test$;
 rollback;
 select 'temporary trigger regressions passed; all changes rolled back' as result;

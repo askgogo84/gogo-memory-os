@@ -242,6 +242,7 @@ async function isConsequentialControl(page,selector){
       const metadata=[el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').toLowerCase();
       commitText=visibleText.replace(navigation,' ')+' '+metadata.replace(navigation,' ').replace(/\b(?:booking|reservation|confirmation|order|payment|purchase|application|cancellation)s?\b/gi,' ');
     }
+    commitText=commitText.replace(/\bapply\s+filters?\b/gi,' ');
     const consequential=/\b(book|booking|cancel|cancellation|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i.test(commitText);
     if(text!==commitText&&!consequential)return false;
     if(safeResearch && !consequential)return false;

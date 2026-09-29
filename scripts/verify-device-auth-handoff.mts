@@ -120,14 +120,15 @@ const scopedDb={from:(table:string)=>{
   return q
 }}
 const dispatched:string[]=[]
+let correctionDuringProvision=false,reservationCancellations=0
 let provisioningFails=false
-let preparationFails=false
+let preparationFails=false,preparationSuperseded=false
 const shared=load('secondary-auth-handoff.ts',{
   './post-auth-outcome':{inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')},markAuthOutcomeUnknown:async(...args:any[])=>outcomeReader.markAuthOutcomeUnknown(...args)},
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
-  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{if(provisioningFails)throw new Error('temporary domain failure');return handoff},cancelProviderBrowserHandoff:async()=>{cancelledHandoffs++}},
+  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>{if(provisioningFails)throw new Error('temporary domain failure');if(correctionDuringProvision){rows.agent_runs.status='failed';rows.life_event_actions.status='queued'};return handoff},cancelProviderBrowserHandoff:async()=>{cancelledHandoffs++},cancelBrowserHandoffReservation:async()=>{reservationCancellations++}},
   './browser-handoff':{releaseBrowserHandoff:async()=>({ok:true})},
-  './life-event-worker':{prepareFlightCheckin:async(p:any)=>{assert.equal(p.resumeRunId,'run');if(preparationFails){rows.agent_runs.status='failed';rows.life_event_actions.status='blocked';delete rows.agent_runs.metadata_json.secondary_auth;throw new Error('temporary browser contention')};dispatched.push('flight_prepare');return {status:'completed'}}},
+  './life-event-worker':{prepareFlightCheckin:async(p:any)=>{assert.equal(p.resumeRunId,'run');if(preparationSuperseded){rows.agent_runs.status='failed';rows.agent_runs.error='flight_schedule_changed';rows.life_event_actions.status='queued';throw new Error('flight_schedule_changed')};if(preparationFails){rows.agent_runs.status='failed';rows.life_event_actions.status='blocked';delete rows.agent_runs.metadata_json.secondary_auth;throw new Error('temporary browser contention')};dispatched.push('flight_prepare');return {status:'completed'}}},
   './life-event-execution':{executeApprovedLifeEventCheckin:async(p:any)=>{assert.equal(p.runId,'run');dispatched.push('flight_execute');return {status:'completed'}}},
   './life-event-integration-worker':{processLifecycleMonitor:async(_a:any,_e:any,_t:any,runId:string)=>{assert.equal(runId,'run');dispatched.push('lifecycle_monitor');return {status:'completed'}}},
   './restaurant-reservation-worker':{processOne:async(p:any)=>{assert.equal(p.id,'action');dispatched.push('restaurant');return {status:'completed'}}},
@@ -879,7 +880,7 @@ await assert.rejects(()=>obsoletePreparation.prepareFlightCheckin({telegramId:'1
 assert.equal(obsoletePreparationReleased,'old-preparation','obsolete human takeover must be released before any new preparation')
 
 const controlClassifier=lockedComputer.BROWSER_SCRIPT.slice(lockedComputer.BROWSER_SCRIPT.indexOf('async function isConsequentialControl'),lockedComputer.BROWSER_SCRIPT.indexOf('(async()=>'))
-for(const [label,expected] of [['View confirmation',false],['Open confirmation',false],['See confirmation details',false],['View payment receipt',false],['Review application status',false],['View confirmation and submit',true],['View booking',false],['View booking confirmation',false],['Show reservation confirmation',false],['View booking confirmation and pay',true],['Manage booking',false],['Booking details',false],['View my reservation',false],['Confirm booking',true],['Cancel booking',true],['Pay for booking',true],['View booking and cancel',true],['Submit booking',true]] as const){
+for(const [label,expected] of [['Apply filters',false],['Apply filters and submit',true],['Apply now',true],['View confirmation',false],['Open confirmation',false],['See confirmation details',false],['View payment receipt',false],['Review application status',false],['View confirmation and submit',true],['View booking',false],['View booking confirmation',false],['Show reservation confirmation',false],['View booking confirmation and pay',true],['Manage booking',false],['Booking details',false],['View my reservation',false],['Confirm booking',true],['Cancel booking',true],['Pay for booking',true],['View booking and cancel',true],['Submit booking',true]] as const){
  const element={textContent:label,tagName:'BUTTON',id:'',getAttribute:(key:string)=>key==='type'?'submit':null}
  const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
  assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page}),expected,label)
@@ -898,3 +899,38 @@ for(const [id,expected] of [['booking',false],['reservation',false],['confirmati
  const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
  assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page}),expected,id)
 }
+
+rows.agent_runs.status='failed'
+await assert.rejects(()=>shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'flight_prepare',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[],handoffReservation:'obsolete-reservation'}}),/flight_schedule_changed/)
+assert.equal(reservationCancellations,1,'obsolete reservation is released before provisioning')
+rows.agent_runs.status='running';rows.life_event_actions.status='running'
+rows.agent_runs.metadata_json={life_event_id:'event',life_event_action_id:'action'}
+provisioningFails=false;correctionDuringProvision=true
+const cancellationsBefore=cancelledHandoffs
+await shared.attachSecondaryAuthHandoff({userId:'user',telegramId:'1',runId:'run',kind:'flight_prepare',result:{blockReason:'human_auth_required',authReason:'device_approval',url:'https://provider.example',actions:[]}})
+assert.equal(cancelledHandoffs,cancellationsBefore+1,'a handoff created concurrently with correction is cancelled')
+assert.equal(rows.agent_runs.status,'failed','obsolete preparation must not be resurrected')
+correctionDuringProvision=false
+let currentPreparationRevision='old',staleReservationReleased=0,staleAttached=0,staleActionWrites=0
+const stalePreparation=load('life-event-worker.ts',{
+ '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{
+  const result=()=>({data:table==='users'?{id:'owner',telegram_id:17}:table==='agent_permissions'?{level:'draft'}:table==='life_event_actions'?{status:'running',payload_json:{scheduleRevision:currentPreparationRevision}}:{id:'obsolete-run'},error:null})
+  const q:any={select:()=>q,eq:()=>q,in:()=>q,insert:()=>q,update:()=>{if(table==='life_event_actions')staleActionWrites++;return q},single:async()=>result(),maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)};return q
+ }}},
+ './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},
+ './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
+ './provider-browser-handoff':{cancelBrowserHandoffReservation:async()=>{staleReservationReleased++}},
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{},attachSecondaryAuthHandoff:async()=>{staleAttached++}},
+ './secure-computer':{runSecureBrowser:async()=>{currentPreparationRevision='new';return {status:'blocked',handoffReservation:'old-reservation',blockReason:'human_auth_required',authReason:'device_approval',actions:[]}}},
+})
+await assert.rejects(()=>stalePreparation.prepareFlightCheckin({telegramId:'17',event:{id:'event',confirmation_ref:'ABC123'},action:{id:'prepare',payload_json:{scheduleRevision:'old',checkInUrl:'https://airline.example'}}}),/flight_schedule_changed/)
+assert.equal(staleReservationReleased,1)
+assert.equal(staleAttached,0)
+assert.equal(staleActionWrites,0,'stale preparation cannot overwrite the corrected action')
+
+rows.agent_runs.status='paused';rows.agent_runs.metadata_json={life_event_id:'event',life_event_action_id:'action',auth_resume:{kind:'flight_prepare',safeToRetry:true}}
+rows.life_event_actions.status='blocked';preparationSuperseded=true
+await assert.rejects(()=>shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'}),/flight_schedule_changed/)
+assert.equal(rows.agent_runs.status,'failed','resume recovery must not revive a superseded preparation')
+assert.equal(rows.life_event_actions.status,'queued','resume recovery must not block the corrected preparation')
+preparationSuperseded=false

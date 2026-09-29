@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { runSecureBrowser } from './secure-computer'
+import { cancelBrowserHandoffReservation } from './provider-browser-handoff'
+import { runSecureBrowser, type SecureBrowserResult } from './secure-computer'
 import { attachSecondaryAuthHandoff, releaseRunAuthHandoff } from './secondary-auth-handoff'
 import { sendAgentPush } from './push'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
@@ -95,6 +96,7 @@ async function createRun(params: { telegramId: string; event: any; action: any; 
       life_event_id: String(params.event.id),
       life_event_action_id: String(params.action.id),
       action_key: String(params.action.action_key),
+      scheduleRevision:params.action.payload_json?.scheduleRevision??null,
       ...(params.metadata || {}),
     },
     started_at: now,
@@ -121,6 +123,12 @@ function freeSeatPolicy(event: any) {
   const seat = safe(pref.seatPreference || pref.seat_preference || '', 100)
   if (seat) return { label: seat, policy: 'remembered_preference' }
   return { label: 'Free allocation only', policy: 'free_allocation_only' }
+}
+
+async function assertCurrentPreparation(action:any,telegramId:string){
+  const {data,error}=await supabaseAdmin.from('life_event_actions').select('status,payload_json').eq('id',action.id).eq('telegram_id',telegramId).maybeSingle()
+  if(error)throw new Error('flight_preparation_state_unavailable')
+  if(!data||!['running','blocked'].includes(data.status)||(data.payload_json?.scheduleRevision??null)!==(action.payload_json?.scheduleRevision??null))throw new Error('flight_schedule_changed')
 }
 
 export async function prepareFlightCheckin(params: { telegramId: string; event: any; action: any; resumeRunId?:string }) {
@@ -161,32 +169,41 @@ export async function prepareFlightCheckin(params: { telegramId: string; event: 
     metadata: { checkin_url: url, provider: event.provider || null, confirmation_ref_present: true, permission_level: permissionLevel },
   })
 
+  let browserResult:SecureBrowserResult|undefined
   try {
+    await assertCurrentPreparation(action,telegramId)
     if(params.resumeRunId)await releaseRunAuthHandoff(telegramId,runId)
-    const result = await runSecureBrowser({
+    const result = browserResult = await runSecureBrowser({
       reserveHumanHandoff:true,
       userId: actor.userId,
       url,
       mode: 'draft',
       objective: `Prepare web check-in for ${safe(event.title, 180)}. Booking reference/PNR: ${confirmation}. Fill only the fields required to reach the final check-in confirmation step. Do not submit check-in. Do not purchase a seat or add-on. If a paid seat is required, stop. If password, OTP, CAPTCHA, passkey, passport verification, payment authentication, or another human-auth step appears, stop for the user.`,
     })
+    await assertCurrentPreparation(action,telegramId)
     const at = new Date().toISOString()
     if (result.status === 'blocked') {
       const handoffUrl=await attachSecondaryAuthHandoff({userId:actor.userId,telegramId,runId,kind:'flight_prepare',result})
-      await supabaseAdmin.from('agent_runs').update({ status: 'paused', progress: 55, summary: safe(result.summary, 1200), error: result.blockReason || 'browser_blocked', updated_at: at }).eq('id', runId).eq('telegram_id', telegramId)
       await markAction(String(action.id), 'blocked', { ...(payload || {}), browserRunId: runId, blockedReason: result.blockReason || 'browser_blocked' })
+      const paused=await supabaseAdmin.from('agent_runs').update({ status: 'paused', progress: 55, summary: safe(result.summary, 1200), error: result.blockReason || 'browser_blocked', updated_at: at }).eq('id', runId).eq('telegram_id', telegramId).in('status',['running','paused']).select('id').maybeSingle()
+      if(paused.error||!paused.data)throw new Error('flight_schedule_changed')
       await activity(telegramId, runId, 'human_auth_required', 'Gogo paused flight check-in at a human authentication boundary.', { life_event_id: event.id, auth_reason: result.authReason || null })
       await sendAgentPush(telegramId, { title: 'Gogo needs you for check-in', body: safe(result.summary || 'Airline check-in reached a secure step that only you can complete.', 280), path: handoffUrl?`/dashboard/activity/${encodeURIComponent(runId)}/browser`:'/agent', data: { runId, lifeEventId: String(event.id) } }).catch(() => {})
       return { status: 'blocked' as const, runId }
     }
 
-    await supabaseAdmin.from('agent_runs').update({ status: 'completed', progress: 100, summary: 'Airline check-in is prepared in Gogo Secure Computer. Nothing was submitted.', completed_at: at, updated_at: at }).eq('id', runId).eq('telegram_id', telegramId)
     await markAction(String(action.id), 'completed', { ...(payload || {}), browserRunId: runId, preparedAt: at, browserUrl: result.url })
+    const completed=await supabaseAdmin.from('agent_runs').update({ status: 'completed', progress: 100, summary: 'Airline check-in is prepared in Gogo Secure Computer. Nothing was submitted.', completed_at: at, updated_at: at }).eq('id', runId).eq('telegram_id', telegramId).eq('status','running').select('id').maybeSingle()
+    if(completed.error||!completed.data)throw new Error('flight_schedule_changed')
     await activity(telegramId, runId, 'life_event_prepared', 'Gogo prepared airline web check-in without submitting it.', { life_event_id: event.id, action_key: action.action_key })
     return { status: 'completed' as const, runId }
   } catch (error: any) {
     const at = new Date().toISOString()
-    await supabaseAdmin.from('agent_runs').update({ status: 'failed', summary: 'Gogo could not prepare airline check-in safely.', error: safe(error?.message || 'secure_browser_failed', 400), completed_at: at, updated_at: at }).eq('id', runId).eq('telegram_id', telegramId)
+    if(browserResult?.handoffReservation)await cancelBrowserHandoffReservation(actor.userId,browserResult.handoffReservation).catch(()=>{})
+    await releaseRunAuthHandoff(telegramId,runId).catch(()=>{})
+    await supabaseAdmin.from('agent_runs').update({ status: 'failed', summary: 'Gogo could not prepare airline check-in safely.', error: safe(error?.message || 'secure_browser_failed', 400), completed_at: at, updated_at: at }).eq('id', runId).eq('telegram_id', telegramId).in('status',['running','paused'])
+    await assertCurrentPreparation(action,telegramId)
+    if(error?.message==='browser_handoff_in_use'){await deferAction(action,1,{waitingFor:'browser_owner_release'});return {status:'deferred' as const,runId}}
     await markAction(String(action.id), 'blocked', { ...(payload || {}), browserRunId: runId, blockedReason: 'secure_browser_failed' })
     throw error
   }
