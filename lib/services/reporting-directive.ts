@@ -32,11 +32,14 @@ const CLAUSE_LEAD = `(?:^|[.!?;,]|\\b(?:and|then|to)\\b)\\s*(?:(?:please|kindly|
 
 // Bounded arbitrary modifiers between "report" and the result noun. Any adjective/
 // determiner is allowed ("the matching verified results"), but the run stops at a
-// clause joint or an "as/for" flag suffix so it can't bridge over a mutation object.
-const PURE_MOD = `(?:\\s+(?!(?:and|then|but|or|as|for)\\b)[a-z0-9'-]+){0,6}`
+// clause joint, an "as/for" flag suffix, or an object-introducing preposition
+// (with/about/regarding/…) so it cannot bridge over a mutation object and reach a
+// trailing result noun ("report the seller with these details" stays a mutation).
+const MOD_STOP = 'and|then|but|or|as|for|to|with|about|regarding|concerning|against|over'
+const PURE_MOD = `(?:\\s+(?!(?:${MOD_STOP})\\b)[a-z0-9'-]+){0,6}`
 // WEAK modifiers additionally exclude demonstratives: "report this status" targets a
 // provider object, not an order status attribute.
-const WEAK_MOD = `(?:\\s+(?!(?:and|then|but|or|as|for|this|that|these|those)\\b)[a-z0-9'-]+){0,6}`
+const WEAK_MOD = `(?:\\s+(?!(?:${MOD_STOP}|this|that|these|those)\\b)[a-z0-9'-]+){0,6}`
 // A WEAK-result directive is benign only when it is NOT flagged "as/for <abuse reason>"
 // ("report the status for harassment" is a mutation).
 const WEAK_NOT_ABUSE = `(?!(?:\\s+[a-z0-9'-]+){0,3}\\s+(?:as|for)\\s+(?:${ABUSE_REASON})\\b)`

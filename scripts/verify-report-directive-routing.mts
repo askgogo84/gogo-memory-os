@@ -115,6 +115,10 @@ assert.equal(hasLeadingReportMutation('report the matching results only'), false
 assert.equal(hasLeadingReportMutation('report the price for milk'), false)
 assert.equal(hasLeadingReportMutation('report the status for terrorism'), true)
 assert.equal(hasLeadingReportMutation('report the account for csam'), true)
+//    (e3) modifiers cannot bridge over a provider object via a preposition (round 7).
+assert.equal(hasLeadingReportMutation('report the seller with these details'), true)
+assert.equal(hasLeadingReportMutation('report the post about spam to me'), true)
+assert.equal(hasLeadingReportMutation('report the account against policy'), true)
 //    (f) leading-adverb directives are stripped; report-as-noun titles are not.
 assert.doesNotMatch(stripReportingDirectives('check availability. Only report verified results.'), /\breport\b/i)
 assert.doesNotMatch(stripReportingDirectives('Just report the findings'), /\breport\b/i)
