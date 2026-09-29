@@ -43,6 +43,12 @@ for (const text of [
   'Open Blinkit and return my last order. Report only verified results.',
   'Open Blinkit and refund my order. Report only verified results.',
   'Open Blinkit and rate the product 5 stars.',
+  // Codex P2: the report-mutation target set is open-ended — do NOT enumerate it.
+  // Any clause-leading "report <entity>" that is not a reporting directive must decline.
+  'Open Instagram and report this story as spam.',
+  'Open Instagram and report this reel.',
+  'Open Instagram and report this message.',
+  'Open Instagram and report this account. Report only verified results.',
 ]) {
   assert.equal(parseConnectedProviderReadCommand(text), null, `real provider mutation must be declined: ${text.slice(0, 48)}...`)
 }

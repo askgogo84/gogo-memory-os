@@ -160,12 +160,17 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
 
   if(reminderMutation||calendarOrListMutation)return null
   if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?(?:return|exchange|refund|rate)(?!\s+(?:(?:the|my|this)\s+)?(?:price|results?|information|details|availability|summary|answer|control)\b)\s+/.test(actionable))return null
-  // "report" is only a provider mutation when it targets a provider entity
-  // (report a seller/listing/post/account/abuse). A reporting DIRECTIVE — the
-  // user's standard "Report only verified results", "report back the findings",
-  // "only report verified information" — is an instruction to Gogo about how to
-  // answer, not an action on the provider, and must never block the read route.
-  if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?report\s+(?:(?:the|this|that|a|an|my|its|their)\s+)?(?:seller|listing|listings|item|items|product|products|post|posts|account|accounts|profile|user|users|review|reviews|comment|comments|abuse|spam|problem|problems|issue|issues|content|page|ad|ads)\b/.test(actionable))return null
+  // "report" as a clause-leading verb is a provider mutation (report a seller /
+  // story / reel / post / message / account / listing / abuse — an open-ended set,
+  // so we do NOT enumerate targets). The ONE benign exception is a reporting
+  // DIRECTIVE that tells Gogo how to answer — the user's standard "Report only
+  // verified results", "report back the findings", "report the price/status". We
+  // whitelist that directive shape explicitly and reject every other leading report.
+  // Judge each clause-leading "report" locally so a benign trailing directive can
+  // never mask a leading mutation ("report the seller ... report only verified
+  // results"). A leading report is a mutation UNLESS it is immediately "report back"
+  // or "report [qualifiers] <result-noun>".
+  if(/(?:^|[.!?;,]|\b(?:and|then|to)\b)\s*(?:please\s+)?report\b(?!\s+back\b)(?!(?:\s+(?:back|only|just|now|please|the|me|to|us|with|of|all|any|its|their|verified|unverified|actual|current|final|live|real|confirmed|exact|relevant|accurate|precise|available|latest|updated))*\s+(?:results?|findings?|finding|status|information|info|details?|summary|summaries|prices?|costs?|availability|stock|answers?|answer|figures?|numbers?|readings?|outcomes?)\b)/i.test(actionable))return null
   if(/\b(?:start|begin|continue|keep|before|after|while|until|once|when)\s+(?:ordering|buying|purchasing|booking|paying|submitting|redeeming|applying|following|unfollowing|liking|commenting|publishing|sending|replying|deleting|editing|changing|saving|blocking|unblocking|sharing|posting|messaging|returning|refunding|exchanging|canceling|cancelling|confirming|placing|making|creating|adding|removing|emptying|clearing|updating|increasing|decreasing|putting|moving|subscribing|unsubscribing|renewing|rescheduling|postponing|modifying|rating|reporting)\b/.test(actionable))return null
   if(shoppingSites.length&&/\bget\s+(?!(?:(?!\b(?:and|then|but|at|for|with|to|from|on|under|below|above|over)\b)[^.!?;,])*\b(?:prices?|costs?|availability|information|details|status)\b)/.test(actionable))return null
   if(/\b(?:request|initiate|process|claim)\b[^.!?]*\b(?:refund|return|cancellation)\b/.test(actionable))return null
