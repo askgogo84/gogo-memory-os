@@ -451,6 +451,9 @@ async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;
       GOGO_LOGIN_URL:params.url,
       GOGO_VAULT_USERNAME:params.username,
       GOGO_VAULT_SECRET:params.secret,
+      // The login must egress the same way the read/action will — otherwise a proxied
+      // provider's sign-in is attempted from the datacenter IP and gets blocked.
+      ...browserProxyEnv(params.url),
     },
   } as any)
   if(result.exitCode!==0)throw new Error('vault_browser_login_failed')
@@ -523,6 +526,19 @@ async function assessReadOutcome(objective:string,page:any):Promise<string|null>
 function localExecutionConfirmation(approvedOperation:ApprovedBrowserOperation|null,before:string,after:string,actions:any[]):string|null{
   if(!actions.some(a=>a.status==='done'&&a.kind==='submit')||!approvedOperation)return null
   const pattern=operationPatterns[approvedOperation]
+  // Adding to a cart is confirmed by the cart-state itself ("Added to cart", "1 in
+  // cart") appearing AFTER the click and not before — there is no trailing
+  // "confirmed/completed" verb like an order receipt. Fail safe: only confirm when the
+  // cart-added state newly appears and its immediate context is not a negation/removal.
+  if(approvedOperation==='cart'){
+    const cartRe=new RegExp(pattern,'i')
+    const afterMatch=String(after||'').normalize('NFKC').match(cartRe)
+    if(!afterMatch||cartRe.test(String(before||'')))return null
+    const idx=afterMatch.index||0
+    const context=String(after).slice(Math.max(0,idx-40),idx+80)
+    if(/\b(?:no|not|never|failed|unable|remove[d]?|empty|cleared|out\s+of\s+stock|sold\s+out)\b/i.test(context))return null
+    return context.replace(/\s+/g,' ').trim().replace(/[.!]+$/,'')
+  }
 const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|complete|placed|processed|successful|succeeded|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
 const gratitude=pattern!=='cancellation'&&pattern!=='check[ -]?in'?new RegExp('\\b(?:thank\\s+you|thanks)\\s+for\\s+(?:your|the)\\s+'+pattern+'\\b','i'):null;
 const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|processed|confirmed)\\s+(?:(?:your|the|this)\\s+)?'+pattern+'\\b','i');

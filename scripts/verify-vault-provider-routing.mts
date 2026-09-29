@@ -214,7 +214,7 @@ assert.equal(
 
 const browser=await import('node:fs').then(fs=>fs.readFileSync('lib/agent/browser-command.ts','utf8'))
 assert.match(browser,/parseConnectedProviderReadCommand/)
-assert.match(browser,/parseBrowserCommand\(params\.text\)\|\|parseConnectedProviderCartAction\(params\.text\)\|\|parseConnectedProviderReadCommand\(params\.text\)/)
+assert.match(browser,/parseConnectedProviderCartAction\(params\.text\)\|\|parseBrowserCommand\(params\.text\)\|\|parseConnectedProviderReadCommand\(params\.text\)/)
 assert.match(browser,/writeTokens/)
 assert.match(browser,/readTokens/)
 assert.match(browser,/mode:'read'/)

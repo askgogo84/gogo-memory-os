@@ -437,7 +437,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
 }
 
 export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:AgentSurface;text:string}){
-  const command=parseBrowserCommand(params.text)||parseConnectedProviderCartAction(params.text)||parseConnectedProviderReadCommand(params.text);if(!command)return null
+  const command=parseConnectedProviderCartAction(params.text)||parseBrowserCommand(params.text)||parseConnectedProviderReadCommand(params.text);if(!command)return null
   const sentinel=evaluateAgentSentinel({capability:'browser',mode:command.mode,risk:command.risk,irreversible:command.mode==='execute',approved:false,instruction:command.objective,url:command.url,actionCount:12})
   if(!sentinel.allowed && sentinel.reason!=='approval_missing'){
     return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Sentinel blocked this browser request: ${sentinel.reason}`,handledBy:'secure-browser' as const}
