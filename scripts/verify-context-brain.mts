@@ -31,6 +31,20 @@ assert.ok(nyPresence)
 assert.equal(nyPresence?.startAt,'2026-09-28T12:35:00.000Z')
 assert.ok(Date.parse(String(nyPresence?.endAt)) >= Date.parse('2026-09-28T14:30:00.000Z'))
 
+// Stale-countdown regression: after the travel date, a recalled leg must be labelled
+// as past so the reply layer cannot replay a relative "check-in opens in N days"
+// countdown or claim the flight landed from schedule alone.
+const pastNow=Date.parse('2026-09-29T06:00:00.000Z')
+const pastFacts=buildTravelPresenceFacts(flights,pastNow,60)
+const pastLeg=pastFacts.find(f=>f.source==='travel_ticket'&&f.summary.includes('Abu Dhabi → New York'))
+assert.ok(pastLeg,'a recently-past leg should still surface for recall')
+assert.match(pastLeg!.summary,/STATUS:/,'a past leg must carry an explicit time status')
+assert.match(pastLeg!.summary,/past/i,'a past leg must be labelled as past (no stale check-in countdown)')
+assert.match(pastLeg!.summary,/not verified live arrival|do not claim it landed/i,'past arrival must be booked-schedule-not-live, not a claimed landing')
+// A future leg must NOT be labelled past.
+const futureLeg=facts.find(f=>f.source==='travel_ticket'&&f.summary.includes('Abu Dhabi → New York'))
+assert.ok(futureLeg&&!/STATUS: .*past/i.test(futureLeg.summary),'a future leg must not be labelled as past')
+
 const pack:ContextPack={
   query:'Book Naru Noodle Bar for 2 at the next available slot',
   generatedAt:'2026-09-26T12:00:00.000Z',

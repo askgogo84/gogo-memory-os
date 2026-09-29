@@ -9,11 +9,16 @@ import { listRecentWorkspaceInbox } from './google-workspace-read'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
 import type { AgentActor } from './actor'
 import {
-  appendBoundedHistory,
   assessWebWatchResult,
   canonicalWatcherUrl,
   watcherResultSignature,
   webWatchAlertAllowed,
+  extractFlightCodes,
+  extractDateTokens,
+  activeEventKeys,
+  recordEventKey,
+  activeStamped,
+  mergeStamped,
 } from './watcher-quality'
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
@@ -981,6 +986,32 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     ? watcher.last_state_json.seenUrls
     : Array.isArray(watcher.last_state_json?.urls) ? watcher.last_state_json.urls : []
   const priorSeenSignatures = Array.isArray(watcher.last_state_json?.seenSignatures) ? watcher.last_state_json.seenSignatures : []
+  const priorSeenEventKeys = Array.isArray(watcher.last_state_json?.seenEventKeys) ? watcher.last_state_json.seenEventKeys : []
+  const armedEventKeys = activeEventKeys(priorSeenEventKeys, now)
+  // Scope the disruption identity to the SPECIFIC occurrence the result is about: the
+  // watcher context plus whichever of the watch's known flight codes the result cites.
+  // A delay on one leg then a delay on a different leg are distinct events; the same
+  // flight's delay re-retrieved is one event. Weather watchers have no flight code, so
+  // they fall back to the context key and rely on the re-arm window.
+  const contextScope = String((condition as any).contextKey || condition.title || '')
+  const knownFlightCodes = extractFlightCodes(condition.query)
+  const occurrenceFor = (result: WebSearchResult) => {
+    const hay = `${result.title} ${result.snippet || ''}`.toLowerCase().replace(/\s+/g, ' ')
+    const cited = knownFlightCodes.filter(code => {
+      const spaced = code.replace(/^([a-z]{1,2}|\d[a-z])(\d)/i, '$1 $2')
+      return hay.includes(code) || hay.includes(spaced)
+    })
+    // Include the date the result is about so the SAME flight number on different dates
+    // (e.g. an outbound and a return leg) is a distinct event and both can alert.
+    const dates = extractDateTokens(`${result.title} ${result.snippet || ''}`)
+    return `${contextScope}:${cited.join('+')}:${dates.join('+')}`
+  }
+
+  // URL/topic dedup expires on the same re-arm clock as event keys, so a recurring
+  // event at a stable URL can alert again after the window instead of being suppressed
+  // forever (legacy bare entries stay armed until re-stamped).
+  const armedUrls = activeStamped(priorSeenUrls, now)
+  const armedSignatures = activeStamped(priorSeenSignatures, now)
 
   const assessments = topResults.map(result => ({
     result,
@@ -990,8 +1021,10 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       snippet: result.snippet,
       url: result.url,
       triggerKeywords: condition.triggerKeywords,
-      seenUrls: priorSeenUrls,
-      seenSignatures: priorSeenSignatures,
+      seenUrls: armedUrls,
+      seenSignatures: armedSignatures,
+      seenEventKeys: armedEventKeys,
+      occurrence: occurrenceFor(result),
     }),
   }))
   const candidate = assessments.find(item => item.quality.eligible) || null
@@ -1031,8 +1064,14 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
 
   const currentUrls = topResults.map(result => canonicalWatcherUrl(result.url)).filter(Boolean)
   const currentSignatures = topResults.map(result => watcherResultSignature(result.title, result.snippet || ''))
-  const seenUrls = appendBoundedHistory(priorSeenUrls, currentUrls)
-  const seenSignatures = appendBoundedHistory(priorSeenSignatures, currentSignatures)
+  const seenUrls = mergeStamped(priorSeenUrls, currentUrls, now)
+  const seenSignatures = mergeStamped(priorSeenSignatures, currentSignatures, now)
+  // Record the disruption identity (with a timestamp) only when we actually alert, so
+  // the same event is suppressed on later polls but re-arms after the window. Expiry is
+  // applied at read time via activeEventKeys, so non-alert polls keep the prior list.
+  const seenEventKeys = material && candidate?.quality.eventKey
+    ? recordEventKey(priorSeenEventKeys, candidate.quality.eventKey, now)
+    : priorSeenEventKeys
   const alertTimes = material
     ? [...alertGate.recentAlertTimes, now.toISOString()]
     : alertGate.recentAlertTimes
@@ -1047,6 +1086,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       urls:currentUrls,
       seenUrls,
       seenSignatures,
+      seenEventKeys,
       quietChecks,
       baselineAt:watcher.last_state_json?.baselineAt || now.toISOString(),
       lastTriggeredAt:material ? now.toISOString() : watcher.last_state_json?.lastTriggeredAt || null,
