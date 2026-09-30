@@ -99,25 +99,42 @@ const STATE_EVIDENCE: Array<[RegExp, RegExp]> = [
   // the flight is running on time.
   [/\bon[- ]time\b/i, /\b(on[- ]time|no delay|as scheduled|arrived on schedule|actual)\b/i],
 ]
+// Remove NEGATED state mentions ("not landed", "yet to depart", "no delay") so a source saying a
+// flight has NOT landed is never treated as evidence for a reply claiming it landed.
+const STATE_WORDS = 'landed|arrived|touched down|cancell?ed|delayed|diverted|departed|took off|en ?route|in ?air|airborne|in flight|on[- ]time'
+function stripNegatedStates(text: string): string {
+  const neg = new RegExp(`\\b(?:not|no|never|hasn'?t|haven'?t|isn'?t|aren'?t|wasn'?t|weren'?t|won'?t|didn'?t|yet to)\\s+(?:\\w+\\s+){0,2}?(?:${STATE_WORDS})\\b`, 'gi')
+  return String(text || '').replace(neg, ' ')
+}
 function statusUngrounded(reply: string, context: string): boolean {
-  return STATE_EVIDENCE.some(([inReply, inContext]) => inReply.test(reply) && !inContext.test(context))
+  const r = stripNegatedStates(reply)   // a "not landed" reply makes no positive landed claim
+  const c = stripNegatedStates(context) // a "not landed" source is not evidence of landing
+  return STATE_EVIDENCE.some(([inReply, inContext]) => inReply.test(r) && !inContext.test(c))
 }
 
-// Clock times mentioned in a text, normalised to "H:MM" (leading zero and am/pm dropped) so a
-// reply's cited times can be compared against the retrieved context.
-function clockTimes(text: string): Set<string> {
-  const out = new Set<string>()
-  for (const m of String(text || '').matchAll(/\b(\d{1,2}):(\d{2})\s*(?:am|pm)?\b/gi)) {
-    out.add(`${Number(m[1])}:${m[2]}`)
+// Clock times mentioned in a text, normalised to "H:MM" plus meridiem when stated, so a reply's
+// cited times can be compared against the retrieved context (8:40 AM must not match 8:40 PM).
+function clockTimes(text: string): Array<{ hm: string; mer: string }> {
+  const out: Array<{ hm: string; mer: string }> = []
+  for (const m of String(text || '').matchAll(/\b(\d{1,2}):(\d{2})\s*(am|pm)?\b/gi)) {
+    out.push({ hm: `${Number(m[1])}:${m[2]}`, mer: (m[3] || '').toLowerCase() })
   }
   return out
 }
-// True when the reply cites a clock time that does NOT appear in the retrieved context — i.e. the
-// model invented or altered a departure/arrival time. The state verb being grounded is not
-// enough; the specific time must come from the source.
+const TZ_RE = /\b(UTC|GMT|IST|EDT|EST|PDT|PST|MDT|MST|CDT|CST|BST|CET|CEST|EET|AEDT|AEST|SGT|JST|GST|HKT|KST|WET)\b/g
+// True when the reply cites a clock time OR timezone that does NOT appear in the retrieved
+// context — the model invented or altered a departure/arrival time, meridiem or timezone.
 function timesUngrounded(reply: string, context: string): boolean {
   const ctx = clockTimes(context)
-  return Array.from(clockTimes(reply)).some(t => !ctx.has(t))
+  const timeBad = clockTimes(reply).some(rt => {
+    const sameHm = ctx.filter(ct => ct.hm === rt.hm)
+    if (!sameHm.length) return true                       // time not in source at all
+    if (!rt.mer) return false                             // reply gave no meridiem -> H:MM is enough
+    return !sameHm.some(ct => !ct.mer || ct.mer === rt.mer) // reply's meridiem must be consistent
+  })
+  const ctxTz = new Set((context.match(TZ_RE) || []).map(s => s.toUpperCase()))
+  const tzBad = (reply.match(TZ_RE) || []).some(t => !ctxTz.has(t.toUpperCase()))
+  return timeBad || tzBad
 }
 
 const COULD_NOT_VERIFY =
@@ -134,12 +151,12 @@ export type FlightStatusDeps = {
   ask?: (userText: string, context: string, userName: string) => Promise<string>
 }
 
-export async function answerLiveFlightStatus(userText: string, userName: string, deps: FlightStatusDeps = {}): Promise<string> {
+export async function answerLiveFlightStatus(userText: string, userName: string, deps: FlightStatusDeps = {}, timezone?: string): Promise<string> {
   const search = deps.search || ((q, o) => searchWebResults(q, o))
   const ask = deps.ask || ((u, c, n) => askClaudeFlightStatus(u, c, n))
-  // Resolve "today"/"tomorrow" once against the user's local calendar so the query and occurrence
-  // validation agree on the same absolute date.
-  const refYmd = localTodayYmd()
+  // Resolve "today"/"tomorrow" once against the USER's local calendar (not a fixed default) so the
+  // query and occurrence validation agree on the correct absolute date for that user.
+  const refYmd = localTodayYmd(timezone)
   const query = buildFlightStatusQuery(userText, refYmd)
   // Keep only non-shopping results that concern the REQUESTED flight occurrence (right flight
   // code, non-contradicting date) — so a recurring flight on another day can't be reported.

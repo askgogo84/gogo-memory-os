@@ -1090,8 +1090,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (intent.meta?.flightStatus) {
       // A concrete flight-status question runs a tracker-scoped STATUS lookup, never a
       // generic web search — a bare "EY1 ... to New York" query ranks airfare/OTA pages and
-      // turned status into "fare not verified" shopping. This path never emits fares.
-      reply = await answerLiveFlightStatus(incomingText, resolvedUser.name)
+      // turned status into "fare not verified" shopping. This path never emits fares. Pass the
+      // user's timezone so "tomorrow" resolves to THEIR local calendar date, not a server default.
+      const userTz = await resolveReminderTimezone(resolvedUser.telegramId)
+      reply = await answerLiveFlightStatus(incomingText, resolvedUser.name, {}, userTz)
     } else {
       const searchContext = await searchWeb(incomingText)
       try { reply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } catch { reply = buildDirectWebAnswer(incomingText, searchContext) }

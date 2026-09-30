@@ -164,6 +164,22 @@ import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
     ask: async () => 'EY1 landed at JFK at 10:40 AM.',
   })
   assert.match(wrongTime, /could(?:n'?t| not) verify/i, 'a reply citing a clock time absent from the source is suppressed')
+
+  // Negation polarity (Codex P1): a "not landed" source must not ground a "landed" reply.
+  const notLanded = [{ title: 'EY1 FlightAware', snippet: 'EY1 has not landed yet; estimated 8:40 AM EDT on 28 September 2026.', url: 'https://flightaware.com/live/flight/ETD1/history/20260928' }]
+  const negClaim = await answerLiveFlightStatus(prompt, 'Gogo', {
+    search: async () => notLanded,
+    ask: async () => 'EY1 landed at JFK.',
+  })
+  assert.match(negClaim, /could(?:n'?t| not) verify/i, 'a landed claim against a "not landed" source is suppressed')
+
+  // Meridiem + timezone (Codex P1): source is 8:40 AM EDT, a reply of 8:40 PM UTC is suppressed.
+  const amEdt = [{ title: 'EY1 FlightAware', snippet: 'EY1 landed at JFK 8:40 AM EDT on 28 September 2026.', url: 'https://flightaware.com/live/flight/ETD1/history/20260928' }]
+  const pmClaim = await answerLiveFlightStatus(prompt, 'Gogo', {
+    search: async () => amEdt,
+    ask: async () => 'EY1 landed at JFK at 8:40 PM UTC.',
+  })
+  assert.match(pmClaim, /could(?:n'?t| not) verify/i, 'a PM/UTC time inconsistent with the AM/EDT source is suppressed')
 }
 
 // ---------------------------------------------------------------------------
