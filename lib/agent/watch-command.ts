@@ -987,6 +987,18 @@ export function parseFlightIdentifier(text: string) {
   const matchedEnd = (match.index || 0) + match[0].length
   if (raw.slice(matchedEnd).trimStart().startsWith(':')) return null
 
+  // Same paused-train / product-code hijack family (documented in train-research.ts):
+  // "...drops below 22000" and model codes like WH-1000XM5 must never be read as a
+  // flight. A real flight code is airline letters + up to 4 digits; a bare run of 5+
+  // digits is a price, PIN, amount or model number. Reject a purely numeric 5+ digit
+  // identifier (longer-token rule), and reject any identifier with a currency / price /
+  // quantity token adjacent to it (adjacency rule).
+  const digitCount = (code + number).replace(/\D/g, '').length
+  if (!/[A-Z]/.test(code) && digitCount >= 5) return null
+  const start = match.index || 0
+  const PRICE_QTY_TOKEN = /(?:₹|\brs\b|\brupees?\b|\binr\b|\bprices?\b|\bcosts?\b|\bunder\b|\bbelow\b|\babove\b|\bdrops?\b|\bamounts?\b|\bpin\b|\botp\b|\bcode\b)/i
+  if (PRICE_QTY_TOKEN.test(raw.slice(Math.max(0, start - 16), start)) || PRICE_QTY_TOKEN.test(raw.slice(matchedEnd, matchedEnd + 16))) return null
+
   const before = raw.slice(0, match.index || 0).trim().replace(/[-–—,:]+$/g, '').trim()
   const airline = before && before.length <= 80 ? before : ''
   return {
