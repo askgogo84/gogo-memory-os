@@ -3,6 +3,7 @@ import { detectIntent } from '../lib/bot/detect-intent'
 import { buildTravelPresenceFacts } from '../lib/agent/context-brain'
 import { answerLiveFlightStatus, buildFlightStatusQuery, isFareShoppingResult, answerLeaksFare, matchesRequestedOccurrence, normalizeNumericDates } from '../lib/bot/handlers/flight-status'
 import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '../lib/agent/appointment-followup'
+import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
 
 // Post-deployment acceptance failures observed in the Sep-30 11:53–11:54 IST WhatsApp turns.
 // Helper routing tests (detectIntent alone) missed these because the defects live in the
@@ -20,6 +21,12 @@ import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '..
   const intent = detectIntent(prompt)
   assert.equal(intent.type, 'web_search', 'flight-status still routes into the web_search executor')
   assert.equal(intent.meta?.flightStatus, true, 'flight-status is tagged so the executor runs a STATUS lookup, not a generic web search')
+
+  // Routing gate must require a GENUINE flight code (Codex P1): "on 28 September" is not a code,
+  // so a codeless question must not be tagged for the dedicated status handler.
+  assert.ok(hasConcreteFlightCode('has EY1 landed?'), 'a real flight code is recognised')
+  assert.ok(!hasConcreteFlightCode('Did my flight land on 28 September 2026?'), '"on 28" is not treated as a flight code')
+  assert.notEqual(detectIntent('Did my flight land on 28 September 2026?').meta?.flightStatus, true, 'a codeless flight question is not tagged flightStatus')
 
   const query = buildFlightStatusQuery(prompt)
   assert.match(query, /EY1/i, 'status query carries the flight number')
@@ -53,7 +60,7 @@ import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '..
 
   // Even if the summariser leaks fares from a real tracker page, the output guard suppresses it.
   const tracker = [
-    { title: 'EY1 (ETD1) Etihad Airways Flight Tracking - FlightAware', snippet: 'EY1 landed at New York JFK 8:40 AM EDT Sep 28. Scheduled 8:35 AM. Gate A6.', url: 'https://flightaware.com/live/flight/ETD1' },
+    { title: 'EY1 (ETD1) Etihad Airways Flight Tracking - FlightAware', snippet: 'EY1 landed at New York JFK 8:40 AM EDT Sep 28, 2026. Scheduled 8:35 AM. Gate A6.', url: 'https://flightaware.com/live/flight/ETD1' },
   ]
   const guarded = await answerLiveFlightStatus(prompt, 'Gogo', {
     search: async () => tracker,
@@ -113,6 +120,13 @@ import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '..
   const datelessEy1 = { title: 'EY1 Etihad Flight Status - FlightAware', snippet: 'EY1 Abu Dhabi to New York. Track live.', url: 'https://flightaware.com/live/flight/ETD1' }
   assert.ok(!matchesRequestedOccurrence(datelessEy1, prompt), 'a dateless result does not satisfy an explicitly dated request')
   assert.ok(matchesRequestedOccurrence(datelessEy1, 'is EY1 on time today?'), 'a live/today query still accepts a dateless tracker page')
+
+  // Year-qualified requests need year evidence in text OR URL (Codex P1): a "Sep 28" result with
+  // no year (possibly an archived other-year occurrence) must be rejected.
+  const noYear = { title: 'EY1 Etihad Flight Status', snippet: 'EY1 landed at JFK on 28 September at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1' }
+  const yearInUrl = { title: 'EY1 Etihad Flight Status', snippet: 'EY1 landed at JFK on 28 September at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20260928' }
+  assert.ok(!matchesRequestedOccurrence(noYear, prompt), 'a yearless result is rejected for a year-qualified request')
+  assert.ok(matchesRequestedOccurrence(yearInUrl, prompt), 'the requested year encoded in the URL is accepted')
 
   // "on time" needs an ACTUAL punctuality signal — a schedule-only context must not ground it.
   const onTimeUngrounded = await answerLiveFlightStatus(prompt, 'Gogo', {

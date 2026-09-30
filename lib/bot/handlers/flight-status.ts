@@ -1,6 +1,9 @@
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { askClaudeFlightStatus } from '@/lib/claude'
-import { extractFlightCodes, extractDateTokens, extractDateTokensYear } from '@/lib/agent/watcher-quality'
+import { extractFlightCodes, extractDateTokens } from '@/lib/agent/watcher-quality'
+import { normalizeNumericDates, extractDateHint, requestedFlightCodes, datesContradict, requestedYears } from '@/lib/bot/flight-codes'
+// Re-export so existing importers/tests keep their entry point.
+export { normalizeNumericDates, requestedFlightCodes } from '@/lib/bot/flight-codes'
 
 // Flight-tracking sources. Scoping the search to these keeps a status lookup from
 // collapsing into airfare shopping (Momondo/Expedia/Skyscanner rank first for a bare
@@ -41,51 +44,6 @@ export function answerLeaksFare(text: string): boolean {
   return FARE_TEXT_RE.test(String(text || ''))
 }
 
-const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec'
-
-// Normalise numeric dates ("9/28/2026", "28/9/26") to ISO so they survive into the query AND
-// are seen by the date-contradiction check. Order is resolved unambiguously when one part is
-// >12; for genuinely ambiguous values it follows the app's India-default day-first convention
-// (dayFirst) rather than silently assuming US month-first, which would change the occurrence.
-export function normalizeNumericDates(text: string, dayFirst = true): string {
-  return String(text || '').replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g, (m, a, b, y) => {
-    let A = Number(a), B = Number(b), Y = Number(y)
-    if (Y < 100) Y += 2000
-    let month: number, day: number
-    if (A > 12 && B <= 12) { day = A; month = B }        // D/M/Y (first part can't be a month)
-    else if (B > 12 && A <= 12) { month = A; day = B }   // M/D/Y (second part can't be a month)
-    else if (dayFirst) { day = A; month = B }            // ambiguous -> India day-first
-    else { month = A; day = B }
-    if (month < 1 || month > 12 || day < 1 || day > 31) return m
-    return `${Y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-  })
-}
-
-function extractDateHint(text: string): string {
-  const t = String(text || '')
-  const iso = t.match(/\b\d{4}-\d{2}-\d{2}\b/)
-  if (iso) return iso[0]
-  const dm = t.match(new RegExp(`\\b\\d{1,2}\\s+(?:${MONTHS})[a-z]*(?:\\s+\\d{4})?`, 'i'))
-  if (dm) return dm[0]
-  const md = t.match(new RegExp(`\\b(?:${MONTHS})[a-z]*\\s+\\d{1,2}(?:,?\\s+\\d{4})?`, 'i'))
-  if (md) return md[0]
-  return ''
-}
-
-// Two-letter tokens that are English words, not airline prefixes — extractFlightCodes()'s
-// generic pattern otherwise reads "on 28 September" as the code "ON28".
-const NON_AIRLINE_PREFIXES = new Set(['on', 'at', 'in', 'by', 'of', 'to', 'no', 'so', 'as', 'is', 'it', 'am', 'pm', 'be', 'or', 'an', 'do', 'if', 'my', 'me', 'we', 'he'])
-
-// The genuine flight codes in a request — preposition+number artefacts ("on28") and codes
-// overlapping the date phrase ("er2026" from "September 2026") removed. Lowercase, matching
-// extractFlightCodes() output, so it compares directly against codes found in a result.
-export function requestedFlightCodes(userText: string): string[] {
-  const dateCompact = extractDateHint(userText).toLowerCase().replace(/\s+/g, '')
-  return extractFlightCodes(userText)
-    .filter(c => !NON_AIRLINE_PREFIXES.has(c.replace(/\d+$/, '')))
-    .filter(c => !(dateCompact && dateCompact.includes(c.toLowerCase())))
-}
-
 export function buildFlightStatusQuery(userText: string): string {
   const norm = normalizeNumericDates(userText)
   const dateHint = extractDateHint(norm)
@@ -94,21 +52,12 @@ export function buildFlightStatusQuery(userText: string): string {
   return `${codePart} flight status ${dateHint} arrival landed on time delayed`.replace(/\s+/g, ' ').trim()
 }
 
-// Year-aware date contradiction, mirroring watcher-quality's verifier: both sides must carry a
-// date for a contradiction; if both also carry a year the year must match.
-function datesContradict(a: string, b: string): boolean {
-  const ka = extractDateTokens(a), kb = extractDateTokens(b)
-  if (!ka.length || !kb.length) return false
-  const ya = extractDateTokensYear(a), yb = extractDateTokensYear(b)
-  if (ya.length && yb.length) return !yb.some(d => ya.includes(d))
-  return !kb.some(d => ka.includes(d))
-}
-
 // A tracker result is only usable if it concerns the REQUESTED flight occurrence: it must name
 // one of the requested flight codes and must not contradict the requested date. This stops a
 // recurring flight on another day (or a nearby flight number) from reporting the wrong status.
 export function matchesRequestedOccurrence(r: WebSearchResult, userText: string): boolean {
   const norm = normalizeNumericDates(userText)
+  const url = String(r.url || '')
   const hay = normalizeNumericDates(`${r.title || ''} ${r.snippet || ''}`)
   const wanted = requestedFlightCodes(norm)
   if (wanted.length) {
@@ -120,6 +69,11 @@ export function matchesRequestedOccurrence(r: WebSearchResult, userText: string)
   // "today"/"tomorrow" don't produce calendar tokens, so live-status queries are unaffected.
   const reqDates = extractDateTokens(norm)
   if (reqDates.length && !extractDateTokens(hay).length) return false
+  // When the request supplies a YEAR, require compatible year evidence in the result text OR URL
+  // (trackers encode the date in the path) — a "Sep 28" result with no year could be an archived
+  // occurrence from another year and must not ground a definitive claim for this year's flight.
+  const years = requestedYears(norm)
+  if (years.length && !years.some(y => hay.includes(y) || url.includes(y))) return false
   if (datesContradict(norm, hay)) return false
   return true
 }

@@ -1,5 +1,6 @@
 import { classifyCheckVerb } from '@/lib/data/lists-core'
 import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
+import { hasConcreteFlightCode } from '@/lib/bot/flight-codes'
 
 // "google calendar" (+ misspellings) â†’ connect intent, derived from the shared spelling
 // set rather than re-encoding the vowel-swaps by hand. Hoisted out of the per-message
@@ -159,10 +160,13 @@ export function detectIntent(text: string): DetectedIntent {
   // status/landing, and (c) is NOT an explicit reminder/watch-creation request routes here; a
   // pronoun-only "has it landed?" stays on the recall path, which already refuses to claim a
   // landing from schedule alone.
+  // Require a GENUINE airline flight code (not a date preposition like "on 28") plus a status
+  // verb, and not an explicit reminder/watch request. hasConcreteFlightCode filters out date
+  // fragments so a codeless "did my flight land on 28 September?" is NOT sent to the dedicated
+  // status handler (where an empty flight list would let any dated result be summarised).
   if (!/\b(remind me|remind to|set (?:a )?reminder|reminder for|alert me|notify me|let me know when|keep me posted|keep (?:me )?tracking|watch (?:this|the|my))\b/i.test(lower) &&
-      /\b(?:[a-z]{2}|[a-z]\d|\d[a-z])\s?\d{1,4}\b/i.test(lower) &&
-      /\b(land(?:s|ed|ing)?|arriv(?:e|ed|es|al|ing)|(?:flight )?status|delay(?:ed|s)?|on[- ]time|diverted|departed|take[n]?\s?off|tracker|track(?:ing)?)\b/i.test(lower) &&
-      /\bflight\b|\b(?:[a-z]{2}|[a-z]\d|\d[a-z])\s?\d{1,4}\b/i.test(lower))
+      hasConcreteFlightCode(lower) &&
+      /\b(land(?:s|ed|ing)?|arriv(?:e|ed|es|al|ing)|(?:flight )?status|delay(?:ed|s)?|on[- ]time|diverted|departed|take[n]?\s?off|tracker|track(?:ing)?)\b/i.test(lower))
     // Tag as flight status so the executor runs a tracker-scoped STATUS lookup and never a
     // generic web search (which ranks airfare/OTA pages and turns status into shopping).
     return { type: 'web_search', confidence: 'high', meta: { flightStatus: true } }
