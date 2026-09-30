@@ -78,12 +78,16 @@ export function classifyOccurrence(r: WebSearchResult, userText: string, refYmd 
   }
   const reqDates = extractDateTokens(norm)
   const todayTokens = extractDateTokens(refYmd)
-  const nonTodayRequested = reqDates.some(d => !todayTokens.includes(d))
+  const reqYears = requestedYears(norm)
+  const refYear = refYmd.slice(0, 4)
+  // Non-today = a different month/day OR an explicit year that differs from the reference year — so
+  // a prior-year anniversary of today (e.g. 30 Sep 2025 asked on 30 Sep 2026) is still treated as a
+  // historical dated request and a dateless live page cannot satisfy it.
+  const nonTodayRequested = reqDates.some(d => !todayTokens.includes(d)) || reqYears.some(y => y !== refYear)
   if (nonTodayRequested && !extractDateTokens(hay).length) return { usable: false, reason: 'dateless_for_dated_request' }
   // Explicit wrong-year is a distinct, high-confidence rejection. Years come from the snippet AND
   // the URL (trackers encode the date in the path, e.g. /history/20250928), so a "28 September"
   // snippet whose URL says 2025 is caught; a yearless same-day result falls through to below.
-  const reqYears = requestedYears(norm)
   // Only take a year from a DATE-SHAPED URL segment (…/20250928 or …/2025-09-28), never an
   // arbitrary 20xx substring — otherwise a flight number like AA2025 would look like a year.
   const urlYears: string[] = []

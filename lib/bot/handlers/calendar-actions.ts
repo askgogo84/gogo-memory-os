@@ -188,13 +188,16 @@ function cleanTitle(text: string) {
 // carry the whole sentence (incl. "do not ... book it yet") into the eventual event title.
 function conciseAppointmentTitle(text: string): string {
   let t = String(text || '')
-  // Drop negated / secondary instruction clauses ("... but do not book it yet") WITHOUT cutting at
-  // an abbreviation period like "Dr." — we remove the clause, not everything after the first period.
-  t = t.replace(/\b(?:but\s+)?(?:please\s+)?(?:do\s*n'?t|do\s+not|dont|does\s*n'?t|doesn'?t|don'?t|never)\b[^.!?]*/gi, ' ')
-  t = t.replace(/\b(?:can you|could you|please|help me|i want to|i'?d like to)\s+/gi, '')
+  // Drop a NEGATED / secondary instruction clause ("... but do not book it yet") — but NOT the
+  // affirmative "don't forget to …" idiom — without cutting at an abbreviation period like "Dr.".
+  t = t.replace(/\b(?:but\s+)?(?:please\s+)?(?:do\s*n'?t|do\s+not|dont|does\s*n'?t|doesn'?t|don'?t|never)\b(?!\s+forget)[^.!?]*/gi, ' ')
+  t = t.replace(/\b(?:can you|could you|please|help me|i want to|i'?d like to|don'?t forget to|do not forget to|remember to)\s+/gi, '')
   t = t.replace(/\b(?:prepare|prep|get\s+ready)\s+(?:for\s+)?/gi, '')       // drop the prep framing
   t = t.replace(/^\s*(?:add|create|schedule|book|set\s+up|put)\s+/i, '')    // drop a leading create verb
-  t = t.replace(/\b(?:for|at)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b.*$/i, '') // drop "for/at 5 pm ..." (also 24h)
+  // Remove ONLY the time expression, not the remainder — keep title text that follows the time
+  // ("meeting at 5 pm with Alice" -> "Meeting with Alice").
+  t = t.replace(/\b(?:for|at)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/gi, ' ')
+  t = t.replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, ' ')
   t = t.replace(/^\s*(?:a|an|my|the)\s+/i, '')
   t = t.replace(/[\s.,;:]+$/, '').replace(/\s+/g, ' ').trim()
   const title = t.length >= 3 ? t.slice(0, 80) : 'Appointment'
@@ -347,7 +350,9 @@ export function parseCalendarCreate(text: string) {
   const isPreparation = /\b(?:prepare|prep|get\s+ready|help me (?:prepare|get ready)|what\s+should\s+i\s+(?:bring|ask|do))\b/i.test(lower)
   // A create verb governed by a negator ("do not book it yet"). Non-greedy so it binds to the
   // NEAREST create verb after the negator, within one clause.
-  const NEG_CREATE_SRC = "\\b(?:do\\s*n'?t|do\\s+not|dont|does\\s*n'?t|doesn'?t|not|never|no)\\b[^.!?]{0,40}?\\b(?:book|add|schedule|create|put|set\\s+up)\\b"
+  // "don't forget to schedule …" is an AFFIRMATIVE idiom, not a negation — the (?!\s+forget)
+  // lookahead keeps it out of the negated-create match.
+  const NEG_CREATE_SRC = "\\b(?:do\\s*n'?t|do\\s+not|dont|does\\s*n'?t|doesn'?t|not|never|no)\\b(?!\\s+forget)[^.!?]{0,40}?\\b(?:book|add|schedule|create|put|set\\s+up)\\b"
   const bookingNegated = new RegExp(NEG_CREATE_SRC, 'i').test(lower)
   // An AFFIRMATIVE create is a create verb that ISN'T part of a negation. Strip the negated spans
   // first, then look for a remaining create verb — so "Schedule … but do not add a reminder" is
@@ -650,18 +655,17 @@ export async function buildCalendarActionReply(
   // connection required to clarify, so this runs BEFORE the tokens gate.
   if (createIntent?.preparation) {
     const t = createIntent.time as { hour: number; minute: number } | null
-    const keeps = t ? ` (I'll keep ${formatClock12(t)})` : ''
-    // Persist the preserved time so if the user then chooses "calendar reminder" and supplies only
-    // the date, the follow-up completes with the 5 pm already understood (no re-ask).
-    if (t) await saveFollowupState(telegramId, 'pending_calendar', { title: createIntent.title, timeText: formatClock12(t) })
+    const at = t ? ` at ${formatClock12(t)}` : ''
+    // Do NOT arm a pending_calendar here: the user asked for preparation, not a calendar entry.
+    // Auto-completing on their next date-bearing reply would create an event they never requested.
+    // Keep this a non-actionable clarification; they must explicitly choose to add a calendar entry.
     return {
       handled: true,
       reply:
-        `Happy to help you prepare — I won't book anything or contact anyone yet. What would you like?\n\n` +
+        `Happy to help you prepare — I won't book anything, add a calendar entry, or contact anyone yet. What would you like?\n\n` +
         `• *Prep help* — what to bring/ask and how to get ready\n` +
-        `• *Calendar reminder* — I can add a personal reminder/event; just tell me the date${keeps}\n` +
-        `• *Find a provider* — I can look up options (I won't contact or book without your go-ahead)\n\n` +
-        `Tell me which one — and the date if you want it on your calendar.`,
+        `• *Add to calendar* — say e.g. *"add it to my calendar on 28 October${at}"* and I'll set it up for approval\n` +
+        `• *Find a provider* — I can look up options (I won't contact or book without your go-ahead)`,
     }
   }
 

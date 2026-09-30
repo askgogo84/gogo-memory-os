@@ -361,4 +361,31 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   assert.equal(drTitle?.title, 'Meeting with Dr. Smith', 'the abbreviation period is preserved in the title')
 }
 
-console.log('✅ acceptance: recall PNR, flight-status grounded (never shops), voice time preserved, dentist-prep asks for date (no silent today)')
+// ---------------------------------------------------------------------------
+// FAILURE 4b (Codex round-4 hardening on #315)
+// ---------------------------------------------------------------------------
+{
+  const tz = 'Asia/Kolkata'
+  // "don't forget to schedule ..." is affirmative, not a negation → a real create.
+  const dontForget = parseCalendarCreate("Don't forget to schedule my dentist appointment tomorrow at 5 pm") as any
+  assert.ok(!dontForget?.preparation, '"don\'t forget to schedule" is treated as affirmative, not preparation')
+  assert.ok(dontForget?.start, 'the affirmative "don\'t forget to schedule" create proceeds')
+
+  // Title text after the time is preserved.
+  const withAlice = parseCalendarCreate('schedule a meeting at 5 pm with Alice') as any
+  assert.equal(withAlice?.needsDate, true, 'no date -> needsDate')
+  assert.equal(withAlice?.title, 'Meeting with Alice', 'title text after the time is preserved')
+
+  // A dotted corrected time overrides the stored time.
+  const rBase = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow') as any
+  const rDot = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow 18.00') as any
+  if (rDot?.remindAtIso && rBase?.remindAtIso) {
+    assert.notEqual(new Date(rDot.remindAtIso).getUTCHours(), new Date(rBase.remindAtIso).getUTCHours(), 'a dotted corrected time (18.00) overrides the stored 5pm')
+  }
+
+  // Prior-year anniversary of today: a dateless live result must not satisfy a historical year.
+  const datelessEy1b = { title: 'EY1 status', snippet: 'EY1 Abu Dhabi to New York. Track live.', url: 'https://flightaware.com/live/flight/ETD1' }
+  assert.equal(classifyOccurrence(datelessEy1b, 'did EY1 land on 30 September 2025?', '2026-09-30').reason, 'dateless_for_dated_request', 'a prior-year anniversary of today still requires dated evidence')
+}
+
+console.log('✅ acceptance: recall PNR survives budget, flight-status grounded (never shops), voice/calendar time preserved, prep never auto-creates')
