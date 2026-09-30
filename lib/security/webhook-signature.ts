@@ -23,9 +23,12 @@
 // show 100% would-pass.
 // WEBHOOK_SIGNATURE_ENFORCE=1|true|on|enforce → invalid signatures get 403.
 //
-// A request that cannot be checked at all (no auth token configured, no signature
-// header, no candidate URL) is 'unverifiable', never 'invalid': enforcing must fail
-// on forgery, not on misconfiguration. Enforce mode rejects 'invalid' only.
+// A request that cannot be checked is 'unverifiable', never 'invalid'. Under
+// enforcement the REASON decides whether it is rejected: an absent signature header
+// is attacker-controlled — omitting the header is the easiest forgery — so it is
+// rejected exactly like an 'invalid' one. 'no_auth_token_configured' and
+// 'no_candidate_url' are OUR OWN misconfiguration, not an attack, and must never
+// reject genuine Twilio traffic. See shouldRejectRequest for the exact rule.
 
 import crypto from 'node:crypto'
 
@@ -123,9 +126,26 @@ export function candidateWebhookUrls(
   return [...new Set(out)]
 }
 
-/** True only when the verdict is a real forgery AND enforcement is switched on. */
+/**
+ * Whether to reject, given the verdict and enforcement mode. Rejects ONLY under
+ * enforcement — log-only never rejects, no matter the verdict.
+ *
+ * Under enforcement two cases are rejected, both attacker-controlled:
+ *   · outcome 'invalid'                         — a forged/tampered signature;
+ *   · 'unverifiable' + reason 'no_signature_header' — the header was omitted, which
+ *     is the EASIEST forgery; blocking 'invalid' but not this would let the simpler
+ *     attack through while stopping the harder one.
+ *
+ * The other 'unverifiable' reasons stay NON-rejecting on purpose:
+ *   · 'no_auth_token_configured' and 'no_candidate_url' are OUR OWN misconfiguration,
+ *     not something an attacker controls. Rejecting on them would 403 genuine Twilio
+ *     traffic the moment we misconfigured, so they must never start rejecting.
+ */
 export function shouldRejectRequest(verdict: SignatureVerdict, mode: EnforcementMode): boolean {
-  return mode === 'enforce' && verdict.outcome === 'invalid'
+  if (mode !== 'enforce') return false
+  if (verdict.outcome === 'invalid') return true
+  if (verdict.outcome === 'unverifiable' && verdict.reason === 'no_signature_header') return true
+  return false
 }
 
 /**
@@ -158,7 +178,9 @@ export function auditInboundTwilioSignature(input: {
     reason: verdict.reason,
     matchedUrl: verdict.matchedUrl || null,
     candidateCount: verdict.candidateCount,
-    wouldReject: verdict.outcome === 'invalid',
+    // Truthful under the real rule: what enforcement WOULD do to this verdict,
+    // independent of the current mode (so log-only logs stay honest about the risk).
+    wouldReject: shouldRejectRequest(verdict, 'enforce'),
     rejected: reject,
   }))
   return { reject, verdict, mode }
