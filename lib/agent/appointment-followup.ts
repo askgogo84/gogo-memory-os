@@ -178,6 +178,17 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
   const resolved = await resolveSlot(params.text, params.actor, { time: selection.requestedTime || null, date: selection.requestedDate || null })
   const slot = resolved.slot
   if (!slot) {
+    // Persist whatever we DID resolve (date or time) so a later turn supplying the other half
+    // completes the flow instead of looping — a date-only confirmation must not be forgotten
+    // when the user then sends the time. Merge, never clobber a known value.
+    const nextTime = resolved.time || selection.requestedTime || ''
+    const nextDate = resolved.past ? '' : (resolved.date || selection.requestedDate || '')
+    if (nextTime !== (selection.requestedTime || '') || nextDate !== (selection.requestedDate || '')) {
+      await supabaseAdmin.from('agent_runs').update({
+        metadata_json: { ...meta, appointment_selection: { ...selection, requestedTime: nextTime, requestedDate: nextDate } },
+        updated_at: new Date().toISOString(),
+      }).eq('id', runId).eq('telegram_id', String(tg))
+    }
     // Preserve whatever was already understood and ask only for the missing piece — never
     // re-request a time the user already gave, and never claim a booking was made.
     let text: string

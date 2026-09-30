@@ -24,7 +24,9 @@ import { mergeSlot, explicitClock, capturedSlotHints } from '../lib/agent/appoin
   const query = buildFlightStatusQuery(prompt)
   assert.match(query, /EY1/i, 'status query carries the flight number')
   assert.match(query, /flight status/i, 'status query targets operational status')
-  assert.doesNotMatch(query, /cheap|book|fare|price/i, 'status query never solicits fares/booking')
+  assert.doesNotMatch(query, /cheap|book |fare|price/i, 'status query never solicits fares/booking')
+  // "on 28 September" must not be misread as an airline code (Codex P2).
+  assert.doesNotMatch(query, /\bon28\b/i, 'a date preposition is not extracted as a flight code')
 
   // Airfare / OTA results are recognised as shopping and excluded from a status answer.
   const airfare = [
@@ -120,6 +122,17 @@ import { mergeSlot, explicitClock, capturedSlotHints } from '../lib/agent/appoin
   assert.equal(onlyDateMissing.slot, null)
   assert.equal(onlyDateMissing.time, '17:00', 'time retained so the clarification can echo it')
   assert.equal(onlyDateMissing.date, null, 'the date is the only missing piece')
+
+  // Multi-turn convergence (Codex P2): a date-only confirmation with no prior hints resolves
+  // the date (which the handler persists); a later time-only turn then completes the flow.
+  const step2 = mergeSlot('confirm the appointment for 28 September 2035', tz, {})
+  assert.equal(step2.date, '2035-09-28', 'date-only turn resolves the date to persist')
+  assert.equal(step2.time, null)
+  assert.equal(step2.slot, null)
+  const step3 = mergeSlot('confirm at 5pm', tz, { date: step2.date })
+  assert.ok(step3.slot, 'once the persisted date is merged with the later time, the flow converges')
+  assert.equal(step3.slot?.time, '17:00')
+  assert.equal(step3.slot?.date, '2035-09-28')
 }
 
 console.log('✅ acceptance: flight-status never shops, recall surfaces flight numbers + PNR, voice time preserved across turns')

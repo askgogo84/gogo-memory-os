@@ -53,9 +53,19 @@ function extractDateHint(text: string): string {
   return ''
 }
 
+// Two-letter tokens that are English words, not airline prefixes — extractFlightCodes()'s
+// generic pattern otherwise reads "on 28 September" as the code "ON28".
+const NON_AIRLINE_PREFIXES = new Set(['on', 'at', 'in', 'by', 'of', 'to', 'no', 'so', 'as', 'is', 'it', 'am', 'pm', 'be', 'or', 'an', 'do', 'if', 'my', 'me', 'we', 'he'])
+
 export function buildFlightStatusQuery(userText: string): string {
-  const codes = extractFlightCodes(userText).map(c => c.toUpperCase())
   const dateHint = extractDateHint(userText)
+  const dateCompact = dateHint.toLowerCase().replace(/\s+/g, '')
+  const codes = extractFlightCodes(userText)
+    // Drop preposition+number artefacts ("on28") and any code that overlaps the date phrase
+    // ("er2026" from "September 2026") so the tracker query is not polluted with a wrong flight.
+    .filter(c => !NON_AIRLINE_PREFIXES.has(c.replace(/\d+$/, '')))
+    .filter(c => !(dateCompact && dateCompact.includes(c.toLowerCase())))
+    .map(c => c.toUpperCase())
   const codePart = codes.length ? codes.join(' ') : String(userText || '').slice(0, 80)
   return `${codePart} flight status ${dateHint} arrival landed on time delayed`.replace(/\s+/g, ' ').trim()
 }
