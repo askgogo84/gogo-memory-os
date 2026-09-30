@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rememberTypedObjects } from './typed-object-context'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
-import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
+import { DEFAULT_TIMEZONE, normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { tryRunBrowserCommand } from './browser-command'
 import { registerLifeEvent } from './life-event-engine'
 import type { AgentActor } from './actor'
@@ -35,6 +35,18 @@ function wantsFinalApproval(text: string) {
   return /\b(confirm|finali[sz]e|go ahead|complete|submit|book it|book this|reserve it)\b/.test(t) && /\b(appointment|slot|option|booking)\b/.test(t)
 }
 
+// A bare answer to our "which date / what time?" prompt — e.g. "4:00 PM", "28 September 2026",
+// "confirm at 4pm". These must reach createFinalApproval even without the word "appointment",
+// otherwise the advertised multi-turn flow can never converge (wantsFinalApproval needs the
+// noun). Strictly gated: short, contains a time or date, and carries no other clear intent.
+export function isSlotOnlyReply(text: string): boolean {
+  const t = String(text || '').trim()
+  if (!t || t.length > 48) return false
+  if (!explicitClock(t) && !explicitDate(t, DEFAULT_TIMEZONE)) return false
+  if (/\b(remind|reminder|list|weather|note|email|call|meeting|cancel|delete|pay|order|buy|search|flight|train|on[- ]time|delayed|status|landed|arriv|depart|diverted|track)\b/i.test(t)) return false
+  return true
+}
+
 function localYmd(now: Date, timezone: string) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone:timezone, year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(now)
   const values: Record<string,string> = {}
@@ -48,7 +60,7 @@ function addDays(iso: string, days: number) {
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth()+1)}-${pad(date.getUTCDate())}`
 }
 
-function explicitDate(text: string, timezone: string) {
+export function explicitDate(text: string, timezone: string) {
   const iso = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/)
   if (iso) return `${iso[1]}-${pad(Number(iso[2]))}-${pad(Number(iso[3]))}`
 
@@ -72,7 +84,7 @@ function explicitDate(text: string, timezone: string) {
   return `${year + 1}-${pad(month)}-${pad(day)}`
 }
 
-function explicitClock(text: string) {
+export function explicitClock(text: string) {
   const withMinutes = text.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)\b/i)
   const hourOnly = text.match(/\b(\d{1,2})\s*(am|pm)\b/i)
   const match = withMinutes || hourOnly
@@ -91,14 +103,75 @@ async function actorTimezone(actor: AgentActor) {
   return normalizeTimezone(String(data?.timezone || 'Asia/Kolkata'))
 }
 
-async function exactSlot(text: string, actor: AgentActor) {
-  const timezone = await actorTimezone(actor)
-  const date = explicitDate(text, timezone)
-  const time = explicitClock(text)
-  if (!date || !time) return null
+function to12h(hhmm: string) {
+  const m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})$/)
+  if (!m) return hhmm
+  let hour = Number(m[1])
+  const meridiem = hour >= 12 ? 'PM' : 'AM'
+  hour = hour % 12 || 12
+  return `${hour}:${m[2]} ${meridiem}`
+}
+
+type ResolvedSlot = { date: string; time: string; timezone: string; startAt: string }
+
+// A clock expression is NON-exact when it is a range/boundary/opening-hours constraint
+// ("after 5pm", "between 5 and 7pm", "by 6pm") or a choice among alternatives ("5pm or 6pm",
+// "5pm, 6pm") — such text must never resolve to a single exact selected time.
+export function hasAmbiguousTime(text: string): boolean {
+  const t = String(text || '')
+  const boundary = /\b(after|before|between|around|from|by|earliest|latest|no later than|any ?time|opening hours|till|until|onwards?)\b/i.test(t)
+  const range = /\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|–|—|to|till|until|through|and|or|,)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)/i.test(t)
+  const clockCount = (t.match(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi) || []).length
+  return boundary || range || clockCount > 1
+}
+// Likewise for dates: a range ("between 5 and 7 October") or a choice ("5 or 6 October").
+export function hasAmbiguousDate(text: string): boolean {
+  const t = String(text || '')
+  const monthAlt = Object.keys(MONTHS).join('|')
+  const alternatives = new RegExp(`\\b\\d{1,2}\\s*(?:-|–|—|to|till|until|through|and|or|,)\\s*\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${monthAlt})`, 'i').test(t)
+  const boundary = /\b(after|before|between|from|by|earliest|latest|no later than)\b/i.test(t)
+    && new RegExp(`(?:\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${monthAlt})|\\b(?:${monthAlt})[a-z]*\\s+\\d{1,2})`, 'i').test(t)
+  return alternatives || boundary
+}
+
+// Resolve the appointment slot by MERGING the current message with any time/date captured on
+// an earlier turn (the original "book my appointment at 5pm" request). A follow-up that
+// supplies only the missing piece (just the date) must not force the user to repeat the time
+// that was already understood. Returns the parsed fields even when incomplete so the caller
+// can echo what it already has and ask only for what's missing.
+// Pure merge — exported for regression coverage. Combines the current message with any
+// previously-captured time/date and reports what is present/missing/past.
+export function mergeSlot(text: string, timezone: string, fallback?: { time?: string | null; date?: string | null }): { slot: ResolvedSlot | null; date: string | null; time: string | null; timezone: string; past: boolean } {
+  // If the CURRENT confirmation itself offers alternatives/ranges ("... at 5pm or 6pm"), do not
+  // silently pick the first — leave that component unresolved so the caller asks the user to
+  // choose, rather than staging a booking for a time/date they never selected.
+  const time = hasAmbiguousTime(text) ? null : (explicitClock(text) || (fallback?.time ? String(fallback.time) : null))
+  const date = hasAmbiguousDate(text) ? null : (explicitDate(text, timezone) || (fallback?.date ? String(fallback.date) : null))
+  if (!date || !time) return { slot: null, date, time, timezone, past: false }
   const parsed = parseLocalDateTime({ date, time, timezone })
-  if (!Number.isFinite(parsed.dueAtUtc.getTime()) || parsed.dueAtUtc.getTime() <= Date.now()) return null
-  return { date, time, timezone, startAt: parsed.dueAtUtc.toISOString() }
+  if (!Number.isFinite(parsed.dueAtUtc.getTime()) || parsed.dueAtUtc.getTime() <= Date.now()) {
+    return { slot: null, date, time, timezone, past: true }
+  }
+  return { slot: { date, time, timezone, startAt: parsed.dueAtUtc.toISOString() }, date, time, timezone, past: false }
+}
+
+async function resolveSlot(text: string, actor: AgentActor, fallback?: { time?: string | null; date?: string | null }) {
+  const timezone = await actorTimezone(actor)
+  return mergeSlot(text, timezone, fallback)
+}
+
+// The exact clock time / date from the ORIGINAL appointment request (e.g. the "book my
+// appointment at 5pm" voice note). Captured into the prepared metadata by EVERY prepare path
+// (primary and recovery) so a later confirmation supplying only the missing piece never
+// re-asks for a time the user already gave.
+export function capturedSlotHints(originalText: string, timezone: string): { requestedTime: string; requestedDate: string } {
+  const t = String(originalText || '')
+  // Only persist a clock/date as an EXACT fallback when it is a single, unqualified value — never
+  // a range/boundary/alternatives — otherwise a later confirmation would be merged into a
+  // time/date the user never actually selected. (Same checks the confirmation turn applies.)
+  const requestedTime = hasAmbiguousTime(t) ? '' : (explicitClock(t) || '')
+  const requestedDate = hasAmbiguousDate(t) ? '' : (explicitDate(t, timezone) || '')
+  return { requestedTime, requestedDate }
 }
 
 async function latestAppointmentResearch(tg: number) {
@@ -140,11 +213,38 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
   const url = safe(selection.url || meta.url || '', 1200)
   if (!url || !/^https?:\/\//i.test(url)) throw new Error('appointment_prepare_url_missing')
 
-  const slot = await exactSlot(params.text, params.actor)
+  const resolved = await resolveSlot(params.text, params.actor, { time: selection.requestedTime || null, date: selection.requestedDate || null })
+  const slot = resolved.slot
   if (!slot) {
+    // Persist whatever we DID resolve (date or time) so a later turn supplying the other half
+    // completes the flow instead of looping — a date-only confirmation must not be forgotten
+    // when the user then sends the time. Merge, never clobber a known value.
+    const nextTime = resolved.time || selection.requestedTime || ''
+    const nextDate = resolved.past ? '' : (resolved.date || selection.requestedDate || '')
+    // Mark the run as awaiting a slot continuation — we only just asked for the missing piece,
+    // so a later bare date/time reply may be treated as the answer. Without this marker, a bare
+    // date/time right after mere preparation could auto-stage a booking the user never confirmed.
+    if (nextTime !== (selection.requestedTime || '') || nextDate !== (selection.requestedDate || '') || selection.awaitingSlot !== true) {
+      await supabaseAdmin.from('agent_runs').update({
+        metadata_json: { ...meta, appointment_selection: { ...selection, requestedTime: nextTime, requestedDate: nextDate, awaitingSlot: true } },
+        updated_at: new Date().toISOString(),
+      }).eq('id', runId).eq('telegram_id', String(tg))
+    }
+    // Preserve whatever was already understood and ask only for the missing piece — never
+    // re-request a time the user already gave, and never claim a booking was made.
+    let text: string
+    if (resolved.past && resolved.date && resolved.time) {
+      text = `That slot (${resolved.date} at ${to12h(resolved.time)}) is already in the past. Give me a future date and time and I'll set up the approval.`
+    } else if (resolved.time && !resolved.date) {
+      text = `Got it — ${to12h(resolved.time)}. Which date should I book it for? (e.g. "28 September 2026")`
+    } else if (resolved.date && !resolved.time) {
+      text = `Got it — ${resolved.date}. What time should I book it for? (e.g. "4:00 PM")`
+    } else {
+      text = 'I have the prepared provider flow, but I need the exact appointment date and time before I can create the final approval. For example: “Confirm this appointment for 20 September 2026 at 4:00 PM.”'
+    }
     return {
       runId, status: 'paused' as const, capability: 'browser' as const, risk: 'low' as const,
-      text: 'I have the prepared provider flow, but I need the exact appointment date and time before I can create the final approval. For example: “Confirm this appointment for 20 September 2026 at 4:00 PM.”',
+      text,
       handledBy: 'appointment-followup' as const,
     }
   }
@@ -188,6 +288,7 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
       scheduled_date: slot.date,
       scheduled_time: slot.time,
       timezone: slot.timezone,
+      awaitingSlot: false,
     },
   }
 
@@ -289,6 +390,24 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
     return createFinalApproval({ actor: params.actor, prepared, text: params.text })
   }
 
+  // Continuation: a bare slot answer to our earlier "which date / what time?" prompt routes
+  // into confirmation, but ONLY when a recent prepared appointment is still awaiting its slot,
+  // so unrelated time/date messages are not hijacked.
+  if (isSlotOnlyReply(params.text)) {
+    const prepared = await latestPreparedAppointment(tg)
+    const sel: any = prepared?.metadata_json?.appointment_selection || {}
+    // Only continue a run that is genuinely AWAITING a slot: it must have explicitly prompted for
+    // one (awaitingSlot), be prepared and recent, and not already be scheduled. This stops a bare
+    // date/time sent right after mere preparation (no prompt yet) from staging a booking, and
+    // stops reopening a completed/executed run (which keeps scheduled_at) into a duplicate approval.
+    if (prepared?.metadata_json?.appointment_prepared && sel.awaitingSlot === true && !sel.scheduled_at) {
+      const done = Date.parse(prepared.completed_at || prepared.started_at || '')
+      if (!Number.isFinite(done) || Date.now() - done <= 24 * 3600_000) {
+        return createFinalApproval({ actor: params.actor, prepared, text: params.text })
+      }
+    }
+  }
+
   const number = optionNumber(params.text)
   if (!number || !wantsPrepare(params.text)) return null
   const research = await latestAppointmentResearch(tg)
@@ -311,6 +430,8 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
   if (!result) throw new Error('appointment_prepare_browser_not_routed')
   if (result.runId) {
     await rememberTypedObjects(tg,'browser',[{id:String(result.runId),title:safe(selected.title||'Appointment option',220)}])
+    const timezone = await actorTimezone(params.actor)
+    const { requestedTime, requestedDate } = capturedSlotHints(String(research.metadata_json?.input_text || ''), timezone)
     await markPrepared(result.runId, tg, {
       option: number,
       researchRunId: String(research.id),
@@ -320,6 +441,8 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
       service: safe(research.metadata_json?.service || '', 120),
       location: safe(research.metadata_json?.location || '', 120),
       timing: safe(research.metadata_json?.timing || '', 120),
+      requestedTime,
+      requestedDate,
     })
   }
   return {

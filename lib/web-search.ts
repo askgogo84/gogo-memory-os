@@ -8,13 +8,16 @@ function cleanText(input: string) {
   return (input || '').replace(/\s+/g, ' ').trim()
 }
 
-async function searchWithTavily(query: string): Promise<WebSearchResult[]> {
+export type WebSearchOptions = { includeDomains?: string[] }
+
+async function searchWithTavily(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
   const apiKey = process.env.TAVILY_API_KEY
   if (!apiKey) {
     console.error('TAVILY_API_KEY missing')
     return []
   }
 
+  const includeDomains = (opts.includeDomains || []).map(d => String(d || '').trim().toLowerCase()).filter(Boolean)
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
     headers: {
@@ -26,7 +29,8 @@ async function searchWithTavily(query: string): Promise<WebSearchResult[]> {
       topic: 'general',
       search_depth: 'basic',
       max_results: 5,
-      include_answer: false
+      include_answer: false,
+      ...(includeDomains.length ? { include_domains: includeDomains } : {}),
     }),
     cache: 'no-store',
   })
@@ -47,11 +51,11 @@ async function searchWithTavily(query: string): Promise<WebSearchResult[]> {
   }))
 }
 
-export async function searchWebResults(query: string): Promise<WebSearchResult[]> {
+export async function searchWebResults(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
   const cleanQuery = cleanText(query).slice(0, 500)
   if (!cleanQuery) return []
   try {
-    return await searchWithTavily(cleanQuery)
+    return await searchWithTavily(cleanQuery, opts)
   } catch (err: any) {
     console.error('searchWebResults failed:', err)
     return []

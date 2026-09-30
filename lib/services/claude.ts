@@ -150,6 +150,44 @@ CRITICAL: When the user gives a time or date, calculate the exact datetime yours
   }
 }
 
+// Live flight STATUS only. A flight-status question must never be answered with airfare /
+// booking / price content, and an actual-landing claim must be independently grounded in a
+// status source (not a schedule, not another assistant's earlier answer). This uses a
+// status-scoped system prompt distinct from the generic web-answer prompt.
+export async function askClaudeFlightStatus(
+  userMessage: string,
+  context: string,
+  userName: string
+): Promise<string> {
+  const prompt = `You are AskGogo, answering a LIVE FLIGHT STATUS question for ${userName}.
+
+User's question: ${userMessage}
+
+Flight-status search results (from flight-tracking sources):
+${context}
+
+RULES — follow every one:
+1. Report ONLY operational status: scheduled / departed / en route / landed / arrived / delayed / cancelled / diverted, plus gate/terminal and scheduled vs actual times when present.
+2. NEVER mention ticket prices, fares, airfare, "book", "cheap flights", deals, or any purchase/shopping content. This is a status lookup, not flight shopping. If the results are airfare/booking pages with no operational status, say you could not verify the live status right now and suggest checking the airline's official flight-status page or a tracker like FlightAware/Flightradar24 — do NOT report any prices.
+3. Do NOT claim the flight actually landed/arrived unless a result EXPLICITLY states it landed or arrived. If results only show a schedule or are inconclusive, say the scheduled time and that the actual arrival is not yet confirmed. Never infer a landing from the schedule.
+4. Do not copy any figure the user quoted from another assistant as ground truth; rely only on the search results above.
+5. When you give an arrival/landing time, state the timezone explicitly.
+
+FORMATTING: Delivered over WhatsApp (no markdown). Never emit [text](url); write any URL bare. Keep it concise (2-5 sentences).`
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 900,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    return response.content[0].type === 'text' ? response.content[0].text : ''
+  } catch (error: any) {
+    console.error('ANTHROPIC_FLIGHT_STATUS_FAILED_FALLING_BACK:', providerErrorSummary(error))
+    return await askOpenAiFallback({ messages: [{ role: 'user', content: prompt }], maxTokens: 900 })
+  }
+}
+
 export async function askClaudeWithContext(
   userMessage: string,
   context: string,

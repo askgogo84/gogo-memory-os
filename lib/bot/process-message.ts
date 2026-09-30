@@ -12,6 +12,7 @@ import { detectIntent } from './detect-intent'
 import { parseClaudeResponse } from './parse-claude-response'
 import { formatOutgoingText } from './format-response'
 import { searchWeb } from '@/lib/web-search'
+import { answerLiveFlightStatus } from '@/lib/bot/handlers/flight-status'
 import { buildSportsReplyWithState } from './handlers/sports'
 import { getLatestFollowupState, saveFollowupState, isFreshFollowupState } from './handlers/followup-state'
 import { resolvePendingReminder, resolvePendingCalendar, looksLikeNewCommand } from './pending-followup'
@@ -1085,10 +1086,19 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       await saveConversation(resolvedUser.telegramId, 'assistant', guard.reply)
       return { text: formatOutgoingText(params.channel, guard.reply), resolvedUser }
     }
-    const searchContext = await searchWeb(incomingText)
     let reply = ''
-    try { reply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } catch { reply = buildDirectWebAnswer(incomingText, searchContext) }
-    if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(reply)) reply = buildDirectWebAnswer(incomingText, searchContext)
+    if (intent.meta?.flightStatus) {
+      // A concrete flight-status question runs a tracker-scoped STATUS lookup, never a
+      // generic web search — a bare "EY1 ... to New York" query ranks airfare/OTA pages and
+      // turned status into "fare not verified" shopping. This path never emits fares. Pass the
+      // user's timezone so "tomorrow" resolves to THEIR local calendar date, not a server default.
+      const userTz = await resolveReminderTimezone(resolvedUser.telegramId)
+      reply = await answerLiveFlightStatus(incomingText, resolvedUser.name, {}, userTz)
+    } else {
+      const searchContext = await searchWeb(incomingText)
+      try { reply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } catch { reply = buildDirectWebAnswer(incomingText, searchContext) }
+      if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(reply)) reply = buildDirectWebAnswer(incomingText, searchContext)
+    }
     reply += await recordWebSearch(resolvedUser, params.channel, inboundMessageId, guard.usage)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
