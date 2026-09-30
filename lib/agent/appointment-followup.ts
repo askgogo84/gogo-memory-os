@@ -142,9 +142,16 @@ async function resolveSlot(text: string, actor: AgentActor, fallback?: { time?: 
 // (primary and recovery) so a later confirmation supplying only the missing piece never
 // re-asks for a time the user already gave.
 export function capturedSlotHints(originalText: string, timezone: string): { requestedTime: string; requestedDate: string } {
+  const t = String(originalText || '')
+  // Only persist a clock as an EXACT fallback time when it is a single, unqualified time — not
+  // a range/boundary/opening-hours constraint ("after 5pm", "between 5 and 7pm", "by 6pm").
+  // Otherwise a later date-only confirmation would be merged into a time the user never chose.
+  const boundary = /\b(after|before|between|around|from|by|earliest|latest|no later than|any ?time|opening hours|till|until|onwards?)\b/i.test(t)
+  const range = /\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|–|—|to|till|until|through|and)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)/i.test(t)
+  const requestedTime = (boundary || range) ? '' : (explicitClock(t) || '')
   return {
-    requestedTime: explicitClock(String(originalText || '')) || '',
-    requestedDate: explicitDate(String(originalText || ''), timezone) || '',
+    requestedTime,
+    requestedDate: explicitDate(t, timezone) || '',
   }
 }
 

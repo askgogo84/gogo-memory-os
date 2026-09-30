@@ -84,6 +84,21 @@ import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '..
     ask: async () => 'EY1 landed on 27 September at 9:10 AM.',
   })
   assert.match(wrongOnly, /could(?:n'?t| not) verify/i, 'wrong-date results do not become a status answer')
+
+  // Numeric dates must be preserved so occurrence validation still catches the wrong day (P1).
+  const numericPrompt = 'Did EY1 land on 9/28/2026?'
+  assert.match(buildFlightStatusQuery(numericPrompt), /2026-09-28/, 'numeric date is normalised into the query')
+  assert.ok(!matchesRequestedOccurrence(wrongDate, numericPrompt), 'numeric-dated request still rejects a 27 Sep result')
+  assert.ok(matchesRequestedOccurrence(tracker[0], numericPrompt), 'numeric-dated request accepts the matching 28 Sep result')
+
+  // Landing claims must be grounded in the retrieved context, not just the prompt (P1). Here the
+  // context is only a schedule; a model that still says "landed" must be suppressed.
+  const scheduleOnly = [{ title: 'EY1 Etihad - FlightStats', snippet: 'EY1 scheduled to arrive JFK 8:35 AM on 28 September 2026.', url: 'https://www.flightstats.com/v2/flight-tracker/EY/1' }]
+  const ungrounded = await answerLiveFlightStatus(prompt, 'Gogo', {
+    search: async () => scheduleOnly,
+    ask: async () => 'EY1 landed at JFK at 8:40 AM.',
+  })
+  assert.match(ungrounded, /could(?:n'?t| not) verify/i, 'a landing claim with no arrival evidence in context is suppressed')
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +134,11 @@ import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '..
   // original request's time so the recovery path is not left without a fallback (Codex P1).
   const hints = capturedSlotHints('book my appointment at 5pm', tz)
   assert.equal(hints.requestedTime, '17:00', 'both prepare paths capture the original 5pm')
+
+  // But a range/boundary/opening-hours time must NOT become an exact fallback (Codex P2),
+  // otherwise a later date-only confirmation books a time the user never chose.
+  assert.equal(capturedSlotHints('find dentist appointments after 5pm', tz).requestedTime, '', 'a boundary time ("after 5pm") is not captured as exact')
+  assert.equal(capturedSlotHints('book a slot between 5pm and 7pm', tz).requestedTime, '', 'a range ("5pm and 7pm") is not captured as exact')
 
   // Follow-up supplies only the date; the earlier 5pm is preserved -> a slot resolves.
   const withFallback = mergeSlot('confirm the appointment for 28 September 2035', tz, { time: '17:00', date: '' })

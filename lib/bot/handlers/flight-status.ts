@@ -42,6 +42,23 @@ export function answerLeaksFare(text: string): boolean {
 }
 
 const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec'
+
+// Normalise numeric dates ("9/28/2026", "28/9/26") to ISO so they survive into the query AND
+// are seen by the date-contradiction check — otherwise a numeric-dated request has no date
+// token and a current/dateless recurring flight would wrongly validate.
+export function normalizeNumericDates(text: string): string {
+  return String(text || '').replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g, (m, a, b, y) => {
+    let A = Number(a), B = Number(b), Y = Number(y)
+    if (Y < 100) Y += 2000
+    let month: number, day: number
+    if (A > 12 && B <= 12) { day = A; month = B }        // D/M/Y
+    else if (B > 12 && A <= 12) { month = A; day = B }   // M/D/Y
+    else { month = A; day = B }                          // ambiguous -> assume M/D/Y
+    if (month < 1 || month > 12 || day < 1 || day > 31) return m
+    return `${Y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  })
+}
+
 function extractDateHint(text: string): string {
   const t = String(text || '')
   const iso = t.match(/\b\d{4}-\d{2}-\d{2}\b/)
@@ -68,8 +85,9 @@ export function requestedFlightCodes(userText: string): string[] {
 }
 
 export function buildFlightStatusQuery(userText: string): string {
-  const dateHint = extractDateHint(userText)
-  const codes = requestedFlightCodes(userText).map(c => c.toUpperCase())
+  const norm = normalizeNumericDates(userText)
+  const dateHint = extractDateHint(norm)
+  const codes = requestedFlightCodes(norm).map(c => c.toUpperCase())
   const codePart = codes.length ? codes.join(' ') : String(userText || '').slice(0, 80)
   return `${codePart} flight status ${dateHint} arrival landed on time delayed`.replace(/\s+/g, ' ').trim()
 }
@@ -88,13 +106,14 @@ function datesContradict(a: string, b: string): boolean {
 // one of the requested flight codes and must not contradict the requested date. This stops a
 // recurring flight on another day (or a nearby flight number) from reporting the wrong status.
 export function matchesRequestedOccurrence(r: WebSearchResult, userText: string): boolean {
-  const hay = `${r.title || ''} ${r.snippet || ''}`
-  const wanted = requestedFlightCodes(userText)
+  const norm = normalizeNumericDates(userText)
+  const hay = normalizeNumericDates(`${r.title || ''} ${r.snippet || ''}`)
+  const wanted = requestedFlightCodes(norm)
   if (wanted.length) {
     const got = new Set(extractFlightCodes(hay))
     if (!wanted.some(c => got.has(c))) return false
   }
-  if (datesContradict(userText, hay)) return false
+  if (datesContradict(norm, hay)) return false
   return true
 }
 
@@ -147,6 +166,13 @@ export async function answerLiveFlightStatus(userText: string, userName: string,
   // Hard guard: if the model produced nothing usable, or leaked fare/shopping content,
   // suppress it entirely rather than deliver airfare in a status answer.
   if (!reply.trim() || answerLeaksFare(reply) || /i apologize|unable to provide|don'?t have access/i.test(reply)) {
+    return COULD_NOT_VERIFY
+  }
+  // Ground the landing claim: the prompt asks the model not to assert a landing without
+  // evidence, but a prompt is not an enforcement boundary. If the reply says landed/arrived
+  // yet the retrieved context contains no such actual-status evidence, don't return it.
+  const ARRIVED_RE = /\b(landed|arrived|touched down|has arrived|on the ground)\b/i
+  if (ARRIVED_RE.test(reply) && !ARRIVED_RE.test(context)) {
     return COULD_NOT_VERIFY
   }
   return reply.trim()
