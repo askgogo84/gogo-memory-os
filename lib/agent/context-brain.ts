@@ -581,7 +581,22 @@ export function renderContextBlock(pack:ContextPack,maxChars=3200){
   ]
   const lines=[...header,...pack.facts.map(factLine)]
   let text=lines.join('\n')
-  if(text.length>maxChars)text=text.slice(0,maxChars).replace(/\n[^\n]*$/,'')+'\n- [context trimmed]'
+  const truncated=text.length>maxChars
+  if(truncated)text=text.slice(0,maxChars).replace(/\n[^\n]*$/,'')+'\n- [context trimmed]'
+  // Diagnostic: when travel facts exist, record whether the flight numbers / booking ref actually
+  // survive into the FINAL model input (this is the exact string the LLM sees). Distinguishes
+  // "facts absent" (retrieval/rows) from "facts dropped by truncation" from "facts present but the
+  // model still denied" (prompt/other answering path) — without adding any field to the answer.
+  const travelFacts=pack.facts.filter(f=>f.source==='travel_ticket')
+  if(travelFacts.length){
+    console.log('RECALL_CTX_TRACE:',JSON.stringify({
+      travelFacts:travelFacts.length,
+      pnrInFacts:travelFacts.filter(f=>/booking ref/i.test(String(f.summary||''))).length,
+      flightNoInText:/\b[A-Z]{2}\s?\d{1,4}\b/.test(text),
+      bookingRefInText:/booking ref/i.test(text),
+      len:text.length,truncated,
+    }))
+  }
   return text
 }
 

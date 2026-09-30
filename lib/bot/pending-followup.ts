@@ -8,7 +8,7 @@ import { detectIntent } from './detect-intent'
 // answer at all.
 
 export type PendingReminderCtx = { task?: string | null; dateText?: string | null; day?: string | null; recurrence?: string | null }
-export type PendingCalendarCtx = { title?: string | null; target?: string | null }
+export type PendingCalendarCtx = { title?: string | null; target?: string | null; timeText?: string | null }
 
 function resolve(taskPhrase: string, answer: string) {
   const base = `Remind me to ${taskPhrase} `.replace(/\s+/g, ' ')
@@ -36,7 +36,10 @@ export function resolvePendingCalendar(ctx: PendingCalendarCtx, answer: string) 
   let dayWord = ''
   if (!hasDay && ctx.target === 'tomorrow') dayWord = 'tomorrow'
   else if (!hasDay && ctx.target === 'day_after_tomorrow') dayWord = 'in 2 days'
-  return resolve(`${(ctx.title || 'meeting').trim()} ${dayWord}`.trim(), answer)
+  // A needsDate follow-up preserved the TIME (timeText) and expects the answer to carry the DATE;
+  // fold the time back in so date + time resolve together.
+  const timePart = ctx.timeText ? ` ${ctx.timeText}` : ''
+  return resolve(`${(ctx.title || 'meeting').trim()} ${dayWord}${timePart}`.trim(), answer)
 }
 
 const NEW_COMMAND_VERB =

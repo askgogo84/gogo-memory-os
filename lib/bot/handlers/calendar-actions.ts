@@ -142,6 +142,14 @@ function targetLabel(target: CalendarDateTarget) {
   return 'today'
 }
 
+function formatClock12(t: { hour: number; minute: number } | null | undefined) {
+  if (!t) return ''
+  let h = t.hour
+  const mer = h >= 12 ? 'PM' : 'AM'
+  h = h % 12 || 12
+  return `${h}:${String(t.minute).padStart(2, '0')} ${mer}`
+}
+
 function targetParts(target: CalendarDateTarget) {
   if (target === 'tomorrow') return istDatePartsPlusDays(1)
   if (target === 'day_after_tomorrow') return istDatePartsPlusDays(2)
@@ -315,6 +323,16 @@ export function parseCalendarCreate(text: string) {
     CALENDAR_EVENT_RE.test(lower)          // "calendar event" (+ misspellings)
   const isCreate = hasCreateVerb && hasCalendarSignal
 
+  // Preparation help ("help me prepare for a dentist appointment") or an explicitly NEGATED action
+  // ("do not book it yet") must NOT create a calendar event/approval — the create verb can appear
+  // INSIDE a negation ("do not ... book it yet"). Surface a distinct signal so the caller clarifies
+  // preparation vs a calendar reminder/event vs an actual provider booking, preserving any time.
+  const isPreparation = /\b(?:prepare|prep|get\s+ready|help me (?:prepare|get ready)|what\s+should\s+i\s+(?:bring|ask|do))\b/i.test(lower)
+  const bookingNegated = /\b(?:do\s*n'?t|do\s+not|dont|does\s*n'?t|doesn'?t|not|never|no)\b[^.!?]{0,40}\b(?:book|add|schedule|create|put|set\s+up)\b/i.test(lower)
+  if (isPreparation || bookingNegated) {
+    return { preparation: true, time: parseTime(text) || null, title: cleanTitle(text) }
+  }
+
   if (!isCreate) return null
 
   const time = parseTime(text)
@@ -326,8 +344,16 @@ export function parseCalendarCreate(text: string) {
     }
   }
 
-  const target = targetFromText(text)
+  // A calendar CREATE with a time but NO explicit date must ASK for the date — never silently
+  // default to today (which produced a wrong-day event the user then approved). An explicit date is
+  // an absolute date OR an explicit relative day; targetFromText's "today" default does NOT count.
   const absolute = parseAbsoluteDate(text)
+  const hasExplicitRelativeDay = /\b(?:today|tonight|tomorrow|day after tomorrow)\b/i.test(lower)
+  if (!absolute && !hasExplicitRelativeDay) {
+    return { needsDate: true, time, title: cleanTitle(text) }
+  }
+
+  const target = targetFromText(text)
   const parts = absolute || targetParts(target)
 
   const quotedTitle = text.match(/(?:called|titled)\s+["“]([^"”]+)["”]/i)?.[1]?.trim()
@@ -589,6 +615,34 @@ export async function buildCalendarActionReply(
     return {
       handled: false,
       reply: '',
+    }
+  }
+
+  // Preparation / explicitly-not-booking: never create an event or approval. Clarify the intent
+  // (prep vs calendar reminder vs provider booking) and preserve any stated time. No calendar
+  // connection required to clarify, so this runs BEFORE the tokens gate.
+  if (createIntent?.preparation) {
+    const t = createIntent.time as { hour: number; minute: number } | null
+    const keeps = t ? ` (I'll keep ${formatClock12(t)})` : ''
+    return {
+      handled: true,
+      reply:
+        `Happy to help you prepare — I won't book anything or contact anyone yet. What would you like?\n\n` +
+        `• *Prep help* — what to bring/ask and how to get ready\n` +
+        `• *Calendar reminder* — I can add a personal reminder/event; just tell me the date${keeps}\n` +
+        `• *Find a provider* — I can look up options (I won't contact or book without your go-ahead)\n\n` +
+        `Tell me which one — and the date if you want it on your calendar.`,
+    }
+  }
+
+  // Calendar create with a time but no date: ASK for the date, preserving the time. Never default
+  // to today. Store the time so the date reply completes THIS event.
+  if (createIntent?.needsDate) {
+    await saveFollowupState(telegramId, 'pending_calendar', { title: createIntent.title, timeText: formatClock12(createIntent.time) })
+    const at = createIntent.time ? ` at ${formatClock12(createIntent.time)}` : ''
+    return {
+      handled: true,
+      reply: `📅 Which date should I add it for${at}? For example: *28 October* or *tomorrow*. (Nothing added yet.)`,
     }
   }
 
