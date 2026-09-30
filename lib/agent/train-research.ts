@@ -51,13 +51,38 @@ function parseDate(text:string,now=new Date()){
 
 export function isTrainResearchRequest(text:string){const t=String(text||'').toLowerCase();return /\b(irctc|train|trains|railway|railways)\b/.test(t)&&/\b(find|search|show|available|availability|check|options|seat|seats|ticket|tickets|book|booking)\b/.test(t)}
 export function isTrainResumeRequest(text:string){return /^(continue|resume|done|finished|i'?m done|return control|continue gogo)$/i.test(String(text||'').trim())}
+
+// A train word in the SAME message. PNR/coach/berth included: they are unambiguous
+// rail vocabulary that a reply to a paused train task legitimately uses.
+const TRAIN_CONTEXT_WORD=/\b(?:train|irctc|vande\s*bharat|express|shatabdi|rajdhani|intercity|pnr|coach|berth)\b/i
+// Currency / price / quantity tokens. A 5-digit number sitting next to any of these is
+// a price, amount, PIN, OTP or code - never a train number.
+const TRAIN_PRICE_QTY_TOKEN=/(?:₹|\brs\b|\brupees?\b|\binr\b|\bprices?\b|\bcosts?\b|\bunder\b|\bbelow\b|\babove\b|\bdrops?\b|\bamounts?\b|\bpin\b|\botp\b|\bcode\b)/i
+
+// A 5-digit token counts as a train-number reference only when it is a STANDALONE
+// numeric token (not part of a longer alphanumeric token such as WH-1000XM5) and has
+// no currency / price / quantity token adjacent to it. This is the paused-train routing
+// hijack fixed on 28 Sep 2026: "...drops below 22000" matched the old bare /\b\d{5}\b/
+// rule and was swallowed by an armed IRCTC device handoff for ~12 days.
+function hasBareTrainNumber(raw:string):boolean{
+  const tokens=raw.split(/\s+/)
+  for(let i=0;i<tokens.length;i++){
+    const bare=tokens[i].replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi,'')
+    if(!/^\d{5}$/.test(bare))continue
+    const context=[tokens[i-2],tokens[i-1],tokens[i],tokens[i+1],tokens[i+2]].filter(Boolean).join(' ')
+    if(TRAIN_PRICE_QTY_TOKEN.test(context))continue
+    return true
+  }
+  return false
+}
+
 export function isTrainDeviceHandoffFollowup(text:string){
   const raw=safe(text,500)
   if(!raw)return false
   if(isTrainResumeRequest(raw))return true
   if(/tell me which train you want and i will take it from there/i.test(raw))return true
-  if(/\b(?:train|irctc|vande\s*bharat|express|shatabdi|rajdhani|intercity)\b/i.test(raw))return true
-  if(/\b\d{5}\b/.test(raw))return true
+  if(TRAIN_CONTEXT_WORD.test(raw))return true
+  if(hasBareTrainNumber(raw))return true
   if(/^(?:option\s*)?\d{1,2}$/i.test(raw))return true
   if(/^(?:the\s+)?(?:first|second|third|fourth|fifth|last)\s+(?:one|train)?$/i.test(raw))return true
   if(/^(?:which|what)\b.{0,80}\b(?:best|better|one|train)\b/i.test(raw))return true
@@ -129,7 +154,7 @@ async function tryHandleTrainDeviceHandoffFollowup(params:{actor:AgentActor;text
   if(!isTrainDeviceHandoffFollowup(params.text))return null
   const tg=params.actor.legacyTelegramId
   const {data:run,error}=await supabaseAdmin.from('agent_runs')
-    .select('id,metadata_json,status')
+    .select('id,metadata_json,status,updated_at')
     .eq('telegram_id',String(tg))
     .eq('type','train_research')
     .eq('status','paused')
@@ -141,6 +166,13 @@ async function tryHandleTrainDeviceHandoffFollowup(params:{actor:AgentActor;text
   const handoff=meta?.handoff
   const c=meta?.context
   if(!run?.id||meta?.state!=='waiting_for_user'||handoff?.mode!=='device'||!c?.date)return null
+  // A paused device handoff EXPIRES after 4h. An expired run returns control to normal
+  // routing SILENTLY: we do NOT close, cancel or modify any record, and we do NOT
+  // swallow the message. This allows a same-session return while stopping an abandoned
+  // run from capturing unrelated messages days later (production hijack 28 Sep 2026).
+  const DEVICE_HANDOFF_TTL_MS=4*60*60*1000
+  const updatedMs=Date.parse(String((run as any).updated_at||''))
+  if(!Number.isFinite(updatedMs)||Date.now()-updatedMs>DEVICE_HANDOFF_TTL_MS)return null
   const runId=String(run.id)
   await activity(tg,runId,'device_handoff_followup','User replied while the train task was waiting on a device handoff.',{text:safe(params.text,180)})
   return{
