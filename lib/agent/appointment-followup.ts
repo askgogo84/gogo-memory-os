@@ -125,6 +125,17 @@ async function resolveSlot(text: string, actor: AgentActor, fallback?: { time?: 
   return mergeSlot(text, timezone, fallback)
 }
 
+// The exact clock time / date from the ORIGINAL appointment request (e.g. the "book my
+// appointment at 5pm" voice note). Captured into the prepared metadata by EVERY prepare path
+// (primary and recovery) so a later confirmation supplying only the missing piece never
+// re-asks for a time the user already gave.
+export function capturedSlotHints(originalText: string, timezone: string): { requestedTime: string; requestedDate: string } {
+  return {
+    requestedTime: explicitClock(String(originalText || '')) || '',
+    requestedDate: explicitDate(String(originalText || ''), timezone) || '',
+  }
+}
+
 async function latestAppointmentResearch(tg: number) {
   const { data, error } = await supabaseAdmin.from('agent_runs')
     .select('id,metadata_json,completed_at,started_at')
@@ -348,13 +359,8 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
   if (!result) throw new Error('appointment_prepare_browser_not_routed')
   if (result.runId) {
     await rememberTypedObjects(tg,'browser',[{id:String(result.runId),title:safe(selected.title||'Appointment option',220)}])
-    // Capture the exact clock time / date from the ORIGINAL request (e.g. the "book my
-    // appointment at 5pm" voice note) so a later confirmation turn that only supplies the
-    // missing piece doesn't re-ask for the time already understood.
     const timezone = await actorTimezone(params.actor)
-    const originalText = String(research.metadata_json?.input_text || '')
-    const requestedTime = explicitClock(originalText)
-    const requestedDate = explicitDate(originalText, timezone)
+    const { requestedTime, requestedDate } = capturedSlotHints(String(research.metadata_json?.input_text || ''), timezone)
     await markPrepared(result.runId, tg, {
       option: number,
       researchRunId: String(research.id),
@@ -364,8 +370,8 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
       service: safe(research.metadata_json?.service || '', 120),
       location: safe(research.metadata_json?.location || '', 120),
       timing: safe(research.metadata_json?.timing || '', 120),
-      requestedTime: requestedTime || '',
-      requestedDate: requestedDate || '',
+      requestedTime,
+      requestedDate,
     })
   }
   return {

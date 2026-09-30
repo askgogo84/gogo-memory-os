@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { detectIntent } from '../lib/bot/detect-intent'
 import { buildTravelPresenceFacts } from '../lib/agent/context-brain'
 import { answerLiveFlightStatus, buildFlightStatusQuery, isFareShoppingResult, answerLeaksFare } from '../lib/bot/handlers/flight-status'
-import { mergeSlot, explicitClock } from '../lib/agent/appointment-followup'
+import { mergeSlot, explicitClock, capturedSlotHints } from '../lib/agent/appointment-followup'
 
 // Post-deployment acceptance failures observed in the Sep-30 11:53–11:54 IST WhatsApp turns.
 // Helper routing tests (detectIntent alone) missed these because the defects live in the
@@ -32,6 +32,13 @@ import { mergeSlot, explicitClock } from '../lib/agent/appointment-followup'
     { title: 'Etihad EY1 tickets - Expedia', snippet: 'Book Etihad Airways EY1. Airfare deals from Rs 45,000.', url: 'https://www.expedia.com/etihad-ey1' },
   ]
   for (const r of airfare) assert.ok(isFareShoppingResult(r), `airfare result flagged as shopping: ${r.url}`)
+
+  // The output guard must catch multi-digit fare amounts and standalone booking language
+  // (Codex P2: the old regex ended in \d\b and missed "$520").
+  for (const leak of ['EY1 tickets cost $520; book now', 'Fares from Rs 45,000', 'book now for the best price', 'lowest price ₹4999']) {
+    assert.ok(answerLeaksFare(leak), `fare/shopping text must be caught by the guard: "${leak}"`)
+  }
+  assert.ok(!answerLeaksFare('EY1 landed at JFK at 8:40 AM EDT, gate A6, per FlightAware.'), 'a clean status line is not flagged as fare')
 
   // With ONLY airfare available, the executor drops it all and says it could not verify —
   // it never reports a fare.
@@ -90,6 +97,11 @@ import { mergeSlot, explicitClock } from '../lib/agent/appointment-followup'
 {
   const tz = 'Asia/Kolkata'
   assert.equal(explicitClock('book my appointment at 5pm'), '17:00', 'the 5pm from the voice note is extracted')
+
+  // The shared capture helper used by BOTH prepare paths (primary + recovery) must lift the
+  // original request's time so the recovery path is not left without a fallback (Codex P1).
+  const hints = capturedSlotHints('book my appointment at 5pm', tz)
+  assert.equal(hints.requestedTime, '17:00', 'both prepare paths capture the original 5pm')
 
   // Follow-up supplies only the date; the earlier 5pm is preserved -> a slot resolves.
   const withFallback = mergeSlot('confirm the appointment for 28 September 2035', tz, { time: '17:00', date: '' })

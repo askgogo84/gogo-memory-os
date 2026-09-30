@@ -1,7 +1,9 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { searchWebResults } from '@/lib/web-search'
+import { normalizeTimezone } from '@/lib/timezone'
 import { tryRunBrowserCommand } from './browser-command'
+import { capturedSlotHints } from './appointment-followup'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 
@@ -176,11 +178,17 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
 
   const availabilityVerified = result.status === 'completed' && hasLiveSlotEvidence(result.text || '')
   if (result.runId) {
+    // Same slot-hint capture as the primary prepare path — this recovery path intercepts
+    // "prepare option N" first, so without this a later date-only confirmation would have no
+    // preserved time and re-ask the user for it.
+    const { data: userRow } = await supabaseAdmin.from('users').select('timezone').eq('telegram_id', tg).maybeSingle()
+    const timezone = normalizeTimezone(String(userRow?.timezone || 'Asia/Kolkata'))
+    const { requestedTime, requestedDate } = capturedSlotHints(String(meta.input_text || ''), timezone)
     await markPrepared(result.runId,tg,{
       option,researchRunId:String(research.id),title:safe(selected.title || '',220),provider:safe(selected.provider || '',160),
       url:target.url,originalUrl:selected.url,bookablePathResolved:target.resolved,availabilityVerified,staleApprovalsRetired,
       service:safe(meta.service || '',120),location:safe(meta.location || '',120),timing:safe(meta.timing || '',120),recoveredContext:true,
-      providerLocked:true,locationLocked:true,
+      providerLocked:true,locationLocked:true,requestedTime,requestedDate,
     })
   }
 

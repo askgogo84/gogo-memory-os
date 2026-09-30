@@ -18,7 +18,10 @@ export const FLIGHT_TRACKER_DOMAINS = [
 
 // Airfare / OTA / shopping signals. A status answer must never surface these.
 const FARE_DOMAIN_RE = /(momondo|expedia|skyscanner|kayak|makemytrip|cleartrip|ixigo|goibibo|yatra|booking\.com|google\.[a-z.]+\/travel|kiwi\.com|trip\.com|easemytrip|happyfares|wego|hopper|priceline|orbitz|travelocity)/i
-const FARE_TEXT_RE = /\b(cheap(?:est)? flights?|book (?:your |a )?flights?|air ?fares?|fares?\b|ticket price|lowest price|best price|flight deals?|compare (?:prices|flights)|starting (?:at|from)|per (?:adult|person|passenger)|round[- ]trip fare|one[- ]way fare|(?:from\s*)?(?:\$|₹|usd|inr)\s?\d)\b/i
+// No single trailing \b — a currency amount like "$520" has no word boundary between its
+// digits, which previously let multi-digit fares slip past the guard. Match the whole amount
+// and cover standalone booking language ("book now", "buy tickets").
+const FARE_TEXT_RE = /(cheap(?:est)? flights?|book (?:your |a )?flights?|book (?:now|online|tickets?|your ticket)|buy (?:a )?tickets?|air ?fares?|\bfares?\b|ticket price|lowest price|best price|flight deals?|compare (?:prices|flights)|starting (?:at|from)|per (?:adult|person|passenger)|round[- ]trip fare|one[- ]way fare|(?:\$|₹|usd|inr|rs\.?)\s?[\d,]+)/i
 
 // Operational-status signals — at least one must be present for a result to count as a
 // real status source rather than a listing/marketing page.
