@@ -48,7 +48,7 @@ function addDays(iso: string, days: number) {
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth()+1)}-${pad(date.getUTCDate())}`
 }
 
-function explicitDate(text: string, timezone: string) {
+export function explicitDate(text: string, timezone: string) {
   const iso = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/)
   if (iso) return `${iso[1]}-${pad(Number(iso[2]))}-${pad(Number(iso[3]))}`
 
@@ -72,7 +72,7 @@ function explicitDate(text: string, timezone: string) {
   return `${year + 1}-${pad(month)}-${pad(day)}`
 }
 
-function explicitClock(text: string) {
+export function explicitClock(text: string) {
   const withMinutes = text.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)\b/i)
   const hourOnly = text.match(/\b(\d{1,2})\s*(am|pm)\b/i)
   const match = withMinutes || hourOnly
@@ -91,14 +91,38 @@ async function actorTimezone(actor: AgentActor) {
   return normalizeTimezone(String(data?.timezone || 'Asia/Kolkata'))
 }
 
-async function exactSlot(text: string, actor: AgentActor) {
-  const timezone = await actorTimezone(actor)
-  const date = explicitDate(text, timezone)
-  const time = explicitClock(text)
-  if (!date || !time) return null
+function to12h(hhmm: string) {
+  const m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})$/)
+  if (!m) return hhmm
+  let hour = Number(m[1])
+  const meridiem = hour >= 12 ? 'PM' : 'AM'
+  hour = hour % 12 || 12
+  return `${hour}:${m[2]} ${meridiem}`
+}
+
+type ResolvedSlot = { date: string; time: string; timezone: string; startAt: string }
+
+// Resolve the appointment slot by MERGING the current message with any time/date captured on
+// an earlier turn (the original "book my appointment at 5pm" request). A follow-up that
+// supplies only the missing piece (just the date) must not force the user to repeat the time
+// that was already understood. Returns the parsed fields even when incomplete so the caller
+// can echo what it already has and ask only for what's missing.
+// Pure merge — exported for regression coverage. Combines the current message with any
+// previously-captured time/date and reports what is present/missing/past.
+export function mergeSlot(text: string, timezone: string, fallback?: { time?: string | null; date?: string | null }): { slot: ResolvedSlot | null; date: string | null; time: string | null; timezone: string; past: boolean } {
+  const time = explicitClock(text) || (fallback?.time ? String(fallback.time) : null)
+  const date = explicitDate(text, timezone) || (fallback?.date ? String(fallback.date) : null)
+  if (!date || !time) return { slot: null, date, time, timezone, past: false }
   const parsed = parseLocalDateTime({ date, time, timezone })
-  if (!Number.isFinite(parsed.dueAtUtc.getTime()) || parsed.dueAtUtc.getTime() <= Date.now()) return null
-  return { date, time, timezone, startAt: parsed.dueAtUtc.toISOString() }
+  if (!Number.isFinite(parsed.dueAtUtc.getTime()) || parsed.dueAtUtc.getTime() <= Date.now()) {
+    return { slot: null, date, time, timezone, past: true }
+  }
+  return { slot: { date, time, timezone, startAt: parsed.dueAtUtc.toISOString() }, date, time, timezone, past: false }
+}
+
+async function resolveSlot(text: string, actor: AgentActor, fallback?: { time?: string | null; date?: string | null }) {
+  const timezone = await actorTimezone(actor)
+  return mergeSlot(text, timezone, fallback)
 }
 
 async function latestAppointmentResearch(tg: number) {
@@ -140,11 +164,24 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
   const url = safe(selection.url || meta.url || '', 1200)
   if (!url || !/^https?:\/\//i.test(url)) throw new Error('appointment_prepare_url_missing')
 
-  const slot = await exactSlot(params.text, params.actor)
+  const resolved = await resolveSlot(params.text, params.actor, { time: selection.requestedTime || null, date: selection.requestedDate || null })
+  const slot = resolved.slot
   if (!slot) {
+    // Preserve whatever was already understood and ask only for the missing piece — never
+    // re-request a time the user already gave, and never claim a booking was made.
+    let text: string
+    if (resolved.past && resolved.date && resolved.time) {
+      text = `That slot (${resolved.date} at ${to12h(resolved.time)}) is already in the past. Give me a future date and time and I'll set up the approval.`
+    } else if (resolved.time && !resolved.date) {
+      text = `Got it — ${to12h(resolved.time)}. Which date should I book it for? (e.g. "28 September 2026")`
+    } else if (resolved.date && !resolved.time) {
+      text = `Got it — ${resolved.date}. What time should I book it for? (e.g. "4:00 PM")`
+    } else {
+      text = 'I have the prepared provider flow, but I need the exact appointment date and time before I can create the final approval. For example: “Confirm this appointment for 20 September 2026 at 4:00 PM.”'
+    }
     return {
       runId, status: 'paused' as const, capability: 'browser' as const, risk: 'low' as const,
-      text: 'I have the prepared provider flow, but I need the exact appointment date and time before I can create the final approval. For example: “Confirm this appointment for 20 September 2026 at 4:00 PM.”',
+      text,
       handledBy: 'appointment-followup' as const,
     }
   }
@@ -311,6 +348,13 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
   if (!result) throw new Error('appointment_prepare_browser_not_routed')
   if (result.runId) {
     await rememberTypedObjects(tg,'browser',[{id:String(result.runId),title:safe(selected.title||'Appointment option',220)}])
+    // Capture the exact clock time / date from the ORIGINAL request (e.g. the "book my
+    // appointment at 5pm" voice note) so a later confirmation turn that only supplies the
+    // missing piece doesn't re-ask for the time already understood.
+    const timezone = await actorTimezone(params.actor)
+    const originalText = String(research.metadata_json?.input_text || '')
+    const requestedTime = explicitClock(originalText)
+    const requestedDate = explicitDate(originalText, timezone)
     await markPrepared(result.runId, tg, {
       option: number,
       researchRunId: String(research.id),
@@ -320,6 +364,8 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
       service: safe(research.metadata_json?.service || '', 120),
       location: safe(research.metadata_json?.location || '', 120),
       timing: safe(research.metadata_json?.timing || '', 120),
+      requestedTime: requestedTime || '',
+      requestedDate: requestedDate || '',
     })
   }
   return {

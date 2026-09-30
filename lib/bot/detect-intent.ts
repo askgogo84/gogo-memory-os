@@ -163,7 +163,9 @@ export function detectIntent(text: string): DetectedIntent {
       /\b(?:[a-z]{2}|[a-z]\d|\d[a-z])\s?\d{1,4}\b/i.test(lower) &&
       /\b(land(?:s|ed|ing)?|arriv(?:e|ed|es|al|ing)|(?:flight )?status|delay(?:ed|s)?|on[- ]time|diverted|departed|take[n]?\s?off|tracker|track(?:ing)?)\b/i.test(lower) &&
       /\bflight\b|\b(?:[a-z]{2}|[a-z]\d|\d[a-z])\s?\d{1,4}\b/i.test(lower))
-    return { type: 'web_search', confidence: 'high' }
+    // Tag as flight status so the executor runs a tracker-scoped STATUS lookup and never a
+    // generic web search (which ranks airfare/OTA pages and turns status into shopping).
+    return { type: 'web_search', confidence: 'high', meta: { flightStatus: true } }
 
   // Word-boundary matching, never raw substring. includes('rain') matched "trains",
   // routing "direct trains from Bangalore to Mysuru" to weather at high confidence.

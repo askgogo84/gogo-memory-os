@@ -160,6 +160,10 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
       airline:safe(row.airline,100),
       flightNo:safe(row.flight_no,60),
       bookingGroup:safe(row.booking_group,120),
+      // Booking reference / PNR is a confirmation detail the user explicitly asks to recall
+      // ("ref B8XIQC"). It lives in the pnr column (or the raw ticket JSON) — surface it so
+      // the answer layer can state it instead of denying a saved confirmation exists.
+      pnr:safe(row.pnr,40)||safe(raw.pnr,40)||safe(raw.bookingReference,40)||null,
       passengers:(Array.isArray(row.passengers)?row.passengers:[]).map((name:unknown)=>safe(name,100)).filter(Boolean),
       seatObservations:(Array.isArray(raw.passengerDetails)?raw.passengerDetails:[{passengers:row.passengers,seat:row.seat||raw.seat}]).flatMap((detail:any)=>{
         const names=(Array.isArray(detail?.passengers)?detail.passengers:[]).map((name:unknown)=>safe(name,100)).filter(Boolean)
@@ -202,7 +206,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
       // timeStatusLabel is placed BEFORE unbounded passenger/seat details so a large
       // group booking can never truncate away the past-leg warning that suppresses
       // stale check-in countdowns and unverified landing claims.
-      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,timeStatusLabel,leg.airline,leg.flightNo,passengerLabel,...leg.seatObservations.map((detail:any)=>detail.names.length===1?`Seat for ${detail.names[0]}: ${detail.seat}`:`Seat ${detail.seat} recorded with ${detail.names.join(', ')}; individual assignment unverified`),...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel].filter(Boolean).join(' · '),700),
+      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,timeStatusLabel,leg.airline,leg.flightNo,leg.pnr?`Booking ref ${leg.pnr}`:null,passengerLabel,...leg.seatObservations.map((detail:any)=>detail.names.length===1?`Seat for ${detail.names[0]}: ${detail.seat}`:`Seat ${detail.seat} recorded with ${detail.names.join(', ')}; individual assignment unverified`),...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel].filter(Boolean).join(' · '),700),
       score:0.8,
       confidence:0.98,
       startAt:leg.departAt,
@@ -289,7 +293,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       .order('updated_at',{ascending:false})
       .limit(30),
     supabaseAdmin.from('travel_tickets')
-      .select('id,type,booking_group,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,seat,depart_tz,date_label,raw')
+      .select('id,type,booking_group,pnr,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,seat,depart_tz,date_label,raw')
       .eq('telegram_id',Number(actor.legacyTelegramId))
       .or(`depart_at.is.null,and(depart_at.gte.${ticketLower},depart_at.lte.${upper})`)
       .order('depart_at',{ascending:true})
