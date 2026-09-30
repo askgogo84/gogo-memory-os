@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rememberTypedObjects } from './typed-object-context'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
-import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
+import { DEFAULT_TIMEZONE, normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { tryRunBrowserCommand } from './browser-command'
 import { registerLifeEvent } from './life-event-engine'
 import type { AgentActor } from './actor'
@@ -33,6 +33,18 @@ function wantsPrepare(text: string) {
 function wantsFinalApproval(text: string) {
   const t = String(text || '').toLowerCase()
   return /\b(confirm|finali[sz]e|go ahead|complete|submit|book it|book this|reserve it)\b/.test(t) && /\b(appointment|slot|option|booking)\b/.test(t)
+}
+
+// A bare answer to our "which date / what time?" prompt — e.g. "4:00 PM", "28 September 2026",
+// "confirm at 4pm". These must reach createFinalApproval even without the word "appointment",
+// otherwise the advertised multi-turn flow can never converge (wantsFinalApproval needs the
+// noun). Strictly gated: short, contains a time or date, and carries no other clear intent.
+export function isSlotOnlyReply(text: string): boolean {
+  const t = String(text || '').trim()
+  if (!t || t.length > 48) return false
+  if (!explicitClock(t) && !explicitDate(t, DEFAULT_TIMEZONE)) return false
+  if (/\b(remind|reminder|list|weather|note|email|call|meeting|cancel|delete|pay|order|buy|search|flight|train|on[- ]time|delayed|status|landed|arriv|depart|diverted|track)\b/i.test(t)) return false
+  return true
 }
 
 function localYmd(now: Date, timezone: string) {
@@ -346,6 +358,19 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
     const prepared = await latestPreparedAppointment(tg)
     if (!prepared) return null
     return createFinalApproval({ actor: params.actor, prepared, text: params.text })
+  }
+
+  // Continuation: a bare slot answer to our earlier "which date / what time?" prompt routes
+  // into confirmation, but ONLY when a recent prepared appointment is still awaiting its slot,
+  // so unrelated time/date messages are not hijacked.
+  if (isSlotOnlyReply(params.text)) {
+    const prepared = await latestPreparedAppointment(tg)
+    if (prepared?.metadata_json?.appointment_prepared) {
+      const done = Date.parse(prepared.completed_at || prepared.started_at || '')
+      if (!Number.isFinite(done) || Date.now() - done <= 24 * 3600_000) {
+        return createFinalApproval({ actor: params.actor, prepared, text: params.text })
+      }
+    }
   }
 
   const number = optionNumber(params.text)

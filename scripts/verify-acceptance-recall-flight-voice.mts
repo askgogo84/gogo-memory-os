@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { detectIntent } from '../lib/bot/detect-intent'
 import { buildTravelPresenceFacts } from '../lib/agent/context-brain'
-import { answerLiveFlightStatus, buildFlightStatusQuery, isFareShoppingResult, answerLeaksFare } from '../lib/bot/handlers/flight-status'
-import { mergeSlot, explicitClock, capturedSlotHints } from '../lib/agent/appointment-followup'
+import { answerLiveFlightStatus, buildFlightStatusQuery, isFareShoppingResult, answerLeaksFare, matchesRequestedOccurrence } from '../lib/bot/handlers/flight-status'
+import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '../lib/agent/appointment-followup'
 
 // Post-deployment acceptance failures observed in the Sep-30 11:53–11:54 IST WhatsApp turns.
 // Helper routing tests (detectIntent alone) missed these because the defects live in the
@@ -69,6 +69,21 @@ import { mergeSlot, explicitClock, capturedSlotHints } from '../lib/agent/appoin
   })
   assert.ok(!answerLeaksFare(statusAnswer), 'status answer stays fare-free')
   assert.match(statusAnswer, /landed|arriv|jfk/i, 'status answer reports operational status')
+
+  // Occurrence validation (Codex P1): a recurring EY1 on the WRONG date must be rejected, and a
+  // different flight number must not satisfy the request.
+  const wrongDate = { title: 'EY1 Etihad Flight Status - FlightAware', snippet: 'EY1 landed at JFK on 27 September 2026 at 9:10 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20260927' }
+  const wrongFlight = { title: 'EY11 Etihad Flight Status', snippet: 'EY11 en route, scheduled 28 September 2026.', url: 'https://flightaware.com/live/flight/ETD11' }
+  assert.ok(!matchesRequestedOccurrence(wrongDate, prompt), 'a wrong-date EY1 result is rejected')
+  assert.ok(!matchesRequestedOccurrence(wrongFlight, prompt), 'a different flight number is rejected')
+  assert.ok(matchesRequestedOccurrence(tracker[0], prompt), 'the correct EY1 / 28 Sep result is accepted')
+
+  // With only wrong-occurrence tracker hits, the executor must NOT report another day's status.
+  const wrongOnly = await answerLiveFlightStatus(prompt, 'Gogo', {
+    search: async () => [wrongDate],
+    ask: async () => 'EY1 landed on 27 September at 9:10 AM.',
+  })
+  assert.match(wrongOnly, /could(?:n'?t| not) verify/i, 'wrong-date results do not become a status answer')
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +148,15 @@ import { mergeSlot, explicitClock, capturedSlotHints } from '../lib/agent/appoin
   assert.ok(step3.slot, 'once the persisted date is merged with the later time, the flow converges')
   assert.equal(step3.slot?.time, '17:00')
   assert.equal(step3.slot?.date, '2035-09-28')
+
+  // Routing gate (Codex P2): a bare slot reply must be recognised so it can reach
+  // createFinalApproval, while unrelated time/date messages are not hijacked.
+  for (const yes of ['4:00 PM', 'confirm at 4pm', '28 September 2035', 'at 5pm']) {
+    assert.ok(isSlotOnlyReply(yes), `slot-only reply routes back into confirmation: "${yes}"`)
+  }
+  for (const no of ['remind me at 5pm', 'what is the weather at 5pm in NYC tomorrow please', 'is EY1 on time at 5pm', 'prepare option 2']) {
+    assert.ok(!isSlotOnlyReply(no), `non-slot message is not hijacked: "${no}"`)
+  }
 }
 
 console.log('✅ acceptance: flight-status never shops, recall surfaces flight numbers + PNR, voice time preserved across turns')

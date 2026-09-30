@@ -1,6 +1,6 @@
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { askClaudeFlightStatus } from '@/lib/claude'
-import { extractFlightCodes } from '@/lib/agent/watcher-quality'
+import { extractFlightCodes, extractDateTokens, extractDateTokensYear } from '@/lib/agent/watcher-quality'
 
 // Flight-tracking sources. Scoping the search to these keeps a status lookup from
 // collapsing into airfare shopping (Momondo/Expedia/Skyscanner rank first for a bare
@@ -57,17 +57,45 @@ function extractDateHint(text: string): string {
 // generic pattern otherwise reads "on 28 September" as the code "ON28".
 const NON_AIRLINE_PREFIXES = new Set(['on', 'at', 'in', 'by', 'of', 'to', 'no', 'so', 'as', 'is', 'it', 'am', 'pm', 'be', 'or', 'an', 'do', 'if', 'my', 'me', 'we', 'he'])
 
-export function buildFlightStatusQuery(userText: string): string {
-  const dateHint = extractDateHint(userText)
-  const dateCompact = dateHint.toLowerCase().replace(/\s+/g, '')
-  const codes = extractFlightCodes(userText)
-    // Drop preposition+number artefacts ("on28") and any code that overlaps the date phrase
-    // ("er2026" from "September 2026") so the tracker query is not polluted with a wrong flight.
+// The genuine flight codes in a request — preposition+number artefacts ("on28") and codes
+// overlapping the date phrase ("er2026" from "September 2026") removed. Lowercase, matching
+// extractFlightCodes() output, so it compares directly against codes found in a result.
+export function requestedFlightCodes(userText: string): string[] {
+  const dateCompact = extractDateHint(userText).toLowerCase().replace(/\s+/g, '')
+  return extractFlightCodes(userText)
     .filter(c => !NON_AIRLINE_PREFIXES.has(c.replace(/\d+$/, '')))
     .filter(c => !(dateCompact && dateCompact.includes(c.toLowerCase())))
-    .map(c => c.toUpperCase())
+}
+
+export function buildFlightStatusQuery(userText: string): string {
+  const dateHint = extractDateHint(userText)
+  const codes = requestedFlightCodes(userText).map(c => c.toUpperCase())
   const codePart = codes.length ? codes.join(' ') : String(userText || '').slice(0, 80)
   return `${codePart} flight status ${dateHint} arrival landed on time delayed`.replace(/\s+/g, ' ').trim()
+}
+
+// Year-aware date contradiction, mirroring watcher-quality's verifier: both sides must carry a
+// date for a contradiction; if both also carry a year the year must match.
+function datesContradict(a: string, b: string): boolean {
+  const ka = extractDateTokens(a), kb = extractDateTokens(b)
+  if (!ka.length || !kb.length) return false
+  const ya = extractDateTokensYear(a), yb = extractDateTokensYear(b)
+  if (ya.length && yb.length) return !yb.some(d => ya.includes(d))
+  return !kb.some(d => ka.includes(d))
+}
+
+// A tracker result is only usable if it concerns the REQUESTED flight occurrence: it must name
+// one of the requested flight codes and must not contradict the requested date. This stops a
+// recurring flight on another day (or a nearby flight number) from reporting the wrong status.
+export function matchesRequestedOccurrence(r: WebSearchResult, userText: string): boolean {
+  const hay = `${r.title || ''} ${r.snippet || ''}`
+  const wanted = requestedFlightCodes(userText)
+  if (wanted.length) {
+    const got = new Set(extractFlightCodes(hay))
+    if (!wanted.some(c => got.has(c))) return false
+  }
+  if (datesContradict(userText, hay)) return false
+  return true
 }
 
 const COULD_NOT_VERIFY =
@@ -88,18 +116,21 @@ export async function answerLiveFlightStatus(userText: string, userName: string,
   const search = deps.search || ((q, o) => searchWebResults(q, o))
   const ask = deps.ask || ((u, c, n) => askClaudeFlightStatus(u, c, n))
   const query = buildFlightStatusQuery(userText)
+  // Keep only non-shopping results that concern the REQUESTED flight occurrence (right flight
+  // code, non-contradicting date) — so a recurring flight on another day can't be reported.
+  const usable = (list: WebSearchResult[]) => list
+    .filter(r => !isFareShoppingResult(r))
+    .filter(r => matchesRequestedOccurrence(r, userText))
 
   // 1) Prefer flight-tracker domains so airfare pages never enter the context.
-  let results = await search(query, { includeDomains: FLIGHT_TRACKER_DOMAINS })
-  // 2) If trackers returned nothing, fall back to an open search but strip shopping results.
+  let results = usable(await search(query, { includeDomains: FLIGHT_TRACKER_DOMAINS }))
+  // 2) If the scoped search yielded nothing usable AFTER filtering (empty, all shopping, or
+  //    wrong occurrence), fall back to an open search and filter it the same way.
   if (!results.length) {
-    const open = await search(query)
-    results = open.filter(r => !isFareShoppingResult(r))
-  } else {
-    results = results.filter(r => !isFareShoppingResult(r))
+    results = usable(await search(query))
   }
 
-  // No usable, non-shopping status source -> say so; never report fares.
+  // No usable status source for this occurrence -> say so; never report fares.
   if (!results.length) return COULD_NOT_VERIFY
 
   const context = results
