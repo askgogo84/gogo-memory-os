@@ -504,14 +504,23 @@ async function loadLearnedFacts(actor:AgentActor,query:string,includeSemantic:bo
   return{memoryEnabled,semantic,insights,profile,retrievalIncomplete}
 }
 
-function dedupeFacts(facts:ContextFact[]){
+function dedupeFacts(facts:ContextFact[],preserveOrder=false){
   const seen=new Set<string>(),out:ContextFact[]=[]
-  for(const fact of facts.sort((a,b)=>b.score-a.score)){
+  for(const fact of preserveOrder?facts:[...facts].sort((a,b)=>b.score-a.score)){
     const key=`${fact.source}|${fact.id}|${safe(fact.summary,220).toLowerCase()}`
     if(seen.has(key))continue
     seen.add(key);out.push(fact)
   }
   return out
+}
+
+// For historical itinerary recall, matching source tickets must reach the model
+// before summaries or inferred presence windows. Apply this at BOTH truncation
+// boundaries: selecting maxFacts and rendering maxChars. No fields are invented.
+export function prioritizeRecallEvidence(query:string,facts:ContextFact[]):ContextFact[]{
+  if(!isRetrospectiveTravelQuery(query))return [...facts]
+  const recorded=(f:ContextFact)=>f.source==='travel_ticket'&&!f.inferred&&lexicalScore(query,f.summary)>=0.25
+  return [...facts.filter(recorded),...facts.filter(f=>!recorded(f))]
 }
 
 export async function buildContextPack(params:{actor:AgentActor;text:string;options?:ContextPackOptions}):Promise<ContextPack>{
@@ -535,7 +544,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
   ])
   // Always preserve a few current/future operational facts even when lexical overlap is low.
   const operationalKeep=all.filter(f=>['typed_context','travel_presence','travel_ticket','life_event'].includes(f.source)).slice(0,6)
-  const combined=dedupeFacts([...operationalKeep,...all]).slice(0,maxFacts)
+  const combined=prioritizeRecallEvidence(query,dedupeFacts([...operationalKeep,...all],true)).slice(0,maxFacts)
   return{
     query,
     generatedAt:new Date().toISOString(),
@@ -579,9 +588,24 @@ export function renderContextBlock(pack:ContextPack,maxChars=3200){
     '- A bounded lookup is not proof of absence. Never claim all documents are present or everything is lined up merely because no missing item appears.',
     ...(pack.retrievalIncomplete?['- Retrieval is incomplete: one or more sources failed. Disclose lookup limitations; never claim no saved record exists.']:[]),
   ]
-  const lines=[...header,...pack.facts.map(factLine)]
+  const lines=[...header,...prioritizeRecallEvidence(pack.query,pack.facts).map(factLine)]
   let text=lines.join('\n')
-  if(text.length>maxChars)text=text.slice(0,maxChars).replace(/\n[^\n]*$/,'')+'\n- [context trimmed]'
+  const truncated=text.length>maxChars
+  if(truncated)text=text.slice(0,maxChars).replace(/\n[^\n]*$/,'')+'\n- [context trimmed]'
+  // Diagnostic: when travel facts exist, record whether the flight numbers / booking ref actually
+  // survive into the FINAL model input (this is the exact string the LLM sees). Distinguishes
+  // "facts absent" (retrieval/rows) from "facts dropped by truncation" from "facts present but the
+  // model still denied" (prompt/other answering path) — without adding any field to the answer.
+  const travelFacts=pack.facts.filter(f=>f.source==='travel_ticket')
+  if(travelFacts.length){
+    console.log('RECALL_CTX_TRACE:',JSON.stringify({
+      travelFacts:travelFacts.length,
+      pnrInFacts:travelFacts.filter(f=>/booking ref/i.test(String(f.summary||''))).length,
+      flightNoInText:/\b[A-Z]{2}\s?\d{1,4}\b/.test(text),
+      bookingRefInText:/booking ref/i.test(text),
+      len:text.length,truncated,
+    }))
+  }
   return text
 }
 

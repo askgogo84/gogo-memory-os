@@ -1,6 +1,6 @@
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { askClaudeFlightStatus } from '@/lib/claude'
-import { extractFlightCodes, extractDateTokens } from '@/lib/agent/watcher-quality'
+import { extractFlightCodes, extractDateTokens, extractDateTokensYear } from '@/lib/agent/watcher-quality'
 import { normalizeNumericDates, resolveRelativeDates, localTodayYmd, extractDateHint, requestedFlightCodes, datesContradict, requestedYears } from '@/lib/bot/flight-codes'
 // Re-export so existing importers/tests keep their entry point.
 export { normalizeNumericDates, requestedFlightCodes } from '@/lib/bot/flight-codes'
@@ -57,32 +57,59 @@ export function buildFlightStatusQuery(userText: string, refYmd = localTodayYmd(
   return `${codePart} flight status ${dateHint} arrival landed on time delayed`.replace(/\s+/g, ' ').trim()
 }
 
-// A tracker result is only usable if it concerns the REQUESTED flight occurrence: it must name
-// one of the requested flight codes and must not contradict the requested date. This stops a
-// recurring flight on another day (or a nearby flight number) from reporting the wrong status.
-export function matchesRequestedOccurrence(r: WebSearchResult, userText: string, refYmd = localTodayYmd()): boolean {
+export type OccurrenceReason = 'ok' | 'flight_number_mismatch' | 'dateless_for_dated_request' | 'wrong_year' | 'date_contradiction'
+
+// Classify whether a result concerns the REQUESTED flight occurrence, returning a REASON so the
+// decision is traceable (query logs) and testable — the difference between "no evidence exists"
+// and "validation rejected it" must be visible. Rules, least to most specific:
+//  - the result must name a requested flight code (when the request has one);
+//  - a NON-today dated request needs a dated result (a dateless live page can't confirm a past day);
+//  - the date must not contradict — YEAR-AWARE: an explicit different year (Sep 28 2025 vs 2026) is
+//    rejected, but a same-day result that merely OMITS the year is accepted rather than over-
+//    restricting historical lookups that legitimately lack a year token.
+export function classifyOccurrence(r: WebSearchResult, userText: string, refYmd = localTodayYmd()): { usable: boolean; reason: OccurrenceReason } {
   const norm = normalizeRequest(userText, refYmd)
   const url = String(r.url || '')
   const hay = normalizeNumericDates(`${r.title || ''} ${r.snippet || ''}`)
   const wanted = requestedFlightCodes(norm)
   if (wanted.length) {
     const got = new Set(extractFlightCodes(hay))
-    if (!wanted.some(c => got.has(c))) return false
+    if (!wanted.some(c => got.has(c))) return { usable: false, reason: 'flight_number_mismatch' }
   }
-  // When the request names a NON-today calendar date, a dateless result (a current/live recurring
-  // page) must not satisfy it — otherwise today's EY1 answers "EY1 on 28 September". A plain
-  // "today" query (relative date resolved to today) still accepts a dateless live page.
   const reqDates = extractDateTokens(norm)
   const todayTokens = extractDateTokens(refYmd)
-  const nonTodayRequested = reqDates.some(d => !todayTokens.includes(d))
-  if (nonTodayRequested && !extractDateTokens(hay).length) return false
-  // For a non-today dated request that supplies a YEAR, require compatible year evidence in the
-  // result text OR URL (trackers encode the date in the path) — a "Sep 28" result with no year
-  // could be an archived occurrence from another year and must not ground a definitive claim.
-  const years = requestedYears(norm)
-  if (nonTodayRequested && years.length && !years.some(y => hay.includes(y) || url.includes(y))) return false
-  if (datesContradict(norm, hay)) return false
-  return true
+  const reqYears = requestedYears(norm)
+  const refYear = refYmd.slice(0, 4)
+  // Non-today = a different month/day OR an explicit year that differs from the reference year — so
+  // a prior-year anniversary of today (e.g. 30 Sep 2025 asked on 30 Sep 2026) is still treated as a
+  // historical dated request and a dateless live page cannot satisfy it.
+  const nonTodayRequested = reqDates.some(d => !todayTokens.includes(d)) || reqYears.some(y => y !== refYear)
+  if (nonTodayRequested && !extractDateTokens(hay).length) return { usable: false, reason: 'dateless_for_dated_request' }
+  // Explicit wrong-year is a distinct, high-confidence rejection. Years come from the snippet AND
+  // the URL (trackers encode the date in the path, e.g. /history/20250928), so a "28 September"
+  // snippet whose URL says 2025 is caught; a yearless same-day result falls through to below.
+  // Only take a year from a DATE-SHAPED URL segment (…/20250928 or …/2025-09-28), never an
+  // arbitrary 20xx substring — otherwise a flight number like AA2025 would look like a year.
+  // Date-shaped URL segments encode the FULL occurrence date (…/20261002 or …/2026-10-02) and are
+  // authoritative — validate the complete year/month/day against the request, not just the year, so
+  // a different day within the requested year (or a different year) is rejected even if the snippet
+  // text happens to match.
+  const urlDates: string[] = []
+  for (const m of url.matchAll(/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/g)) urlDates.push(`${m[1]}-${m[2]}-${m[3]}`)
+  for (const m of url.matchAll(/(20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])/g)) urlDates.push(`${m[1]}-${m[2]}-${m[3]}`)
+  const textYears = new Set(extractDateTokensYear(hay).map(t => t.slice(-4)))
+  if (reqYears.length && textYears.size && !reqYears.some(y => textYears.has(y))) return { usable: false, reason: 'wrong_year' }
+  if (urlDates.length) {
+    const urlYears = new Set(urlDates.map(d => d.slice(0, 4)))
+    if (reqYears.length && !reqYears.some(y => urlYears.has(y))) return { usable: false, reason: 'wrong_year' }
+    if (datesContradict(norm, urlDates.join(' '))) return { usable: false, reason: 'date_contradiction' }
+  }
+  if (datesContradict(norm, hay)) return { usable: false, reason: 'date_contradiction' }
+  return { usable: true, reason: 'ok' }
+}
+
+export function matchesRequestedOccurrence(r: WebSearchResult, userText: string, refYmd = localTodayYmd()): boolean {
+  return classifyOccurrence(r, userText, refYmd).usable
 }
 
 // Definitive operational states and the evidence that must appear in the retrieved context
@@ -160,22 +187,34 @@ export async function answerLiveFlightStatus(userText: string, userName: string,
   // query and occurrence validation agree on the correct absolute date for that user.
   const refYmd = localTodayYmd(timezone)
   const query = buildFlightStatusQuery(userText, refYmd)
-  // Keep only non-shopping results that concern the REQUESTED flight occurrence (right flight
-  // code, non-contradicting date) — so a recurring flight on another day can't be reported.
-  const usable = (list: WebSearchResult[]) => list
-    .filter(r => !isFareShoppingResult(r))
-    .filter(r => matchesRequestedOccurrence(r, userText, refYmd))
+  // Keep only non-shopping results that concern the REQUESTED flight occurrence. Each drop is
+  // logged with its reason so production traces can distinguish "no evidence exists" from
+  // "faulty retrieval" from "over-restrictive validation" (never inferred, never invented).
+  const usable = (list: WebSearchResult[], stage: string) => list.filter(r => {
+    if (isFareShoppingResult(r)) { console.log('FLIGHT_STATUS_TRACE:', JSON.stringify({ stage, drop: 'fare_shopping', url: r.url })); return false }
+    const { usable: ok, reason } = classifyOccurrence(r, userText, refYmd)
+    if (!ok) console.log('FLIGHT_STATUS_TRACE:', JSON.stringify({ stage, drop: reason, url: r.url, title: (r.title || '').slice(0, 120) }))
+    return ok
+  })
 
+  console.log('FLIGHT_STATUS_TRACE:', JSON.stringify({ stage: 'query', query, refYmd }))
   // 1) Prefer flight-tracker domains so airfare pages never enter the context.
-  let results = usable(await search(query, { includeDomains: FLIGHT_TRACKER_DOMAINS }))
+  const scopedRaw = await search(query, { includeDomains: FLIGHT_TRACKER_DOMAINS })
+  let results = usable(scopedRaw, 'scoped')
   // 2) If the scoped search yielded nothing usable AFTER filtering (empty, all shopping, or
   //    wrong occurrence), fall back to an open search and filter it the same way.
+  let openRaw: WebSearchResult[] = []
   if (!results.length) {
-    results = usable(await search(query))
+    openRaw = await search(query)
+    results = usable(openRaw, 'open')
   }
 
-  // No usable status source for this occurrence -> say so; never report fares.
-  if (!results.length) return COULD_NOT_VERIFY
+  // No usable status source for this occurrence -> say so; never report fares. The trace records
+  // whether retrieval was empty (no evidence) or everything was filtered out (validation).
+  if (!results.length) {
+    console.log('FLIGHT_STATUS_TRACE:', JSON.stringify({ stage: 'no_result', scopedRaw: scopedRaw.length, openRaw: openRaw.length, outcome: (scopedRaw.length + openRaw.length) ? 'all_filtered' : 'retrieval_empty' }))
+    return COULD_NOT_VERIFY
+  }
 
   const context = results
     .map((r, i) => `${i + 1}. ${r.title}\n${r.snippet}\nSource: ${r.url}`)

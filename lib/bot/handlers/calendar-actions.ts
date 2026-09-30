@@ -142,6 +142,14 @@ function targetLabel(target: CalendarDateTarget) {
   return 'today'
 }
 
+function formatClock12(t: { hour: number; minute: number } | null | undefined) {
+  if (!t) return ''
+  let h = t.hour
+  const mer = h >= 12 ? 'PM' : 'AM'
+  h = h % 12 || 12
+  return `${h}:${String(t.minute).padStart(2, '0')} ${mer}`
+}
+
 function targetParts(target: CalendarDateTarget) {
   if (target === 'tomorrow') return istDatePartsPlusDays(1)
   if (target === 'day_after_tomorrow') return istDatePartsPlusDays(2)
@@ -174,6 +182,26 @@ function cleanTitle(text: string) {
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+// A concise event title for a preparation / needs-date request, so the persisted follow-up doesn't
+// carry the whole sentence (incl. "do not ... book it yet") into the eventual event title.
+function conciseAppointmentTitle(text: string): string {
+  let t = String(text || '')
+  // Drop a NEGATED / secondary instruction clause ("... but do not book it yet") — but NOT the
+  // affirmative "don't forget to …" idiom — without cutting at an abbreviation period like "Dr.".
+  t = t.replace(/\b(?:but\s+)?(?:please\s+)?(?:do\s*n'?t|do\s+not|dont|does\s*n'?t|doesn'?t|don'?t|never)\b(?!\s+forget)[\s\S]*/gi, ' ')
+  t = t.replace(/\b(?:can you|could you|please|help me|i want to|i'?d like to|don'?t forget to|do not forget to|remember to)\s+/gi, '')
+  t = t.replace(/\b(?:prepare|prep|get\s+ready)\s+(?:for\s+)?/gi, '')       // drop the prep framing
+  t = t.replace(/^\s*(?:add|create|schedule|book|set\s+up|put)\s+/i, '')    // drop a leading create verb
+  // Remove ONLY the time expression, not the remainder — keep title text that follows the time
+  // ("meeting at 5 pm with Alice" -> "Meeting with Alice").
+  t = t.replace(/\b(?:for|at)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/gi, ' ')
+  t = t.replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, ' ')
+  t = t.replace(/^\s*(?:a|an|my|the)\s+/i, '')
+  t = t.replace(/[\s.,;:]+$/, '').replace(/\s+/g, ' ').trim()
+  const title = t.length >= 3 ? t.slice(0, 80) : 'Appointment'
+  return title.charAt(0).toUpperCase() + title.slice(1)
 }
 
 function parseTime(text: string) {
@@ -315,6 +343,31 @@ export function parseCalendarCreate(text: string) {
     CALENDAR_EVENT_RE.test(lower)          // "calendar event" (+ misspellings)
   const isCreate = hasCreateVerb && hasCalendarSignal
 
+  // Preparation help ("help me prepare for a dentist appointment") or an explicitly NEGATED action
+  // ("do not book it yet") must NOT create a calendar event/approval — the create verb can appear
+  // INSIDE a negation ("do not ... book it yet"). Surface a distinct signal so the caller clarifies
+  // preparation vs a calendar reminder/event vs an actual provider booking, preserving any time.
+  const isPreparation = /\b(?:prepare|prep|get\s+ready|help me (?:prepare|get ready)|what\s+should\s+i\s+(?:bring|ask|do))\b/i.test(lower)
+  // A create verb governed by a negator ("do not book it yet"). Non-greedy so it binds to the
+  // NEAREST create verb after the negator, within one clause.
+  // "don't forget to schedule …" is an AFFIRMATIVE idiom, not a negation — the (?!\s+forget)
+  // lookahead keeps it out of the negated-create match.
+  // Span uses [\s\S] (not [^.!?]) so an abbreviation period ("Dr.") inside the negated clause does
+  // not end the match before the create verb — "do not contact Dr. Smith or book it yet" stays
+  // negated. Non-greedy + a 60-char bound keeps it within the clause.
+  const NEG_CREATE_SRC = "\\b(?:do\\s*n'?t|do\\s+not|dont|does\\s*n'?t|doesn'?t|not|never|no)\\b(?!\\s+forget)[\\s\\S]{0,60}?\\b(?:book|add|schedule|create|put|set\\s+up)\\b"
+  const bookingNegated = new RegExp(NEG_CREATE_SRC, 'i').test(lower)
+  // An AFFIRMATIVE create is a create verb that ISN'T part of a negation. Strip the negated spans
+  // first, then look for a remaining create verb — so "Schedule … but do not add a reminder" is
+  // still an affirmative create, while "do not book it yet" (only negated verbs) is not.
+  const hasAffirmativeCreate = /\b(?:add|schedule|book|create|set\s+up|put)\b/.test(lower.replace(new RegExp(NEG_CREATE_SRC, 'gi'), ' '))
+  // Route to preparation ONLY when there is no affirmative create verb — an explicit create that
+  // merely uses a prep word as its title ("schedule a prep meeting") or contains a negated
+  // secondary action still proceeds as a real create.
+  if (!hasAffirmativeCreate && (isPreparation || bookingNegated)) {
+    return { preparation: true, time: parseTime(text) || null, title: conciseAppointmentTitle(text) }
+  }
+
   if (!isCreate) return null
 
   const time = parseTime(text)
@@ -326,8 +379,16 @@ export function parseCalendarCreate(text: string) {
     }
   }
 
-  const target = targetFromText(text)
+  // A calendar CREATE with a time but NO explicit date must ASK for the date — never silently
+  // default to today (which produced a wrong-day event the user then approved). An explicit date is
+  // an absolute date OR an explicit relative day; targetFromText's "today" default does NOT count.
   const absolute = parseAbsoluteDate(text)
+  const hasExplicitRelativeDay = /\b(?:today|tonight|tomorrow|day after tomorrow)\b/i.test(lower)
+  if (!absolute && !hasExplicitRelativeDay) {
+    return { needsDate: true, time, title: conciseAppointmentTitle(text) }
+  }
+
+  const target = targetFromText(text)
   const parts = absolute || targetParts(target)
 
   const quotedTitle = text.match(/(?:called|titled)\s+["“]([^"”]+)["”]/i)?.[1]?.trim()
@@ -589,6 +650,36 @@ export async function buildCalendarActionReply(
     return {
       handled: false,
       reply: '',
+    }
+  }
+
+  // Preparation / explicitly-not-booking: never create an event or approval. Clarify the intent
+  // (prep vs calendar reminder vs provider booking) and preserve any stated time. No calendar
+  // connection required to clarify, so this runs BEFORE the tokens gate.
+  if (createIntent?.preparation) {
+    const t = createIntent.time as { hour: number; minute: number } | null
+    const at = t ? ` at ${formatClock12(t)}` : ''
+    // Do NOT arm a pending_calendar here: the user asked for preparation, not a calendar entry.
+    // Auto-completing on their next date-bearing reply would create an event they never requested.
+    // Keep this a non-actionable clarification; they must explicitly choose to add a calendar entry.
+    return {
+      handled: true,
+      reply:
+        `Happy to help you prepare — I won't book anything, add a calendar entry, or contact anyone yet. What would you like?\n\n` +
+        `• *Prep help* — what to bring/ask and how to get ready\n` +
+        `• *Add to calendar* — say e.g. *"add it to my calendar on 28 October${at}"* and I'll set it up for approval\n` +
+        `• *Find a provider* — I can look up options (I won't contact or book without your go-ahead)`,
+    }
+  }
+
+  // Calendar create with a time but no date: ASK for the date, preserving the time. Never default
+  // to today. Store the time so the date reply completes THIS event.
+  if (createIntent?.needsDate) {
+    await saveFollowupState(telegramId, 'pending_calendar', { title: createIntent.title, timeText: formatClock12(createIntent.time) })
+    const at = createIntent.time ? ` at ${formatClock12(createIntent.time)}` : ''
+    return {
+      handled: true,
+      reply: `📅 Which date should I add it for${at}? For example: *28 October* or *tomorrow*. (Nothing added yet.)`,
     }
   }
 

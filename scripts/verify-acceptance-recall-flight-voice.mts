@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { detectIntent } from '../lib/bot/detect-intent'
 import { buildTravelPresenceFacts } from '../lib/agent/context-brain'
-import { answerLiveFlightStatus, buildFlightStatusQuery, isFareShoppingResult, answerLeaksFare, matchesRequestedOccurrence, normalizeNumericDates } from '../lib/bot/handlers/flight-status'
+import { answerLiveFlightStatus, buildFlightStatusQuery, isFareShoppingResult, answerLeaksFare, matchesRequestedOccurrence, classifyOccurrence, normalizeNumericDates } from '../lib/bot/handlers/flight-status'
 import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply, hasAmbiguousTime, hasAmbiguousDate } from '../lib/agent/appointment-followup'
 import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
+import { parseCalendarCreate } from '../lib/bot/handlers/calendar-actions'
+import { resolvePendingCalendar } from '../lib/bot/pending-followup'
 
 // Post-deployment acceptance failures observed in the Sep-30 11:53–11:54 IST WhatsApp turns.
 // Helper routing tests (detectIntent alone) missed these because the defects live in the
@@ -127,10 +129,26 @@ import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
 
   // Year-qualified requests need year evidence in text OR URL (Codex P1): a "Sep 28" result with
   // no year (possibly an archived other-year occurrence) must be rejected.
+  // Softened to avoid over-restricting historical lookups: a yearless SAME-DAY result is ACCEPTED
+  // (return status rather than force could-not-verify), while an explicit WRONG-year result is
+  // rejected (the date-contradiction check is year-aware). Reason codes make each decision traceable.
   const noYear = { title: 'EY1 Etihad Flight Status', snippet: 'EY1 landed at JFK on 28 September at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1' }
-  const yearInUrl = { title: 'EY1 Etihad Flight Status', snippet: 'EY1 landed at JFK on 28 September at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20260928' }
-  assert.ok(!matchesRequestedOccurrence(noYear, prompt), 'a yearless result is rejected for a year-qualified request')
-  assert.ok(matchesRequestedOccurrence(yearInUrl, prompt), 'the requested year encoded in the URL is accepted')
+  const wrongYear = { title: 'EY1 Etihad Flight Status', snippet: 'EY1 landed at JFK on 28 September 2025 at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20250928' }
+  assert.ok(matchesRequestedOccurrence(noYear, prompt), 'a yearless same-day result is accepted (not over-restricted)')
+  assert.ok(!matchesRequestedOccurrence(wrongYear, prompt), 'an explicit different-year (2025) result is rejected')
+  // Wrong year encoded in the URL path must also be rejected; the right year in the URL accepted.
+  const wrongYearUrl = { title: 'EY1 Etihad Flight Status', snippet: 'EY1 landed at JFK on 28 September at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20250928' }
+  const rightYearUrl = { title: 'EY1 Etihad Flight Status', snippet: 'EY1 landed at JFK on 28 September at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20260928' }
+  assert.ok(!matchesRequestedOccurrence(wrongYearUrl, prompt), 'wrong year in the URL path is rejected')
+  assert.equal(classifyOccurrence(wrongYearUrl, prompt).reason, 'wrong_year', 'URL wrong-year rejection is traceable')
+  assert.ok(matchesRequestedOccurrence(rightYearUrl, prompt), 'correct year in the URL path is accepted')
+  // A flight NUMBER that looks like a year in the URL must NOT be read as a wrong year.
+  const flightNumUrl = { title: 'AA2025 status', snippet: 'AA2025 landed at JFK on 28 September at 8:40 AM.', url: 'https://flightaware.com/live/flight/AAL2025' }
+  assert.ok(matchesRequestedOccurrence(flightNumUrl, 'did AA2025 land on 28 September 2026?'), 'a flight number in the URL is not mistaken for a wrong year')
+  assert.equal(classifyOccurrence(wrongYear, prompt).reason, 'wrong_year', 'wrong-year rejection is traceable')
+  assert.equal(classifyOccurrence(wrongDate, prompt).reason, 'date_contradiction', 'wrong-day rejection is traceable')
+  assert.equal(classifyOccurrence(datelessEy1, prompt).reason, 'dateless_for_dated_request', 'dateless rejection is traceable')
+  assert.equal(classifyOccurrence(tracker[0], prompt).reason, 'ok', 'the correct occurrence classifies ok')
 
   // "on time" needs an ACTUAL punctuality signal — a schedule-only context must not ground it.
   const onTimeUngrounded = await answerLiveFlightStatus(prompt, 'Gogo', {
@@ -281,4 +299,117 @@ import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
   }
 }
 
-console.log('✅ acceptance: flight-status never shops, recall surfaces flight numbers + PNR, voice time preserved across turns')
+// ---------------------------------------------------------------------------
+// FAILURE 4 (Sep-30 15:32) — a TEXT "Help me prepare for a dentist appointment for 5 pm.
+// Do not contact anyone or book it yet." must NOT silently default the date to today and stage
+// a calendar-add approval. Before the fix, parseCalendarCreate matched "book" (inside "do not
+// ... book it yet") and targetFromText defaulted to today, producing an approved event.
+// ---------------------------------------------------------------------------
+{
+  const prep = parseCalendarCreate('Help me prepare for a dentist appointment for 5 pm. Do not contact anyone or book it yet.') as any
+  assert.equal(prep?.preparation, true, 'preparation / "do not book" is NOT treated as a calendar create')
+  assert.ok(!prep?.start, 'no event start is produced, so no calendar approval can be staged')
+  assert.equal(prep?.time?.hour, 17, '5 pm is preserved for the clarification')
+
+  // A genuine create with a time but NO date must ASK for the date (preserving the time), not
+  // default to today.
+  const noDate = parseCalendarCreate('add a dentist appointment at 5 pm') as any
+  assert.equal(noDate?.needsDate, true, 'a create missing a date asks for the date')
+  assert.ok(!noDate?.start, 'no event start until a date is supplied')
+  assert.equal(noDate?.time?.hour, 17, '5 pm preserved for the date follow-up')
+
+  // A create WITH an explicit date still proceeds normally.
+  const withDate = parseCalendarCreate('add a dentist appointment on 28 October 2026 at 5 pm') as any
+  assert.ok(!withDate?.needsDate && !withDate?.preparation, 'a dated create proceeds')
+  assert.ok(withDate?.start, 'a dated create produces an event start')
+  assert.equal(withDate?.start?.day, 28, 'the explicit date (28) is used, not today')
+
+  // An AFFIRMATIVE create that merely uses a prep word as the title must still proceed (Codex P2).
+  const prepMeeting = parseCalendarCreate('schedule a prep meeting tomorrow at 5 pm') as any
+  assert.ok(!prepMeeting?.preparation, 'an affirmative create using a prep word is NOT suppressed')
+  assert.ok(prepMeeting?.start, 'the affirmative create proceeds to an event start')
+  const prepInterview = parseCalendarCreate('add an appointment to prepare for the interview tomorrow at 4 pm') as any
+  assert.ok(!prepInterview?.preparation, 'an affirmative "add appointment to prepare" create is NOT suppressed')
+  assert.ok(prepInterview?.start, 'it proceeds to an event start')
+
+  // Title normalization: the persisted title is concise, not the whole sentence (Codex P2).
+  const prep2 = parseCalendarCreate('Help me prepare for a dentist appointment for 5 pm. Do not contact anyone or book it yet.') as any
+  assert.equal(prep2?.title, 'Dentist appointment', 'preparation title is normalized to the appointment, not the full sentence')
+
+  // The date follow-up folds the preserved time back in so date + time resolve together.
+  const completed = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, '28 October 2026')
+  assert.ok(completed, 'a date reply completes the pending calendar with the preserved 5 pm')
+
+  // A corrected time in the follow-up overrides the stored time — am/pm AND 24-hour forms (Codex P1).
+  const rBase = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow') as any
+  for (const corrected of ['tomorrow at 6 pm', 'tomorrow at 18:00']) {
+    const rc = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, corrected) as any
+    if (rc?.remindAtIso && rBase?.remindAtIso) {
+      assert.notEqual(new Date(rc.remindAtIso).getUTCHours(), new Date(rBase.remindAtIso).getUTCHours(), `a corrected follow-up time overrides the stored 5pm: "${corrected}"`)
+    }
+  }
+
+  // Negation must bind to its own clause — a negated SECONDARY action does not suppress an earlier
+  // affirmative create (Codex P2).
+  const mixed = parseCalendarCreate('Schedule a dentist appointment tomorrow at 5 pm, but do not add a reminder') as any
+  assert.ok(!mixed?.preparation, 'a negated secondary action does not suppress an affirmative create')
+  assert.ok(mixed?.start, 'the affirmative appointment create proceeds')
+
+  // An abbreviation period ("Dr.") must not truncate the derived title (Codex P2).
+  const drTitle = parseCalendarCreate('Schedule a meeting with Dr. Smith at 5 pm') as any
+  assert.equal(drTitle?.needsDate, true, 'no date -> needsDate')
+  assert.equal(drTitle?.title, 'Meeting with Dr. Smith', 'the abbreviation period is preserved in the title')
+}
+
+// ---------------------------------------------------------------------------
+// FAILURE 4b (Codex round-4 hardening on #315)
+// ---------------------------------------------------------------------------
+{
+  const tz = 'Asia/Kolkata'
+  // "don't forget to schedule ..." is affirmative, not a negation → a real create.
+  const dontForget = parseCalendarCreate("Don't forget to schedule my dentist appointment tomorrow at 5 pm") as any
+  assert.ok(!dontForget?.preparation, '"don\'t forget to schedule" is treated as affirmative, not preparation')
+  assert.ok(dontForget?.start, 'the affirmative "don\'t forget to schedule" create proceeds')
+
+  // Title text after the time is preserved.
+  const withAlice = parseCalendarCreate('schedule a meeting at 5 pm with Alice') as any
+  assert.equal(withAlice?.needsDate, true, 'no date -> needsDate')
+  assert.equal(withAlice?.title, 'Meeting with Alice', 'title text after the time is preserved')
+
+  // A dotted corrected time overrides the stored time.
+  const rBase = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow') as any
+  const rDot = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow 18.00') as any
+  if (rDot?.remindAtIso && rBase?.remindAtIso) {
+    assert.notEqual(new Date(rDot.remindAtIso).getUTCHours(), new Date(rBase.remindAtIso).getUTCHours(), 'a dotted corrected time (18.00) overrides the stored 5pm')
+  }
+
+  // Prior-year anniversary of today: a dateless live result must not satisfy a historical year.
+  const datelessEy1b = { title: 'EY1 status', snippet: 'EY1 Abu Dhabi to New York. Track live.', url: 'https://flightaware.com/live/flight/ETD1' }
+  assert.equal(classifyOccurrence(datelessEy1b, 'did EY1 land on 30 September 2025?', '2026-09-30').reason, 'dateless_for_dated_request', 'a prior-year anniversary of today still requires dated evidence')
+
+  // needsDate follow-up: a time-only correction must NOT resolve an event (keep waiting for the date).
+  assert.equal(resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'actually 6 pm'), null, 'a time-only reply to a date prompt does not create an event')
+  // needsDate follow-up: an ISO date reply resolves to that date (not misread as 20:00).
+  const iso = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, '2026-10-28') as any
+  assert.ok(iso?.remindAtIso, 'an ISO date reply resolves the pending calendar')
+  if (iso?.remindAtIso) { const d = new Date(iso.remindAtIso); assert.equal(d.getUTCMonth(), 9, 'ISO month is October'); assert.equal(d.getUTCDate() >= 27 && d.getUTCDate() <= 28, true, 'ISO day is 28 (IST)') }
+
+  // Conflicting URL year is authoritative: snippet 2026 but URL /history/20250928 -> wrong_year.
+  const conflictYear = { title: 'EY1 Etihad', snippet: 'EY1 landed at JFK on 28 September 2026 at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20250928' }
+  assert.equal(classifyOccurrence(conflictYear, 'Did EY1 land on 28 September 2026?').reason, 'wrong_year', 'a conflicting date-shaped URL year is rejected despite matching snippet text')
+
+  // Full URL date validated (not just year): /history/20261002 is a different day in 2026 -> reject.
+  const conflictDay = { title: 'EY1 Etihad', snippet: 'EY1 landed at JFK on 28 September 2026 at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20261002' }
+  assert.equal(classifyOccurrence(conflictDay, 'Did EY1 land on 28 September 2026?').reason, 'date_contradiction', 'a same-year but different-day URL date is rejected')
+
+  // Negation must survive an abbreviation period ("Dr.") — still classified as preparation.
+  const negAcrossAbbrev = parseCalendarCreate('Help me prepare for a dentist appointment tomorrow at 5 pm. Do not contact Dr. Smith or book it yet') as any
+  assert.equal(negAcrossAbbrev?.preparation, true, '"do not ... Dr. ... book" stays negated across the abbreviation period')
+  assert.ok(!negAcrossAbbrev?.start, 'no event/approval is produced')
+
+  // Ordinal-only date reply completes the pending calendar (reminder parser resolves "the 28th").
+  const ordinal = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'the 28th') as any
+  assert.ok(ordinal?.remindAtIso, 'an ordinal-only date reply ("the 28th") resolves the pending calendar')
+}
+
+console.log('✅ acceptance: recall PNR survives budget, flight-status grounded (never shops), voice/calendar time preserved, prep never auto-creates')
