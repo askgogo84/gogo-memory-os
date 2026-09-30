@@ -37,6 +37,31 @@ export function normalizeNumericDates(text: string, dayFirst = true): string {
   })
 }
 
+function addDaysYmd(ymd: string, days: number): string {
+  const d = new Date(`${ymd}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
+// Today's local calendar date (YYYY-MM-DD). India default matches the app's DEFAULT_TIMEZONE.
+export function localTodayYmd(timezone = 'Asia/Kolkata'): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
+  const v: Record<string, string> = {}
+  for (const p of parts) if (p.type !== 'literal') v[p.type] = p.value
+  return `${v.year}-${v.month}-${v.day}`
+}
+
+// Resolve relative dates to an absolute ISO date so a flight-status query for "tomorrow" carries
+// a real calendar date AND occurrence validation rejects a current/other-day recurring result
+// instead of reporting today's status as tomorrow's.
+export function resolveRelativeDates(text: string, refYmd = localTodayYmd()): string {
+  return String(text || '')
+    .replace(/\bday after tomorrow\b/gi, addDaysYmd(refYmd, 2))
+    .replace(/\btomorrow\b/gi, addDaysYmd(refYmd, 1))
+    .replace(/\byesterday\b/gi, addDaysYmd(refYmd, -1))
+    .replace(/\b(today|tonight)\b/gi, refYmd)
+}
+
 export function extractDateHint(text: string): string {
   const t = String(text || '')
   const iso = t.match(/\b\d{4}-\d{2}-\d{2}\b/)

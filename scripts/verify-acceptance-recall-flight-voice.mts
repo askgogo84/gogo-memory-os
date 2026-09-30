@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { detectIntent } from '../lib/bot/detect-intent'
 import { buildTravelPresenceFacts } from '../lib/agent/context-brain'
 import { answerLiveFlightStatus, buildFlightStatusQuery, isFareShoppingResult, answerLeaksFare, matchesRequestedOccurrence, normalizeNumericDates } from '../lib/bot/handlers/flight-status'
-import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '../lib/agent/appointment-followup'
+import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply, hasAmbiguousTime, hasAmbiguousDate } from '../lib/agent/appointment-followup'
 import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
 
 // Post-deployment acceptance failures observed in the Sep-30 11:53–11:54 IST WhatsApp turns.
@@ -142,6 +142,20 @@ import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
   // Ambiguous numeric dates follow India day-first; unambiguous ones (part >12) stay correct.
   assert.match(normalizeNumericDates('Did EY1 land on 9/10/2026?'), /2026-10-09/, 'ambiguous 9/10 -> 9 October (day-first)')
   assert.match(normalizeNumericDates('Did EY1 land on 9/28/2026?'), /2026-09-28/, 'unambiguous 9/28 -> 28 September')
+
+  // Relative dates ("tomorrow") are resolved to an absolute date for both query and validation
+  // (Codex P1), so today's recurring page is not reported as tomorrow's status.
+  const q = buildFlightStatusQuery('Is EY1 delayed tomorrow?', '2026-09-30')
+  assert.match(q, /2026-10-01/, 'relative "tomorrow" is resolved into the query')
+  const todayResult = { title: 'EY1 FlightAware', snippet: 'EY1 landed 30 September 2026.', url: 'https://flightaware.com/live/flight/ETD1' }
+  assert.ok(!matchesRequestedOccurrence(todayResult, 'Is EY1 delayed tomorrow?', '2026-09-30'), "today's result does not satisfy a tomorrow request")
+
+  // en route / in air claims are grounded too (Codex P1).
+  const enrouteUngrounded = await answerLiveFlightStatus(prompt, 'Gogo', {
+    search: async () => scheduleOnly,
+    ask: async () => 'EY1 is en route.',
+  })
+  assert.match(enrouteUngrounded, /could(?:n'?t| not) verify/i, 'an en-route claim with only a schedule is suppressed')
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +201,14 @@ import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
   assert.equal(capturedSlotHints('book a slot on 5 or 6 October 2026', tz).requestedDate, '', 'alternative dates are not captured as exact')
   assert.equal(capturedSlotHints('book between 5 and 7 October 2026', tz).requestedDate, '', 'a date range is not captured as exact')
   assert.equal(capturedSlotHints('book on 28 September 2026 at 5pm', tz).requestedDate, '2026-09-28', 'a single explicit date is still captured')
+
+  // The CONFIRMATION turn itself must also reject alternatives (Codex P2) — mergeSlot must not
+  // silently pick the first of "5pm or 6pm".
+  assert.ok(hasAmbiguousTime('at 5pm or 6pm') && !hasAmbiguousTime('at 5pm'), 'alternative vs single time detected')
+  assert.ok(hasAmbiguousDate('on 5 or 6 October 2035') && !hasAmbiguousDate('on 5 October 2035'), 'alternative vs single date detected')
+  const ambConfirm = mergeSlot('confirm the appointment on 28 September 2035 at 5pm or 6pm', tz, {})
+  assert.equal(ambConfirm.time, null, 'alternative times in the confirmation are not auto-resolved')
+  assert.equal(ambConfirm.slot, null, 'no slot is staged for an unselected time')
 
   // Follow-up supplies only the date; the earlier 5pm is preserved -> a slot resolves.
   const withFallback = mergeSlot('confirm the appointment for 28 September 2035', tz, { time: '17:00', date: '' })

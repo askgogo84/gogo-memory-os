@@ -114,6 +114,26 @@ function to12h(hhmm: string) {
 
 type ResolvedSlot = { date: string; time: string; timezone: string; startAt: string }
 
+// A clock expression is NON-exact when it is a range/boundary/opening-hours constraint
+// ("after 5pm", "between 5 and 7pm", "by 6pm") or a choice among alternatives ("5pm or 6pm",
+// "5pm, 6pm") — such text must never resolve to a single exact selected time.
+export function hasAmbiguousTime(text: string): boolean {
+  const t = String(text || '')
+  const boundary = /\b(after|before|between|around|from|by|earliest|latest|no later than|any ?time|opening hours|till|until|onwards?)\b/i.test(t)
+  const range = /\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|–|—|to|till|until|through|and|or|,)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)/i.test(t)
+  const clockCount = (t.match(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi) || []).length
+  return boundary || range || clockCount > 1
+}
+// Likewise for dates: a range ("between 5 and 7 October") or a choice ("5 or 6 October").
+export function hasAmbiguousDate(text: string): boolean {
+  const t = String(text || '')
+  const monthAlt = Object.keys(MONTHS).join('|')
+  const alternatives = new RegExp(`\\b\\d{1,2}\\s*(?:-|–|—|to|till|until|through|and|or|,)\\s*\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${monthAlt})`, 'i').test(t)
+  const boundary = /\b(after|before|between|from|by|earliest|latest|no later than)\b/i.test(t)
+    && new RegExp(`(?:\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${monthAlt})|\\b(?:${monthAlt})[a-z]*\\s+\\d{1,2})`, 'i').test(t)
+  return alternatives || boundary
+}
+
 // Resolve the appointment slot by MERGING the current message with any time/date captured on
 // an earlier turn (the original "book my appointment at 5pm" request). A follow-up that
 // supplies only the missing piece (just the date) must not force the user to repeat the time
@@ -122,8 +142,11 @@ type ResolvedSlot = { date: string; time: string; timezone: string; startAt: str
 // Pure merge — exported for regression coverage. Combines the current message with any
 // previously-captured time/date and reports what is present/missing/past.
 export function mergeSlot(text: string, timezone: string, fallback?: { time?: string | null; date?: string | null }): { slot: ResolvedSlot | null; date: string | null; time: string | null; timezone: string; past: boolean } {
-  const time = explicitClock(text) || (fallback?.time ? String(fallback.time) : null)
-  const date = explicitDate(text, timezone) || (fallback?.date ? String(fallback.date) : null)
+  // If the CURRENT confirmation itself offers alternatives/ranges ("... at 5pm or 6pm"), do not
+  // silently pick the first — leave that component unresolved so the caller asks the user to
+  // choose, rather than staging a booking for a time/date they never selected.
+  const time = hasAmbiguousTime(text) ? null : (explicitClock(text) || (fallback?.time ? String(fallback.time) : null))
+  const date = hasAmbiguousDate(text) ? null : (explicitDate(text, timezone) || (fallback?.date ? String(fallback.date) : null))
   if (!date || !time) return { slot: null, date, time, timezone, past: false }
   const parsed = parseLocalDateTime({ date, time, timezone })
   if (!Number.isFinite(parsed.dueAtUtc.getTime()) || parsed.dueAtUtc.getTime() <= Date.now()) {
@@ -143,20 +166,11 @@ async function resolveSlot(text: string, actor: AgentActor, fallback?: { time?: 
 // re-asks for a time the user already gave.
 export function capturedSlotHints(originalText: string, timezone: string): { requestedTime: string; requestedDate: string } {
   const t = String(originalText || '')
-  // Only persist a clock as an EXACT fallback time when it is a SINGLE, unqualified time — not a
-  // range/boundary/opening-hours constraint ("after 5pm", "between 5 and 7pm", "by 6pm") and not
-  // a choice among alternatives ("5pm or 6pm", "5pm, 6pm"). Otherwise a later date-only
-  // confirmation would be merged into a time the user never actually selected.
-  const boundary = /\b(after|before|between|around|from|by|earliest|latest|no later than|any ?time|opening hours|till|until|onwards?)\b/i.test(t)
-  const range = /\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|–|—|to|till|until|through|and|or|,)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)/i.test(t)
-  const clockCount = (t.match(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi) || []).length
-  const requestedTime = (boundary || range || clockCount > 1) ? '' : (explicitClock(t) || '')
-  // Apply the same non-exact rejection to the DATE: a range ("between 5 and 7 October") or a
-  // choice ("5 or 6 October", "5, 6 October") must not be stored as an exact selected date.
-  const monthAlt = Object.keys(MONTHS).join('|')
-  const dateAlternatives = new RegExp(`\\b\\d{1,2}\\s*(?:-|–|—|to|till|until|through|and|or|,)\\s*\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${monthAlt})`, 'i').test(t)
-  const dateBoundary = boundary && new RegExp(`(?:\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${monthAlt})|\\b(?:${monthAlt})[a-z]*\\s+\\d{1,2})`, 'i').test(t)
-  const requestedDate = (dateAlternatives || dateBoundary) ? '' : (explicitDate(t, timezone) || '')
+  // Only persist a clock/date as an EXACT fallback when it is a single, unqualified value — never
+  // a range/boundary/alternatives — otherwise a later confirmation would be merged into a
+  // time/date the user never actually selected. (Same checks the confirmation turn applies.)
+  const requestedTime = hasAmbiguousTime(t) ? '' : (explicitClock(t) || '')
+  const requestedDate = hasAmbiguousDate(t) ? '' : (explicitDate(t, timezone) || '')
   return { requestedTime, requestedDate }
 }
 

@@ -1,9 +1,14 @@
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { askClaudeFlightStatus } from '@/lib/claude'
 import { extractFlightCodes, extractDateTokens } from '@/lib/agent/watcher-quality'
-import { normalizeNumericDates, extractDateHint, requestedFlightCodes, datesContradict, requestedYears } from '@/lib/bot/flight-codes'
+import { normalizeNumericDates, resolveRelativeDates, localTodayYmd, extractDateHint, requestedFlightCodes, datesContradict, requestedYears } from '@/lib/bot/flight-codes'
 // Re-export so existing importers/tests keep their entry point.
 export { normalizeNumericDates, requestedFlightCodes } from '@/lib/bot/flight-codes'
+
+// Normalise numeric + relative dates in a request to absolute ISO for querying and validation.
+function normalizeRequest(userText: string, refYmd: string): string {
+  return resolveRelativeDates(normalizeNumericDates(userText), refYmd)
+}
 
 // Flight-tracking sources. Scoping the search to these keeps a status lookup from
 // collapsing into airfare shopping (Momondo/Expedia/Skyscanner rank first for a bare
@@ -44,8 +49,8 @@ export function answerLeaksFare(text: string): boolean {
   return FARE_TEXT_RE.test(String(text || ''))
 }
 
-export function buildFlightStatusQuery(userText: string): string {
-  const norm = normalizeNumericDates(userText)
+export function buildFlightStatusQuery(userText: string, refYmd = localTodayYmd()): string {
+  const norm = normalizeRequest(userText, refYmd)
   const dateHint = extractDateHint(norm)
   const codes = requestedFlightCodes(norm).map(c => c.toUpperCase())
   const codePart = codes.length ? codes.join(' ') : String(userText || '').slice(0, 80)
@@ -55,8 +60,8 @@ export function buildFlightStatusQuery(userText: string): string {
 // A tracker result is only usable if it concerns the REQUESTED flight occurrence: it must name
 // one of the requested flight codes and must not contradict the requested date. This stops a
 // recurring flight on another day (or a nearby flight number) from reporting the wrong status.
-export function matchesRequestedOccurrence(r: WebSearchResult, userText: string): boolean {
-  const norm = normalizeNumericDates(userText)
+export function matchesRequestedOccurrence(r: WebSearchResult, userText: string, refYmd = localTodayYmd()): boolean {
+  const norm = normalizeRequest(userText, refYmd)
   const url = String(r.url || '')
   const hay = normalizeNumericDates(`${r.title || ''} ${r.snippet || ''}`)
   const wanted = requestedFlightCodes(norm)
@@ -64,16 +69,18 @@ export function matchesRequestedOccurrence(r: WebSearchResult, userText: string)
     const got = new Set(extractFlightCodes(hay))
     if (!wanted.some(c => got.has(c))) return false
   }
-  // When the request names an explicit calendar date, a dateless result (a current/live
-  // recurring page) must not satisfy it — otherwise today's EY1 answers "EY1 on 28 September".
-  // "today"/"tomorrow" don't produce calendar tokens, so live-status queries are unaffected.
+  // When the request names a NON-today calendar date, a dateless result (a current/live recurring
+  // page) must not satisfy it — otherwise today's EY1 answers "EY1 on 28 September". A plain
+  // "today" query (relative date resolved to today) still accepts a dateless live page.
   const reqDates = extractDateTokens(norm)
-  if (reqDates.length && !extractDateTokens(hay).length) return false
-  // When the request supplies a YEAR, require compatible year evidence in the result text OR URL
-  // (trackers encode the date in the path) — a "Sep 28" result with no year could be an archived
-  // occurrence from another year and must not ground a definitive claim for this year's flight.
+  const todayTokens = extractDateTokens(refYmd)
+  const nonTodayRequested = reqDates.some(d => !todayTokens.includes(d))
+  if (nonTodayRequested && !extractDateTokens(hay).length) return false
+  // For a non-today dated request that supplies a YEAR, require compatible year evidence in the
+  // result text OR URL (trackers encode the date in the path) — a "Sep 28" result with no year
+  // could be an archived occurrence from another year and must not ground a definitive claim.
   const years = requestedYears(norm)
-  if (years.length && !years.some(y => hay.includes(y) || url.includes(y))) return false
+  if (nonTodayRequested && years.length && !years.some(y => hay.includes(y) || url.includes(y))) return false
   if (datesContradict(norm, hay)) return false
   return true
 }
@@ -86,7 +93,8 @@ const STATE_EVIDENCE: Array<[RegExp, RegExp]> = [
   [/\bcancell?ed\b/i, /\bcancell?ed\b/i],
   [/\bdelayed\b/i, /\bdelay(?:ed)?\b/i],
   [/\bdiverted\b/i, /\bdivert(?:ed)?\b/i],
-  [/\b(departed|took off)\b/i, /\b(departed|took off|en ?route|in ?air|airborne)\b/i],
+  [/\b(departed|took off)\b/i, /\b(departed|took off|en ?route|in ?air|airborne|in flight)\b/i],
+  [/\b(en ?route|in ?air|airborne|in flight)\b/i, /\b(en ?route|in ?air|airborne|in flight|departed|took off)\b/i],
   // "on time" needs an ACTUAL punctuality signal — a mere published schedule is not evidence
   // the flight is running on time.
   [/\bon[- ]time\b/i, /\b(on[- ]time|no delay|as scheduled|arrived on schedule|actual)\b/i],
@@ -112,12 +120,15 @@ export type FlightStatusDeps = {
 export async function answerLiveFlightStatus(userText: string, userName: string, deps: FlightStatusDeps = {}): Promise<string> {
   const search = deps.search || ((q, o) => searchWebResults(q, o))
   const ask = deps.ask || ((u, c, n) => askClaudeFlightStatus(u, c, n))
-  const query = buildFlightStatusQuery(userText)
+  // Resolve "today"/"tomorrow" once against the user's local calendar so the query and occurrence
+  // validation agree on the same absolute date.
+  const refYmd = localTodayYmd()
+  const query = buildFlightStatusQuery(userText, refYmd)
   // Keep only non-shopping results that concern the REQUESTED flight occurrence (right flight
   // code, non-contradicting date) — so a recurring flight on another day can't be reported.
   const usable = (list: WebSearchResult[]) => list
     .filter(r => !isFareShoppingResult(r))
-    .filter(r => matchesRequestedOccurrence(r, userText))
+    .filter(r => matchesRequestedOccurrence(r, userText, refYmd))
 
   // 1) Prefer flight-tracker domains so airfare pages never enter the context.
   let results = usable(await search(query, { includeDomains: FLIGHT_TRACKER_DOMAINS }))
