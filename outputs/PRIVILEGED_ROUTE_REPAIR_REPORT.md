@@ -3,7 +3,7 @@
 **Date:** 2026-10-01 (overnight)
 **Base commit:** `5cb08c9925f95b9e4dde7b99f21439e40c2292ec` (main / production HEAD at handoff)
 **Branch:** `fix/privileged-route-authorization`
-**Final commit:** `dbd48a52` (see §Final commit).
+**Final commit:** `c657be7a` (pushed HEAD containing the full repair; this SHA line corrected in a trailing doc-only commit). See §Final commit.
 **Scope:** authorization only, for the routes named in `outputs/ASKGOGO_READINESS_REPORT.md` §Bug A. No memory/learning/watcher/train/browser work. No new libraries, no schema changes, no deployment, no merge.
 
 > **PRODUCTION IS UNCHANGED.** This is an un-merged, un-deployed branch. The live exposure is NOT closed until this branch is merged and deployed. Do not treat this report as remediation of production.
@@ -136,4 +136,4 @@ After this branch is reviewed, merged, and deployed:
 ---
 
 ## Final commit
-`dbd48a52` — branch `fix/privileged-route-authorization`, pushed to origin, **not** merged, **not** deployed. Production remains unchanged.
+`c657be7a` — branch `fix/privileged-route-authorization`, pushed to origin, **not** merged, **not** deployed. Production remains unchanged.
