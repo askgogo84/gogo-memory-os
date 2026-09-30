@@ -29,7 +29,7 @@ const FARE_DOMAIN_RE = /(momondo|expedia|skyscanner|kayak|makemytrip|cleartrip|i
 // No single trailing \b — a currency amount like "$520" has no word boundary between its
 // digits, which previously let multi-digit fares slip past the guard. Match the whole amount
 // and cover standalone booking language ("book now", "buy tickets").
-const FARE_TEXT_RE = /(cheap(?:est)? flights?|book (?:your |a )?flights?|book (?:now|online|tickets?|your ticket)|buy (?:a )?tickets?|air ?fares?|\bfares?\b|ticket price|lowest price|best price|flight deals?|compare (?:prices|flights)|starting (?:at|from)|per (?:adult|person|passenger)|round[- ]trip fare|one[- ]way fare|(?:\$|₹|usd|inr|rs\.?)\s?[\d,]+)/i
+const FARE_TEXT_RE = /(cheap(?:est)? flights?|book (?:your |a )?flights?|book (?:now|online|tickets?|your ticket)|buy (?:a )?tickets?|air ?fares?|\bfares?\b|ticket price|lowest price|best price|flight deals?|compare (?:prices|flights)|starting (?:at|from)|per (?:adult|person|passenger)|round[- ]trip fare|one[- ]way fare|(?:[$₹€£¥]|usd|inr|eur|gbp|jpy|aed|sgd|cad|aud|rs\.?)\s?[\d,]+|[\d,]+\s?(?:usd|inr|eur|gbp|jpy|aed|sgd|cad|aud|dollars?|euros?|pounds?|rupees?|yen))/i
 
 // Operational-status signals — at least one must be present for a result to count as a
 // real status source rather than a listing/marketing page.
@@ -103,6 +103,23 @@ function statusUngrounded(reply: string, context: string): boolean {
   return STATE_EVIDENCE.some(([inReply, inContext]) => inReply.test(reply) && !inContext.test(context))
 }
 
+// Clock times mentioned in a text, normalised to "H:MM" (leading zero and am/pm dropped) so a
+// reply's cited times can be compared against the retrieved context.
+function clockTimes(text: string): Set<string> {
+  const out = new Set<string>()
+  for (const m of String(text || '').matchAll(/\b(\d{1,2}):(\d{2})\s*(?:am|pm)?\b/gi)) {
+    out.add(`${Number(m[1])}:${m[2]}`)
+  }
+  return out
+}
+// True when the reply cites a clock time that does NOT appear in the retrieved context — i.e. the
+// model invented or altered a departure/arrival time. The state verb being grounded is not
+// enough; the specific time must come from the source.
+function timesUngrounded(reply: string, context: string): boolean {
+  const ctx = clockTimes(context)
+  return Array.from(clockTimes(reply)).some(t => !ctx.has(t))
+}
+
 const COULD_NOT_VERIFY =
   "I couldn't verify the live status from the flight trackers just now. Check the airline's official flight-status page or a tracker like FlightAware or Flightradar24 for the current status — I won't guess it from the schedule."
 
@@ -159,8 +176,8 @@ export async function answerLiveFlightStatus(userText: string, userName: string,
   }
   // Ground EVERY definitive operational-status claim against the retrieved context — not just
   // arrival. A reply asserting landed/cancelled/delayed/diverted/departed/on-time without
-  // matching source evidence is suppressed rather than returned as fact.
-  if (statusUngrounded(reply, context)) {
+  // matching source evidence, OR citing a clock time absent from the source, is suppressed.
+  if (statusUngrounded(reply, context) || timesUngrounded(reply, context)) {
     return COULD_NOT_VERIFY
   }
   return reply.trim()

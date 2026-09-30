@@ -48,7 +48,7 @@ import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
 
   // The output guard must catch multi-digit fare amounts and standalone booking language
   // (Codex P2: the old regex ended in \d\b and missed "$520").
-  for (const leak of ['EY1 tickets cost $520; book now', 'Fares from Rs 45,000', 'book now for the best price', 'lowest price ₹4999']) {
+  for (const leak of ['EY1 tickets cost $520; book now', 'Fares from Rs 45,000', 'book now for the best price', 'lowest price ₹4999', 'EY1 is available for €520', 'EY1 costs GBP 450', 'fares from 4999 rupees']) {
     assert.ok(answerLeaksFare(leak), `fare/shopping text must be caught by the guard: "${leak}"`)
   }
   assert.ok(!answerLeaksFare('EY1 landed at JFK at 8:40 AM EDT, gate A6, per FlightAware.'), 'a clean status line is not flagged as fare')
@@ -156,6 +156,14 @@ import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
     ask: async () => 'EY1 is en route.',
   })
   assert.match(enrouteUngrounded, /could(?:n'?t| not) verify/i, 'an en-route claim with only a schedule is suppressed')
+
+  // Reported TIMES must come from the source, not just the state verb (Codex P1): the context
+  // says landed 8:40, so a reply of 10:40 is suppressed.
+  const wrongTime = await answerLiveFlightStatus(prompt, 'Gogo', {
+    search: async () => tracker,
+    ask: async () => 'EY1 landed at JFK at 10:40 AM.',
+  })
+  assert.match(wrongTime, /could(?:n'?t| not) verify/i, 'a reply citing a clock time absent from the source is suppressed')
 }
 
 // ---------------------------------------------------------------------------
