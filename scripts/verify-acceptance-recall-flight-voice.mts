@@ -340,12 +340,25 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   const completed = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, '28 October 2026')
   assert.ok(completed, 'a date reply completes the pending calendar with the preserved 5 pm')
 
-  // A corrected time in the follow-up overrides the stored time (Codex P2).
-  const r6 = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow at 6 pm') as any
-  const r5 = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow') as any
-  if (r6?.remindAtIso && r5?.remindAtIso) {
-    assert.notEqual(new Date(r6.remindAtIso).getUTCHours(), new Date(r5.remindAtIso).getUTCHours(), 'a corrected follow-up time (6pm) overrides the stored 5pm')
+  // A corrected time in the follow-up overrides the stored time — am/pm AND 24-hour forms (Codex P1).
+  const rBase = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow') as any
+  for (const corrected of ['tomorrow at 6 pm', 'tomorrow at 18:00']) {
+    const rc = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, corrected) as any
+    if (rc?.remindAtIso && rBase?.remindAtIso) {
+      assert.notEqual(new Date(rc.remindAtIso).getUTCHours(), new Date(rBase.remindAtIso).getUTCHours(), `a corrected follow-up time overrides the stored 5pm: "${corrected}"`)
+    }
   }
+
+  // Negation must bind to its own clause — a negated SECONDARY action does not suppress an earlier
+  // affirmative create (Codex P2).
+  const mixed = parseCalendarCreate('Schedule a dentist appointment tomorrow at 5 pm, but do not add a reminder') as any
+  assert.ok(!mixed?.preparation, 'a negated secondary action does not suppress an affirmative create')
+  assert.ok(mixed?.start, 'the affirmative appointment create proceeds')
+
+  // An abbreviation period ("Dr.") must not truncate the derived title (Codex P2).
+  const drTitle = parseCalendarCreate('Schedule a meeting with Dr. Smith at 5 pm') as any
+  assert.equal(drTitle?.needsDate, true, 'no date -> needsDate')
+  assert.equal(drTitle?.title, 'Meeting with Dr. Smith', 'the abbreviation period is preserved in the title')
 }
 
 console.log('✅ acceptance: recall PNR, flight-status grounded (never shops), voice time preserved, dentist-prep asks for date (no silent today)')

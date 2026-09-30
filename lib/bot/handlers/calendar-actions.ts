@@ -188,13 +188,15 @@ function cleanTitle(text: string) {
 // carry the whole sentence (incl. "do not ... book it yet") into the eventual event title.
 function conciseAppointmentTitle(text: string): string {
   let t = String(text || '')
-  t = t.replace(/[.!?].*$/s, '')                                          // keep only the first sentence
+  // Drop negated / secondary instruction clauses ("... but do not book it yet") WITHOUT cutting at
+  // an abbreviation period like "Dr." — we remove the clause, not everything after the first period.
+  t = t.replace(/\b(?:but\s+)?(?:please\s+)?(?:do\s*n'?t|do\s+not|dont|does\s*n'?t|doesn'?t|don'?t|never)\b[^.!?]*/gi, ' ')
   t = t.replace(/\b(?:can you|could you|please|help me|i want to|i'?d like to)\s+/gi, '')
-  t = t.replace(/\b(?:prepare|prep|get\s+ready)\s+(?:for\s+)?/gi, '')     // drop the prep framing
-  t = t.replace(/^\s*(?:add|create|schedule|book|set\s+up|put)\s+/i, '')  // drop a leading create verb
-  t = t.replace(/\b(?:for|at)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b.*$/i, '')// drop "for/at 5 pm ..."
+  t = t.replace(/\b(?:prepare|prep|get\s+ready)\s+(?:for\s+)?/gi, '')       // drop the prep framing
+  t = t.replace(/^\s*(?:add|create|schedule|book|set\s+up|put)\s+/i, '')    // drop a leading create verb
+  t = t.replace(/\b(?:for|at)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b.*$/i, '') // drop "for/at 5 pm ..." (also 24h)
   t = t.replace(/^\s*(?:a|an|my|the)\s+/i, '')
-  t = t.replace(/\s+/g, ' ').trim()
+  t = t.replace(/[\s.,;:]+$/, '').replace(/\s+/g, ' ').trim()
   const title = t.length >= 3 ? t.slice(0, 80) : 'Appointment'
   return title.charAt(0).toUpperCase() + title.slice(1)
 }
@@ -343,12 +345,18 @@ export function parseCalendarCreate(text: string) {
   // INSIDE a negation ("do not ... book it yet"). Surface a distinct signal so the caller clarifies
   // preparation vs a calendar reminder/event vs an actual provider booking, preserving any time.
   const isPreparation = /\b(?:prepare|prep|get\s+ready|help me (?:prepare|get ready)|what\s+should\s+i\s+(?:bring|ask|do))\b/i.test(lower)
-  const bookingNegated = /\b(?:do\s*n'?t|do\s+not|dont|does\s*n'?t|doesn'?t|not|never|no)\b[^.!?]{0,40}\b(?:book|add|schedule|create|put|set\s+up)\b/i.test(lower)
-  // Only override to "preparation" when there is NO affirmative create verb — an explicit create
-  // that merely uses a prep word as the title ("schedule a prep meeting", "add an appointment to
-  // prepare for the interview") is a real create and must proceed. Negated create verbs ("do not
-  // book it yet") always route to preparation regardless.
-  if (bookingNegated || (isPreparation && !hasCreateVerb)) {
+  // A create verb governed by a negator ("do not book it yet"). Non-greedy so it binds to the
+  // NEAREST create verb after the negator, within one clause.
+  const NEG_CREATE_SRC = "\\b(?:do\\s*n'?t|do\\s+not|dont|does\\s*n'?t|doesn'?t|not|never|no)\\b[^.!?]{0,40}?\\b(?:book|add|schedule|create|put|set\\s+up)\\b"
+  const bookingNegated = new RegExp(NEG_CREATE_SRC, 'i').test(lower)
+  // An AFFIRMATIVE create is a create verb that ISN'T part of a negation. Strip the negated spans
+  // first, then look for a remaining create verb — so "Schedule … but do not add a reminder" is
+  // still an affirmative create, while "do not book it yet" (only negated verbs) is not.
+  const hasAffirmativeCreate = /\b(?:add|schedule|book|create|set\s+up|put)\b/.test(lower.replace(new RegExp(NEG_CREATE_SRC, 'gi'), ' '))
+  // Route to preparation ONLY when there is no affirmative create verb — an explicit create that
+  // merely uses a prep word as its title ("schedule a prep meeting") or contains a negated
+  // secondary action still proceeds as a real create.
+  if (!hasAffirmativeCreate && (isPreparation || bookingNegated)) {
     return { preparation: true, time: parseTime(text) || null, title: conciseAppointmentTitle(text) }
   }
 

@@ -39,7 +39,12 @@ export function resolvePendingCalendar(ctx: PendingCalendarCtx, answer: string) 
   // A needsDate follow-up preserved the TIME (timeText) and expects the answer to carry the DATE;
   // fold the time back in so date + time resolve together — BUT only when the answer doesn't supply
   // its own time. A corrected time ("tomorrow at 6 pm") must override the stored 5 pm.
-  const answerHasTime = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i.test(answer)
+  // Any time the answer supplies its own time — am/pm, 24-hour "18:00", "at 6", noon/midnight —
+  // that time wins; only fall back to the stored timeText when the answer carries no time at all.
+  const answerHasTime = /\b\d{1,2}:\d{2}\b/.test(answer)
+    || /\b\d{1,2}\s*(?:am|pm)\b/i.test(answer)
+    || /\bat\s+\d{1,2}\b/i.test(answer)
+    || /\b(?:noon|midnight|midday)\b/i.test(answer)
   const timePart = (!answerHasTime && ctx.timeText) ? ` ${ctx.timeText}` : ''
   return resolve(`${(ctx.title || 'meeting').trim()} ${dayWord}${timePart}`.trim(), answer)
 }
