@@ -113,8 +113,28 @@ export function matchesRequestedOccurrence(r: WebSearchResult, userText: string)
     const got = new Set(extractFlightCodes(hay))
     if (!wanted.some(c => got.has(c))) return false
   }
+  // When the request names an explicit calendar date, a dateless result (a current/live
+  // recurring page) must not satisfy it — otherwise today's EY1 answers "EY1 on 28 September".
+  // "today"/"tomorrow" don't produce calendar tokens, so live-status queries are unaffected.
+  const reqDates = extractDateTokens(norm)
+  if (reqDates.length && !extractDateTokens(hay).length) return false
   if (datesContradict(norm, hay)) return false
   return true
+}
+
+// Definitive operational states and the evidence that must appear in the retrieved context
+// before a reply may assert them. A prompt instruction is not an enforcement boundary, so any
+// state the model asserts without matching source evidence forces the unverified fallback.
+const STATE_EVIDENCE: Array<[RegExp, RegExp]> = [
+  [/\b(landed|arrived|touched down|on the ground)\b/i, /\b(landed|arrived|touched down|on the ground)\b/i],
+  [/\bcancell?ed\b/i, /\bcancell?ed\b/i],
+  [/\bdelayed\b/i, /\bdelay(?:ed)?\b/i],
+  [/\bdiverted\b/i, /\bdivert(?:ed)?\b/i],
+  [/\b(departed|took off)\b/i, /\b(departed|took off|en ?route|in ?air|airborne)\b/i],
+  [/\bon[- ]time\b/i, /\b(on[- ]time|scheduled|estimated|landed|arrived|departed|gate)\b/i],
+]
+function statusUngrounded(reply: string, context: string): boolean {
+  return STATE_EVIDENCE.some(([inReply, inContext]) => inReply.test(reply) && !inContext.test(context))
 }
 
 const COULD_NOT_VERIFY =
@@ -168,11 +188,10 @@ export async function answerLiveFlightStatus(userText: string, userName: string,
   if (!reply.trim() || answerLeaksFare(reply) || /i apologize|unable to provide|don'?t have access/i.test(reply)) {
     return COULD_NOT_VERIFY
   }
-  // Ground the landing claim: the prompt asks the model not to assert a landing without
-  // evidence, but a prompt is not an enforcement boundary. If the reply says landed/arrived
-  // yet the retrieved context contains no such actual-status evidence, don't return it.
-  const ARRIVED_RE = /\b(landed|arrived|touched down|has arrived|on the ground)\b/i
-  if (ARRIVED_RE.test(reply) && !ARRIVED_RE.test(context)) {
+  // Ground EVERY definitive operational-status claim against the retrieved context — not just
+  // arrival. A reply asserting landed/cancelled/delayed/diverted/departed/on-time without
+  // matching source evidence is suppressed rather than returned as fact.
+  if (statusUngrounded(reply, context)) {
     return COULD_NOT_VERIFY
   }
   return reply.trim()

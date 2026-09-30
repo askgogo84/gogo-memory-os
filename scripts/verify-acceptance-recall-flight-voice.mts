@@ -99,6 +99,20 @@ import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '..
     ask: async () => 'EY1 landed at JFK at 8:40 AM.',
   })
   assert.match(ungrounded, /could(?:n'?t| not) verify/i, 'a landing claim with no arrival evidence in context is suppressed')
+
+  // Grounding applies to EVERY definitive state, not just arrival (P1): a "cancelled" claim with
+  // no cancellation evidence in context is suppressed too.
+  const cancelledClaim = await answerLiveFlightStatus(prompt, 'Gogo', {
+    search: async () => scheduleOnly,
+    ask: async () => 'EY1 was cancelled.',
+  })
+  assert.match(cancelledClaim, /could(?:n'?t| not) verify/i, 'an ungrounded cancelled/delayed/diverted claim is suppressed')
+
+  // A dateless result must not satisfy an explicitly-dated request (P1) — but a live "today"
+  // query, which carries no calendar token, still accepts a dateless tracker page.
+  const datelessEy1 = { title: 'EY1 Etihad Flight Status - FlightAware', snippet: 'EY1 Abu Dhabi to New York. Track live.', url: 'https://flightaware.com/live/flight/ETD1' }
+  assert.ok(!matchesRequestedOccurrence(datelessEy1, prompt), 'a dateless result does not satisfy an explicitly dated request')
+  assert.ok(matchesRequestedOccurrence(datelessEy1, 'is EY1 on time today?'), 'a live/today query still accepts a dateless tracker page')
 }
 
 // ---------------------------------------------------------------------------

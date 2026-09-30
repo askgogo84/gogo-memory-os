@@ -372,7 +372,11 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
   // so unrelated time/date messages are not hijacked.
   if (isSlotOnlyReply(params.text)) {
     const prepared = await latestPreparedAppointment(tg)
-    if (prepared?.metadata_json?.appointment_prepared) {
+    const sel: any = prepared?.metadata_json?.appointment_selection || {}
+    // Only continue a run that is genuinely still AWAITING a slot: prepared, recent, and not
+    // already scheduled. A completed/executed booking keeps appointment_prepared + scheduled_at,
+    // so without this a bare date/time could reopen it and stage a duplicate approval.
+    if (prepared?.metadata_json?.appointment_prepared && !sel.scheduled_at) {
       const done = Date.parse(prepared.completed_at || prepared.started_at || '')
       if (!Number.isFinite(done) || Date.now() - done <= 24 * 3600_000) {
         return createFinalApproval({ actor: params.actor, prepared, text: params.text })
