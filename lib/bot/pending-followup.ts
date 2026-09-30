@@ -34,8 +34,11 @@ const MONTH_NAME_RE = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(
 // The reminder fallback's date parser only understands named months, and its time parser would
 // read the leading "20" of an ISO date as 20:00. Convert ISO / numeric (day-first) dates in the
 // answer to "D Month YYYY" first so a calendar date reply is parsed as a date, not a time.
+// "day after tomorrow" is normalized to "in 2 days" BEFORE anything else: the reminder parser
+// matches the embedded word "tomorrow" and would otherwise schedule only one day ahead.
 function normalizeAnswerDate(answer: string): string {
   return String(answer || '')
+    .replace(/\b(?:the\s+)?day\s+after\s+tomorrow\b/gi, 'in 2 days')
     .replace(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g, (m, y, mo, d) => { const mi = Number(mo); return mi >= 1 && mi <= 12 ? `${Number(d)} ${MONTH_LABELS[mi - 1]} ${y}` : m })
     .replace(/\b(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})\b/g, (m, d, mo, y) => { let Y = Number(y); if (Y < 100) Y += 2000; const mi = Number(mo), dd = Number(d); return mi >= 1 && mi <= 12 && dd >= 1 && dd <= 31 ? `${dd} ${MONTH_LABELS[mi - 1]} ${Y}` : m })
 }

@@ -352,10 +352,16 @@ export function parseCalendarCreate(text: string) {
   // NEAREST create verb after the negator, within one clause.
   // "don't forget to schedule …" is an AFFIRMATIVE idiom, not a negation — the (?!\s+forget)
   // lookahead keeps it out of the negated-create match.
-  // Span uses [\s\S] (not [^.!?]) so an abbreviation period ("Dr.") inside the negated clause does
-  // not end the match before the create verb — "do not contact Dr. Smith or book it yet" stays
-  // negated. Non-greedy + a 60-char bound keeps it within the clause.
-  const NEG_CREATE_SRC = "\\b(?:do\\s*n'?t|do\\s+not|dont|does\\s*n'?t|doesn'?t|not|never|no)\\b(?!\\s+forget)[\\s\\S]{0,60}?\\b(?:book|add|schedule|create|put|set\\s+up)\\b"
+  // The gap must NOT cross a real sentence boundary (. ! ?) — otherwise "Do not contact Alice.
+  // Schedule a meeting tomorrow at 5 pm" would let the negator govern the later "Schedule" and
+  // suppress an explicit create. But it MUST tolerate an abbreviation period ("Dr.") mid-clause,
+  // so a plain [^.!?] is too strict. The gap therefore consumes either a known abbreviation+dot
+  // (Dr./Mr./…) as one unit OR any non-sentence-ending character. Non-greedy + a 60-unit bound
+  // keeps it within the clause. (Abbrev branch listed FIRST so "dr." is consumed whole, not as
+  // letters that then strand the period as a boundary.)
+  const NEG_ABBR = "(?:dr|mr|mrs|ms|messrs|prof|sr|jr|st|mt|vs|no|dept|approx|appt)"
+  const NEG_GAP = `(?:${NEG_ABBR}\\.|[^.!?]){0,60}?`
+  const NEG_CREATE_SRC = `\\b(?:do\\s*n'?t|do\\s+not|dont|does\\s*n'?t|doesn'?t|not|never|no)\\b(?!\\s+forget)${NEG_GAP}\\b(?:book|add|schedule|create|put|set\\s+up)\\b`
   const bookingNegated = new RegExp(NEG_CREATE_SRC, 'i').test(lower)
   // An AFFIRMATIVE create is a create verb that ISN'T part of a negation. Strip the negated spans
   // first, then look for a remaining create verb — so "Schedule … but do not add a reminder" is

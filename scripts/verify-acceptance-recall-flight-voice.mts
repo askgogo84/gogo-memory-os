@@ -412,4 +412,43 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   assert.ok(ordinal?.remindAtIso, 'an ordinal-only date reply ("the 28th") resolves the pending calendar')
 }
 
-console.log('✅ acceptance: recall PNR survives budget, flight-status grounded (never shops), voice/calendar time preserved, prep never auto-creates')
+// ---------------------------------------------------------------------------
+// FAILURE 4c (Codex round-7 on #315)
+// ---------------------------------------------------------------------------
+{
+  const dayMs = 24 * 60 * 60 * 1000
+
+  // P1 — a needsDate follow-up answered with "day after tomorrow" must resolve TWO days ahead.
+  // The reminder parser matches the embedded word "tomorrow", so without normalization it would
+  // schedule only one day ahead. Assert it lands exactly one day BEYOND the "tomorrow" answer,
+  // going through the actual calendar follow-up path (resolvePendingCalendar -> parseReminderIntent,
+  // whose result process-message.ts hands to createCalendarEventAtIso).
+  const rTomorrow = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow') as any
+  const rDayAfter = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'day after tomorrow') as any
+  const rDayAfterThe = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'the day after tomorrow') as any
+  assert.ok(rTomorrow?.remindAtIso && rDayAfter?.remindAtIso && rDayAfterThe?.remindAtIso, 'all three follow-up dates resolve to an instant')
+  const daysBeyondTomorrow = (r: any) => Math.round((new Date(r.remindAtIso).getTime() - new Date(rTomorrow.remindAtIso).getTime()) / dayMs)
+  assert.equal(daysBeyondTomorrow(rDayAfter), 1, '"day after tomorrow" resolves one day beyond tomorrow (two days ahead), not the same day as tomorrow')
+  assert.equal(daysBeyondTomorrow(rDayAfterThe), 1, '"the day after tomorrow" resolves two days ahead as well')
+  // The preserved 5 pm still rides along (same wall-clock time, only the date differs).
+  assert.equal(new Date(rDayAfter.remindAtIso).getTime() - new Date(rTomorrow.remindAtIso).getTime(), dayMs, 'the preserved time is unchanged; exactly a 24h date shift')
+
+  // P2 — a negation in an EARLIER sentence must not suppress an affirmative create in a LATER
+  // sentence. The round-6 [\s\S] span let "Do not …" govern the later "Schedule"; the gap must
+  // stop at the sentence boundary.
+  const twoSentences = parseCalendarCreate('Do not contact Alice. Schedule a meeting tomorrow at 5 pm') as any
+  assert.ok(!twoSentences?.preparation, 'a negation in an earlier sentence does not route a later explicit create to preparation')
+  assert.ok(twoSentences?.start, 'the second-sentence "Schedule a meeting" proceeds to an event start')
+  const twoSentencesBang = parseCalendarCreate('Do not book flights! Add a meeting tomorrow at 4 pm') as any
+  assert.ok(!twoSentencesBang?.preparation && twoSentencesBang?.start, 'a "!" boundary also confines the negation')
+
+  // P2 — abbreviations are STILL preserved: a negated clause containing "Dr." keeps binding to the
+  // create verb within the SAME sentence, so it stays preparation (no event).
+  const negAcrossDr = parseCalendarCreate('Help me prepare for a dentist appointment tomorrow at 5 pm. Do not contact Dr. Smith or book it yet') as any
+  assert.equal(negAcrossDr?.preparation, true, '"do not … Dr. … book" stays negated across the abbreviation period')
+  assert.ok(!negAcrossDr?.start, 'no event/approval is produced for the negated, same-sentence booking')
+  const negMr = parseCalendarCreate('Do not contact Mr. Lee or book a room yet') as any
+  assert.equal(negMr?.preparation, true, 'negation survives "Mr." within the clause')
+}
+
+console.log('✅ acceptance: recall PNR survives budget, flight-status grounded (never shops), voice/calendar time preserved, prep never auto-creates, day-after-tomorrow is +2 days, negation respects sentence boundaries')
