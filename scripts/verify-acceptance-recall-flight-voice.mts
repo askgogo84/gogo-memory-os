@@ -142,6 +142,9 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   assert.ok(!matchesRequestedOccurrence(wrongYearUrl, prompt), 'wrong year in the URL path is rejected')
   assert.equal(classifyOccurrence(wrongYearUrl, prompt).reason, 'wrong_year', 'URL wrong-year rejection is traceable')
   assert.ok(matchesRequestedOccurrence(rightYearUrl, prompt), 'correct year in the URL path is accepted')
+  // A flight NUMBER that looks like a year in the URL must NOT be read as a wrong year.
+  const flightNumUrl = { title: 'AA2025 status', snippet: 'AA2025 landed at JFK on 28 September at 8:40 AM.', url: 'https://flightaware.com/live/flight/AAL2025' }
+  assert.ok(matchesRequestedOccurrence(flightNumUrl, 'did AA2025 land on 28 September 2026?'), 'a flight number in the URL is not mistaken for a wrong year')
   assert.equal(classifyOccurrence(wrongYear, prompt).reason, 'wrong_year', 'wrong-year rejection is traceable')
   assert.equal(classifyOccurrence(wrongDate, prompt).reason, 'date_contradiction', 'wrong-day rejection is traceable')
   assert.equal(classifyOccurrence(datelessEy1, prompt).reason, 'dateless_for_dated_request', 'dateless rejection is traceable')
@@ -329,9 +332,20 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   assert.ok(!prepInterview?.preparation, 'an affirmative "add appointment to prepare" create is NOT suppressed')
   assert.ok(prepInterview?.start, 'it proceeds to an event start')
 
+  // Title normalization: the persisted title is concise, not the whole sentence (Codex P2).
+  const prep2 = parseCalendarCreate('Help me prepare for a dentist appointment for 5 pm. Do not contact anyone or book it yet.') as any
+  assert.equal(prep2?.title, 'Dentist appointment', 'preparation title is normalized to the appointment, not the full sentence')
+
   // The date follow-up folds the preserved time back in so date + time resolve together.
   const completed = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, '28 October 2026')
   assert.ok(completed, 'a date reply completes the pending calendar with the preserved 5 pm')
+
+  // A corrected time in the follow-up overrides the stored time (Codex P2).
+  const r6 = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow at 6 pm') as any
+  const r5 = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'tomorrow') as any
+  if (r6?.remindAtIso && r5?.remindAtIso) {
+    assert.notEqual(new Date(r6.remindAtIso).getUTCHours(), new Date(r5.remindAtIso).getUTCHours(), 'a corrected follow-up time (6pm) overrides the stored 5pm')
+  }
 }
 
 console.log('✅ acceptance: recall PNR, flight-status grounded (never shops), voice time preserved, dentist-prep asks for date (no silent today)')

@@ -37,8 +37,10 @@ export function resolvePendingCalendar(ctx: PendingCalendarCtx, answer: string) 
   if (!hasDay && ctx.target === 'tomorrow') dayWord = 'tomorrow'
   else if (!hasDay && ctx.target === 'day_after_tomorrow') dayWord = 'in 2 days'
   // A needsDate follow-up preserved the TIME (timeText) and expects the answer to carry the DATE;
-  // fold the time back in so date + time resolve together.
-  const timePart = ctx.timeText ? ` ${ctx.timeText}` : ''
+  // fold the time back in so date + time resolve together — BUT only when the answer doesn't supply
+  // its own time. A corrected time ("tomorrow at 6 pm") must override the stored 5 pm.
+  const answerHasTime = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i.test(answer)
+  const timePart = (!answerHasTime && ctx.timeText) ? ` ${ctx.timeText}` : ''
   return resolve(`${(ctx.title || 'meeting').trim()} ${dayWord}${timePart}`.trim(), answer)
 }
 

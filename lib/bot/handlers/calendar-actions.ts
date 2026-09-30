@@ -184,6 +184,21 @@ function cleanTitle(text: string) {
     .trim()
 }
 
+// A concise event title for a preparation / needs-date request, so the persisted follow-up doesn't
+// carry the whole sentence (incl. "do not ... book it yet") into the eventual event title.
+function conciseAppointmentTitle(text: string): string {
+  let t = String(text || '')
+  t = t.replace(/[.!?].*$/s, '')                                          // keep only the first sentence
+  t = t.replace(/\b(?:can you|could you|please|help me|i want to|i'?d like to)\s+/gi, '')
+  t = t.replace(/\b(?:prepare|prep|get\s+ready)\s+(?:for\s+)?/gi, '')     // drop the prep framing
+  t = t.replace(/^\s*(?:add|create|schedule|book|set\s+up|put)\s+/i, '')  // drop a leading create verb
+  t = t.replace(/\b(?:for|at)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b.*$/i, '')// drop "for/at 5 pm ..."
+  t = t.replace(/^\s*(?:a|an|my|the)\s+/i, '')
+  t = t.replace(/\s+/g, ' ').trim()
+  const title = t.length >= 3 ? t.slice(0, 80) : 'Appointment'
+  return title.charAt(0).toUpperCase() + title.slice(1)
+}
+
 function parseTime(text: string) {
   const lower = text.toLowerCase()
 
@@ -334,7 +349,7 @@ export function parseCalendarCreate(text: string) {
   // prepare for the interview") is a real create and must proceed. Negated create verbs ("do not
   // book it yet") always route to preparation regardless.
   if (bookingNegated || (isPreparation && !hasCreateVerb)) {
-    return { preparation: true, time: parseTime(text) || null, title: cleanTitle(text) }
+    return { preparation: true, time: parseTime(text) || null, title: conciseAppointmentTitle(text) }
   }
 
   if (!isCreate) return null
@@ -354,7 +369,7 @@ export function parseCalendarCreate(text: string) {
   const absolute = parseAbsoluteDate(text)
   const hasExplicitRelativeDay = /\b(?:today|tonight|tomorrow|day after tomorrow)\b/i.test(lower)
   if (!absolute && !hasExplicitRelativeDay) {
-    return { needsDate: true, time, title: cleanTitle(text) }
+    return { needsDate: true, time, title: conciseAppointmentTitle(text) }
   }
 
   const target = targetFromText(text)
