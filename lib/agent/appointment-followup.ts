@@ -151,10 +151,13 @@ export function capturedSlotHints(originalText: string, timezone: string): { req
   const range = /\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|–|—|to|till|until|through|and|or|,)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)/i.test(t)
   const clockCount = (t.match(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi) || []).length
   const requestedTime = (boundary || range || clockCount > 1) ? '' : (explicitClock(t) || '')
-  return {
-    requestedTime,
-    requestedDate: explicitDate(t, timezone) || '',
-  }
+  // Apply the same non-exact rejection to the DATE: a range ("between 5 and 7 October") or a
+  // choice ("5 or 6 October", "5, 6 October") must not be stored as an exact selected date.
+  const monthAlt = Object.keys(MONTHS).join('|')
+  const dateAlternatives = new RegExp(`\\b\\d{1,2}\\s*(?:-|–|—|to|till|until|through|and|or|,)\\s*\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${monthAlt})`, 'i').test(t)
+  const dateBoundary = boundary && new RegExp(`(?:\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${monthAlt})|\\b(?:${monthAlt})[a-z]*\\s+\\d{1,2})`, 'i').test(t)
+  const requestedDate = (dateAlternatives || dateBoundary) ? '' : (explicitDate(t, timezone) || '')
+  return { requestedTime, requestedDate }
 }
 
 async function latestAppointmentResearch(tg: number) {

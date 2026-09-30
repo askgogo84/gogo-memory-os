@@ -27,6 +27,10 @@ import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
   assert.ok(hasConcreteFlightCode('has EY1 landed?'), 'a real flight code is recognised')
   assert.ok(!hasConcreteFlightCode('Did my flight land on 28 September 2026?'), '"on 28" is not treated as a flight code')
   assert.notEqual(detectIntent('Did my flight land on 28 September 2026?').meta?.flightStatus, true, 'a codeless flight question is not tagged flightStatus')
+  // Real designators that are also English words must NOT be dropped by a blacklist (Codex P1).
+  assert.ok(hasConcreteFlightCode('Has AM5 landed?'), 'Aeroméxico AM5 is kept (not blacklisted as "am")')
+  assert.ok(hasConcreteFlightCode('current status of AS204'), 'Alaska AS204 is kept')
+  assert.ok(hasConcreteFlightCode('has AM5 landed on 28 September 2026?'), 'AM5 still recognised even alongside a date phrase')
 
   const query = buildFlightStatusQuery(prompt)
   assert.match(query, /EY1/i, 'status query carries the flight number')
@@ -178,6 +182,11 @@ import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
   // otherwise a later date-only confirmation books a time the user never chose.
   assert.equal(capturedSlotHints('find dentist appointments after 5pm', tz).requestedTime, '', 'a boundary time ("after 5pm") is not captured as exact')
   assert.equal(capturedSlotHints('book a slot between 5pm and 7pm', tz).requestedTime, '', 'a range ("5pm and 7pm") is not captured as exact')
+  assert.equal(capturedSlotHints('book at 5pm or 6pm', tz).requestedTime, '', 'alternative times ("5pm or 6pm") are not captured as exact')
+  // Ambiguous DATES must be rejected too (Codex P2), while a single explicit date is still kept.
+  assert.equal(capturedSlotHints('book a slot on 5 or 6 October 2026', tz).requestedDate, '', 'alternative dates are not captured as exact')
+  assert.equal(capturedSlotHints('book between 5 and 7 October 2026', tz).requestedDate, '', 'a date range is not captured as exact')
+  assert.equal(capturedSlotHints('book on 28 September 2026 at 5pm', tz).requestedDate, '2026-09-28', 'a single explicit date is still captured')
 
   // Follow-up supplies only the date; the earlier 5pm is preserved -> a slot resolves.
   const withFallback = mergeSlot('confirm the appointment for 28 September 2035', tz, { time: '17:00', date: '' })

@@ -4,11 +4,20 @@ import { extractFlightCodes, extractDateTokens, extractDateTokensYear } from '@/
 // flight-status executor. Kept dependency-light (only watcher-quality, which imports crypto)
 // so detect-intent's hot path does not pull in the web-search / LLM client graph.
 
-// Two-letter tokens that are English words, not airline prefixes — extractFlightCodes()'s
-// generic pattern otherwise reads "on 28 September" as the code "ON28".
-export const NON_AIRLINE_PREFIXES = new Set(['on', 'at', 'in', 'by', 'of', 'to', 'no', 'so', 'as', 'is', 'it', 'am', 'pm', 'be', 'or', 'an', 'do', 'if', 'my', 'me', 'we', 'he'])
-
 const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec'
+
+// Remove date expressions (with any leading preposition) BEFORE extracting flight codes, so
+// "on 28 September" does not yield the bogus code "ON28" — WITHOUT blacklisting real airline
+// designators that happen to be English words (AM Aeroméxico, AS Alaska, AT Royal Air Maroc).
+function stripDateExpressions(text: string): string {
+  let t = String(text || '')
+  t = t.replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' ')                                                                    // ISO (incl. normalised numeric)
+  t = t.replace(new RegExp(`\\b(?:on|at|for|by)\\s+\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${MONTHS})[a-z]*(?:,?\\s+\\d{4})?`, 'gi'), ' ') // "on 28 September 2026"
+  t = t.replace(new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${MONTHS})[a-z]*(?:,?\\s+\\d{4})?`, 'gi'), ' ')      // "28 September 2026"
+  t = t.replace(new RegExp(`\\b(?:${MONTHS})[a-z]*\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?`, 'gi'), ' ')      // "September 28, 2026"
+  t = t.replace(/\b(?:on|at|for|by)\s+\d{1,2}(?:st|nd|rd|th)\b/gi, ' ')                                           // "on 28th"
+  return t
+}
 
 // Normalise numeric dates ("9/28/2026", "28/9/26") to ISO so they survive into the query AND
 // are seen by the date-contradiction check. Order is resolved unambiguously when one part is
@@ -39,13 +48,11 @@ export function extractDateHint(text: string): string {
   return ''
 }
 
-// The genuine flight codes in a request — preposition+number artefacts ("on28") and codes
-// overlapping the date phrase removed. Lowercase, matching extractFlightCodes() output.
+// The genuine flight codes in a request. Date expressions are removed first (contextually), so
+// "on 28 September" yields no code while a real designator that is also a word (AM5, AS204) is
+// preserved. Lowercase, matching extractFlightCodes() output.
 export function requestedFlightCodes(userText: string): string[] {
-  const dateCompact = extractDateHint(userText).toLowerCase().replace(/\s+/g, '')
-  return extractFlightCodes(userText)
-    .filter(c => !NON_AIRLINE_PREFIXES.has(c.replace(/\d+$/, '')))
-    .filter(c => !(dateCompact && dateCompact.includes(c.toLowerCase())))
+  return extractFlightCodes(stripDateExpressions(userText))
 }
 
 // True only when a REAL airline flight code is present (not "on 28" / a date fragment). Used at
