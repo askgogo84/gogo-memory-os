@@ -329,7 +329,11 @@ export function parseCalendarCreate(text: string) {
   // preparation vs a calendar reminder/event vs an actual provider booking, preserving any time.
   const isPreparation = /\b(?:prepare|prep|get\s+ready|help me (?:prepare|get ready)|what\s+should\s+i\s+(?:bring|ask|do))\b/i.test(lower)
   const bookingNegated = /\b(?:do\s*n'?t|do\s+not|dont|does\s*n'?t|doesn'?t|not|never|no)\b[^.!?]{0,40}\b(?:book|add|schedule|create|put|set\s+up)\b/i.test(lower)
-  if (isPreparation || bookingNegated) {
+  // Only override to "preparation" when there is NO affirmative create verb — an explicit create
+  // that merely uses a prep word as the title ("schedule a prep meeting", "add an appointment to
+  // prepare for the interview") is a real create and must proceed. Negated create verbs ("do not
+  // book it yet") always route to preparation regardless.
+  if (bookingNegated || (isPreparation && !hasCreateVerb)) {
     return { preparation: true, time: parseTime(text) || null, title: cleanTitle(text) }
   }
 
@@ -624,6 +628,9 @@ export async function buildCalendarActionReply(
   if (createIntent?.preparation) {
     const t = createIntent.time as { hour: number; minute: number } | null
     const keeps = t ? ` (I'll keep ${formatClock12(t)})` : ''
+    // Persist the preserved time so if the user then chooses "calendar reminder" and supplies only
+    // the date, the follow-up completes with the 5 pm already understood (no re-ask).
+    if (t) await saveFollowupState(telegramId, 'pending_calendar', { title: createIntent.title, timeText: formatClock12(t) })
     return {
       handled: true,
       reply:

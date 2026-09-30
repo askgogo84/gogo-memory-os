@@ -136,6 +136,12 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   const wrongYear = { title: 'EY1 Etihad Flight Status', snippet: 'EY1 landed at JFK on 28 September 2025 at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20250928' }
   assert.ok(matchesRequestedOccurrence(noYear, prompt), 'a yearless same-day result is accepted (not over-restricted)')
   assert.ok(!matchesRequestedOccurrence(wrongYear, prompt), 'an explicit different-year (2025) result is rejected')
+  // Wrong year encoded in the URL path must also be rejected; the right year in the URL accepted.
+  const wrongYearUrl = { title: 'EY1 Etihad Flight Status', snippet: 'EY1 landed at JFK on 28 September at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20250928' }
+  const rightYearUrl = { title: 'EY1 Etihad Flight Status', snippet: 'EY1 landed at JFK on 28 September at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20260928' }
+  assert.ok(!matchesRequestedOccurrence(wrongYearUrl, prompt), 'wrong year in the URL path is rejected')
+  assert.equal(classifyOccurrence(wrongYearUrl, prompt).reason, 'wrong_year', 'URL wrong-year rejection is traceable')
+  assert.ok(matchesRequestedOccurrence(rightYearUrl, prompt), 'correct year in the URL path is accepted')
   assert.equal(classifyOccurrence(wrongYear, prompt).reason, 'wrong_year', 'wrong-year rejection is traceable')
   assert.equal(classifyOccurrence(wrongDate, prompt).reason, 'date_contradiction', 'wrong-day rejection is traceable')
   assert.equal(classifyOccurrence(datelessEy1, prompt).reason, 'dateless_for_dated_request', 'dateless rejection is traceable')
@@ -314,6 +320,14 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   assert.ok(!withDate?.needsDate && !withDate?.preparation, 'a dated create proceeds')
   assert.ok(withDate?.start, 'a dated create produces an event start')
   assert.equal(withDate?.start?.day, 28, 'the explicit date (28) is used, not today')
+
+  // An AFFIRMATIVE create that merely uses a prep word as the title must still proceed (Codex P2).
+  const prepMeeting = parseCalendarCreate('schedule a prep meeting tomorrow at 5 pm') as any
+  assert.ok(!prepMeeting?.preparation, 'an affirmative create using a prep word is NOT suppressed')
+  assert.ok(prepMeeting?.start, 'the affirmative create proceeds to an event start')
+  const prepInterview = parseCalendarCreate('add an appointment to prepare for the interview tomorrow at 4 pm') as any
+  assert.ok(!prepInterview?.preparation, 'an affirmative "add appointment to prepare" create is NOT suppressed')
+  assert.ok(prepInterview?.start, 'it proceeds to an event start')
 
   // The date follow-up folds the preserved time back in so date + time resolve together.
   const completed = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, '28 October 2026')

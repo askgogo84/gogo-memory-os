@@ -69,6 +69,7 @@ export type OccurrenceReason = 'ok' | 'flight_number_mismatch' | 'dateless_for_d
 //    restricting historical lookups that legitimately lack a year token.
 export function classifyOccurrence(r: WebSearchResult, userText: string, refYmd = localTodayYmd()): { usable: boolean; reason: OccurrenceReason } {
   const norm = normalizeRequest(userText, refYmd)
+  const url = String(r.url || '')
   const hay = normalizeNumericDates(`${r.title || ''} ${r.snippet || ''}`)
   const wanted = requestedFlightCodes(norm)
   if (wanted.length) {
@@ -79,9 +80,11 @@ export function classifyOccurrence(r: WebSearchResult, userText: string, refYmd 
   const todayTokens = extractDateTokens(refYmd)
   const nonTodayRequested = reqDates.some(d => !todayTokens.includes(d))
   if (nonTodayRequested && !extractDateTokens(hay).length) return { usable: false, reason: 'dateless_for_dated_request' }
-  // Explicit wrong-year (both sides carry a year and they differ) is a distinct, high-confidence
-  // rejection; a yearless same-day result falls through to the general contradiction check.
-  const reqYears = requestedYears(norm), gotYears = new Set(extractDateTokensYear(hay).map(t => t.slice(-4)))
+  // Explicit wrong-year is a distinct, high-confidence rejection. Years come from the snippet AND
+  // the URL (trackers encode the date in the path, e.g. /history/20250928), so a "28 September"
+  // snippet whose URL says 2025 is caught; a yearless same-day result falls through to below.
+  const reqYears = requestedYears(norm)
+  const gotYears = new Set([...extractDateTokensYear(hay).map(t => t.slice(-4)), ...(url.match(/20\d{2}/g) || [])])
   if (reqYears.length && gotYears.size && !reqYears.some(y => gotYears.has(y))) return { usable: false, reason: 'wrong_year' }
   if (datesContradict(norm, hay)) return { usable: false, reason: 'date_contradiction' }
   return { usable: true, reason: 'ok' }
