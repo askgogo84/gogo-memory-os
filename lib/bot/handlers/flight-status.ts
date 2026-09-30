@@ -44,16 +44,18 @@ export function answerLeaksFare(text: string): boolean {
 const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec'
 
 // Normalise numeric dates ("9/28/2026", "28/9/26") to ISO so they survive into the query AND
-// are seen by the date-contradiction check — otherwise a numeric-dated request has no date
-// token and a current/dateless recurring flight would wrongly validate.
-export function normalizeNumericDates(text: string): string {
+// are seen by the date-contradiction check. Order is resolved unambiguously when one part is
+// >12; for genuinely ambiguous values it follows the app's India-default day-first convention
+// (dayFirst) rather than silently assuming US month-first, which would change the occurrence.
+export function normalizeNumericDates(text: string, dayFirst = true): string {
   return String(text || '').replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g, (m, a, b, y) => {
     let A = Number(a), B = Number(b), Y = Number(y)
     if (Y < 100) Y += 2000
     let month: number, day: number
-    if (A > 12 && B <= 12) { day = A; month = B }        // D/M/Y
-    else if (B > 12 && A <= 12) { month = A; day = B }   // M/D/Y
-    else { month = A; day = B }                          // ambiguous -> assume M/D/Y
+    if (A > 12 && B <= 12) { day = A; month = B }        // D/M/Y (first part can't be a month)
+    else if (B > 12 && A <= 12) { month = A; day = B }   // M/D/Y (second part can't be a month)
+    else if (dayFirst) { day = A; month = B }            // ambiguous -> India day-first
+    else { month = A; day = B }
     if (month < 1 || month > 12 || day < 1 || day > 31) return m
     return `${Y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
   })
@@ -131,7 +133,9 @@ const STATE_EVIDENCE: Array<[RegExp, RegExp]> = [
   [/\bdelayed\b/i, /\bdelay(?:ed)?\b/i],
   [/\bdiverted\b/i, /\bdivert(?:ed)?\b/i],
   [/\b(departed|took off)\b/i, /\b(departed|took off|en ?route|in ?air|airborne)\b/i],
-  [/\bon[- ]time\b/i, /\b(on[- ]time|scheduled|estimated|landed|arrived|departed|gate)\b/i],
+  // "on time" needs an ACTUAL punctuality signal — a mere published schedule is not evidence
+  // the flight is running on time.
+  [/\bon[- ]time\b/i, /\b(on[- ]time|no delay|as scheduled|arrived on schedule|actual)\b/i],
 ]
 function statusUngrounded(reply: string, context: string): boolean {
   return STATE_EVIDENCE.some(([inReply, inContext]) => inReply.test(reply) && !inContext.test(context))

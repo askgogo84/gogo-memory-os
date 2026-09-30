@@ -202,9 +202,12 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
     // when the user then sends the time. Merge, never clobber a known value.
     const nextTime = resolved.time || selection.requestedTime || ''
     const nextDate = resolved.past ? '' : (resolved.date || selection.requestedDate || '')
-    if (nextTime !== (selection.requestedTime || '') || nextDate !== (selection.requestedDate || '')) {
+    // Mark the run as awaiting a slot continuation — we only just asked for the missing piece,
+    // so a later bare date/time reply may be treated as the answer. Without this marker, a bare
+    // date/time right after mere preparation could auto-stage a booking the user never confirmed.
+    if (nextTime !== (selection.requestedTime || '') || nextDate !== (selection.requestedDate || '') || selection.awaitingSlot !== true) {
       await supabaseAdmin.from('agent_runs').update({
-        metadata_json: { ...meta, appointment_selection: { ...selection, requestedTime: nextTime, requestedDate: nextDate } },
+        metadata_json: { ...meta, appointment_selection: { ...selection, requestedTime: nextTime, requestedDate: nextDate, awaitingSlot: true } },
         updated_at: new Date().toISOString(),
       }).eq('id', runId).eq('telegram_id', String(tg))
     }
@@ -266,6 +269,7 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
       scheduled_date: slot.date,
       scheduled_time: slot.time,
       timezone: slot.timezone,
+      awaitingSlot: false,
     },
   }
 
@@ -373,10 +377,11 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
   if (isSlotOnlyReply(params.text)) {
     const prepared = await latestPreparedAppointment(tg)
     const sel: any = prepared?.metadata_json?.appointment_selection || {}
-    // Only continue a run that is genuinely still AWAITING a slot: prepared, recent, and not
-    // already scheduled. A completed/executed booking keeps appointment_prepared + scheduled_at,
-    // so without this a bare date/time could reopen it and stage a duplicate approval.
-    if (prepared?.metadata_json?.appointment_prepared && !sel.scheduled_at) {
+    // Only continue a run that is genuinely AWAITING a slot: it must have explicitly prompted for
+    // one (awaitingSlot), be prepared and recent, and not already be scheduled. This stops a bare
+    // date/time sent right after mere preparation (no prompt yet) from staging a booking, and
+    // stops reopening a completed/executed run (which keeps scheduled_at) into a duplicate approval.
+    if (prepared?.metadata_json?.appointment_prepared && sel.awaitingSlot === true && !sel.scheduled_at) {
       const done = Date.parse(prepared.completed_at || prepared.started_at || '')
       if (!Number.isFinite(done) || Date.now() - done <= 24 * 3600_000) {
         return createFinalApproval({ actor: params.actor, prepared, text: params.text })

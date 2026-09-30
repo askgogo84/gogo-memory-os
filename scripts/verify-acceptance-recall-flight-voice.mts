@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { detectIntent } from '../lib/bot/detect-intent'
 import { buildTravelPresenceFacts } from '../lib/agent/context-brain'
-import { answerLiveFlightStatus, buildFlightStatusQuery, isFareShoppingResult, answerLeaksFare, matchesRequestedOccurrence } from '../lib/bot/handlers/flight-status'
+import { answerLiveFlightStatus, buildFlightStatusQuery, isFareShoppingResult, answerLeaksFare, matchesRequestedOccurrence, normalizeNumericDates } from '../lib/bot/handlers/flight-status'
 import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '../lib/agent/appointment-followup'
 
 // Post-deployment acceptance failures observed in the Sep-30 11:53–11:54 IST WhatsApp turns.
@@ -113,6 +113,17 @@ import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply } from '..
   const datelessEy1 = { title: 'EY1 Etihad Flight Status - FlightAware', snippet: 'EY1 Abu Dhabi to New York. Track live.', url: 'https://flightaware.com/live/flight/ETD1' }
   assert.ok(!matchesRequestedOccurrence(datelessEy1, prompt), 'a dateless result does not satisfy an explicitly dated request')
   assert.ok(matchesRequestedOccurrence(datelessEy1, 'is EY1 on time today?'), 'a live/today query still accepts a dateless tracker page')
+
+  // "on time" needs an ACTUAL punctuality signal — a schedule-only context must not ground it.
+  const onTimeUngrounded = await answerLiveFlightStatus(prompt, 'Gogo', {
+    search: async () => scheduleOnly,
+    ask: async () => 'EY1 is on time.',
+  })
+  assert.match(onTimeUngrounded, /could(?:n'?t| not) verify/i, 'an on-time claim with only a published schedule is suppressed')
+
+  // Ambiguous numeric dates follow India day-first; unambiguous ones (part >12) stay correct.
+  assert.match(normalizeNumericDates('Did EY1 land on 9/10/2026?'), /2026-10-09/, 'ambiguous 9/10 -> 9 October (day-first)')
+  assert.match(normalizeNumericDates('Did EY1 land on 9/28/2026?'), /2026-09-28/, 'unambiguous 9/28 -> 28 September')
 }
 
 // ---------------------------------------------------------------------------
