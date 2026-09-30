@@ -190,7 +190,7 @@ function conciseAppointmentTitle(text: string): string {
   let t = String(text || '')
   // Drop a NEGATED / secondary instruction clause ("... but do not book it yet") — but NOT the
   // affirmative "don't forget to …" idiom — without cutting at an abbreviation period like "Dr.".
-  t = t.replace(/\b(?:but\s+)?(?:please\s+)?(?:do\s*n'?t|do\s+not|dont|does\s*n'?t|doesn'?t|don'?t|never)\b(?!\s+forget)[^.!?]*/gi, ' ')
+  t = t.replace(/\b(?:but\s+)?(?:please\s+)?(?:do\s*n'?t|do\s+not|dont|does\s*n'?t|doesn'?t|don'?t|never)\b(?!\s+forget)[\s\S]*/gi, ' ')
   t = t.replace(/\b(?:can you|could you|please|help me|i want to|i'?d like to|don'?t forget to|do not forget to|remember to)\s+/gi, '')
   t = t.replace(/\b(?:prepare|prep|get\s+ready)\s+(?:for\s+)?/gi, '')       // drop the prep framing
   t = t.replace(/^\s*(?:add|create|schedule|book|set\s+up|put)\s+/i, '')    // drop a leading create verb
@@ -352,7 +352,10 @@ export function parseCalendarCreate(text: string) {
   // NEAREST create verb after the negator, within one clause.
   // "don't forget to schedule …" is an AFFIRMATIVE idiom, not a negation — the (?!\s+forget)
   // lookahead keeps it out of the negated-create match.
-  const NEG_CREATE_SRC = "\\b(?:do\\s*n'?t|do\\s+not|dont|does\\s*n'?t|doesn'?t|not|never|no)\\b(?!\\s+forget)[^.!?]{0,40}?\\b(?:book|add|schedule|create|put|set\\s+up)\\b"
+  // Span uses [\s\S] (not [^.!?]) so an abbreviation period ("Dr.") inside the negated clause does
+  // not end the match before the create verb — "do not contact Dr. Smith or book it yet" stays
+  // negated. Non-greedy + a 60-char bound keeps it within the clause.
+  const NEG_CREATE_SRC = "\\b(?:do\\s*n'?t|do\\s+not|dont|does\\s*n'?t|doesn'?t|not|never|no)\\b(?!\\s+forget)[\\s\\S]{0,60}?\\b(?:book|add|schedule|create|put|set\\s+up)\\b"
   const bookingNegated = new RegExp(NEG_CREATE_SRC, 'i').test(lower)
   // An AFFIRMATIVE create is a create verb that ISN'T part of a negation. Strip the negated spans
   // first, then look for a remaining create verb — so "Schedule … but do not add a reminder" is

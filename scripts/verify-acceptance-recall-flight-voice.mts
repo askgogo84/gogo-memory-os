@@ -397,6 +397,19 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   // Conflicting URL year is authoritative: snippet 2026 but URL /history/20250928 -> wrong_year.
   const conflictYear = { title: 'EY1 Etihad', snippet: 'EY1 landed at JFK on 28 September 2026 at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20250928' }
   assert.equal(classifyOccurrence(conflictYear, 'Did EY1 land on 28 September 2026?').reason, 'wrong_year', 'a conflicting date-shaped URL year is rejected despite matching snippet text')
+
+  // Full URL date validated (not just year): /history/20261002 is a different day in 2026 -> reject.
+  const conflictDay = { title: 'EY1 Etihad', snippet: 'EY1 landed at JFK on 28 September 2026 at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20261002' }
+  assert.equal(classifyOccurrence(conflictDay, 'Did EY1 land on 28 September 2026?').reason, 'date_contradiction', 'a same-year but different-day URL date is rejected')
+
+  // Negation must survive an abbreviation period ("Dr.") — still classified as preparation.
+  const negAcrossAbbrev = parseCalendarCreate('Help me prepare for a dentist appointment tomorrow at 5 pm. Do not contact Dr. Smith or book it yet') as any
+  assert.equal(negAcrossAbbrev?.preparation, true, '"do not ... Dr. ... book" stays negated across the abbreviation period')
+  assert.ok(!negAcrossAbbrev?.start, 'no event/approval is produced')
+
+  // Ordinal-only date reply completes the pending calendar (reminder parser resolves "the 28th").
+  const ordinal = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'the 28th') as any
+  assert.ok(ordinal?.remindAtIso, 'an ordinal-only date reply ("the 28th") resolves the pending calendar')
 }
 
 console.log('✅ acceptance: recall PNR survives budget, flight-status grounded (never shops), voice/calendar time preserved, prep never auto-creates')

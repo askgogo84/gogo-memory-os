@@ -46,6 +46,7 @@ function answerCarriesDate(answer: string): boolean {
     || /\b\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4}\b/.test(answer)
     || new RegExp(`\\b\\d{1,2}\\s+(?:${MONTH_NAME_RE})\\b`, 'i').test(answer)
     || new RegExp(`\\b(?:${MONTH_NAME_RE})\\s+\\d{1,2}\\b`, 'i').test(answer)
+    || /\b\d{1,2}(?:st|nd|rd|th)\b/i.test(answer)   // bare/ordinal day "the 28th" (reminder parser resolves it)
 }
 
 export function resolvePendingCalendar(ctx: PendingCalendarCtx, answerRaw: string) {
