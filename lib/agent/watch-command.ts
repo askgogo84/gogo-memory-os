@@ -272,51 +272,203 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
   return {runId:`watcher-stop-${selected.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:`Stopped ${selected.title}.`,handledBy:'watcher-stop'}
 }
 
+// A storage/capacity variant is a real slot ONLY for products that actually ship in
+// multiple capacities (phones, tablets, laptops, drives, consoles…). Headphones,
+// watches, shoes, etc. have none — asking about storage there invents an attribute
+// (live DEFECT 1, 30 Sep 2026). Evidence = the product name already cites a capacity, or
+// names a category that is sold in capacity variants. With no evidence we never ask, and
+// never carry a storage token into the watcher query.
+const STORAGE_VARIANT_PRODUCT=/\b(iphone|ipad|macbook|imac|mac\s?mini|galaxy\s+(?:s\d|z\s?(?:fold|flip)|tab|book|note|a\d)|pixel|oneplus|redmi|xiaomi|realme|vivo|oppo|nothing\s+phone|tablet|laptop|notebook|ultrabook|chromebook|ssd|hdd|hard\s+dis[kc]|pen\s*drive|thumb\s+drive|usb\s+(?:drive|stick|flash)|flash\s+drive|memory\s+card|micro\s?sd|sd\s+card|kindle|surface|steam\s+deck|playstation|ps5|ps4|xbox|nintendo\s+switch|nvme|smartphone|\bphone\b)\b/i
+
+function storageTokenIn(text:string):string|null{
+  const gb=String(text||'').match(/\b(16|32|64|128|256|512)\s*GB\b/i)?.[1]
+  if(gb)return `${gb}GB`
+  const tb=String(text||'').match(/\b(\d+)\s*TB\b/i)?.[1]
+  if(tb)return `${tb}TB`
+  return null
+}
+
+function productHasStorageEvidence(product:string){
+  return Boolean(storageTokenIn(product))||STORAGE_VARIANT_PRODUCT.test(product)
+}
+
+// Offers basis from free text. Exclusion MUST win even though the phrase names
+// "bank"/"card"/"offers": the live DEFECT 3 was that "exclude bank and card offers" was
+// stored (and confirmed back) as INCLUDED. "listed selling price only" is exclusion.
+// Returns null when the text does not decide the basis.
+export function parseOffersBasis(text:string):'included'|'excluded'|null{
+  const raw=clean(text,600).toLowerCase()
+  if(/\blisted?\s+(?:selling\s+)?price\s+only\b/.test(raw))return 'excluded'
+  if(/\bselling\s+price\s+only\b/.test(raw))return 'excluded'
+  if(/\b(?:exclude|excluding|without|no|not|don'?t|do\s+not|ignore|ignoring|skip)\b[^.!?]*\boffers?\b/.test(raw))return 'excluded'
+  if(/\boffers?\b[^.!?]*\b(?:excluded|not\s+included|do\s*n'?t\s+count|should\s*n'?t\s+count)\b/.test(raw))return 'excluded'
+  if(/\b(?:include|including|count|with|apply|factor\s+in)\b[^.!?]*\boffers?\b/.test(raw))return 'included'
+  if(/\boffers?\b[^.!?]*\b(?:included|should\s+count|do\s+count)\b/.test(raw))return 'included'
+  return null
+}
+
+// The user can declare the storage slot inapplicable ("no storage variant", "it is
+// headphones", "N/A"). Such a slot is recorded N/A and never re-asked (live DEFECT 2).
+export function declaresStorageNotApplicable(text:string){
+  const raw=clean(text,600).toLowerCase()
+  if(/\bno\s+storage\b/.test(raw))return true
+  if(/\bno\s+(?:storage\s+)?variant\b/.test(raw))return true
+  if(/\bstorage\b[^.!?]*\b(?:n\/?a|not\s+applicable|does\s*n'?t\s+apply|doesn'?t\s+exist|not\s+relevant|no\s+such|irrelevant)\b/.test(raw))return true
+  if(/\b(?:it\s+is|it'?s|they\s+are|they'?re|these\s+are)\s+(?:a\s+pair\s+of\s+)?(?:headphones?|earphones?|earbuds?|headset)\b/.test(raw))return true
+  return false
+}
+
 export function parsePriceWatchCommand(text:string){
   const raw=clean(text,1200)
   const m=raw.match(/^(?:please\s+)?(?:watch|monitor|track)\s+(?:the\s+)?price\s+of\s+(.+?)\s+(?:and\s+)?(?:tell|notify|alert|let)\s+me\s+(?:know\s+)?if\s+(?:it|the\s+price)\s+(?:drops?|falls?|goes?)\s+below\s+(.+)$/i)
   if(!m?.[1]||!m?.[2])return null
   const product=clean(m[1],160)
   const threshold=clean(m[2],80)
-  const storage=product.match(/\b(128|256|512)\s*GB\b/i)?.[1]
-  const priceBasis=/\b(?:card|bank|offer|effective)\b/i.test(raw)?'offers':'unspecified'
-  return {product,threshold,storage:storage?`${storage}GB`:null,priceBasis}
+  return {
+    product,
+    threshold,
+    storage:storageTokenIn(product),
+    storageEvidenced:productHasStorageEvidence(product),
+    offers:(parseOffersBasis(raw)||'unspecified') as 'included'|'excluded'|'unspecified',
+  }
 }
 
-type PendingPriceWatch={product:string;threshold:string;storage:string|null;priceBasis:'offers'|'list'|'unspecified';created_at:string}
+type PendingPriceWatch={
+  product:string
+  threshold:string
+  storage:string|null
+  storageNA:boolean
+  storageEvidenced:boolean
+  offers:'included'|'excluded'|'unspecified'
+  asks:number
+  created_at:string
+}
 
-export async function tryRunPriceWatchClarification(params:{actor:AgentActor;surface:AgentSurface;text:string}){
-  const parsed=parsePriceWatchCommand(params.text)
-  if(parsed){
-    const missing:string[]=[]
-    if(!parsed.storage)missing.push('storage')
-    if(parsed.priceBasis==='unspecified')missing.push('price basis')
-    if(missing.length){
-      await clearFollowupState(params.actor.legacyTelegramId,'price_watch_clarification')
-      await saveFollowupState(params.actor.legacyTelegramId,'price_watch_clarification',{...parsed,created_at:new Date().toISOString()})
-      return {runId:'price-watch-clarify',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
-        text:`Before I start the persistent watch: which storage should I track (for example 256GB or 512GB), and should the ${parsed.threshold} threshold include bank/card offers or use listed selling price only?`,handledBy:'price-watch-clarification'}
-    }
+function openPriceSlots(p:PendingPriceWatch){
+  // A storage slot is only open when it is evidenced for THIS product, still unanswered,
+  // and the user has not declared it inapplicable. An unevidenced product never opens the
+  // storage slot, so we never invent "512GB" for headphones.
+  const storage=p.storageEvidenced&&!p.storage&&!p.storageNA
+  const offers=p.offers==='unspecified'
+  return {storage,offers,any:storage||offers}
+}
+
+function priceClarifyQuestion(p:PendingPriceWatch,open:{storage:boolean;offers:boolean}){
+  const parts:string[]=[]
+  if(open.storage)parts.push('which storage should I track (for example 256GB or 512GB)')
+  if(open.offers)parts.push(`should the ${p.threshold} threshold include bank/card offers or use the listed selling price only`)
+  return {
+    runId:'price-watch-clarify',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+    text:`Before I start the persistent watch: ${parts.join(', and ')}?`,handledBy:'price-watch-clarification',
   }
-  const state=await getLatestFollowupState(params.actor.legacyTelegramId,'price_watch_clarification')
-  if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload)return null
-  const raw=clean(params.text,600)
-  const storage=raw.match(/\b(128|256|512)\s*GB\b/i)?.[1]
-  const offers=/\b(?:include|with|count|card|bank)\b.*\b(?:offer|offers)\b|\bcard\s+offer/i.test(raw)
-  const list=/\b(?:list|listed|selling)\s+price\b/i.test(raw)
-  if(!storage&&!offers&&!list)return null
-  const p=state.payload as PendingPriceWatch
-  const resolvedStorage=storage?`${storage}GB`:p.storage
-  const resolvedBasis=offers?'offers':list?'list':p.priceBasis
-  if(!resolvedStorage||resolvedBasis==='unspecified'){
-    return {runId:'price-watch-clarify',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:'I still need both the storage size and whether card/bank offers should count toward the threshold.',handledBy:'price-watch-clarification'}
-  }
-  await clearFollowupState(params.actor.legacyTelegramId,'price_watch_clarification')
-  const basis=resolvedBasis==='offers'?'including bank/card offers':'listed selling price only'
-  const synthetic=`watch the web for ${p.product} ${resolvedStorage} price India and tell me if you find price below ${p.threshold} ${basis}`
+}
+
+async function persistPriceClarification(tg:number,p:PendingPriceWatch){
+  await clearFollowupState(tg,'price_watch_clarification')
+  await saveFollowupState(tg,'price_watch_clarification',p)
+}
+
+// Render the confirmation from the PERSISTED watcher record and verify it agrees with the
+// user's explicit constraints (live DEFECT 3, FIX 7/8). The watch query itself carries the
+// threshold and the offers basis (phrased so parseWebWatchCommand cannot strip them), so
+// the persisted record — not a drifting template — is the single source of truth. A
+// mismatch is a FAILED creation, never a formatting problem: we do not announce success.
+async function finalizePriceWatch(params:{actor:AgentActor;surface:AgentSurface},p:PendingPriceWatch){
+  const offers:'included'|'excluded'=p.offers==='included'?'included':'excluded'
+  const storageNA=p.storageNA||!p.storage
+  const storageToken=(!storageNA&&p.storage)?` ${p.storage}`:''
+  const basisPhrase=offers==='included'?'including bank/card offers':'excluding bank/card offers'
+  const synthetic=`watch the web for ${p.product}${storageToken} price in India below ${p.threshold} ${basisPhrase}`
   const created=await tryCreateWebWatchFromCommand({actor:params.actor,surface:params.surface,text:synthetic})
   if(!created)return null
-  return {...created,text:`Persistent watch created: ${p.product}, ${resolvedStorage}, India, threshold ${p.threshold}, ${basis}. ${created.text}`,handledBy:'price-watch-clarification'}
+  // Permission / plan / limit gates return a paused result — surface it, never claim success.
+  if(created.status!=='completed'||/blocked|limit/i.test(String(created.runId))){
+    return {...created,handledBy:'price-watch-clarification'}
+  }
+  const tg=String(params.actor.legacyTelegramId)
+  const {data:persisted,error}=await supabaseAdmin.from('agent_watchers')
+    .select('id,condition_json,active')
+    .eq('telegram_id',tg).eq('type','web_search').eq('active',true)
+    .order('created_at',{ascending:false}).limit(1).maybeSingle()
+  if(error||!persisted?.id)throw new Error('price_watch_readback_failed')
+  const persistedQuery=String((persisted.condition_json as any)?.query||'')
+  const persistedOffers:'included'|'excluded'|'unknown'=
+    persistedQuery.includes('including bank/card offers')?'included'
+    :persistedQuery.includes('excluding bank/card offers')?'excluded':'unknown'
+  const persistedStorage=storageTokenIn(persistedQuery)
+  if(persistedOffers!==offers){
+    // The saved watch does not match the user's explicit constraint. Do not announce
+    // success; deactivate the mis-saved watch so no wrong background watch runs.
+    await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
+      .eq('id',persisted.id).eq('telegram_id',tg)
+    return {
+      runId:'price-watch-verify-failed',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+      text:'I could not confirm the watch was saved with your exact settings (the bank/card offers rule did not match what you asked), so I have not started it. Please try again.',
+      handledBy:'price-watch-clarification',
+    }
+  }
+  const basisText=persistedOffers==='included'?'including bank/card offers':'excluding bank/card offers'
+  const storageText=persistedStorage?persistedStorage:'no storage variant (N/A)'
+  return {
+    ...created,
+    text:`Persistent watch created: ${p.product}, ${storageText}, India, threshold ${p.threshold}, ${basisText}. ${created.text}`,
+    handledBy:'price-watch-clarification',
+  }
+}
+
+export async function tryRunPriceWatchClarification(params:{actor:AgentActor;surface:AgentSurface;text:string}){
+  const tg=params.actor.legacyTelegramId
+  const parsed=parsePriceWatchCommand(params.text)
+
+  // A fresh, explicit price command starts (or restarts) the clarification.
+  if(parsed){
+    const p:PendingPriceWatch={
+      product:parsed.product,threshold:parsed.threshold,
+      storage:parsed.storage,storageNA:false,storageEvidenced:parsed.storageEvidenced,
+      offers:parsed.offers,asks:0,created_at:new Date().toISOString(),
+    }
+    const open=openPriceSlots(p)
+    if(open.any){
+      p.asks=1
+      await persistPriceClarification(tg,p)
+      return priceClarifyQuestion(p,open)
+    }
+    // Nothing to clarify — proceed with what the command already specified.
+    return await finalizePriceWatch(params,p)
+  }
+
+  // Otherwise, treat this as a possible reply to a pending clarification.
+  const state=await getLatestFollowupState(tg,'price_watch_clarification')
+  if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload)return null
+  const p={...(state.payload as PendingPriceWatch)}
+  if(typeof p.asks!=='number')p.asks=1
+
+  const replyStorage=storageTokenIn(params.text)
+  const replyOffers=parseOffersBasis(params.text)
+  const replyNA=declaresStorageNotApplicable(params.text)
+  // If the reply advances no open slot it is unrelated to this clarification — let normal
+  // routing handle it rather than hijacking the message.
+  if(!replyStorage&&!replyOffers&&!replyNA)return null
+
+  if(replyStorage){p.storage=replyStorage;p.storageNA=false}
+  if(replyNA){p.storageNA=true;p.storage=null}
+  if(replyOffers)p.offers=replyOffers
+
+  const open=openPriceSlots(p)
+  // Cap clarification: ask a still-open slot at most one further time, then proceed with
+  // what is known. This retains an already-answered slot and re-asks only the remaining
+  // one (FIX 3), and can never deadlock a user who corrected a false premise (FIX 2/5).
+  if(open.any&&p.asks<2){
+    p.asks+=1
+    await persistPriceClarification(tg,p)
+    return priceClarifyQuestion(p,open)
+  }
+  await clearFollowupState(tg,'price_watch_clarification')
+  // Proceed with what is known. Never invent a storage value; default an unresolved offers
+  // basis to EXCLUDED (the literal selling price), the safe reading of an ambiguous reply.
+  if(p.offers==='unspecified')p.offers='excluded'
+  if(!p.storage)p.storageNA=true
+  return await finalizePriceWatch(params,p)
 }
 
 export function parseWebWatchCommand(text: string) {
