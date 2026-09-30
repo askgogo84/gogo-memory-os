@@ -88,17 +88,32 @@ const validSignature = computeTwilioSignature(AUTH_TOKEN, URL_SIGNED, PARAMS)
   console.log('  ✓ tampered body, spoofed sender, garbage signature, wrong URL and wrong token are all invalid')
 }
 
-// ── 4. Unverifiable is distinct from invalid ──────────────────────────────────
+// ── 4. Unverifiable is distinct from invalid; the REASON decides rejection ─────
 {
-  assert.equal(evaluateTwilioSignature({ signature: validSignature, candidateUrls: [URL_SIGNED], params: PARAMS, authToken: '' }).outcome, 'unverifiable')
-  assert.equal(evaluateTwilioSignature({ signature: '', candidateUrls: [URL_SIGNED], params: PARAMS, authToken: AUTH_TOKEN }).outcome, 'unverifiable')
-  assert.equal(evaluateTwilioSignature({ signature: validSignature, candidateUrls: [], params: PARAMS, authToken: AUTH_TOKEN }).outcome, 'unverifiable')
-  // Misconfiguration must never be treated as forgery, even under enforcement.
-  for (const reason of ['', null]) {
-    const v = evaluateTwilioSignature({ signature: reason as any, candidateUrls: [URL_SIGNED], params: PARAMS, authToken: AUTH_TOKEN })
-    assert.equal(shouldRejectRequest(v, 'enforce'), false, 'enforcement must not reject an unverifiable request')
+  // All three are 'unverifiable' — distinct from a forgery's 'invalid'.
+  const noToken = evaluateTwilioSignature({ signature: validSignature, candidateUrls: [URL_SIGNED], params: PARAMS, authToken: '' })
+  const noHeader = evaluateTwilioSignature({ signature: '', candidateUrls: [URL_SIGNED], params: PARAMS, authToken: AUTH_TOKEN })
+  const noUrl = evaluateTwilioSignature({ signature: validSignature, candidateUrls: [], params: PARAMS, authToken: AUTH_TOKEN })
+  assert.equal(noToken.outcome, 'unverifiable')
+  assert.equal(noHeader.outcome, 'unverifiable')
+  assert.equal(noUrl.outcome, 'unverifiable')
+  assert.equal(noHeader.reason, 'no_signature_header')
+  assert.equal(noToken.reason, 'no_auth_token_configured')
+  assert.equal(noUrl.reason, 'no_candidate_url')
+
+  // An ABSENT signature header is attacker-controlled (the easiest forgery), so it
+  // must be rejected under enforcement — exactly like an 'invalid' signature.
+  for (const absent of ['', null, undefined]) {
+    const v = evaluateTwilioSignature({ signature: absent as any, candidateUrls: [URL_SIGNED], params: PARAMS, authToken: AUTH_TOKEN })
+    assert.equal(v.reason, 'no_signature_header')
+    assert.equal(shouldRejectRequest(v, 'enforce'), true, 'enforcement must reject a request with no signature header')
   }
-  console.log('  ✓ missing token / header / URL is unverifiable, and is never rejected even under enforcement')
+
+  // OUR OWN misconfiguration (no auth token, no candidate URL) must NEVER reject —
+  // otherwise a config slip would 403 genuine Twilio traffic.
+  assert.equal(shouldRejectRequest(noToken, 'enforce'), false, 'enforcement must not reject on missing auth token (our misconfig)')
+  assert.equal(shouldRejectRequest(noUrl, 'enforce'), false, 'enforcement must not reject on missing candidate URL (our misconfig)')
+  console.log('  ✓ absent header rejects under enforcement; missing token / URL (our misconfig) never rejects')
 }
 
 // ── 5. THE SAFETY DEFAULT: unset flag can never reject ─────────────────────────
@@ -141,7 +156,29 @@ const validSignature = computeTwilioSignature(AUTH_TOKEN, URL_SIGNED, PARAMS)
   })
   assert.equal(good.verdict.outcome, 'valid')
   assert.equal(good.reject, false)
-  console.log('  ✓ route helper: forged passes in log-only, is rejected under enforcement, genuine always passes')
+
+  // THE GAP THIS FIX CLOSES: a request that simply OMITS the signature header must
+  // be rejected under enforcement, not waved through. Headers carry no x-twilio-signature.
+  const noHeaderHeaders = headers({ 'x-forwarded-host': 'app.askgogo.in', 'x-forwarded-proto': 'https' })
+  const unsignedEnforced = auditInboundTwilioSignature({
+    ...req,
+    headers: noHeaderHeaders,
+    env: { TWILIO_AUTH_TOKEN: AUTH_TOKEN, WEBHOOK_SIGNATURE_ENFORCE: '1' },
+  })
+  assert.equal(unsignedEnforced.verdict.reason, 'no_signature_header')
+  assert.equal(unsignedEnforced.reject, true, 'enforce + no signature header must be rejected')
+
+  // The same unsigned request in log-only mode must still pass — the flag is the
+  // only thing that can ever cause a rejection.
+  const unsignedLogOnly = auditInboundTwilioSignature({ ...req, headers: noHeaderHeaders, env: { TWILIO_AUTH_TOKEN: AUTH_TOKEN } })
+  assert.equal(unsignedLogOnly.mode, 'log-only')
+  assert.equal(unsignedLogOnly.reject, false, 'log-only + no signature header must NOT be rejected')
+
+  // Enforce + our own misconfiguration (no auth token) must NOT reject genuine traffic.
+  const noTokenEnforced = auditInboundTwilioSignature({ ...req, env: { WEBHOOK_SIGNATURE_ENFORCE: '1' } })
+  assert.equal(noTokenEnforced.verdict.reason, 'no_auth_token_configured')
+  assert.equal(noTokenEnforced.reject, false, 'enforce + no auth token configured (our misconfig) must NOT be rejected')
+  console.log('  ✓ route helper: unsigned rejected under enforcement but not log-only; our misconfig never rejects; genuine always passes')
 }
 
 // ── 7. URL candidates cover the proxy cases ───────────────────────────────────
