@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { parseExpenseText, generateDailyInsight } from '@/lib/bot/services/expense-analyzer'
 import { saveExpense, getTodayExpenses, getPeriodExpenses } from '@/lib/bot/services/expense-storage'
+import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -17,6 +18,11 @@ async function resolveUser(phone: string) {
 
 // ── POST: log an expense ──────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
+  // Internal service call only (bot pipeline). `phone`/`telegramId` are the target
+  // owner supplied by the trusted caller, not authorization.
+  if (!isInternalServiceAuthorized(req)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   const { phone, text, telegramId: directTelegramId } = await req.json()
   if (!text) return NextResponse.json({ error: 'text required' }, { status: 400 })
 
@@ -51,6 +57,10 @@ export async function POST(req: NextRequest) {
 
 // ── GET: summary or insight ───────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
+  // Internal service call only (bot pipeline). `phone` is the target owner, not auth.
+  if (!isInternalServiceAuthorized(req)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   const phone = req.nextUrl.searchParams.get('phone')
   const period = (req.nextUrl.searchParams.get('period') || 'today') as 'today' | 'week' | 'month'
   const insight = req.nextUrl.searchParams.get('insight') === '1'

@@ -105,7 +105,8 @@ async function main() {
     '@/lib/services/delivery-state':states,
     '@/lib/services/reminder-series':series,
     '@/lib/whatsapp':{sendWhatsApp:send,sendWhatsAppReminderTemplate:send,sendWhatsAppReminderButtons:send},
-    '@/lib/bot/handlers/reminder-optout':{isSuppressed:async()=>{if(cancelDuringConsent)await query('update reminders set sent=true where not sent');return consent}}
+    '@/lib/bot/handlers/reminder-optout':{isSuppressed:async()=>{if(cancelDuringConsent)await query('update reminders set sent=true where not sent');return consent}},
+    '@/lib/security/cron-auth':{internalServiceAuthHeaders:()=>({Authorization:'Bearer fixture'})}
   },{CRON_SECRET:'fixture',TWILIO_REMINDER_CONTENT_SID:'fixture'})
   const req=()=>new Request('https://fixture.invalid/api/cron/reminders',{headers:{authorization:'Bearer fixture'}})
   await query('delete from reminders');r=await add()

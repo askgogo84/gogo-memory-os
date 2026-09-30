@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAdminSession } from '@/lib/admin/auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -7,6 +8,14 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
 
 export async function GET() {
+  // Aggregate counts + the latest users' PII — admin-only. Reject before any
+  // privileged database access; a session that is missing/invalid/non-admin never
+  // reaches the queries below.
+  const auth = await requireAdminSession()
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.reason }, { status: auth.status })
+  }
+
   if (!supabaseUrl || !serviceKey) {
     return NextResponse.json({ error: 'Supabase env vars missing' }, { status: 500 })
   }

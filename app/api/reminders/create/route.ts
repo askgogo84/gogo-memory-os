@@ -2,9 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { resolveUser } from "@/lib/bot/resolve-user";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { normalizeTimezone, parseLocalDateTime } from "@/lib/timezone";
+import { isInternalServiceAuthorized } from "@/lib/security/cron-auth";
 
 export async function POST(req: NextRequest) {
   try {
+    // Internal service call only. `phone` is the target owner supplied by the
+    // trusted caller, never authorization. (No in-repo caller today; gated
+    // fail-closed so external callers cannot mint reminders / overwrite a
+    // stranger's timezone by phone number.)
+    if (!isInternalServiceAuthorized(req)) {
+      return NextResponse.json({ success: false, error: "unauthorized" }, { status: 401 });
+    }
     const body = await req.json();
     const phone = String(body.phone || "").trim();
     const reminderText = String(body.reminder_text || body.text || "").trim();

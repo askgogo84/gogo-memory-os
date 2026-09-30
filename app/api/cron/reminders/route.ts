@@ -9,6 +9,7 @@ import { isSuppressed } from '@/lib/bot/handlers/reminder-optout'
 // getNextOccurrence now lives in the shared reminder-series module so skip-occurrence
 // advances a series exactly the way this cron does — one implementation, no drift.
 import { describeCadence } from '@/lib/services/reminder-series'
+import { internalServiceAuthHeaders } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -187,7 +188,7 @@ async function runDelivery(req: Request) {
         text = '📂 *' + topic + ' digest*\n\n' + (data || []).map((r: any) => '• ' + r.content).join('\n')
       }
       if (isBriefing && whatsappTo) {
-        const response = await fetch(APP_URL + '/api/briefing', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        const response = await fetch(APP_URL + '/api/briefing', { method: 'POST', headers: { 'Content-Type': 'application/json', ...internalServiceAuthHeaders() },
           body: JSON.stringify({ phone: whatsappTo }), signal: AbortSignal.timeout(15000) })
         if (!response.ok) throw new Error('briefing_prepare_failed')
         const body = await response.json()

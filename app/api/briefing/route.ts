@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendWhatsApp } from '@/lib/whatsapp'
+import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -58,6 +59,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // Internal service call only (bot pipeline + reminders cron). `phone` is the
+  // target owner supplied by the trusted caller, not authorization. The GET path
+  // (cron fan-out) keeps its existing ?secret=CRON_SECRET check below.
+  if (!isInternalServiceAuthorized(req)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   const { phone, name } = await req.json()
   if (!phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })
 
