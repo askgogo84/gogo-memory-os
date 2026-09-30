@@ -173,6 +173,14 @@ import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
   })
   assert.match(negClaim, /could(?:n'?t| not) verify/i, 'a landed claim against a "not landed" source is suppressed')
 
+  // "no delay" (noun negation) must not ground a "delayed" reply (Codex P1).
+  const noDelay = [{ title: 'EY1 FlightAware', snippet: 'EY1 has no delay; on schedule to arrive 8:40 AM EDT on 28 September 2026.', url: 'https://flightaware.com/live/flight/ETD1/history/20260928' }]
+  const delayClaim = await answerLiveFlightStatus(prompt, 'Gogo', {
+    search: async () => noDelay,
+    ask: async () => 'EY1 is delayed.',
+  })
+  assert.match(delayClaim, /could(?:n'?t| not) verify/i, 'a delayed claim against a "no delay" source is suppressed')
+
   // Meridiem + timezone (Codex P1): source is 8:40 AM EDT, a reply of 8:40 PM UTC is suppressed.
   const amEdt = [{ title: 'EY1 FlightAware', snippet: 'EY1 landed at JFK 8:40 AM EDT on 28 September 2026.', url: 'https://flightaware.com/live/flight/ETD1/history/20260928' }]
   const pmClaim = await answerLiveFlightStatus(prompt, 'Gogo', {

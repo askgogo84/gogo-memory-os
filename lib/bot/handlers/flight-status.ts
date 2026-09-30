@@ -101,7 +101,9 @@ const STATE_EVIDENCE: Array<[RegExp, RegExp]> = [
 ]
 // Remove NEGATED state mentions ("not landed", "yet to depart", "no delay") so a source saying a
 // flight has NOT landed is never treated as evidence for a reply claiming it landed.
-const STATE_WORDS = 'landed|arrived|touched down|cancell?ed|delayed|diverted|departed|took off|en ?route|in ?air|airborne|in flight|on[- ]time'
+// Include noun forms (delay/cancellation/diversion) so "no delay" / "no cancellation" are
+// stripped — the evidence regexes accept the bare noun, so negation must cover it too.
+const STATE_WORDS = 'landed|arrived|touched down|cancell?ed|cancellations?|delay(?:ed)?|diverted|diversions?|departed|took off|en ?route|in ?air|airborne|in flight|on[- ]time'
 function stripNegatedStates(text: string): string {
   const neg = new RegExp(`\\b(?:not|no|never|hasn'?t|haven'?t|isn'?t|aren'?t|wasn'?t|weren'?t|won'?t|didn'?t|yet to)\\s+(?:\\w+\\s+){0,2}?(?:${STATE_WORDS})\\b`, 'gi')
   return String(text || '').replace(neg, ' ')
