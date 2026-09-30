@@ -90,11 +90,17 @@ export function classifyOccurrence(r: WebSearchResult, userText: string, refYmd 
   // snippet whose URL says 2025 is caught; a yearless same-day result falls through to below.
   // Only take a year from a DATE-SHAPED URL segment (…/20250928 or …/2025-09-28), never an
   // arbitrary 20xx substring — otherwise a flight number like AA2025 would look like a year.
-  const urlYears: string[] = []
-  for (const m of url.matchAll(/(20\d{2})(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])/g)) urlYears.push(m[1])
-  for (const m of url.matchAll(/(20\d{2})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])/g)) urlYears.push(m[1])
-  const gotYears = new Set([...extractDateTokensYear(hay).map(t => t.slice(-4)), ...urlYears])
-  if (reqYears.length && gotYears.size && !reqYears.some(y => gotYears.has(y))) return { usable: false, reason: 'wrong_year' }
+  const urlYearsArr: string[] = []
+  for (const m of url.matchAll(/(20\d{2})(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])/g)) urlYearsArr.push(m[1])
+  for (const m of url.matchAll(/(20\d{2})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])/g)) urlYearsArr.push(m[1])
+  const urlYears = new Set(urlYearsArr)
+  const textYears = new Set(extractDateTokensYear(hay).map(t => t.slice(-4)))
+  if (reqYears.length) {
+    // A date-shaped URL year is authoritative for the occurrence — a conflicting URL year (e.g.
+    // /history/20250928 for a 2026 request) is rejected even if the snippet text says 2026.
+    if (urlYears.size && !reqYears.some(y => urlYears.has(y))) return { usable: false, reason: 'wrong_year' }
+    if (textYears.size && !reqYears.some(y => textYears.has(y))) return { usable: false, reason: 'wrong_year' }
+  }
   if (datesContradict(norm, hay)) return { usable: false, reason: 'date_contradiction' }
   return { usable: true, reason: 'ok' }
 }

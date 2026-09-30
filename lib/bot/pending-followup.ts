@@ -29,7 +29,32 @@ export function resolvePendingReminder(ctx: PendingReminderCtx, answer: string) 
   return task ? { ...parsed, message: task } : parsed
 }
 
-export function resolvePendingCalendar(ctx: PendingCalendarCtx, answer: string) {
+const MONTH_LABELS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+const MONTH_NAME_RE = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?'
+// The reminder fallback's date parser only understands named months, and its time parser would
+// read the leading "20" of an ISO date as 20:00. Convert ISO / numeric (day-first) dates in the
+// answer to "D Month YYYY" first so a calendar date reply is parsed as a date, not a time.
+function normalizeAnswerDate(answer: string): string {
+  return String(answer || '')
+    .replace(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g, (m, y, mo, d) => { const mi = Number(mo); return mi >= 1 && mi <= 12 ? `${Number(d)} ${MONTH_LABELS[mi - 1]} ${y}` : m })
+    .replace(/\b(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})\b/g, (m, d, mo, y) => { let Y = Number(y); if (Y < 100) Y += 2000; const mi = Number(mo), dd = Number(d); return mi >= 1 && mi <= 12 && dd >= 1 && dd <= 31 ? `${dd} ${MONTH_LABELS[mi - 1]} ${Y}` : m })
+}
+function answerCarriesDate(answer: string): boolean {
+  return /\b(today|tonight|tomorrow|tmrw|tmr|day after tomorrow|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/i.test(answer)
+    || /\bin\s+\d+\s+(?:day|days)\b/i.test(answer)
+    || /\b\d{4}-\d{1,2}-\d{1,2}\b/.test(answer)
+    || /\b\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4}\b/.test(answer)
+    || new RegExp(`\\b\\d{1,2}\\s+(?:${MONTH_NAME_RE})\\b`, 'i').test(answer)
+    || new RegExp(`\\b(?:${MONTH_NAME_RE})\\s+\\d{1,2}\\b`, 'i').test(answer)
+}
+
+export function resolvePendingCalendar(ctx: PendingCalendarCtx, answerRaw: string) {
+  const answer = normalizeAnswerDate(answerRaw)
+  // A needsDate follow-up (timeText stored, no target) MUST receive a date before resolving —
+  // a time-only correction ("actually 6 pm") must not create an event for today/tomorrow. In that
+  // case return null; the caller keeps waiting for the date.
+  const isNeedsDate = !!ctx.timeText && !ctx.target
+  if (isNeedsDate && !answerCarriesDate(answerRaw) && !answerCarriesDate(answer)) return null
   const hasDay =
     /\b(today|tomorrow|tmrw|tmr|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/i.test(answer) ||
     /\bin\s+\d+\s+(?:day|days|hour|hours|min|mins|minute|minutes)\b/i.test(answer)

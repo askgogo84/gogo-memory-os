@@ -386,6 +386,17 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   // Prior-year anniversary of today: a dateless live result must not satisfy a historical year.
   const datelessEy1b = { title: 'EY1 status', snippet: 'EY1 Abu Dhabi to New York. Track live.', url: 'https://flightaware.com/live/flight/ETD1' }
   assert.equal(classifyOccurrence(datelessEy1b, 'did EY1 land on 30 September 2025?', '2026-09-30').reason, 'dateless_for_dated_request', 'a prior-year anniversary of today still requires dated evidence')
+
+  // needsDate follow-up: a time-only correction must NOT resolve an event (keep waiting for the date).
+  assert.equal(resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'actually 6 pm'), null, 'a time-only reply to a date prompt does not create an event')
+  // needsDate follow-up: an ISO date reply resolves to that date (not misread as 20:00).
+  const iso = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, '2026-10-28') as any
+  assert.ok(iso?.remindAtIso, 'an ISO date reply resolves the pending calendar')
+  if (iso?.remindAtIso) { const d = new Date(iso.remindAtIso); assert.equal(d.getUTCMonth(), 9, 'ISO month is October'); assert.equal(d.getUTCDate() >= 27 && d.getUTCDate() <= 28, true, 'ISO day is 28 (IST)') }
+
+  // Conflicting URL year is authoritative: snippet 2026 but URL /history/20250928 -> wrong_year.
+  const conflictYear = { title: 'EY1 Etihad', snippet: 'EY1 landed at JFK on 28 September 2026 at 8:40 AM.', url: 'https://flightaware.com/live/flight/ETD1/history/20250928' }
+  assert.equal(classifyOccurrence(conflictYear, 'Did EY1 land on 28 September 2026?').reason, 'wrong_year', 'a conflicting date-shaped URL year is rejected despite matching snippet text')
 }
 
 console.log('✅ acceptance: recall PNR survives budget, flight-status grounded (never shops), voice/calendar time preserved, prep never auto-creates')
