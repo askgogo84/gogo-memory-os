@@ -3,7 +3,7 @@ import {COMMERCE_PROVIDERS, commerceCallback, type CommerceProvider} from './pro
 
 export type CommerceAuthFlow = {
   provider: CommerceProvider; owner: string; state: string; verifier: string;
-  clientId: string; redirectUri: string; createdAt: number;
+  clientId: string; redirectUri: string; createdAt: number; runId?: string;
 }
 export type CommerceToken = {accessToken: string; expiresAt: number; scope: string}
 

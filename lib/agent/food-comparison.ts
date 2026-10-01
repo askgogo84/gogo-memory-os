@@ -2,6 +2,8 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {searchWebResults, type WebSearchResult} from '@/lib/web-search'
 import {foodLocationReply,foodSearchSubject,isFoodComparisonRequest} from './food-comparison-intent'
 
+import {commerceTaskLink} from '@/lib/commerce/task'
+
 const TYPE='food_comparison'
 const QUESTION='For this food comparison, what is your delivery PIN code in India?'
 const PROVIDERS=[{name:'Swiggy',domain:'swiggy.com'},{name:'Zomato',domain:'zomato.com'},{name:'Magicpin',domain:'magicpin.in'}]
@@ -25,15 +27,21 @@ export function renderFoodDiscovery(subject:string,pin:string,groups:Array<{name
 }
 
 export async function tryFoodComparison(params:{telegramId:number;text:string;surface?:string}):Promise<Result|null>{
+  const statusRequest=/^\s*(?:show|check)\s+(?:my|the)\s+food comparison(?: status)?[.!]?\s*$/i.test(params.text)
   const fresh=isFoodComparisonRequest(params.text)
   const location=foodLocationReply(params.text)
   // Do not query pending work or hijack unrelated requests.
-  if(!fresh&&!location&&!/^\s*(?:cancel|stop)\s+(?:the\s+)?food comparison[.!]?\s*$/i.test(params.text))return null
+  if(!statusRequest&&!fresh&&!location&&!/^\s*(?:cancel|stop)\s+(?:the\s+)?food comparison[.!]?\s*$/i.test(params.text))return null
   const owner=String(params.telegramId)
   const {data:previous,error:readError}=await supabaseAdmin.from('agent_runs')
-    .select('id,status,updated_at,metadata_json').eq('telegram_id',owner).eq('type',TYPE)
+    .select('id,status,updated_at,summary,metadata_json').eq('telegram_id',owner).eq('type',TYPE)
     .order('started_at',{ascending:false}).limit(1).maybeSingle()
   if(readError)throw new Error('food_comparison_read_failed')
+  if(statusRequest){
+    const task=previous?.status==='paused'&&previous.metadata_json?.state!=='closed'?previous:null
+    if(!task)return {runId:previous?.id||'',status:'paused',capability:'browser',risk:'low',handledBy:'food-comparison',text:'There is no active food comparison.'}
+    return {runId:task.id,status:'paused',capability:'browser',risk:'low',handledBy:'food-comparison',text:task.summary+'\n\nContinue this comparison: '+commerceTaskLink(task.id)}
+  }
   const age=Date.now()-Date.parse(previous?.updated_at||'')
   const active=previous?.status==='paused'&&previous?.metadata_json?.state!=='closed'&&Number.isFinite(age)&&age>=0&&age<TTL
   if(!fresh){
@@ -88,5 +96,5 @@ export async function tryFoodComparison(params:{telegramId:number;text:string;su
   meta.state='provider_connection_required'
   meta.discovery={checked_at:now,groups,evidence_kind:'search_results_only',cart_verified:false}
   await save('Provider pages searched; live prices, delivery totals and cart connection remain unverified.')
-  return reply(renderFoodDiscovery(meta.subject,pin,groups,now))
+  return reply(renderFoodDiscovery(meta.subject,pin,groups,now)+'\n\nContinue this comparison: '+commerceTaskLink(runId!))
 }

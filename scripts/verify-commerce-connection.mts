@@ -89,7 +89,7 @@ const db = {from(table: string) {
 function moduleWith(file:string, dependencies:Record<string,any>) {
   const exports:any={}
   runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
-    {exports,console,process,URL,Date,Buffer,require(name:string){if(name in dependencies)return dependencies[name];throw new Error(`Unexpected dependency ${name}`)}})
+    {exports,console,process,URL,URLSearchParams,Date,Buffer,require(name:string){if(name in dependencies)return dependencies[name];throw new Error(`Unexpected dependency ${name}`)}})
   return exports
 }
 const store = moduleWith('lib/commerce/connection-store.ts', {'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/security/vault-crypto':vaultCrypto,'./providers':providers})
@@ -113,6 +113,7 @@ const callback = moduleWith('app/api/commerce/[provider]/callback/route.ts',{
   '@/lib/security/vault-crypto':vaultCrypto, '@/lib/commerce/providers':providers,
   '@/lib/commerce/oauth':{...oauth,exchangeCommerceCode:async()=>{callbackExchanges++;return token}},
   '@/lib/commerce/connection-store':store,
+  '@/lib/commerce/task':{resumeCommerceTaskAfterAuth:async()=>{throw new Error('unexpected task-less continuation')}},
 })
 const request={url:`https://app.askgogo.in/api/commerce/swiggy/callback?code=fixture-code&state=${flow.state}`}
 const wrongOwner=await callback.GET(request,{params:Promise.resolve({provider:'swiggy'})})
