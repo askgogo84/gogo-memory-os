@@ -3,6 +3,8 @@
 // Muse-style Agent handling runs ONLY when legacy routing declines the turn.
 
 import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
+import { tryFoodComparison } from '@/lib/agent/food-comparison'
+import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
 import { dispatchThroughSameBrain } from '@/lib/agent/same-brain'
 import { isEventCredentialRetrieval, retrieveEventCredential } from '@/lib/agent/booking-closure'
@@ -263,6 +265,10 @@ export async function routeFeatureIntent(
   const normalized=normalizeUserInputForRouting(text)
   if(normalized.changed) console.info('INPUT_NORMALIZED_FOR_FEATURE_ROUTING:',{reasons:normalized.reasons,originalLength:String(text||'').length,normalizedLength:normalized.text.length})
   text=normalized.text
+  if(extra?.telegramId&&(isFoodComparisonRequest(text)||/\b[1-9]\d{5}\b/.test(text)||/^(?:stop|cancel) (?:the )?food comparison/i.test(text))){
+    const food=await tryFoodComparison({telegramId:extra.telegramId,text})
+    if(food)return food.text
+  }
 
   // Autonomy controls must run before reminder/list/calendar specialists so
   // commands like "set calendar autonomy to auto" cannot be stolen by a noun router.

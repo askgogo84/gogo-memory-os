@@ -1,4 +1,5 @@
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
+import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { randomUUID } from 'node:crypto'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
@@ -51,6 +52,17 @@ export async function POST(request: Request) {
     const respond = async (result:any, status:number) => {
       await attachRunToThread(session.telegramId, result?.runId, thread?.id || null)
       return NextResponse.json(result, { status })
+    }
+    const food=await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface})
+    if(food){
+      // The location handoff is resumed against the shared last assistant turn.
+      // Persist it here too, so a reply can arrive on WhatsApp or dashboard chat.
+      const {error}=await supabaseAdmin.from('conversations').insert([
+        {telegram_id:actor.legacyTelegramId,role:'user',content:text},
+        {telegram_id:actor.legacyTelegramId,role:'assistant',content:food.text},
+      ])
+      if(error)throw new Error('food_comparison_conversation_save_failed')
+      return respond(food,200)
     }
 
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)

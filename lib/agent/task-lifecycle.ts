@@ -2,6 +2,7 @@
 // from age, a repeated title, or an expired human handoff.
 export function retiredRunReason(run: any): string | null {
   const meta = run?.metadata_json || run?.metadata || {}
+  if(meta.plan_type==='food_comparison'&&meta.state==='closed')return meta.closure_reason==='user_cancelled'?'Cancelled by you':'Replaced comparison'
   if (meta.state === 'closed_stale') return 'Closed stale handoff'
   if (String(run?.summary || '').trim() === 'Superseded by duplicate mission submission') return 'Superseded task'
   if (['stale_provider_access_limited', 'background_browser_resume_expired', 'stale_run_recovered', 'background_browser_actor_missing'].includes(String(run?.error || ''))) return 'Closed session'

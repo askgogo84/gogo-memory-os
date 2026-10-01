@@ -1,4 +1,5 @@
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
+import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { completeReminderOccurrence } from '@/lib/bot/handlers/reminder-completion'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
@@ -1181,6 +1182,14 @@ _"${originalText}"_
         await sendWhatsAppMessage(from,accountAgent.text)
         return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
       }
+    }
+
+    const foodComparison=await tryFoodComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'})
+    if(foodComparison){
+      await saveConversation(resolvedUser.telegramId,'user',text)
+      await saveConversation(resolvedUser.telegramId,'assistant',foodComparison.text)
+      await sendWhatsAppMessage(from,foodComparison.text)
+      return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
     }
 
     // Gmail draft/send/status commands are deterministic provider workflows.
