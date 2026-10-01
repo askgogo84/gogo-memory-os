@@ -265,7 +265,7 @@ export async function routeFeatureIntent(
   const normalized=normalizeUserInputForRouting(text)
   if(normalized.changed) console.info('INPUT_NORMALIZED_FOR_FEATURE_ROUTING:',{reasons:normalized.reasons,originalLength:String(text||'').length,normalizedLength:normalized.text.length})
   text=normalized.text
-  if(extra?.telegramId&&(isFoodComparisonRequest(text)||/\b[1-9]\d{5}\b/.test(text)||/^(?:stop|cancel) (?:the )?food comparison/i.test(text))){
+  if(extra?.telegramId&&(/^\s*(?:compare grocery prices for\s|(?:show|check)\s+(?:my|the)\s+(?:food|grocery) comparison(?: status)?[.!]?\s*$)/i.test(text)||isFoodComparisonRequest(text)||/\b[1-9]\d{5}\b/.test(text)||/^(?:stop|cancel) (?:the )?food comparison/i.test(text))){
     const food=await tryFoodComparison({telegramId:extra.telegramId,text})
     if(food)return food.text
   }

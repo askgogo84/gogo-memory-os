@@ -43,6 +43,7 @@ const exports:any={}
 runInNewContext(compiled,{exports,Date,URL,console,require(name:string){
   if(name==='@/lib/supabase-admin')return {supabaseAdmin:db}
   if(name==='./food-comparison-intent')return intent
+  if(name==='@/lib/commerce/task')return {commerceTaskLink:(id:string)=>'https://app.askgogo.in/dashboard/commerce?run='+id}
   if(name==='@/lib/web-search')return {searchWebResults:async(query:string)=>{
     searches.push(query)
     return [
@@ -73,6 +74,7 @@ assert.doesNotMatch(second.text,/Grubhub|grubhub|\$5|0\.7 miles|different area|e
 assert.match(second.text,/not verified delivery quotes/)
 assert.match(second.text,/Nothing has been added to a cart or ordered/)
 assert.equal(rows[0].metadata_json.discovery.cart_verified,false)
+assert.match((await run('show my food comparison')).text,/live prices, delivery totals and cart connection remain unverified/,'status comes from stored task summary')
 assert.equal(rows[0].status,'paused','unverified totals cannot be labelled completed')
 const remembered=await run(incident)
 assert.doesNotMatch(remembered.text,/what is your delivery PIN/,'recent confirmed area is reused')

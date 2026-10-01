@@ -392,7 +392,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
-  if(intent.type==='food_comparison'||/\b[1-9]\d{5}\b/.test(incomingText)||/^(?:stop|cancel) (?:the )?food comparison/i.test(incomingText)){
+  if(/^\s*(?:compare grocery prices for\s|(?:show|check)\s+(?:my|the)\s+(?:food|grocery) comparison(?: status)?[.!]?\s*$)/i.test(incomingText)||intent.type==='food_comparison'||/\b[1-9]\d{5}\b/.test(incomingText)||/^(?:stop|cancel) (?:the )?food comparison/i.test(incomingText)){
     const food=await tryFoodComparison({telegramId:resolvedUser.telegramId,text:incomingText,surface:params.channel})
     if(food){
       await saveConversation(resolvedUser.telegramId,'user',incomingText)
