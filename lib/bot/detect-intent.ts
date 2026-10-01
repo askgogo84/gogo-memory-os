@@ -1,3 +1,4 @@
+import { isTimeFirstReminder } from './reminder-command'
 import { classifyCheckVerb } from '@/lib/data/lists-core'
 import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
 import { hasConcreteFlightCode } from '@/lib/bot/flight-codes'
@@ -145,6 +146,9 @@ export function detectIntent(text: string): DetectedIntent {
   if (((lower.includes('connect') || lower.includes('link')) && CALENDAR_WORD_RE.test(lower)) || GOOGLE_CALENDAR_RE.test(lower)) return { type: 'connect_calendar', confidence: 'high' }
   // Check "remind me" BEFORE weather - marathon/training reminders must not go to weather
   if (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ')) return { type: 'set_reminder', confidence: 'high' }
+
+  // Time-first noun directive must schedule, not search for the appointment provider.
+  if (isTimeFirstReminder(text)) return { type: 'set_reminder', confidence: 'high' }
 
   // Handle time/date-only follow-ups after a reminder conversation (e.g. "6am", "on 28th june", "change time to 6am")
   if (/^(change time to|change it to|make it|set it to|update to|change to)\s+/i.test(lower)) return { type: 'set_reminder', confidence: 'high' }

@@ -120,11 +120,24 @@ try {
   assert.equal(written.length, 2, 'missed advance notice must not save a past or shifted reminder')
   assert.match(missed.text, /Nothing has been saved/)
 
+  // Oct 1 13:25 WhatsApp: time-first wording went to web_search and saved nothing.
+  // The real pipeline must save a reminder without web/model calls.
+  now = RealDate.parse('2026-10-01T07:55:14Z')
+  const timeFirst = '4pm aqua dental appointment today.. reminder'
+  assert.equal(detectIntent(timeFirst).type, 'set_reminder', 'time-first reminder must not become web research')
+  const timeFirstReply = await run(timeFirst)
+  assert.equal(written.length, 3)
+  assert.equal(written[2].remind_at, '2026-10-01T10:30:00.000Z')
+  assert.equal(written[2].message, 'aqua dental appointment')
+  assert.match(timeFirstReply.text, /Reminder set/)
+  assert.match(timeFirstReply.text, /today at 4:00\s*pm/i)
+  assert.doesNotMatch(timeFirstReply.text, /contact|210-824-7900|https?:/i)
+
   now = RealDate.parse('2026-10-01T06:42:37Z')
   failInsert = true
   await assert.rejects(() => run(incident), /Reminder insert failed/, 'failed persistence must not confirm success')
   assert.equal(modelCalls, 0, 'valid and unresolved lead-time requests must bypass model arithmetic')
-  console.log('PASS: Aqua appointment stores 16:20 IST, confirms 16:20, and never delegates lead-time arithmetic to a model')
+  console.log('PASS: Aqua lead-time reminder saves 16:20 IST; time-first reminder saves 16:00 IST without web/model calls')
 } finally {
   globalThis.Date = RealDate
   globalThis.fetch = realFetch

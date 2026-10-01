@@ -1,3 +1,4 @@
+import { isTimeFirstReminder } from '../reminder-command'
 import { describeCadence, formatReminderTimeOfDay } from '@/lib/services/reminder-series'
 
 type ParsedReminder =
@@ -393,7 +394,7 @@ function parseTodayReminder(text: string): ParsedReminder {
   const nowIst = istNowParts()
   const when = istWallTimeToUtcDate(nowIst.year, nowIst.month, nowIst.day, time.hour, time.minute)
   if (when.getTime() <= Date.now()) return null
-  return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text) }
+  return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text.replace(/\btoday\b/gi, '')) }
 }
 
 function parseTomorrowReminder(text: string): ParsedReminder {
@@ -598,6 +599,7 @@ export function reminderLeadTime(text: string) {
 }
 
 export function parseReminderIntent(text: string): ParsedReminder {
+  if (isTimeFirstReminder(text)) text = `remind me at ${text.trim().replace(/\breminder[.!]*\s*$/i, '').trim()}`
   const lead = reminderLeadTime(text)
   if (!lead) return parseReminderBase(text)
 
