@@ -588,8 +588,33 @@ function parseAbsoluteDateReminder(text: string): ParsedReminder {
   return { kind: 'one_time', remindAtIso: when.toISOString(), message: message || 'Reminder' }
 }
 
-export function parseReminderIntent(text: string): ParsedReminder {
+function parseReminderBase(text: string): ParsedReminder {
   return parseDailyRecurring(text) || parseEveryNRecurring(text) || parseRelativeReminder(text) || parseTomorrowReminder(text) || parseTodayReminder(text) || parseSpecificWeekdayReminder(text) || parseWeekdayRecurring(text) || parseHourlyWindowRecurring(text) || parseAbsoluteDateReminder(text) || parseSimpleAtTime(text) || null
+}
+
+export function reminderLeadTime(text: string) {
+  if (!/\bremind(?:er)?\b/i.test(text)) return null
+  return text.match(/\b(\d+)\s*(minutes?|mins?|hours?|hrs?)\s+(?:earlier|before)\b/i)
+}
+
+export function parseReminderIntent(text: string): ParsedReminder {
+  const lead = reminderLeadTime(text)
+  if (!lead) return parseReminderBase(text)
+
+  // Oct 1 production incident: "Aqua appointment at 4.30pm..remind me..10 mins
+  // earlier" fell into model datetime arithmetic and was saved at 17:20 IST.
+  // Parse the EVENT first, then subtract its notice period in code. Prefixing
+  // only this path lets an event-first sentence use the existing reminder parser.
+  const eventText = text.replace(lead[0], '')
+  // A lead duration alone must not become the appointment's clock time.
+  if (!/\b(?:at|for)\s+\d|\b\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)\b|\b(?:noon|midnight|midday)\b/i.test(eventText)) return null
+  const event = parseReminderBase(`remind me ${eventText}`)
+  if (!event || event.kind !== 'one_time') return null
+  const offsetMs = Number(lead[1]) * (/^(?:hour|hr)/i.test(lead[2]) ? 3600000 : 60000)
+  const fireMs = Date.parse(event.remindAtIso) - offsetMs
+  // Do not silently move an already-missed advance notice to another day.
+  if (!Number.isFinite(fireMs) || fireMs <= Date.now()) return null
+  return { ...event, remindAtIso: new Date(fireMs).toISOString() }
 }
 
 export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>): string {
