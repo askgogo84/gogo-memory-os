@@ -7,9 +7,12 @@ export class CommerceMcpError extends Error {
 
 // This initial transport exposes discovery and documented read-only tools only.
 // Cart writes require a separate durable approval/readback executor, not an LLM tool loop.
-const READ_TOOLS: Record<CommerceProvider, readonly string[]> = {
-  swiggy: ['get_addresses', 'search_restaurants', 'search_menu', 'get_restaurant_menu', 'get_food_cart'],
-  zepto: [], // Populate only after the authenticated provider catalogue/schema is verified.
+const READ_TOOLS: Record<CommerceProvider, Partial<Record<'food' | 'grocery', readonly string[]>>> = {
+  swiggy: {
+    food: ['get_addresses', 'search_restaurants', 'search_menu', 'get_restaurant_menu', 'get_food_cart'],
+    grocery: ['get_addresses', 'search_products', 'get_cart'],
+  },
+  zepto: {}, // Populate only after the authenticated provider catalogue/schema is verified.
 }
 const PROTOCOL = '2025-06-18'
 
@@ -51,7 +54,7 @@ export class CommerceMcpClient {
   private version = PROTOCOL
   private initialized = false
   private endpoint: string
-  constructor(private provider: CommerceProvider, server: 'food' | 'grocery', private accessToken: string, private request: typeof fetch = fetch) {
+  constructor(private provider: CommerceProvider, private server: 'food' | 'grocery', private accessToken: string, private request: typeof fetch = fetch) {
     this.endpoint = (COMMERCE_PROVIDERS[provider].servers as Partial<Record<'food' | 'grocery', string>>)[server] || ''
     if (!this.endpoint || !accessToken) throw new CommerceMcpError('provider_unavailable')
   }
@@ -94,7 +97,7 @@ export class CommerceMcpClient {
     throw new CommerceMcpError('invalid_response')
   }
   async readTool(name: string, args: Record<string, unknown>) {
-    if (!READ_TOOLS[this.provider].includes(name)) throw new CommerceMcpError('tool_not_allowed')
+    if (!(READ_TOOLS[this.provider][this.server] || []).includes(name)) throw new CommerceMcpError('tool_not_allowed')
     await this.initialize()
     const result = await this.rpc('tools/call', {name, arguments: args})
     if (result.isError) throw new CommerceMcpError('provider_unavailable')

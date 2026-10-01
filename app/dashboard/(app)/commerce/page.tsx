@@ -2,9 +2,10 @@
 
 import {useEffect, useState} from 'react'
 import Link from 'next/link'
+import type {FoodCatalogue} from '@/lib/commerce/task'
 
 type Provider = {provider: string; label: string; state: string}
-type Task = {runId: string; summary: string; subject: string; state: string; provider?: string; addressLabel?: string}
+type Task = {runId: string; summary: string; subject: string; state: string; provider?: string; addressLabel?: string; catalogue?: FoodCatalogue | null}
 type AddressPage = {addresses: Array<{id: string; label: string; addressLine: string}>; page: number; hasMore: boolean}
 export default function CommerceConnectionsPage() {
   const [providers, setProviders] = useState<Provider[]>([])
@@ -57,14 +58,29 @@ export default function CommerceConnectionsPage() {
     } catch { setMessage('Saved addresses could not be verified. Reconnect if sign-in has expired, then retry.') }
     finally { setBusy(null) }
   }
+  async function readCatalogue(restaurantId?: string, taskId = task?.runId) {
+    if (!taskId) return
+    setBusy('swiggy'); setMessage('Reading available options for your saved address…')
+    try {
+      const response = await fetch('/api/commerce/tasks/' + encodeURIComponent(taskId) + '/catalogue', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(restaurantId ? {restaurantId} : {})})
+      const data = await response.json()
+      if (!response.ok) {
+        setMessage(data.error === 'reauth_required' ? 'Please reconnect Swiggy, then continue this same comparison.' : data.error === 'refresh_restaurants' ? 'These options need refreshing. Read available restaurants again.' : 'The provider options could not be verified. Your task and selected address are preserved; retry or choose your address again.')
+        return
+      }
+      setTask(data); setMessage('Available options checked. Item prices and delivered totals are still unverified; nothing was added to a cart.')
+    } catch { setMessage('The provider could not be reached. Your comparison is preserved; retry shortly.') }
+    finally { setBusy(null) }
+  }
   async function selectAddress(addressId: string) {
     if (!addresses || !task) return
     setBusy('swiggy'); setMessage('')
     try {
       const response = await fetch('/api/commerce/swiggy/addresses', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({runId: task.runId, addressId, page: addresses.page})})
       if (!response.ok) throw new Error()
-      setTask(await response.json()); setAddresses(null)
-      setMessage('Saved address selected for the same comparison. Availability, prices and cart are not yet verified.')
+      const saved = await response.json()
+      setTask(saved); setAddresses(null)
+      await readCatalogue(undefined, saved.runId)
     } catch { setMessage('Selection was not saved. Refresh the task and saved addresses, then try again.') }
     finally { setBusy(null) }
   }
@@ -88,6 +104,19 @@ export default function CommerceConnectionsPage() {
       {runId && provider.provider === 'zepto' && <p className="text-sm text-[#a0a0a0]">Zepto groceries cannot be compared with a restaurant meal.</p>}
       {task && task.provider === 'swiggy' && provider.provider === 'swiggy' && provider.state === 'authorized' && <button disabled={busy !== null} onClick={() => readAddresses(1)} className="block rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Choose saved delivery address</button>}
     </section>)}
+    {task?.addressLabel && task.provider === 'swiggy' && providers.some(provider => provider.provider === 'swiggy' && provider.state === 'authorized') && <section className="space-y-3">
+      <button disabled={busy !== null} onClick={() => readCatalogue()} className="rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Read available restaurants</button>
+      {task.catalogue?.observedAt && <p className="text-sm text-[#a0a0a0]">Checked: {new Date(task.catalogue.observedAt).toLocaleString()}</p>}
+      {task.catalogue?.restaurants?.map(restaurant => <button key={restaurant.id} disabled={busy !== null} onClick={() => readCatalogue(restaurant.id)} className="block w-full rounded-xl border border-[#292929] p-4 text-left disabled:opacity-50">
+        <strong>{restaurant.name}</strong>
+        <p>{restaurant.distanceKm !== null ? restaurant.distanceKm + ' km away' : 'Distance not provided'} · {restaurant.deliveryMinutes !== null ? 'Estimated ' + restaurant.deliveryMinutes + ' min' : 'Delivery estimate not provided'}</p>
+        <span className="text-sm text-[#2fb8a6]">Read matching menu items</span>
+      </button>)}
+      {task.catalogue?.items?.map(item => <div key={item.id} className="rounded-xl border border-[#292929] p-4">
+        <strong>{item.name}</strong>
+        <p className="text-sm text-[#a0a0a0]">Available at the last check. Price and delivered total not verified.{item.needsCustomization ? ' Options must be confirmed before any cart preparation.' : ''}</p>
+      </div>)}
+    </section>}
     {addresses && <section aria-label="Saved delivery addresses" className="space-y-3">
       <h2 className="text-lg font-medium">Choose your delivery address</h2>
       {!addresses.addresses.length && <p>No saved addresses on this page. Add an address in Swiggy, then reload.</p>}

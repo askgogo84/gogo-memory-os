@@ -51,7 +51,7 @@ export async function POST(request: Request, context: {params: Promise<{provider
     const page = swiggyAddressPage(await client.readTool('get_addresses', {page: input.page, pageSize: 10}))
     const matches = page.addresses.filter(address => address.id === input.addressId)
     if (matches.length !== 1) return NextResponse.json({error: 'address_changed_reload'}, {status: 409})
-    const saved = await selectCommerceTaskAddress(session.telegramId, task, provider, matches[0])
+    const saved = await selectCommerceTaskAddress(session.telegramId, task, provider, matches[0], input.page)
     return NextResponse.json(commerceTaskView(saved), {headers: {'Cache-Control': 'no-store'}})
   } catch (error) {
     if (error instanceof CommerceMcpError && error.reason === 'reauth_required') return NextResponse.json({error: 'reauth_required'}, {status: 401})

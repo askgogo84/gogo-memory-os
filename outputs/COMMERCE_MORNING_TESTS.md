@@ -1,6 +1,6 @@
 # Commerce morning acceptance — draft, not a live-readiness claim
 
-The new commerce branch is not deployed yet. Run these only after the release report names the production commit. Provider access/callback approval and your sign-in are separate prerequisites. Current implementation reaches account connection and saved-address selection in fixtures; catalogue, delivered-total and cart execution are still unfinished.
+The new commerce branch is not deployed yet. Run these only after the release report names the production commit. Provider access/callback approval and your sign-in are separate prerequisites. Current implementation reaches account connection and saved-address selection in fixtures; Food catalogue reads are now wired after address selection, but delivered-total and cart execution are still unfinished.
 
 ## 1. Start a comparison on WhatsApp
 
@@ -24,13 +24,15 @@ Expected: choose a saved delivery address. Account connection alone must not cla
 
 Choose the actual saved address you want. If several addresses say Home, use the displayed address lines to distinguish them. Selection must be confirmed only after provider readback succeeds. Full street and phone are not copied into task metadata.
 
+After selecting an address, expect Swiggy restaurant options from a fresh provider read. Choose an offered restaurant to read matching available items. Closed restaurants and unavailable/non-vegetarian items must not appear in the vegetarian options. Menu prices and delivery totals are explicitly unverified until their evidence exists. A provider failure must preserve the task and show a retry/sign-in/address action rather than invent results.
+
 ## 5. Check the same task from WhatsApp
 
 ```text
 Show my food comparison.
 ```
 
-Expected: same progress and next action as the dashboard. At the current implementation boundary, it says live availability, totals and cart remain unverified. That is not an end-to-end pass.
+Expected: same progress and next action as the dashboard. After a successful provider catalogue read, it names the same options and check time. Prices, delivered totals and cart preparation remain unverified. That is not an end-to-end pass.
 
 ## Remaining end-to-end acceptance — OPEN
 
