@@ -6,6 +6,7 @@ import { getDashboardMemory } from '@/lib/dashboard/memory'
 import { CommandBar } from '@/components/dashboard/command-bar'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
 import { isActionablePause } from '@/lib/dashboard/run-state'
+import { reminderStateLabel } from '@/lib/dashboard/reminder-state'
 
 export const dynamic='force-dynamic'
 
@@ -114,7 +115,7 @@ export default async function HomePage(){
         <section className="final-dark-panel overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Today</div><span className="text-[10px] text-[#6a6a6a]">{reminders.length}</span></div>
           <div className="border-t border-[#1f1f1f] px-4">
-            {reminders.length?reminders.slice(0,6).map(r=><Row key={String(r.id)} tone={r.sent?'green':'muted'} title={r.message||'Reminder'} meta={r.sent?'Delivered':'Reminder'} right={clock(r.remind_at,tz)}/>):<div className="py-5 text-[12px] text-[#6a6a6a]">No reminders scheduled for today.</div>}
+            {reminders.length?reminders.slice(0,6).map(r=><Row key={String(r.id)} tone={r.status==='completed'||['read','delivered'].includes(r.delivery_state||'')?'green':'muted'} title={r.message||'Reminder'} meta={reminderStateLabel(r)} right={clock(r.remind_at,tz)}/>):<div className="py-5 text-[12px] text-[#6a6a6a]">No reminders scheduled for today.</div>}
           </div>
         </section>
       </div>

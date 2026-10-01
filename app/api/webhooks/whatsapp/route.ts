@@ -1,4 +1,5 @@
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
+import { completeReminderOccurrence } from '@/lib/bot/handlers/reminder-completion'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
@@ -386,7 +387,15 @@ export async function POST(req: NextRequest) {
     // fired reminder (sent_at within ~30 min), else the next pending one. Typed
     // replies keep working unchanged (this block is skipped when there's no payload).
     const buttonPayload = String(formData.get('ButtonPayload') || '').trim()
-    if (buttonPayload === 'done' || buttonPayload === 'snooze_10' || buttonPayload === 'move_8pm') {
+    if(buttonPayload==='done'){
+      const reply=await completeReminderOccurrence(resolvedUser.telegramId,String(formData.get('OriginalRepliedMessageSid')||'')||null)
+        .catch(()=> 'I couldn’t save that reminder as done. Please try again; I haven’t confirmed it as completed.')
+      await saveConversation(resolvedUser.telegramId,'user','[button:done]')
+      await saveConversation(resolvedUser.telegramId,'assistant',reply)
+      await sendWhatsAppMessage(from,reply)
+      return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+    }
+    if (buttonPayload === 'snooze_10' || buttonPayload === 'move_8pm') {
       const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString()
       const { data: recentFired } = await supabaseAdmin
         .from('reminders')
@@ -408,36 +417,6 @@ export async function POST(req: NextRequest) {
       let reply: string
       if (!target) {
         reply = `I couldn't find a recent reminder to update. Say *my reminders* to see what's pending.`
-      } else if (buttonPayload === 'done') {
-        // "Done" resolves THIS occurrence — it must never masquerade as cancelling a
-        // whole series (the old copy said "Reminder cancelled" even when it set sent=true
-        // on an already-fired row: success for a no-op).
-        const name = cleanReminderName(String(target.message || ''))
-        if (target.is_recurring) {
-          // The cron already queued the next occurrence when this one fired, so we do
-          // NOT write sent here (marking a pending recurring row sent would kill the
-          // series). Just acknowledge and restate when it next comes.
-          const { data: nextRows } = await supabaseAdmin
-            .from('reminders')
-            .select('remind_at')
-            .eq('telegram_id', resolvedUser.telegramId)
-            .eq('message', target.message)
-            .eq('sent', false)
-            .order('remind_at', { ascending: true })
-            .limit(1)
-          const cadence = describeCadence(target.recurring_pattern)
-          const nextIso = nextRows?.[0]?.remind_at
-          reply = nextIso
-            ? `✅ Done! *${name}* — next ${cadence} reminder ${formatReminderWhen(nextIso)}.`
-            : `✅ Done! *${name}* logged.`
-        } else {
-          // One-off: mark resolved (idempotent if it already fired). No "cancelled".
-          if (target.sent !== true) {
-            const { error } = await supabaseAdmin.from('reminders').update({ sent: true }).eq('id', target.id)
-            if (error) console.error('REMINDER_BTN_DONE_UPDATE_FAILED:', target.id, error.message)
-          }
-          reply = `✅ Done! *${name}* marked as resolved.`
-        }
       } else if (buttonPayload === 'snooze_10') {
         const newRemindAt = new Date(Date.now() + 10 * 60 * 1000)
         const { error } = await supabaseAdmin.from('reminders').update({ remind_at: newRemindAt.toISOString(), sent: false }).eq('id', target.id)
@@ -1413,6 +1392,14 @@ _"${originalText}"_
 
     // ── Follow-up reminder done/snooze handler ────────────────────────────────
     const isDone = /^(done|resolved|sorted|closed|completed|cancel reminder|no need)$/i.test(text.trim())
+    if(/^(done|resolved|sorted|closed|completed)$/i.test(text.trim())){
+      const reply=await completeReminderOccurrence(resolvedUser.telegramId,String(formData.get('OriginalRepliedMessageSid')||'')||null)
+        .catch(()=> 'I couldn’t save that reminder as done. Please try again; I haven’t confirmed it as completed.')
+      await saveConversation(resolvedUser.telegramId,'user',text)
+      await saveConversation(resolvedUser.telegramId,'assistant',reply)
+      await sendWhatsAppMessage(from,reply)
+      return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+    }
     const snoozeMatch = text.trim().match(/^snooze\s+(.+)$/i)
 
     if (isDone || snoozeMatch) {

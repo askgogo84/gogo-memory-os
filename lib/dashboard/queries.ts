@@ -24,6 +24,8 @@ export type ReminderRow = {
   is_recurring: boolean | null
   sent: boolean | null
   sent_at: string | null
+  status?: string | null
+  delivery_state?: string | null
 }
 
 // Discriminated so the page can tell "nothing today" (ok, empty) from "the read
@@ -48,7 +50,7 @@ export async function getTodayReminders(telegramId: string): Promise<TodayRemind
   const { startUtc, endUtc } = istDayWindow()
   const { data, error } = await supabaseAdmin
     .from('reminders')
-    .select('id, message, remind_at, timezone, recurring_pattern, is_recurring, sent, sent_at')
+    .select('id, message, remind_at, timezone, recurring_pattern, is_recurring, sent, sent_at, status, delivery_state')
     .eq('telegram_id', tgNum)
     .gte('remind_at', startUtc.toISOString())
     .lt('remind_at', endUtc.toISOString())

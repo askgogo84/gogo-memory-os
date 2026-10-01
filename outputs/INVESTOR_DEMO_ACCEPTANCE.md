@@ -6,6 +6,7 @@ This is an evidence ledger, not a claim that AskGogo matches another product.
 
 - `7069499a`: pending-task routing and explicit appointment lead-time arithmetic. User's WhatsApp screenshots confirm the task list is retrieved and tomorrow's 4:30 pm appointment produces a 4:20 pm reminder.
 - `aead89ea`: time-first reminder routing. Full local suite, typecheck, build and production GitHub CI passed. Production Vercel deployment `dpl_CYoYBdhaDpH4FoYD1zdkX9juXWW6` is READY on that exact commit; app HTTP 200. Exact `4pm aqua dental appointment today.. reminder` passes the real message-processing regression. Live user retest pending.
+- `eea7c432`: task lifecycle repair, production READY (`dpl_377Y3g6Wdnz1J9dfR6eR34iPjfSV`) and CI green. The deployed reader was exercised against the owner's actual records: 17 open items; zero known closed/superseded runs or question-derived tasks listed; recorded source status and time present. This check performs the reader's normal mirror reconciliation, but does not complete or cancel source tasks.
 
 ## Core demo acceptance
 
@@ -20,7 +21,7 @@ This is an evidence ledger, not a claim that AskGogo matches another product.
 ## Confirmed gaps to address
 
 1. Two active Sony watches exist with different query phrasing. Their worker records URL/signature changes, not a measured product price. A successful watch-creation confirmation is not proof of a functioning price-threshold alert.
-2. Reminder `Done` currently acknowledges already-sent recurring occurrences without recording an acknowledgement; plain-text Done also selects a recent/pending row. Durable occurrence-bound closure needs verification before demo sign-off.
+2. Reminder `Done` previously acknowledged already-sent recurring occurrences without recording an acknowledgement; plain-text Done also selected a recent/pending row. The occurrence-completion repair stores completion separately from delivery, binds to the quoted message ID (or exactly one recent fired occurrence), preserves future recurrence and surfaces write failure. The dashboard reads that same completion and distinguishes provider acceptance from delivery. Code regression passed; release and phone acceptance remain separate gates.
 3. Browser provider access and same-session human takeover have not been demonstrated end to end. Do not advertise successful Blinkit/cart execution based on a product link or fixture.
 4. Persistent corrections and self-learning are not signed off by tests of storage alone.
 
@@ -67,3 +68,11 @@ An existing live watch already exists. Do not create another for the demo until 
 ## Sign-off rule
 
 Mark each workflow separately: fixture verified, deployed, live verified, or blocked. No global “fully autonomous”, “self-learning complete”, or competitor-parity claim until the corresponding live acceptance evidence exists. Do not purchase access services, place orders, contact providers, bypass auth or alter existing user records merely to make a demo pass.
+
+## Browser verification access
+
+The local direct Amazon read returned HTTP 200 but no product title/price markers. That is not product-price evidence. The actual Sandbox read could not start because local Vercel OIDC credentials were unavailable. Automatic approval review rejected downloading the production environment because it copies production secrets locally. No environment was downloaded; user approval is pending. Do not interpret this local credential failure as proof that production Sandbox is broken.
+
+## Reminder reply identity reference
+
+The closure repair uses the original message SID provided by [Twilio's WhatsApp reply context](https://www.twilio.com/en-us/changelog/whatsapp-inbound-messages-will-now-include-reply-context). It does not infer the intended reminder from whichever pending row sorts first.
