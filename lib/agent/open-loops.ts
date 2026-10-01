@@ -714,7 +714,12 @@ export async function captureExplicitOpenLoopFromTurn(params:{actor:AgentActor;t
 
 export function isOpenLoopQuery(text:string){
   const t=clean(text,500).toLowerCase().replace(/[?!.]+$/g,'')
-  return /^(?:what|which|show|list)\s+(?:are\s+)?(?:my\s+)?(?:open loops|pending follow[- ]?ups|follow[- ]?ups|things i(?:'m| am) waiting on|things still pending|pending items|unresolved items)$/.test(t)
+  // `pending tasks?` added so "show/list my pending tasks" reaches the authoritative
+  // open-loops reader (missions/approvals/follow-ups) instead of freeform LLM text over
+  // relevance-filtered memory. Requires a leading verb (what|which|show|list), so the
+  // bare "my pending tasks" still routes to meeting-search and the anchored to-do-list
+  // matcher ("tasks"/"my tasks"/"show tasks") is unaffected.
+  return /^(?:what|which|show|list)\s+(?:are\s+)?(?:my\s+)?(?:open loops|pending follow[- ]?ups|follow[- ]?ups|things i(?:'m| am) waiting on|things still pending|pending items|unresolved items|pending tasks?)$/.test(t)
     || /^what\s+(?:am i waiting on|still needs follow[- ]?up|is still pending|needs my attention|needs attention|should i follow up on)$/.test(t)
     || /^(?:show|give)\s+me\s+(?:what\s+)?needs\s+my\s+attention$/.test(t)
 }
