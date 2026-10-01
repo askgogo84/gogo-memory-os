@@ -1,4 +1,5 @@
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
+import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { randomUUID } from 'crypto'
@@ -100,6 +101,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+    const foodComparison=await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:'web'})
+    if(foodComparison){
+      await saveConversation(user.telegram_id,text,foodComparison.text)
+      return NextResponse.json(foodComparison)
+    }
     const typedReply = await tryTypedTimeRouting({actor,text,surface:'web',messageId:`web-${randomUUID()}`})
     if(typedReply){
       await saveConversation(user.telegram_id,text,typedReply.text)

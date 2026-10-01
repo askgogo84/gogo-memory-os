@@ -1,4 +1,5 @@
 import { isTimeFirstReminder } from './reminder-command'
+import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
 import { classifyCheckVerb } from '@/lib/data/lists-core'
 import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
 import { hasConcreteFlightCode } from '@/lib/bot/flight-codes'
@@ -9,6 +10,7 @@ import { hasConcreteFlightCode } from '@/lib/bot/flight-codes'
 const GOOGLE_CALENDAR_RE = new RegExp(`\\bgoogle\\s+${CALENDAR_WORD_RE.source}`)
 
 export type IntentType =
+  | 'food_comparison'
   | 'connect_gmail'
   | 'read_gmail'
   | 'email_action'
@@ -82,6 +84,7 @@ export function detectIntent(text: string): DetectedIntent {
   const lower = t.toLowerCase()
 
   if (!lower) return { type: 'general_chat', confidence: 'low' }
+  if (isFoodComparisonRequest(t)) return { type: 'food_comparison', confidence: 'high' }
   if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) return { type: 'welcome_menu', confidence: 'high' }
   if (/^(?:help|\/help|menu|commands|what can you do)[?!.]*$/i.test(lower)) return { type: 'help_menu', confidence: 'high' }
 

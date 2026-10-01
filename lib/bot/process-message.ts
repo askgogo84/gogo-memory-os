@@ -1,4 +1,5 @@
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
+import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { buildContextPack, renderContextBlock } from '@/lib/agent/context-brain'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
@@ -391,6 +392,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
+  if(intent.type==='food_comparison'||/\b[1-9]\d{5}\b/.test(incomingText)||/^(?:stop|cancel) (?:the )?food comparison/i.test(incomingText)){
+    const food=await tryFoodComparison({telegramId:resolvedUser.telegramId,text:incomingText,surface:params.channel})
+    if(food){
+      await saveConversation(resolvedUser.telegramId,'user',incomingText)
+      await saveConversation(resolvedUser.telegramId,'assistant',food.text)
+      return {text:formatOutgoingText(params.channel,food.text),resolvedUser,handledBy:food.handledBy}
+    }
+  }
 
   // Inbound message id for meter idempotency (one unit per message per counter).
   const inboundMessageId = params.messageId ?? null
