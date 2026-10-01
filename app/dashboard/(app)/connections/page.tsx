@@ -58,6 +58,7 @@ export default async function ConnectionsPage(){
     <header className="border-b border-[#1f1f1f] pb-5">
       <div className="final-dark-eyebrow">Reach · authority · evidence</div>
       <h1 className="final-dark-title mt-2 text-[34px]">Connections</h1>
+      <Link href="/dashboard/commerce" className="mt-3 inline-block text-sm text-[#2fb8a6]">Connect food and grocery accounts →</Link>
       <p className="mt-2 max-w-3xl text-[13px] leading-5 text-[#9a9a9a]">What Gogo can reach, what it is allowed to do there, and what evidence is required before it claims success.</p>
     </header>
 
