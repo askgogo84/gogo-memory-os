@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isRelevantOpenLoop } from './task-lifecycle'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { embedText } from '@/lib/services/embeddings'
 import { isIndexable, recallableMemoryText } from '@/lib/services/memory-index'
@@ -328,6 +329,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
 
   const openLoops:ContextFact[]=[]
   for(const row of loopResult.data||[]){
+    if(!isRelevantOpenLoop(row))continue
     const text=[(row as any).title,(row as any).summary,(row as any).kind,(row as any).source_type].filter(Boolean).join(' ')
     const dueAt=validIso((row as any).due_at||(row as any).next_check_at)
     const priority=Number((row as any).priority||0)

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentSession } from '@/lib/agent/session'
+import { retiredRunReason } from '@/lib/agent/task-lifecycle'
 
 export const dynamic = 'force-dynamic'
 
@@ -88,7 +89,7 @@ export async function GET(request: Request) {
     surface: session.surface,
     runtime: runtimeStatus(),
     runs: (runs.data || []).map((r: any) => ({
-      id: r.id, goalId: r.goal_id, title: r.title, summary: r.summary, status: r.status,
+      id: r.id, goalId: r.goal_id, title: r.title, summary: r.summary, status: retiredRunReason(r)?'closed':r.status,
       capability: r.capability, progress: r.progress, startedAt: r.started_at,
       updatedAt: r.updated_at, nextCheckAt: r.next_check_at, why: r.why,
       // error + metadata let the client tell an actionable pause (sign-in / secure

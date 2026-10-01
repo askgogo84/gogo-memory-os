@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { syncOpenLoopsForUser } from './open-loops'
+import { isRelevantOpenLoop } from './task-lifecycle'
 import { isAutonomyStatus, partitionAttentionRuns, ideaWatcherIds, currentWatcherIdeas, watcherSupportsCurrentIdea } from './attention-state'
 
 function clean(value:unknown,max=300){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
@@ -53,12 +54,12 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
   const {data:user}=await supabaseAdmin.from('users').select('timezone').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
   const timezone=String(user?.timezone||'Asia/Kolkata')
   const results=await Promise.all([
-    supabaseAdmin.from('agent_runs').select('id,status,title,summary,progress,updated_at,error').eq('telegram_id',tg).in('status',['queued','running','waiting_approval','paused','outcome_unknown']).order('updated_at',{ascending:false}).limit(30),
+    supabaseAdmin.from('agent_runs').select('id,status,title,summary,progress,updated_at,error,metadata_json').eq('telegram_id',tg).in('status',['queued','running','waiting_approval','paused','outcome_unknown']).order('updated_at',{ascending:false}).limit(30),
     supabaseAdmin.from('agent_watchers').select('id,type,condition_json,cadence_minutes,next_check_at,active,created_at').eq('telegram_id',tg).eq('active',true).order('created_at',{ascending:false}).limit(8),
     supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at').eq('telegram_id',tg).eq('status','pending').order('requested_at',{ascending:false}).limit(5),
     supabaseAdmin.from('life_events').select('id,title,event_type,start_at,location,lifecycle_state').eq('telegram_id',tg).gte('start_at',new Date().toISOString()).order('start_at',{ascending:true}).limit(5),
     supabaseAdmin.from('agent_ideas').select('id,title,reason,value_score,status,created_at,source_refs').eq('telegram_id',tg).eq('status','new').order('value_score',{ascending:false}).limit(4),
-    supabaseAdmin.from('agent_open_loops').select('id,kind,title,priority,due_at,updated_at,source_type').eq('telegram_id',tg).eq('status','active').not('source_type','in','(approval,agent_run,life_event_action)').order('priority',{ascending:false}).limit(8),
+    supabaseAdmin.from('agent_open_loops').select('id,kind,title,summary,priority,due_at,updated_at,source_type').eq('telegram_id',tg).eq('status','active').not('source_type','in','(approval,agent_run,life_event_action)').order('priority',{ascending:false}).limit(8),
   ])
   const failed=results.find((result:any)=>result.error)
   if(failed?.error)throw new Error(`autonomy_status_read_failed:${failed.error.message}`)
@@ -81,11 +82,12 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
     if(ideaError)throw new Error('attention_watcher_evidence_read_failed')
     currentIdeas=currentWatcherIdeas(ideas,new Set((activeIdeaWatchers||[]).filter(watcherSupportsCurrentIdea).map((w:any)=>String(w.id))))
   }
-  const runLines=(items:any[])=>items.slice(0,6).map(r=>`• ${clean(r.title,150)} — ${String(r.status).replaceAll('_',' ')}`).join('\n')
+  const runLines=(items:any[])=>items.slice(0,6).map(r=>`• ${clean(r.title,150)} — ${String(r.status).replaceAll('_',' ')}\n  ${clean(r.summary,220)}${r.updated_at?` (source updated ${fmt(r.updated_at,timezone)})`:''}`).join('\n')
 
   const blocks:string[]=[]
   if(approvals?.length)blocks.push(`🛡️ *Waiting for you*\n${approvals.map((a:any)=>`• ${clean(a.title,160)}`).join('\n')}`)
-  if(openLoops?.length)blocks.push(`🧩 *Open loops*\n${openLoops.slice(0,6).map((loop:any)=>`• ${clean(loop.title,160)}`).join('\n')}`)
+  const relevantLoops=openLoops.filter(isRelevantOpenLoop)
+  if(relevantLoops.length)blocks.push(`🧩 *Open loops*\n${relevantLoops.slice(0,6).map((loop:any)=>`• ${clean(loop.title,160)}`).join('\n')}`)
   if(grouped.activeNow.length)blocks.push(`🧠 *Active now*\n${runLines(grouped.activeNow)}`)
   if(grouped.incomplete.length)blocks.push(`📋 *Incomplete tasks — queued*\n${runLines(grouped.incomplete)}`)
   if(grouped.pendingDecisions.length)blocks.push(`🛡️ *Pending decisions*\n${runLines(grouped.pendingDecisions)}`)

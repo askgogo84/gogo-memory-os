@@ -4,6 +4,7 @@ import type { AgentActor } from './actor'
 import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { fetchGmailAttentionThreads, refreshGmailAccessToken } from '@/lib/services/google-gmail'
+import { retiredRunReason, isTaskInventoryQuestion, isRelevantOpenLoop, openLoopStatus } from './task-lifecycle'
 
 export type OpenLoopKind='followup'|'waiting_on'|'commitment'|'approval'|'mission'|'life_event'|'meeting_action'|'other'
 
@@ -59,7 +60,7 @@ export function parseExplicitOpenLoop(text:string):{
   priority:number
 }|null{
   const raw=clean(text,1200)
-  if(!raw)return null
+  if(!raw||isTaskInventoryQuestion(raw))return null
 
   const waiting=raw.match(/\b(?:still\s+)?waiting\s+(?:on|for)\s+(.{3,240})/i)
   if(waiting?.[1]){
@@ -194,6 +195,7 @@ export async function autoResolveOpenLoopsFromTurn(params:{actor:AgentActor;text
 }
 
 async function upsertOpenLoop(input:OpenLoopInput){
+  if(input.sourceType==='conversation'&&isTaskInventoryQuestion(input.summary||input.title))return null
   const telegramId=String(input.telegramId)
   const fingerprint=fingerprintFor(input)
 
@@ -345,12 +347,10 @@ async function syncApprovals(telegramId:string,current:Set<string>){
 }
 
 function suppressRun(row:any){
-  const error=clean(row?.error,160)
   // Only suppress pauses that have a known terminal/recovered provider outcome.
   // Generic paused runs may still be waiting for user input or a resumable handoff
   // (for example train/general-plan flows), so age alone must never resolve them.
-  if(['stale_provider_access_limited','background_browser_resume_expired','stale_run_recovered','background_browser_actor_missing'].includes(error))return true
-  return false
+  return Boolean(retiredRunReason(row))
 }
 
 async function syncRuns(telegramId:string,current:Set<string>){
@@ -358,7 +358,7 @@ async function syncRuns(telegramId:string,current:Set<string>){
   const pageSize=200
   for(let from=0;;from+=pageSize){
     const {data,error}=await supabaseAdmin.from('agent_runs')
-      .select('id,status,title,summary,error,updated_at,started_at,capability')
+      .select('id,status,title,summary,error,updated_at,started_at,capability,metadata_json')
       .eq('telegram_id',telegramId)
       .in('status',['waiting_approval','paused','outcome_unknown'])
       .order('updated_at',{ascending:false})
@@ -667,6 +667,7 @@ export async function syncOpenLoopsForUser(telegramId:string|number){
 }
 
 export async function captureJevOpenLoopFromTurn(params:{actor:AgentActor;text:string;jev?:JevShadowResult|null;observedAt?:string|null}){
+  if(isTaskInventoryQuestion(params.text))return null
   const jev=params.jev
   if(!jev?.ok)return null
   const choice=String(jev.attentionState?.choice||'')
@@ -780,14 +781,17 @@ export async function listOpenLoops(telegramId:string|number,limit=10){
   await syncOpenLoopsForUser(telegramId)
   const fetchLimit=Math.max(limit,Math.min(80,limit*5))
   const {data,error}=await supabaseAdmin.from('agent_open_loops')
-    .select('id,kind,title,summary,priority,due_at,next_check_at,source_type,source_id,updated_at')
+    .select('id,kind,title,summary,priority,due_at,next_check_at,source_type,source_id,evidence_json,last_seen_at,updated_at')
     .eq('telegram_id',String(telegramId)).eq('status','active')
     .order('priority',{ascending:false}).order('updated_at',{ascending:false}).limit(fetchLimit)
   if(error)throw new Error(`open_loop_list_failed:${error.message}`)
   const seen=new Set<string>()
   const deduped:any[]=[]
   for(const row of data||[]){
-    const key=`${String(row.kind||'')}|${normalize(row.title)}`
+    if(!isRelevantOpenLoop(row))continue
+    // Equal titles can refer to different flight legs or tasks. Only collapse the
+    // same underlying record, never unrelated tasks with matching display text.
+    const key=row.source_id?`${row.source_type}|${row.source_id}`:String(row.id)
     if(seen.has(key))continue
     seen.add(key)
     deduped.push(row)
@@ -804,7 +808,14 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
   }
   const lines=loops.map((loop:any,index:number)=>{
     const badge=loop.kind==='approval'?'🛡️':loop.kind==='followup'?'📨':loop.kind==='waiting_on'?'⏳':loop.kind==='mission'?'🧠':loop.kind==='life_event'?'✈️':'•'
-    return `${index+1}. ${badge} ${clean(loop.title,180)}`
+    const details=[openLoopStatus(loop)]
+    const summary=clean(loop.summary,260)
+    if(summary&&summary.toLowerCase()!==clean(loop.title,260).toLowerCase())details.push(summary)
+    const due=Date.parse(String(loop.due_at||''))
+    if(Number.isFinite(due))details.push(`${due<Date.now()?'Past due; completion unconfirmed':'Due'}: ${new Date(due).toLocaleDateString('en-GB',{timeZone:'Asia/Kolkata'})}`)
+    const observed=Date.parse(String(loop.last_seen_at||''))
+    if(Number.isFinite(observed))details.push(`Source updated ${new Date(observed).toLocaleDateString('en-GB',{timeZone:'Asia/Kolkata'})}`)
+    return `${index+1}. ${badge} ${clean(loop.title,180)}\n   ${details.join(' · ')}`
   })
   await supabaseAdmin.from('agent_activity').insert({
     telegram_id:String(params.actor.legacyTelegramId),
@@ -815,7 +826,7 @@ export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string})
   const attentionWording=/needs\s+(?:my\s+)?attention|should\s+i\s+follow\s+up/i.test(params.text)
   return {
     runId:'open-loops-list',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,
-    text:`🧠 *${attentionWording?'What needs your attention':'Your open loops'}*\n\n${lines.join('\n')}\n\nSay *mark 2 done* to close one, *snooze 2 for 4 hours* to pause nudges, or *draft follow-up for 2* for a follow-up item.`,
+    text:`🧠 *${attentionWording?'What needs your attention':'Your open loops'}*\n\n${lines.join('\n\n')}\n\nSay *dismiss 2* to hide an attention item (this does not cancel its task), *snooze 2 for 4 hours* to pause nudges, *draft follow-up for 2* for a follow-up, or *mark 2 done* for a completed follow-up. Tasks awaiting approval must be approved or rejected through their action.`,
     handledBy:'open-loops',
   }
 }

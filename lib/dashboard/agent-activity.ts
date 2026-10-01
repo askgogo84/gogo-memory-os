@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { retiredRunReason } from '../agent/task-lifecycle'
 
 export type DashboardActivityStep = {
   id:string
@@ -87,7 +88,7 @@ export async function getDashboardActivityRuns(telegramId:string,limit=60):Promi
       id:String(run.id),
       type:String(run.type||'command'),
       capability:String(run.capability||''),
-      status:String(run.status||'queued'),
+      status:retiredRunReason(run)?'closed':String(run.status||'queued'),
       title:String(run.title||'Gogo task'),
       summary:String(run.summary||''),
       progress:Number(run.progress||0),
@@ -123,7 +124,7 @@ export async function getDashboardActivityRun(telegramId:string,runId:string):Pr
     id:String(run.id),
     type:String(run.type||'command'),
     capability:String(run.capability||''),
-    status:String(run.status||'queued'),
+    status:retiredRunReason(run)?'closed':String(run.status||'queued'),
     title:String(run.title||'Gogo task'),
     summary:String(run.summary||''),
     progress:Number(run.progress||0),

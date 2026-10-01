@@ -39,6 +39,7 @@ function dotTone(status:string){
   return 'bg-[#2A2A2A]'
 }
 function statusLabel(status:string){
+  if(status==='closed')return 'Closed'
   if(status==='completed')return 'Complete'
   if(status==='waiting_approval')return 'Waiting on you'
   if(status==='paused')return 'Paused'
@@ -48,6 +49,7 @@ function statusLabel(status:string){
   return status.replaceAll('_',' ')
 }
 function runSubline(run:DashboardActivityRun){
+  if(run.status==='closed')return 'Closed or superseded. No verified completion is recorded for this task.'
   const browser=browserContextForRun(run)
   if(run.status==='running')return run.summary||'Gogo is working on it.'
   if(run.status==='waiting_approval')return run.summary||'Waiting for your approval.'
@@ -135,7 +137,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="truncate text-[15px] font-semibold text-[#F2EFEA] group-hover:text-[#2FB8A6]">{run.title}</h2>
-                  {waiting&&<span className={`rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-[.1em] ${statusTone(run.status)}`}>{statusLabel(run.status)}</span>}
+                  {(waiting||run.status==='closed')&&<span className={`rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-[.1em] ${statusTone(run.status)}`}>{statusLabel(run.status)}</span>}
                 </div>
                 <p className={`mt-1 line-clamp-2 text-[13px] leading-5 ${active?'font-semibold text-[#D9A441]':'text-[#9A9A9A]'}`}>{runSubline(run)}</p>
                 {active&&<div className="mt-2 flex max-w-[320px] items-center gap-2"><div className="flex flex-1 gap-1">{[1,2,3,4,5].map((n)=><span key={n} className={`h-[2px] flex-1 ${n<=Math.max(1,Math.ceil((run.progress||0)/20))?'bg-[#2FB8A6]':'bg-[#2A2A2A]/50'}`}/>)}</div><span className="text-[10px] font-bold uppercase tracking-[.08em] text-[#6A6A6A]">{run.progress||0}%</span></div>}

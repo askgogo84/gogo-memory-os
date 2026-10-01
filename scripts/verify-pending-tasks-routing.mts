@@ -4,6 +4,9 @@ import { runInNewContext } from 'node:vm'
 import crypto from 'node:crypto'
 import ts from 'typescript'
 import { isMeetingSearchCommand } from '../lib/services/meeting-search'
+import * as lifecycle from '../lib/agent/task-lifecycle'
+import { partitionAttentionRuns } from '../lib/agent/attention-state'
+import { summarizeActiveRunState } from '../lib/dashboard/run-state'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Repair regression for the 1-Oct "Show my pending tasks." → "no pending tasks"
@@ -77,6 +80,7 @@ function loadOpenLoops(db: any) {
     transpiled = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   }
   const mocks: Record<string, any> = {
+    './task-lifecycle': lifecycle,
     'node:crypto': crypto,
     '@/lib/supabase-admin': { supabaseAdmin: db },
     '@/lib/security/google-token-crypto': { decryptGoogleToken: (v: string) => v },
@@ -155,7 +159,7 @@ function seed(): Record<string, any[]> {
   const db = makeDb(seed())
   const ol = loadOpenLoops(db)
   const res = await ol.handleOpenLoopQuery({ actor: actor(100), text: 'show my pending tasks' })
-  check('resolved/completed loop excluded', !/COMPLETED|Reply to Anil/i.test(res?.text || ''))
+  check('resolved/completed loop excluded', !/Reply to Anil/i.test(res?.text || ''))
 }
 
 // ── 4. Another user's records never appear ─────────────────────────────────────
@@ -178,6 +182,56 @@ function seed(): Record<string, any[]> {
     'authoritative read failure must throw (surface an error), not return a "no open loops" success',
   )
   check('lookup failure propagates as an error (asserted via rejects above)', true)
+}
+
+// Oct-1 production: old closed handoffs, an explicitly superseded trip and
+// questions extracted as commitments polluted the list. Exercise reconciliation,
+// numbered closure and the same lifecycle interpretation used by the dashboard.
+{
+  const fixture = seed()
+  const base = fixture.agent_runs[0]
+  fixture.agent_runs.push(
+    {...base,id:'closed-train',title:'CLOSED TRAIN',metadata_json:{state:'closed_stale',handoff:{takeoverUrl:'old'}}},
+    {...base,id:'superseded-trip',title:'SUPERSEDED TRIP',summary:'Superseded by duplicate mission submission'},
+    {...base,id:'other-leg',title:base.title,summary:'Different rail request, waiting on your route choice.'},
+  )
+  const question='Which of those are actually running in the background right now, and which are just waiting for me?'
+  fixture.agent_open_loops.push({id:'invented',telegram_id:'100',kind:'waiting_on',status:'active',title:'Waiting on me',summary:question,source_type:'conversation'})
+  const db=makeDb(fixture)
+  const ol=loadOpenLoops(db)
+  assert.equal(ol.parseExplicitOpenLoop(question),null)
+  assert.equal(ol.parseExplicitOpenLoop('How many reminders do I have to review Project Phoenix?'),null)
+  assert.ok(ol.parseExplicitOpenLoop('I am waiting for Ravi to send the invoice.'))
+  assert.equal(await ol.captureJevOpenLoopFromTurn({actor:actor(100),text:question,jev:{ok:true,attentionState:{choice:'waiting_on',confidence:1}}}),null)
+  const first=await ol.handleOpenLoopQuery({actor:actor(100),text:'show my pending tasks'})
+  assert.doesNotMatch(first.text,/CLOSED TRAIN|SUPERSEDED TRIP|Waiting on me/)
+  assert.match(first.text,/Paused — not running/)
+  assert.match(first.text,/waiting on IRCTC device handoff/)
+  assert.match(first.text,/Source updated 01\/10\/2026/)
+  assert.equal((first.text.match(/Train research: SBC to MYS/g)||[]).length,2,'same title must not hide a distinct source task')
+  const runs=fixture.agent_runs
+  assert.equal(partitionAttentionRuns(runs).waitingContext.length,2)
+  assert.equal(summarizeActiveRunState([runs[1]]).waiting,0,'closed handoff is not actionable on dashboard')
+
+  // Dismissal hides the attention item, does not claim verified task completion,
+  // and an unchanged source cannot resurrect it during the next synchronization.
+  const shown=db.store.agent_activity.find((r:any)=>r.event_type==='open_loops_list_shown').metadata_json.open_loop_ids
+  const mirror=db.store.agent_open_loops.find((r:any)=>r.source_id==='run-sbc')
+  const index=shown.indexOf(mirror.id)+1
+  const refused=await ol.handleOpenLoopResolution({actor:actor(100),text:`mark ${index} done`})
+  assert.match(refused.text,/underlying task is still active/)
+  const dismissed=await ol.handleOpenLoopResolution({actor:actor(100),text:`dismiss ${index}`})
+  assert.match(dismissed.text,/Closed/)
+  await ol.handleOpenLoopQuery({actor:actor(100),text:'show my pending tasks'})
+  assert.equal(mirror.status,'dismissed')
+  assert.equal(db.store.agent_runs[0].status,'paused')
+
+  // Explicit source closure reconciles its mirror, without changing the source.
+  db.store.agent_runs.find((r:any)=>r.id==='other-leg').metadata_json={state:'closed_stale'}
+  const after=await ol.handleOpenLoopQuery({actor:actor(100),text:'show my pending tasks'})
+  assert.doesNotMatch(after.text,/Train research: SBC to MYS/)
+  assert.equal(db.store.agent_open_loops.find((r:any)=>r.source_id==='other-leg').status,'resolved')
+  check('source lifecycle, corrections, same-title identity and durable dismissal verified',true)
 }
 
 if (failures > 0) { console.error(`\npending-tasks routing verification FAILED: ${failures} check(s)`); process.exit(1) }

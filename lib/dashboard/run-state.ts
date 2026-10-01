@@ -5,7 +5,9 @@
 // waiting_approval runs were treated as active. Separate genuinely-running work from
 // work that is waiting on the user so the indicator reflects the real task state.
 
-export type RunStatusLike = { status?: string | null; error?: string | null; metadata?: any; metadata_json?: any }
+import { retiredRunReason } from '../agent/task-lifecycle'
+
+export type RunStatusLike = { status?: string | null; summary?: string | null; error?: string | null; metadata?: any; metadata_json?: any }
 export type RunStateSummary = {
   working: number
   waiting: number
@@ -22,6 +24,7 @@ const WORKING = new Set(['running', 'queued'])
 const ACTIONABLE_PAUSE = /human_auth_required|secondary_auth|awaiting_user|take[_\s-]?control|handoff|resume/i
 
 export function isActionablePause(run: RunStatusLike): boolean {
+  if(retiredRunReason(run))return false
   if (String(run?.status || '') !== 'paused') return false
   const meta = (run?.metadata || run?.metadata_json || {}) as any
   // Actionable pauses can be signalled by metadata (handoff, secure-browser waiting,
@@ -32,7 +35,7 @@ export function isActionablePause(run: RunStatusLike): boolean {
 }
 
 export function summarizeActiveRunState(runs: RunStatusLike[] | null | undefined): RunStateSummary {
-  const list = Array.isArray(runs) ? runs : []
+  const list = Array.isArray(runs) ? runs.filter(r=>!retiredRunReason(r)) : []
   const working = list.filter(r => WORKING.has(String(r?.status || ''))).length
   const waiting = list.filter(r => String(r?.status || '') === 'waiting_approval' || isActionablePause(r)).length
   const label: RunStateSummary['label'] = working ? 'Working' : waiting ? 'Waiting for you' : 'Ready'

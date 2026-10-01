@@ -1,7 +1,10 @@
+import { retiredRunReason } from './task-lifecycle'
+
 export function partitionAttentionRuns(runs:any[]){
   const activeNow:any[]=[],incomplete:any[]=[],pendingDecisions:any[]=[],waitingContext:any[]=[]
   const seen=new Set<string>()
   for(const run of runs){
+    if(retiredRunReason(run))continue
     if(!run.id||seen.has(String(run.id)))continue
     seen.add(String(run.id))
     if(run.status==='running')activeNow.push(run)

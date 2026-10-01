@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { retiredRunReason } from '../lib/agent/task-lifecycle'
 import { draftFromOpenLoop, parseExplicitOpenLoop, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate, isUncertainOrNegatedCompletion, parseOpenLoopResolution } from '../lib/agent/open-loops'
 
 const wait=parseExplicitOpenLoop("I'm still waiting on Srinivas to send the corrected JSON.")
@@ -197,7 +198,8 @@ assert.match(openLoops,/snooze 2 for 4 hours/)
 assert.match(openLoops,/draft follow-up for 2/)
 console.log('Attention scout page rotation + action discoverability verified')
 
-assert.match(openLoops,/stale_provider_access_limited/)
+assert.ok(retiredRunReason({status:'paused',error:'stale_provider_access_limited'}))
+assert.equal(retiredRunReason({status:'paused',updated_at:'2020-01-01'}),null)
 assert.doesNotMatch(openLoops,/status[^\n]{0,80}paused[^\n]{0,120}age\s*>/i)
 assert.match(openLoops,/\.range\(from,from\+pageSize-1\)/)
 assert.match(autonomyStatus,/terminalPauseErrors/)

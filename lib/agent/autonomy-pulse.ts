@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp, sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
+import { retiredRunReason, isRelevantOpenLoop } from './task-lifecycle'
 
 const PULSE_COOLDOWN_MINUTES=180
 const MAX_USERS_PER_PASS=80
@@ -92,7 +93,7 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
   const [approvalRes,ideas,runsRes,eventsRes,openLoopsRes]=await Promise.all([
     supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at').eq('telegram_id',telegramId).eq('status','pending').order('requested_at',{ascending:false}).limit(3),
     fetchPulseIdeas(telegramId),
-    supabaseAdmin.from('agent_runs').select('id,status,title,summary,updated_at,error').eq('telegram_id',telegramId).in('status',['waiting_approval','paused','outcome_unknown','failed']).gte('updated_at',since48).order('updated_at',{ascending:false}).limit(6),
+    supabaseAdmin.from('agent_runs').select('id,status,title,summary,updated_at,error,metadata_json').eq('telegram_id',telegramId).in('status',['waiting_approval','paused','outcome_unknown','failed']).gte('updated_at',since48).order('updated_at',{ascending:false}).limit(6),
     supabaseAdmin.from('life_events').select('id,event_type,title,start_at,location,lifecycle_state,next_action_at').eq('telegram_id',telegramId).gte('start_at',nowIso).lte('start_at',future72).order('start_at',{ascending:true}).limit(5),
     supabaseAdmin.from('agent_open_loops').select('id,kind,title,summary,priority,due_at,next_check_at,proactive_backoff_until,source_type').eq('telegram_id',telegramId).eq('status','active').gte('priority',0.85).not('source_type','in','(approval,agent_run,life_event_action)').or(`next_check_at.is.null,next_check_at.lte.${nowIso}`).or(`proactive_backoff_until.is.null,proactive_backoff_until.lte.${nowIso}`).order('priority',{ascending:false}).limit(8),
   ])
@@ -122,6 +123,7 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     items.push({key:`approval:${a.id}`,score:100,line:`🛡️ *Needs your approval*: ${clean(a.title,160)}`,kind:'approval'})
   }
   for(const loop of openLoops||[]){
+    if(!isRelevantOpenLoop(loop))continue
     if(loop.next_check_at && Date.parse(String(loop.next_check_at))>Date.now())continue
     const score=Math.round(Math.max(0,Math.min(1,Number(loop.priority||0.8)))*100)
     const title=usefulOpenLoopTitle(loop.title)
@@ -144,6 +146,7 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     'background_browser_actor_missing',
   ])
   for(const r of runs||[]){
+    if(retiredRunReason(r))continue
     if(String(r.status)==='waiting_approval')continue
     const errorCode=clean(r.error,160)
     if(suppressedRunErrors.has(errorCode))continue
