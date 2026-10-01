@@ -17,7 +17,7 @@ import { buildSportsReplyWithState } from './handlers/sports'
 import { getLatestFollowupState, saveFollowupState, isFreshFollowupState } from './handlers/followup-state'
 import { resolvePendingReminder, resolvePendingCalendar, looksLikeNewCommand } from './pending-followup'
 import { styleReplyByIntent } from './handlers/response-style'
-import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent } from './handlers/reminders'
+import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent, reminderLeadTime } from './handlers/reminders'
 import { buildAmPmReminderSetReply, buildReminderFromAmPmChoice, isAmPmChoice } from './handlers/reminder-ampm-followup'
 import { editLatestReminder } from './handlers/edit-reminder'
 import { buildMorningBriefing } from './handlers/morning-briefing'
@@ -798,7 +798,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // mis-parses go to Claude first (it understands language). Simple one-time
   // reminders still use the fast regex path below. Fail-safe: any error/decline
   // falls through to the regex chain.
-  if (intent.type === 'set_reminder' && /\b(every|hourly|twice|between|from .+ to |each (day|week|mon|tue|wed|thu|fri|sat|sun))\b/i.test(incomingText)) {
+  if (intent.type === 'set_reminder' && !reminderLeadTime(incomingText) && /\b(every|hourly|twice|between|from .+ to |each (day|week|mon|tue|wed|thu|fri|sat|sun))\b/i.test(incomingText)) {
     try {
       const cRaw = await askClaude(incomingText, [], [], resolvedUser.name, '')
       const cParsed = parseClaudeResponse(cRaw)
@@ -846,6 +846,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   // Reminder intent detected but no specific time parsed - ask only for time
   if (!eagerReminder && intent.type === 'set_reminder') {
+    // An unresolved advance notice must not fall back to model timestamp math.
+    if (reminderLeadTime(incomingText)) {
+      const reply = "I couldn't resolve a future reminder time. Please include the appointment date, time and advance notice together — for example, ‘Aqua appointment tomorrow at 4:30 pm; remind me 10 minutes earlier’. Nothing has been saved."
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
     // Regex couldn't parse the time — let Claude resolve it (it computes the
     // datetime itself and handles natural phrasings). Fail-safe: any error
     // falls through to the clarifying question below.
