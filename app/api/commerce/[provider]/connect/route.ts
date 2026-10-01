@@ -27,7 +27,7 @@ export async function POST(request: Request, context: {params: Promise<{provider
     if (runId !== undefined && (typeof runId !== 'string' || !(await readCommerceTask(session.telegramId, runId)))) {
       return NextResponse.json({error: 'task_unavailable'}, {status: 404})
     }
-    // Current task adapter is restaurant food; Zepto grocery needs a separate basket task.
+    // Only Swiggy task adapters have a verified tool schema; Zepto remains connection-only.
     if (runId && provider !== 'swiggy') return NextResponse.json({error: 'task_provider_not_supported'}, {status: 409})
     if (runId && await readCommerceConnection(session.telegramId, provider)) {
       const task = await resumeCommerceTaskAfterAuth(session.telegramId, runId, provider)

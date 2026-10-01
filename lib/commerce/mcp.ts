@@ -5,8 +5,8 @@ export class CommerceMcpError extends Error {
   constructor(public reason: 'reauth_required' | 'provider_unavailable' | 'invalid_response' | 'tool_not_allowed') { super(reason) }
 }
 
-// This initial transport exposes discovery and documented read-only tools only.
-// Cart writes require a separate durable approval/readback executor, not an LLM tool loop.
+// Read tools stay separate from the explicit, durable Instamart cart executor.
+// No order, payment or general-purpose write method is exposed.
 const READ_TOOLS: Record<CommerceProvider, Partial<Record<'food' | 'grocery', readonly string[]>>> = {
   swiggy: {
     food: ['get_addresses', 'search_restaurants', 'search_menu', 'get_restaurant_menu', 'get_food_cart'],
@@ -95,6 +95,17 @@ export class CommerceMcpClient {
       cursor = result.nextCursor
     }
     throw new CommerceMcpError('invalid_response')
+  }
+  // Only lib/commerce/instamart-cart.ts calls this after persisting an owned request.
+  async updateInstamartCart(addressId: string, items: Array<{spinId: string; skuId: string; quantity: number}>) {
+    if (this.provider !== 'swiggy' || this.server !== 'grocery') throw new CommerceMcpError('tool_not_allowed')
+    if (!addressId || addressId.length > 512 || !items.length || items.length > 100 || items.some(item =>
+      !item.spinId || item.spinId.length > 512 || !item.skuId || item.skuId.length > 512 || !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 999)) throw new CommerceMcpError('invalid_response')
+    await this.initialize()
+    // Official update_cart replaces the whole basket; caller supplies preserved items too.
+    const result = await this.rpc('tools/call', {name: 'update_cart', arguments: {selectedAddressId: addressId, items}})
+    if (result.isError) throw new CommerceMcpError('provider_unavailable')
+    // A transport success is not a verified cart. The executor must read get_cart next.
   }
   async readTool(name: string, args: Record<string, unknown>) {
     if (!(READ_TOOLS[this.provider][this.server] || []).includes(name)) throw new CommerceMcpError('tool_not_allowed')

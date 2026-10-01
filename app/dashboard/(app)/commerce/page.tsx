@@ -5,7 +5,7 @@ import Link from 'next/link'
 import type {FoodCatalogue} from '@/lib/commerce/task'
 
 type Provider = {provider: string; label: string; state: string}
-type Task = {runId: string; summary: string; subject: string; state: string; provider?: string; addressLabel?: string; catalogue?: FoodCatalogue | null}
+type Task = {service: 'food' | 'grocery'; runId: string; summary: string; subject: string; state: string; provider?: string; addressLabel?: string; catalogue?: FoodCatalogue | null}
 type AddressPage = {addresses: Array<{id: string; label: string; addressLine: string}>; page: number; hasMore: boolean}
 export default function CommerceConnectionsPage() {
   const [providers, setProviders] = useState<Provider[]>([])
@@ -52,7 +52,7 @@ export default function CommerceConnectionsPage() {
   async function readAddresses(page: number) {
     setBusy('swiggy'); setMessage(''); setAddresses(null)
     try {
-      const response = await fetch('/api/commerce/swiggy/addresses?page=' + page, {cache: 'no-store'})
+      const response = await fetch('/api/commerce/swiggy/addresses?page=' + page + '&service=' + (task?.service || 'food'), {cache: 'no-store'})
       if (!response.ok) throw new Error()
       setAddresses(await response.json())
     } catch { setMessage('Saved addresses could not be verified. Reconnect if sign-in has expired, then retry.') }
@@ -65,11 +65,23 @@ export default function CommerceConnectionsPage() {
       const response = await fetch('/api/commerce/tasks/' + encodeURIComponent(taskId) + '/catalogue', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(restaurantId ? {restaurantId} : {})})
       const data = await response.json()
       if (!response.ok) {
+        if (data.task) setTask(data.task)
         setMessage(data.error === 'reauth_required' ? 'Please reconnect Swiggy, then continue this same comparison.' : data.error === 'refresh_restaurants' ? 'These options need refreshing. Read available restaurants again.' : 'The provider options could not be verified. Your task and selected address are preserved; retry or choose your address again.')
         return
       }
       setTask(data); setMessage('Available options checked. Item prices and delivered totals are still unverified; nothing was added to a cart.')
     } catch { setMessage('The provider could not be reached. Your comparison is preserved; retry shortly.') }
+    finally { setBusy(null) }
+  }
+  async function cart(action: 'add' | 'check', spinId?: string, skuId?: string) {
+    if (!task) return
+    setBusy('swiggy'); setMessage('Checking the cart…')
+    try {
+      const response = await fetch('/api/commerce/tasks/' + encodeURIComponent(task.runId) + '/cart', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action, spinId, skuId, quantity: 1})})
+      const data = await response.json()
+      if (response.ok) { setTask(data); setMessage('') }
+      else { if (data.task) setTask(data.task); setMessage('The cart result could not be confirmed. Refresh this task and use Check cart outcome; do not repeat the addition.') }
+    } catch { await load(task.runId).catch(() => {}); setMessage('The connection was interrupted. Refresh this task and check the outcome before any further addition.') }
     finally { setBusy(null) }
   }
   async function selectAddress(addressId: string) {
@@ -92,26 +104,32 @@ export default function CommerceConnectionsPage() {
     {task && <section className="rounded-xl border border-[#292929] p-5 space-y-2">
       <h2 className="text-lg font-medium">Your {task.subject} comparison</h2>
       <p>{task.summary}</p>
+      {task.state === 'cart_outcome_unknown' && <button disabled={busy !== null} onClick={() => cart('check')} className="rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Check cart outcome — no new addition</button>}
       {task.addressLabel && <p>Selected address: {task.addressLabel}</p>}
       <Link href="/dashboard/chat" className="text-[#2fb8a6]">Back to Gogo</Link>
     </section>}
     {providers.map(provider => <section key={provider.provider} className="rounded-xl border border-[#292929] p-5 space-y-3">
       <h2 className="text-lg font-medium">{provider.label}{provider.provider === 'swiggy' ? ' Food and Instamart' : ''}</h2>
       <p className="text-sm text-[#a0a0a0]">{provider.state === 'provider_approval_required' ? 'Waiting for provider access approval.' : provider.state === 'authorized' ? 'Account authorized. Address, price and cart verification are still required for each task.' : 'Not connected, or sign-in has expired.'}</p>
-      {provider.state !== 'provider_approval_required' && <button disabled={busy !== null || (!!runId && (!task || provider.provider !== 'swiggy'))} onClick={() => act(provider.provider, provider.state === 'authorized' && !runId ? 'disconnect' : 'connect')} className="rounded-lg bg-[#2fb8a6] px-4 py-2 text-sm text-black disabled:opacity-50">
+      {provider.state !== 'provider_approval_required' && <button disabled={busy !== null || (!!runId && (!task || task.state.startsWith('cart_') || provider.provider !== 'swiggy'))} onClick={() => act(provider.provider, provider.state === 'authorized' && !runId ? 'disconnect' : 'connect')} className="rounded-lg bg-[#2fb8a6] px-4 py-2 text-sm text-black disabled:opacity-50">
         {busy === provider.provider ? 'Please wait…' : provider.state === 'authorized' ? (!runId ? 'Disconnect' : 'Use connected ' + provider.label + ' account') : 'Connect ' + provider.label}
       </button>}
-      {runId && provider.provider === 'zepto' && <p className="text-sm text-[#a0a0a0]">Zepto groceries cannot be compared with a restaurant meal.</p>}
-      {task && task.provider === 'swiggy' && provider.provider === 'swiggy' && provider.state === 'authorized' && <button disabled={busy !== null} onClick={() => readAddresses(1)} className="block rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Choose saved delivery address</button>}
+      {runId && provider.provider === 'zepto' && <p className="text-sm text-[#a0a0a0]">{task?.service === 'grocery' ? 'Zepto comparison is waiting for provider access and verified integration.' : 'Zepto groceries cannot be compared with a restaurant meal.'}</p>}
+      {task && !task.state.startsWith('cart_') && task.provider === 'swiggy' && provider.provider === 'swiggy' && provider.state === 'authorized' && <button disabled={busy !== null} onClick={() => readAddresses(1)} className="block rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Choose saved delivery address</button>}
     </section>)}
-    {task?.addressLabel && task.provider === 'swiggy' && providers.some(provider => provider.provider === 'swiggy' && provider.state === 'authorized') && <section className="space-y-3">
-      <button disabled={busy !== null} onClick={() => readCatalogue()} className="rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Read available restaurants</button>
+    {task?.addressLabel && !task.state.startsWith('cart_') && task.provider === 'swiggy' && providers.some(provider => provider.provider === 'swiggy' && provider.state === 'authorized') && <section className="space-y-3">
+      <button disabled={busy !== null} onClick={() => readCatalogue()} className="rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">{task.service === 'grocery' ? 'Read available grocery products' : 'Read available restaurants'}</button>
       {task.catalogue?.observedAt && <p className="text-sm text-[#a0a0a0]">Checked: {new Date(task.catalogue.observedAt).toLocaleString()}</p>}
       {task.catalogue?.restaurants?.map(restaurant => <button key={restaurant.id} disabled={busy !== null} onClick={() => readCatalogue(restaurant.id)} className="block w-full rounded-xl border border-[#292929] p-4 text-left disabled:opacity-50">
         <strong>{restaurant.name}</strong>
         <p>{restaurant.distanceKm !== null ? restaurant.distanceKm + ' km away' : 'Distance not provided'} · {restaurant.deliveryMinutes !== null ? 'Estimated ' + restaurant.deliveryMinutes + ' min' : 'Delivery estimate not provided'}</p>
         <span className="text-sm text-[#2fb8a6]">Read matching menu items</span>
       </button>)}
+      {task.catalogue?.products?.map(item => <div key={item.id + ':' + item.skuId} className="rounded-xl border border-[#292929] p-4">
+        <strong>{item.name} — {item.variant}</strong>
+        <p className="text-sm text-[#a0a0a0]">Available at the last check. Price and delivered total remain unverified. Nothing has been added to your cart.</p>
+        {task.state === 'waiting_item_selection' && <button disabled={busy !== null} onClick={() => cart('add', item.id, item.skuId)} className="mt-3 rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Add 1 to Instamart cart — price unverified</button>}
+      </div>)}
       {task.catalogue?.items?.map(item => <div key={item.id} className="rounded-xl border border-[#292929] p-4">
         <strong>{item.name}</strong>
         <p className="text-sm text-[#a0a0a0]">Available at the last check. Price and delivered total not verified.{item.needsCustomization ? ' Options must be confirmed before any cart preparation.' : ''}</p>

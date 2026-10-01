@@ -8,7 +8,7 @@ const TYPE='food_comparison'
 const QUESTION='For this food comparison, what is your delivery PIN code in India?'
 const PROVIDERS=[{name:'Swiggy',domain:'swiggy.com'},{name:'Zomato',domain:'zomato.com'},{name:'Magicpin',domain:'magicpin.in'}]
 const TTL=4*60*60_000
-type Result={runId:string;status:'paused';capability:'browser';risk:'low';text:string;handledBy:'food-comparison'}
+type Result={runId:string;status:'paused';capability:'browser';risk:'low';text:string;handledBy:'food-comparison'|'grocery-comparison'}
 
 export function foodProviderLink(result:WebSearchResult,domain:string){
   try{
@@ -27,6 +27,10 @@ export function renderFoodDiscovery(subject:string,pin:string,groups:Array<{name
 }
 
 export async function tryFoodComparison(params:{telegramId:number;text:string;surface?:string}):Promise<Result|null>{
+  if (/^\s*(?:compare grocery prices for\s|(?:show|check)\s+(?:my|the)\s+grocery comparison(?: status)?[.!]?\s*$)/i.test(params.text)) {
+    const {tryGroceryComparison} = await import('./grocery-comparison')
+    return tryGroceryComparison(params)
+  }
   const statusRequest=/^\s*(?:show|check)\s+(?:my|the)\s+food comparison(?: status)?[.!]?\s*$/i.test(params.text)
   const fresh=isFoodComparisonRequest(params.text)
   const location=foodLocationReply(params.text)

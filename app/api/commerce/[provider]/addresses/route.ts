@@ -5,7 +5,7 @@ import {readCommerceConnection} from '@/lib/commerce/connection-store'
 import {CommerceMcpClient, CommerceMcpError} from '@/lib/commerce/mcp'
 import {swiggyAddressPage} from '@/lib/commerce/addresses'
 
-import {readCommerceTask, selectCommerceTaskAddress, commerceTaskView} from '@/lib/commerce/task'
+import {readCommerceTask, selectCommerceTaskAddress, commerceTaskView, commerceTaskService} from '@/lib/commerce/task'
 
 export const dynamic = 'force-dynamic'
 export async function GET(request: Request, context: {params: Promise<{provider: string}>}) {
@@ -16,12 +16,14 @@ export async function GET(request: Request, context: {params: Promise<{provider:
   if (!commerceEnabled(provider)) return NextResponse.json({error: 'provider_approval_required'}, {status: 409})
   // Zepto's authenticated tool schema has not been obtained; do not guess it.
   if (provider !== 'swiggy') return NextResponse.json({error: 'provider_address_adapter_pending'}, {status: 409})
-  const page = Number(new URL(request.url).searchParams.get('page') || '1')
+  const query = new URL(request.url).searchParams
+  const service = query.get('service') === 'grocery' ? 'grocery' : 'food'
+  const page = Number(query.get('page') || '1')
   if (!Number.isSafeInteger(page) || page < 1 || page > 50) return NextResponse.json({error: 'invalid_page'}, {status: 400})
   try {
     const token = await readCommerceConnection(session.telegramId, provider)
     if (!token) return NextResponse.json({error: 'reauth_required'}, {status: 401})
-    const client = new CommerceMcpClient(provider, 'food', token.accessToken)
+    const client = new CommerceMcpClient(provider, service, token.accessToken)
     const data = swiggyAddressPage(await client.readTool('get_addresses', {page, pageSize: 10}))
     return NextResponse.json({...data, page, observedAt: new Date().toISOString()}, {headers: {'Cache-Control': 'no-store'}})
   } catch (error) {
@@ -47,7 +49,7 @@ export async function POST(request: Request, context: {params: Promise<{provider
     if (!task || task.metadata_json.commerce?.provider !== provider) return NextResponse.json({error: 'task_unavailable'}, {status: 404})
     const token = await readCommerceConnection(session.telegramId, provider)
     if (!token) return NextResponse.json({error: 'reauth_required'}, {status: 401})
-    const client = new CommerceMcpClient(provider, 'food', token.accessToken)
+    const client = new CommerceMcpClient(provider, commerceTaskService(task), token.accessToken)
     const page = swiggyAddressPage(await client.readTool('get_addresses', {page: input.page, pageSize: 10}))
     const matches = page.addresses.filter(address => address.id === input.addressId)
     if (matches.length !== 1) return NextResponse.json({error: 'address_changed_reload'}, {status: 409})
