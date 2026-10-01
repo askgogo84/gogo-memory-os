@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendWhatsApp } from '@/lib/whatsapp'
+import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 export const dynamic = 'force-dynamic'
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 export async function GET(req: NextRequest) {
+  // Internal service call only. `phone` is the target owner, not authorization.
+  // (No in-repo caller today; gated fail-closed so external callers cannot read a
+  // stranger's referral code / paid-referral count or mint codes by phone number.)
+  if (!isInternalServiceAuthorized(req)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   const phone = req.nextUrl.searchParams.get('phone')
   if (!phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })
   const { data: user } = await supabase.from('users').select('id,referral_code').eq('whatsapp_id', phone).single()
@@ -15,6 +22,10 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ ok: true, code, paidReferrals: paid, reply: `🎁 *Your Referral Link*\n\nShare: https://app.askgogo.in?ref=${code}\n\nWhen they subscribe, you both get *1 free month!*\n\n• Paid referrals: ${paid}` })
 }
 export async function POST(req: NextRequest) {
+  // Internal service call only. `phone` is the target owner, not authorization.
+  if (!isInternalServiceAuthorized(req)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   const { action, phone, code } = await req.json()
   if (action === 'apply') {
     const { data: ref } = await supabase.from('users').select('id').eq('referral_code',code.toUpperCase()).single()

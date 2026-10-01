@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 export const dynamic = 'force-dynamic'
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 const Q = { tech: 'India tech AI news today', markets: 'India NSE BSE market news', cricket: 'India cricket IPL news', startup: 'India startup funding news', world: 'world top news today', politics: 'India politics news' }
 export async function POST(req: NextRequest) {
+  // Internal service call only (bot pipeline). `phone` is the target owner, not auth.
+  if (!isInternalServiceAuthorized(req)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
   const { phone, topics } = await req.json()
   if (!phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })
   let userTopics = topics

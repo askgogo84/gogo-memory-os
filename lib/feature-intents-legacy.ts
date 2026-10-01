@@ -20,6 +20,7 @@ import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import { isCalendarListName } from '@/lib/data/calendar-word'
 import { buildNaturalAssetRetrievalReply } from '@/lib/services/asset-natural-retrieval'
 import { handleLinkVaultText } from '@/lib/services/link-vault'
+import { internalServiceAuthHeaders } from '@/lib/security/cron-auth'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
@@ -296,9 +297,12 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
 
 async function post(path: string, body: object): Promise<{ reply?: string } | null> {
   try {
+    // These bot-action routes require the internal-service secret (see
+    // lib/security/cron-auth.ts). We are the trusted backend calling ourselves; the
+    // Bearer header authenticates the caller so the routes reject external requests.
     const res = await fetch(`${APP_URL}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...internalServiceAuthHeaders() },
       body: JSON.stringify(body),
     })
     return res.json()
@@ -311,7 +315,7 @@ async function post(path: string, body: object): Promise<{ reply?: string } | nu
 async function get(path: string, params: Record<string, string>): Promise<{ reply?: string } | null> {
   try {
     const qs = new URLSearchParams(params).toString()
-    const res = await fetch(`${APP_URL}${path}?${qs}`)
+    const res = await fetch(`${APP_URL}${path}?${qs}`, { headers: { ...internalServiceAuthHeaders() } })
     return res.json()
   } catch (e) {
     console.error('[feature-intents] GET error:', path, e)

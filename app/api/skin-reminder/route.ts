@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -53,6 +54,10 @@ function formatIstDate(iso: string) {
 
 export async function POST(req: NextRequest) {
   try {
+    // Internal service call only (bot pipeline). `phone` is the target owner, not auth.
+    if (!isInternalServiceAuthorized(req)) {
+      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+    }
     const body = await req.json()
     const phone = String(body.phone || '').trim()
 
