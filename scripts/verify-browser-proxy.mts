@@ -49,7 +49,7 @@ assert.deepEqual(Object.keys(browserPageAllowlist('https://www.swiggy.com/instam
   'b67f7794189c.f957f42c.ap-south-1.token.awswaf.com',
 ].sort())
 assert.deepEqual(Object.keys(browserPageAllowlist('https://www.zepto.com/')).sort(),[
-  'www.zepto.com','*.www.zepto.com','277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com',
+  'www.zepto.com','*.www.zepto.com','277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com','cdn.zeptonow.com',
 ].sort())
 assert.equal('277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com' in browserPageAllowlist('https://zepto.com.example.com'),false)
 assert.deepEqual(Object.keys(browserPageAllowlist('https://example.com')),['example.com','*.example.com'])
