@@ -10,7 +10,7 @@ import { browserPageAllowlist } from '../lib/agent/browser-page-network'
 function load(file: string, mocks: Record<string, any>, extra='', globals:Record<string,any>={}) {
   // Legacy action fixtures focus on receipts/forms. The real load observer is
   // exercised against challenge, HTTP and navigation failures in lifetime tests.
-  mocks={'./browser-page-readiness':{BROWSER_PAGE_READINESS:'function observeBrowserPage(){return {read:async()=>({state:"ready",httpStatus:200})}}'},...mocks}
+  mocks={'./managed-browser':{managedBrowserEnabled:()=>false,ensureManagedBrowser:async()=>null},'./browser-page-readiness':{BROWSER_PAGE_READINESS:'function observeBrowserPage(){return {read:async()=>({state:"ready",httpStatus:200})}}'},...mocks}
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}

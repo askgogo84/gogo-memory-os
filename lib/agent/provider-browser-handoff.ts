@@ -4,6 +4,7 @@ import { ensureBrowserRuntime, SANDBOX_WORKDIR } from './secure-browser-bootstra
 import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
 import { browserPageAllowlist } from './browser-page-network'
 import {ensurePersistentCommerceBrowser} from './persistent-commerce-browser'
+import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
 
 export async function cancelBrowserHandoffReservation(userId:string,token:string){
   const {sandbox}=await getPersistentBrowserSandbox(userId,{bootstrap:false})
@@ -44,7 +45,9 @@ export async function startProviderBrowserHandoff(params:{userId:string;url:stri
   const serverPath=`${SANDBOX_WORKDIR}/gogo-handoff.js`
   await sandbox.writeFiles([{path:serverPath,content:Buffer.from(HANDOFF_SERVER)}])
   const encoded=Buffer.from(params.url).toString('base64')
-  const runtimeOptions=Buffer.from(JSON.stringify({keepAlive:params.keepAlive===true,taskId:params.sessionTaskId||''})).toString('base64')
+  const runtimeOptions=Buffer.from(JSON.stringify({keepAlive:params.keepAlive===true,taskId:params.sessionTaskId||'',managed:managedBrowserEnabled()})).toString('base64')
+  // Credentials are written only after the owner reservation is acquired.
+  // The launch process reads them privately; they never enter the handoff URL.
   // Hold one OS lock for the server lifetime. A second run must never kill or
   // rotate the token of an active owner-scoped takeover. Reserve before changing
   // network policy, then let the lock holder launch Chromium after setup.
@@ -57,14 +60,20 @@ const deadline=Date.now()+300000;let launched=false;
 const timer=setInterval(()=>{let abort='';try{abort=fs.readFileSync('gogo-handoff-abort-'+token,'utf8')}catch{}
 if(abort===token||(!launched&&Date.now()>deadline))process.exit(1);
 let ready='';try{ready=fs.readFileSync('gogo-handoff-go','utf8')}catch{}
-if(!launched&&ready===token){launched=true;process.argv=['node','${serverPath}',token,url,options];require('${serverPath}')}},100);`
+if(!launched&&ready===token){launched=true;if(JSON.parse(Buffer.from(options,'base64').toString()).managed){try{const env=JSON.parse(fs.readFileSync('${SANDBOX_WORKDIR}/managed-handoff-env','utf8'));if(env.token!==token||!env.values?.GOGO_BROWSER_CDP_URL)process.exit(1);Object.assign(process.env,env.values);fs.unlinkSync('${SANDBOX_WORKDIR}/managed-handoff-env')}catch{process.exit(1)}};process.argv=['node','${serverPath}',token,url,options];require('${serverPath}')}},100);`
   await sandbox.runCommand({cmd:'flock',args:['-n','--close','gogo-handoff.lock','node','-e',launch,token,encoded,params.reservationToken?'required':'new',runtimeOptions],detached:true,...(Object.keys(proxyEnv).length?{env:proxyEnv}:{})} as any)
   await new Promise(r=>setTimeout(r,500))
   const reservation=await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');let value='';try{value=fs.readFileSync('gogo-handoff-reserved','utf8')}catch{};process.exit(value===process.argv[1]?0:1)",token]})
   if(reservation.exitCode!==0)throw new Error('browser_handoff_in_use')
-  await ensureBrowserRuntime(sandbox)
-  if(params.keepAlive)await ensurePersistentCommerceBrowser(sandbox,params.originalUrl||params.url)
-  await sandbox.updateNetworkPolicy({allow} as any)
+  await ensureBrowserRuntime(sandbox,managedBrowserEnabled()?{'*.browserbase.com':[]}: {})
+  const managed=await ensureManagedBrowser(sandbox,name,params.originalUrl||params.url)
+  if(params.keepAlive&&!managed)await ensurePersistentCommerceBrowser(sandbox,params.originalUrl||params.url)
+  if(managed){
+    await sandbox.writeFiles([{path:`${SANDBOX_WORKDIR}/managed-handoff-env`,content:Buffer.from(JSON.stringify({token,values:managed.env}))}])
+    const permissions=await sandbox.runCommand({cmd:'chmod',args:['600',`${SANDBOX_WORKDIR}/managed-handoff-env`]})
+    if(permissions.exitCode!==0)throw Error('managed_browser_handoff_permissions_failed')
+  }
+  await sandbox.updateNetworkPolicy({allow:managed?.allow||allow} as any)
   await sandbox.writeFiles([{path:'gogo-handoff-go',content:Buffer.from(token)}])
   // The 2 Oct live takeover returned 502 after a successful-looking setup.
   // Probe only readiness, never page contents or authentication data.
