@@ -24,7 +24,7 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   const deviceHandoff=handoffActive&&handoff?.mode==='device'&&Boolean(handoff?.providerUrl)
   const latest=[...run.steps].reverse().find(s=>s.toolName==='secure_browser'||/browser/i.test(s.toolName)||s.output?.browser)
   const raw:any=latest?.output?.browser||latest?.output?.browserState||latest?.output||{}
-  const pageTitle=String(raw?.title||'')
+  const pageTitle=browser.title
   const pageUrl=String(raw?.url||handoff?.providerUrl||run.metadata?.browser_url||'')
   let displayUrl=browser.hostname||'Secure browser'
   try{

@@ -152,15 +152,18 @@ export function browserContextForRun(run:DashboardActivityRun){
   try{hostname=rawUrl?new URL(rawUrl).hostname:''}catch{}
   const mode=String(handoff?.mode||'')
   const handoffActive=['paused','waiting_approval'].includes(run.status)
+  // A fresh takeover supersedes the old attempt's access error. Keep the old
+  // observation in step history, not in the current-state card (2 Oct live bug).
+  const takeoverAvailable=handoffActive&&Boolean(handoff?.takeoverUrl)
   return {
     hasBrowser:Boolean(browserStep||handoff||meta?.secondary_auth||meta?.auth_resume||meta?.auth_reconciliation_required),
     hostname,
-    title:String(browser?.title||''),
+    title:takeoverAvailable||run.error?'':String(browser?.title||''),
     status:String(browser?.status||''),
-    summary:String(browser?.summary||run.summary||''),
+    summary:String(run.summary||browser?.summary||''),
     handoffMode:mode,
-    providerBlocked:handoffActive&&(mode==='device'||String(browser?.blockReason||'')==='provider_access_limited'),
-    takeoverAvailable:handoffActive&&Boolean(handoff?.takeoverUrl),
+    providerBlocked:handoffActive&&!takeoverAvailable&&(mode==='device'||(!run.error&&String(browser?.blockReason||'')==='provider_access_limited')),
+    takeoverAvailable,
     deviceHandoff:handoffActive&&Boolean(mode==='device'&&handoff?.providerUrl),
   }
 }
