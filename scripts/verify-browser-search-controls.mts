@@ -5,7 +5,8 @@ import ts from 'typescript'
 import {needsBrowserDeliveryLocation} from '../lib/agent/browser-location-gate'
 import {browserPageAllowlist} from '../lib/agent/browser-page-network'
 import {detectHumanAuthGate} from '../lib/agent/browser-auth-gate'
-import {isLoginDestination} from '../lib/agent/browser-evidence'
+import * as browserEvidence from '../lib/agent/browser-evidence'
+const {isLoginDestination}=browserEvidence
 
 const source=readFileSync('lib/agent/secure-computer.ts','utf8')
 const body=[...source.matchAll(/page\.evaluate\(\(\)\s*=>\s*\{([\s\S]*?)\n\s*\}\);/g)]
@@ -106,4 +107,45 @@ assert.equal(zeptoBlocked.handoffReservation,'fixture-reservation')
 assert.equal(reserved,2)
 assert.equal(released,2)
 
-console.log('PASS: simulated multi-provider search controls, exact selectors, location gate and planner serialization')
+// 3 Oct: production Amazon repeated four successful searches. A controlled
+// live-model replay against captured public result excerpts also re-searched
+// and returned prefixed (non-verbatim) evidence. Exercise the actual worker
+// loop with deterministic responses; these fixture prices are not live quotes.
+const resultText='Sony WH-1000XM5 headphones Black\nPrice, product page ₹28,926'
+const resultPage={url:'https://fixture.example/search',title:'Search results',text:resultText,forms:[],controls:[],links:[],actions:[{kind:'click',status:'done'}]}
+let researchCalls=0,workerCalls=0,assessmentCalls=0,assessmentInstruction=''
+let assessmentEvidence=['Sony WH-1000XM5 headphones Black','Price, product page ₹28,926']
+const resultExports:any={}
+runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+ exports:resultExports,process:{env:{}},Buffer,URL,console,require:(id:string)=>{
+  if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
+  if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
+  if(id==='./browser-evidence')return browserEvidence
+  if(id==='./browser-auth-gate')return {detectHumanAuthGate}
+  if(id==='./browser-location-gate')return {needsBrowserDeliveryLocation}
+  if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
+  if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string,_usage:any,system?:string)=>{
+   if(system){assessmentCalls++;assessmentInstruction=system
+    return JSON.stringify(JSON.parse(prompt).observation.text.includes('₹28,926')?{complete:true,evidence:assessmentEvidence}:{complete:false})
+   }
+   researchCalls++;return JSON.stringify({actions:[{kind:'click',selector:'#search'}]})
+  }}
+  return {}
+ },
+})
+const fixtureSandbox={updateNetworkPolicy:async()=>{},stop:async()=>{},runCommand:async()=>{
+ workerCalls++;return {exitCode:0,stdout:async()=>JSON.stringify(resultPage)}
+}}
+resultExports.testInspect(async()=>({page:{...resultPage,text:'Search products',actions:[]},releaseOwnerLock:async()=>{},sandbox:fixtureSandbox,name:'fixture',managed:{allow:{},env:{},release:async()=>{}}}))
+const result=await resultExports.runSecureBrowser({userId:'fixture-user',url:'https://fixture.example/',objective:'Find Sony WH-1000XM5 headphones and listed price',mode:'read'})
+assert.equal(result.status,'completed')
+assert.equal(workerCalls,1,'verified search results must stop the repeated-search loop')
+assert.equal(researchCalls,1)
+assert.match(result.summary,/₹28,926/)
+assert.match(assessmentInstruction,/exact continuous substring/)
+assert.match(assessmentInstruction,/Do not prefix excerpts/)
+const previousAssessments=assessmentCalls
+assessmentEvidence=['Model: Sony WH-1000XM5','Listed Price: ₹28,926']
+await assert.rejects(()=>resultExports.runSecureBrowser({userId:'fixture-user',url:'https://fixture.example/',objective:'Find Sony WH-1000XM5 headphones and listed price',mode:'read'}),/browser_objective_unverified/,'invented labels must still fail grounding')
+assert.ok(assessmentCalls>previousAssessments)
+console.log('PASS: search controls, location handoff, verified result convergence and fail-closed evidence')
