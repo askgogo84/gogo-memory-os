@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { parseBrowserCommand } from '../lib/agent/browser-command'
 
+// Exact live 3 Oct test incorrectly asked for purchase approval.
+const amazonRead=parseBrowserCommand('Open https://www.amazon.in/ in the browser. Find Sony WH-1000XM5 headphones. Report the matching model, listed price and source only if visible. Read only. Do not sign in, add to cart or buy.')
+assert.equal(amazonRead?.mode,'read')
+assert.equal(amazonRead?.risk,'low')
+assert.equal(amazonRead?.approvalAction,undefined)
+
 const readOnly = parseBrowserCommand('Open https://example.com and inspect availability. Fill only safe non-sensitive search fields if needed. Make no provider-side changes. Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step.')
 assert.ok(readOnly)
 assert.equal(readOnly?.mode, 'draft')
