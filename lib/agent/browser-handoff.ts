@@ -34,7 +34,7 @@ async function isConsequential(selector){try{return await page.locator(selector)
  const __env=(process&&process.env)||{};
  const __proxyServer=(__env.GOGO_BROWSER_PROXY_URL||'').trim();
  const __proxy=__proxyServer?{server:__proxyServer,username:(__env.GOGO_BROWSER_PROXY_USERNAME||'').trim()||undefined,password:(__env.GOGO_BROWSER_PROXY_PASSWORD||'').trim()||undefined}:undefined;
- attached=runtimeOptions.keepAlive?await chromium.connectOverCDP('${COMMERCE_CDP_URL}'):null;
+ attached=__env.GOGO_BROWSER_CDP_URL||runtimeOptions.keepAlive?await chromium.connectOverCDP(__env.GOGO_BROWSER_CDP_URL||'${COMMERCE_CDP_URL}').catch(()=>{throw Error('browser_connection_failed')}):null;
  context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},...(__proxy?{proxy:__proxy}:{})});
  page=context.pages()[0]||await context.newPage();
  const pageReadiness=observeBrowserPage(page);

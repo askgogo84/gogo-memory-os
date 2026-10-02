@@ -28,11 +28,11 @@ assert.match(computer,/acquireBrowserOwnerLock\(sandbox\)/)
 assert.match(computer,/updateNetworkPolicy\(\{allow\}/)
 
 // Both browser surfaces share the ONE proven bootstrap and never drift.
-assert.match(computer,/ensureBrowserRuntime\(sandbox\)/)
+assert.match(computer,/ensureBrowserRuntime\(sandbox[,)]/)
 assert.match(computer,/SANDBOX_WORKDIR/)
 assert.match(computer,/path:\`\$\{SANDBOX_WORKDIR\}\/gogo-browser\.js\`/)
 assert.match(computer,/cd \$\{SANDBOX_WORKDIR\} && node gogo-browser\.js/)
-assert.match(ticket,/ensureBrowserRuntime\(sandbox\)/)
+assert.match(ticket,/ensureBrowserRuntime\(sandbox[,)]/)
 assert.match(ticket,/acquireBrowserOwnerLock\(sandbox\)/)
 
 // --- Vercel Sandbox bootstrap invariants ---
@@ -73,7 +73,7 @@ assert.match(bootstrap,/PLAYWRIGHT_VERSION = '1\.63\.0'/)
 // 7. Readiness requires a real Chromium launch, not only a binary-on-disk check.
 assert.match(bootstrap,/chromium\.launch\(\{headless:true\}\)/)
 assert.match(bootstrap,/chromium_launch_probe_failed/)
-assert.match(bootstrap,/updateNetworkPolicy\(BROWSER_SETUP_NETWORK/)
+assert.match(bootstrap,/updateNetworkPolicy\(\{allow:\{\.\.\.BROWSER_SETUP_NETWORK.allow,\.\.\.extraHosts\}\}/)
 
 // Real Chromium/Playwright is installed inside the microVM, not in the Next.js
 // function process. Browser code is a fixed script; the LLM only proposes a small

@@ -35,7 +35,7 @@ assert.match(computer, /Sandbox\.getOrCreate/)
 assert.match(computer, /persistent:true/)
 // Real Chromium is bootstrapped inside the microVM via the shared, proven
 // bootstrap (image:node:24 + user-scoped chromium install + sudo install-deps).
-assert.match(computer, /ensureBrowserRuntime\(sandbox\)/)
+assert.match(computer, /ensureBrowserRuntime\(sandbox[,)]/)
 
 // Background Gogo remains server-driven even when the user closes the app.
 const cronPaths = new Map((vercel.crons || []).map((c:any)=>[c.path,c.schedule]))

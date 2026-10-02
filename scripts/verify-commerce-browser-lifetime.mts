@@ -30,6 +30,7 @@ for(const label of ['Add','Add to cart','Remove','Increase quantity','Decrease q
 }
 let activeTask='',gotoCount=0,contextClosed=0,disconnects=0,launches=0
 let currentUrl='about:blank',field='',sessionMarker=''
+let managedEndpoint=''
 const page:any={
   on:()=>{},
   url:()=>currentUrl,
@@ -40,14 +41,14 @@ const page:any={
 }
 const context={pages:()=>[page],close:async()=>{contextClosed++}}
 const chromium={
-  connectOverCDP:async(url:string)=>{assert.equal(url,'http://127.0.0.1:9222');return {contexts:()=>[context],close:async()=>{disconnects++}}},
+  connectOverCDP:async(url:string)=>{assert.equal(url,managedEndpoint||'http://127.0.0.1:9222');return {contexts:()=>[context],close:async()=>{disconnects++}}},
   launchPersistentContext:async()=>{launches++;return context},
 }
 let handler:any
 const fs={readFileSync:()=>activeTask,writeFileSync:(_path:string,value:string)=>{activeTask=value}}
 const globals=(argv:string[])=>({
   Buffer,URL,console:{log:()=>{},error:()=>{}},setTimeout:()=>0,
-  process:{argv,env:{},exit:(code:number)=>{if(code)throw Error('program_exit_'+code)}},
+  process:{argv,env:managedEndpoint?{GOGO_BROWSER_CDP_URL:managedEndpoint}:{},exit:(code:number)=>{if(code)throw Error('program_exit_'+code)}},
   require:(name:string)=>name==='playwright'?{chromium}:name==='fs'?fs:name==='url'?{URL}:name==='http'?{createServer:(h:any)=>{handler=h;return {listen:()=>{}}}}:{},
 })
 const run=(payload:any)=>runInNewContext(worker,globals(['node','worker',Buffer.from(JSON.stringify(payload)).toString('base64')]))
@@ -92,6 +93,25 @@ await run({...task,keepAlive:false})
 assert.equal(launches,1)
 assert.equal(contextClosed,1,'legacy non-commerce cleanup remains unchanged')
 console.log('PASS: actual browser programs retain live page through action waves and takeover; replaced/expired task fails; legacy lifecycle preserved')
+
+managedEndpoint='wss://connect.browserbase.com/?fixture-only'
+await run(task)
+const managedNavigations=gotoCount
+field='managed login and Home selected'
+await runInNewContext(handoff,globals(['node','handoff','token',Buffer.from(task.url).toString('base64'),Buffer.from(JSON.stringify({keepAlive:true,taskId:task.taskId})).toString('base64')]))
+await handler({url:'/release?token=token',method:'POST',headers:{}},response)
+await run({...task,reusePage:true})
+assert.equal(gotoCount,managedNavigations,'managed human takeover and resume preserve the same live page')
+assert.equal(field,'managed login and Home selected')
+assert.equal(launches,1,'managed runtime must never silently launch a local replacement')
+assert.equal(contextClosed,1,'managed disconnect must preserve provider Context')
+await run({...task,keepAlive:false})
+const genericNavigations=gotoCount
+field='generic browser dynamic form'
+await run({...task,keepAlive:false,reusePage:true})
+assert.equal(field,'generic browser dynamic form')
+assert.equal(gotoCount,genericNavigations,'generic managed action waves preserve the page too')
+console.log('PASS: Browserbase worker and takeover share endpoint, page and owner task without closing the cloud browser')
 
 // Actual cloud reproduction: 202 interstitial -> missing challenge script ->
 // blank body. Once the dependency loads the provider may return 403 or 429.

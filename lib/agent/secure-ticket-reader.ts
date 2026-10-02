@@ -4,6 +4,7 @@ import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-own
 import { detectProviderChallenge, PROVIDER_CLOUDFLARE_CHALLENGE, DEVICE_HANDOFF_REQUIRED } from './provider-challenge'
 import { runSecureBrowser } from './secure-computer'
 import { startProviderBrowserHandoff } from './provider-browser-handoff'
+import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
 import { releaseBrowserHandoff } from './browser-handoff'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 
@@ -125,7 +126,8 @@ async function captureCredential(page){
   }catch{return null;}
 }
 (async()=>{
-  const context=await chromium.launchPersistentContext(profile,{
+  const attached=process.env.GOGO_BROWSER_CDP_URL?await chromium.connectOverCDP(process.env.GOGO_BROWSER_CDP_URL).catch(()=>{throw Error('browser_connection_failed')}):null;
+  const context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{
     headless:true,
     viewport:{width:412,height:915},
     screen:{width:412,height:915},
@@ -164,11 +166,11 @@ async function captureCredential(page){
       };
     });
     data.tried=tried;
-    data.mobileContext=true;
+    data.mobileContext=!attached;
     data.ticketRendered=ticketRendered;
     data.credential=await captureCredential(page);
     console.log(JSON.stringify(data));
-  }finally{await context.close();}
+  }finally{if(attached)await attached.close();else await context.close();}
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
 `
 
@@ -178,12 +180,14 @@ async function computer(userId: string, url: string) {
     timeout: 20 * 60 * 1000, persistent: true, ports: BROWSER_PORTS, resources: { vcpus: 1 },
   } as any)
   const releaseOwnerLock=await acquireBrowserOwnerLock(sandbox)
+  let managed:Awaited<ReturnType<typeof ensureManagedBrowser>>=null
   try {
-    await ensureBrowserRuntime(sandbox)
+    await ensureBrowserRuntime(sandbox,managedBrowserEnabled()?{'*.browserbase.com':[]}: {})
+    managed=await ensureManagedBrowser(sandbox,sandboxName(userId),url)
   await sandbox.writeFiles([{ path: 'gogo-ticket-reader.js', content: Buffer.from(SCRIPT) }])
-  await sandbox.updateNetworkPolicy({ allow: allowedHosts(url) } as any)
-  return {sandbox,releaseOwnerLock}
-  }catch(error){await releaseOwnerLock();throw error}
+  await sandbox.updateNetworkPolicy({ allow: managed?.allow||allowedHosts(url) } as any)
+  return {sandbox,releaseOwnerLock,managed}
+  }catch(error){await managed?.release().catch(()=>{});await releaseOwnerLock();throw error}
 }
 
 async function fallbackSecureComputer(params: { userId: string; url: string; humanHandoff?: boolean }): Promise<SecureTicketReadResult> {
@@ -216,13 +220,14 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
   let sandbox: any = null
   let releaseOwnerLock:BrowserOwnerRelease|undefined
   let keepForHuman=false
+  let releaseManaged:(()=>Promise<void>)|undefined
   // Only an explicit continuation may release a user's active takeover session.
   if(params.resumeHandoff?.releaseUrl)await releaseBrowserHandoff(params.resumeHandoff.releaseUrl,{allowExpired:true})
   try {
     const owned=await computer(params.userId, params.url)
-    sandbox=owned.sandbox;releaseOwnerLock=owned.releaseOwnerLock
+    sandbox=owned.sandbox;releaseOwnerLock=owned.releaseOwnerLock;releaseManaged=owned.managed?.release
     const payload = Buffer.from(JSON.stringify({ url: params.url })).toString('base64')
-    const result = await sandbox.runCommand({ cmd: 'node', args: ['gogo-ticket-reader.js', payload] })
+    const result = await sandbox.runCommand({ cmd: 'node', args: ['gogo-ticket-reader.js', payload],env:owned.managed?.env })
     if (result.exitCode !== 0) throw new Error('ticket_browser_failed')
     const stdout = await result.stdout()
     const lines = String(stdout || '').trim().split('\n').filter(Boolean)
@@ -277,7 +282,7 @@ export async function readProviderTicketPage(params: { userId: string; url: stri
     keepForHuman=true
     return fallback
   } finally {
-    if (sandbox&&!keepForHuman) await sandbox.stop().catch(() => {})
+    if (sandbox&&!keepForHuman){await releaseManaged?.().catch(()=>{});await sandbox.stop().catch(() => {})}
     await releaseOwnerLock?.()
   }
 }

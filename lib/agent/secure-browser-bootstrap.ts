@@ -105,11 +105,11 @@ const READY_CHECK = `mkdir -p ${SANDBOX_WORKDIR} && cd ${SANDBOX_WORKDIR} && if 
  * failure so production logs reveal the actual missing dependency without
  * leaking booking URLs or credentials.
  */
-export async function ensureBrowserRuntime(sandbox: any): Promise<void> {
+export async function ensureBrowserRuntime(sandbox: any, extraHosts:Record<string,string[]>={}): Promise<void> {
   // A named persistent sandbox may have been resumed after a prior request
   // locked egress down to a booking-provider host. Restore bootstrap egress
   // before readiness checks/downloads; callers lock it back after setup.
-  await sandbox.updateNetworkPolicy(BROWSER_SETUP_NETWORK as any)
+  await sandbox.updateNetworkPolicy({allow:{...BROWSER_SETUP_NETWORK.allow,...extraHosts}} as any)
 
   const check = await sandbox.runCommand({ cmd: 'bash', args: ['-lc', READY_CHECK] })
   if ((await check.stdout()).trim() === 'ready') return
