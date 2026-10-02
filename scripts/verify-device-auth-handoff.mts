@@ -179,14 +179,14 @@ assert.equal(cancelledHandoffs,1,'release the owner lock if the takeover token c
 assert.equal(rows.agent_runs.status,'paused')
 tokenSaveFails=false
 
-let reserved=true,policyUpdates=0,bootstraps=0,lastPolicy:any
+let reserved=true,handoffReady=true,policyUpdates=0,bootstraps=0,lastPolicy:any
 const launches:any[]=[]
 const provider=load('provider-browser-handoff.ts',{
   crypto:{randomBytes:()=>({toString:()=> 'new-token'})},
-  './secure-browser-bootstrap':{ensureBrowserRuntime:async()=>{bootstraps++}},
+  './secure-browser-bootstrap':{SANDBOX_WORKDIR:'/home/vercel-sandbox',ensureBrowserRuntime:async()=>{bootstraps++}},
   './browser-handoff':{BROWSER_HANDOFF_PORT:3001,HANDOFF_SERVER:'fixture',getPersistentBrowserSandbox:async(_id:string,options:any)=>{assert.equal(options.bootstrap,false);return {name:'owner',sandbox:{
     writeFiles:async()=>{},updateNetworkPolicy:async(policy:any)=>{policyUpdates++;lastPolicy=policy},domain:async()=> 'browser.example',
-    runCommand:async(command:any)=>{launches.push(command);return {exitCode:command.cmd==='flock'?0:reserved?0:1}},
+    runCommand:async(command:any)=>{launches.push(command);return {exitCode:command.cmd==='flock'?0:command.args?.[1]?.includes('/health')?(handoffReady?0:1):reserved?0:1}},
   }}}},
 },'',{setTimeout:(f:()=>void)=>{f();return 0}})
 await provider.startProviderBrowserHandoff({userId:'owner',url:'https://login.example',originalUrl:'https://provider.example'})
@@ -195,10 +195,15 @@ assert.equal(policyUpdates,1)
 assert.equal(launches[0].cmd,'flock')
 assert.equal(launches[0].args[0],'-n')
 assert.equal(launches[0].detached,true)
+assert.match(launches[0].args[5],/require\('\/home\/vercel-sandbox\/gogo-handoff.js'\)/,'resolve Playwright from its installed runtime, not the command cwd')
+assert.ok(launches.some(c=>c.args?.[1]?.includes('/health')),'never expose a takeover link before the server is ready')
 reserved=false
 await assert.rejects(()=>provider.startProviderBrowserHandoff({userId:'owner',url:'https://other.example'}),/in_use/)
 assert.equal(policyUpdates,1,'a contending task must not change the active takeover network policy')
 assert.equal(bootstraps,1,'a contending task must not bootstrap or replace the setup policy')
+reserved=true;handoffReady=false
+await assert.rejects(()=>provider.startProviderBrowserHandoff({userId:'owner',url:'https://provider.example'}),/browser_handoff_not_ready/,'failed listener never becomes a successful handoff')
+handoffReady=true
 assert.equal(launches.some(c=>JSON.stringify(c).includes('pkill')),false,'never replace a live owner takeover token')
 console.log('Provisioning failure, consumed auth markers, and concurrent owner takeover safety verified')
 
@@ -252,7 +257,7 @@ console.log('Production browser script records consequential clicks and uncertai
 let browserReads=0,finalStops=0,finalUnlocks=0
 let finalChallenge:any={url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'submit',detail:'#confirm',status:'done',consequential:true}]}
 const finalGateComputer=load('secure-computer.ts',{
-  '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[{type:'text',text:'{"approvedOperation":"booking","actions":[{"kind":"submit","selector":"#confirm"}]}'}]})}}},
+  './planner-provider':{completeAgentPlanPrompt:async()=>'{"approvedOperation":"booking","actions":[{"kind":"submit","selector":"#confirm"}]}'},
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{finalStops++},
     runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(browserReads++===0
       ? {url:'https://provider.example',title:'Reservation',text:'Review reservation',forms:[]}
@@ -442,8 +447,28 @@ let modelText='[]'
 let plannedOperation:string|undefined
 let queuedObservations:any[]=[]
 let evidenceCredential:any=null
+let primaryUnavailable=false, fallbackAvailable=false, primaryAttempts=0, fallbackAttempts=0
+let fallbackEvidence:string|null=null
+const fallbackRequests:any[]=[]
+function modelResponse(){
+  let response=modelText
+  try{const parsed=JSON.parse(modelText);if(plannedOperation&&Array.isArray(parsed))response=JSON.stringify({approvedOperation:plannedOperation,actions:parsed})}catch{}
+  return response
+}
+// Run the real provider fallback, replacing only the two network SDKs. This
+// reproduces the production model rejection, including the evidence verifier.
+const browserPlanner=load('planner-provider.ts',{
+  '@anthropic-ai/sdk':{default:class {messages={create:async()=>{primaryAttempts++;if(modelFailure||primaryUnavailable)throw Object.assign(new Error('primary request rejected'),{status:400});return {content:[{type:'text',text:modelResponse()}]}}}}},
+  'openai':{default:class {chat={completions:{create:async(request:any)=>{
+    fallbackAttempts++;fallbackRequests.push(request)
+    if(!fallbackAvailable)throw new Error('fallback unavailable')
+    return {choices:[{message:{content:request.messages[0].role==='system'?JSON.stringify({complete:true,evidence:[fallbackEvidence]}):'{"approvedOperation":"none","actions":[]}'}}]}
+  }}}}},
+  './model-usage':{measureModelCall:async({call}:any)=>call()},
+  '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},
+},'',{process:{env:{OPENAI_API_KEY:'fixture-not-a-key'}}})
 const evidenceComputer=load('secure-computer.ts',{
-  '@anthropic-ai/sdk':{default:class {messages={create:async()=>{if(modelFailure)throw new Error('unavailable');let response=modelText;try{const parsed=JSON.parse(modelText);if(plannedOperation&&Array.isArray(parsed))response=JSON.stringify({approvedOperation:plannedOperation,actions:parsed})}catch{};return {content:[{type:'text',text:response}]}}}}},
+  './planner-provider':browserPlanner,
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(queuedObservations.shift()??evidencePage)})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
@@ -482,6 +507,27 @@ const flightResult=await evidenceComputer.runSecureBrowser({...readParams,url:'h
 assert.equal(flightResult.status,'completed')
 assert.equal(flightResult.pageText,evidencePage.text,'structured consumers retain the observed body')
 console.log('Title watchers and structured travel consumers retain verified observations')
+
+// 2 Oct production: Instamart reached the browser but the primary API rejected
+// planning. Both planning and grounded readback must use the configured fallback.
+primaryUnavailable=true;fallbackAvailable=true
+evidencePage={url:'https://provider.example/milk',title:'Milk',text:'Amul Taaza toned milk 1 litre: ₹60. In stock.',forms:[]}
+fallbackEvidence=evidencePage.text
+const fallbackStart=fallbackAttempts,primaryStart=primaryAttempts
+const fallbackRead=await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Check Amul Taaza toned milk 1 litre price and availability'})
+assert.equal(fallbackRead.status,'completed')
+assert.equal(fallbackRead.summary,evidencePage.text)
+assert.equal(primaryAttempts-primaryStart,2,'both planning and assessment try the primary')
+assert.equal(fallbackAttempts-fallbackStart,2,'both calls recover through the configured fallback')
+assert.match(fallbackRequests.at(-2).messages[0].content,/UNTRUSTED EXTERNAL_WEB_DATA/)
+assert.equal(fallbackRequests.at(-1).messages[0].role,'system','assessment instructions keep their privileged role')
+assert.match(fallbackRequests.at(-1).messages[0].content,/Do not infer unseen/)
+fallbackEvidence='Amul Taaza 1 litre costs ₹1 with free delivery.'
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url}),/browser_objective_unverified/,'fallback cannot invent price or fees')
+fallbackAvailable=false
+await assert.rejects(()=>evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url}),/browser_planning_failed/,'two failed providers never produce success')
+primaryUnavailable=false;fallbackEvidence=null
+console.log('Live browser model rejection recovers through fallback; unsupported prices and dual failures stay unverified')
 
 evidencePage={url:'https://provider.example',title:'Acme',text:'',forms:[]}
 modelText=JSON.stringify({complete:true,evidence:['Acme']})

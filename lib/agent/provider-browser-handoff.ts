@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto'
 import { BROWSER_HANDOFF_PORT, HANDOFF_SERVER, getPersistentBrowserSandbox, releaseBrowserHandoff } from './browser-handoff'
-import { ensureBrowserRuntime } from './secure-browser-bootstrap'
+import { ensureBrowserRuntime, SANDBOX_WORKDIR } from './secure-browser-bootstrap'
 import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
 import {ensurePersistentCommerceBrowser} from './persistent-commerce-browser'
 
@@ -38,7 +38,10 @@ export async function startProviderBrowserHandoff(params:{userId:string;url:stri
   const {sandbox,name}=await getPersistentBrowserSandbox(params.userId,{bootstrap:false})
   const token=params.reservationToken||randomBytes(24).toString('base64url')
   try{
-  await sandbox.writeFiles([{path:'gogo-handoff.js',content:Buffer.from(HANDOFF_SERVER)}])
+  // Production's command cwd is /vercel, but Playwright is installed in the
+  // shared runtime directory. Resolve the server (and its imports) there.
+  const serverPath=`${SANDBOX_WORKDIR}/gogo-handoff.js`
+  await sandbox.writeFiles([{path:serverPath,content:Buffer.from(HANDOFF_SERVER)}])
   const encoded=Buffer.from(params.url).toString('base64')
   const runtimeOptions=Buffer.from(JSON.stringify({keepAlive:params.keepAlive===true,taskId:params.sessionTaskId||''})).toString('base64')
   // Hold one OS lock for the server lifetime. A second run must never kill or
@@ -53,7 +56,7 @@ const deadline=Date.now()+300000;let launched=false;
 const timer=setInterval(()=>{let abort='';try{abort=fs.readFileSync('gogo-handoff-abort-'+token,'utf8')}catch{}
 if(abort===token||(!launched&&Date.now()>deadline))process.exit(1);
 let ready='';try{ready=fs.readFileSync('gogo-handoff-go','utf8')}catch{}
-if(!launched&&ready===token){launched=true;process.argv=['node','gogo-handoff.js',token,url,options];require('./gogo-handoff.js')}},100);`
+if(!launched&&ready===token){launched=true;process.argv=['node','${serverPath}',token,url,options];require('${serverPath}')}},100);`
   await sandbox.runCommand({cmd:'flock',args:['-n','--close','gogo-handoff.lock','node','-e',launch,token,encoded,params.reservationToken?'required':'new',runtimeOptions],detached:true,...(Object.keys(proxyEnv).length?{env:proxyEnv}:{})} as any)
   await new Promise(r=>setTimeout(r,500))
   const reservation=await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');let value='';try{value=fs.readFileSync('gogo-handoff-reserved','utf8')}catch{};process.exit(value===process.argv[1]?0:1)",token]})
@@ -62,7 +65,13 @@ if(!launched&&ready===token){launched=true;process.argv=['node','gogo-handoff.js
   if(params.keepAlive)await ensurePersistentCommerceBrowser(sandbox,params.originalUrl||params.url)
   await sandbox.updateNetworkPolicy({allow} as any)
   await sandbox.writeFiles([{path:'gogo-handoff-go',content:Buffer.from(token)}])
-  await new Promise(r=>setTimeout(r,1500))
+  // The 2 Oct live takeover returned 502 after a successful-looking setup.
+  // Probe only readiness, never page contents or authentication data.
+  const readiness=await sandbox.runCommand({cmd:'node',args:['-e',String.raw`(async()=>{
+const deadline=Date.now()+55000;
+while(Date.now()<deadline){try{const r=await fetch('http://127.0.0.1:${BROWSER_HANDOFF_PORT}/health',{headers:{'x-gogo-handoff-token':process.argv[1]},signal:AbortSignal.timeout(1000)});if(r.ok&&(await r.json()).ready===true)process.exit(0)}catch{};await new Promise(r=>setTimeout(r,250))}process.exit(1)
+})()`,token]})
+  if(readiness.exitCode!==0)throw new Error('browser_handoff_not_ready')
   const domain=typeof (sandbox as any).domain==='function' ? await (sandbox as any).domain(BROWSER_HANDOFF_PORT) : ''
   if(!domain)throw new Error('browser_handoff_domain_unavailable')
   const base=String(domain).startsWith('http')?String(domain):`https://${domain}`
