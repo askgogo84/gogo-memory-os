@@ -4,6 +4,7 @@ import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from 
 import { completeAgentPlanPrompt } from './planner-provider'
 import { Sandbox } from '@vercel/sandbox'
 import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
+import { browserPageAllowlist } from './browser-page-network'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
 import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
@@ -67,7 +68,7 @@ function allowedHosts(url:string){
   if(u.protocol!=='https:'&&u.protocol!=='http:')throw new Error('browser_url_not_http')
   const hostname=u.hostname.toLowerCase()
   if(!hostname||hostname==='localhost'||hostname.endsWith('.local'))throw new Error('browser_private_host_blocked')
-  const allow:Record<string,string[]>={[hostname]:[],[`*.${hostname}`]:[]}
+  const allow=browserPageAllowlist(url)
   // When this target egresses through a residential proxy, the sandbox firewall must
   // permit the tunnel to the proxy host as well as the provider host.
   if(resolveBrowserProxy(url)){

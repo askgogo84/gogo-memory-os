@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto'
 import { BROWSER_HANDOFF_PORT, HANDOFF_SERVER, getPersistentBrowserSandbox, releaseBrowserHandoff } from './browser-handoff'
 import { ensureBrowserRuntime, SANDBOX_WORKDIR } from './secure-browser-bootstrap'
 import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
+import { browserPageAllowlist } from './browser-page-network'
 import {ensurePersistentCommerceBrowser} from './persistent-commerce-browser'
 
 export async function cancelBrowserHandoffReservation(userId:string,token:string){
@@ -22,7 +23,7 @@ export async function startProviderBrowserHandoff(params:{userId:string;url:stri
   const target=new URL(params.url)
   const hosts=[target,...(params.originalUrl?[new URL(params.originalUrl)]:[])]
   if(hosts.some(url=>!['https:','http:'].includes(url.protocol)))throw new Error('browser_url_not_http')
-  const allow=Object.fromEntries(hosts.flatMap(url=>[[url.hostname,[]],[`*.${url.hostname}`,[]]]))
+  const allow=Object.assign({},...hosts.map(url=>browserPageAllowlist(url.toString())))
   // If this provider egresses through the residential proxy, the takeover browser needs
   // the same egress — allow the proxy host and pass its credentials to the handoff server
   // so the human takeover isn't 403'd by the provider's datacenter block.

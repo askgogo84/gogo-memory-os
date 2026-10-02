@@ -34,3 +34,13 @@ Final local gates passed: all 155 commands in the existing package test manifest
 3. Open the account/location handoff and verify that the actual provider page appears.
 4. User completes any provider sign-in or delivery-location selection in that browser, then returns control and resumes the same task.
 5. Verify source-backed product/availability/price evidence and matching saved status. Delivered fees/totals, cart preparation and phone-cart opening remain separate open acceptance requirements.
+
+## Live retest on bcde6966 and provider page dependencies
+
+PR #320 deployed as `bcde6966638ebfd8f629cc1683fe2dcdfb11cd00`, production `dpl_2fHPTvQzeazUgyQKGKcx5jwpETYT` READY. The existing task explicitly reported its expired live page. Reopening account/location control on the same child now loads the authenticated takeover UI instead of 502. Its actual provider screenshot remained blank.
+
+A local browser at the identical public Instamart URL rendered its location/sign-in screen. Its DOM contained script sources on `media-assets.swiggy.com`, `instamart-media-assets.swiggy.com` and the specific provider WAF host `b67f7794189c.edge.sdk.awswaf.com`. The existing cloud allowlist admitted only `www.swiggy.com` and `*.www.swiggy.com`, excluding those page dependencies. The follow-up repair adds only those explicit dependencies for the exact Swiggy root/www hosts in both worker and handoff. It does not grant page text authority to add hosts or permit the unrelated analytics hosts observed in the DOM. Whether provider anti-bot controls independently block the cloud environment remains a live acceptance question.
+
+After Return control and resume, the production log on bcde6966 shows the primary model rejection was handled through fallback and the result was `browser_objective_unverified`, not `browser_planning_failed`. Thus fallback recovered in production without inventing a result from the blank page. No provider sign-in or location entry was attempted.
+
+The provider dependency tests cover both real worker/handoff policy paths, the exact allowed dependency set and unchanged unrelated-host behavior. Updated release/gate evidence is in the handoff.
