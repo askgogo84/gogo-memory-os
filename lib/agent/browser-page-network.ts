@@ -9,7 +9,11 @@ const SWIGGY_PAGE_DEPENDENCIES = [
   // Its own script must load normally; no challenge solving or token fabrication.
   'b67f7794189c.f957f42c.ap-south-1.token.awswaf.com',
 ]
-const ZEPTO_PAGE_DEPENDENCIES = ['277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com']
+const ZEPTO_PAGE_DEPENDENCIES = [
+  '277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com',
+  // 2 Oct live control: stylesheet and application scripts load from this CDN.
+  'cdn.zeptonow.com',
+]
 
 export function browserPageAllowlist(url:string):Record<string,string[]>{
   const host=new URL(url).hostname.toLowerCase()

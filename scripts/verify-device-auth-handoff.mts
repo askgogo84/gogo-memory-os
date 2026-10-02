@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from '../lib/agent/browser-evidence'
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
+import { needsBrowserDeliveryLocation } from '../lib/agent/browser-location-gate'
 import { browserPageAllowlist } from '../lib/agent/browser-page-network'
 
 // 2 Oct live Browserbase acceptance: this exact title request was rejected.
@@ -32,6 +33,7 @@ const sandbox={writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async
 const reader=load('secure-ticket-reader.ts',{
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>sandbox}},
   './browser-auth-gate':{detectHumanAuthGate},
+  './browser-location-gate':{needsBrowserDeliveryLocation},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{},{reserveHandoff:async()=>"transfer"})},
   './provider-challenge':{detectProviderChallenge:()=>({challenged:false})},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'fixture',ensureBrowserRuntime:async()=>{}},
@@ -276,6 +278,7 @@ const finalGateComputer=load('secure-computer.ts',{
       : finalChallenge)})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
+  './browser-location-gate':{needsBrowserDeliveryLocation},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{finalUnlocks++},{reserveHandoff:async()=>"transfer"})},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
   './trust':{canAuthorizeConsequentialAction:()=>true},
@@ -348,6 +351,7 @@ const outcomeReader=load('post-auth-outcome.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
   './browser-handoff':{readBrowserHandoffState:async()=>{if(outcomeReadError)throw outcomeReadError;return outcomePage}},
   './browser-auth-gate':{detectHumanAuthGate},
+  './browser-location-gate':{needsBrowserDeliveryLocation},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
 })
 const outcomeMetadata={handoff:{stateUrl:'https://browser.example/state'},auth_original_url:'https://provider.example',auth_action_log:[{kind:'click',status:'done',consequential:true}]}
@@ -485,6 +489,7 @@ const evidenceComputer=load('secure-computer.ts',{
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async(policy:any)=>{browserPolicies.push(policy)},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(queuedObservations.shift()??evidencePage)})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
+  './browser-location-gate':{needsBrowserDeliveryLocation},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{},{reserveHandoff:async()=>"transfer"})},
   './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
   '@/lib/vault/credential-store':{resolveVaultCredentialForBrowser:async()=>evidenceCredential,recordVaultBrowserOutcome:async()=>{}},
