@@ -15,7 +15,7 @@ export async function tryGroceryComparison(params: {telegramId: number; text: st
     const {data, error} = await supabaseAdmin.from('agent_runs').insert({
       telegram_id: owner, type: 'grocery_comparison', capability: 'browser', status: 'paused',
       title: 'Compare groceries: ' + subject, progress: 0, source: params.surface || 'whatsapp', started_at: now, updated_at: now,
-      summary: 'Choose your connected Swiggy account and saved delivery address to check ' + subject + ' on Instamart. Zepto comparison awaits provider access and a verified adapter. Prices, delivery fees and cart contents are not verified. Nothing has been ordered.',
+      summary: 'Open this comparison and choose Use browser to look up ' + subject + ' on Instamart, Zepto or Blinkit. You can also use a connected Swiggy account when available. Zepto comparison awaits verified provider results. Prices, delivery fees and cart contents are not verified. Nothing has been ordered.',
       metadata_json: {plan_type: 'grocery_comparison', state: 'provider_connection_required', subject, request_text: params.text, service: 'grocery'},
     }).select('id,type,status,updated_at,summary,metadata_json').single()
     if (error || !data?.id) throw new Error('grocery_comparison_create_failed')

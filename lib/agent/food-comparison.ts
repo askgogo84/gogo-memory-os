@@ -2,7 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {searchWebResults, type WebSearchResult} from '@/lib/web-search'
 import {foodLocationReply,foodSearchSubject,isFoodComparisonRequest} from './food-comparison-intent'
 
-import {commerceTaskLink} from '@/lib/commerce/task'
+import {commerceTaskLink, readCommerceTask} from '@/lib/commerce/task'
 
 const TYPE='food_comparison'
 const QUESTION='For this food comparison, what is your delivery PIN code in India?'
@@ -44,7 +44,9 @@ export async function tryFoodComparison(params:{telegramId:number;text:string;su
   if(statusRequest){
     const task=previous?.status==='paused'&&previous.metadata_json?.state!=='closed'?previous:null
     if(!task)return {runId:previous?.id||'',status:'paused',capability:'browser',risk:'low',handledBy:'food-comparison',text:'There is no active food comparison.'}
-    return {runId:task.id,status:'paused',capability:'browser',risk:'low',handledBy:'food-comparison',text:task.summary+'\n\nContinue this comparison: '+commerceTaskLink(task.id)}
+    const current=task.metadata_json?.state==='browser_research'?await readCommerceTask(owner,task.id):task
+    if(!current)throw new Error('food_comparison_read_failed')
+    return {runId:task.id,status:'paused',capability:'browser',risk:'low',handledBy:'food-comparison',text:current.summary+'\n\nContinue this comparison: '+commerceTaskLink(task.id)}
   }
   const age=Date.now()-Date.parse(previous?.updated_at||'')
   const active=previous?.status==='paused'&&previous?.metadata_json?.state!=='closed'&&Number.isFinite(age)&&age>=0&&age<TTL

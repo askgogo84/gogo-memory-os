@@ -337,6 +337,9 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   const {data:currentRun,error:currentRunError}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',String(tg)).maybeSingle()
   if(currentRunError||!currentRun)throw new Error('browser_handoff_run_unavailable')
   const runMetadata:any=currentRun.metadata_json||{}
+  const persistentCommerce=Boolean(runMetadata.commerce_parent_id)&&params.mode==='read'
+  const browserOwner=persistentCommerce?params.actor.userId+':commerce':params.actor.userId
+  const resumePage=persistentCommerce&&Boolean(runMetadata.handoff)
   const reconciledResult=runMetadata.browser_safe_to_retry===false
     ? await (await import('./post-auth-outcome')).inspectPostAuthRun(String(tg),params.runId,runMetadata):undefined
   if(reconciledResult===null)return {runId:params.runId,status:'outcome_unknown' as const,capability:'browser' as const,risk:params.command.risk,text:'The browser session is unavailable. Verify the outcome directly with the provider; Gogo will not repeat the action.',handledBy:'secure-browser' as const}
@@ -355,7 +358,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   let pendingHandoffReservation:string|undefined
   try{
-    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null})
+    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce?{keepAlive:true,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
     const at=new Date().toISOString()
 
@@ -375,10 +378,10 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       if(blockReason==='human_auth_required'){
         if((result.handoffReservation||(result.authReason&&result.authReason!=='password'))&&!result.credentialSelectionRequired){
           const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
-          const handoff=await startProviderBrowserHandoff({userId:params.actor.userId,url:result.url,originalUrl:params.command.url,reservationToken:result.handoffReservation})
+          const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:result.url,originalUrl:params.command.url,reservationToken:result.handoffReservation,...(persistentCommerce?{keepAlive:true,sessionTaskId:params.runId}:{})})
           const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff},completed_at:null}).eq('id',params.runId).eq('telegram_id',String(tg))
           if(error){
-            await cancelProviderBrowserHandoff(params.actor.userId,handoff).catch(()=>{})
+            await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{})
             throw new Error('browser_handoff_save_failed')
           }
           const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
@@ -421,7 +424,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     await activity(tg,params.runId,'run_completed',result.summary,{host:new URL(result.url).hostname,action_count:result.actions.length})
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}\n${params.mode==='read'?'':safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
   }catch(err:any){
-    if(pendingHandoffReservation)await (await import('./provider-browser-handoff')).cancelBrowserHandoffReservation(params.actor.userId,pendingHandoffReservation).catch(()=>{})
+    if(pendingHandoffReservation)await (await import('./provider-browser-handoff')).cancelBrowserHandoffReservation(browserOwner,pendingHandoffReservation).catch(()=>{})
     if(err?.browserExecutionStarted===true)runMetadata.browser_safe_to_retry=false
     if(runMetadata.browser_safe_to_retry===false){
       const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
@@ -431,9 +434,44 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),completed_at:at}).eq('id',params.stepId)).catch(()=>{})
     await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the secure browser session.',error:safe(message,500),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
     await activity(tg,params.runId,'run_failed','Secure browser session failed.',{error:safe(message,250)})
+    if(message.includes('browser_live_session_expired')){
+      const summary='The live browser page expired or was replaced by another task. Open this comparison and choose your account or delivery location again. No cart or order was changed by this read.'
+      await supabaseAdmin.from('agent_runs').update({summary}).eq('id',params.runId).eq('telegram_id',String(tg))
+      return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:summary,handledBy:'secure-browser' as const}
+    }
     if(message==='browser_objective_unverified'||message==='browser_planning_failed')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:'I could not verify the information you requested from the provider page. This task is not complete; I have no verified result to report.',handledBy:'secure-browser' as const}
     throw err
   }
+}
+
+// Link a paused read before execution; a lost response must not spawn a second
+// browser task. The normal resume path rechecks current permission and policy.
+export async function prepareLinkedBrowserRead(params:{actor:AgentActor;surface:AgentSurface;url:string;objective:string;parentRunId:string}){
+  const command:BrowserCommand={url:params.url,objective:safe(params.objective,1800),mode:'read',risk:'low'}
+  const {runId}=await makeRun({...params,command})
+  const {data,error}=await supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{plan_type:'secure_browser',url:command.url,objective:command.objective,mode:'read',risk:'low',commerce_parent_id:params.parentRunId}})
+    .eq('id',runId).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('status','queued').select('id').maybeSingle()
+  if(error||!data)throw new Error('commerce_browser_prepare_failed')
+  return runId
+}
+
+export async function takeControlOfCommerceRead(params:{actor:AgentActor;runId:string}){
+  const owner=String(params.actor.legacyTelegramId)
+  const {data:run,error}=await supabaseAdmin.from('agent_runs').select('id,status,metadata_json').eq('id',params.runId).eq('telegram_id',owner).eq('type','secure_browser').maybeSingle()
+  const meta=run?.metadata_json
+  if(error||!run||!['paused','completed','failed'].includes(run.status)||meta?.mode!=='read'||!meta.commerce_parent_id)throw new Error('browser_control_unavailable')
+  const {readCommerceTask}=await import('@/lib/commerce/task')
+  const parent=await readCommerceTask(owner,meta.commerce_parent_id)
+  if(!parent||parent.metadata_json.state!=='browser_research'||!Object.values(parent.metadata_json.browser_runs||{}).includes(run.id))throw new Error('commerce_parent_unavailable')
+  const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:await permission(params.actor.legacyTelegramId),mode:'read',risk:'low',irreversible:false,approvalStatus:null})
+  if(!policy.allowed)throw new Error('browser_control_permission_blocked')
+  if(meta.handoff?.takeoverUrl&&run.status==='paused')return
+  const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
+  const browserOwner=params.actor.userId+':commerce'
+  const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:meta.url,keepAlive:true,sessionTaskId:run.id})
+  const {data:saved,error:saveError}=await supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{...meta,handoff},summary:'Choose your account or delivery location in the provider browser, then resume this same task. Do not send login codes in chat.',completed_at:null,updated_at:new Date().toISOString()})
+    .eq('id',run.id).eq('telegram_id',owner).eq('status',run.status).select('id').maybeSingle()
+  if(saveError||!saved){await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{});throw new Error('browser_control_save_failed')}
 }
 
 export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:AgentSurface;text:string}){
@@ -495,6 +533,12 @@ export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:stri
 
   const meta:any=run.metadata_json||{}
   const mode=String(meta.mode||'read') as BrowserMode
+
+  if(meta.commerce_parent_id){
+    const {readCommerceTask}=await import('@/lib/commerce/task')
+    const parent=await readCommerceTask(String(tg),String(meta.commerce_parent_id))
+    if(!parent||parent.metadata_json.state!=='browser_research'||!Object.values(parent.metadata_json.browser_runs||{}).includes(run.id))throw new Error('commerce_parent_unavailable')
+  }
 
   // Consequential runs must resume through the exact approval path. The
   // approval survives a password/MFA pause, so we revalidate it rather than
