@@ -5,6 +5,7 @@ import { completeAgentPlanPrompt } from './planner-provider'
 import { Sandbox } from '@vercel/sandbox'
 import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
 import { browserPageAllowlist } from './browser-page-network'
+import {BROWSER_PAGE_READINESS} from './browser-page-readiness'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
 import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
@@ -167,6 +168,7 @@ async function model(page){
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
 `
 const BROWSER_SCRIPT=String.raw`
+${BROWSER_PAGE_READINESS}
 const { chromium } = require('playwright');
 const encoded = process.argv[2];
 if (!encoded) throw new Error('missing_secure_browser_payload');
@@ -284,6 +286,7 @@ async function isConsequentialControl(page,selector){
   const attached=payload.keepAlive?await chromium.connectOverCDP('${COMMERCE_CDP_URL}'):null;
   const context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
   const page=context.pages()[0]||await context.newPage();
+  const pageReadiness=observeBrowserPage(page);
   const log=[];
   let executionBeforeText=null;
   let executionAfterText=null;
@@ -296,6 +299,7 @@ async function isConsequentialControl(page,selector){
     }
     if(!reuse)await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
     await page.waitForTimeout(900);
+    await pageReadiness.read(true);
     for(const a of (payload.actions||[])){
       let consequential=a.kind==='submit';
       let captureEvidence=false;
@@ -395,7 +399,7 @@ return receiptCount(after)>receiptCount(before);
         }catch{draftVerified=false;}
       }
     }
-    const out=await model(page); out.draftVerified=draftVerified; out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; console.log(JSON.stringify(out));
+    const out=await model(page); out.pageLoad=await pageReadiness.read(); out.draftVerified=draftVerified; out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; console.log(JSON.stringify(out));
   } finally { if(attached)await attached.close();else await context.close(); }
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
 `
@@ -490,6 +494,10 @@ async function inspect(userId:string,url:string,keepAlive=false,taskId='',reuseP
 }
 
 function detectProviderAccessBlock(page:any){
+  if(page?.pageLoad?.state==='security_check')return 'The provider security check has not finished in the cloud browser. Availability and prices remain unverified; this is not an account sign-in request.'
+  if(page?.pageLoad?.httpStatus===403)return 'The provider refused access from the cloud browser (HTTP 403). Availability and prices remain unverified.'
+  if(page?.pageLoad?.httpStatus===429)return 'The provider limited requests from the cloud browser (HTTP 429). Availability and prices remain unverified. Gogo has stopped retrying.'
+  if(['http_error','navigation_error','empty'].includes(page?.pageLoad?.state))return 'The provider page could not load in the cloud browser. Availability and prices remain unverified; there is no usable sign-in page yet.'
   const text=`${page?.title || ''} ${page?.text || ''}`.replace(/\s+/g,' ').toLowerCase()
   const blocked=/\b(your access to this site has been limited|access denied|access has been denied|request blocked|security policy prevents access|temporarily blocked|unusual traffic|automated requests|bot protection)\b/i.test(text)
   return blocked ? 'The provider site is limiting automated access, so Gogo cannot verify live availability from this page.' : null

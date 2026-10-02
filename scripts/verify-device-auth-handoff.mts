@@ -8,6 +8,9 @@ import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
 import { browserPageAllowlist } from '../lib/agent/browser-page-network'
 
 function load(file: string, mocks: Record<string, any>, extra='', globals:Record<string,any>={}) {
+  // Legacy action fixtures focus on receipts/forms. The real load observer is
+  // exercised against challenge, HTTP and navigation failures in lifetime tests.
+  mocks={'./browser-page-readiness':{BROWSER_PAGE_READINESS:'function observeBrowserPage(){return {read:async()=>({state:"ready",httpStatus:200})}}'},...mocks}
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
@@ -499,6 +502,21 @@ modelFailure=false
 modelText=JSON.stringify({complete:true,answer:'Three saved posts',evidence:['Unobserved private post content']})
 await assert.rejects(()=>evidenceComputer.runSecureBrowser(readParams),/browser_objective_unverified/)
 console.log('Production browser rejects empty shells, model errors, and unsupported evidence')
+// 2 Oct cloud reproduction: a WAF interstitial can have NO body text. Never ask
+// the model to invent a storefront result or mislabel this as account sign-in.
+const beforeBlockedPlanCalls=primaryAttempts+fallbackAttempts
+for(const [state,httpStatus,expected] of [
+  ['security_check',202,/security check/],['http_error',403,/refused.*403/],
+  ['http_error',429,/limited.*429/],['empty',200,/could not load/],
+] as const){
+  evidencePage={url:'https://www.zepto.com/',title:'',text:'',forms:[],pageLoad:{state,httpStatus}}
+  const result=await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url})
+  assert.equal(result.status,'blocked')
+  assert.equal(result.blockReason,'provider_access_limited')
+  assert.equal(result.authReason,undefined)
+  assert.match(result.summary,expected)
+}
+assert.equal(primaryAttempts+fallbackAttempts,beforeBlockedPlanCalls,'unrendered/provider-blocked pages never enter the model planner')
 
 evidencePage={url:'https://provider.example',title:'Acme',text:'',forms:[]}
 modelText=JSON.stringify({complete:true,answer:'Acme',evidence:['Acme']})

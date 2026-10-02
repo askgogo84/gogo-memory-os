@@ -46,7 +46,12 @@ console.log('✅ browser residential-proxy egress: env-gated, provider-scoped, c
 assert.deepEqual(Object.keys(browserPageAllowlist('https://www.swiggy.com/instamart')).sort(),[
   '*.www.swiggy.com','www.swiggy.com','media-assets.swiggy.com',
   'instamart-media-assets.swiggy.com','b67f7794189c.edge.sdk.awswaf.com',
+  'b67f7794189c.f957f42c.ap-south-1.token.awswaf.com',
 ].sort())
+assert.deepEqual(Object.keys(browserPageAllowlist('https://www.zepto.com/')).sort(),[
+  'www.zepto.com','*.www.zepto.com','277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com',
+].sort())
+assert.equal('277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com' in browserPageAllowlist('https://zepto.com.example.com'),false)
 assert.deepEqual(Object.keys(browserPageAllowlist('https://example.com')),['example.com','*.example.com'])
 assert.equal('media-assets.swiggy.com' in browserPageAllowlist('https://swiggy.com.example.com'),false)
 console.log('PASS: observed Swiggy page dependencies allowed only for the specific provider; unrelated egress unchanged')
