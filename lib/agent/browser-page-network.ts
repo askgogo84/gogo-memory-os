@@ -15,9 +15,17 @@ const ZEPTO_PAGE_DEPENDENCIES = [
   'cdn.zeptonow.com',
 ]
 
+// 3 Oct electronics diagnostics: these stylesheet/bootstrap/image hosts were
+// read from the actual public Amazon and Flipkart DOM. The broker previously
+// aborted them because their domains differ from the storefront hostname.
+const AMAZON_PAGE_DEPENDENCIES = ['m.media-amazon.com','images-na.ssl-images-amazon.com']
+const FLIPKART_PAGE_DEPENDENCIES = ['static-assets-web.flixcart.com','rukminim2.flixcart.com']
+
 export function browserPageAllowlist(url:string):Record<string,string[]>{
   const host=new URL(url).hostname.toLowerCase()
   const hosts=[host,`*.${host}`]
+  if(host==='www.amazon.in'||host==='amazon.in')hosts.push(...AMAZON_PAGE_DEPENDENCIES)
+  if(host==='www.flipkart.com'||host==='flipkart.com')hosts.push(...FLIPKART_PAGE_DEPENDENCIES)
   if(host==='www.swiggy.com'||host==='swiggy.com')hosts.push(...SWIGGY_PAGE_DEPENDENCIES)
   if(host==='www.zepto.com'||host==='zepto.com')hosts.push(...ZEPTO_PAGE_DEPENDENCIES)
   return Object.fromEntries(hosts.map(name=>[name,[]]))

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {runInNewContext} from 'node:vm'
+import {browserPageAllowlist} from '../lib/agent/browser-page-network'
 import {resolveManagedSession,managedScope,MANAGED_BROWSER_BROKER,type ManagedState} from '../lib/agent/managed-browser'
 
 const project='11111111-1111-4111-8111-111111111111'
@@ -77,3 +78,33 @@ for(const [url,expected] of [['https://www.swiggy.com/x',true],['https://media-a
   assert.equal(result,expected,'websocket '+url)
 }
 console.log('PASS: managed browser owner/site isolation, profile restore, bounded India session, no blind retry, resource restrictions')
+
+// Captured from the public DOM on 3 Oct while diagnosing production electronics
+// searches. Test the real broker against the exact stylesheet/bootstrap hosts,
+// not a mock claiming that a provider journey succeeded.
+for(const [site,resources] of [
+ ['https://www.amazon.in/',[
+  'https://m.media-amazon.com/images/I/11mVszy8FIL.js?AUIClients/AmazonRushAssetLoader',
+  'https://images-na.ssl-images-amazon.com/images/I/215h87l68bL.js',
+ ]],
+ ['https://www.flipkart.com/',[
+  'https://static-assets-web.flixcart.com/batman-returns/batman-returns/p/de025efa02a5f190c3b98c1fb29aed1b/DesktopComponents.css',
+  'https://rukminim2.flixcart.com/fk-p-flap/52/44/image/d2ecfddf891a3922.png?q=80',
+ ]],
+] as const){
+ await runInNewContext(MANAGED_BROWSER_BROKER,{
+  URL,JSON,console,process:{env:{GOGO_BROWSER_CDP_URL:endpoint,GOGO_BROWSER_ALLOWED_HOSTS:JSON.stringify(Object.keys(browserPageAllowlist(site))),GOGO_BROWSER_SESSION_ID:sessionId},pid:123,exit:()=>{throw Error('unexpected broker exit')}},setInterval:()=>0,
+  require:(name:string)=>name==='playwright'?{chromium:{connectOverCDP:async()=>({contexts:()=>[contextMock],on:()=>{}})}}:{writeFileSync:()=>{}},
+ })
+ for(const url of resources){
+  let permitted=false
+  await route({request:()=>({url:()=>url}),continue:()=>{permitted=true},abort:()=>{permitted=false}})
+  assert.equal(permitted,true,site+' must load observed resource '+new URL(url).hostname)
+  assert.ok(!(new URL(url).hostname in browserPageAllowlist('https://example.com')),'resource grant is not global')
+  assert.ok(!(new URL(url).hostname in browserPageAllowlist(site.replace('.com/','.com.evil.example/').replace('.in/','.in.evil.example/'))),'lookalikes cannot inherit resources')
+ }
+ let unrelatedAllowed=true
+ await route({request:()=>({url:()=> 'https://unrelated.example/collect'}),continue:()=>{unrelatedAllowed=true},abort:()=>{unrelatedAllowed=false}})
+ assert.equal(unrelatedAllowed,false,'provider resources do not authorize arbitrary egress')
+}
+console.log('PASS: observed Amazon/Flipkart resources load through the actual scoped broker')
