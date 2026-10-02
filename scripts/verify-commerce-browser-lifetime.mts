@@ -28,6 +28,23 @@ for(const label of ['Add','Add to cart','Remove','Increase quantity','Decrease q
   const element={textContent:label,id:'',tagName:'BUTTON',getAttribute:(name:string)=>name==='type'?'button':null}
   assert.equal(await guardContext.guard({locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})},'#control'),true,'read must block '+label)
 }
+// 3 Oct live Amazon markup: Go / nav-search-submit-button, type=submit,
+// form role=search method=get action=/s/ref=nb_sb_noss. The metadata word
+// 'submit' blocked the public search after its input had been filled.
+for(const [role,method,id,label,override,expected] of [
+  ['search','get','nav-search-submit-button','Go',null,false],
+  ['search','get','nav-search-submit-button','Buy now',null,true],
+  ['search','get','purchase-submit','Go',null,true],
+  ['search','post','nav-search-submit-button','Go',null,true],
+  ['', 'get','nav-search-submit-button','Go',null,true],
+  ['search','get','nav-search-submit-button','Go','/checkout',true],
+] as const){
+  const form={getAttribute:(name:string)=>name==='role'?role:name==='method'?method:null}
+  const element={textContent:'',id,tagName:'INPUT',form,
+    getAttribute:(name:string)=>name==='type'?'submit':name==='value'?label:name==='formaction'?override:null}
+  const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
+  assert.equal(await guardContext.guard(page,'#observed-control'),expected,JSON.stringify({role,method,id,label,override}))
+}
 let activeTask='',gotoCount=0,contextClosed=0,disconnects=0,launches=0
 let currentUrl='about:blank',field='',sessionMarker=''
 let managedEndpoint=''

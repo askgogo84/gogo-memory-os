@@ -293,6 +293,17 @@ async function isConsequentialControl(page,selector){
       const metadata=[el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').toLowerCase();
       commitText=visibleText.replace(navigation,' ')+' '+metadata.replace(navigation,' ').replace(/\b(?:booking|reservation|confirmation|order|payment|purchase|application|cancellation)s?\b/gi,' ');
     }
+    // Amazon's observed Go control uses id=nav-search-submit-button inside a
+    // GET search form. Ignore only that metadata token, not visible commit text
+    // or other consequential metadata; never exempt POST/overridden targets.
+    const searchForm=el.form||el.closest?.('form');
+    if(!inspecting&&searchForm&&(searchForm.getAttribute('role')||'').toLowerCase()==='search'
+      &&(searchForm.getAttribute('method')||'get').toLowerCase()==='get'
+      &&el.getAttribute('formaction')===null&&el.getAttribute('formmethod')===null
+      &&/^(?:go|search|find)(?:\s+(?:go|search|find))*$/.test(visibleText.trim())){
+      const metadata=[el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').toLowerCase();
+      commitText=visibleText+' '+metadata.replace(/\bsubmit\b/g,' ');
+    }
     commitText=commitText.replace(/\bapply\s+filters?\b/gi,' ');
     const consequential=/\b(book|booking|cancel|cancellation|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i.test(commitText);
     if(text!==commitText&&!consequential)return false;
