@@ -1,6 +1,6 @@
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {searchWebResults, type WebSearchResult} from '@/lib/web-search'
-import {foodLocationReply,foodSearchSubject,isFoodComparisonRequest} from './food-comparison-intent'
+import {foodLocationReply,foodSearchSubject,isFoodComparisonRequest,isExplicitFoodBrowserRequest} from './food-comparison-intent'
 
 import {commerceTaskLink, readCommerceTask} from '@/lib/commerce/task'
 
@@ -31,6 +31,7 @@ export async function tryFoodComparison(params:{telegramId:number;text:string;su
     const {tryGroceryComparison} = await import('./grocery-comparison')
     return tryGroceryComparison(params)
   }
+  if(isExplicitFoodBrowserRequest(params.text))return null
   const statusRequest=/^\s*(?:show|check)\s+(?:my|the)\s+food comparison(?: status)?[.!]?\s*$/i.test(params.text)
   const fresh=isFoodComparisonRequest(params.text)
   const location=foodLocationReply(params.text)

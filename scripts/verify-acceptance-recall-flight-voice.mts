@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { detectIntent } from '../lib/bot/detect-intent'
 import { buildTravelPresenceFacts } from '../lib/agent/context-brain'
 import { answerLiveFlightStatus, buildFlightStatusQuery, isFareShoppingResult, answerLeaksFare, matchesRequestedOccurrence, classifyOccurrence, normalizeNumericDates } from '../lib/bot/handlers/flight-status'
-import { mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply, hasAmbiguousTime, hasAmbiguousDate } from '../lib/agent/appointment-followup'
+import { tryRunAppointmentFollowup, mergeSlot, explicitClock, capturedSlotHints, isSlotOnlyReply, hasAmbiguousTime, hasAmbiguousDate } from '../lib/agent/appointment-followup'
 import { hasConcreteFlightCode } from '../lib/bot/flight-codes'
 import { parseCalendarCreate } from '../lib/bot/handlers/calendar-actions'
 import { resolvePendingCalendar } from '../lib/bot/pending-followup'
@@ -452,3 +452,7 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
 }
 
 console.log('✅ acceptance: recall PNR survives budget, flight-status grounded (never shops), voice/calendar time preserved, prep never auto-creates, day-after-tomorrow is +2 days, negation respects sentence boundaries')
+
+// Exact live 3 Oct flight prompt must not consult or mutate a stale prepared
+// appointment, even though its prohibition contains "submit a booking".
+assert.equal(await tryRunAppointmentFollowup({actor:{legacyTelegramId:42} as any,surface:'web',text:'Open https://www.goindigo.in/ in the browser. Read only. This is a test itinerary: search Bengaluru to Mumbai, one adult, one-way on 10 October 2026. Report displayed flight dates, times and fares only if verifiable. Do not enter passenger details, hold seats, submit a booking or pay. Stop at authentication.'}),null)

@@ -382,6 +382,10 @@ export async function finalizeApprovedAppointmentRun(params: { actor: AgentActor
 }
 
 export async function tryRunAppointmentFollowup(params: { actor: AgentActor; surface: AgentSurface; text: string }) {
+  // 3 Oct live flight browser test: "Do not ... submit a booking" matched
+  // wantsFinalApproval and rewrote an old dentist task with the flight date.
+  // An explicitly addressed browser request starts its own task.
+  if(/^\s*(?:open|browse|visit|navigate to|go to)\s+https?:\/\/\S+\s+(?:in|using)\s+(?:the\s+)?browser\b/i.test(params.text))return null
   const tg = params.actor.legacyTelegramId
 
   if (wantsFinalApproval(params.text)) {

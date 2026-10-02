@@ -74,6 +74,10 @@ assert.equal(plan.actions[0].kind,'click')
 assert.equal(plan.actions[0].selector,'body:nth-of-type(1) > div:nth-of-type(1)')
 assert.match(captured,/Each action must use the key kind/)
 assert.match(captured,/Never book, buy/)
+assert.doesNotMatch(captured,/If the final approved control cannot be identified/,'read planner cannot be told to stop for missing purchase controls')
+await exports.planActions('Book the approved reservation',snapshot('Confirm','BUTTON'),'execute','USER_INSTRUCTION')
+assert.match(captured,/If the final approved control cannot be identified/,'execute mode retains its final-control safeguard')
+
 let released=0,reserved=0
 const release:any=async()=>{released++}
 release.reserveHandoff=async()=>{reserved++;return 'fixture-reservation'}
