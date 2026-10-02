@@ -67,13 +67,17 @@ export function parseBrowserCommand(text:string):BrowserCommand|null{
   const booking=!noBooking && /\b(book|booking|reserve|reservation)\b/.test(t)
   const submit=!noSubmit && /\b(submit|send application|apply for|complete and send|confirm form)\b/.test(t)
   const fill=/\b(fill|complete form|prepare form|type into|enter my|draft application)\b/.test(t)
-  const mode:BrowserMode=(purchase||booking||submit)?'execute':fill?'draft':'read'
+  // 3 Oct live Amazon test: a long "Do not sign in, add to cart or buy"
+  // list exceeded the negation matcher. An explicit read-only instruction
+  // bounds authority even when a later prohibition contains a purchase verb.
+  const readOnly=/(?:^|[.!?;])\s*read[ -]only\b/.test(t)
+  const mode:BrowserMode=readOnly?'read':(purchase||booking||submit)?'execute':fill?'draft':'read'
   return {
     url,
     objective:safe(raw,1800),
     mode,
     risk:mode==='execute'?'high':mode==='draft'?'medium':'low',
-    approvalAction:purchase?'purchase':booking?'booking':submit?'submit_form':undefined,
+    approvalAction:mode!=='execute'?undefined:purchase?'purchase':booking?'booking':submit?'submit_form':undefined,
   }
 }
 
