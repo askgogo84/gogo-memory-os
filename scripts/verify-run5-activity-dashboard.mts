@@ -1,5 +1,23 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import ts from 'typescript'
+import { runInNewContext } from 'node:vm'
+
+const activityExports:any={}
+runInNewContext(ts.transpileModule(fs.readFileSync('lib/dashboard/agent-activity.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
+  {exports:activityExports,require:()=>({}),URL})
+// Live 2 Oct: a new cloud takeover rendered a previous attempt's HTTP 403.
+const old403={toolName:'secure_browser',output:{title:'Old provider page',summary:'HTTP 403',blockReason:'provider_access_limited'}}
+const resumedRun={status:'paused',summary:'Choose your account or delivery location.',error:null,metadata:{handoff:{takeoverUrl:'https://takeover.example/',providerUrl:'https://www.swiggy.com/instamart'}},steps:[old403]}
+const activeBrowser=activityExports.browserContextForRun(resumedRun)
+assert.equal(activeBrowser.providerBlocked,false)
+assert.equal(activeBrowser.takeoverAvailable,true)
+assert.equal(activeBrowser.summary,resumedRun.summary)
+assert.equal(activeBrowser.title,'')
+const failedBrowser=activityExports.browserContextForRun({...resumedRun,status:'failed',error:'browser_objective_unverified',summary:'No verified result from this attempt.',metadata:{}})
+assert.equal(failedBrowser.summary,'No verified result from this attempt.')
+assert.equal(failedBrowser.title,'')
+assert.equal(activityExports.browserContextForRun({...resumedRun,metadata:{handoff:{mode:'device',providerUrl:'https://www.swiggy.com/instamart'}}}).providerBlocked,true)
 
 const activity=fs.readFileSync('app/dashboard/(app)/activity/page.tsx','utf8')
 const detail=fs.readFileSync('app/dashboard/(app)/activity/[runId]/page.tsx','utf8')

@@ -54,7 +54,29 @@ still require human sign-in or refuse access. This integration does not supply
 MCP approval, invent deep links, guarantee mobile-app cart synchronization, or
 establish complete delivered-price comparison.
 
-## Rollback
+## Production acceptance, 2 October
+
+Integration release `e60f1dcc75dfc87210b198657a5ab8bfc238b7b6` was verified
+READY on the production alias. The existing Instamart comparison opened its
+Browserbase session through AskGogo's takeover UI with the authenticated account
+and saved Home address visible. Return-control and resume preserved the task.
+No cart was changed and no order was placed.
+
+Two observed acceptance defects required a follow-up: the exact chat request
+`Open https://example.com in the browser and report its page title. Read only.`
+was rejected by title-only completion, and the browser view showed an old HTTP
+403 despite a new working takeover. Regression cases reproduce both failures.
+The follow-up accepts that title wording, reads the observed title directly,
+and renders current task/handoff state instead of the old access observation.
+
+Instamart automated product lookup remains unverified. Manual takeover opened
+its search page, but resuming the lookup did not produce a verified product
+answer. `BROWSER_READ_INCOMPLETE` records action kinds/statuses and observation
+counts only to diagnose this failure; it excludes provider text, selectors,
+field values and connection URLs. Persistent access is not equivalent to a
+completed comparison, cart preparation or verified phone handoff.
+
+## Rollback procedure
 
 Remove the runtime flag or set it to `local`, then redeploy the last validated
 commit. Stop any live Browserbase sessions belonging to the rollout after human

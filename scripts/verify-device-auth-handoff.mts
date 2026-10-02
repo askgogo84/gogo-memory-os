@@ -7,6 +7,12 @@ import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from 
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
 import { browserPageAllowlist } from '../lib/agent/browser-page-network'
 
+// 2 Oct live Browserbase acceptance: this exact title request was rejected.
+const titleRequest='Open https://example.com in the browser and report its page title. Read only.'
+assert.equal(isTitleOnlyObjective(titleRequest),true)
+assert.equal(verifiedBrowserAnswer({complete:true,evidence:['Example Domain']},'Example Domain','Example Domain',isTitleOnlyObjective(titleRequest)),'Example Domain')
+assert.equal(isTitleOnlyObjective('Open https://example.com in the browser and report its title and prices.'),false)
+
 function load(file: string, mocks: Record<string, any>, extra='', globals:Record<string,any>={}) {
   // Legacy action fixtures focus on receipts/forms. The real load observer is
   // exercised against challenge, HTTP and navigation failures in lifetime tests.
@@ -554,7 +560,7 @@ console.log('Live browser model rejection recovers through fallback; unsupported
 
 evidencePage={url:'https://provider.example',title:'Acme',text:'',forms:[]}
 modelText=JSON.stringify({complete:true,evidence:['Acme']})
-for(const objective of ['Open https://provider.example and report the page title','What is the title of this website?','Read the document title','Open this page and tell me its title','Get the webpage title']){
+for(const objective of [titleRequest,'Open https://provider.example and report the page title','What is the title of this website?','Read the document title','Open this page and tell me its title','Get the webpage title']){
  const result=await evidenceComputer.runSecureBrowser({...readParams,url:'https://provider.example',objective})
  assert.equal(result.status,'completed',objective)
  assert.equal(result.summary,'Acme')
