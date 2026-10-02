@@ -47,6 +47,12 @@ location.text='Please provide your delivery location to see products at nearby s
 assert.equal(needsBrowserDeliveryLocation(location),true)
 assert.equal(needsBrowserDeliveryLocation({text:'Select location | Milk ₹77',forms:[]}),false)
 assert.equal(needsBrowserDeliveryLocation({...location,text:'Search your saved addresses'}),false)
+// Captured 3 Oct from Zepto's retained production browser after a failed search.
+const zeptoLocation=snapshot('Search a new address','INPUT',true)
+zeptoLocation.text='Your Location\nUse My Current Location\nEnable your current location for better services\nEnable'
+assert.equal(needsBrowserDeliveryLocation(zeptoLocation),true,'Zepto location dialog must pause before more product-search actions')
+assert.equal(needsBrowserDeliveryLocation({...zeptoLocation,forms:[]}),false,'dialog copy alone is insufficient')
+
 assert.ok('cdn.zeptonow.com' in browserPageAllowlist('https://www.zepto.com'))
 assert.ok(!('cdn.zeptonow.com' in browserPageAllowlist('https://zepto.com.example.org')))
 
@@ -93,4 +99,11 @@ assert.equal(blocked.handoffReservation,'fixture-reservation')
 assert.equal(reserved,1)
 assert.equal(released,1,'worker releases its lock through the normal reserved-handoff protocol')
 assert.match(blocked.summary,/resume this same task/)
+exports.testInspect(async()=>({page:zeptoLocation,releaseOwnerLock:release,sandbox:{stop:async()=>{}},name:'owner-scoped-fixture'}))
+const zeptoBlocked=await exports.runSecureBrowser({userId:'fixture-user',url:'https://www.zepto.com/',objective:'Find Amul Taaza 1 litre',mode:'read',keepAlive:true,sessionTaskId:'same-zepto-task',reserveHumanHandoff:true})
+assert.equal(zeptoBlocked.blockReason,'delivery_location_required')
+assert.equal(zeptoBlocked.handoffReservation,'fixture-reservation')
+assert.equal(reserved,2)
+assert.equal(released,2)
+
 console.log('PASS: simulated multi-provider search controls, exact selectors, location gate and planner serialization')
