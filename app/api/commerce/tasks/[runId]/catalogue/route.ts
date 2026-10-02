@@ -24,6 +24,7 @@ export async function POST(request: Request, context: {params: Promise<{runId: s
   }
   try {
     task = await readCommerceTask(session.telegramId, (await context.params).runId)
+    if(task?.metadata_json.state==='browser_research') return NextResponse.json({error:'browser_task_active'},{status:409})
     if (task?.metadata_json.state.startsWith('cart_')) return NextResponse.json({error: 'cart_readback_required'}, {status: 409})
     const address = task?.metadata_json.commerce?.address
     if (!task || task.metadata_json.commerce?.provider !== 'swiggy' || address?.source !== 'provider_saved_address' || !address.id) return NextResponse.json({error: 'select_saved_address'}, {status: 409})

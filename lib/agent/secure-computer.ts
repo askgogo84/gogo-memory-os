@@ -1,4 +1,5 @@
 import { draftObjectiveCovered } from './draft-coverage'
+import {ensurePersistentCommerceBrowser, COMMERCE_CDP_URL} from './persistent-commerce-browser'
 import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from './browser-evidence'
 import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
@@ -130,7 +131,8 @@ async function model(page){
   const __env=(process&&process.env)||{};
   const __proxyServer=(__env.GOGO_BROWSER_PROXY_URL||'').trim();
   const __proxy=__proxyServer?{server:__proxyServer,username:(__env.GOGO_BROWSER_PROXY_USERNAME||'').trim()||undefined,password:(__env.GOGO_BROWSER_PROXY_PASSWORD||'').trim()||undefined}:undefined;
-  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
+  const attached=__env.GOGO_BROWSER_KEEP_ALIVE==='true'?await chromium.connectOverCDP('${COMMERCE_CDP_URL}'):null;
+  const context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
   const page=context.pages()[0]||await context.newPage();
   let usernameFilled=false,passwordFilled=false,submitted=false;
   try{
@@ -161,7 +163,7 @@ async function model(page){
     const out=await model(page);
     out.vaultLogin={usernameFilled,passwordFilled,submitted};
     console.log(JSON.stringify(out));
-  } finally { await context.close(); }
+  } finally { if(attached)await attached.close();else await context.close(); }
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
 `
 const BROWSER_SCRIPT=String.raw`
@@ -256,6 +258,7 @@ async function isConsequentialControl(page,selector){
   try{return await page.locator(selector).first().evaluate(el=>{
     const t=(el.getAttribute('type')||'').toLowerCase();
     const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
+    if(/\b(add|remove|increase|decrease)\b/.test(text)||/^[+−-]$/.test(text))return true;
     const safeResearch=/\b(search|find|show|filter|apply filters|see results|view results|check availability|update results|go)\b/i.test(text);
     const navigation=/\b(?:(?:view|manage|open|show|see|read|inspect|review)\s+(?:(?:my|your|the)\s+)?(?:booking|reservation|confirmation|order|payment|purchase|application|cancellation)s?(?:\s+(?:details|confirmation|status|history|receipt))?|(?:booking|reservation)\s+details)\b/gi;
     const visibleText=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value')].filter(Boolean).join(' ').toLowerCase();
@@ -278,13 +281,20 @@ async function isConsequentialControl(page,selector){
   const __env=(process&&process.env)||{};
   const __proxyServer=(__env.GOGO_BROWSER_PROXY_URL||'').trim();
   const __proxy=__proxyServer?{server:__proxyServer,username:(__env.GOGO_BROWSER_PROXY_USERNAME||'').trim()||undefined,password:(__env.GOGO_BROWSER_PROXY_PASSWORD||'').trim()||undefined}:undefined;
-  const context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
+  const attached=payload.keepAlive?await chromium.connectOverCDP('${COMMERCE_CDP_URL}'):null;
+  const context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
   const page=context.pages()[0]||await context.newPage();
   const log=[];
   let executionBeforeText=null;
   let executionAfterText=null;
   try{
-    await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
+    let reuse=false;
+    if(payload.keepAlive){
+      const fs=require('fs');let active='';try{active=fs.readFileSync('${SANDBOX_WORKDIR}/commerce-active-task','utf8')}catch{}
+      if(payload.reusePage){if(active!==payload.taskId||!page.url().startsWith('http'))throw new Error('browser_live_session_expired');reuse=true;}
+      if(!reuse)fs.writeFileSync('${SANDBOX_WORKDIR}/commerce-active-task',payload.taskId||'');
+    }
+    if(!reuse)await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
     await page.waitForTimeout(900);
     for(const a of (payload.actions||[])){
       let consequential=a.kind==='submit';
@@ -386,11 +396,11 @@ return receiptCount(after)>receiptCount(before);
       }
     }
     const out=await model(page); out.draftVerified=draftVerified; out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; console.log(JSON.stringify(out));
-  } finally { await context.close(); }
+  } finally { if(attached)await attached.close();else await context.close(); }
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
 `
 
-async function getComputer(userId:string,targetUrl:string){
+async function getComputer(userId:string,targetUrl:string,keepAlive=false){
   const canonicalUserId=await canonicalBrowserOwnerId(userId)
   const name=userSandboxName(canonicalUserId)
   const sandbox=await Sandbox.getOrCreate({
@@ -400,6 +410,7 @@ async function getComputer(userId:string,targetUrl:string){
   const releaseOwnerLock=await acquireBrowserOwnerLock(sandbox)
   try{
   await ensureBrowserRuntime(sandbox)
+  if(keepAlive)await ensurePersistentCommerceBrowser(sandbox,targetUrl)
   await sandbox.writeFiles([
     {path:`${SANDBOX_WORKDIR}/gogo-browser.js`,content:Buffer.from(BROWSER_SCRIPT)},
     {path:`${SANDBOX_WORKDIR}/gogo-vault-login.js`,content:Buffer.from(VAULT_LOGIN_SCRIPT)},
@@ -407,7 +418,7 @@ async function getComputer(userId:string,targetUrl:string){
   const {allow}=allowedHosts(targetUrl)
   await sandbox.updateNetworkPolicy({allow} as any)
   return {sandbox,name,releaseOwnerLock}
-  }catch(error){await sandbox.stop().catch(()=>{});await releaseOwnerLock();throw error}
+  }catch(error){if(!keepAlive)await sandbox.stop().catch(()=>{});await releaseOwnerLock();throw error}
 }
 
 function parseJsonLoose(text:string){
@@ -445,7 +456,7 @@ function pageLooksLikeLogin(page:any){
   return isLoginDestination(page)||(loginInput&&loginCopy)
 }
 
-async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;secret:string}){
+async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;secret:string;keepAlive?:boolean}){
   const result=await params.sandbox.runCommand({
     cmd:'bash',
     args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-vault-login.js`],
@@ -453,6 +464,7 @@ async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;
       GOGO_LOGIN_URL:params.url,
       GOGO_VAULT_USERNAME:params.username,
       GOGO_VAULT_SECRET:params.secret,
+      GOGO_BROWSER_KEEP_ALIVE:params.keepAlive?'true':'false',
       // The login must egress the same way the read/action will — otherwise a proxied
       // provider's sign-in is attempted from the datacenter IP and gets blocked.
       ...browserProxyEnv(params.url),
@@ -464,17 +476,17 @@ async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;
   if(!lines.length)throw new Error('vault_browser_login_empty')
   return JSON.parse(lines[lines.length-1])
 }
-async function inspect(userId:string,url:string){
-  const {sandbox,name,releaseOwnerLock}=await getComputer(userId,url)
+async function inspect(userId:string,url:string,keepAlive=false,taskId='',reusePage=false){
+  const {sandbox,name,releaseOwnerLock}=await getComputer(userId,url,keepAlive)
   try{
-  const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[]})).toString('base64')
+  const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[],keepAlive,taskId,reusePage})).toString('base64')
   const result=await sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload],env:browserProxyEnv(url)} as any)
   if(result.exitCode!==0)throw new Error(`secure_browser_read_failed:${safeText(await result.stderr(),700)}`)
   const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
   if(!lines.length)throw new Error('secure_browser_empty_output')
   const parsed=JSON.parse(lines[lines.length-1])
   return {sandbox,name,page:parsed,releaseOwnerLock}
-  }catch(error){await sandbox.stop().catch(()=>{});await releaseOwnerLock();throw error}
+  }catch(error){if(!keepAlive)await sandbox.stop().catch(()=>{});await releaseOwnerLock();throw error}
 }
 
 function detectProviderAccessBlock(page:any){
@@ -578,14 +590,15 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;sessionTaskId?:string;resumePage?:boolean}):Promise<SecureBrowserResult>{
   let releaseOwnerLock:BrowserOwnerRelease|undefined
   let executionStarted=false
   let activeSandbox:{stop:()=>Promise<unknown>}|undefined
   try {
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
-    const first=await inspect(params.userId,target.toString())
+    if(params.keepAlive&&(!params.sessionTaskId||params.mode!=='read'))throw new Error('persistent_browser_read_task_required')
+    const first=await inspect(params.keepAlive?params.userId+':commerce':params.userId,target.toString(),params.keepAlive,params.sessionTaskId,params.resumePage)
     releaseOwnerLock=first.releaseOwnerLock
     activeSandbox=first.sandbox
     let page=first.page
@@ -639,6 +652,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
               url:currentUrl,
               username:credential.username,
               secret:credential.secret,
+              keepAlive:params.keepAlive,
             })
             actionLog.push({kind:'vault_login',detail:`Saved ${credential.provider} login`,status:'done'})
             authGate=detectHumanAuthGate(page)
@@ -714,7 +728,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       draftActions=actions
       const currentUrl=String(page.url||target.toString())
       const {allow}=allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
-      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null})).toString('base64')
+      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null,keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:params.keepAlive===true})).toString('base64')
       if(params.mode==='execute')executionStarted=true
       const result=await first.sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload],env:browserProxyEnv(currentUrl)} as any)
       if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
@@ -745,7 +759,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     const executionEvidence=params.mode==='execute'&&typeof page.executionBeforeText==='string'&&typeof page.executionAfterText==='string'?localExecutionConfirmation(approvedOperation,page.executionBeforeText,page.executionAfterText,actionLog):null
     if(params.mode==='execute'&&!executionEvidence)throw new Error('browser_objective_unverified')
     if(params.mode==='draft'&&(!draftReady||page.draftVerified!==true||draftObjectiveCovered(params.objective,page,draftActions)===false))throw new Error('browser_objective_unverified')
-    await first.sandbox.stop().catch(()=>{})
+    if(!params.keepAlive)await first.sandbox.stop().catch(()=>{})
     const prepared=params.mode==='draft'
     return {
       status:prepared?'prepared':'completed',url:safeText(page.url||target,1200),title:safeText(page.title,300),
@@ -753,7 +767,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       pageText:safeText(page.text,9000),forms:Array.isArray(page.forms)?page.forms.slice(0,12).map((form:any)=>({...form,action:safeText(form?.action,1200)})):[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
     }
   } catch (error:any) {
-    await activeSandbox?.stop().catch(()=>{})
+    if(!params.keepAlive)await activeSandbox?.stop().catch(()=>{})
     const safeError=safeText(error?.message||error,1000)
     console.error('SECURE_BROWSER_FAILED:',safeError)
     throw Object.assign(new Error(safeError||'secure_browser_failed'),{browserExecutionStarted:executionStarted})

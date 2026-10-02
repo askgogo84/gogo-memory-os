@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { Sandbox } from '@vercel/sandbox'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
+import {COMMERCE_CDP_URL} from './persistent-commerce-browser'
+import {SANDBOX_WORKDIR} from './secure-browser-bootstrap'
 
 export const BROWSER_HANDOFF_PORT = 3001
 const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
@@ -20,7 +22,8 @@ const profile='${BROWSER_PROFILE_DIR}';
 const port=${BROWSER_HANDOFF_PORT};
 const token=process.argv[2];
 const initialUrl=Buffer.from(process.argv[3]||'', 'base64').toString('utf8');
-let context,page;
+const runtimeOptions=process.argv[4]?JSON.parse(Buffer.from(process.argv[4],'base64').toString('utf8')):{};
+let context,page,attached;
 function ok(res,code=200,type='application/json'){res.writeHead(code,{'content-type':type,'cache-control':'no-store'});return res}
 function auth(req){try{const u=new URL(req.url,'http://x');return u.searchParams.get('token')===token||req.headers['x-gogo-handoff-token']===token}catch{return false}}
 async function model(){return await page.evaluate(()=>{const clean=s=>String(s||'').replace(/\s+/g,' ').trim();const visible=el=>{try{const r=el.getBoundingClientRect();const s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return true}};const input=el=>{const id=el.id||'',name=el.getAttribute('name')||'',type=(el.getAttribute('type')||el.tagName||'').toLowerCase();const label=id?clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||''):'';let selector='';if(id)selector='#'+CSS.escape(id);else if(name)selector=el.tagName.toLowerCase()+'[name="'+CSS.escape(name)+'"]';else selector=el.tagName.toLowerCase();return{selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')}};return{url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),links:Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0,100).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})),forms:Array.from(document.forms).filter(visible).slice(0,16).map(f=>({action:f.action||location.href,method:(f.method||'get').toLowerCase(),inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(input)}))}})}
@@ -29,9 +32,12 @@ async function isConsequential(selector){try{return await page.locator(selector)
  const __env=(process&&process.env)||{};
  const __proxyServer=(__env.GOGO_BROWSER_PROXY_URL||'').trim();
  const __proxy=__proxyServer?{server:__proxyServer,username:(__env.GOGO_BROWSER_PROXY_USERNAME||'').trim()||undefined,password:(__env.GOGO_BROWSER_PROXY_PASSWORD||'').trim()||undefined}:undefined;
- context=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},...(__proxy?{proxy:__proxy}:{})});
+ attached=runtimeOptions.keepAlive?await chromium.connectOverCDP('${COMMERCE_CDP_URL}'):null;
+ context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},...(__proxy?{proxy:__proxy}:{})});
  page=context.pages()[0]||await context.newPage();
- if(initialUrl&&(!page.url().startsWith('http')||page.url()==='about:blank'))await page.goto(initialUrl,{waitUntil:'domcontentloaded',timeout:45000}).catch(()=>{});
+ let changedTask=false;
+ if(runtimeOptions.keepAlive){let active='';try{active=fs.readFileSync('${SANDBOX_WORKDIR}/commerce-active-task','utf8')}catch{}changedTask=active!==runtimeOptions.taskId;fs.writeFileSync('${SANDBOX_WORKDIR}/commerce-active-task',runtimeOptions.taskId||'');}
+ if(initialUrl&&(changedTask||!page.url().startsWith('http')||page.url()==='about:blank'))await page.goto(initialUrl,{waitUntil:'domcontentloaded',timeout:45000}).catch(()=>{});
  const server=http.createServer(async(req,res)=>{
   if(!auth(req))return ok(res,403).end(JSON.stringify({error:'forbidden'}));
   const u=new URL(req.url,'http://x');
@@ -46,6 +52,7 @@ async function isConsequential(selector){try{return await page.locator(selector)
    await page.waitForTimeout(350);ok(res).end(JSON.stringify(await model()));return
   }
   if(req.method==='POST'&&u.pathname==='/agent-action'){
+   if(runtimeOptions.keepAlive)return ok(res,409).end(JSON.stringify({error:'return_control_before_agent_actions'}));
    let body='';for await(const c of req)body+=c;let a={};try{a=JSON.parse(body)}catch{}
    try{
     if(a.kind==='goto'&&a.url)await page.goto(String(a.url),{waitUntil:'domcontentloaded',timeout:45000});
@@ -59,7 +66,7 @@ async function isConsequential(selector){try{return await page.locator(selector)
    return
   }
   if(req.method==='POST'&&u.pathname==='/return'){fs.writeFileSync('/home/vercel-sandbox/handoff-returned.json',JSON.stringify({at:new Date().toISOString(),url:page.url()}));ok(res).end(JSON.stringify({ok:true,url:page.url()}));return}
-  if(req.method==='POST'&&u.pathname==='/release'){const s=await model();await context.close();ok(res).end(JSON.stringify({ok:true,state:s}));setTimeout(()=>process.exit(0),100);return}
+  if(req.method==='POST'&&u.pathname==='/release'){const s=await model();if(attached)await attached.close();else await context.close();ok(res).end(JSON.stringify({ok:true,state:s}));setTimeout(()=>process.exit(0),100);return}
   if(req.method==='GET'&&u.pathname==='/'){
    const html='<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>AskGogo · Take control</title><style>body{font-family:system-ui;margin:0;background:#f7f4ee;color:#222}.bar{padding:12px 14px;background:white;position:sticky;top:0;z-index:2;box-shadow:0 1px 8px #0002}.stage{max-width:1100px;margin:auto;padding:10px}.browser{width:100%;border-radius:14px;box-shadow:0 2px 14px #0002;touch-action:manipulation}.controls{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.controls input{flex:1;min-width:180px;padding:12px;border:1px solid #ccc;border-radius:10px}.controls button{padding:11px 14px;border:0;border-radius:10px;background:#222;color:white}.return{background:#16855b!important}</style><div class="bar"><b>AskGogo · Take control</b><div id="s">Same secure browser session. Complete only the human-required step, then return control.</div></div><div class="stage"><img id="screen" class="browser"><div class="controls"><input id="t" placeholder="Type into the focused field"><button onclick="typeText()">Type</button><button onclick="press(\"Enter\")">Enter</button><button onclick="scrollByY(600)">Scroll ↓</button><button onclick="scrollByY(-600)">Scroll ↑</button><button class="return" onclick="giveBack()">Return control to Gogo</button></div></div><script>const tok=new URLSearchParams(location.search).get("token");const sc=document.getElementById("screen");function refresh(){sc.src="/shot?token="+encodeURIComponent(tok)+"&t="+Date.now()}setInterval(refresh,1200);refresh();sc.onclick=async e=>{const r=sc.getBoundingClientRect();const x=(e.clientX-r.left)*1280/r.width,y=(e.clientY-r.top)*900/r.height;await act({kind:"click",x,y});refresh()};async function act(a){await fetch("/action?token="+encodeURIComponent(tok),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(a)})}async function typeText(){const el=document.getElementById("t");await act({kind:"type",text:el.value});el.value="";refresh()}async function press(key){await act({kind:"press",key});refresh()}async function scrollByY(dy){await act({kind:"scroll",dy});refresh()}async function giveBack(){await fetch("/return?token="+encodeURIComponent(tok),{method:"POST"});document.getElementById("s").textContent="Control returned. Go back to WhatsApp and send CONTINUE."}</script>';
    ok(res,200,'text/html; charset=utf-8').end(html);return
