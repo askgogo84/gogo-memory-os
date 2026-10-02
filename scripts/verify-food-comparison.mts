@@ -56,11 +56,21 @@ runInNewContext(compiled,{exports,Date,URL,console,require(name:string){
   throw new Error(`Unexpected dependency ${name}`)
 }})
 const run=(text:string,telegramId=42,surface='whatsapp')=>exports.tryFoodComparison({telegramId,text,surface})
+// Exact observed browser request must reach the later browser handler even
+// when a food task is waiting for a PIN; a PIN inside the request is not a reply.
+const browserRequest='Open https://www.zomato.com/ in the browser. Find vegetarian burgers in Bengaluru. Report only visible restaurant/menu evidence; do not infer delivery availability or total. Do not sign in, order or change a cart. Read only.'
+assert.equal(intent.isFoodComparisonRequest(browserRequest),false)
+assert.notEqual(detectIntent(browserRequest).type,'food_comparison')
+assert.equal(await run(browserRequest),null)
+assert.equal(rows.length,0)
 const first=await run(incident)
 assert.match(first.text,/delivery PIN code/)
 assert.equal(searches.length,0,'unknown location must not search or guess')
 assert.equal(rows[0].metadata_json.state,'waiting_location')
 assistant=first.text
+assert.equal(await run(browserRequest+' Area 560086.'),null,'explicit browser request must not resume a pending PIN question')
+assert.equal(rows.length,1)
+assert.equal(searches.length,0)
 assert.equal(await run('560086',99),null,'another owner cannot resume this task')
 assistant='Here is your email summary.'
 assert.equal(await run('560086'),null,'a paused task cannot steal a number after a topic change')

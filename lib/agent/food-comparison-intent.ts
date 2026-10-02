@@ -1,6 +1,13 @@
 // Oct 1 production incident: a nearby veg-burger comparison fell through to
 // generic chat and returned US restaurants, unsupported distances and a coupon.
+// 3 Oct live Zomato request explicitly chose browser execution, but food
+// discovery intercepted it before the browser handler on every surface.
+export function isExplicitFoodBrowserRequest(text:string){
+  return /^\s*(?:open|browse|visit|navigate to|go to)\s+https?:\/\/\S+\s+(?:in|using)\s+(?:the\s+)?browser\b/i.test(text)
+}
+
 export function isFoodComparisonRequest(text:string){
+  if(isExplicitFoodBrowserRequest(text))return false
   return /\b(?:find|compare|cheapest|best)\b/i.test(text)
     && /\b(?:burger|pizza|biryani|food|meal|dosa|sandwich|restaurant)s?\b/i.test(text)
     && /\b(?:near|nearest|nearby|delivery|swiggy|zomato|magicpin)\b/i.test(text)
