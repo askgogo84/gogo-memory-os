@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
+import {BROWSER_PAGE_READINESS} from '../lib/agent/browser-page-readiness'
 
 // Run the actual worker and takeover programs. A cookie-only fixture would miss
 // the original defect: each action batch reloaded the page and destroyed its DOM.
@@ -13,6 +14,7 @@ export function browserProgram(file:string,name:string){
     if(id==='@anthropic-ai/sdk')return {default:class {}}
     if(id==='./secure-browser-bootstrap')return {BROWSER_PROFILE_DIR:'/fixture/profile',SANDBOX_WORKDIR:'/fixture'}
     if(id==='./persistent-commerce-browser')return {COMMERCE_CDP_URL:'http://127.0.0.1:9222'}
+    if(id==='./browser-page-readiness')return {BROWSER_PAGE_READINESS}
     return {}
   }})
   return exports[name] as string
@@ -29,11 +31,12 @@ for(const label of ['Add','Add to cart','Remove','Increase quantity','Decrease q
 let activeTask='',gotoCount=0,contextClosed=0,disconnects=0,launches=0
 let currentUrl='about:blank',field='',sessionMarker=''
 const page:any={
+  on:()=>{},
   url:()=>currentUrl,
   goto:async(url:string)=>{gotoCount++;currentUrl=url;field='';sessionMarker=''},
   waitForTimeout:async()=>{},
   locator:()=>({first:()=>({fill:async(value:string)=>{field=value}})}),
-  evaluate:async()=>({url:currentUrl,title:'Fixture',text:field,forms:[],links:[]}),
+  evaluate:async(fn:any)=>String(fn).includes('hasContent')?{hasContent:true,challenge:false}:{url:currentUrl,title:'Fixture',text:field,forms:[],links:[]},
 }
 const context={pages:()=>[page],close:async()=>{contextClosed++}}
 const chromium={
@@ -63,6 +66,12 @@ assert.equal(responseCode,403,'readiness requires the current handoff token')
 await handler({url:'/health',method:'GET',headers:{'x-gogo-handoff-token':'token'}},response)
 assert.equal(responseCode,200)
 assert.deepEqual(JSON.parse(responseBody),{ready:true},'readiness must not return provider or authentication data')
+await handler({url:'/page-health',method:'GET',headers:{}},response)
+assert.equal(responseCode,403,'page load diagnostics also require the current token')
+await handler({url:'/page-health',method:'GET',headers:{'x-gogo-handoff-token':'token'}},response)
+assert.deepEqual(JSON.parse(responseBody),{state:'ready',httpStatus:null},'page diagnostics contain no provider data or secrets')
+await handler({url:'/?token=token',method:'GET',headers:{}},response)
+assert.match(responseBody,/provider page is blank/,'takeover must explain blank pages instead of falsely asking for sign-in')
 await handler({url:'/agent-action?token=token',method:'POST',headers:{}},response)
 assert.equal(responseCode,409,'commerce automation waits until the human returns control')
 await handler({url:'/release?token=token',method:'POST',headers:{}},response)
@@ -83,3 +92,29 @@ await run({...task,keepAlive:false})
 assert.equal(launches,1)
 assert.equal(contextClosed,1,'legacy non-commerce cleanup remains unchanged')
 console.log('PASS: actual browser programs retain live page through action waves and takeover; replaced/expired task fails; legacy lifecycle preserved')
+
+// Actual cloud reproduction: 202 interstitial -> missing challenge script ->
+// blank body. Once the dependency loads the provider may return 403 or 429.
+const dom:any={body:{innerText:''},scripts:[{src:'https://277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com/a/challenge.js'}],querySelectorAll:()=>[]}
+let responseListener:any,settle:(()=>void)|undefined,waits=0
+const frame={}
+const observedPage={on:(_event:string,fn:any)=>{responseListener=fn},mainFrame:()=>frame,
+  evaluate:async(fn:any)=>fn(),waitForFunction:async(fn:any,_arg:any,options:any)=>{waits++;assert.equal(options.timeout,12000);settle?.();if(!fn())throw Error('bounded timeout')},
+}
+const observerScope:any={URL,document:dom}
+runInNewContext(BROWSER_PAGE_READINESS+';this.observe=observeBrowserPage',observerScope)
+const observer=observerScope.observe(observedPage)
+const emit=(status:number,action?:string)=>responseListener({request:()=>({isNavigationRequest:()=>true}),frame:()=>frame,status:()=>status,headers:()=>({'x-amzn-waf-action':action,'set-cookie':'must-never-escape'})})
+emit(202,'challenge')
+assert.deepEqual(JSON.parse(JSON.stringify(await observer.read(true))),{state:'security_check',httpStatus:202})
+assert.equal(waits,1,'challenge gets a bounded rendering wait')
+settle=()=>{dom.scripts=[];dom.body.innerText='Access denied';emit(403)}
+assert.deepEqual(JSON.parse(JSON.stringify(await observer.read(true))),{state:'http_error',httpStatus:403})
+dom.body.innerText='';emit(429)
+assert.equal((await observer.read(true)).state,'http_error','empty 429 is not a loaded page')
+assert.equal(waits,2,'HTTP refusal does not trigger repeated waits')
+emit(200);observer.navigationFailed()
+assert.equal((await observer.read()).state,'navigation_error')
+emit(200);dom.body.innerText='Sign in. Select your delivery location.'
+assert.deepEqual(JSON.parse(JSON.stringify(await observer.read())),{state:'ready',httpStatus:200},'real loaded content clears previous refusal')
+console.log('PASS: cloud challenge, blank 429, 403 and failed navigation are explicit; only state/status leave page observer')

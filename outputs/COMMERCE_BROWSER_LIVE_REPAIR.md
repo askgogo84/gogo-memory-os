@@ -44,3 +44,25 @@ A local browser at the identical public Instamart URL rendered its location/sign
 After Return control and resume, the production log on bcde6966 shows the primary model rejection was handled through fallback and the result was `browser_objective_unverified`, not `browser_planning_failed`. Thus fallback recovered in production without inventing a result from the blank page. No provider sign-in or location entry was attempted.
 
 The provider dependency tests cover both real worker/handoff policy paths, the exact allowed dependency set and unchanged unrelated-host behavior. Updated release/gate evidence is in the handoff.
+
+## Cloud rendering diagnosis and repair (after e0f602c1)
+
+An isolated, unauthenticated bom1 Sandbox using the production Chromium bootstrap and network policy reproduced the white viewport on both providers. Only status codes, public dependency hosts and rendering counts were exported; no user profile or private process logs were read.
+
+| Public page | Original policy, actual Chromium | With the observed dependency admitted |
+| --- | --- | --- |
+| Swiggy Instamart | HTTP 202, `x-amzn-waf-action: challenge`, zero visible text; challenge script failed `net::ERR_NAME_NOT_RESOLVED` | Challenge script loads, then provider returns HTTP 403 with 92 visible characters |
+| Zepto | HTTP 202, `x-amzn-waf-action: challenge`, zero visible text; challenge script failed `net::ERR_NAME_NOT_RESOLVED` | Challenge script loads, then provider returns HTTP 429 with an empty body |
+
+The two missing hosts came from the providers' actual cloud HTML responses:
+
+- Swiggy: `b67f7794189c.f957f42c.ap-south-1.token.awswaf.com`
+- Zepto: `277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com`
+
+These exact dependencies are now scoped to their respective provider. This lets the provider's normal browser script run; it does not solve a CAPTCHA, fabricate a challenge token, disable TLS verification, or grant arbitrary website-supplied hosts access. AWS documents the distinction between a 202 challenge and the normal page: https://docs.aws.amazon.com/waf/latest/APIReference/API_ChallengeAction.html
+
+The shared worker/takeover page observer now distinguishes a loaded page from a pending security check, HTTP error, navigation failure and empty document. Workers give page rendering a bounded 12-second opportunity before returning a truthful blocked result. An empty challenge/403/429 no longer reaches the model planner or becomes a sign-in request. The takeover banner reports load problems; its authenticated health endpoint exposes only state and HTTP status.
+
+Regression coverage is in the existing browser lifetime, proxy and device-handoff tests. The lifetime test executes the shared observer and reproduces 202-to-403, empty 429, navigation failure and recovery. The real handler test proves blocked pages never invoke the planner and never claim an authentication step.
+
+**Remaining external blocker:** the existing cloud connection still receives provider refusals after the rendering dependency is fixed. A 403/429 alone does not prove whether IP reputation, automation detection, rate policy or another provider rule is responsible. No proxy purchase/configuration or anti-bot bypass was attempted. Successful storefront access, sign-in, saved addresses, delivered prices and cart/phone handoff remain unverified.
