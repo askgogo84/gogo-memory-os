@@ -21,7 +21,7 @@ assert.match(planner, /The plan sees ONLY this user request/i)
 assert.match(planner, /User request: \$\{JSON\.stringify\(String\(text \|\| ''\)\.slice\(0, 1800\)\)\}/)
 assert.match(planner, /completeAgentPlanPrompt\(prompt,onUsage\)/)
 assert.match(plannerProvider, /messages:\[\{role:'user',content:prompt\}\]/)
-assert.match(plannerProvider, /completePlannerPromptWithFallback\(prompt,p=>anthropicComplete\(p,onUsage\),p=>openAiComplete\(p,onUsage\)\)/)
+assert.match(plannerProvider, /completePlannerPromptWithFallback\(prompt,p=>anthropicComplete\(p,onUsage,system\),p=>openAiComplete\(p,onUsage,system\)\)/)
 
 assert.match(planner, /classifyAgentRequest\(step\.instruction\)/)
 assert.match(planner, /evaluateAgentExecutionPolicy/)

@@ -41,6 +41,7 @@ async function isConsequential(selector){try{return await page.locator(selector)
  const server=http.createServer(async(req,res)=>{
   if(!auth(req))return ok(res,403).end(JSON.stringify({error:'forbidden'}));
   const u=new URL(req.url,'http://x');
+  if(req.method==='GET'&&u.pathname==='/health'){ok(res).end(JSON.stringify({ready:true}));return}
   if(req.method==='GET'&&u.pathname==='/shot'){const png=await page.screenshot({type:'png'});ok(res,200,'image/png').end(png);return}
   if(req.method==='GET'&&u.pathname==='/state'){ok(res).end(JSON.stringify(await model()));return}
   if(req.method==='POST'&&u.pathname==='/action'){

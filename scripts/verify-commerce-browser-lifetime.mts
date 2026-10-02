@@ -56,8 +56,13 @@ assert.equal(gotoCount,1,'action wave must not reload the page')
 await runInNewContext(handoff,globals(['node','handoff','token',Buffer.from(task.url).toString('base64'),Buffer.from(JSON.stringify({keepAlive:true,taskId:task.taskId})).toString('base64')]))
 assert.equal(gotoCount,1,'takeover attaches to the same page')
 field='user selected saved Home address'
-let responseCode=0
-const response:any={writeHead:(code:number)=>{responseCode=code},end:()=>{}}
+let responseCode=0,responseBody=''
+const response:any={writeHead:(code:number)=>{responseCode=code},end:(body:string)=>{responseBody=body}}
+await handler({url:'/health',method:'GET',headers:{}},response)
+assert.equal(responseCode,403,'readiness requires the current handoff token')
+await handler({url:'/health',method:'GET',headers:{'x-gogo-handoff-token':'token'}},response)
+assert.equal(responseCode,200)
+assert.deepEqual(JSON.parse(responseBody),{ready:true},'readiness must not return provider or authentication data')
 await handler({url:'/agent-action?token=token',method:'POST',headers:{}},response)
 assert.equal(responseCode,409,'commerce automation waits until the human returns control')
 await handler({url:'/release?token=token',method:'POST',headers:{}},response)
