@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { resolveBrowserProxy, proxyRequiredHosts, proxyAllowlistHost } from '../lib/agent/browser-proxy'
+import { browserPageAllowlist } from '../lib/agent/browser-page-network'
 
 // Residential/mobile egress for datacenter-blocked providers (Blinkit et al. return 403
 // to datacenter IPs — proven live). The proxy is env-gated and provider-scoped.
@@ -40,3 +41,12 @@ assert.equal(proxyAllowlistHost(env), 'gw.residential.example.com')
 assert.equal(proxyAllowlistHost({ GOGO_BROWSER_PROXY_URL: 'gw2.residential.example.com:9000' } as any), 'gw2.residential.example.com')
 
 console.log('✅ browser residential-proxy egress: env-gated, provider-scoped, credential-free in code')
+
+// Live 2 Oct: Instamart scripts use sibling hosts, not *.www.swiggy.com.
+assert.deepEqual(Object.keys(browserPageAllowlist('https://www.swiggy.com/instamart')).sort(),[
+  '*.www.swiggy.com','www.swiggy.com','media-assets.swiggy.com',
+  'instamart-media-assets.swiggy.com','b67f7794189c.edge.sdk.awswaf.com',
+].sort())
+assert.deepEqual(Object.keys(browserPageAllowlist('https://example.com')),['example.com','*.example.com'])
+assert.equal('media-assets.swiggy.com' in browserPageAllowlist('https://swiggy.com.example.com'),false)
+console.log('PASS: observed Swiggy page dependencies allowed only for the specific provider; unrelated egress unchanged')

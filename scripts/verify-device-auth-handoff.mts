@@ -5,12 +5,13 @@ import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from '../lib/agent/browser-evidence'
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
+import { browserPageAllowlist } from '../lib/agent/browser-page-network'
 
 function load(file: string, mocks: Record<string, any>, extra='', globals:Record<string,any>={}) {
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
-  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./draft-coverage'?{draftObjectiveCovered}:undefined)||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:undefined)||(name==='./browser-proxy'?{resolveBrowserProxy:()=>null,proxyAllowlistHost:()=>null}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
+  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./browser-page-network'?{browserPageAllowlist}:undefined)||(name==='./draft-coverage'?{draftObjectiveCovered}:undefined)||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:undefined)||(name==='./browser-proxy'?{resolveBrowserProxy:()=>null,proxyAllowlistHost:()=>null}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
   return exports
 }
 
@@ -204,6 +205,8 @@ assert.equal(bootstraps,1,'a contending task must not bootstrap or replace the s
 reserved=true;handoffReady=false
 await assert.rejects(()=>provider.startProviderBrowserHandoff({userId:'owner',url:'https://provider.example'}),/browser_handoff_not_ready/,'failed listener never becomes a successful handoff')
 handoffReady=true
+await provider.startProviderBrowserHandoff({userId:'owner',url:'https://www.swiggy.com/instamart'})
+assert.ok('instamart-media-assets.swiggy.com' in lastPolicy.allow,'human takeover permits the observed provider page scripts')
 assert.equal(launches.some(c=>JSON.stringify(c).includes('pkill')),false,'never replace a live owner takeover token')
 console.log('Provisioning failure, consumed auth markers, and concurrent owner takeover safety verified')
 
@@ -447,6 +450,7 @@ let modelText='[]'
 let plannedOperation:string|undefined
 let queuedObservations:any[]=[]
 let evidenceCredential:any=null
+const browserPolicies:any[]=[]
 let primaryUnavailable=false, fallbackAvailable=false, primaryAttempts=0, fallbackAttempts=0
 let fallbackEvidence:string|null=null
 const fallbackRequests:any[]=[]
@@ -469,7 +473,7 @@ const browserPlanner=load('planner-provider.ts',{
 },'',{process:{env:{OPENAI_API_KEY:'fixture-not-a-key'}}})
 const evidenceComputer=load('secure-computer.ts',{
   './planner-provider':browserPlanner,
-  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(queuedObservations.shift()??evidencePage)})})}},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async(policy:any)=>{browserPolicies.push(policy)},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(queuedObservations.shift()??evidencePage)})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{},{reserveHandoff:async()=>"transfer"})},
@@ -511,12 +515,13 @@ console.log('Title watchers and structured travel consumers retain verified obse
 // 2 Oct production: Instamart reached the browser but the primary API rejected
 // planning. Both planning and grounded readback must use the configured fallback.
 primaryUnavailable=true;fallbackAvailable=true
-evidencePage={url:'https://provider.example/milk',title:'Milk',text:'Amul Taaza toned milk 1 litre: ₹60. In stock.',forms:[]}
+evidencePage={url:'https://www.swiggy.com/instamart',title:'Milk fixture',text:'Amul Taaza toned milk 1 litre: ₹60. In stock.',forms:[]}
 fallbackEvidence=evidencePage.text
 const fallbackStart=fallbackAttempts,primaryStart=primaryAttempts
 const fallbackRead=await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url,objective:'Check Amul Taaza toned milk 1 litre price and availability'})
 assert.equal(fallbackRead.status,'completed')
 assert.equal(fallbackRead.summary,evidencePage.text)
+assert.ok('instamart-media-assets.swiggy.com' in browserPolicies.at(-1).allow,'worker and handoff share the provider dependency rules')
 assert.equal(primaryAttempts-primaryStart,2,'both planning and assessment try the primary')
 assert.equal(fallbackAttempts-fallbackStart,2,'both calls recover through the configured fallback')
 assert.match(fallbackRequests.at(-2).messages[0].content,/UNTRUSTED EXTERNAL_WEB_DATA/)
