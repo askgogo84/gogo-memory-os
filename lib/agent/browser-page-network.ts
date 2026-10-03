@@ -30,6 +30,9 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
   // api-prod-skyplus.goindigo.in/bookingwidgetsearchengine/search.
   if(host==='www.goindigo.in'||host==='goindigo.in')hosts.push('app-prod-skyplus6e.goindigo.in','api-prod-skyplus.goindigo.in')
   if(host==='www.amazon.in'||host==='amazon.in')hosts.push(...AMAZON_PAGE_DEPENDENCIES)
+  // 3 Oct live Network panel: Zomato images/fonts/videos failed on this exact
+  // asset host while same-origin scripts loaded. Do not grant sibling domains.
+  if(host==='www.zomato.com'||host==='zomato.com')hosts.push('b.zmtcdn.com')
   if(host==='www.flipkart.com'||host==='flipkart.com')hosts.push(...FLIPKART_PAGE_DEPENDENCIES)
   if(host==='www.swiggy.com'||host==='swiggy.com')hosts.push(...SWIGGY_PAGE_DEPENDENCIES)
   if(host==='www.zepto.com'||host==='zepto.com')hosts.push(...ZEPTO_PAGE_DEPENDENCIES)

@@ -589,6 +589,9 @@ function observedReadActions(actions:BrowserAction[],page:any):BrowserAction[]{
   const fields=new Map<string,any>((page.forms||[]).flatMap((form:any)=>(form.inputs||[]).map((field:any)=>[String(field.selector),field])))
   const out:BrowserAction[]=[]
   for(const action of actions){
+    // Live Zomato plans reloaded the current homepage before their useful step.
+    // Skip only a leading same-URL preamble; retain standalone refresh requests.
+    if(action===actions[0]&&actions.length>1&&action.kind==='goto'&&action.url===page.url)continue
     if('selector' in action){
       const control=controls.get(action.selector),field=fields.get(action.selector)
       if(!control&&!field)break
