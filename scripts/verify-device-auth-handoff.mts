@@ -1011,6 +1011,14 @@ for(const id of ['manage-booking','manage_booking','manageBooking']){
  const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
  assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page}),false,id)
 }
+// Observed Flipkart product descriptions contain 'Noise Cancellation'; opening
+// that product link is not a cancellation operation. Real commit words remain guarded.
+for(const [label,expected] of [['SONY WH-1000XM6 Wireless Noise Cancellation',false],['Buy SONY Noise Cancellation headphones',true],['Cancel order for Noise Cancellation headphones',true]] as const){
+ const element={textContent:label,tagName:'A',id:'',getAttribute:()=>null}
+ const page={locator:()=>({first:()=>({evaluate:(fn:any)=>fn(element)})})}
+ assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#product")',{page}),expected,label)
+}
+
 const mixedNavigationElement={textContent:'Manage booking',tagName:'BUTTON',id:'cancel-booking',getAttribute:()=>null}
 assert.equal(await runInNewContext(controlClassifier+';isConsequentialControl(page,"#control")',{page:{locator:()=>({first:()=>({evaluate:(fn:any)=>fn(mixedNavigationElement)})})}}),true)
 

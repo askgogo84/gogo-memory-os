@@ -15,12 +15,12 @@ assert.ok(body,'test the emitted worker DOM extraction')
 
 // Simulated DOMs, not claims of live access to these providers. The Instamart
 // div and Blinkit location prompt reproduce the observed 2 Oct page shapes.
-function snapshot(label:string, tag='DIV', field=false, hidden=false){
+function snapshot(label:string, tag='DIV', field=false, hidden=false, focusShell=false){
   const root:any={tagName:'BODY',nodeType:1,children:[],parentElement:null,id:'',innerText:label}
   const control:any={tagName:tag,nodeType:1,id:'',parentElement:root,children:[],innerText:field?'':label,textContent:field?'':label,
-    getAttribute:(name:string)=>name==='placeholder'&&field?label:null,
+    getAttribute:(name:string)=>name==='placeholder'&&field?label:focusShell&&name==='tabindex'?'-1':null,
     getBoundingClientRect:()=>({width:hidden?0:200,height:hidden?0:40}),
-    matches:()=>field||tag==='BUTTON',querySelectorAll:()=>[]}
+    matches:()=>field||tag==='BUTTON'||focusShell,querySelectorAll:()=>focusShell?[{}]:[]}
   root.children=[control]
   root.querySelectorAll=()=>field?[control]:[]
   const document={title:'Simulated provider',body:root,forms:[],
@@ -45,6 +45,7 @@ for(const [provider,label,tag,field] of [
   if(field)assert.equal(page.forms[0].inputs[0].selector,page.controls[0].selector)
 }
 assert.equal(snapshot('Search','DIV',false,true).controls.length,0,'hidden controls excluded')
+assert.equal(snapshot('Search Veg Burger - Delivery','DIV',false,false,true).controls.length,0,'focus shell is not an actionable search control')
 // Observed IndiGo From wrapper has role=button and a labelled direct child.
 // Inserting a sibling during hydration must not redirect its observed locator.
 const selectorSource=body.slice(body.indexOf('const selectorFor ='),body.indexOf('const candidates='))
@@ -102,6 +103,10 @@ runInNewContext(ts.transpileModule(source+'\nexport {planActions}; export functi
     return {}
   },
 })
+const observedLinkPage={url:'https://www.zomato.com/',text:'zomato Check it out',controls:[{selector:'a[href="https://www.zomato.com/restaurants"]',tag:'a',label:'zomato Get the app now to start ordering your favorite dishes! Check it out',href:'https://www.zomato.com/restaurants'}],links:[],forms:[],actions:[{kind:'click',detail:'a[href="https://www.zomato.com/"]',status:'done'}]}
+await exports.planActions('Find vegetarian burgers',observedLinkPage,'read','USER_INSTRUCTION')
+assert.match(captured,/"href":"https:\/\/www.zomato.com\/restaurants"/,'planner can distinguish restaurant navigation from a same-page footer link')
+assert.match(captured,/"previousActions":\[{"kind":"click","status":"done"/,'last attempted action survives into the next planning wave')
 const plan=await exports.planActions('Find Amul Taaza 1 litre',snapshot('Search for milk'),'read','USER_INSTRUCTION')
 assert.equal(plan.actions[0].kind,'click')
 assert.equal(plan.actions[0].selector,'body:nth-of-type(1) > div:nth-of-type(1)')
