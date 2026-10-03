@@ -476,6 +476,7 @@ export function parseWebWatchCommand(text: string) {
   if (!raw) return null
 
   const patterns = [
+    /^(?:please\s+)?keep\s+(?:searching|looking)\s+(?:the\s+web\s+)?for\s+(.+)$/i,
     /^(?:please\s+)?(?:watch|monitor|track)\s+(?:the\s+)?(?:web|internet|online)\s+(?:for\s+)?(.+)$/i,
     /^(?:please\s+)?watch\s+(.+?)\s+(?:online|on\s+the\s+web)(?:\s+.*)?$/i,
   ]
@@ -503,6 +504,8 @@ export function parseWebWatchCommand(text: string) {
     triggerKeywords,
     delivery: 'both',
     cadenceMinutes: 15,
+    originalRequest:raw,
+    notifyOnFirstMatch:true,
   })
 }
 
@@ -1105,7 +1108,7 @@ export async function tryCreateWebWatchFromCommand(params: {
     status: 'completed' as const,
     capability: 'browser' as const,
     risk: 'low' as const,
-    text: `Background Gogo is now watching “${condition.query}”. I’ll establish a baseline first, then adapt the check frequency based on changes and your plan so quiet watches don’t waste your Gogo capacity. Meaningful updates appear in Ideas${condition.delivery !== 'app' ? ' and WhatsApp' : ''}.`,
+    text: `Background Gogo is now watching “${condition.query}”. Your request is saved. I’ll check about every ${condition.cadenceMinutes} minutes initially and send the first relevant result with its source link${condition.delivery !== 'app' ? ' in WhatsApp and Ideas' : ' in Ideas'}. Quiet checks may slow down within your plan. Search results are leads; prices, availability and offer terms need provider verification. Say “show my watches” for status or stop a watch by name.`,
     handledBy: 'background-web-watch',
   }
 }

@@ -18,6 +18,7 @@ export type ContextSource =
   | 'memory_insight'
   | 'memory_profile'
   | 'typed_context'
+  | 'watcher'
 
 export type ContextFact = {
   id:string
@@ -45,6 +46,7 @@ export type ContextPack = {
     travelTickets:number
     openLoops:number
     goals?:number
+    watchers?:number
     semanticMemories:number
     insights:number
     typedContext:number
@@ -274,7 +276,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   // ticket query widens its lookback; other fact types keep the tight 2-day window.
   const ticketLower=new Date(now-(isRetrospectiveTravelQuery(query)?RETROSPECTIVE_TRAVEL_LOOKBACK_DAYS:2)*86400_000).toISOString()
 
-  const [lifeResult,loopResult,goalResult,ticketResult,typed]=await Promise.all([
+  const [lifeResult,loopResult,goalResult,ticketResult,typed,watcherResult]=await Promise.all([
     supabaseAdmin.from('life_events')
       .select('id,event_type,subtype,title,provider,start_at,end_at,timezone,location,lifecycle_state,participants,metadata_json,source_refs,updated_at')
       .eq('telegram_id',tg)
@@ -300,6 +302,9 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       .order('depart_at',{ascending:true})
       .limit(80),
     latestTypedContext(actor.legacyTelegramId).catch(()=>null),
+    supabaseAdmin.from('agent_watchers')
+      .select('id,type,condition_json,last_state_json,active,cadence_minutes,last_checked_at,next_check_at,updated_at')
+      .eq('telegram_id',tg).order('updated_at',{ascending:false}).limit(40),
   ])
 
   const lifeFacts:ContextFact[]=[]
@@ -396,9 +401,30 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
     }
   }
 
-  const retrievalIncomplete=[lifeResult,loopResult,goalResult,ticketResult].some(result=>!!result.error)
+  const watcherFacts:ContextFact[]=[]
+  for(const row of watcherResult.data||[]){
+    const condition=row.condition_json||{}
+    const text=[condition.title,condition.query,condition.productUrl,condition.variant,condition.originalRequest].filter(Boolean).join(' ')
+    const relevance=lexicalScore(query,text)
+    // Keep durable task intent available across surfaces without polluting unrelated turns.
+    if(relevance<0.25)continue
+    const latest=row.last_state_json?.lastResult
+    const summary=safe([
+      `Saved watch: ${condition.title||row.type}`,
+      `Status: ${row.active===true?'active':'inactive'}`,
+      `Criteria: ${condition.query||condition.productUrl||condition.originalRequest||''}`,
+      condition.variant?`Variant: ${condition.variant}`:'',
+      `Check interval: ${row.cadence_minutes||condition.cadenceMinutes||60} minutes`,
+      row.next_check_at?`Next check: ${row.next_check_at}`:'No next check scheduled',
+      latest?.url?`Last source: ${latest.url} (search lead, not verified price or availability)`:'',
+    ].filter(Boolean).join(' · '),700)
+    watcherFacts.push({id:`watcher:${row.id}`,source:'watcher',summary,
+      score:clamp(0.55+relevance*0.4),confidence:1,inferred:false,kind:row.type,
+      sourceRefs:[{type:'watcher',id:String(row.id)}]})
+  }
+  const retrievalIncomplete=[lifeResult,loopResult,goalResult,ticketResult,watcherResult].some(result=>!!result.error)
   if(retrievalIncomplete)console.error('CONTEXT_OPERATIONAL_RETRIEVAL_INCOMPLETE')
-  return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts,retrievalIncomplete}
+  return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts,watcherFacts,retrievalIncomplete}
 }
 
 async function loadLearnedFacts(actor:AgentActor,query:string,includeSemantic:boolean){
@@ -540,6 +566,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
     ...operational.lifeFacts,
     ...operational.openLoops,
     ...operational.goalFacts,
+    ...operational.watcherFacts,
     ...learned.semantic,
     ...learned.insights,
     ...learned.profile,
@@ -558,6 +585,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
       travelTickets:operational.travelFacts.filter(f=>f.source==='travel_ticket'||f.source==='travel_presence').length,
       openLoops:operational.openLoops.length,
       goals:operational.goalFacts.length,
+      watchers:operational.watcherFacts.length,
       semanticMemories:learned.semantic.length,
       insights:learned.insights.length,
       typedContext:operational.typedFacts.length,
