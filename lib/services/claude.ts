@@ -1,35 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk'
-import OpenAI from 'openai'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { completeReasoning } from './reasoning-gateway'
 
 export interface Message {
   role: 'user' | 'assistant'
   content: string
-}
-
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-})
-
-const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null
-const OPENAI_FALLBACK_MODEL = process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o-mini'
-
-async function askOpenAiFallback(params:{system?:string;messages:Message[];maxTokens:number}){
-  if(!openai) throw new Error('openai_fallback_not_configured')
-  const response=await openai.chat.completions.create({
-    model:OPENAI_FALLBACK_MODEL,
-    max_tokens:params.maxTokens,
-    temperature:0.3,
-    messages:[
-      ...(params.system?[{role:'system' as const,content:params.system}]:[]),
-      ...params.messages.map(m=>({role:m.role,content:m.content})),
-    ],
-  })
-  return response.choices?.[0]?.message?.content?.trim()||''
-}
-
-function providerErrorSummary(error:any){
-  return {name:String(error?.name||'Error'),status:error?.status||null,type:error?.type||error?.error?.type||null,message:String(error?.message||error||'').slice(0,240)}
 }
 
 function isContextSynthesisTurn(text:string){
@@ -136,18 +110,14 @@ CRITICAL: When the user gives a time or date, calculate the exact datetime yours
   const historyForTurn = isContextSynthesisTurn(userMessage) ? [] : safeHistory.slice(-10)
   const messages:Message[]=[...historyForTurn,{ role: 'user', content: userMessage }]
 
-  try{
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages,
-    })
-    return response.content[0].type === 'text' ? response.content[0].text : ''
-  }catch(error:any){
-    console.error('ANTHROPIC_FREEFORM_FAILED_FALLING_BACK:',providerErrorSummary(error))
-    return await askOpenAiFallback({system:systemPrompt,messages,maxTokens:1024})
-  }
+  const result = await completeReasoning({
+    purpose:'freeform',
+    system:systemPrompt,
+    messages,
+    maxTokens:1024,
+    temperature:0.3,
+  })
+  return result.text
 }
 
 // Live flight STATUS only. A flight-status question must never be answered with airfare /
@@ -175,17 +145,13 @@ RULES — follow every one:
 
 FORMATTING: Delivered over WhatsApp (no markdown). Never emit [text](url); write any URL bare. Keep it concise (2-5 sentences).`
 
-  try {
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 900,
-      messages: [{ role: 'user', content: prompt }],
-    })
-    return response.content[0].type === 'text' ? response.content[0].text : ''
-  } catch (error: any) {
-    console.error('ANTHROPIC_FLIGHT_STATUS_FAILED_FALLING_BACK:', providerErrorSummary(error))
-    return await askOpenAiFallback({ messages: [{ role: 'user', content: prompt }], maxTokens: 900 })
-  }
+  const result = await completeReasoning({
+    purpose:'flight_status',
+    messages:[{role:'user',content:prompt}],
+    maxTokens:900,
+    temperature:0.2,
+  })
+  return result.text
 }
 
 export async function askClaudeWithContext(
@@ -206,15 +172,11 @@ FORMATTING: This reply is delivered over WhatsApp, which does NOT render markdow
 
 FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF-REPORTED and approximate unless explicitly bank-verified via Account Aggregator. When such a figure is used to make or justify a redemption or spending decision, treat it as user-entered and not confirmed, and suggest linking cards via Account Aggregator in the CreditIQ app for exact, bank-confirmed balances before deciding. Never present a self-reported balance as a confirmed, spendable fact when advising on a redemption or purchase. For a casual mention with no spending decision, a light "(self-reported)" note is enough.`
 
-  try{
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 1500,
-      messages:[{role:'user',content:prompt}],
-    })
-    return response.content[0].type === 'text' ? response.content[0].text : ''
-  }catch(error:any){
-    console.error('ANTHROPIC_CONTEXT_FAILED_FALLING_BACK:',providerErrorSummary(error))
-    return await askOpenAiFallback({messages:[{role:'user',content:prompt}],maxTokens:1500})
-  }
+  const result = await completeReasoning({
+    purpose:'context_answer',
+    messages:[{role:'user',content:prompt}],
+    maxTokens:1500,
+    temperature:0.2,
+  })
+  return result.text
 }
