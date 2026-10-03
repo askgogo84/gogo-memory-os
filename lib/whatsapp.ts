@@ -121,6 +121,12 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
   return lastMessage
 }
 
+// WhatsApp template variables reject line breaks, tabs and repeated whitespace.
+// Keep the canonical reminder unchanged; normalize only the outbound variable.
+function reminderTemplateLabel(label:string):string {
+  return (String(label || '').replace(/\s+/g, ' ').trim() || 'your task').slice(0, 400)
+}
+
 export async function sendWhatsAppReminderTemplate(toNumber: string, label: string, deliveryToken?: string) {
   const contentSid = process.env.TWILIO_REMINDER_CONTENT_SID
   if (!contentSid) throw new Error('Missing TWILIO_REMINDER_CONTENT_SID')
@@ -130,7 +136,7 @@ export async function sendWhatsAppReminderTemplate(toNumber: string, label: stri
     from,
     to,
     contentSid,
-    contentVariables: JSON.stringify({ '1': String(label || 'your task').slice(0, 400) }),
+    contentVariables: JSON.stringify({ '1': reminderTemplateLabel(label) }),
   }
   if (statusCallbackUrl || deliveryToken) payload.statusCallback = deliveryCallbackUrl(statusCallbackUrl, deliveryToken)
   const message = await client.messages.create(payload)
@@ -148,7 +154,7 @@ export async function sendWhatsAppReminderButtons(toNumber: string, label: strin
     from,
     to,
     contentSid,
-    contentVariables: JSON.stringify({ '1': String(label || 'your task').slice(0, 400) }),
+    contentVariables: JSON.stringify({ '1': reminderTemplateLabel(label) }),
   }
   if (statusCallbackUrl || deliveryToken) payload.statusCallback = deliveryCallbackUrl(statusCallbackUrl, deliveryToken)
   const message = await client.messages.create(payload)
