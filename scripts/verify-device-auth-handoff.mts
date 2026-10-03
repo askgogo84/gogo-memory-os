@@ -295,6 +295,16 @@ for(const scenario of ['search','password','post','auth-form','blank-link','cons
  assert.equal(out.actions[0].status,['search','blank-link'].includes(scenario)?'done':'skipped',scenario)
 }
 
+// 3 Oct Flipkart cloud search reached results, but the snapshot was captured
+// during the intervening blank document and saved as provider_access_limited.
+const settledComputer=load('secure-computer.ts',{'./browser-page-readiness':{BROWSER_PAGE_READINESS:'function observeBrowserPage(page){return {read:async(wait=false)=>{if(wait)page.settle();return {state:page.empty()?"empty":"ready",httpStatus:200}}}}'}},'\nexport {BROWSER_SCRIPT}')
+let navigationEmpty=false,settledOutput:any
+const searchInput={tagName:'INPUT',id:'',getAttribute:(key:string)=>key==='placeholder'?'Search products':null}
+const settlingPage={settle:()=>{navigationEmpty=false},empty:()=>navigationEmpty,goto:async()=>{},waitForTimeout:async()=>{},evaluate:async()=>({url:'https://provider.example/search',text:navigationEmpty?'':'Observed product search results'}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(searchInput),press:async()=>{navigationEmpty=true}})})}
+await runInNewContext(settledComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[settlingPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example/',mode:'read',actions:[{kind:'search_enter',selector:'#q'}]})).toString('base64')],exit:()=>{throw new Error('unexpected exit')}},Buffer,console:{log:(value:string)=>{settledOutput=JSON.parse(value)},error:console.error}})
+assert.equal(settledOutput.pageLoad.state,'ready','post-action readiness must settle the new document')
+assert.equal(settledOutput.text,'Observed product search results','snapshot must follow readiness, not precede it')
+
 console.log('Production browser script records consequential clicks and uncertain click outcomes')
 let browserReads=0,finalStops=0,finalUnlocks=0
 let finalChallenge:any={url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'submit',detail:'#confirm',status:'done',consequential:true}]}
