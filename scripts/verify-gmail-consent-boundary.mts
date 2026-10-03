@@ -9,9 +9,9 @@ const actor={legacyTelegramId:101,userId:'fixture-owner',whatsappId:'fixture',na
 let enabled:boolean|null=false,consentError=false,fetches=0,credentialReads=0,writes=0
 const db={from(table:string){
   let single=false
-  const q:any={select(){return q},eq(key:string,value:any){if(key==='telegram_id')assert.equal(String(value),'101');return q},gte(){return q},limit(){return q},maybeSingle(){single=true;return q},insert(){writes++;throw new Error('unexpected write')},then(resolve:any,reject:any){return Promise.resolve().then(()=>{
+  const q:any={select(columns:string){assert.ok(!columns.includes('google_calendar_connected_at'),'Connections must use columns present in the production users schema');return q},eq(key:string,value:any){if(key==='telegram_id')assert.equal(String(value),'101');return q},gte(){return q},limit(){return q},maybeSingle(){single=true;return q},insert(){writes++;throw new Error('unexpected write')},then(resolve:any,reject:any){return Promise.resolve().then(()=>{
     if(table==='user_consent_settings')return {data:enabled===null?null:{gmail_enabled:enabled},error:consentError?{message:'fixture outage'}:null}
-    if(table==='users'){credentialReads++;return {data:{gmail_connected:true,gmail_access_token:'fixture-only',gmail_email:'fixture@example.test'},error:null}}
+    if(table==='users'){credentialReads++;return {data:{gmail_connected:true,gmail_send_connected:true,gmail_access_token:'fixture-only',gmail_email:'fixture@example.test'},error:null}}
     if(table==='agent_watchers')return {data:single?{id:'existing-watch',active:true}:[],error:null}
     return {data:single?null:[],count:0,error:null}
   }).then(resolve,reject)}};return q
@@ -62,7 +62,7 @@ assert.match(JSON.stringify(await page.default()),/Connected · Reading off/)
 consentError=true
 assert.match(JSON.stringify(await page.default()),/Reading status unavailable/)
 consentError=false;enabled=true
-assert.match(JSON.stringify(await page.default()),/Connected · Read only/)
+assert.match(JSON.stringify(await page.default()),/Connected · Send enabled/)
 assert.match((await watches.tryCreateInboxTriageWatchFromCommand({actor,surface:'whatsapp',text:'Monitor my inbox for important emails'})).text,/already active/)
 assert.equal(writes,0)
 console.log('PASS: Gmail privacy preference enforced before tokens/network; watch, chat and dashboard agree; Drive retained; failed consent reads fail closed')

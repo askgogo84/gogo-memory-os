@@ -41,7 +41,7 @@ export default async function ConnectionsPage(){
   const [vaultResult,userResult,travelResult,browserPermission,gmailConsent]=Number.isFinite(tgNum)
     ?await Promise.all([
       supabaseAdmin.from('vault_credentials').select('id',{count:'exact',head:true}).eq('telegram_id',tgNum),
-      supabaseAdmin.from('users').select('gmail_connected,gmail_send_connected,gmail_connected_at,google_calendar_connected,google_calendar_connected_at').eq('telegram_id',tgNum).maybeSingle(),
+      supabaseAdmin.from('users').select('gmail_connected,gmail_send_connected,gmail_connected_at,google_calendar_connected').eq('telegram_id',tgNum).maybeSingle(),
       supabaseAdmin.from('travel_tickets').select('id',{count:'exact',head:true}).eq('telegram_id',tgNum).gte('depart_at',new Date().toISOString()),
       supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',tg).eq('capability','browser').maybeSingle(),
       supabaseAdmin.from('user_consent_settings').select('gmail_enabled').eq('telegram_id',tgNum).maybeSingle(),
@@ -74,7 +74,7 @@ export default async function ConnectionsPage(){
           operations="Read schedules and exact events; prepare/create/update calendar events."
           approval="Reads are safe. Create/update/delete remains behind the calendar approval boundary."
           verification="Google Calendar read-back of the exact event/object after mutation."
-          detail={u.google_calendar_connected_at?'Connection recorded on this account.':undefined} href="/dashboard/calendar"/>
+          detail={u.google_calendar_connected?'Connection recorded on this account.':undefined} href="/dashboard/calendar"/>
         <ConnRow name="Gmail" state={c.gmail?(gmailReadUnknown?'Connected · Reading status unavailable':gmailReadOff?'Connected · Reading off':gmailSend?'Connected · Send enabled':'Connected · Read only'):'Not connected'} available={c.gmail&&!gmailReadOff&&!gmailReadUnknown}
           operations={gmailSend?'Read/search mail, inspect attachments, draft and approved send.':'Read/search mail and attachments; drafts are safe. Gmail Send has not been granted.'}
           approval="Reading never authorizes sending. Every consequential send requires the existing bounded approval."
