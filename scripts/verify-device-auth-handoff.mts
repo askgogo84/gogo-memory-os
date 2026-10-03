@@ -267,6 +267,18 @@ for(const [label,throws,expected,mode] of [['Cancel booking',false,true,'execute
   assert.equal(actions[0].consequential,expected,'the executed DOM control determines replay safety')
   assert.equal(actions[0].status,mode==='read'?'skipped':throws?'failed':'done')
 }
+// 3 Oct cloud click failed, but the worker catch discarded the entire reason.
+// Exercise that catch with an intercepted click; do not log raw provider errors.
+let diagnosticOutput:any
+const diagnosticElement={textContent:'From',tagName:'DIV',id:'from',getAttribute:()=>null,getBoundingClientRect:()=>({width:100,height:40})}
+const diagnosticPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async()=>({url:'https://provider.example',text:'Flight search'}),locator:()=>({
+ evaluateAll:async(fn:any)=>fn([diagnosticElement]),
+ first:()=>({evaluate:async(fn:any)=>fn(diagnosticElement),click:async()=>{throw Object.assign(new Error('private-fixture-value intercepts pointer events at https://private.example/?token=private-fixture-token'),{name:'TimeoutError'})}})
+})}
+await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[diagnosticPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'read',actions:[{kind:'click',selector:'#from'}]})).toString('base64')],exit:()=>{throw new Error('unexpected exit')}},Buffer,console:{log:(value:string)=>{diagnosticOutput=JSON.parse(value)},error:console.error}})
+assert.deepEqual(diagnosticOutput.actions[0].failure,{reason:'obscured',matches:1,rendered:1,firstTag:'div'})
+assert.doesNotMatch(JSON.stringify(diagnosticOutput),/private-fixture|private\.example/,'provider exception content and URLs must not enter diagnostics')
+
 console.log('Production browser script records consequential clicks and uncertain click outcomes')
 let browserReads=0,finalStops=0,finalUnlocks=0
 let finalChallenge:any={url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'submit',detail:'#confirm',status:'done',consequential:true}]}
