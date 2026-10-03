@@ -444,7 +444,23 @@ return receiptCount(after)>receiptCount(before);
           },{before:executionBeforeText,pattern:payload.confirmationPattern},{timeout:15000,polling:250}).catch(()=>{});
           executionAfterText=await snapshotConfirmation(page,payload.confirmationPattern);
         }
-      }catch(e){log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential});}
+      }catch(e){
+        // The 3 Oct live flight click failed with no usable reason. Keep only
+        // fixed reason codes and DOM counts, never raw errors/selectors/values.
+        const message=String(e?.message||'');
+        const reason=/intercepts pointer events/i.test(message)?'obscured'
+          :/not an? (?:<input|input|textarea)|not an? editable/i.test(message)?'wrong_input_type'
+          :/not visible|not stable/i.test(message)?'not_actionable'
+          :/target.*closed|page.*closed|browser.*closed|crashed/i.test(message)?'page_closed'
+          :e?.name==='TimeoutError'?'timeout':'action_error';
+        let counts={matches:null,rendered:null,firstTag:null};
+        if(a.selector)try{counts=await page.locator(a.selector).evaluateAll(elements=>({
+          matches:elements.length,
+          rendered:elements.filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0}).length,
+          firstTag:elements.length?(['input','textarea','button','div','span','a','select'].includes(elements[0].tagName.toLowerCase())?elements[0].tagName.toLowerCase():'other'):null,
+        }));}catch{}
+        log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential,failure:{reason,...counts}});
+      }
     }
     let draftVerified=false;
     if(payload.mode==='draft'){
@@ -905,7 +921,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       console.warn('BROWSER_READ_INCOMPLETE:',JSON.stringify({
         taskId:params.sessionTaskId||null,loadState:page.pageLoad?.state||null,
         inputs:(page.forms||[]).reduce((n:number,f:any)=>n+(f.inputs?.length||0),0),
-        links:page.links?.length||0,actions:actionLog.map(a=>({kind:a.kind,status:a.status})),
+        links:page.links?.length||0,actions:actionLog.map(a=>({kind:a.kind,status:a.status,...(a.failure?{failure:a.failure}:{})})),
         controls:page.controls?.length||0,
       }))
       throw new Error('browser_objective_unverified')
