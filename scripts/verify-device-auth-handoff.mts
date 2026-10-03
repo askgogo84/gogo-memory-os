@@ -280,6 +280,21 @@ await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{lau
 assert.deepEqual(diagnosticOutput.actions[0].failure,{reason:'obscured',matches:1,rendered:1,firstTag:'div'})
 assert.doesNotMatch(JSON.stringify(diagnosticOutput),/private-fixture|private\.example/,'provider exception content and URLs must not enter diagnostics')
 
+// Actual emitted worker: public search Enter and _blank restaurant navigation.
+// No live values or writes are simulated as production evidence.
+for(const scenario of ['search','password','post','auth-form','blank-link','consequential-link']){
+ let pressed=0,clicked=0,currentUrl='https://provider.example/',out:any
+ const attrs:any=scenario.includes('link')?{target:'_blank'}:{placeholder:'Search for Products, Brands and More',type:scenario==='password'?'password':'text'}
+ const form=scenario==='post'||scenario==='auth-form'?{getAttribute:(name:string)=>name==='method'?(scenario==='post'?'post':'get'):name==='action'?'/login':null,querySelectorAll:()=>[]}:null
+ const el={tagName:scenario.includes('link')?'A':'INPUT',textContent:scenario==='consequential-link'?'Buy now':'Check it out',href:'https://provider.example/restaurants',id:'',form,getAttribute:(name:string)=>attrs[name]??null}
+ const page={goto:async(url:string)=>{currentUrl=url},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async()=>({url:currentUrl,text:'Public result'}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(el),press:async(key:string)=>{assert.equal(key,'Enter');pressed++},click:async()=>{clicked++}})})}
+ await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[page],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example/',mode:'read',actions:[{kind:scenario.includes('link')?'click':'search_enter',selector:'#observed'}]})).toString('base64')],exit:()=>{throw new Error('unexpected exit')}},Buffer,console:{log:(value:string)=>{out=JSON.parse(value)},error:console.error}})
+ assert.equal(pressed,scenario==='search'?1:0,scenario)
+ assert.equal(clicked,0,scenario+' never clicks a guessed submission')
+ assert.equal(currentUrl,scenario==='blank-link'?'https://provider.example/restaurants':'https://provider.example/',scenario+' navigates same task only after consequence guard')
+ assert.equal(out.actions[0].status,['search','blank-link'].includes(scenario)?'done':'skipped',scenario)
+}
+
 console.log('Production browser script records consequential clicks and uncertain click outcomes')
 let browserReads=0,finalStops=0,finalUnlocks=0
 let finalChallenge:any={url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'submit',detail:'#confirm',status:'done',consequential:true}]}
@@ -492,7 +507,7 @@ const browserPlanner=load('planner-provider.ts',{
   'openai':{default:class {chat={completions:{create:async(request:any)=>{
     fallbackAttempts++;fallbackRequests.push(request)
     if(!fallbackAvailable)throw new Error('fallback unavailable')
-    return {choices:[{message:{content:request.messages[0].role==='system'?JSON.stringify({complete:true,evidence:[fallbackEvidence]}):'{"approvedOperation":"none","actions":[]}'}}]}
+    return {choices:[{message:{content:request.messages[0].content.startsWith('Evaluate whether')?JSON.stringify({complete:true,evidence:[fallbackEvidence]}):'{"approvedOperation":"none","actions":[]}'}}]}
   }}}}},
   './model-usage':{measureModelCall:async({call}:any)=>call()},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},
@@ -566,7 +581,7 @@ assert.equal(fallbackRead.summary,evidencePage.text)
 assert.ok('instamart-media-assets.swiggy.com' in browserPolicies.at(-1).allow,'worker and handoff share the provider dependency rules')
 assert.equal(primaryAttempts-primaryStart,2,'both planning and assessment try the primary')
 assert.equal(fallbackAttempts-fallbackStart,2,'both calls recover through the configured fallback')
-assert.match(fallbackRequests.at(-2).messages[0].content,/UNTRUSTED EXTERNAL_WEB_DATA/)
+assert.match(fallbackRequests.at(-2).messages.find((message:any)=>message.role==='user').content,/UNTRUSTED EXTERNAL_WEB_DATA/)
 assert.equal(fallbackRequests.at(-1).messages[0].role,'system','assessment instructions keep their privileged role')
 assert.match(fallbackRequests.at(-1).messages[0].content,/Do not infer unseen/)
 fallbackEvidence='Amul Taaza 1 litre costs ₹1 with free delivery.'
@@ -1100,7 +1115,7 @@ const deadlineComputer=load('secure-computer.ts',{
     return {exitCode:0,stdout:async()=>JSON.stringify(deadlinePage)}
   }})}},
   './trust':{canAuthorizeConsequentialAction:()=>false},
-  './planner-provider':{completeAgentPlanPrompt:async(_p:string,_u:any,system?:string)=>system?'{"complete":false}':'{"actions":[{"kind":"click","selector":"#from"}]}'},
+  './planner-provider':{completeAgentPlanPrompt:async(_p:string,_u:any,system?:string)=>system?.startsWith('Evaluate whether')?'{"complete":false}':'{"actions":[{"kind":"click","selector":"#from"}]}'},
   './secure-browser-redaction':{redactBrowserSensitiveText:(s:string)=>s},
   './browser-auth-gate':{detectHumanAuthGate},'./browser-location-gate':{needsBrowserDeliveryLocation},
   './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{deadlineUnlocks++},{reserveHandoff:async()=>"transfer"})},
