@@ -19,6 +19,21 @@ import { canAuthorizeConsequentialAction, type TrustClass } from './trust'
 
 const MAX_ACTIONS = 12
 const MAX_RESEARCH_WAVES = 4
+// 3 Oct: the IndiGo read exceeded the 300s route limit and left RUNNING in DB.
+// Reserve 120s for teardown, caller persistence and response. This is a read
+// budget, not permission to retry an interrupted consequential operation.
+const READ_BUDGET_MS = 180_000
+async function withinReadBudget<T>(deadline:number|undefined,work:()=>Promise<T>):Promise<T>{
+  if(deadline===undefined)return work()
+  const remaining=deadline-Date.now()
+  if(remaining<=0)throw new Error('browser_read_deadline')
+  let timer:ReturnType<typeof setTimeout>|undefined
+  try{
+    return await Promise.race([work(),new Promise<never>((_,reject)=>{
+      timer=setTimeout(()=>reject(new Error('browser_read_deadline')),remaining)
+    })])
+  }finally{if(timer)clearTimeout(timer)}
+}
 const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
 
 export type BrowserMode = 'read' | 'draft' | 'execute'
@@ -175,8 +190,15 @@ const { chromium } = require('playwright');
 const encoded = process.argv[2];
 if (!encoded) throw new Error('missing_secure_browser_payload');
 const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+// Stop the read worker itself, not only the API's wait for its response.
+// No planner/browser continuation may outlive this task's read budget.
+if(payload.mode==='read'&&Number.isFinite(payload.readDeadline)){
+  const remaining=payload.readDeadline-Date.now();
+  if(remaining<=0){console.error('browser_read_deadline');process.exit(124);}
+  setTimeout(()=>{console.error('browser_read_deadline');process.exit(124)},remaining).unref();
+}
 const profile = '${BROWSER_PROFILE_DIR}';
-const navTimeout = 45000; // read mode ran with 18s and timed out on IRCTC; the worker has a 300s budget, no reason to be stingier than execute
+const navTimeout = 45000; // Per-navigation limit; readDeadline also bounds the whole read.
 const clean = s => String(s||'').replace(/\s+/g,' ').trim();
 async function model(page){
   return await page.evaluate(() => {
@@ -520,11 +542,12 @@ async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;
   if(!lines.length)throw new Error('vault_browser_login_empty')
   return JSON.parse(lines[lines.length-1])
 }
-async function inspect(userId:string,url:string,keepAlive=false,taskId='',reusePage=false){
+async function inspect(userId:string,url:string,keepAlive=false,taskId='',reusePage=false,readDeadline?:number){
   const {sandbox,name,releaseOwnerLock,managed}=await getComputer(userId,url,keepAlive)
   try{
-  const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[],keepAlive,taskId,reusePage})).toString('base64')
+  const payload=Buffer.from(JSON.stringify({url,mode:'read',actions:[],keepAlive,taskId,reusePage,readDeadline})).toString('base64')
   const result=await sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload],env:{...browserProxyEnv(url),...managed?.env}} as any)
+  if(result.exitCode===124&&readDeadline!==undefined)throw new Error('browser_read_deadline')
   if(result.exitCode!==0)throw new Error(`secure_browser_read_failed:${safeText(await result.stderr(),700)}`)
   const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
   if(!lines.length)throw new Error('secure_browser_empty_output')
@@ -655,6 +678,7 @@ function normalizeActionLog(values:any[]){
 }
 
 export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;sessionTaskId?:string;resumePage?:boolean}):Promise<SecureBrowserResult>{
+  const readDeadline=params.mode==='read'?Date.now()+READ_BUDGET_MS:undefined
   let releaseOwnerLock:BrowserOwnerRelease|undefined
   let executionStarted=false
   let activeSandbox:{stop:()=>Promise<unknown>}|undefined
@@ -663,7 +687,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
     if(params.keepAlive&&(!params.sessionTaskId||params.mode!=='read'))throw new Error('persistent_browser_read_task_required')
-    const first=await inspect(params.keepAlive?params.userId+':commerce':params.userId,target.toString(),params.keepAlive,params.sessionTaskId,params.resumePage)
+    const first=await inspect(params.keepAlive?params.userId+':commerce':params.userId,target.toString(),params.keepAlive,params.sessionTaskId,params.resumePage,readDeadline)
     releaseOwnerLock=first.releaseOwnerLock
     activeSandbox=first.sandbox
     releaseManaged=first.managed?.release
@@ -799,11 +823,11 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       // Check grounded completion before another action, after every safety gate.
       // Keep the verifier fail-closed and do not assess the same snapshot twice.
       if(params.mode==='read'&&wave>0){
-        readAnswer=await assessReadOutcome(params.objective,page)
+        readAnswer=await withinReadBudget(readDeadline,()=>assessReadOutcome(params.objective,page))
         assessedReadPage=page
         if(readAnswer)break
       }
-      const plan=await planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION')
+      const plan=await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION'))
       const actions=plan.actions
       if(!actions.length)break
       if(params.mode==='execute'&&(!plan.operation||actions.filter(a=>a.kind==='submit').length!==1))throw new Error('browser_objective_unverified')
@@ -812,10 +836,15 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       draftActions=actions
       const currentUrl=String(page.url||target.toString())
       const {allow}=first.managed||allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
-      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null,keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:params.keepAlive===true||Boolean(first.managed)})).toString('base64')
+      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,readDeadline,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null,keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:params.keepAlive===true||Boolean(first.managed)})).toString('base64')
+      if(readDeadline!==undefined&&Date.now()>=readDeadline)throw new Error('browser_read_deadline')
       if(params.mode==='execute')executionStarted=true
       const result=await first.sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',payload],env:{...browserProxyEnv(currentUrl),...first.managed?.env}} as any)
-      if(result.exitCode!==0)throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
+      if(result.exitCode!==0){
+        console.error('BROWSER_WORKER_EXIT:',JSON.stringify({mode:params.mode,wave,exitCode:result.exitCode,durationMs:result.durationMs??null}))
+        if(result.exitCode===124&&readDeadline!==undefined)throw new Error('browser_read_deadline')
+        throw new Error(`secure_browser_action_failed:${safeText(await result.stderr(),700)}`)
+      }
       const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]))
@@ -842,7 +871,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         title:safeText(page.title,300),summary:'Choose your delivery location in the provider browser, then resume this same task. Prices and availability depend on that location.',
         pageText:'Delivery location is required.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'delivery_location_required'}
     }
-    if(params.mode==='read'&&assessedReadPage!==page)readAnswer=await assessReadOutcome(params.objective,page)
+    if(params.mode==='read'&&assessedReadPage!==page)readAnswer=await withinReadBudget(readDeadline,()=>assessReadOutcome(params.objective,page))
     if(params.mode==='read'&&!readAnswer){
       // Diagnose the observed 2 Oct lookup failure without logging page content,
       // account details, selectors, input values, cookies or connection URLs.
