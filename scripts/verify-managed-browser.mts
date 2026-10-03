@@ -89,6 +89,7 @@ for(const [site,resources] of [
  ]],
  ['https://www.goindigo.in/',[
   'https://app-prod-skyplus6e.goindigo.in/booking/remoteEntry.js',
+  'https://api-prod-skyplus.goindigo.in/bookingwidgetsearchengine/search?prefix=Bengaluru&limit=10',
  ]],
  ['https://www.flipkart.com/',[
   'https://static-assets-web.flixcart.com/batman-returns/batman-returns/p/de025efa02a5f190c3b98c1fb29aed1b/DesktopComponents.css',
