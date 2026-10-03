@@ -444,6 +444,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       await supabaseAdmin.from('agent_runs').update({summary}).eq('id',params.runId).eq('telegram_id',String(tg))
       return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:summary,handledBy:'secure-browser' as const}
     }
+    if(message==='browser_read_deadline')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:'The browser read reached its time limit before I could verify a result. This task is not complete.',handledBy:'secure-browser' as const}
     if(message==='browser_objective_unverified'||message==='browser_planning_failed')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:'I could not verify the information you requested from the provider page. This task is not complete; I have no verified result to report.',handledBy:'secure-browser' as const}
     throw err
   }

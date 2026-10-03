@@ -62,7 +62,7 @@ assert.ok(!('cdn.zeptonow.com' in browserPageAllowlist('https://zepto.com.exampl
 let captured=''
 const exports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport {planActions}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
-  exports,process:{env:{}},Buffer,URL,console,require:(id:string)=>{
+  exports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
     if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
     if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
     if(id==='./browser-auth-gate')return {detectHumanAuthGate}
@@ -117,7 +117,7 @@ let researchCalls=0,workerCalls=0,assessmentCalls=0,assessmentInstruction=''
 let assessmentEvidence=['Sony WH-1000XM5 headphones Black','Price, product page ₹28,926']
 const resultExports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
- exports:resultExports,process:{env:{}},Buffer,URL,console,require:(id:string)=>{
+ exports:resultExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
   if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
   if(id==='./browser-evidence')return browserEvidence

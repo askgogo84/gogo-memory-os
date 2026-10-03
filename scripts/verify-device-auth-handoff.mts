@@ -21,7 +21,7 @@ function load(file: string, mocks: Record<string, any>, extra='', globals:Record
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
-  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./browser-page-network'?{browserPageAllowlist}:undefined)||(name==='./draft-coverage'?{draftObjectiveCovered}:undefined)||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:undefined)||(name==='./browser-proxy'?{resolveBrowserProxy:()=>null,proxyAllowlistHost:()=>null}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,...globals})
+  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./browser-page-network'?{browserPageAllowlist}:undefined)||(name==='./draft-coverage'?{draftObjectiveCovered}:undefined)||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:undefined)||(name==='./browser-proxy'?{resolveBrowserProxy:()=>null,proxyAllowlistHost:()=>null}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,setTimeout,clearTimeout,...globals})
   return exports
 }
 
@@ -1075,3 +1075,56 @@ await assert.rejects(()=>finalMonitorRace.processLifecycleMonitor({id:'watch',pa
 assert.equal(finalMonitorWrites,0)
 assert.equal(finalMonitorRevision,'new')
 assert.equal(finalMonitorReservationReleased,1)
+
+// 3 Oct production run41e59541: multiple slow action waves hit Vercel's300s
+// timeout before the caller could persist failure; the database stayed RUNNING.
+let deadlineNow=0,deadlineWaves=0,deadlineStops=0,deadlineUnlocks=0
+const deadlinePage={url:'https://provider.example',title:'Flight search',text:'Choose departure airport',forms:[],actions:[{kind:'click',status:'done'}]}
+const deadlineComputer=load('secure-computer.ts',{
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{deadlineStops++},runCommand:async(c:any)=>{
+    const payload=JSON.parse(Buffer.from(c.args.at(-1),'base64').toString())
+    if(payload.actions.length){deadlineWaves++;deadlineNow+=181000}
+    return {exitCode:0,stdout:async()=>JSON.stringify(deadlinePage)}
+  }})}},
+  './trust':{canAuthorizeConsequentialAction:()=>false},
+  './planner-provider':{completeAgentPlanPrompt:async(_p:string,_u:any,system?:string)=>system?'{"complete":false}':'{"actions":[{"kind":"click","selector":"#from"}]}'},
+  './secure-browser-redaction':{redactBrowserSensitiveText:(s:string)=>s},
+  './browser-auth-gate':{detectHumanAuthGate},'./browser-location-gate':{needsBrowserDeliveryLocation},
+  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{deadlineUnlocks++},{reserveHandoff:async()=>"transfer"})},
+  './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
+},'',{Date:class extends Date {static now(){return deadlineNow}}})
+await assert.rejects(()=>deadlineComputer.runSecureBrowser({userId:'owner',url:deadlinePage.url,objective:'Read airport suggestions',mode:'read'}),/browser_read_deadline/)
+assert.equal(deadlineWaves,1,'do not start another action wave after the read budget')
+assert.equal(deadlineStops,1)
+assert.equal(deadlineUnlocks,1,'release ownership so the failure can return to persistence')
+metadata={objective:'Read airports',url:deadlinePage.url,mode:'read'}
+commandExecutionFailure=new Error('browser_read_deadline')
+const timedOut=await command.executeBrowser(params)
+assert.equal(timedOut.status,'failed')
+assert.match(timedOut.text,/time limit/i)
+assert(mutations.some(m=>m.table==='agent_runs'&&m.update?.status==='failed'&&m.update?.error==='browser_read_deadline'),'persist failure before returning to chat')
+commandExecutionFailure=undefined
+console.log('PASS: read deadline stops additional browser work and saves same-task failure before platform timeout')
+
+// Exercise the actual worker watchdog setup; expiry exits the read process even
+// when a selector/navigation promise never settles. No real provider is used.
+const currentWorker=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
+const watchdog=currentWorker.slice(currentWorker.indexOf("const encoded = process.argv[2];",currentWorker.indexOf('const BROWSER_SCRIPT')),currentWorker.indexOf("const profile =",currentWorker.indexOf('const BROWSER_SCRIPT')))
+let watchdogCallback:(()=>void)|undefined,watchdogMs=0
+const watchdogGlobals=(mode:string)=>({Buffer,Date:{now:()=>1000},console:{error:()=>{}},
+  process:{argv:['node','worker',Buffer.from(JSON.stringify({mode,readDeadline:2500})).toString('base64')],exit:(code:number)=>{throw new Error('exit_'+code)}},
+  setTimeout:(fn:()=>void,ms:number)=>{watchdogCallback=fn;watchdogMs=ms;return {unref(){}}}})
+runInNewContext(watchdog,watchdogGlobals('read'))
+assert.equal(watchdogMs,1500)
+assert.throws(()=>watchdogCallback!(),/exit_124/)
+watchdogCallback=undefined
+runInNewContext(watchdog,watchdogGlobals('execute'))
+assert.equal(watchdogCallback,undefined,'do not treat a potentially committed execute operation as a retryable timed-out read')
+const budget=load('secure-computer.ts',{},'\nexport { withinReadBudget }')
+let lateModelResolve:(value:string)=>void=()=>{}
+await assert.rejects(()=>budget.withinReadBudget(Date.now()+10,()=>new Promise(resolve=>{lateModelResolve=resolve})),/browser_read_deadline/)
+lateModelResolve('late plan')
+let launchedAfterExpiry=false
+await assert.rejects(()=>budget.withinReadBudget(Date.now()-1,async()=>{launchedAfterExpiry=true}),/browser_read_deadline/)
+assert.equal(launchedAfterExpiry,false)
+console.log('PASS: read worker watchdog exits124; stalled/expired model work cannot launch subsequent browser actions')
