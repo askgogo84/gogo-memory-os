@@ -37,10 +37,14 @@ for(const input of [
 
 const router=fs.readFileSync('lib/feature-intents.ts','utf8')
 const claude=fs.readFileSync('lib/services/claude.ts','utf8')
+const reasoningGateway=fs.readFileSync('lib/services/reasoning-gateway.ts','utf8')
 assert.match(router,/normalizeUserInputForRouting\(text\)/,'feature router must normalize before deterministic routing')
 assert.match(router,/if\(normalized\.changed\)[\s\S]*dispatchThroughSameBrain\(\{actor,text\}\)/,'repaired commands declined by specialist routing must continue through the mature brain with repaired text')
-assert.match(claude,/ANTHROPIC_FREEFORM_FAILED_FALLING_BACK/,'free-form provider failure must be observed')
-assert.match(claude,/askOpenAiFallback/,'free-form reasoning must have configured second-provider path')
-assert.match(claude,/OPENAI_FALLBACK_MODEL/,'fallback model must be configurable')
+assert.match(claude,/completeReasoning\(/,'free-form reasoning must route through the AskGogo-owned reasoning gateway')
+assert.match(reasoningGateway,/ASKGOGO_REASONING_PRIMARY_FAILED/,'primary reasoning-provider failure must be observed')
+assert.match(reasoningGateway,/configuredFallback/,'reasoning must have a configured second-provider path')
+assert.match(reasoningGateway,/ASKGOGO_REASONING_PRIMARY/,'reasoning primary provider must be configurable')
+assert.match(reasoningGateway,/ASKGOGO_REASONING_FALLBACK/,'reasoning fallback provider must be configurable')
+assert.match(reasoningGateway,/ASKGOGO_OPENAI_REASONING_MODEL|OPENAI_FALLBACK_MODEL/,'fallback model must be configurable')
 
 console.log('✅ Input typo/noise recovery + payload preservation + downstream propagation + WhatsApp failure sanitization + model failover regression passed')
