@@ -1,3 +1,4 @@
+import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
 import { parseWebWatchCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
@@ -443,6 +444,17 @@ export async function POST(req: NextRequest) {
 
     const firstMediaUrl = String(formData.get('MediaUrl0') || '')
     const firstMediaType = String(formData.get('MediaContentType0') || '')
+    // Meeting invitations and their bounded replies take precedence over link previews.
+    const meetingReply=await tryMeetingShareFollowup({
+      actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:resolvedUser.whatsappId,name:resolvedUser.name||'Gogo'},
+      text:bodyText,surface:'whatsapp',
+    })
+    if(meetingReply){
+      await saveConversation(resolvedUser.telegramId,'user',bodyText)
+      await saveConversation(resolvedUser.telegramId,'assistant',meetingReply.text)
+      await sendWhatsAppMessage(from,meetingReply.text)
+      return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+    }
     const isKnownSocialPreview = isInstagramReelPreview(bodyText) || detectInstagramPreviewCard(bodyText) || detectLinkedInPreviewCard(bodyText) || detectReelUrl(bodyText) !== null
     const previewThumbnailOnly = shouldTreatMediaAsLinkPreview({ bodyText, mediaType: firstMediaType, numMedia, mediaUrl: firstMediaUrl }) && !isKnownSocialPreview
     if (previewThumbnailOnly) console.log('WHATSAPP_LINK_PREVIEW_MEDIA_IGNORED:', { body: bodyText.slice(0, 180), mediaType: firstMediaType })
