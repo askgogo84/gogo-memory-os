@@ -34,13 +34,14 @@ for(const [provider,label,tag,field] of [
   ['Flipkart','Search for Products, Brands and More','INPUT',true],
   ['Swiggy','Search for restaurant, item or more','DIV',false],
   ['Zomato','Search for restaurant, cuisine or a dish','INPUT',true],
+  ['Zomato suggestion','Veg Burger - Delivery','P',false],
   ['Flight search','Search flights','BUTTON',false],
 ] as const){
   const page=snapshot(label,tag,field)
   assert.equal(page.controls.length,1,provider+' exposes its visible search control')
   assert.equal(page.controls[0].label,label)
   if(field)assert.equal(page.controls[0].selector,'input[placeholder="'+label+'"]')
-  else assert.match(page.controls[0].selector,/^body:nth-of-type\(1\) > (div|input|button):nth-of-type\(1\)$/)
+  else assert.match(page.controls[0].selector,/^body:nth-of-type\(1\) > (div|input|button|p):nth-of-type\(1\)$/)
   if(field)assert.equal(page.forms[0].inputs[0].selector,page.controls[0].selector)
 }
 assert.equal(snapshot('Search','DIV',false,true).controls.length,0,'hidden controls excluded')
@@ -57,6 +58,14 @@ airportRoot.children.unshift({tagName:'DIV'})
 const afterHydration=runInNewContext(selectorSource+'selectorFor(el)',{...selectorContext})
 assert.equal(beforeHydration,afterHydration,'banner hydration must not change the airport control selector')
 assert.match(beforeHydration,/sourceCity Delhi Selected/)
+const sourceFieldClass='search-widget-form-body__from'
+airportWrapper.classList=[sourceFieldClass]
+const classContext={...selectorContext,document:{querySelectorAll:(selector:string)=>selector==='div.'+sourceFieldClass?[airportWrapper]:[]}}
+const beforeLabelChange=runInNewContext(selectorSource+'selectorFor(el)',{...classContext})
+airportLabel.getAttribute=(key:string)=>key==='aria-label'?'sourceCity Empty':null
+assert.equal(runInNewContext(selectorSource+'selectorFor(el)',{...classContext}),beforeLabelChange,'airport label hydration must not invalidate its observed unique field class')
+assert.equal(beforeLabelChange,'div.'+sourceFieldClass)
+
 
 const location=snapshot('Search delivery location','INPUT',true)
 location.text='Please provide your delivery location to see products at nearby store'
@@ -146,6 +155,16 @@ plannerReply=JSON.stringify({actions:[{kind:'goto',ref:'r1',url:'https://invente
 assert.equal((await exports.planActions('Find vegetarian burgers',linkedZomato,'read','USER_INSTRUCTION')).actions[0].url,linkedZomato.links[0].href,'reference binds to observed destination, not model URL')
 plannerReply=JSON.stringify({actions:[{kind:'click',ref:'r999',selector:'#restaurants'}]})
 assert.equal((await exports.planActions('Find burgers',linkedZomato,'read','USER_INSTRUCTION')).actions.length,0,'invalid reference fails closed')
+// Live Zomato search Enter dismissed its unlabelled, pointer-style P options.
+const suggestedSearch={...searchPage,controls:[{selector:'#q',tag:'input',label:'Search for a dish',searchMode:'suggestions',value:'vegetarian burger'},{selector:'#dish',tag:'p',label:'Veg Burger - Delivery'}]}
+const blankSuggestedSearch={...suggestedSearch,controls:suggestedSearch.controls.map((c:any)=>({...c,value:''}))}
+plannerReply=JSON.stringify({actions:[{kind:'fill',ref:'r0',value:'vegetarian burger'},{kind:'search_enter',ref:'r0'}]})
+assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Find vegetarian burgers',blankSuggestedSearch,'read','USER_INSTRUCTION')).actions)),[{kind:'fill',selector:'#q',value:'vegetarian burger'}],'observe autocomplete before sending Enter')
+assert.equal((await exports.planActions('Find vegetarian burgers',suggestedSearch,'read','USER_INSTRUCTION')).actions.length,0,'do not refill an unchanged query or dismiss its suggestions with Enter')
+assert.match(captured,/"value":"vegetarian burger"/,'planner sees its already-filled public search')
+plannerReply=JSON.stringify({actions:[{kind:'click',ref:'r1'}]})
+assert.equal((await exports.planActions('Find vegetarian burgers',suggestedSearch,'read','USER_INSTRUCTION')).actions[0].selector,'#dish')
+assert.equal(snapshot('Search password','INPUT',true).controls[0].value,undefined,'never expose a secret-field value as a search query')
 plannerReply=null
 
 // Drive the real controller across the newly opened field and returned options.
