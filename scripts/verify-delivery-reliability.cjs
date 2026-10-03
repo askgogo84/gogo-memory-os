@@ -21,6 +21,27 @@ function load(file, mocks, env = {}) {
 }
 
 async function main() {
+  // Live meeting reminder failed with Twilio ContentVariables error: newline in label.
+  const payloads=[],accepted=[]
+  const whatsapp=load('lib/whatsapp.ts',{
+    twilio:{default:()=>({messages:{create:async payload=>{
+      const label=JSON.parse(payload.contentVariables)['1']
+      assert.doesNotMatch(label,/[\r\n\t]| {5,}/,'template values must satisfy WhatsApp whitespace constraints')
+      assert.ok(label.length>0&&label.length<=400)
+      payloads.push(payload);return {sid:'SMfixture'+payloads.length,status:'queued'}
+    }}})},
+    '@/lib/services/delivery-callback':{deliveryCallbackUrl:()=> 'https://fixture.invalid/callback',persistAcceptedChunk:async(...args)=>accepted.push(args)},
+  },{TWILIO_WHATSAPP_NUMBER:'+15555550100',TWILIO_REMINDER_CONTENT_SID:'HXfixture',TWILIO_REMINDER_BUTTONS_CONTENT_SID:'HXbuttons'})
+  const multiline='Meeting — 4:35 pm\r\nhttps://meet.google.com/ghm-npbd-uar\t     Join'
+  for(const send of [whatsapp.sendWhatsAppReminderTemplate,whatsapp.sendWhatsAppReminderButtons]){
+    await send('+15555550101',multiline,'fixture-token')
+    assert.equal(JSON.parse(payloads.at(-1).contentVariables)['1'],'Meeting — 4:35 pm https://meet.google.com/ghm-npbd-uar Join')
+    assert.equal(payloads.at(-1).statusCallback,'https://fixture.invalid/callback')
+    await send('+15555550101','\r\n\t   ','fixture-token')
+    assert.equal(JSON.parse(payloads.at(-1).contentVariables)['1'],'your task')
+  }
+  assert.equal(accepted.length,4,'all successful sends retain delivery receipt tracking')
+
   const db = new PGlite()
   await db.exec(`create role anon; create role authenticated; create role service_role;
     create table reminders(id uuid primary key default gen_random_uuid(),telegram_id bigint,chat_id bigint,
