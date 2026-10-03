@@ -67,6 +67,9 @@ export type WebSearchWatcherCondition = ContextualWatcherMeta & {
   delivery: WatcherDelivery
   cadenceMinutes: number
   burstUntil?: string | null
+  // Manual find requests surface their first match, even after empty checks.
+  notifyOnFirstMatch?: boolean
+  originalRequest?: string
 }
 
 export type WebPageWatcherCondition = {
@@ -168,7 +171,10 @@ export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition
   const cadenceMinutes = Math.max(15, Math.min(24 * 60, Math.floor(Number(input?.cadenceMinutes || 60))))
   const burstUntil = input?.burstUntil ? validDate(input.burstUntil) : null
   if (!title || !query) return null
-  return { title, query, triggerKeywords, delivery, cadenceMinutes, burstUntil, ...normalizeContextualMeta(input) }
+  return { title, query, triggerKeywords, delivery, cadenceMinutes, burstUntil,
+    notifyOnFirstMatch:input?.notifyOnFirstMatch===true && input?.contextual!==true,
+    originalRequest:String(input?.originalRequest||'').trim().slice(0,2000)||undefined,
+    ...normalizeContextualMeta(input) }
 }
 
 export async function createDeadlineWatcher(params: {
@@ -1024,7 +1030,9 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       snippet: result.snippet,
       url: result.url,
       triggerKeywords: condition.triggerKeywords,
-      seenUrls: armedUrls,
+      // A previously nonmatching page can later contain the requested result.
+      // Find watches deduplicate delivered content rather than the URL alone.
+      seenUrls: condition.notifyOnFirstMatch ? [] : armedUrls,
       seenSignatures: armedSignatures,
       seenEventKeys: armedEventKeys,
       occurrence: occurrenceFor(result),
@@ -1053,7 +1061,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     lastAlertAt: watcher.last_state_json?.lastAlertAt || watcher.last_state_json?.lastTriggeredAt || null,
     alertTimes: Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : [],
   })
-  const material = !isBaseline && Boolean(candidate) && alertGate.allowed
+  const material = (!isBaseline || condition.notifyOnFirstMatch===true) && Boolean(candidate) && alertGate.allowed
   const suppressedReason = !isBaseline && !candidate && sawUnverified ? 'unverified_context'
     : !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
   const quietChecks = material || isBaseline ? 0 : currentQuiet + 1
@@ -1072,12 +1080,13 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     await sendWhatsAppIfWanted(
       telegramId,
       condition.delivery,
-      `${candidate.result.title}\n\nThis looks relevant to ${condition.title.replace(/^Watch:\\s*/i,'')}. I saved the source for you and I’ll only message again if something meaningfully changes.`,
+      `${candidate.result.title}\n\nSearch result for ${condition.title.replace(/^Watch:\s*/i,'')}. Price, stock and offer eligibility have not been verified on the provider page.\n\n${candidate.result.url}\n\nI’ll keep checking and only alert on a new relevant result.`,
     ).catch(err => console.error('AGENT_WATCHER_WHATSAPP_FAILED:', err?.message || err))
     await writeActivity(telegramId, `Background Gogo found a high-signal web update: ${condition.title}`, {
       watcher_id:watcher.id,
       type:'web_search',
-      source_url:candidate.quality.canonicalUrl,
+      source_url:candidate.result.url,
+      evidence_level:'search_result',
       relevance:candidate.quality.relevance,
       matched_keywords:candidate.quality.matchedKeywords,
     })
@@ -1089,7 +1098,9 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   // context-rejected result (wrong flight/date/city) must NOT enter seenUrls/seenSignatures:
   // if that same stable tracker or weather URL is later updated to describe the watched
   // occurrence, it must remain eligible to alert instead of being suppressed as "seen".
-  const recordable = contextual ? assessments.filter(item => verifyItem(item).verified).map(item => item.result) : topResults
+  const recordable = condition.notifyOnFirstMatch
+    ? material && candidate ? [candidate.result] : []
+    : contextual ? assessments.filter(item => verifyItem(item).verified).map(item => item.result) : topResults
   const recordUrls = recordable.map(result => canonicalWatcherUrl(result.url)).filter(Boolean)
   const recordSignatures = recordable.map(result => watcherResultSignature(result.title, result.snippet || ''))
   const seenUrls = mergeStamped(priorSeenUrls, recordUrls, now)
@@ -1110,7 +1121,12 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     last_checked_at:now.toISOString(),
     next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
     last_state_json:{
+      ...(watcher.last_state_json || {}),
       fingerprint,
+      lastResult:material && candidate ? {
+        title:candidate.result.title, url:candidate.result.url,
+        snippet:candidate.result.snippet, observedAt:now.toISOString(), evidenceLevel:'search_result',
+      } : watcher.last_state_json?.lastResult || null,
       urls:currentUrls,
       seenUrls,
       seenSignatures,
