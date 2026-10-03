@@ -39,10 +39,25 @@ for(const [provider,label,tag,field] of [
   const page=snapshot(label,tag,field)
   assert.equal(page.controls.length,1,provider+' exposes its visible search control')
   assert.equal(page.controls[0].label,label)
-  assert.match(page.controls[0].selector,/^body:nth-of-type\(1\) > (div|input|button):nth-of-type\(1\)$/)
+  if(field)assert.equal(page.controls[0].selector,'input[placeholder="'+label+'"]')
+  else assert.match(page.controls[0].selector,/^body:nth-of-type\(1\) > (div|input|button):nth-of-type\(1\)$/)
   if(field)assert.equal(page.forms[0].inputs[0].selector,page.controls[0].selector)
 }
 assert.equal(snapshot('Search','DIV',false,true).controls.length,0,'hidden controls excluded')
+// Observed IndiGo From wrapper has role=button and a labelled direct child.
+// Inserting a sibling during hydration must not redirect its observed locator.
+const selectorSource=body.slice(body.indexOf('const selectorFor ='),body.indexOf('const candidates='))
+const airportLabel={tagName:'DIV',nodeType:1,getAttribute:(key:string)=>key==='aria-label'?'sourceCity Delhi Selected':null}
+const airportWrapper:any={tagName:'DIV',nodeType:1,id:'',children:[airportLabel],getAttribute:(key:string)=>key==='role'?'button':null}
+const airportRoot:any={tagName:'BODY',nodeType:1,id:'',parentElement:null,children:[airportWrapper],getAttribute:()=>null}
+airportWrapper.parentElement=airportRoot
+const selectorContext={el:airportWrapper,CSS:{escape:(text:string)=>text},document:{querySelectorAll:(selector:string)=>selector==='div[aria-label="sourceCity Delhi Selected"]'?[airportLabel]:selector==='div[role="button"]:has(> div[aria-label="sourceCity Delhi Selected"])'?[airportWrapper]:[]}}
+const beforeHydration=runInNewContext(selectorSource+'selectorFor(el)',{...selectorContext})
+airportRoot.children.unshift({tagName:'DIV'})
+const afterHydration=runInNewContext(selectorSource+'selectorFor(el)',{...selectorContext})
+assert.equal(beforeHydration,afterHydration,'banner hydration must not change the airport control selector')
+assert.match(beforeHydration,/sourceCity Delhi Selected/)
+
 const location=snapshot('Search delivery location','INPUT',true)
 location.text='Please provide your delivery location to see products at nearby store'
 assert.equal(needsBrowserDeliveryLocation(location),true)
@@ -122,6 +137,15 @@ plannerReply=JSON.stringify({actions:[{kind:'goto',url:zomatoPage.url}]})
 assert.equal((await exports.planActions('Refresh the page',zomatoPage,'read','USER_INSTRUCTION')).actions[0].kind,'goto','a standalone refresh is not discarded')
 plannerReply=JSON.stringify({actions:[{kind:'goto',url:'https://www.zomato.com/bangalore/restaurants'},{kind:'click',selector:'#restaurants'}]})
 assert.equal((await exports.planActions('Find restaurants',zomatoPage,'read','USER_INSTRUCTION')).actions[0].kind,'goto','changed-page navigation still ends the wave')
+// 3 Oct Flipkart accepts Enter on its public search input; Zomato has no
+// homepage search input, only a restaurant link. Bind model refs to this page.
+plannerReply=JSON.stringify({actions:[{kind:'fill',ref:'r0',value:'Sony WH-1000XM5'},{kind:'search_enter',ref:'r0'}]})
+assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Find Sony',searchPage,'read','USER_INSTRUCTION')).actions)),[{kind:'fill',selector:'#q',value:'Sony WH-1000XM5'},{kind:'search_enter',selector:'#q'}])
+const linkedZomato={...zomatoPage,links:[{text:'Check it out',href:'https://www.zomato.com/restaurants'}]}
+plannerReply=JSON.stringify({actions:[{kind:'goto',ref:'r1',url:'https://invented.example'}]})
+assert.equal((await exports.planActions('Find vegetarian burgers',linkedZomato,'read','USER_INSTRUCTION')).actions[0].url,linkedZomato.links[0].href,'reference binds to observed destination, not model URL')
+plannerReply=JSON.stringify({actions:[{kind:'click',ref:'r999',selector:'#restaurants'}]})
+assert.equal((await exports.planActions('Find burgers',linkedZomato,'read','USER_INSTRUCTION')).actions.length,0,'invalid reference fails closed')
 plannerReply=null
 
 // Drive the real controller across the newly opened field and returned options.
@@ -136,7 +160,7 @@ runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any)
   if(id==='./browser-location-gate')return {needsBrowserDeliveryLocation}
   if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
   if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string,_u:any,system?:string)=>{
-   if(system)return JSON.stringify(JSON.parse(prompt).observation.text===suggestionText?{complete:true,evidence:[suggestionText]}:{complete:false})
+   if(system?.startsWith('Evaluate whether'))return JSON.stringify(JSON.parse(prompt).observation.text===suggestionText?{complete:true,evidence:[suggestionText]}:{complete:false})
    return JSON.stringify({actions:airportWaves.length===0?[{kind:'click',selector:'#from-panel'},{kind:'fill',selector:'#to-panel',value:'Bengaluru'}]:[{kind:'fill',selector:'#airport-input',value:'Bengaluru'}]})
   }}
   return {}
@@ -189,7 +213,7 @@ runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any)
   if(id==='./browser-location-gate')return {needsBrowserDeliveryLocation}
   if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
   if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string,_usage:any,system?:string)=>{
-   if(system){assessmentCalls++;assessmentInstruction=system
+   if(system?.startsWith('Evaluate whether')){assessmentCalls++;assessmentInstruction=system
     return JSON.stringify(JSON.parse(prompt).observation.text.includes('₹28,926')?{complete:true,evidence:assessmentEvidence}:{complete:false})
    }
    researchCalls++;return JSON.stringify({actions:[{kind:'click',selector:'#search'}]})
