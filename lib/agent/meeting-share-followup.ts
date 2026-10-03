@@ -62,9 +62,11 @@ export async function tryMeetingShareFollowup(p:{actor:AgentActor;text:string;su
     return reply(question)
   }
 
+  // Dashboard inserts each user/assistant pair together: timestamps can tie.
+  // Within that pair the assistant is the latest turn; a genuinely newer user still wins.
   const [{data:rows,error:memoryError},{data:turns,error:historyError}]=await Promise.all([
     supabaseAdmin.from('memories').select('id,content,created_at').eq('telegram_id',tg).order('created_at',{ascending:false}).limit(40),
-    supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id',tg).order('created_at',{ascending:false}).limit(1),
+    supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id',tg).order('created_at',{ascending:false}).order('role',{ascending:true}).limit(1),
   ])
   if(memoryError||historyError)throw new Error('meeting_followup_read_failed')
   const candidate=(rows||[]).map(row=>{try{return {row,state:JSON.parse(row.content)}}catch{return null}}).find(x=>x?.state?.type==='followup_state'&&x.state.kind===KIND)

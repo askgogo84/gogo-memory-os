@@ -74,6 +74,8 @@ export async function GET() {
     .eq('telegram_id', user.telegram_id)
     .in('role', ['user', 'assistant'])
     .order('created_at', { ascending: false })
+    // Reverse below displays each tied batch as user then assistant.
+    .order('role', { ascending: true })
     .limit(50)
 
   if (error) return NextResponse.json({ error: 'history_failed' }, { status: 500 })

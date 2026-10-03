@@ -16,12 +16,14 @@ const store:Record<string,any[]>={users:[{telegram_id:101,whatsapp_id:'fixture-p
 const db={from(table:string){
   store[table]||=[]
   const filters:Array<(r:any)=>boolean>=[]
-  let changes:any,insert:any,single=false,limit=Infinity,sort=false
-  const b:any={select(){return b},eq(k:string,v:any){filters.push(r=>String(r[k])===String(v));return b},order(){sort=true;return b},limit(n:number){limit=n;return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},maybeSingle(){single=true;return b},single(){single=true;return b},then(resolve:any,reject:any){return Promise.resolve().then(()=>{
+  let changes:any,insert:any,single=false,limit=Infinity
+  const sorts:Array<{key:string;ascending:boolean}>=[]
+  const b:any={select(){return b},in(k:string,values:any[]){filters.push(r=>values.includes(r[k]));return b},eq(k:string,v:any){filters.push(r=>String(r[k])===String(v));return b},order(key:string,options:any){sorts.push({key,ascending:options.ascending});return b},limit(n:number){limit=n;return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},maybeSingle(){single=true;return b},single(){single=true;return b},then(resolve:any,reject:any){return Promise.resolve().then(()=>{
     let rows=store[table].filter(r=>filters.every(f=>f(r)))
-    if(sort)rows=rows.slice().sort((a,b)=>b._seq-a._seq)
+    if(sorts.length)rows=rows.slice().sort((a,b)=>{for(const {key,ascending} of sorts){const delta=a[key]<b[key]?-1:a[key]>b[key]?1:0;if(delta)return ascending?delta:-delta}return 0})
     rows=rows.slice(0,limit)
     if(insert){
+      clock+=1 // Each DB statement is later; rows in a batch share a timestamp, as in production.
       if(table==='reminders'){
         writeAttempts++
         if(failInsert)return {data:null,error:{message:'injected write failure'}}
@@ -103,12 +105,30 @@ assert.equal(worker().parseSharedMeeting('Save this https://meet.google.com/ghm-
 clock=Date.parse('2026-10-03T09:28:00Z')
 
 // Execute actual route hooks with the real handler, not a second parser.
+store.memories=[];store.conversations=[];store.reminders=[]
 const dashboard=ts.transpileModule(fs.readFileSync('app/api/dashboard/chat/route.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 const exports:any={},noop=new Proxy({},{get:()=>async()=>null})
 const mocks:any={crypto,'next/server':{NextResponse:{json:(body:any)=>({body})}},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/dashboard/session':{getSession:async()=>({telegramId:'101'})},'@/lib/agent/actor':{resolveAgentActor:async()=>actor},'@/lib/agent/meeting-share-followup':worker()}
 vm.runInNewContext(dashboard,{exports,module:{exports},require:(n:string)=>mocks[n]||noop,URL,console})
 const response=await exports.POST({headers:{get:()=> 'https://app.askgogo.in'},nextUrl:{host:'app.askgogo.in'},json:async()=>({text:invitation.replace('Food Working','Dashboard Working')})})
 assert.equal(response.body.handledBy,'meeting-share-followup')
+const pair=store.conversations.slice(-2)
+assert.equal(pair[0].role,'user')
+assert.equal(pair[0].created_at,pair[1].created_at,'production batch timestamp tie reproduced')
+const beforeDashboardYes=store.reminders.length
+const dashboardYes=await exports.POST({headers:{get:()=> 'https://app.askgogo.in'},nextUrl:{host:'app.askgogo.in'},json:async()=>({text:'Yes'})})
+assert.equal(dashboardYes.body.handledBy,'meeting-share-followup','Yes must bind to the persisted offer despite tied conversation timestamps')
+assert.match(dashboardYes.body.text,/Reminder set/)
+assert.match(dashboardYes.body.text,/Dashboard Working/)
+assert.ok(dashboardYes.body.text.includes(parsed.url))
+assert.equal(store.reminders.length,beforeDashboardYes+1)
+await exports.POST({headers:{get:()=> 'https://app.askgogo.in'},nextUrl:{host:'app.askgogo.in'},json:async()=>({text:'Yes'})})
+assert.equal(store.reminders.length,beforeDashboardYes+1,'repeated dashboard Yes cannot fall through and duplicate')
+const display=await exports.GET()
+assert.equal(display.body.messages.at(-1).role,'assistant','reloaded history keeps response after user for tied timestamps')
+await offer(invitation.replace('Food Working','Interrupted Working'))
+await db.from('conversations').insert({telegram_id:101,role:'user',content:'Different topic now'})
+assert.equal(await worker().tryMeetingShareFollowup({actor,text:'Yes',surface:'web'}),null,'a genuinely newer user turn still invalidates the old offer')
 const wa=fs.readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
 const hook=wa.slice(wa.indexOf('    // Meeting invitations and their bounded replies'),wa.indexOf('    const isKnownSocialPreview ='))
 assert.ok(hook.includes('tryMeetingShareFollowup'))
