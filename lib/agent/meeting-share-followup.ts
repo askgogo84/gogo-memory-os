@@ -12,11 +12,18 @@ type Meeting={title:string;url:string;startAt:string;endAt:string;remindAt:strin
 // 3 Oct live reproduction: a Google Meet invitation was filed as a generic link.
 // Parse the explicit invitation, not arbitrary web content or an inferred calendar event.
 export function parseSharedMeeting(text:string, timezone:string, now=new Date()):Meeting|null {
-  const links=text.match(/https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b/gi)||[]
+  const links=[...new Set(text.match(/https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b/gi)||[])]
   if(links.length!==1)return null
-  const date=text.match(/\b(?:(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+)?(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(20\d{2}))?\s*[·,]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+  const dateExpression=(/\b(?:(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+)?(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(20\d{2}))?\s*[·,]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+  const date=text.match(dateExpression)
   if(!date)return null
+  // Forwarding our own saved-link reply repeats the invitation and sometimes its URL.
+  // Identical copies describe one meeting; conflicting schedules need clarification.
+  const dates=[...text.matchAll(new RegExp(dateExpression.source,'gi'))]
+  if(dates.some(other=>other.slice(1).join('|').toLowerCase()!==date.slice(1).join('|').toLowerCase()))return null
   const title=text.slice(0,date.index).trim()
+    .replace(/^(?:Forwarded\s+)?(?:🔗\s*)?Saved to Link Vault:\s*/i,'')
+    .replace(/^\*+|\*+$/g,'').trim()
   if(!title||title.length>180||title.includes('https://'))return null
   const zone=normalizeTimezone(timezone)
   const year=Number(date[4]||getLocalParts(now,zone).year)
@@ -34,8 +41,16 @@ export function parseSharedMeeting(text:string, timezone:string, now=new Date())
   const key=`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`
   const startAt=parseLocalDateTime({date:key,time:start,timezone:zone}).dueAtUtcISO
   const endAt=parseLocalDateTime({date:key,time:end,timezone:zone}).dueAtUtcISO
-  if(Date.parse(endAt)<=Date.parse(startAt)||Date.parse(startAt)<=now.getTime())return null
+  if(Date.parse(endAt)<=Date.parse(startAt))return null
   return {title,url:links[0],startAt,endAt,remindAt:new Date(Date.parse(startAt)-600000).toISOString(),timezone:zone}
+}
+
+function meetingTimeStatus(meeting:Meeting,now=Date.now()){
+  const start=formatInTimezone(meeting.startAt,meeting.timezone)
+  const end=formatInTimezone(meeting.endAt,meeting.timezone)
+  if(now>=Date.parse(meeting.endAt))return `${meeting.title} was scheduled to end ${end} (${meeting.timezone}). That time has already passed. I haven’t set a new reminder or moved the meeting to another date.`
+  if(now>=Date.parse(meeting.startAt))return `${meeting.title} is scheduled to be in progress, from ${start} to ${end} (${meeting.timezone}). It’s too late for a reminder before the start.\nJoin: ${meeting.url}`
+  return null
 }
 
 function reminderId(tg:number,m:Meeting){
@@ -52,9 +67,16 @@ export async function tryMeetingShareFollowup(p:{actor:AgentActor;text:string;su
     const {data:user,error}=await supabaseAdmin.from('users').select('timezone').eq('telegram_id',tg).maybeSingle()
     if(error)throw new Error('meeting_timezone_read_failed')
     const meeting=parseSharedMeeting(text,user?.timezone||'Asia/Kolkata')
-    if(!meeting)return null
+    if(!meeting){
+      // A dated invitation must not reach generic reminder inference, which can roll
+      // an old weekday into next week. A bare Meet bookmark still uses Link Vault.
+      if(/\b(?:joining info|video call link)\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(text))return reply('Please confirm the meeting date, start/end time and one joining link. I couldn’t reliably read a single meeting from this message, so I haven’t set a reminder.')
+      return null
+    }
     const saved=await saveLinkVaultItem({telegramId:tg,text,url:meeting.url,visibleTitle:meeting.title,sourceSurface:p.surface})
-    if(Date.parse(meeting.remindAt)<=Date.now())return reply(`Saved ${meeting.title} and its Meet link. The meeting starts too soon for a 10-minute reminder.`)
+    const timeStatus=meetingTimeStatus(meeting)
+    if(timeStatus)return reply(timeStatus,'completed')
+    if(Date.parse(meeting.remindAt)<=Date.now())return reply(`Saved ${meeting.title} and its Meet link. The meeting starts ${formatInTimezone(meeting.startAt,meeting.timezone)} — too soon for a 10-minute reminder.\nJoin: ${meeting.url}`,'completed')
     const question=`${meeting.title} starts ${formatInTimezone(meeting.startAt,meeting.timezone)}. Remind you 10 minutes before, at ${formatInTimezone(meeting.remindAt,meeting.timezone)}?`
     const content=JSON.stringify({type:'followup_state',kind:KIND,payload:{meeting,question,status:'pending',linkId:saved.row.id,reminderId:reminderId(tg,meeting),surface:p.surface},created_at:new Date().toISOString()})
     const {error:saveError}=await supabaseAdmin.from('memories').insert({telegram_id:tg,content})
@@ -74,6 +96,8 @@ export async function tryMeetingShareFollowup(p:{actor:AgentActor;text:string;su
   const {row,state}=candidate,offer=state.payload,m:Meeting=offer?.meeting
   const previous=turns?.[0]
   if(!m||previous?.role!=='assistant'||![offer.question,offer.confirmation].filter(Boolean).includes(previous.content))return null
+  const timeStatus=meetingTimeStatus(m)
+  if(timeStatus)return reply(timeStatus,'completed')
   if(!Number.isFinite(Date.parse(state.created_at))||Date.now()-Date.parse(state.created_at)>86400000||Date.parse(m.remindAt)<=Date.now())return reply('That reminder offer has expired. Please share the current meeting details again.')
   if(!['pending','executing','completed'].includes(offer.status))return null
   const update=async(payload:any)=>{
