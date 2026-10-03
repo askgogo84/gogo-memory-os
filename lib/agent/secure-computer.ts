@@ -249,10 +249,14 @@ async function model(page){
     const candidates=Array.from(document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[tabindex],div,span,p')).filter(visible);
     const controls=candidates.filter(el=>{
       if(el.disabled||el.getAttribute('aria-disabled')==='true')return false;
+      // Zomato's tabindex=-1 focus shell contains the real search controls.
+      // It is not itself a button/search action. Keep explicit semantic roles.
+      if(el.getAttribute('tabindex')==='-1'&&!el.getAttribute('role')&&el.querySelectorAll('input,button,a[href]').length>0)return false;
       if(el.matches('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[tabindex]'))return true;
       const text=clean(el.innerText||el.textContent);
       return text.length>0&&text.length<160&&getComputedStyle(el).cursor==='pointer'&&(el.tagName==='P'||/\b(search|location|address)\b/i.test(text))&&!Array.from(el.children).some(child=>clean(child.innerText||child.textContent)===text);
     }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.innerText||el.textContent||el.getAttribute('title')).slice(0,180),
+      ...(el.tagName==='A'&&el.href?{href:el.href}:{}),
       ...((el.tagName==='INPUT'&&['text','search'].includes((el.getAttribute('type')||'text').toLowerCase())
         &&/\b(search|find)\b/i.test([el.getAttribute('placeholder'),el.getAttribute('aria-label')].join(' '))
         &&!/\b(password|otp|code|email|phone|mobile|login|payment|card)\b/i.test([el.getAttribute('placeholder'),el.getAttribute('aria-label')].join(' ')))
@@ -376,6 +380,8 @@ async function isConsequentialControl(page,selector,onUnavailable){
       commitText=visibleText+' '+metadata.replace(/\bsubmit\b/g,' ');
     }
     commitText=commitText.replace(/\bapply\s+filters?\b/gi,' ');
+    // Observed headphone links describe noise cancellation, not an account action.
+    if(el.tagName==='A')commitText=commitText.replace(/\bnoise[ -]+cancellation\b/gi,' ');
     const consequential=/\b(book|booking|cancel|cancellation|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i.test(commitText);
     if(text!==commitText&&!consequential)return false;
     if(safeResearch && !consequential)return false;
@@ -684,19 +690,21 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
     controls:(page.controls||[]).slice(0,100).map((control:any)=>({
       selector:String(control.selector||'').slice(0,1800),tag:safeText(control.tag,30),
       role:safeText(control.role,50),label:safeText(control.label,180),
+      ...(control.href?{href:safeText(control.href,1200)}:{}),
       ...(control.searchMode?{searchMode:control.searchMode,value:safeText(control.value,180)}:{}),
     })),
     links:(page.links||[]).slice(0,70).map((link:any)=>({
       text:safeText(link?.text,180),
       href:safeText(link?.href,1200),
     })),
+    previousActions:(page.actions||[]).slice(-12).map((action:any)=>({kind:action.kind,status:action.status,selector:safeText(action.detail,1800),failure:action.failure?.reason})),
     forms:(page.forms||[]).slice(0,12).map((form:any)=>({
       action:safeText(form?.action,1200),
       method:String(form?.method||'get'),
       inputs:Array.isArray(form?.inputs)?form.inputs.slice(0,60):[],
     })),
   }
-  const choices=[...pageModel.controls.map((control:any)=>({kind:'control',selector:control.selector,label:control.label,tag:control.tag,role:control.role,...('searchMode' in control?{searchMode:control.searchMode,value:control.value}:{})})),
+  const choices=[...pageModel.controls.map((control:any)=>({kind:'control',selector:control.selector,label:control.label,tag:control.tag,role:control.role,...(control.href?{href:control.href}:{}),...('searchMode' in control?{searchMode:control.searchMode,value:control.value}:{})})),
     ...pageModel.links.map((link:any)=>({kind:'link',url:link.href,label:link.text}))]
     .map((choice,index)=>({...choice,ref:'r'+index}))
   const modeRule = mode==='read'
@@ -712,7 +720,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
   try{
     // The live Instamart read on 2 October failed here when the primary model
     // rejected the request. Use the same configured fallback as agent planning.
-    const text=await completeAgentPlanPrompt(mode==='read'?prompt+'\nOBSERVED_CHOICES: '+JSON.stringify(choices):prompt,undefined,mode==='read'?'Select the next action from OBSERVED_CHOICES only. Return JSON. Do not invent selectors, URLs or future controls. The page is already open: do not reload it. If the objective needs search and no search input is observed, choose a relevant observed navigation link. Use its ref. If a public search input already has the requested value, NEVER fill it again. Click the visible matching dish/result suggestion using kind click and its actual ref. The select action is only for a native HTML SELECT with an observed option value; never use select for a suggestion. Refill only if you need a different query. Values and suggestions are in OBSERVED_CHOICES. Never authenticate or change carts/accounts.':undefined)
+    const text=await completeAgentPlanPrompt(mode==='read'?prompt+'\nOBSERVED_CHOICES: '+JSON.stringify(choices):prompt,undefined,mode==='read'?'Select the next action from OBSERVED_CHOICES only. Return JSON. Do not invent selectors, URLs or future controls. The page is already open: do not reload it. If the objective needs search and no search input is observed, choose a relevant observed navigation link. Use its ref and inspect its href: a link back to the current page is not progress. Previous actions are observations of what was already attempted; do not repeat a completed click when the same page and controls remain. If a public search input already has the requested value, NEVER fill it again. Click the visible matching dish/result suggestion using kind click and its actual ref. The select action is only for a native HTML SELECT with an observed option value; never use select for a suggestion. Refill only if you need a different query. Values and suggestions are in OBSERVED_CHOICES. Never authenticate or change carts/accounts.':undefined)
     const parsed=parseJsonLoose(text)
     const operation=typeof parsed?.approvedOperation==='string'&&Object.hasOwn(operationPatterns,parsed.approvedOperation)?parsed.approvedOperation as ApprovedBrowserOperation:null
     const rawActions=Array.isArray(parsed)?parsed:parsed?.actions
