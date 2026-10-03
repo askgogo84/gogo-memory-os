@@ -123,6 +123,14 @@ async function refresh(actor: AgentActor, refreshToken: string) {
 }
 
 async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}) {
+  // OAuth reach and the user's read preference are separate. Check before even
+  // loading credentials; Drive/Contacts retain their independent Workspace access.
+  if(url.startsWith('https://gmail.googleapis.com/')){
+    const {data:consent,error}=await supabaseAdmin.from('user_consent_settings')
+      .select('gmail_enabled').eq('telegram_id',actor.legacyTelegramId).maybeSingle()
+    if(error)throw new Error('workspace_email_consent_unavailable')
+    if(consent?.gmail_enabled===false)throw new Error('workspace_email_reading_disabled')
+  }
   const creds = await credentials(actor)
   let token = String(creds.gmail_access_token || '')
   if (!token && creds.gmail_refresh_token) token = await refresh(actor, String(creds.gmail_refresh_token))

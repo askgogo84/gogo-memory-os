@@ -38,14 +38,15 @@ export default async function ConnectionsPage(){
   const profile=session?await getProfile(session.telegramId):({ok:false} as const)
   const tgNum=parseInt(session?.telegramId||'',10)
   const tg=String(session?.telegramId||'')
-  const [vaultResult,userResult,travelResult,browserPermission]=Number.isFinite(tgNum)
+  const [vaultResult,userResult,travelResult,browserPermission,gmailConsent]=Number.isFinite(tgNum)
     ?await Promise.all([
       supabaseAdmin.from('vault_credentials').select('id',{count:'exact',head:true}).eq('telegram_id',tgNum),
       supabaseAdmin.from('users').select('gmail_connected,gmail_send_connected,gmail_connected_at,google_calendar_connected,google_calendar_connected_at').eq('telegram_id',tgNum).maybeSingle(),
       supabaseAdmin.from('travel_tickets').select('id',{count:'exact',head:true}).eq('telegram_id',tgNum).gte('depart_at',new Date().toISOString()),
       supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',tg).eq('capability','browser').maybeSingle(),
+      supabaseAdmin.from('user_consent_settings').select('gmail_enabled').eq('telegram_id',tgNum).maybeSingle(),
     ])
-    :[{count:0},{data:null},{count:0},{data:null}] as any
+    :[{count:0},{data:null},{count:0},{data:null},{data:null}] as any
   const vaultCount=Number((vaultResult as any)?.count||0)
   const travelCount=Number((travelResult as any)?.count||0)
   const u:any=(userResult as any)?.data||{}
@@ -53,6 +54,8 @@ export default async function ConnectionsPage(){
   const browserLevel=String((browserPermission as any)?.data?.level||'draft')
   const browserAvailable=browserLevel!=='off'
   const gmailSend=Boolean(u.gmail_send_connected)
+  const gmailReadOff=gmailConsent?.data?.gmail_enabled===false
+  const gmailReadUnknown=Boolean(gmailConsent?.error)
 
   return <div className="mx-auto w-full max-w-[1180px] pb-10">
     <header className="border-b border-[#1f1f1f] pb-5">
@@ -72,11 +75,11 @@ export default async function ConnectionsPage(){
           approval="Reads are safe. Create/update/delete remains behind the calendar approval boundary."
           verification="Google Calendar read-back of the exact event/object after mutation."
           detail={u.google_calendar_connected_at?'Connection recorded on this account.':undefined} href="/dashboard/calendar"/>
-        <ConnRow name="Gmail" state={c.gmail?(gmailSend?'Connected · Send enabled':'Connected · Read only'):'Not connected'} available={c.gmail}
+        <ConnRow name="Gmail" state={c.gmail?(gmailReadUnknown?'Connected · Reading status unavailable':gmailReadOff?'Connected · Reading off':gmailSend?'Connected · Send enabled':'Connected · Read only'):'Not connected'} available={c.gmail&&!gmailReadOff&&!gmailReadUnknown}
           operations={gmailSend?'Read/search mail, inspect attachments, draft and approved send.':'Read/search mail and attachments; drafts are safe. Gmail Send has not been granted.'}
           approval="Reading never authorizes sending. Every consequential send requires the existing bounded approval."
           verification="Gmail provider message/thread evidence; send success requires provider read-back."
-          detail={u.gmail_connected_at?'Workspace identity is owner-bound.':undefined} href="/dashboard/you"/>
+          detail={gmailReadUnknown?'Could not verify your reading preference.':gmailReadOff?'Email reading is disabled in your saved privacy preference.':'Connecting Gmail alone does not start an inbox watch.'} href="/dashboard/you"/>
         <ConnRow name="Google Drive" state={c.gmail?'Connected via Workspace':'Not connected'} available={c.gmail}
           operations="Read/search Drive context and fetch supported files for bounded analysis."
           approval="Read-only Workspace scope. File mutation is not granted by this connection."

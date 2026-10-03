@@ -529,6 +529,14 @@ export async function tryCreateInboxTriageWatchFromCommand(params:{
   if(!parsed)return null
   const tg=String(params.actor.legacyTelegramId)
 
+  const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
+    .select('gmail_enabled').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
+  if(consentError)throw new Error('inbox_watch_consent_read_failed')
+  if(consent?.gmail_enabled===false)return {
+    runId:'inbox-watch-reading-disabled',status:'paused' as const,capability:'email' as const,risk:'low' as const,
+    text:'Gmail reading is disabled in your saved privacy preference. Connecting Google does not change that preference. I haven’t started an inbox watch or read any mail.',
+    blockedReason:'workspace_email_reading_disabled',handledBy:'inbox-triage-watch',
+  }
   const {data:user,error:userError}=await supabaseAdmin.from('users')
     .select('gmail_connected')
     .eq('telegram_id',params.actor.legacyTelegramId)
