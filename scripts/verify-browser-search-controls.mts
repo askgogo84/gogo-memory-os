@@ -112,6 +112,16 @@ const searchPage={...flightPage,controls:[{selector:'#q',tag:'input',role:'searc
 plannerReply=JSON.stringify({actions:[{kind:'fill',selector:'#q',value:'Sony WH-1000XM5'},{kind:'click',selector:'#go'},{kind:'click',selector:'#from-panel'}]})
 assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Find Sony',searchPage,'read','USER_INSTRUCTION')).actions)),[{kind:'fill',selector:'#q',value:'Sony WH-1000XM5'},{kind:'click',selector:'#go'}],'ordinary observed search input plus button remains one wave')
 assert.equal((await exports.planActions('Draft',flightPage,'draft','USER_INSTRUCTION')).actions.length,3,'draft execution remains unchanged')
+// 3 Oct live Zomato run483ad29c spent three waves reloading its homepage.
+// Preserve the observed next step when a plan redundantly starts at this URL.
+const zomatoPage={...flightPage,url:'https://www.zomato.com/',controls:[{selector:'#restaurants',tag:'a',label:'Bengaluru restaurants'}]}
+plannerReply=JSON.stringify({actions:[{kind:'goto',url:zomatoPage.url},{kind:'click',selector:'#restaurants'}]})
+assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Find vegetarian burgers',zomatoPage,'read','USER_INSTRUCTION')).actions)),[{kind:'click',selector:'#restaurants'}],'same-page preamble must not consume the entire read wave')
+assert.equal((await exports.planActions('Prepare navigation',zomatoPage,'draft','USER_INSTRUCTION')).actions.length,2,'non-read plans retain navigation')
+plannerReply=JSON.stringify({actions:[{kind:'goto',url:zomatoPage.url}]})
+assert.equal((await exports.planActions('Refresh the page',zomatoPage,'read','USER_INSTRUCTION')).actions[0].kind,'goto','a standalone refresh is not discarded')
+plannerReply=JSON.stringify({actions:[{kind:'goto',url:'https://www.zomato.com/bangalore/restaurants'},{kind:'click',selector:'#restaurants'}]})
+assert.equal((await exports.planActions('Find restaurants',zomatoPage,'read','USER_INSTRUCTION')).actions[0].kind,'goto','changed-page navigation still ends the wave')
 plannerReply=null
 
 // Drive the real controller across the newly opened field and returned options.

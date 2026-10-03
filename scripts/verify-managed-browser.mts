@@ -91,6 +91,11 @@ for(const [site,resources] of [
   'https://app-prod-skyplus6e.goindigo.in/booking/remoteEntry.js',
   'https://api-prod-skyplus.goindigo.in/bookingwidgetsearchengine/search?prefix=Bengaluru&limit=10',
  ]],
+ // Captured GET ERR in the live Zomato cloud Network panel on3Oct.
+ ['https://www.zomato.com/',[
+  'https://b.zmtcdn.com/web/logo/low/6d289d7188aeb23d3c0c76b74915b9931587822718.png',
+  'https://b.zmtcdn.com/data/o2_assets/e468d0e2ffd9aeeb9a232df7461a27fb1743099002.woff2',
+ ]],
  ['https://www.flipkart.com/',[
   'https://static-assets-web.flixcart.com/batman-returns/batman-returns/p/de025efa02a5f190c3b98c1fb29aed1b/DesktopComponents.css',
   'https://rukminim2.flixcart.com/fk-p-flap/52/44/image/d2ecfddf891a3922.png?q=80',
