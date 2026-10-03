@@ -1,3 +1,4 @@
+import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
@@ -101,6 +102,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+    const meetingReply=await tryMeetingShareFollowup({actor,text,surface:'web'})
+    if(meetingReply){
+      await saveConversation(user.telegram_id,text,meetingReply.text)
+      return NextResponse.json(meetingReply)
+    }
     const foodComparison=await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:'web'})
     if(foodComparison){
       await saveConversation(user.telegram_id,text,foodComparison.text)
