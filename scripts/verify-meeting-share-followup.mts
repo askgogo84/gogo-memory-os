@@ -136,4 +136,60 @@ let whatsappReply=''
 await vm.runInNewContext(`(async()=>{${hook}})()`,{tryMeetingShareFollowup:worker().tryMeetingShareFollowup,resolvedUser:{id:actor.userId,telegramId:101,whatsappId:actor.whatsappId,name:actor.name},bodyText:invitation.replace('Food Working','WhatsApp Working'),from:actor.whatsappId,saveConversation:async(tg:number,role:string,content:string)=>{await db.from('conversations').insert({telegram_id:tg,role,content})},sendWhatsAppMessage:async(_phone:string,text:string)=>{whatsappReply=text},NextResponse:class {},emptyTwiml:()=>''})
 assert.match(whatsappReply,/4:10/)
 assert.ok(wa.indexOf('    // Meeting invitations and their bounded replies')<wa.indexOf('    const isKnownSocialPreview ='),'meeting flow precedes generic media saving')
+
+// 3 Oct 18:43 IST: forwarding the old Link Vault reply must not schedule 10 Oct.
+const forwarded=`🔗 Saved to Link Vault: ${invitation.replace(/\n/g,' ')}
+Note: ${invitation.replace(/\n/g,' ')}
+This link is relevant to the upcoming Food Working Session scheduled for Saturday, 3rd October.`
+clock=Date.parse('2026-10-03T13:13:00Z')
+const remindersBeforePast=store.reminders.length,attemptsBeforePast=writeAttempts
+for(const text of [invitation,forwarded]){
+  const ended=await worker().tryMeetingShareFollowup({actor,text,surface:'whatsapp'})
+  assert.ok(ended,'past meetings must be consumed before generic reminder routing')
+  assert.match(ended.text,/scheduled to end.*5:00 pm/i)
+  assert.match(ended.text,/already passed/i)
+  assert.doesNotMatch(ended.text,/10 Oct|Reminder set|Remind you/i)
+  assert.equal(ended.status,'completed')
+}
+const parsedForward=worker().parseSharedMeeting(forwarded,'Asia/Kolkata')
+assert.equal(parsedForward.title,'Food Working Session')
+assert.equal(parsedForward.startAt,parsed.startAt,'past dates are not rolled into the future')
+assert.equal(await worker().tryMeetingShareFollowup({actor,text:'Save my meeting link https://meet.google.com/ghm-npbd-uar',surface:'web'}),null,'a bare bookmark remains a Link Vault request')
+assert.equal(worker().parseSharedMeeting(invitation,'America/Los_Angeles').startAt,'2026-10-03T23:20:00.000Z','meeting time uses the owner timezone')
+assert.equal(worker().parseSharedMeeting(invitation.replace('Saturday, 3 Oct','Friday, 3 Oct 2025'),'Asia/Kolkata').startAt,'2025-10-03T10:50:00.000Z','an explicit past year is retained')
+assert.equal(store.reminders.length,remindersBeforePast)
+assert.equal(writeAttempts,attemptsBeforePast)
+
+for(const [at,expected] of [
+  ['2026-10-03T10:50:00Z',/scheduled.*in progress/i],
+  ['2026-10-03T11:00:00Z',/scheduled.*in progress/i],
+  ['2026-10-03T11:30:00Z',/already passed/i],
+] as const){
+  clock=Date.parse(at)
+  assert.match((await worker().tryMeetingShareFollowup({actor,text:forwarded,surface:'web'})).text,expected)
+}
+clock=Date.parse('2026-10-03T09:28:00Z')
+const futureForward=await offer(forwarded)
+assert.match(futureForward.text,/Food Working Session starts.*4:20 pm.*4:10 pm/i)
+clock=Date.parse('2026-10-03T10:45:00Z')
+assert.match((await worker().tryMeetingShareFollowup({actor,text:invitation,surface:'web'})).text,/too soon/i)
+clock=Date.parse('2026-10-03T13:13:00Z')
+assert.match((await worker().tryMeetingShareFollowup({actor,text:'Yes',surface:'web'})).text,/already passed/i,'late Yes retains the actual meeting time')
+
+for(const text of [
+  invitation.replace('Saturday','Sunday'),
+  invitation.replace('3 Oct','31 Oct').replace('Saturday','Thursday'),
+  `${invitation}\n${invitation.replace('4:20','6:20').replace('–5','–7')}`,
+  `${invitation}\nhttps://meet.google.com/abc-defg-hij`,
+]){
+  const ambiguous=await worker().tryMeetingShareFollowup({actor,text,surface:'web'})
+  assert.match(ambiguous.text,/confirm.*date.*time/i,'uncertain invitation details must not fall through to generic date inference')
+}
+assert.equal(writeAttempts,attemptsBeforePast,'all temporal and ambiguous shares create zero reminders')
+let pastWhatsApp=''
+await vm.runInNewContext(`(async()=>{${hook}})()`,{tryMeetingShareFollowup:worker().tryMeetingShareFollowup,resolvedUser:{id:actor.userId,telegramId:101,whatsappId:actor.whatsappId,name:actor.name},bodyText:forwarded,from:actor.whatsappId,saveConversation:async()=>{},sendWhatsAppMessage:async(_phone:string,text:string)=>{pastWhatsApp=text},NextResponse:class {},emptyTwiml:()=>''})
+assert.match(pastWhatsApp,/already passed/i)
+const pastDashboard=await exports.POST({headers:{get:()=> 'https://app.askgogo.in'},nextUrl:{host:'app.askgogo.in'},json:async()=>({text:forwarded})})
+assert.equal(pastDashboard.body.handledBy,'meeting-share-followup')
+assert.match(pastDashboard.body.text,/already passed/i)
 console.log('PASS: shared meeting -> durable offer -> cross-channel Yes -> exact reminder readback; link retained, owner isolated, stale/unrelated replies ignored, duplicates and failed writes protected, actual WA/dashboard hooks')
