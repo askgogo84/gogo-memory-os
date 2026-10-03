@@ -89,12 +89,13 @@ export function getAmbiguousReminderTime(text: string): { label: string; hour: n
   if (/\b\d{1,4}([:.]\d{2})?\s*(am|pm)\b/i.test(raw)) return null
   if (!/\b(remind|wake|alarm|set|tomorrow|tmrw|tmr|at)\b/i.test(raw)) return null
 
-  const hourOnly = raw.match(/\bat\s+(\d{1,2})\b/i)
+  const hourOnly = raw.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\b/i)
   if (hourOnly) {
     const hour = parseInt(hourOnly[1], 10)
     // Only 7-11 are truly ambiguous (could be AM or PM)
     // 1-6 default to PM, 12 defaults to PM — not ambiguous
-    if (hour >= 7 && hour <= 11) return { label: `${hour}:00`, hour, minute: 0 }
+    const minute = Number(hourOnly[2] || 0)
+    if (hour >= 7 && hour <= 11 && minute <= 59) return { label: `${hour}:${String(minute).padStart(2, '0')}`, hour, minute }
     return null  // smart default applies, not ambiguous
   }
 
@@ -393,7 +394,6 @@ function parseTodayReminder(text: string): ParsedReminder {
   if (!time) return null
   const nowIst = istNowParts()
   const when = istWallTimeToUtcDate(nowIst.year, nowIst.month, nowIst.day, time.hour, time.minute)
-  if (when.getTime() <= Date.now()) return null
   return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text.replace(/\btoday\b/gi, '')) }
 }
 
@@ -575,11 +575,11 @@ function parseAbsoluteDateReminder(text: string): ParsedReminder {
   const time = (timeMatch && parseTimePart(timeMatch[0])) || { hour: 9, minute: 0 }
 
   const nowIst = istNowParts()
-  let year = yearStr ? parseInt(yearStr, 10) : nowIst.year
-  if (!yearStr) {
-    const candidate = istWallTimeToUtcDate(year, month, day, time.hour, time.minute)
-    if (candidate.getTime() <= Date.now()) year += 1 // date already passed -> next year
-  }
+  const year = yearStr ? parseInt(yearStr, 10) : nowIst.year
+  const calendarDay = new Date(Date.UTC(year, month - 1, day))
+  if(calendarDay.getUTCMonth()!==month-1||calendarDay.getUTCDate()!==day)return null
+  const weekday=text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)?.[1]?.toLowerCase()
+  if(weekday&&WEEKDAYS[calendarDay.getUTCDay()]!==weekday)return null
 
   const when = istWallTimeToUtcDate(year, month, day, time.hour, time.minute)
   if (isNaN(when.getTime())) return null
@@ -590,7 +590,42 @@ function parseAbsoluteDateReminder(text: string): ParsedReminder {
 }
 
 function parseReminderBase(text: string): ParsedReminder {
-  return parseDailyRecurring(text) || parseEveryNRecurring(text) || parseRelativeReminder(text) || parseTomorrowReminder(text) || parseTodayReminder(text) || parseSpecificWeekdayReminder(text) || parseWeekdayRecurring(text) || parseHourlyWindowRecurring(text) || parseAbsoluteDateReminder(text) || parseSimpleAtTime(text) || null
+  const recurring=parseDailyRecurring(text)||parseEveryNRecurring(text)||parseWeekdayRecurring(text)||parseHourlyWindowRecurring(text)
+  if(recurring)return recurring
+  // A named date or "today" owns its interpretation even when invalid/past.
+  // Never fall through to the next weekday, tomorrow, or next year.
+  if(hasNamedReminderDate(text))return parseAbsoluteDateReminder(text)
+  if(/\byesterday\b/i.test(text))return null
+  if(/\btoday\b/i.test(text))return parseTodayReminder(text)
+  return parseRelativeReminder(text)||parseTomorrowReminder(text)||parseSpecificWeekdayReminder(text)||parseAbsoluteDateReminder(text)||parseSimpleAtTime(text)||null
+}
+
+function hasNamedReminderDate(text:string){
+  return /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\b(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2}\b/i.test(text)
+}
+
+function normalizeReminderDate(text: string) {
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December']
+  const named = (raw:string, year:string, month:string, day:string) => {
+    const m=Number(month), d=Number(day), y=Number(year)<100?Number(year)+2000:Number(year)
+    return m>=1&&m<=12&&d>=1&&d<=31?`${d} ${months[m-1]} ${y}`:raw
+  }
+  return text.replace(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g,(raw,y,m,d)=>named(raw,y,m,d))
+    .replace(/\b(\d{1,2})[/.](\d{1,2})[/.](\d{2,4})\b/g,(raw,d,m,y)=>named(raw,y,m,d))
+}
+
+export function reminderTimingProblem(text:string):string|null {
+  if(/\b(?:every|daily|weekly|hourly|monthly|each)\b/i.test(text))return null
+  text=normalizeReminderDate(text)
+  if(/\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.]\d{1,2}[/.]\d{2,4})\b/.test(text))return 'Please confirm a valid date and time. Nothing has been saved.'
+  if(/\byesterday\b/i.test(text))return 'That date has already passed. Please give me a future date and time. Nothing has been saved.'
+  if(!hasNamedReminderDate(text)&&!/\btoday\b/i.test(text))return null
+  const lead=reminderLeadTime(text)
+  const parsed=parseReminderBase(`remind me ${lead?text.replace(lead[0],''):text}`)
+  if(!parsed)return hasNamedReminderDate(text)?'Please confirm a valid date and time, including a matching weekday if provided. Nothing has been saved.':null
+  const offset=lead?Number(lead[1])*(/^(hour|hr)/i.test(lead[2])?3600000:60000):0
+  if(Date.parse(parsed.remindAtIso)-offset<=Date.now())return 'That reminder time has already passed. I haven’t moved it to another day. Please give me a future date and time. Nothing has been saved.'
+  return null
 }
 
 export function reminderLeadTime(text: string) {
@@ -599,7 +634,9 @@ export function reminderLeadTime(text: string) {
 }
 
 export function parseReminderIntent(text: string): ParsedReminder {
+  text=normalizeReminderDate(text)
   if (isTimeFirstReminder(text)) text = `remind me at ${text.trim().replace(/\breminder[.!]*\s*$/i, '').trim()}`
+  if(reminderTimingProblem(text))return null
   const lead = reminderLeadTime(text)
   if (!lead) return parseReminderBase(text)
 

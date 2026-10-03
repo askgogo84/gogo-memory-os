@@ -28,9 +28,13 @@ export async function tryGetConnectionStatus(params:{actor:AgentActor;text:strin
     .maybeSingle()
   if(error)throw new Error(`connection_status_read_failed:${error.message}`)
   if(!data)return null
+  const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
+    .select('gmail_enabled').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
+  if(consentError)throw new Error('connection_status_consent_failed')
   const lines:string[]=[]
   if(data.gmail_connected){
     lines.push(`📧 Gmail / Workspace: connected${data.gmail_email?` as *${clean(data.gmail_email,160)}*`:''}`)
+    lines.push(`Gmail reading: ${consent?.gmail_enabled===false?'off in your saved privacy preference':'enabled; connecting alone does not start an inbox watch'}`)
     lines.push(`✉️ Gmail Send: ${data.gmail_send_connected?'enabled (approval-gated)':'not enabled'}`)
   }else lines.push('📧 Gmail / Workspace: not connected')
   if(data.google_calendar_connected){

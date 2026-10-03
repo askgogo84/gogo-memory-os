@@ -1,5 +1,5 @@
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
-import { parseReminderIntent, buildReminderConfirmation, getAmbiguousReminderTime, buildAmPmClarificationReply } from './reminders'
+import { parseReminderIntent, buildReminderConfirmation, getAmbiguousReminderTime, buildAmPmClarificationReply, reminderTimingProblem } from './reminders'
 import { pickRecurringDuplicate } from '@/lib/bot/reminder-dedup'
 import { formatReminderWhen } from '@/lib/services/reminder-series'
 
@@ -166,6 +166,8 @@ export async function saveNaturalReminder(params: {
   const normalized = normalizeNaturalReminderSave(params.text)
   if (!normalized) return null
   if (normalized === REMINDER_READ_SENTINEL) return await showReminderReadQuery(params.telegramId, params.text)
+  const timingProblem=reminderTimingProblem(normalized)
+  if(timingProblem)return timingProblem
 
   const compound = parseListReminderCompound(params.text)
   let compoundListReply = ''

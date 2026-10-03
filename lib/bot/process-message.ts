@@ -16,10 +16,10 @@ import { searchWeb } from '@/lib/web-search'
 import { answerLiveFlightStatus } from '@/lib/bot/handlers/flight-status'
 import { buildSportsReplyWithState } from './handlers/sports'
 import { getLatestFollowupState, saveFollowupState, isFreshFollowupState } from './handlers/followup-state'
-import { resolvePendingReminder, resolvePendingCalendar, looksLikeNewCommand } from './pending-followup'
+import { resolvePendingReminder, resolvePendingCalendar, looksLikeNewCommand, pendingReminderTimingProblem } from './pending-followup'
 import { styleReplyByIntent } from './handlers/response-style'
-import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent, reminderLeadTime } from './handlers/reminders'
-import { buildAmPmReminderSetReply, buildReminderFromAmPmChoice, isAmPmChoice } from './handlers/reminder-ampm-followup'
+import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent, reminderLeadTime, reminderTimingProblem } from './handlers/reminders'
+import { buildAmPmReminderSetReply, buildReminderFromAmPmChoice, isAmPmChoice, amPmReminderTimingProblem } from './handlers/reminder-ampm-followup'
 import { editLatestReminder } from './handlers/edit-reminder'
 import { buildMorningBriefing } from './handlers/morning-briefing'
 import { setBriefingTime } from './handlers/briefing-settings'
@@ -392,6 +392,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
+  const timingProblem=intent.type==='set_reminder'?reminderTimingProblem(incomingText):null
+  if(timingProblem){
+    await saveConversation(resolvedUser.telegramId,'assistant',timingProblem)
+    return {text:formatOutgoingText(params.channel,timingProblem),resolvedUser}
+  }
   if(/^\s*(?:compare grocery prices for\s|(?:show|check)\s+(?:my|the)\s+(?:food|grocery) comparison(?: status)?[.!]?\s*$)/i.test(incomingText)||intent.type==='food_comparison'||/\b[1-9]\d{5}\b/.test(incomingText)||/^(?:stop|cancel) (?:the )?food comparison/i.test(incomingText)){
     const food=await tryFoodComparison({telegramId:resolvedUser.telegramId,text:incomingText,surface:params.channel})
     if(food){
@@ -527,6 +532,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       }
     } else if (pick === 'reminder') {
       const ctx = pendingReminder.payload || {}
+      const timingProblem=pendingReminderTimingProblem(ctx,incomingText)
+      if(timingProblem){
+        await saveConversation(resolvedUser.telegramId,'assistant',timingProblem)
+        return {text:formatOutgoingText(params.channel,timingProblem),resolvedUser}
+      }
       const parsed = resolvePendingReminder(ctx, incomingText)
       if (parsed) {
         // No task was ever captured (the "Sure! When should I remind you?" branch): a bare
@@ -593,6 +603,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (isAmPmChoice(incomingText)) {
     const latestAmPm = await getLatestFollowupState(resolvedUser.telegramId, 'reminder_ampm')
     if (latestAmPm?.payload?.originalText && isFreshFollowupState(latestAmPm)) {
+      const timingProblem = amPmReminderTimingProblem(latestAmPm.payload.originalText, incomingText)
+      if (timingProblem) {
+        await saveConversation(resolvedUser.telegramId, 'assistant', timingProblem)
+        return { text: formatOutgoingText(params.channel, timingProblem), resolvedUser }
+      }
       const parsed = buildReminderFromAmPmChoice(latestAmPm.payload.originalText, incomingText)
       if (parsed) {
         await createReminder(

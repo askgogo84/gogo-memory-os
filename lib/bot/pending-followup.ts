@@ -1,4 +1,4 @@
-import { parseReminderIntent } from './handlers/reminders'
+import { parseReminderIntent, reminderTimingProblem } from './handlers/reminders'
 import { detectIntent } from './detect-intent'
 
 // Shared logic for completing a "what time?" clarification. Kept pure (no I/O) so the routing
@@ -16,11 +16,22 @@ function resolve(taskPhrase: string, answer: string) {
   return parseReminderIntent(`${base}${raw}`.trim()) || parseReminderIntent(`${base}at ${raw}`.trim())
 }
 
-export function resolvePendingReminder(ctx: PendingReminderCtx, answer: string) {
+function pendingReminderText(ctx:PendingReminderCtx,answerRaw:string){
+  const answer=normalizeAnswerDate(answerRaw)
+  const replacesDate=answerCarriesDate(answer)
+  const dateText=replacesDate?'':(ctx.dateText||'').trim()
+  const dayClause=!replacesDate&&ctx.day?`on the ${ctx.day}th of every month`:''
+  return {answer,scheduleContext:[ctx.task||'',dateText,dayClause].filter(Boolean).join(' ')}
+}
+
+export function pendingReminderTimingProblem(ctx:PendingReminderCtx,answer:string){
+  const p=pendingReminderText(ctx,answer)
+  return reminderTimingProblem(`remind me ${p.scheduleContext} ${p.answer}`)
+}
+
+export function resolvePendingReminder(ctx: PendingReminderCtx, answerRaw: string) {
   const task = (ctx.task || '').trim()
-  const dateText = (ctx.dateText || '').trim()
-  const dayClause = ctx.day ? `on the ${ctx.day}th of every month` : ''
-  const scheduleContext = [task, dateText, dayClause].filter(Boolean).join(' ')
+  const {scheduleContext,answer}=pendingReminderText(ctx,answerRaw)
   const parsed = resolve(scheduleContext, answer)
   if (!parsed) return null
 
@@ -43,7 +54,7 @@ function normalizeAnswerDate(answer: string): string {
     .replace(/\b(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})\b/g, (m, d, mo, y) => { let Y = Number(y); if (Y < 100) Y += 2000; const mi = Number(mo), dd = Number(d); return mi >= 1 && mi <= 12 && dd >= 1 && dd <= 31 ? `${dd} ${MONTH_LABELS[mi - 1]} ${Y}` : m })
 }
 function answerCarriesDate(answer: string): boolean {
-  return /\b(today|tonight|tomorrow|tmrw|tmr|day after tomorrow|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/i.test(answer)
+  return /\b(yesterday|today|tonight|tomorrow|tmrw|tmr|day after tomorrow|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/i.test(answer)
     || /\bin\s+\d+\s+(?:day|days)\b/i.test(answer)
     || /\b\d{4}-\d{1,2}-\d{1,2}\b/.test(answer)
     || /\b\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4}\b/.test(answer)

@@ -7,6 +7,12 @@ import { hasExplicitReminderTiming, naturalReminderPendingContext, naturalRemind
 import { isReservedSaveLastActionDestination } from '../lib/bot/handlers/save-last-context-routing.ts'
 import { parseSplitIntent } from '../lib/splitwise/split-parser.ts'
 
+// Keep this future-date conversation independent of the machine's current date.
+const RealDate = Date
+const fixedNow = RealDate.parse('2026-09-20T08:00:00Z')
+class FixedDate extends RealDate { constructor(value?: any) { super(value === undefined ? fixedNow : value) } static now() { return fixedNow } }
+globalThis.Date = FixedDate as DateConstructor
+
 // Exact screenshot flow: date first, clock time second. It must never become a note.
 const reminderText='Save this as reminder I travel to US on 27th September'
 const normalized=normalizeNaturalReminderSave(reminderText)
@@ -121,4 +127,5 @@ assert.match(natural,/pickRecurringDuplicate/,'recurring dedupe must include tim
 assert.match(natural,/\.eq\('message', parsed\.message\)/,'recurring dedupe must include reminder identity')
 assert.match(natural,/is_recurring\.is\.null,is_recurring\.eq\.false/,'one-time dedupe must never overwrite a recurring series')
 
+globalThis.Date = RealDate
 console.log('✅ Generic-user conversational reminder/checklist + WhatsApp precedence regressions passed')

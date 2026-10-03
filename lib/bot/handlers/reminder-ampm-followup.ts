@@ -1,4 +1,4 @@
-import { buildReminderConfirmation, getAmbiguousReminderTime, parseReminderIntent } from './reminders'
+import { buildReminderConfirmation, getAmbiguousReminderTime, parseReminderIntent, reminderTimingProblem } from './reminders'
 
 function choiceParts(text:string){
   const raw=String(text||'').toLowerCase().trim().replace(/a\.m\.?/g,'am').replace(/p\.m\.?/g,'pm')
@@ -15,7 +15,7 @@ export function isAmPmChoice(text: string) {
   return Boolean(choiceParts(text))
 }
 
-export function buildReminderFromAmPmChoice(originalText: string, choiceText: string) {
+function resolvedAmPmText(originalText: string, choiceText: string) {
   const ambiguous = getAmbiguousReminderTime(originalText)
   if (!ambiguous) return null
   const choice=choiceParts(choiceText)
@@ -27,12 +27,18 @@ export function buildReminderFromAmPmChoice(originalText: string, choiceText: st
   if(choice.hour!==null&&(choice.hour!==ambiguous.hour||choice.minute!==ambiguous.minute))return null
 
   const fullTime = `${ambiguous.label} ${choice.suffix}`
-  let resolvedText = originalText
-  const compact = originalText.match(/\b\d{3,4}\b/)
-  if (compact) resolvedText = originalText.replace(compact[0], fullTime)
-  else resolvedText = originalText.replace(/\bat\s+\d{1,2}(?::\d{2})?\b/i, `at ${fullTime}`)
+  // Replace the clock we asked about, never a year elsewhere in the request.
+  return originalText.replace(/\bat\s+\d{1,2}(?::\d{2})?\b/i, `at ${fullTime}`)
+}
 
-  return parseReminderIntent(resolvedText)
+export function amPmReminderTimingProblem(originalText: string, choiceText: string) {
+  const resolved = resolvedAmPmText(originalText, choiceText)
+  return resolved ? reminderTimingProblem(resolved) : null
+}
+
+export function buildReminderFromAmPmChoice(originalText: string, choiceText: string) {
+  const resolved = resolvedAmPmText(originalText, choiceText)
+  return resolved ? parseReminderIntent(resolved) : null
 }
 
 export function buildAmPmReminderSetReply(parsed: NonNullable<ReturnType<typeof parseReminderIntent>>) {

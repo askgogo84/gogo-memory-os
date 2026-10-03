@@ -18,9 +18,12 @@ function ok(label: string, cond: boolean) {
   console.log(`  ${cond ? '✓' : '✗'}  ${label}`)
 }
 
-// Answers the clarifying prompt itself advertises. Each must resolve to a valid FUTURE
-// instant. (We assert future, not a specific day: "8pm today" run after 8pm rolls to the
-// next occurrence via the "at" fallback — that's correct, not a failure.)
+const RealDate=Date
+let fixedNow=RealDate.parse('2026-10-03T08:00:00Z')
+class FixedDate extends RealDate {constructor(value?:any){super(value===undefined?fixedNow:value)}static now(){return fixedNow}}
+globalThis.Date=FixedDate as DateConstructor
+// Future answers are fixed to a daytime clock. A passed explicit "today" must
+// be clarified, never silently converted to tomorrow.
 const ANSWERS = ['8pm today', 'in 2 hours', 'every Monday 10 AM']
 const future = (iso?: string) => !!iso && !isNaN(Date.parse(iso)) && Date.parse(iso) > Date.now() - 60_000
 
@@ -64,4 +67,9 @@ ok('fresh record is honored', isFreshFollowupState({ created_at: now }) === true
 ok('payload.created_at is read too', isFreshFollowupState({ payload: { created_at: elevenMinAgo } }) === false)
 
 console.log(`\n${fails === 0 ? '✅ all cases passed' : `❌ ${fails} case(s) failed`}\n`)
+fixedNow=RealDate.parse('2026-10-03T16:00:00Z')
+ok('past today answer is not moved to tomorrow',resolvePendingReminder({task:'call'},'8pm today')===null)
+ok('new tomorrow answer overrides the old today context',resolvePendingReminder({task:'call',dateText:'today'},'tomorrow at 8pm')?.remindAtIso==='2026-10-04T14:30:00.000Z')
+ok('ISO date answer preserves the exact date',resolvePendingReminder({task:'call',dateText:'today'},'2026-10-05 at 8pm')?.remindAtIso==='2026-10-05T14:30:00.000Z')
+globalThis.Date=RealDate
 process.exit(fails === 0 ? 0 : 1)

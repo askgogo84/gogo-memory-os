@@ -135,6 +135,7 @@ async function tryWorkspaceRead(actor:AgentActor,text:string):Promise<string|nul
     }
   } catch(err:any) {
     const code=String(err?.message||'')
+    if(code==='workspace_email_reading_disabled')return 'Gmail is connected, but reading is disabled in your saved privacy preference. I did not read your mail. Reconnecting Google will not change that preference.'
     if(['workspace_not_connected','workspace_reconnect_required','workspace_scope_required'].includes(code))return workspaceConnectionReply(actor)
     console.error('AGENT_WORKSPACE_READ_FAILED:',code.slice(0,120))
     return 'I could not read that Google Workspace context just now. I did not guess or fall back to another account.'
