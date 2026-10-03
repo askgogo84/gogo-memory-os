@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { browserFailureSummary } from '../lib/agent/browser-failure-notice'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
@@ -26,6 +27,7 @@ let browserResult:any={status:'blocked',url:'https://blinkit.com/',title:'Sign i
 let permissionAllowed=true
 const browserParams:any[]=[]
 const command=load('lib/agent/browser-command.ts',{
+  './browser-failure-notice':{browserFailureSummary},
   'node:crypto':{},'@/lib/supabase-admin':{supabaseAdmin:db},'./typed-object-context':{rememberTypedObjects:async()=>{}},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},'./policy':{evaluateAgentExecutionPolicy:()=>({allowed:permissionAllowed,reason:'disabled'})},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},'./secure-computer':{runSecureBrowser:async(p:any)=>{assert.equal(p.mode,'read');assert.equal(p.keepAlive,true);assert.equal(p.userId,'user-42');assert.ok(p.sessionTaskId);browserParams.push(p);assert.match(p.objective,/Do not add, remove or change cart/);browserCalls++;return structuredClone(browserResult)}},

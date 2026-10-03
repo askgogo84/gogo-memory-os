@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { browserFailureSummary } from './browser-failure-notice'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp, sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
 import { retiredRunReason, isRelevantOpenLoop } from './task-lifecycle'
@@ -86,6 +87,27 @@ async function fetchPulseIdeas(telegramId:string){
   return rows
 }
 
+// Notification grouping only: never merge/delete tasks. Keep different goals,
+// parent comparisons and failure explanations separate, even on the same site.
+function browserBlocker(run:any){
+  const meta=run.metadata_json||{}
+  if(run.status!=='failed'||meta.mode!=='read'||meta.plan_type!=='secure_browser')return null
+  const summary=browserFailureSummary(run.error)
+  const objective=clean(meta.objective,1800).toLowerCase()
+  const identity=objective?[String(meta.commerce_parent_id||''),String(meta.url||''),objective]:[String(run.id)]
+  return {key:`browser_blocker:${fingerprint([...identity,summary])}`,summary}
+}
+
+async function recentBrowserNotices(telegramId:string){
+  // Cover the entire 48h candidate horizon, not just the 3h send cooldown.
+  const {data,error}=await supabaseAdmin.from('agent_activity').select('metadata_json')
+    .eq('telegram_id',telegramId).eq('event_type','autonomy_pulse_sent')
+    .gte('created_at',new Date(Date.now()-48*3600_000).toISOString())
+    .order('created_at',{ascending:false}).limit(100)
+  if(error)throw new Error('autonomy_pulse_history_read_failed')
+  return new Set<string>((data||[]).flatMap((row:any)=>Array.isArray(row.metadata_json?.item_keys)?row.metadata_json.item_keys:[]))
+}
+
 async function buildPulse(telegramId:string,timezone:string):Promise<{items:PulseItem[];fingerprint:string}>{
   const nowIso=new Date().toISOString()
   const future72=new Date(Date.now()+72*3600_000).toISOString()
@@ -99,6 +121,12 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
   ])
   const approvals=approvalRes.data||[]
   const runs=runsRes.data||[]
+  const seenBrowserNotices=runs.some(browserBlocker)?await recentBrowserNotices(telegramId):new Set<string>()
+  // Recognize previously sent run-ID keys during rollout without rewriting history.
+  for(const run of runs){
+    const blocker=browserBlocker(run)
+    if(blocker&&seenBrowserNotices.has(`run:${run.id}:${run.status}`))seenBrowserNotices.add(blocker.key)
+  }
   const events=eventsRes.data||[]
   const openLoops=openLoopsRes.data||[]
   const items:PulseItem[]=[]
@@ -153,6 +181,12 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     const ageHours=(Date.now()-Date.parse(String(r.updated_at||0)))/3600_000
     if(String(r.status)==='failed'&&ageHours>6)continue
     if(String(r.status)==='paused'&&ageHours>24)continue
+    const blocker=browserBlocker(r)
+    if(blocker){
+      if(seenBrowserNotices.has(blocker.key))continue
+      items.push({key:blocker.key,score:86,line:`*${clean(r.title,150)}*: ${blocker.summary}\nTask details: https://app.askgogo.in/dashboard/activity/${encodeURIComponent(String(r.id))}`,kind:'browser_blocker'})
+      continue
+    }
     const score=String(r.status)==='outcome_unknown'?92:String(r.status)==='failed'?86:80
     const label=String(r.status)==='outcome_unknown'?'needs verification':String(r.status)==='failed'?'hit a blocker':'is paused'
     items.push({key:`run:${r.id}:${r.status}`,score,line:`🧠 *${clean(r.title,150)}* ${label}. ${clean(r.summary,190)}`,kind:'run'})

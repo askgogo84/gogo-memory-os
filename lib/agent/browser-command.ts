@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { browserFailureSummary } from './browser-failure-notice'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rememberTypedObjects } from './typed-object-context'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
@@ -436,16 +437,17 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}
     }
     const message=String(err?.message||'secure_browser_failed');const at=new Date().toISOString()
+    const failureSummary=params.mode==='read'?browserFailureSummary(message):'Gogo could not complete the secure browser session.'
     await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),completed_at:at}).eq('id',params.stepId)).catch(()=>{})
-    await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Gogo could not complete the secure browser session.',error:safe(message,500),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
+    await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:failureSummary,error:safe(message,500),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
     await activity(tg,params.runId,'run_failed','Secure browser session failed.',{error:safe(message,250)})
     if(message.includes('browser_live_session_expired')){
-      const summary='The live browser page expired or was replaced by another task. Open this comparison and choose your account or delivery location again. No cart or order was changed by this read.'
+      const summary=params.mode==='read'?failureSummary:'The live browser page expired or was replaced by another task. Open this comparison and choose your account or delivery location again. No cart or order was changed by this read.'
       await supabaseAdmin.from('agent_runs').update({summary}).eq('id',params.runId).eq('telegram_id',String(tg))
       return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:summary,handledBy:'secure-browser' as const}
     }
-    if(message==='browser_read_deadline')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:'The browser read reached its time limit before I could verify a result. This task is not complete.',handledBy:'secure-browser' as const}
-    if(message==='browser_objective_unverified'||message==='browser_planning_failed')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:'I could not verify the information you requested from the provider page. This task is not complete; I have no verified result to report.',handledBy:'secure-browser' as const}
+    if(message==='browser_read_deadline')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:failureSummary,handledBy:'secure-browser' as const}
+    if(message==='browser_objective_unverified'||message==='browser_planning_failed')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:params.mode==='read'?failureSummary:'I could not verify the information you requested from the provider page. This task is not complete; I have no verified result to report.',handledBy:'secure-browser' as const}
     throw err
   }
 }
