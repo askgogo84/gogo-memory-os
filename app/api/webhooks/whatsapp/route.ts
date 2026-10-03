@@ -1,4 +1,5 @@
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
+import { parseWebWatchCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { completeReminderOccurrence } from '@/lib/bot/handlers/reminder-completion'
@@ -1117,6 +1118,7 @@ _"${originalText}"_
 
     // Watcher commands create/read persistent state; never downgrade them to one-shot search.
     const isDeterministicWatcherCommand =
+      Boolean(parseWebWatchCommand(text)) ||
       /^(?:watch|monitor|track)\b/i.test(text.trim()) ||
       /^(?:show|list)\s+(?:my\s+)?(?:active\s+)?(?:watchers?|watches|monitors?)\b/i.test(text.trim()) ||
       /^(?:stop|cancel|remove|disable)\b.*\b(?:watcher|watch|monitor)\b/i.test(text.trim())
