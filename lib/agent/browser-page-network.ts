@@ -24,6 +24,9 @@ const FLIPKART_PAGE_DEPENDENCIES = ['static-assets-web.flixcart.com','rukminim2.
 export function browserPageAllowlist(url:string):Record<string,string[]>{
   const host=new URL(url).hostname.toLowerCase()
   const hosts=[host,`*.${host}`]
+  // 3 Oct live cloud page lacked the flight widget. The public DOM loads its
+  // booking/remoteEntry.js from this exact sibling host, not *.www.goindigo.in.
+  if(host==='www.goindigo.in'||host==='goindigo.in')hosts.push('app-prod-skyplus6e.goindigo.in')
   if(host==='www.amazon.in'||host==='amazon.in')hosts.push(...AMAZON_PAGE_DEPENDENCIES)
   if(host==='www.flipkart.com'||host==='flipkart.com')hosts.push(...FLIPKART_PAGE_DEPENDENCIES)
   if(host==='www.swiggy.com'||host==='swiggy.com')hosts.push(...SWIGGY_PAGE_DEPENDENCIES)

@@ -87,6 +87,9 @@ for(const [site,resources] of [
   'https://m.media-amazon.com/images/I/11mVszy8FIL.js?AUIClients/AmazonRushAssetLoader',
   'https://images-na.ssl-images-amazon.com/images/I/215h87l68bL.js',
  ]],
+ ['https://www.goindigo.in/',[
+  'https://app-prod-skyplus6e.goindigo.in/booking/remoteEntry.js',
+ ]],
  ['https://www.flipkart.com/',[
   'https://static-assets-web.flixcart.com/batman-returns/batman-returns/p/de025efa02a5f190c3b98c1fb29aed1b/DesktopComponents.css',
   'https://rukminim2.flixcart.com/fk-p-flap/52/44/image/d2ecfddf891a3922.png?q=80',
@@ -107,4 +110,4 @@ for(const [site,resources] of [
  await route({request:()=>({url:()=> 'https://unrelated.example/collect'}),continue:()=>{unrelatedAllowed=true},abort:()=>{unrelatedAllowed=false}})
  assert.equal(unrelatedAllowed,false,'provider resources do not authorize arbitrary egress')
 }
-console.log('PASS: observed Amazon/Flipkart resources load through the actual scoped broker')
+console.log('PASS: observed Amazon/Flipkart/IndiGo resources load through the actual scoped broker')
