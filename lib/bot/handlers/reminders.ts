@@ -525,6 +525,7 @@ function stripDateTimeTokens(text: string, dateTok: string, timeTok?: string): s
 function parseAbsoluteDateReminder(text: string): ParsedReminder {
   // Only fire on explicit reminder/scheduling intent
   if (!/\b(remind|reminder|alert|notify|ping|wake|alarm|schedule)\b/i.test(text)) return null
+  if (getAmbiguousReminderTime(text)) return null
 
   const monthAlt =
     'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?' +
@@ -619,6 +620,7 @@ export function reminderTimingProblem(text:string):string|null {
   text=normalizeReminderDate(text)
   if(/\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.]\d{1,2}[/.]\d{2,4})\b/.test(text))return 'Please confirm a valid date and time. Nothing has been saved.'
   if(/\byesterday\b/i.test(text))return 'That date has already passed. Please give me a future date and time. Nothing has been saved.'
+  if(getAmbiguousReminderTime(text))return null
   if(!hasNamedReminderDate(text)&&!/\btoday\b/i.test(text))return null
   const lead=reminderLeadTime(text)
   const parsed=parseReminderBase(`remind me ${lead?text.replace(lead[0],''):text}`)

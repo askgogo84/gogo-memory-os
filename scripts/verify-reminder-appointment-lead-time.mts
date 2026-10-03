@@ -163,6 +163,9 @@ try {
   const future=reminders.parseReminderIntent('Remind me Monday, 12 Oct 2026 at 4pm to call')
   assert.equal(future?.remindAtIso,'2026-10-12T10:30:00.000Z','explicit date wins over next Monday')
   assert.equal(reminders.parseReminderIntent('Remind me every Saturday at 4pm to call')?.kind,'recurring')
+  const ambiguousDate='remind me on 3 October 2026 at 8 to call Mom'
+  assert.equal(reminders.reminderTimingProblem(ambiguousDate),null,'must clarify AM/PM before judging whether the clock is past')
+  assert.equal(reminders.parseReminderIntent(ambiguousDate),null,'ambiguous named-date clock must not become default 9am')
 
   followup={kind:'pending_reminder',payload:{task:'call Mom',dateText:'today'}}
   assert.match((await run('4 pm')).text,/passed/)
