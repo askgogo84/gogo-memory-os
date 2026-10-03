@@ -59,3 +59,28 @@ assert.match(svc,/contextualizeSavedItemReply/,'saved links should pass through 
 assert.match(svc,/kind:'link'/,'Link Vault must identify saved-link association kind')
 assert.match(svc,/platform:r\.platform,title:r\.title/,'link association must use canonical saved metadata')
 console.log('T14 saved-link contextual association wiring verified')
+
+
+// Live 3 Oct: a saved meeting link must not capture "Show my watches".
+const vm = await import('node:vm')
+const ts = await import('typescript')
+const { selectedTypedObject } = await import('../lib/agent/typed-object-context')
+const context={domain:'links',items:[{id:'saved-meet',title:'Meeting'}],selectedId:'saved-meet',at:new Date().toISOString()}
+let linkReads=0
+const linkDb={from(){linkReads++;const q:any={select(){return q},eq(){return q},maybeSingle:async()=>({data:{id:'saved-meet',title:'Meeting',canonical_url:'https://meet.google.com/ghm-npbd-uar'},error:null})};return q}}
+const exported:any={}
+const mocks:any={
+  '@/lib/supabase-admin':{supabaseAdmin:linkDb},
+  '@/lib/agent/typed-object-context':{latestTypedContext:async()=>context,rememberTypedObjects:async()=>{},selectedTypedObject},
+}
+vm.runInNewContext(ts.transpileModule(svc,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:exported,module:{exports:exported},require:(name:string)=>mocks[name]||{},URL,console})
+const fixtureActor={legacyTelegramId:101}
+for(const text of ['Show my watches','Show my reminders','Open my calendar','Delete my watches','Remove my reminder','Show that flight']){
+  assert.equal(await exported.handleLinkVaultFollowup(fixtureActor,text),null,`saved link must not capture ${text}`)
+}
+assert.equal(linkReads,0,'unrelated requests must not read or mutate the selected saved link')
+for(const text of ['Open it','Show that link','Read the first link','Select the first one']){
+  const result=await exported.handleLinkVaultFollowup(fixtureActor,text)
+  assert.ok(result.text.includes('https://meet.google.com/ghm-npbd-uar'),`explicit link reference remains supported: ${text}`)
+}
+console.log('PASS: saved meeting link context cannot capture unrelated watch, reminder or calendar commands')

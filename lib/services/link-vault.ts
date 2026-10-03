@@ -225,6 +225,13 @@ export function formatLinkVaultResults(rows:LinkVaultRow[],text:string){
   return'🔗 *Saved links* ('+rows.length+' matches)\n\n'+lines.join('\n\n')+'\n\n_You can say “open the second one”, “tag this AI”, or “delete that” after selecting an exact result._'
 }
 export async function handleLinkVaultFollowup(actor:AgentActor,text:string){
+  // A remembered selection resolves a reference, not an unrelated new command.
+  const target=String.raw`(?:(?:it|this|that)(?:\s+(?:one|link|reel|repo|repository))?|(?:the\s+)?selected(?:\s+(?:one|link|reel|repo|repository))?|(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+(?:one|link|reel|repo|repository))`
+  const explicitReference=new RegExp(String.raw`^\s*(?:open|show(?:\s+me)?|read|select|delete|remove|forget)\s+${target}[.!?]*\s*$`,'i')
+  const sendReference=new RegExp(String.raw`^\s*send\s+${target}(?:\s+to\s+.+)?[.!?]*\s*$`,'i')
+  const tagReference=/^\s*tag\s+(?:this|that|it|the\s+selected(?:\s+link)?)\s+#?[a-z0-9_-]+[.!?]*\s*$/i
+  if(!explicitReference.test(text)&&!sendReference.test(text)&&!tagReference.test(text))return null
+
   const context=await latestTypedContext(actor.legacyTelegramId)
   if(context?.domain!=='links')return null
   const selected=selectedTypedObject(context,text);if(!selected)return null
