@@ -274,7 +274,7 @@ const finalGateComputer=load('secure-computer.ts',{
   './planner-provider':{completeAgentPlanPrompt:async()=>'{"approvedOperation":"booking","actions":[{"kind":"submit","selector":"#confirm"}]}'},
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{finalStops++},
     runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(browserReads++===0
-      ? {url:'https://provider.example',title:'Reservation',text:'Review reservation',forms:[]}
+      ? {url:'https://provider.example',title:'Reservation',text:'Review reservation',forms:[],controls:[{selector:'#confirm',tag:'button',role:'button',label:'Confirm'}]}
       : finalChallenge)})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
@@ -1079,7 +1079,7 @@ assert.equal(finalMonitorReservationReleased,1)
 // 3 Oct production run41e59541: multiple slow action waves hit Vercel's300s
 // timeout before the caller could persist failure; the database stayed RUNNING.
 let deadlineNow=0,deadlineWaves=0,deadlineStops=0,deadlineUnlocks=0
-const deadlinePage={url:'https://provider.example',title:'Flight search',text:'Choose departure airport',forms:[],actions:[{kind:'click',status:'done'}]}
+const deadlinePage={url:'https://provider.example',title:'Flight search',text:'Choose departure airport',forms:[],controls:[{selector:'#from',tag:'div',role:'button',label:'From'}],actions:[{kind:'click',status:'done'}]}
 const deadlineComputer=load('secure-computer.ts',{
   '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{deadlineStops++},runCommand:async(c:any)=>{
     const payload=JSON.parse(Buffer.from(c.args.at(-1),'base64').toString())
