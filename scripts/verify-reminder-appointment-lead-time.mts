@@ -25,6 +25,7 @@ class FixedDate extends RealDate {
 globalThis.Date = FixedDate as DateConstructor
 
 const written: Record<string, any>[] = []
+const conversations: Record<string, any>[] = []
 let modelCalls = 0
 let failInsert = false
 let followup: {kind:string,payload:any}|null = null
@@ -47,6 +48,7 @@ const db = {
       },
       then(resolve: any, reject: any) {
         assert.equal(table, 'conversations', 'unexpected database side effect')
+        conversations.push({...payload})
         return Promise.resolve({ data: null, error: null }).then(resolve, reject)
       },
     }
@@ -95,7 +97,13 @@ runInNewContext(compiled, {
 })
 
 async function run(text: string) {
-  return exports.processIncomingMessage({ channel: 'whatsapp', externalUserId: 'test-owner', text })
+  const before=conversations.length
+  const reply=await exports.processIncomingMessage({ channel: 'whatsapp', externalUserId: 'test-owner', text })
+  const saved=conversations.slice(before)
+  assert.equal(saved.filter(row=>row.role==='user'&&row.content===text).length,1,'retain the exact user request, including rejected dates and follow-ups')
+  assert.equal(saved.filter(row=>row.role==='assistant').length,1,'retain one matching reply')
+  assert.ok(saved.every(row=>row.telegram_id===42),'conversation must belong to the request owner')
+  return reply
 }
 
 try {
