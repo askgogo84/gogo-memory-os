@@ -394,6 +394,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   console.log('PIM:intent', intent)
   const timingProblem=intent.type==='set_reminder'?reminderTimingProblem(incomingText):null
   if(timingProblem){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
     await saveConversation(resolvedUser.telegramId,'assistant',timingProblem)
     return {text:formatOutgoingText(params.channel,timingProblem),resolvedUser}
   }
@@ -534,6 +535,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       const ctx = pendingReminder.payload || {}
       const timingProblem=pendingReminderTimingProblem(ctx,incomingText)
       if(timingProblem){
+        await saveConversation(resolvedUser.telegramId,'user',incomingText)
         await saveConversation(resolvedUser.telegramId,'assistant',timingProblem)
         return {text:formatOutgoingText(params.channel,timingProblem),resolvedUser}
       }
@@ -605,6 +607,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (latestAmPm?.payload?.originalText && isFreshFollowupState(latestAmPm)) {
       const timingProblem = amPmReminderTimingProblem(latestAmPm.payload.originalText, incomingText)
       if (timingProblem) {
+        await saveConversation(resolvedUser.telegramId, 'user', incomingText)
         await saveConversation(resolvedUser.telegramId, 'assistant', timingProblem)
         return { text: formatOutgoingText(params.channel, timingProblem), resolvedUser }
       }
