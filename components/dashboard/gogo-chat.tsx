@@ -40,7 +40,7 @@ function Avatar(){
 function Message({message}:{message:ChatMessage}){
   if(message.role==='user'){
     return <div className="flex justify-end">
-      <div className="max-w-[78%] rounded-[16px] bg-[#1c1c1c] px-4 py-3 text-[14px] leading-6 text-[#f2efea]">
+      <div className="max-w-[78%] whitespace-pre-wrap break-words rounded-[16px] bg-[#1c1c1c] px-4 py-3 text-[14px] leading-6 text-[#f2efea]">
         {linkify(message.content)}
         {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
       </div>
@@ -48,7 +48,7 @@ function Message({message}:{message:ChatMessage}){
   }
   return <div className="flex items-start gap-3">
     <Avatar/>
-    <div className="max-w-[78%] pt-1 text-[14px] leading-6 text-[#f2efea]">
+    <div className="min-w-0 max-w-[78%] whitespace-pre-wrap break-words pt-1 text-[14px] leading-6 text-[#f2efea]">
       {linkify(message.content)}
       {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
     </div>

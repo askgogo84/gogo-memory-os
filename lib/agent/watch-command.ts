@@ -55,6 +55,25 @@ export function isWatcherStatusQuery(text:string) {
     || /^(?:what|when|how|is|are|do)\b[^.!?]*\bmy\b[^.!?]*\b(?:watches|watch|watchers?|monitors?)\b/.test(raw)
 }
 
+function watchStatusSubject(text:string){
+  const raw=clean(text,2000)
+  return raw.match(/\bwhat\s+are\s+my\s+(.+?)\s+(?:criteria|conditions|requirements)\b/i)?.[1]
+    || raw.match(/\b(?:what|which)\s+(.+?)\s+(?:am\s+i|are\s+you)\s+(?:watching|monitoring|tracking)\b/i)?.[1]
+    || raw.match(/\bmy\s+(.+?)\s+(?:watch|monitor)\b/i)?.[1]
+    || ''
+}
+
+function watchSubjectTokens(value:string){
+  return clean(value).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+    .map(word=>word.length>4?word.replace(/s$/,''):word)
+    .filter(word=>!['the','my','for','all','active','current','saved','watch','watche','watcher','monitor','background'].includes(word))
+}
+
+function watchCheckTime(value:unknown){
+  const time=Date.parse(String(value||''))
+  return Number.isFinite(time)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(time))+' IST':null
+}
+
 export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;text:string}) {
   if(!isWatcherStatusQuery(params.text))return null
   const tg=String(params.actor.legacyTelegramId)
@@ -65,6 +84,36 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     .order('created_at',{ascending:false})
     .limit(12)
   if(error)throw new Error(`watcher_status_read_failed:${error.message}`)
+  const subject=watchStatusSubject(params.text)
+  const tokens=watchSubjectTokens(subject)
+  if(tokens.length && data?.length){
+    const matches=(value:string)=>tokens.some(token=>watchSubjectTokens(value).includes(token))
+    let selected=data.filter((row:any)=>matches([row.condition_json?.title,row.condition_json?.query,row.condition_json?.originalRequest,row.condition_json?.variant].filter(Boolean).join(' ')))
+    if(!selected.length){
+      // Resolve category follow-ups only from the recent, explicitly named watch
+      // conversation. Re-read current owner rows; never infer a product category.
+      const context=await latestTypedContext(params.actor.legacyTelegramId)
+      const ids=context?.domain==='watchers'?context.items.filter(item=>matches(item.title)).map(item=>item.id):[]
+      selected=data.filter((row:any)=>ids.includes(String(row.id)))
+    }
+    if(!selected.length)return {
+      runId:'watcher-status-clarify',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+      text:`I have saved watches, but couldn’t match “${clean(subject,100)}” to one. Say “show my watches” to see them, or give me the product name.`,handledBy:'watcher-status',
+    }
+    await rememberTypedObjects(params.actor.legacyTelegramId,'watchers',selected.map((row:any)=>({id:String(row.id),title:`${clean(subject,80)} — ${String(row.condition_json?.title||row.type)}`})))
+    const blocks=selected.map((row:any,index:number)=>{
+      const c=row.condition_json||{}
+      const criteria=clean(c.query||c.originalRequest||c.productUrl||c.url||c.title||row.type,700)
+      const delivery=row.last_state_json?.alertDelivery?.state
+      const alert=delivery==='outcome_unknown'?'\nAlert delivery is unconfirmed.':delivery==='failed'?'\nThe last alert could not be delivered.':row.last_state_json?.pendingAlert?'\nAn alert is waiting to be retried.':''
+      return `${selected.length>1?`${index+1}. `:''}${criteria}\nLast checked: ${watchCheckTime(row.last_checked_at)||'not yet recorded'}\nNext check: ${watchCheckTime(row.next_check_at)||'not scheduled'} (about every ${Math.max(1,Number(row.cadence_minutes||60))} min)${alert}`
+    })
+    return {
+      runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
+      text:`${selected.length===1?'I’m watching this for you:':`You have ${selected.length} matching watches active:`}\n\n${blocks.join('\n\n')}`,
+      handledBy:'watcher-status',verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:selected.map((row:any)=>String(row.id)).join(',')},
+    }
+  }
   await rememberTypedObjects(params.actor.legacyTelegramId,'watchers',(data||[]).map((row:any)=>({id:String(row.id),title:String(row.condition_json?.title||row.type||'Watch')})))
   if(!data?.length) {
     return {
