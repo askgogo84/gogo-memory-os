@@ -559,44 +559,79 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
         return condition.matchTerms!.some(term=>hay.includes(String(term).toLowerCase()))
       })
     : fresh
-  const actions=scoped.map(inboxActionStep).filter(Boolean).slice(0,5) as Array<{subject:string;from:string;step:string}>
-  const currentIds=messages.map((m:any)=>String(m?.id||'')).filter(Boolean)
-  const nextSeen=Array.from(new Set([...currentIds,...seen])).slice(0,120)
+  const candidates=scoped.map((m:any)=>{
+    const action=inboxActionStep(m)
+    return action ? {...action,id:String(m.id),threadId:String(m.threadId||''),date:String(m.date||'')} : null
+  }).filter(Boolean)
+  const conditionKey=JSON.stringify(watcher.condition_json)
+  const saved=watcher.last_state_json?.pendingInboxAlert
+  const retained=saved?.conditionKey===conditionKey&&Array.isArray(saved?.actions)&&saved.actions.length ? saved : null
+  const actions=retained?.actions||candidates.slice(0,5)
+  const actionIds=new Set(actions.map((a:any)=>String(a.id)))
+  // A bounded digest must leave overflow candidates eligible for the next check.
+  const deferredIds=new Set(candidates.filter((a:any)=>!actionIds.has(a.id)).map((a:any)=>a.id))
+  const consumedIds=messages.map((m:any)=>String(m?.id||'')).filter((id:string)=>id&&!deferredIds.has(id))
+  const nextSeen=Array.from(new Set([...actions.map((a:any)=>a.id),...consumedIds,...seen])).slice(0,120)
+  let deliveryState=watcher.last_state_json?.inboxAlertDelivery||null
+
+  const checkpoint=async(state:Record<string,unknown>,minutes:number)=>{
+    const {data,error}=await supabaseAdmin.from('agent_watchers').update({
+      last_state_json:state,last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime()+minutes*60_000).toISOString(),updated_at:now.toISOString(),
+    }).eq('id',watcher.id).eq('telegram_id',telegramId).eq('active',true)
+      .eq('condition_json',conditionKey).select('id').maybeSingle()
+    if(error)throw new Error('inbox_alert_checkpoint_failed')
+    return Boolean(data?.id)
+  }
 
   if(actions.length) {
-    const lines=actions.map((a,i)=>`${i+1}. *${a.subject}* — ${a.from}\n   Next: ${a.step}`).join('\n\n')
+    const key=retained?.key||'inbox/'+watcher.id+'/'+createHash('sha256')
+      .update(JSON.stringify([watcher.condition_json,actions.map((a:any)=>a.id).sort()])).digest('hex')
+    const pending=retained||{key,due:now.toISOString(),conditionKey,actions}
+    const lines=actions.map((a:any,i:number)=>`${i+1}. *${a.subject}* — ${a.from}\n   Next: ${a.step}`).join('\n\n')
     const message=`📬 *Your inbox needs attention*\n\n${lines}\n\nI only read this mail. I did not reply, send, delete, archive, approve, pay, or change anything.`
-    await sendWhatsAppIfWanted(telegramId,condition.delivery,message)
-      .catch(err=>console.error('AGENT_EMAIL_TRIAGE_WHATSAPP_FAILED:',err?.message||err))
-    await supabaseAdmin.from('agent_ideas').insert({
-      telegram_id:telegramId,
+    const pendingState={...(watcher.last_state_json||{}),pendingInboxAlert:pending}
+    // Persist before handing off to the receipt-backed ledger. A fresh worker can
+    // retry the same digest even if the source leaves the latest inbox window.
+    if(!await checkpoint(pendingState,15))return {triggered:false,failed:false}
+    let delivery={state:'app_only',accepted:true,providerId:null as string|null}
+    if(condition.delivery!=='app') {
+      delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:pending.due,
+        message,condition:watcher.condition_json})
+      if(['suppressed','cancelled'].includes(delivery.state))return {triggered:false,failed:false}
+    }
+    deliveryState={state:delivery.state,providerId:delivery.providerId,key}
+    if(!await checkpoint({...pendingState,inboxAlertDelivery:deliveryState},15))return {triggered:false,failed:false}
+    // Retry definite rejections with the same key; never blindly resend an
+    // uncertain/terminal attempt. Surface that uncertainty in the app instead.
+    if(!delivery.accepted&&!['outcome_unknown','failed'].includes(delivery.state))return {triggered:false,failed:true}
+    const hex=createHash('sha256').update(key).digest('hex')
+    const ideaId=`${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`
+    const {error:ideaError}=await supabaseAdmin.from('agent_ideas').upsert({
+      id:ideaId,telegram_id:telegramId,
       title:`Inbox: ${actions.length} action item${actions.length===1?'':'s'}`,
-      reason:'New inbox messages appear to require your attention.',
-      expected_value:actions.map(a=>`${a.subject}: ${a.step}`).join(' | ').slice(0,1200),
-      value_score:0.88,
-      action_label:'Review inbox',
-      source_refs:[{type:'watcher',id:String(watcher.id)}],
+      reason:delivery.accepted?'New inbox messages appear to require your attention.'
+        :'New inbox messages need attention. WhatsApp delivery is not confirmed; review them here.',
+      expected_value:actions.map((a:any)=>`${a.subject}: ${a.step}`).join(' | ').slice(0,1200),
+      value_score:0.88,action_label:'Review inbox',
+      source_refs:[{type:'watcher',id:String(watcher.id)},
+        ...actions.map((a:any)=>({type:'gmail_message',id:a.id,threadId:a.threadId,date:a.date,observedAt:pending.due})),
+        ...(condition.delivery==='app'?[]:[{type:'notification_delivery',key}])],
       status:'new',
-    }).then(({error})=>{if(error)console.error('AGENT_EMAIL_TRIAGE_IDEA_FAILED:',error.message)})
+    },{onConflict:'id',ignoreDuplicates:true})
+    if(ideaError)throw new Error('inbox_alert_idea_write_failed')
     await writeActivity(telegramId,`Inbox triage surfaced ${actions.length} action item(s).`,{
-      watcher_id:watcher.id,type:'email_triage',action_count:actions.length,
+      watcher_id:watcher.id,type:'email_triage',action_count:actions.length,delivery_key:key,delivery_state:delivery.state,
     })
   }
 
-  await supabaseAdmin.from('agent_watchers').update({
-    cadence_minutes:condition.cadenceMinutes,
-    last_checked_at:now.toISOString(),
-    next_check_at:new Date(now.getTime()+condition.cadenceMinutes*60_000).toISOString(),
-    last_state_json:{
-      ...(watcher.last_state_json||{}),
-      seenMessageIds:nextSeen,
-      lastActionCount:actions.length,
-      lastActionAt:actions.length?now.toISOString():watcher.last_state_json?.lastActionAt||null,
-      workspaceErrorNotified:false,
-      lastError:null,
-    },
-    updated_at:now.toISOString(),
-  }).eq('id',watcher.id)
+  const finalState={
+    ...(watcher.last_state_json||{}),pendingInboxAlert:null,inboxAlertDelivery:deliveryState,
+    seenMessageIds:nextSeen,lastActionCount:actions.length,
+    lastActionAt:actions.length?now.toISOString():watcher.last_state_json?.lastActionAt||null,
+    workspaceErrorNotified:false,lastError:null,
+  }
+  if(!await checkpoint(finalState,deferredIds.size?15:condition.cadenceMinutes))return {triggered:false,failed:false}
   return {triggered:actions.length>0,failed:false}
 }
 
