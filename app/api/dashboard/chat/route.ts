@@ -1,5 +1,5 @@
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
-import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
+import { tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(typedReply)
     }
     // Save an explicit persistent search before a one-shot planner can claim it.
-    const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'web', text })
+    const webWatch = await tryUpdateWebWatchFromCommand({actor,text}) || await tryCreateWebWatchFromCommand({ actor, surface:'web', text })
     if (webWatch) {
       await saveConversation(user.telegram_id, text, webWatch.text)
       return NextResponse.json(webWatch)

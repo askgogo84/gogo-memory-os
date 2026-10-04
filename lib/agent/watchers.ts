@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
+import { deliverWatchAlert } from './watch-alert-delivery'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { checkCostAllowance, COST_ESTIMATES_PAISE, getCostBudget, recordCostEvent } from '@/lib/services/cost-guard'
 import { adaptiveWatcherCadence } from './watch-cost-policy'
@@ -301,13 +302,16 @@ async function createDeadlineIdea(telegramId: string, condition: DeadlineWatcher
   if (error) console.error('AGENT_WATCHER_IDEA_FAILED:', error.message)
 }
 
-async function createWebIdea(telegramId: string, condition: WebSearchWatcherCondition, watcherId: string, result: WebSearchResult | null, matchedKeywords: string[], relevance = 0.8) {
+async function createWebIdea(telegramId: string, condition: WebSearchWatcherCondition, watcherId: string, result: WebSearchResult | null, matchedKeywords: string[], relevance = 0.8, deliveryKey?: string) {
   const detail = matchedKeywords.length
     ? `A new relevant result matched: ${matchedKeywords.join(', ')}.`
     : 'A new result materially matched this watch.'
   const sourceRefs:any[] = [{ type:'watcher', id:watcherId }]
   if (result?.url) sourceRefs.push({ type:'url', url:result.url })
-  const { error } = await supabaseAdmin.from('agent_ideas').insert({
+  const hex = createHash('sha256').update(deliveryKey || `${watcherId}:${result?.url}`).digest('hex')
+  const id = `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`
+  const { error } = await supabaseAdmin.from('agent_ideas').upsert({
+    id,
     telegram_id: telegramId,
     title: condition.title,
     reason: detail,
@@ -316,8 +320,8 @@ async function createWebIdea(telegramId: string, condition: WebSearchWatcherCond
     action_label: 'Review update',
     source_refs: sourceRefs,
     status: 'new',
-  })
-  if (error) console.error('AGENT_WATCHER_IDEA_FAILED:', error.message)
+  }, { onConflict: 'id', ignoreDuplicates: true })
+  if (error) throw new Error('watch_alert_idea_write_failed')
 }
 
 async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDelivery, message: string) {
@@ -961,8 +965,12 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     return { triggered:false, failed:false }
   }
 
-  const results = await searchWebResults(condition.query)
-  await recordCostEvent({
+  // Retry the saved result even if the search index changes after a failed send.
+  // Comparing the full stored condition prevents a correction from reviving old criteria.
+  const pending = watcher.last_state_json?.pendingAlert
+  const retained = pending?.conditionKey === JSON.stringify(watcher.condition_json) ? pending : null
+  const results = retained ? [retained.result] : await searchWebResults(condition.query)
+  if (!retained) await recordCostEvent({
     telegramId,
     category:'web_search_basic',
     metadata:{ source:'background_gogo', watcher_id:String(watcher.id) },
@@ -1063,7 +1071,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     lastAlertAt: watcher.last_state_json?.lastAlertAt || watcher.last_state_json?.lastTriggeredAt || null,
     alertTimes: Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : [],
   })
-  const material = (!isBaseline || condition.notifyOnFirstMatch===true) && Boolean(candidate) && alertGate.allowed
+  const material = Boolean(retained && candidate) || ((!isBaseline || condition.notifyOnFirstMatch===true) && Boolean(candidate) && alertGate.allowed)
   const suppressedReason = !isBaseline && !candidate && sawUnverified ? 'unverified_context'
     : !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
   const quietChecks = material || isBaseline ? 0 : currentQuiet + 1
@@ -1077,18 +1085,46 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     now,
   })
 
+  let notificationAccepted = condition.delivery === 'app'
   if (material && candidate) {
-    await createWebIdea(telegramId, condition, String(watcher.id), candidate.result, candidate.quality.matchedKeywords, candidate.quality.relevance)
-    await sendWhatsAppIfWanted(
-      telegramId,
-      condition.delivery,
-      `${candidate.result.title}\n\nSearch result for ${condition.title.replace(/^Watch:\s*/i,'')}. Price, stock and offer eligibility have not been verified on the provider page.\n\n${candidate.result.url}\n\nI’ll keep checking and only alert on a new relevant result.`,
-    ).catch(err => console.error('AGENT_WATCHER_WHATSAPP_FAILED:', err?.message || err))
+    const candidateKey = retained?.key || 'watch/' + watcher.id + '/' + createHash('sha256').update(JSON.stringify([watcher.condition_json, candidate.result, watcher.last_state_json?.lastTriggeredAt || null])).digest('hex')
+    if (condition.delivery !== 'app') {
+      const pendingAlert = retained || {
+        key: candidateKey,
+        due: now.toISOString(), result: candidate.result,
+        conditionKey: JSON.stringify(watcher.condition_json),
+      }
+      const persistAlert = async (state: string, providerId: string | null = null) => {
+        const { data: checkpoint, error } = await supabaseAdmin.from('agent_watchers').update({
+          last_state_json: { ...(watcher.last_state_json || {}), pendingAlert, alertDelivery: { state, providerId, key: pendingAlert.key } },
+          last_checked_at: now.toISOString(), next_check_at: new Date(now.getTime() + 15 * 60_000).toISOString(), updated_at: now.toISOString(),
+        }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
+          .eq('condition_json', JSON.stringify(watcher.condition_json)).select('id').maybeSingle()
+        if (error || !checkpoint?.id) throw new Error('watch_alert_checkpoint_failed')
+      }
+      await persistAlert('pending')
+      const delivery = await deliverWatchAlert({
+        watcherId: String(watcher.id), owner: telegramId, key: pendingAlert.key, due: pendingAlert.due,
+        condition: watcher.condition_json,
+        message: candidate.result.title + '\n\nSearch result for ' + condition.title.replace(/^Watch:\s*/i, '') +
+          '. Price, stock and offer eligibility have not been verified on the provider page.\n\n' + candidate.result.url +
+          '\n\nI’ll keep checking and only alert on a new relevant result.',
+      })
+      if (['suppressed', 'cancelled'].includes(delivery.state)) return { triggered: false, failed: false }
+      await persistAlert(delivery.state, delivery.providerId)
+      // A definite rejection can retry; an uncertain or terminal send must not
+      // be resent blindly or block subsequent searches. Surface it in the app.
+      if (!delivery.accepted && !['outcome_unknown', 'failed', 'suppressed', 'cancelled'].includes(delivery.state)) return { triggered: false, failed: true }
+      notificationAccepted = delivery.accepted
+      watcher.last_state_json = { ...(watcher.last_state_json || {}), alertDelivery: { state: delivery.state, providerId: delivery.providerId, key: pendingAlert.key } }
+    }
+    await createWebIdea(telegramId, condition, String(watcher.id), candidate.result, candidate.quality.matchedKeywords, candidate.quality.relevance, candidateKey)
     await writeActivity(telegramId, `Background Gogo found a high-signal web update: ${condition.title}`, {
       watcher_id:watcher.id,
       type:'web_search',
       source_url:candidate.result.url,
       evidence_level:'search_result',
+      notification_state:watcher.last_state_json?.alertDelivery?.state || 'app',
       relevance:candidate.quality.relevance,
       matched_keywords:candidate.quality.matchedKeywords,
     })
@@ -1113,11 +1149,11 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   const seenEventKeys = material && candidate?.quality.eventKey
     ? recordEventKey(priorSeenEventKeys, candidate.quality.eventKey, now)
     : priorSeenEventKeys
-  const alertTimes = material
+  const alertTimes = material && notificationAccepted
     ? [...alertGate.recentAlertTimes, now.toISOString()]
     : alertGate.recentAlertTimes
 
-  await supabaseAdmin.from('agent_watchers').update({
+  const { error: stateError } = await supabaseAdmin.from('agent_watchers').update({
     cadence_minutes:cadenceMinutes,
     condition_json:{ ...condition, cadenceMinutes },
     last_checked_at:now.toISOString(),
@@ -1125,6 +1161,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     last_state_json:{
       ...(watcher.last_state_json || {}),
       fingerprint,
+      pendingAlert: null,
       lastResult:material && candidate ? {
         title:candidate.result.title, url:candidate.result.url,
         snippet:candidate.result.snippet, observedAt:now.toISOString(), evidenceLevel:'search_result',
@@ -1136,7 +1173,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       quietChecks,
       baselineAt:watcher.last_state_json?.baselineAt || now.toISOString(),
       lastTriggeredAt:material ? now.toISOString() : watcher.last_state_json?.lastTriggeredAt || null,
-      lastAlertAt:material ? now.toISOString() : watcher.last_state_json?.lastAlertAt || null,
+      lastAlertAt:material && notificationAccepted ? now.toISOString() : watcher.last_state_json?.lastAlertAt || null,
       alertTimes,
       suppressedReason,
       suppressedAt:suppressedReason ? now.toISOString() : null,
@@ -1145,7 +1182,9 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       costGuard:'ok',
     },
     updated_at:now.toISOString(),
-  }).eq('id', watcher.id)
+  }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
+    .eq('condition_json', JSON.stringify(watcher.condition_json))
+  if (stateError) throw new Error('watch_alert_state_write_failed')
   return { triggered:material, failed:false }
 }
 
