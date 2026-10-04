@@ -1,3 +1,4 @@
+import { sanitizeBrowserReadDiagnostics } from '../lib/agent/browser-read-diagnostics'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
@@ -133,6 +134,7 @@ let plannerReply:string|null=null
 const exports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport {planActions}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
     if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>redactLinkFixture?redactBrowserSensitiveText(s):s}
     if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
     if(id==='./browser-auth-gate')return {detectHumanAuthGate}
@@ -208,7 +210,13 @@ const queryLinkPage={...linkedZomato,links:[{text:'Check it out',href:privateObs
 assert.equal((await exports.planActions('Find burgers',queryLinkPage,'read','USER_INSTRUCTION')).actions[0].url,privateObservedLink,'execution resolves the original observed href, not its redacted model copy')
 assert.doesNotMatch(captured,/observed-fixture|secret-fixture/,'query values never reach the planner')
 redactLinkFixture=false
+const diagnosticEvents:any[]=[]
+plannerReply=JSON.stringify({actions:[{kind:'click',ref:'r1'}]})
+assert.equal((await exports.planActions('Find burgers',linkedZomato,'read','USER_INSTRUCTION',[],(e:any)=>diagnosticEvents.push(e))).actions.length,0)
+assert.ok(diagnosticEvents.some(e=>e.reason==='unsupported_reference_action'))
 plannerReply=JSON.stringify({actions:[{kind:'click',ref:'r999',selector:'#restaurants'}]})
+await exports.planActions('Find burgers',linkedZomato,'read','USER_INSTRUCTION',[],(e:any)=>diagnosticEvents.push(e))
+assert.ok(diagnosticEvents.some(e=>e.reason==='invalid_reference'&&e.proposed===1&&e.accepted===0))
 assert.equal((await exports.planActions('Find burgers',linkedZomato,'read','USER_INSTRUCTION')).actions.length,0,'invalid reference fails closed')
 // Live Zomato search Enter dismissed its unlabelled, pointer-style P options.
 const suggestedSearch={...searchPage,controls:[{selector:'#q',tag:'input',label:'Search for a dish',searchMode:'suggestions',value:'vegetarian burger'},{selector:'#dish',tag:'p',label:'Veg Burger - Delivery'}]}
@@ -242,6 +250,7 @@ const airportExports:any={},airportWaves:any[]=[]
 const suggestionText='Bengaluru BLR � Kempegowda International Airport'
 runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:airportExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
   if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
   if(id==='./browser-evidence')return browserEvidence
@@ -274,6 +283,7 @@ assert.equal(airportResult.summary,suggestionText)
  const detail={url:'https://fixture.example/product/sony',text:'Sony WH-1000XM5 headphones. Fixture price INR 1.',title:'Sony',controls:[],forms:[],links:[],actions:[]}
  runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports:flow,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
    if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
    if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
    if(id==='./browser-evidence')return browserEvidence
@@ -335,6 +345,7 @@ let assessmentEvidence=['Sony WH-1000XM5 headphones Black','Price, product page 
 const resultExports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:resultExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
   if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
   if(id==='./browser-evidence')return browserEvidence
@@ -363,7 +374,7 @@ assert.match(assessmentInstruction,/exact continuous substring/)
 assert.match(assessmentInstruction,/Do not prefix excerpts/)
 const previousAssessments=assessmentCalls
 assessmentEvidence=['Model: Sony WH-1000XM5','Listed Price: ₹28,926']
-await assert.rejects(()=>resultExports.runSecureBrowser({userId:'fixture-user',url:'https://fixture.example/',objective:'Find Sony WH-1000XM5 headphones and listed price',mode:'read'}),/browser_objective_unverified/,'invented labels must still fail grounding')
+await assert.rejects(()=>resultExports.runSecureBrowser({userId:'fixture-user',url:'https://fixture.example/',objective:'Find Sony WH-1000XM5 headphones and listed price',mode:'read'}),(error:any)=>{assert.match(error.message,/browser_objective_unverified/);assert.ok(error.browserReadDiagnostics.some((d:any)=>d.reason==='unverified_quotes'));return true},'invented labels must still fail grounding')
 assert.ok(assessmentCalls>previousAssessments)
 console.log('PASS: search controls, location handoff, verified result convergence and fail-closed evidence')
 // Flight widgets need separate observations to open/fill/select two airports and dates.
@@ -377,6 +388,7 @@ async function multiStepFixture(scenario:'flight'|'blocked-control'|'never-compl
     actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:steps===1&&scenario==='blocked-control'?'skipped':'done',failure:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
   runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
     exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
       if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
       if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
       if(id==='./browser-evidence')return browserEvidence
@@ -410,6 +422,7 @@ console.log('PASS: multi-step flight research can complete, blocked commit stays
 const sourceChecks:any={}
 runInNewContext(ts.transpileModule(source+'\nexport {browserSourceUrl, productLinkNeedsDetail, assessReadOutcome}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:sourceChecks,process:{env:{}},URL,console,require:(id:string)=>{
+    if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s.replace(/\?[^ ]+/, '?[redacted]')}
   if(id==='./browser-evidence')return browserEvidence
   if(id==='./planner-provider')return {completeAgentPlanPrompt:async()=>JSON.stringify({complete:true,evidence:[resultText]})}
@@ -441,6 +454,7 @@ const reuseDb={from:(table:string)=>{
 const reuseCommand:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/browser-command.ts','utf8')+'\nexport {findActiveBrowserRead}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:reuseCommand,process:{env:{}},URL,Date,console,require:(id:string)=>{
+    if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='@/lib/supabase-admin')return {supabaseAdmin:reuseDb}
   if(id==='@/lib/bot/memory-redaction')return {redactSecretShapedText:(s:string)=>s}
   if(id==='./sentinel')return {evaluateAgentSentinel:()=>({allowed:true})}
@@ -465,3 +479,12 @@ assert.equal(await reuseCommand.findActiveBrowserRead('42',repeatedCommand),null
 runningReads[0].status='running';runningReads[0].started_at='2026-01-01T00:00:00Z'
 assert.equal(await reuseCommand.findActiveBrowserRead('42',repeatedCommand),null,'stale work must not remain working forever')
 console.log('PASS: overlapping read reuses the original owner task, without another browser run')
+
+// Persist only bounded diagnostic metadata, never page content or model output.
+assert.deepEqual(sanitizeBrowserReadDiagnostics([{phase:'plan',reason:'invalid_reference',proposed:1,accepted:0,text:'private',url:'https://private',token:'secret',pageChars:NaN,evidenceCount:-1,normalized:20001},{phase:'plan',reason:'private-secret'},null]),[{phase:'plan',reason:'invalid_reference',proposed:1,accepted:0}])
+assert.equal(sanitizeBrowserReadDiagnostics(Array.from({length:40},()=>({phase:'assessment',reason:'model_incomplete'}))).length,32)
+assert.deepEqual(sanitizeBrowserReadDiagnostics('private'),[])
+const assessmentDiagnostics:any[]=[]
+await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,url:'https://www.amazon.in/s?k=Sony'},(e:any)=>assessmentDiagnostics.push(e))
+assert.equal(assessmentDiagnostics[0].reason,'needs_product_detail')
+console.log('PASS: reason-coded read failures and secret-free bounded diagnostics')
