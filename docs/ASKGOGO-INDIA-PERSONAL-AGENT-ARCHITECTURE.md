@@ -2,6 +2,8 @@
 
 Status: launch contract for India beta (September 2026)
 
+Current owner direction and reference evidence: [AskGogo product memory](ASKGOGO_PRODUCT_MEMORY.md).
+
 ## Product contract
 
 AskGogo is one persistent personal agent, not a collection of unrelated pages.
