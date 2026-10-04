@@ -1,3 +1,4 @@
+import { sanitizeBrowserReadDiagnostics } from '../lib/agent/browser-read-diagnostics'
 import assert from 'node:assert/strict'
 import { browserFailureSummary } from '../lib/agent/browser-failure-notice'
 import {readFileSync} from 'node:fs'
@@ -21,7 +22,7 @@ const db={from(table:string){
   const q:any={select(){return q},eq(k:string,v:any){filters.push(r=>r[k]===v);return q},order(){return q},limit(){return q},insert(p:any){insert=p;return q},update(p:any){patch=p;return q},async maybeSingle(){return execute()},async single(){return execute()},then(resolve:any,reject:any){return Promise.resolve(execute()).then(resolve,reject)}}
   return q
 }}
-function load(file:string,deps:Record<string,any>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,process,Date,URL,console,require(name:string){if(name in deps)return deps[name];throw Error(name)}});return exports}
+function load(file:string,deps:Record<string,any>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,process,Date,URL,console,require(name:string){if(name==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics};if(name in deps)return deps[name];throw Error(name)}});return exports}
 const tasks=load('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers})
 let browserResult:any={status:'blocked',url:'https://blinkit.com/',title:'Sign in',summary:'Sign in on the provider page.',forms:[],actions:[],blockReason:'human_auth_required',authReason:'otp',handoffReservation:'fixture'}
 let permissionAllowed=true

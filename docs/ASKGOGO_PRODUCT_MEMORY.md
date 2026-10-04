@@ -40,3 +40,5 @@ Apply useful design principles with focused original repairs and measured compar
 5. Complete a bounded flight search with exact airports, dates and passengers; distinguish observed fare conditions from a booking. No purchase or booking is part of these tests.
 
 Latest exact deployments, failed runs and live evidence are recorded in [the working handoff](../outputs/COMMERCE_OVERNIGHT_HANDOFF.md). Read it before retries; do not repeat unchanged blocked scenarios.
+
+The [pinned Odysseus comparison](ODYSSEUS_COMPARISON_20261004.md) records implementation evidence, limits and same-journey adoption gates. Keep the existing stack until an alternative demonstrates improvement on those journeys.

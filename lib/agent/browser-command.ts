@@ -1,3 +1,4 @@
+import { sanitizeBrowserReadDiagnostics } from './browser-read-diagnostics'
 import { createHash } from 'node:crypto'
 import { browserFailureSummary } from './browser-failure-notice'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -445,7 +446,8 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     }
     const message=String(err?.message||'secure_browser_failed');const at=new Date().toISOString()
     const failureSummary=params.mode==='read'?browserFailureSummary(message):'Gogo could not complete the secure browser session.'
-    await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),completed_at:at}).eq('id',params.stepId)).catch(()=>{})
+    const readDiagnostics=params.mode==='read'?sanitizeBrowserReadDiagnostics(err?.browserReadDiagnostics):[]
+    await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),...(readDiagnostics.length?{output_json:{diagnostics:readDiagnostics}}:{}),completed_at:at}).eq('id',params.stepId)).catch(()=>{})
     await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:failureSummary,error:safe(message,500),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
     await activity(tg,params.runId,'run_failed','Secure browser session failed.',{error:safe(message,250)})
     if(message.includes('browser_live_session_expired')){

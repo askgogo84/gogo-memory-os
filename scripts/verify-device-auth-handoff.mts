@@ -1,3 +1,4 @@
+import { sanitizeBrowserReadDiagnostics } from '../lib/agent/browser-read-diagnostics'
 import assert from 'node:assert/strict'
 import { browserFailureSummary } from '../lib/agent/browser-failure-notice'
 import { draftObjectiveCovered } from '../lib/agent/draft-coverage'
@@ -18,7 +19,7 @@ assert.equal(isTitleOnlyObjective('Open https://example.com in the browser and r
 function load(file: string, mocks: Record<string, any>, extra='', globals:Record<string,any>={}) {
   // Legacy action fixtures focus on receipts/forms. The real load observer is
   // exercised against challenge, HTTP and navigation failures in lifetime tests.
-  mocks={'./browser-failure-notice':{browserFailureSummary},'./managed-browser':{managedBrowserEnabled:()=>false,ensureManagedBrowser:async()=>null},'./browser-page-readiness':{BROWSER_PAGE_READINESS:'function observeBrowserPage(){return {read:async()=>({state:"ready",httpStatus:200})}}'},...mocks}
+  mocks={'./browser-read-diagnostics':{sanitizeBrowserReadDiagnostics},'./browser-failure-notice':{browserFailureSummary},'./managed-browser':{managedBrowserEnabled:()=>false,ensureManagedBrowser:async()=>null},'./browser-page-readiness':{BROWSER_PAGE_READINESS:'function observeBrowserPage(){return {read:async()=>({state:"ready",httpStatus:200})}}'},...mocks}
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
@@ -1153,9 +1154,11 @@ assert(mutations.some(m=>m.table==='agent_runs'&&m.update?.status==='failed'&&m.
 assert.equal(mutations.filter(m=>m.table==='agent_runs'&&m.update?.error==='browser_read_deadline').at(-1)?.update.summary,timedOut.text,'dashboard and chat share the saved failure explanation')
 for(const error of ['browser_objective_unverified','browser_planning_failed','browser_live_session_expired']){
   metadata={objective:'Read provider information',url:'https://provider.example',mode:'read'}
-  commandExecutionFailure=new Error(error)
+  commandExecutionFailure=Object.assign(new Error(error),{browserReadDiagnostics:[{phase:'plan',reason:'invalid_reference',proposed:1,accepted:0,secret:'must-not-persist'},{phase:'plan',reason:'private-page-content'}]})
   const failed=await command.executeBrowser(params)
   assert.equal(failed.status,'failed')
+  const savedDiagnostics=mutations.filter(m=>m.table==='agent_steps'&&m.update?.status==='failed').at(-1)?.update.output_json?.diagnostics
+  assert.deepEqual(JSON.parse(JSON.stringify(savedDiagnostics)),[{phase:'plan',reason:'invalid_reference',proposed:1,accepted:0}],'actual handler saves only safe failure metadata')
   assert.equal(failed.text,browserFailureSummary(error))
   assert.equal(mutations.filter(m=>m.table==='agent_runs'&&m.update?.status==='failed').at(-1)?.update.summary,failed.text,'persist the same explanation returned to chat')
 }
