@@ -13,6 +13,7 @@ assert.deepEqual(model.parsePriceComparison('Compare grocery prices for Amul Taa
 assert.deepEqual(model.parsePriceComparison('Compare vegetarian burger delivery on Swiggy and Zomato')?.providers, ['swiggy', 'zomato'])
 assert.equal(model.parsePriceComparison('Watch Sony prices on Amazon and Flipkart every hour and compare them'), null)
 assert.equal(model.parsePriceComparison('Show my watches'), null)
+assert.equal(model.parsePriceComparison('Show the final status of my Amazon and Flipkart comparison. Do not retry anything.'), null)
 assert.equal(model.parsePriceComparison('Find Sony WH-1000XM5 on Amazon'), null)
 assert.equal(model.comparisonSource('amazon', 'https://amazon.in.evil.test/dp/B123'), null)
 assert.equal(model.comparisonSource('amazon', 'https://user:secret@amazon.in/dp/B123'), null)
@@ -82,6 +83,10 @@ assert.equal(start.status, 'queued'); assert.match(start.text, /Saved comparison
 assert.doesNotMatch(start.text, /₹|free delivery|in stock/i)
 const repeat = await service.tryPriceComparison({telegramId: 42, text: request, surface: 'whatsapp'})
 assert.equal(start.runId, repeat.runId, 'same request must retain the same in-flight task across channels')
+const savedCount = tables.agent_runs.length
+const statusReply = await service.tryPriceComparison({telegramId: 42, text: 'Show the final status of my Amazon and Flipkart comparison. Do not retry anything.', surface: 'whatsapp'})
+assert.equal(statusReply.runId, start.runId)
+assert.equal(tables.agent_runs.length, savedCount, 'status questions must not create another search')
 assert.equal(await service.readPriceComparison('43', start.runId), null, 'another owner cannot read this report')
 await assert.rejects(() => service.assertComparisonChild('43', start.runId, 'unknown'), /comparison_parent_unavailable/)
 locked = true

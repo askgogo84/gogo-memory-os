@@ -19,7 +19,13 @@ export type PriceComparison = {
   metadata_json: {request: string; subject: string; providers: ProviderObservation[]; notified?: boolean};
 }
 
+export function isPriceComparisonStatus(text: string) {
+  return /^\s*(?:show|check|what|which|tell)\b/i.test(text) && /\bcomparisons?\b/i.test(text)
+    && /\b(?:status|my|latest|saved|last|previous)\b/i.test(text)
+}
+
 export function parsePriceComparison(text: string) {
+  if (isPriceComparisonStatus(text)) return null
   const intentText = text.replace(/\b(?:do not|don't|never)\b[^.!?\n]*/gi, '')
     .replace(/\bno\s+(?:new\s+)?(?:watches|watch|monitors|monitor|reminders|reminder)\b/gi, '')
   if (!/\bcompar(?:e|ison|isons)\b/i.test(text) || /\b(?:watch|monitor|remind|remember|every|keep checking)\b/i.test(intentText)) return null

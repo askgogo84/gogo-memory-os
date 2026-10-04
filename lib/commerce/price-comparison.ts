@@ -2,7 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
-import {COMPARISON_PROVIDERS, comparisonObjective, comparisonSource, comparisonState, comparisonSummary, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, comparisonObjective, comparisonSource, comparisonState, comparisonSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 
 const TYPE = 'price_comparison'
 const SELECT = 'id,status,title,source,updated_at,metadata_json'
@@ -48,7 +48,7 @@ function reply(task: PriceComparison) {
 
 export async function tryPriceComparison(params: {telegramId: number; text: string; surface?: string}) {
   const parsed = parsePriceComparison(params.text)
-  const status = /^\s*(?:show|check)\s+(?:my|the|my latest|the latest)\s+(?:price|shopping)\s+comparison(?: status)?[.!]?\s*$/i.test(params.text)
+  const status = isPriceComparisonStatus(params.text)
   if (!parsed && !status) return null
   const owner = String(params.telegramId)
   // Serialize duplicate inbound requests across dashboard and WhatsApp.
@@ -65,6 +65,9 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
       const current = await readPriceComparison(owner, existing.id)
       if (current) return reply(current)
     }
+    // Let existing food/grocery tasks answer their own status when there is no
+    // saved multi-store comparison. Never manufacture a new task for a status read.
+    if (!parsed && !/\b(?:price|shopping)\b/i.test(params.text)) return null
     if (!parsed) return {runId: '', status: 'paused', capability: 'browser' as const, risk: 'low' as const,
       handledBy: 'price-comparison', text: 'There is no saved price comparison yet.'}
     const now = new Date().toISOString()
