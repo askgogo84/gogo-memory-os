@@ -44,6 +44,28 @@ for(const [provider,label,tag,field] of [
   else assert.match(page.controls[0].selector,/^body:nth-of-type\(1\) > (div|input|button|p):nth-of-type\(1\)$/)
   if(field)assert.equal(page.forms[0].inputs[0].selector,page.controls[0].selector)
 }
+// Live IndiGo exposes an expanded input inside its still-clickable From wrapper.
+// Offering both lets the planner repeatedly close/reopen the same dropdown.
+{
+ const root:any={tagName:'BODY',nodeType:1,children:[],parentElement:null,id:'',innerText:'From Start typing Bengaluru BLR'}
+ const wrapper:any={tagName:'DIV',nodeType:1,id:'',parentElement:root,children:[],innerText:'From Search by place/airport Bengaluru BLR',
+  getAttribute:(key:string)=>key==='role'?'button':null,matches:()=>true,getBoundingClientRect:()=>({width:300,height:100}),
+  querySelectorAll:(selector:string)=>selector==='input[role="combobox"][aria-expanded="true"]'?[input]:[]}
+ const input:any={tagName:'INPUT',nodeType:1,id:'',parentElement:wrapper,children:[],innerText:'',value:'',
+  getAttribute:(key:string)=>key==='role'?'combobox':key==='aria-expanded'?'true':key==='placeholder'?'Start typing..':null,
+  matches:()=>true,getBoundingClientRect:()=>({width:200,height:30}),querySelectorAll:()=>[]}
+ const option:any={tagName:'DIV',nodeType:1,id:'',parentElement:wrapper,children:[],innerText:'Bengaluru Kempegowda International Airport BLR',
+  getAttribute:(key:string)=>key==='role'?'combobox':key==='aria-labelledby'?'Bengaluru':null,
+  matches:()=>true,getBoundingClientRect:()=>({width:200,height:30}),querySelectorAll:()=>[]}
+ wrapper.children=[input,option];root.children=[wrapper];root.querySelectorAll=()=>[input]
+ const doc={title:'Public flight fixture',body:root,forms:[],querySelectorAll:(selector:string)=>selector==='input,textarea,select'?[input]:selector==='a[href]'?[]:selector==='input[placeholder="Start typing.."]'?[input]:selector==='div[aria-labelledby="Bengaluru"]'?[option]:[wrapper,input,option]}
+ const page=runInNewContext('(()=>{'+body+'})()',{document:doc,location:{href:'https://fixture.example/flights'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
+ assert.equal(page.controls.length,2,'expanded wrapper is not offered as a competing click target')
+ assert.ok(page.controls.some((c:any)=>c.tag==='input'),'editable field remains available')
+ assert.ok(page.controls.some((c:any)=>c.label.includes('Bengaluru')),'airport option remains available')
+ assert.equal(page.controls.find((c:any)=>c.label.includes('Bengaluru')).selector,'div[aria-labelledby="Bengaluru"]','use the observed unique option identity')
+}
+
 assert.equal(snapshot('Search','DIV',false,true).controls.length,0,'hidden controls excluded')
 assert.equal(snapshot('Search Veg Burger - Delivery','DIV',false,false,true).controls.length,0,'focus shell is not an actionable search control')
 // Observed IndiGo From wrapper has role=button and a labelled direct child.
