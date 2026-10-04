@@ -425,7 +425,7 @@ const sourceChecks:any={}
 runInNewContext(ts.transpileModule(source+'\nexport {browserSourceUrl, productLinkNeedsDetail, assessReadOutcome}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:sourceChecks,process:{env:{}},URL,console,require:(id:string)=>{
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
-  if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s.replace(/\?[^ ]+/, '?[redacted]')}
+  if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText}
   if(id==='./browser-evidence')return browserEvidence
   if(id==='./planner-provider')return {completeAgentPlanPrompt:async()=>JSON.stringify({complete:true,evidence:[resultText]})}
   return {}
@@ -441,6 +441,13 @@ assert.equal(sourceChecks.browserSourceUrl('https://user:password@provider.examp
 assert.equal(sourceChecks.browserSourceUrl('javascript:alert(1)'),null)
 assert.equal(sourceChecks.productLinkNeedsDetail(exactObjective,productUrl),false)
 assert.equal(await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,url:productUrl}),resultText.replace(/\s+/g,' ').trim())
+// Exact public pathname observed in the live cloud browser on 4 Oct; no session query captured.
+const observedProduct='https://www.amazon.in/Sony-WH-1000XM5-Wireless-Cancelling-Headphones/dp/B09XS7JWHH'
+const observedTrackedProduct=observedProduct+'/ref=sxin_26_pa_sp_search_thematic_sspa'
+assert.notEqual(redactBrowserSensitiveText(observedTrackedProduct),observedTrackedProduct,'the long tracking pathname triggers the real opaque-token redactor')
+assert.equal(sourceChecks.browserSourceUrl(observedTrackedProduct+'?tracking=fixture#fragment'),observedProduct,'strip only tracking from the observed product path before redaction')
+assert.equal(await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,url:observedTrackedProduct}),resultText.replace(/\s+/g,' ').trim(),'real redaction must not prevent assessment of the observed product page')
+assert.equal(sourceChecks.browserSourceUrl('https://provider.example/product/ref=private?token=secret'),null,'unrecognized provider URLs remain withheld')
 console.log('PASS: observed product source handoff and search-result completion boundary')
 
 // Replay the actual duplicate browser command while its first read is running.
