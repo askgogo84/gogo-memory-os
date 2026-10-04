@@ -476,8 +476,21 @@ export function inboxActionStep(message:any): {subject:string;from:string;step:s
   if(/\b(unsubscribe|newsletter|weekly digest|daily digest|sale|discount|offer|coupon|promotion|promotional)\b/i.test(text)
     && !/\b(action required|deadline|due|invoice|payment|renew|expire|response required)\b/i.test(text)) return null
 
+  // Calendar providers use these subject prefixes without saying "meeting invite".
+  // Require schedule evidence as well so social invitations and order cancellations
+  // do not become meeting alerts. This only suggests review; it never edits events.
+  const calendarSubject=/^(?:updated invitation|invitation|cancell?ed)\s*:/i.test(subject)
+  const hasCalendarDate=/\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|\b20\d{2}-\d{2}-\d{2}\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\b|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i.test(text)
+  const hasCalendarTime=/\b(?:[01]?\d|2[0-3]):[0-5]\d\b|\b(?:[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap]m\b/i.test(text)
   let step=''
-  if(/\b(action required|response required|please respond|please reply|reply required)\b/i.test(text)) step='Review the request and reply if it is valid.'
+  if(calendarSubject&&hasCalendarDate&&hasCalendarTime) {
+    step=/^cancell?ed\s*:/i.test(subject)
+      ? 'Review the cancellation against your saved meeting and reminder; nothing has been changed automatically.'
+      : /^updated invitation\s*:/i.test(subject)
+      ? 'Compare the updated date/time with your saved meeting and reminder before making changes.'
+      : 'Check the invitation date/time and existing reminders, then decide whether to accept or decline.'
+  }
+  else if(/\b(action required|response required|please respond|please reply|reply required)\b/i.test(text)) step='Review the request and reply if it is valid.'
   else if(/\b(sign|signature|approve|approval)\b/i.test(text)) step='Review the request and approve or sign only if appropriate.'
   else if(/\b(invoice|payment|amount due|due payment|past due|overdue)\b/i.test(text)) step='Check the amount and due date, then decide whether payment or follow-up is needed.'
   else if(/\b(rsvp|meeting invite|calendar invite|schedule|reschedule|appointment)\b/i.test(text)) step='Check the date/time and confirm, decline, or reschedule.'

@@ -420,3 +420,42 @@ inbox.active=false;clock+=86400000
 await freshWorker().processDueAgentWatchers()
 assert.equal(sent.length,beforeCorrection,'stopped inbox watch never resumes itself')
 console.log('PASS: corrected inbox criteria revoke retained alerts; stopped watches remain stopped')
+
+
+// Real calendar-shaped subjects commonly omit the exact words "meeting invite".
+const classifyInbox=freshWorker().inboxActionStep
+for(const [subject,snippet,expected] of [
+ ['Invitation: Project Atlas sync @ Mon Oct 5, 2026 11:30am','Join with Google Meet',/date.*time/i],
+ ['Updated invitation: Project Atlas sync','When Monday 5 October 2026 12:00pm India Standard Time',/updated.*time/i],
+ ['Canceled: Project Atlas sync @ Mon Oct 5, 2026 11:30am','',/cancel/i],
+ ['Cancelled: Project Atlas sync','When 2026-10-05 11:30',/cancel/i],
+] as const){
+ const result=classifyInbox({subject,snippet,from:'Fixture organizer'})
+ assert.ok(result,subject)
+ assert.match(result.step,expected)
+ assert.doesNotMatch(result.step,/I (?:changed|cancelled|created)|reminder set/i)
+}
+for(const [subject,snippet] of [
+ ['Invitation: our latest sale','Monday 5 October 2026 11:30am Unsubscribe'],
+ ['Invitation to connect','Build your network'],
+ ['Canceled: your order','Order cancelled, refund processing'],
+ ['Invitation: unnamed event','Details unavailable'],
+])assert.equal(classifyInbox({subject,snippet,from:'Fixture'}),null)
+console.log('PASS: calendar-shaped invitations, updates and cancellations are recognized without treating generic invites/promotions as meetings')
+
+// Same meeting thread, new provider message: an update is a new action, while
+// rereading that exact update remains deduplicated by message identity.
+inbox.active=true;inbox.condition_json={title:'Inbox action watch',delivery:'whatsapp',cadenceMinutes:60};inbox.last_state_json={};inbox.next_check_at=new Date(clock).toISOString()
+inboxMessages=[{id:'invite-first',threadId:'meeting-thread',subject:'Invitation: Atlas @ Mon Oct 5 2026 11:30am',from:'Fixture organizer'}]
+const beforeInvite=sent.length
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,beforeInvite+1)
+inboxMessages=[{id:'invite-updated',threadId:'meeting-thread',subject:'Updated invitation: Atlas @ Mon Oct 5 2026 12:00pm',from:'Fixture organizer'}]
+clock=Date.parse(inbox.next_check_at)
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,beforeInvite+2,'a corrected meeting message is not deduplicated by thread alone')
+assert.match(sent.at(-1)!,/updated date\/time/)
+clock=Date.parse(inbox.next_check_at)
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,beforeInvite+2,'the same updated message is not sent repeatedly')
+console.log('PASS: meeting invitation and corrected time traverse the actual inbox worker; exact update deduplicates')
