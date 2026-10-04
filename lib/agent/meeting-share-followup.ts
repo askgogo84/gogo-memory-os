@@ -58,7 +58,33 @@ function reminderId(tg:number,m:Meeting){
   return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-a${h.slice(17,20)}-${h.slice(20,32)}`
 }
 
-export async function tryMeetingShareFollowup(p:{actor:AgentActor;text:string;surface:'web'|'whatsapp'}){
+type MeetingShareInput={actor:AgentActor;text:string;surface:'web'|'whatsapp'}
+
+// OCR is evidence, never an instruction or consent. Only invitation fields enter
+// the offer flow; guests, dial-in details and suggested actions do not.
+export async function tryImageMeetingShareFollowup(p:{actor:AgentActor;readerText:string;caption:string}){
+  if(/\b(?:do not|don't|don’t|no)\s+(?:(?:set|offer|create)\s+)?(?:a\s+)?remind|\b(?:just|only)\s+(?:save|read|extract|transcribe)|\b(?:save|read|extract|transcribe)\b.*\bonly\b/i.test(p.caption))return null
+  const extracted=p.readerText.replace(/\*/g,'').match(/(?:^|\n)Extracted text\s*\n([\s\S]*?)(?=\n(?:Next actions|Summary|Patient|Clinic|Doctor|Medicines)\b|$)/i)?.[1]?.trim()
+  if(!extracted||!/^\s*(?:[•-]\s*)?Join with Google Meet\s*$/im.test(extracted)||!/^\s*Meeting link\s*$/im.test(extracted)||!/^\s*When\s*$/im.test(extracted))return null
+  const clarify=()=>reply('I can see a Google Meet invitation, but couldn’t reliably read its date, start/end time, time zone and one meeting link. Please confirm those details before I offer a reminder.')
+  const links=[...new Set((extracted.match(/(?:https:\/\/)?meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\b/gi)||[]).map(link=>link.replace(/^https:\/\//i,'').toLowerCase()))]
+  const when=extracted.split(/^\s*When\s*$/im)[1]?.split(/^\s*(?:Guests|View all guest info|More joining options|Description)\s*$/im)[0]?.trim()
+  if(links.length!==1||!when||!/^\s*Meeting link\s*\n\s*(?:https:\/\/)?meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}\s*$/im.test(extracted)||extracted.split(/^\s*When\s*$/im).length!==2)return clarify()
+  // Explicit year, AM/PM and a recognized time zone are required. Do not silently
+  // reinterpret an image's unknown zone using the owner's saved preference.
+  const date=when.match(/^\s*((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+\d{1,2}\s+[A-Za-z]+\s+20\d{2}\s*[·,]\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)\s*[-–—]\s*\d{1,2}(?::\d{2})?\s*(?:am|pm))\s*\n?\s*\((India Standard Time\s*[-–—]\s*Kolkata|Asia\/Kolkata|UTC)\)\s*$/i)
+  if(!date)return clarify()
+  const timezone=/^UTC$/i.test(date[2])?'UTC':'Asia/Kolkata'
+  const text=`Google Meet meeting\n${date[1].replace(/\s+/g,' ')}\nhttps://${links[0]}`
+  if(!parseSharedMeeting(text,timezone))return clarify()
+  return handleMeetingShare({actor:p.actor,text,surface:'whatsapp'},{timezone})
+}
+
+export async function tryMeetingShareFollowup(p:MeetingShareInput){
+  return handleMeetingShare(p)
+}
+
+async function handleMeetingShare(p:MeetingShareInput,image?:{timezone:string}){
   const text=p.text.trim(),tg=p.actor.legacyTelegramId
   const answer=/^(yes(?: please)?|no(?: thanks)?)[.!]*$/i.exec(text)
   // Avoid reads on unrelated turns. The current conversation owns short replies.
@@ -66,7 +92,7 @@ export async function tryMeetingShareFollowup(p:{actor:AgentActor;text:string;su
   if(!answer){
     const {data:user,error}=await supabaseAdmin.from('users').select('timezone').eq('telegram_id',tg).maybeSingle()
     if(error)throw new Error('meeting_timezone_read_failed')
-    const meeting=parseSharedMeeting(text,user?.timezone||'Asia/Kolkata')
+    const meeting=parseSharedMeeting(text,image?.timezone||user?.timezone||'Asia/Kolkata')
     if(!meeting){
       // A dated invitation must not reach generic reminder inference, which can roll
       // an old weekday into next week. A bare Meet bookmark still uses Link Vault.
@@ -77,7 +103,15 @@ export async function tryMeetingShareFollowup(p:{actor:AgentActor;text:string;su
     const timeStatus=meetingTimeStatus(meeting)
     if(timeStatus)return reply(timeStatus,'completed')
     if(Date.parse(meeting.remindAt)<=Date.now())return reply(`Saved ${meeting.title} and its Meet link. The meeting starts ${formatInTimezone(meeting.startAt,meeting.timezone)} — too soon for a 10-minute reminder.\nJoin: ${meeting.url}`,'completed')
-    const question=`${meeting.title} starts ${formatInTimezone(meeting.startAt,meeting.timezone)}. Remind you 10 minutes before, at ${formatInTimezone(meeting.remindAt,meeting.timezone)}?`
+    let question=`${meeting.title} starts ${formatInTimezone(meeting.startAt,meeting.timezone)}. Remind you 10 minutes before, at ${formatInTimezone(meeting.remindAt,meeting.timezone)}?`
+    if(image){
+      const day=(at:number)=>new Intl.DateTimeFormat('en-CA',{timeZone:meeting.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(at)
+      const tomorrow=day(Date.now()+86400000)===day(Date.parse(meeting.startAt))?'tomorrow, ':''
+      const date=new Intl.DateTimeFormat('en-GB',{timeZone:meeting.timezone,weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date(meeting.startAt))
+      const time=(at:string)=>new Intl.DateTimeFormat('en-US',{timeZone:meeting.timezone,hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(at)).toLowerCase()
+      const zone=meeting.timezone==='Asia/Kolkata'?'IST':meeting.timezone
+      question=`This meeting is ${tomorrow}${date}, ${time(meeting.startAt)}–${time(meeting.endAt)} ${zone}. Want a reminder at ${time(meeting.remindAt)}?`
+    }
     const content=JSON.stringify({type:'followup_state',kind:KIND,payload:{meeting,question,status:'pending',linkId:saved.row.id,reminderId:reminderId(tg,meeting),surface:p.surface},created_at:new Date().toISOString()})
     const {error:saveError}=await supabaseAdmin.from('memories').insert({telegram_id:tg,content})
     if(saveError)throw new Error('meeting_offer_save_failed')
