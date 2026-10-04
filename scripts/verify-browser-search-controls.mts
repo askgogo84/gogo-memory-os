@@ -344,3 +344,41 @@ assert.equal(sourceChecks.browserSourceUrl('javascript:alert(1)'),null)
 assert.equal(sourceChecks.productLinkNeedsDetail(exactObjective,productUrl),false)
 assert.equal(await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,url:productUrl}),resultText.replace(/\s+/g,' ').trim())
 console.log('PASS: observed product source handoff and search-result completion boundary')
+
+// Replay the actual duplicate browser command while its first read is running.
+// The duplicate must return the same owner-scoped task without a new execution.
+const runningReads:any[]=[]
+let duplicateExecutions=0
+const reuseDb={from:(table:string)=>{
+ assert.equal(table,'agent_runs')
+ const filters:Array<(row:any)=>boolean>=[]
+ const q:any={select:()=>q,eq:(key:string,value:any)=>{filters.push(r=>r[key]===value);return q},gte:(key:string,value:any)=>{filters.push(r=>r[key]>=value);return q},order:()=>q,limit:()=>q,maybeSingle:async()=>({data:runningReads.find(r=>filters.every(f=>f(r)))||null,error:null}),insert:()=>{throw new Error('duplicate task insert')}}
+ return q
+}}
+const reuseCommand:any={}
+runInNewContext(ts.transpileModule(readFileSync('lib/agent/browser-command.ts','utf8')+'\nexport {findActiveBrowserRead}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+ exports:reuseCommand,process:{env:{}},URL,Date,console,require:(id:string)=>{
+  if(id==='@/lib/supabase-admin')return {supabaseAdmin:reuseDb}
+  if(id==='@/lib/bot/memory-redaction')return {redactSecretShapedText:(s:string)=>s}
+  if(id==='./sentinel')return {evaluateAgentSentinel:()=>({allowed:true})}
+  if(id==='@/lib/services/reporting-directive')return {hasLeadingReportMutation:()=>false}
+  if(id==='./secure-computer')return {runSecureBrowser:async()=>{duplicateExecutions++;throw Error('duplicate browser execution')}}
+  return {}
+ }
+})
+const repeatedText='Open https://www.amazon.in/ in the browser. Find Sony WH-1000XM5 headphones. Read only. Do not sign in, add to cart or buy.'
+const repeatedCommand=reuseCommand.parseBrowserCommand(repeatedText)
+runningReads.push({id:'original-read',telegram_id:'42',type:'secure_browser',status:'running',started_at:new Date().toISOString(),'metadata_json->>mode':'read','metadata_json->>url':repeatedCommand.url,'metadata_json->>objective':repeatedCommand.objective})
+const reused=await reuseCommand.tryRunBrowserCommand({actor:{legacyTelegramId:42},surface:'web',text:repeatedText})
+assert.equal(reused.runId,'original-read')
+assert.equal(reused.status,'running')
+assert.equal(duplicateExecutions,0)
+assert.match(reused.text,/same browser task/)
+assert.equal(await reuseCommand.findActiveBrowserRead('43',repeatedCommand),null,'other owners never reuse this read')
+assert.equal(await reuseCommand.findActiveBrowserRead('42',{...repeatedCommand,objective:'different product'}),null)
+assert.equal(await reuseCommand.findActiveBrowserRead('42',{...repeatedCommand,mode:'execute'}),null,'execution approval is never deduplicated as a read')
+runningReads[0].status='completed'
+assert.equal(await reuseCommand.findActiveBrowserRead('42',repeatedCommand),null)
+runningReads[0].status='running';runningReads[0].started_at='2026-01-01T00:00:00Z'
+assert.equal(await reuseCommand.findActiveBrowserRead('42',repeatedCommand),null,'stale work must not remain working forever')
+console.log('PASS: overlapping read reuses the original owner task, without another browser run')

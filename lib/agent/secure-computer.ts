@@ -439,10 +439,10 @@ async function isConsequentialControl(page,selector,onUnavailable){
           let unavailable=false;
           consequential=await isConsequentialControl(page,a.selector,()=>{unavailable=true});
           if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential,failure:{reason:unavailable?'control_unavailable':'consequential_control'}});continue;}
-          // Zomato's observed restaurant launcher opens _blank. Keep read-only
-          // link navigation on the task page so the next wave sees its result.
+          // Follow the observed ordinary link on the task page. This also avoids
+          // pointer interception by overlays; consequence checks above still apply.
           const readLink=payload.mode==='read'?await page.locator(a.selector).first().evaluate(el=>
-            el.tagName==='A'&&el.getAttribute('target')==='_blank'&&/^https?:/.test(el.href||'')?el.href:null).catch(()=>null):null;
+            el.tagName==='A'&&/^https?:/.test(el.href||'')&&!el.hasAttribute?.('download')?el.href:null).catch(()=>null):null;
           if(readLink)await page.goto(readLink,{waitUntil:'domcontentloaded',timeout:navTimeout});
           else await page.locator(a.selector).first().click({timeout:10000});
         } else if(a.kind==='submit'){

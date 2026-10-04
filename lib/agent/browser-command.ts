@@ -489,6 +489,20 @@ export async function takeControlOfCommerceRead(params:{actor:AgentActor;runId:s
   if(saveError||!saved){await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{});throw new Error('browser_control_save_failed')}
 }
 
+// An overlapping read must point at the existing task, not create a second
+// run that fails the owner browser lock. Terminal and stale runs are not reused.
+async function findActiveBrowserRead(owner:string,command:BrowserCommand){
+  if(command.mode!=='read')return null
+  const {data,error}=await supabaseAdmin.from('agent_runs').select('id,status,summary')
+    .eq('telegram_id',owner).eq('type','secure_browser').eq('status','running')
+    .eq('metadata_json->>mode','read').eq('metadata_json->>url',command.url)
+    .eq('metadata_json->>objective',command.objective)
+    .gte('started_at',new Date(Date.now()-10*60_000).toISOString())
+    .order('started_at',{ascending:false}).limit(1).maybeSingle()
+  if(error)throw new Error('browser_active_read_lookup_failed')
+  return data
+}
+
 export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:AgentSurface;text:string}){
   const command=parseConnectedProviderCartAction(params.text)||parseBrowserCommand(params.text)||parseConnectedProviderReadCommand(params.text);if(!command)return null
   const sentinel=evaluateAgentSentinel({capability:'browser',mode:command.mode,risk:command.risk,irreversible:command.mode==='execute',approved:false,instruction:command.objective,url:command.url,actionCount:12})
@@ -496,7 +510,11 @@ export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:Agen
     return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Sentinel blocked this browser request: ${sentinel.reason}`,handledBy:'secure-browser' as const}
   }
 
-  const tg=params.actor.legacyTelegramId;const {runId,stepId}=await makeRun({actor:params.actor,surface:params.surface,command})
+  const tg=params.actor.legacyTelegramId
+  const existing=await findActiveBrowserRead(String(tg),command)
+  if(existing)return {runId:existing.id,status:'running' as const,capability:'browser' as const,risk:command.risk,
+    text:'I’m still working on this same browser task. You do not need to send it again.\nTask progress: https://app.askgogo.in/dashboard/activity/'+existing.id,handledBy:'secure-browser' as const}
+  const {runId,stepId}=await makeRun({actor:params.actor,surface:params.surface,command})
   await rememberTypedObjects(tg,'browser',[{id:runId,title:'Browser task'}]).catch(()=>{})
   const level=await permission(tg)
   const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:level,mode:command.mode,risk:command.risk,irreversible:command.mode==='execute',approvalStatus:null})
