@@ -216,7 +216,7 @@ async function model(page){
       // observed semantic attribute (including an ancestor) over sibling indexes.
       const semantic = node => {
         const tag=node.tagName.toLowerCase();
-        for(const key of ['aria-label','placeholder','name','href']){
+        for(const key of ['aria-label','aria-labelledby','placeholder','name','href']){
           const value=node.getAttribute?.(key);
           if(!value)continue;
           const selector=tag+'['+key+'="'+CSS.escape(value)+'"]';
@@ -251,6 +251,11 @@ async function model(page){
     const candidates=Array.from(document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[tabindex],div,span,p')).filter(visible);
     const controls=candidates.filter(el=>{
       if(el.disabled||el.getAttribute('aria-disabled')==='true')return false;
+      // The observed IndiGo From wrapper remains clickable around an expanded
+      // airport input. Plan against the field/options, not its closing trigger.
+      if(!['INPUT','TEXTAREA','SELECT'].includes(el.tagName)
+        &&['button','combobox'].includes(el.getAttribute('role'))
+        &&el.querySelectorAll('input[role="combobox"][aria-expanded="true"]').length>0)return false;
       // Zomato's tabindex=-1 focus shell contains the real search controls.
       // It is not itself a button/search action. Keep explicit semantic roles.
       if(el.getAttribute('tabindex')==='-1'&&!el.getAttribute('role')&&el.querySelectorAll('input,button,a[href]').length>0)return false;
