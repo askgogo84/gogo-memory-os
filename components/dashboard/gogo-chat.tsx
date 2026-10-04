@@ -79,6 +79,8 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
   const [snapshot,setSnapshot]=useState<AgentSnapshot>({runs:[],watchers:[],approvals:[]})
   const endRef=useRef<HTMLDivElement|null>(null)
   const messageScrollRef=useRef<HTMLDivElement|null>(null)
+  const sendingRef=useRef(false)
+  const conversationVersion=useRef(0)
 
   async function loadSnapshot(){
     try{
@@ -95,23 +97,37 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
 
   useEffect(()=>{
     let live=true
-    Promise.all([
-      fetch('/api/dashboard/chat',{cache:'no-store'}).then(async res=>{
-        if(!res.ok)throw new Error('history')
-        return res.json()
-      }),
-      fetch('/api/agent/snapshot',{cache:'no-store',credentials:'same-origin'}).then(r=>r.ok?r.json():null).catch(()=>null),
-    ]).then(([chat,agent])=>{
-      if(!live)return
-      setMessages(Array.isArray(chat.messages)?chat.messages:[])
-      if(agent)setSnapshot({
-        runs:Array.isArray(agent.runs)?agent.runs:[],
-        watchers:Array.isArray(agent.watchers)?agent.watchers:[],
-        approvals:Array.isArray(agent.approvals)?agent.approvals:[],
-      })
-    }).catch(()=>live&&setError('I could not load the recent conversation. You can still start a new message.'))
-      .finally(()=>live&&setLoading(false))
-    return()=>{live=false}
+    let refreshing=false
+    async function refresh(initial=false){
+      if(refreshing||sendingRef.current||(!initial&&document.hidden))return
+      refreshing=true
+      const version=conversationVersion.current
+      try{
+        const [chat,agent]=await Promise.all([
+          fetch('/api/dashboard/chat',{cache:'no-store'}).then(async res=>{
+            if(!res.ok)throw new Error('history')
+            return res.json()
+          }),
+          fetch('/api/agent/snapshot',{cache:'no-store',credentials:'same-origin'}).then(r=>r.ok?r.json():null).catch(()=>null),
+        ])
+        // A response started before a new send must not overwrite its optimistic
+        // message or its reply. Poll only persisted, owner-scoped conversation.
+        if(!live||sendingRef.current||version!==conversationVersion.current)return
+        const next=Array.isArray(chat.messages)?chat.messages:[]
+        setMessages(current=>JSON.stringify(current)===JSON.stringify(next)?current:next)
+        if(agent)setSnapshot({
+          runs:Array.isArray(agent.runs)?agent.runs:[],
+          watchers:Array.isArray(agent.watchers)?agent.watchers:[],
+          approvals:Array.isArray(agent.approvals)?agent.approvals:[],
+        })
+      }catch{if(initial&&live)setError('I could not load the recent conversation. You can still start a new message.')}
+      finally{refreshing=false;if(live)setLoading(false)}
+    }
+    void refresh(true)
+    const onVisible=()=>{void refresh()}
+    const timer=setInterval(onVisible,15000)
+    document.addEventListener('visibilitychange',onVisible)
+    return()=>{live=false;clearInterval(timer);document.removeEventListener('visibilitychange',onVisible)}
   },[])
 
   useEffect(()=>{
@@ -133,7 +149,9 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
 
   async function submit(value?:string){
     const next=String(value??text).trim()
-    if(!next||sending)return
+    if(!next||sendingRef.current)return
+    sendingRef.current=true
+    conversationVersion.current++
     setText('');setError('');setSending(true);setHistoryOpen(false)
     setMessages(m=>[...m,{role:'user',content:next}])
     try{
@@ -149,6 +167,7 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
     }catch(e:any){
       setError(e?.message&&e.message!=='chat'?e.message:'Gogo had trouble with that. Try once more.')
     }finally{
+      sendingRef.current=false
       setSending(false)
     }
   }
