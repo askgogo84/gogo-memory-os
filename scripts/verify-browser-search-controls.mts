@@ -211,7 +211,9 @@ assert.equal((await exports.planActions('Find burgers',queryLinkPage,'read','USE
 assert.doesNotMatch(captured,/observed-fixture|secret-fixture/,'query values never reach the planner')
 redactLinkFixture=false
 const diagnosticEvents:any[]=[]
-plannerReply=JSON.stringify({actions:[{kind:'click',ref:'r1'}]})
+plannerReply=JSON.stringify({actions:[{kind:'click',ref:'r1',url:'https://invented.example',selector:'#invented'}]})
+assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Find burgers',linkedZomato,'read','USER_INSTRUCTION')).actions)),[{kind:'goto',url:linkedZomato.links[0].href}],'clicking an observed link reference must bind to its observed href')
+plannerReply=JSON.stringify({actions:[{kind:'submit',ref:'r1'}]})
 assert.equal((await exports.planActions('Find burgers',linkedZomato,'read','USER_INSTRUCTION',[],(e:any)=>diagnosticEvents.push(e))).actions.length,0)
 assert.ok(diagnosticEvents.some(e=>e.reason==='unsupported_reference_action'))
 plannerReply=JSON.stringify({actions:[{kind:'click',ref:'r999',selector:'#restaurants'}]})

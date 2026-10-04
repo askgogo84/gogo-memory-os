@@ -765,7 +765,9 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
       if(!choice){rejections.push('invalid_reference');return {kind:'invalid'}}
       if(choice.kind==='link'){
         const observedHref=page.links?.[(choice as any).sourceIndex]?.href
-        if(action.kind==='goto'&&typeof observedHref==='string')return {kind:'goto',url:observedHref}
+        // A link ref is an observed destination, not a CSS control. Both common
+        // navigation verbs bind to that destination; model URLs/selectors are ignored.
+        if(['goto','click'].includes(action.kind)&&typeof observedHref==='string')return {kind:'goto',url:observedHref}
         rejections.push('unsupported_reference_action');return {kind:'invalid'}
       }
       return {...action,selector:(choice as any).selector}
