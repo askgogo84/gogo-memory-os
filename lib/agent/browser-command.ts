@@ -343,7 +343,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   const {data:currentRun,error:currentRunError}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',String(tg)).maybeSingle()
   if(currentRunError||!currentRun)throw new Error('browser_handoff_run_unavailable')
   const runMetadata:any=currentRun.metadata_json||{}
-  const persistentCommerce=Boolean(runMetadata.commerce_parent_id)&&params.mode==='read'
+  const persistentCommerce=Boolean(runMetadata.commerce_parent_id||runMetadata.comparison_parent_id)&&params.mode==='read'
   const browserOwner=persistentCommerce?params.actor.userId+':commerce':params.actor.userId
   const resumePage=persistentCommerce&&Boolean(runMetadata.handoff)
   const reconciledResult=runMetadata.browser_safe_to_retry===false
@@ -463,10 +463,11 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
 
 // Link a paused read before execution; a lost response must not spawn a second
 // browser task. The normal resume path rechecks current permission and policy.
-export async function prepareLinkedBrowserRead(params:{actor:AgentActor;surface:AgentSurface;url:string;objective:string;parentRunId:string}){
+export async function prepareLinkedBrowserRead(params:{actor:AgentActor;surface:AgentSurface;url:string;objective:string;parentRunId:string;parentKind?:'comparison'}){
   const command:BrowserCommand={url:params.url,objective:safe(params.objective,1800),mode:'read',risk:'low'}
   const {runId}=await makeRun({...params,command})
-  const {data,error}=await supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{plan_type:'secure_browser',url:command.url,objective:command.objective,mode:'read',risk:'low',commerce_parent_id:params.parentRunId}})
+  const parentKey=params.parentKind==='comparison'?'comparison_parent_id':'commerce_parent_id'
+  const {data,error}=await supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{plan_type:'secure_browser',url:command.url,objective:command.objective,mode:'read',risk:'low',[parentKey]:params.parentRunId}})
     .eq('id',runId).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('status','queued').select('id').maybeSingle()
   if(error||!data)throw new Error('commerce_browser_prepare_failed')
   return runId
@@ -568,6 +569,12 @@ export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:stri
 
   const meta:any=run.metadata_json||{}
   const mode=String(meta.mode||'read') as BrowserMode
+
+  if(meta.comparison_parent_id){
+    if(mode!=='read')throw new Error('comparison_read_only')
+    const {assertComparisonChild}=await import('@/lib/commerce/price-comparison')
+    await assertComparisonChild(String(tg),String(meta.comparison_parent_id),run.id)
+  }
 
   if(meta.commerce_parent_id){
     const {readCommerceTask}=await import('@/lib/commerce/task')

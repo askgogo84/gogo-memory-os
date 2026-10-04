@@ -48,6 +48,7 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   return <div className="mx-auto w-full max-w-[1180px] pb-10">
     <header className="border-b border-[#2A2A2A] pb-4">
       {typeof run.metadata?.commerce_parent_id==='string'&&<Link href={'/dashboard/commerce?run='+encodeURIComponent(run.metadata.commerce_parent_id)} className="text-sm text-[#2FB8A6]">← Back to your comparison</Link>}
+      {typeof run.metadata?.comparison_parent_id==='string'&&<Link href={'/dashboard/comparisons/'+encodeURIComponent(run.metadata.comparison_parent_id)} className="text-sm text-[#2FB8A6]">← Back to your saved comparison</Link>}
       <div className="flex items-center justify-between gap-3">
         <Link href={'/dashboard/activity/'+encodeURIComponent(run.id)} className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-[.12em] text-[#6A6A6A] hover:text-[#2FB8A6]">← Back to task</Link>
         <span className="text-[11px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">Gogo&apos;s browser</span>
@@ -129,7 +130,7 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
           <h2 className="mt-2 font-serif text-[22px] font-semibold text-[#F2EFEA]">{deviceHandoff?'Open this on your device.':'Take control when Gogo needs you.'}</h2>
           <p className="mt-2 text-[12.5px] leading-5 text-[#9A9A9A]">{deviceHandoff?'The provider blocks the server browser. Continue on your own connection.':'Use the same persistent browser session for the human-only step, then return control to Gogo.'}</p>
           <a href={'/api/dashboard/agent/runs/'+encodeURIComponent(run.id)+'/handoff'} target="_blank" rel="noopener" className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-[11px] bg-[#2FB8A6] px-4 text-[13px] font-bold text-[#F2EFEA]">{deviceHandoff?'Open provider':'Take control'}</a>
-          {cloudTakeover&&(secondaryAuth||humanAuth||run.metadata?.commerce_parent_id)&&<div className="mt-3"><VaultResumeTaskButton runId={run.id} label={(run.metadata?.secondary_auth?.safeToRetry===false||run.metadata?.browser_safe_to_retry===false)?"Check outcome without repeating action":"Resume this task"}/></div>}
+          {cloudTakeover&&(secondaryAuth||humanAuth||run.metadata?.commerce_parent_id||run.metadata?.comparison_parent_id)&&<div className="mt-3"><VaultResumeTaskButton runId={run.id} label={(run.metadata?.secondary_auth?.safeToRetry===false||run.metadata?.browser_safe_to_retry===false)?"Check outcome without repeating action":"Resume this task"}/></div>}
           {(run.metadata?.secondary_auth?.safeToRetry===false||run.metadata?.browser_safe_to_retry===false)&&<p className="mt-3 text-[12px] text-[#D9A441]">An action may already have reached the provider. Gogo will only inspect the result after you finish authentication; it will not repeat the action.</p>}
         </section>}
         {(secondaryAuth||run.metadata?.browser_waiting)&&!cloudTakeover&&run.metadata?.secondary_auth?.safeToRetry!==false&&run.metadata?.browser_safe_to_retry!==false&&<section className="rounded-[16px] bg-[#1A1710] p-5">
