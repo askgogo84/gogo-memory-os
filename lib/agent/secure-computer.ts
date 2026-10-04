@@ -838,6 +838,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
     for(let wave=0;wave<(params.mode==='read'?MAX_RESEARCH_WAVES:1);wave++){
+      const beforeReadSnapshot=readSnapshot(page)
       const providerBlock=detectProviderAccessBlock(page)
       if(providerBlock){
         // Do NOT stop the sandbox on a block. A blocked result is precisely the
@@ -856,7 +857,6 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       // environment variables, and injected directly by Playwright. They are
       // never exposed to the model planner, task objective, Activity, or logs.
       if(!vaultAttempted && (authGate.reason==='password'||(!authGate.required&&loginish))){
-        const beforeReadSnapshot=readSnapshot(page)
       const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
