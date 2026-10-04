@@ -55,7 +55,7 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
   if(!isWatcherStatusQuery(params.text))return null
   const tg=String(params.actor.legacyTelegramId)
   const {data,error}=await supabaseAdmin.from('agent_watchers')
-    .select('id,type,condition_json,cadence_minutes,last_checked_at,next_check_at,active,created_at,updated_at')
+    .select('id,type,condition_json,last_state_json,cadence_minutes,last_checked_at,next_check_at,active,created_at,updated_at')
     .eq('telegram_id',tg)
     .eq('active',true)
     .order('created_at',{ascending:false})
@@ -84,7 +84,12 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     const expires=contextual&&condition.expiresAt&&Number.isFinite(Date.parse(String(condition.expiresAt)))
       ? `\n   Expires: ${new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(condition.expiresAt))}`
       : contextual?'':'\n   Expires: stays active until you stop it'
-    return `${index+1}. ${label} — active, checking about every ${cadence} min${why}${source}${expires}`
+    const delivery=row.last_state_json?.alertDelivery?.state
+    const notification=delivery==='outcome_unknown'?'\n   WhatsApp alert: delivery is unconfirmed; no blind resend.'
+      :delivery==='failed'?'\n   WhatsApp alert: failed after bounded attempts; result remains in the app.'
+      :row.last_state_json?.pendingAlert?'\n   WhatsApp alert: pending retry.':''
+    const next=row.next_check_at?'\n   Next check: '+new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(row.next_check_at)):''
+    return `${index+1}. ${label} — active, checking about every ${cadence} min${why}${source}${expires}${next}${notification}`
   }
   const contextualRows=data.filter((row:any)=>row.condition_json?.contextual===true)
   const manualRows=data.filter((row:any)=>row.condition_json?.contextual!==true)
@@ -199,6 +204,33 @@ export async function tryRestartWatcherFromCommand(params:{actor:AgentActor;text
     message:`Gogo restarted ${best.label}.`.slice(0,900),metadata_json:{watcher_id:chosen.id,type:chosen.type}})
   return {runId:`watcher-restart-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
     text:`Watch restarted: ${best.label} — active, checking about every ${Math.max(1,Number(chosen.cadence_minutes||60))} min. Persistent state now shows ${active.length} active monitor${active.length===1?'':'s'}.`,handledBy:'watcher-restart'}
+}
+
+// Explicit replacement criteria, not a guessed edit to an ambiguous watch.
+export async function tryUpdateWebWatchFromCommand(params:{actor:AgentActor;text:string}) {
+  const match=clean(params.text,2000).match(/^(?:please\s+)?(?:update|change|correct)\s+(?:my\s+)?(.+?)\s+(?:watch|monitor)\s+to\s*:?\s*(.+)$/i)
+  if(!match)return null
+  const target=watcherIdentityTokens(match[1]), query=clean(match[2],500)
+  const tg=String(params.actor.legacyTelegramId)
+  const rows=await canonicalActiveWatchers(tg)
+  const matches=rows.filter((row:any)=>row.type==='web_search'&&row.condition_json?.contextual!==true&&
+    target.length>0&&target.every(token=>watcherIdentityTokens(row.condition_json?.title+' '+row.condition_json?.query).includes(token)))
+  if(matches.length!==1||query.length<3)return {
+    runId:'watcher-update-clarify',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+    text:'Please identify one active search watch and give its complete replacement criteria, including the product or journey, budget and exclusions.',handledBy:'watcher-update',
+  }
+  const chosen=matches[0],now=new Date().toISOString()
+  const condition=normalizeWebSearchWatcher({...chosen.condition_json,originalRequest:chosen.condition_json.originalRequest||chosen.condition_json.query,title:'Watch: '+query.slice(0,120),query,triggerKeywords:[],notifyOnFirstMatch:true})
+  if(!condition)throw new Error('watcher_update_invalid')
+  const {data:updated,error}=await supabaseAdmin.from('agent_watchers').update({
+    condition_json:condition,last_state_json:{criteriaCorrectedAt:now},next_check_at:now,updated_at:now,
+  }).eq('id',chosen.id).eq('telegram_id',tg).eq('active',true)
+    .eq('condition_json',JSON.stringify(chosen.condition_json)).select('id,condition_json,active').maybeSingle()
+  if(error||!updated?.active||updated.condition_json?.query!==query)throw new Error('watcher_update_unverified')
+  await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,event_type:'watcher_updated',
+    message:'Saved corrected watch criteria: '+query,metadata_json:{watcher_id:chosen.id,previous_query:chosen.condition_json?.query,query}})
+  return {runId:'watcher-update-'+chosen.id,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
+    text:'Updated the same saved watch: '+query+'. I’ll use these criteria on future checks. The next check is queued; search leads still need provider verification.',handledBy:'watcher-update'}
 }
 
 export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:string}) {

@@ -10,6 +10,9 @@ import * as cadence from '../lib/agent/watch-cost-policy'
 // in WhatsApp and app -> no duplicate. Fixture records, no real sends or DB writes.
 let clock=Date.parse('2026-10-03T08:00:00Z')
 let results:any[]=[]
+let rejectDelivery=false
+let unknownDelivery=false
+const accepted=new Map<string,string>()
 const sent:string[]=[]
 const queries:string[]=[]
 const store:Record<string,any[]>={agent_watchers:[],agent_ideas:[],agent_activity:[],users:[{telegram_id:101,whatsapp_id:'fixture-phone'}]}
@@ -18,10 +21,10 @@ const db={from(table:string){
   const filters:Array<(r:any)=>boolean>=[]
   let changes:any,insert:any,single=false
   const b:any={
-    select(){return b},eq(k:string,v:any){filters.push(r=>String(r[k])===String(v));return b},
+    select(){return b},eq(k:string,v:any){filters.push(r=>k==='condition_json'?JSON.stringify(r[k])===v:String(r[k])===String(v));return b},
     in(k:string,v:any[]){filters.push(r=>v.includes(r[k]));return b},
     lte(k:string,v:any){filters.push(r=>r[k]!=null&&r[k]<=v);return b},
-    order(){return b},limit(){return b},or(){return b},is(){return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},
+    order(){return b},limit(){return b},or(){return b},is(){return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},upsert(v:any){if(!store[table].some(r=>r.id===v.id))insert=v;return b},
     maybeSingle(){single=true;return b},single(){single=true;return b},
     then(resolve:any,reject:any){return Promise.resolve().then(()=>{
       const rows=(store[table]||[]).filter(r=>filters.every(f=>f(r)))
@@ -38,7 +41,13 @@ function freshWorker(){
   class Clock extends Date {constructor(value?:any){super(value===undefined?clock:value)}static now(){return clock}}
   const mocks:any={
     'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:db},
-    '@/lib/channels/whatsapp':{sendWhatsAppMessage:async(_phone:string,text:string)=>{sent.push(text)}},
+    './watch-alert-delivery':{deliverWatchAlert:async(p:any)=>{
+      if(unknownDelivery)return {accepted:false,state:'outcome_unknown',providerId:null}
+      if(rejectDelivery)return {accepted:false,state:'pending',providerId:null}
+      if(!accepted.has(p.key)){sent.push(p.message);accepted.set(p.key,'SM-fixture-'+accepted.size)}
+      return {accepted:true,state:'provider_accepted',providerId:accepted.get(p.key)}
+    }},
+    '@/lib/channels/whatsapp':{sendWhatsAppMessage:async(_phone:string,text:string)=>{if(rejectDelivery)throw Object.assign(new Error('fixture provider rejection'),{status:429});sent.push(text)}},
     '@/lib/web-search':{searchWebResults:async(query:string)=>{queries.push(query);return structuredClone(results)}},
     '@/lib/services/cost-guard':{getCostBudget:async()=>budget,checkCostAllowance:async()=>({allowed:true,state:{usageRatio:0}}),recordCostEvent:async()=>{},COST_ESTIMATES_PAISE:{web_search_basic:1}},
     './watch-cost-policy':cadence,'./watcher-quality':quality,
@@ -88,6 +97,48 @@ row.active=false;clock+=86400000
 await freshWorker().processDueAgentWatchers()
 assert.equal(sent.length,2,'stopped watches never resume themselves')
 console.log('PASS: persistent watch survives fresh workers, alerts first match with identical source link, deduplicates and respects stop')
+
+// A definite rejection must survive fresh workers and a disappearing search result.
+row.active=true;row.condition_json=condition;row.last_state_json={};row.next_check_at=new Date(clock).toISOString()
+results=[{title:condition.query,snippet:'New source for this watch.',url:'https://shop.example.com/another'}]
+rejectDelivery=true
+const beforeSent=sent.length,beforeIdeas=store.agent_ideas.length
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,beforeSent)
+assert.equal(row.last_state_json.lastAlertAt,undefined,'failed attempt is not a successful alert')
+assert.ok(row.last_state_json.pendingAlert?.key,'result is persisted before send')
+const pendingKey=row.last_state_json.pendingAlert.key
+assert.equal(store.agent_ideas.length,beforeIdeas,'pending send is not published as completed')
+results=[];clock=Date.parse(row.next_check_at);rejectDelivery=false
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,beforeSent+1,'saved result is retried even after disappearing from search')
+assert.equal(row.last_state_json.alertDelivery.key,pendingKey)
+assert.equal(row.last_state_json.alertDelivery.state,'provider_accepted','acceptance is not delivery')
+assert.equal(row.last_state_json.pendingAlert,null)
+assert.ok(sent.at(-1)?.includes('/another'))
+clock=Date.parse(row.next_check_at)
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,beforeSent+1,'next worker does not duplicate accepted alert')
+row.active=false
+console.log('PASS: failed alert survives restart and empty later search, reuses delivery identity, and records acceptance honestly')
+
+// Unknown sends surface in the app and do not halt future monitoring or resend blindly.
+row.active=true;row.last_state_json={};row.next_check_at=new Date(clock).toISOString()
+results=[{title:condition.query,snippet:'Unknown transport outcome fixture',url:'https://shop.example.com/unknown'}]
+unknownDelivery=true
+await freshWorker().processDueAgentWatchers()
+assert.equal(row.last_state_json.alertDelivery.state,'outcome_unknown')
+assert.equal(row.last_state_json.lastAlertAt,null)
+assert.equal(row.last_state_json.pendingAlert,null)
+assert.ok(store.agent_ideas.some(i=>i.source_refs.some((r:any)=>r.url==='https://shop.example.com/unknown')))
+unknownDelivery=false;results=[];clock+=30*86400000
+const queryCount=queries.length
+await freshWorker().processDueAgentWatchers()
+assert.equal(queries.length,queryCount+1,'watch keeps searching a month later after uncertain delivery')
+assert.equal(row.condition_json.originalRequest,request)
+assert.equal(row.active,true)
+row.active=false
+console.log('PASS: uncertain transport never masquerades as delivery or prevents later monitoring; month-later criteria remain intact')
 
 // The shared prompt reads current stored criteria, not a stale conversation summary.
 store.agent_watchers.push({...structuredClone(row),id:'foreign',telegram_id:'202',condition_json:{...condition,title:'PRIVATE OTHER OWNER',query:'Christopher Ward C63 Sealander India SECRET'}})
@@ -160,3 +211,59 @@ assert.equal(created.condition_json.notifyOnFirstMatch,true)
 assert.equal(store.agent_runs.at(-1).source,'web','creation retains the originating dashboard surface')
 assert.match(response.body.text,/source link/)
 console.log('PASS: authenticated dashboard POST creates the same durable search with correct owner and surface')
+// Exercise the actual delivery adapter, including owner/correction checks and receipt token.
+const deliveryOutput=ts.transpileModule(fs.readFileSync('lib/agent/watch-alert-delivery.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
+const deliveryExports:any={}
+let providerCalls=0,readyMutation:(()=>void)|null=null
+const deliveryMocks:any={
+  '@/lib/supabase-admin':{supabaseAdmin:db},
+  '@/lib/whatsapp':{sendWhatsApp:async(phone:string,message:string,media:any,token:string)=>{
+    assert.equal(phone,'fixture-phone');assert.equal(token,'fixture-receipt-token');assert.equal(media,null)
+    providerCalls++;return {sid:'SM-verified-adapter-fixture'}
+  }},
+  '@/lib/services/notification-delivery':{deliverNotification:async(p:any)=>{
+    assert.equal(p.source,'followup');assert.equal(p.owner,101)
+    await p.prepare();readyMutation?.()
+    if(!await p.ready())return 'suppressed'
+    const id=await p.send('fixture-receipt-token')
+    store.notification_deliveries=[{delivery_key:p.key,owner_id:101,state:'provider_accepted',provider_id:id}]
+    return 'provider_accepted'
+  }},
+}
+vm.runInNewContext(deliveryOutput,{exports:deliveryExports,module:{exports:deliveryExports},require:(n:string)=>deliveryMocks[n]||{},Date,console})
+row.active=true;row.condition_json=condition
+const adapterParams={watcherId:row.id,owner:'101',key:'watch/adapter-fixture',due:new Date(clock).toISOString(),message:'Fixture source link',condition}
+let outcome=await deliveryExports.deliverWatchAlert(adapterParams)
+assert.equal(outcome.accepted,true);assert.equal(outcome.providerId,'SM-verified-adapter-fixture')
+store.notification_deliveries=[]
+readyMutation=()=>{row.active=false}
+outcome=await deliveryExports.deliverWatchAlert({...adapterParams,key:'watch/stopped'})
+assert.equal(outcome.accepted,false);assert.equal(providerCalls,1,'intervening stop prevents send')
+row.active=true
+readyMutation=()=>{row.condition_json={...condition,query:'Corrected different request'}}
+outcome=await deliveryExports.deliverWatchAlert({...adapterParams,key:'watch/corrected'})
+assert.equal(outcome.accepted,false);assert.equal(providerCalls,1,'intervening correction prevents stale alert')
+readyMutation=null
+outcome=await deliveryExports.deliverWatchAlert({...adapterParams,owner:'202',key:'watch/foreign'}).catch(()=>({accepted:false}))
+assert.equal(outcome.accepted,false);assert.equal(providerCalls,1)
+console.log('PASS: receipt adapter passes delivery token, verifies owner, and honors intervening stop/correction')
+// Real conversational correction, persisted under the same task identity.
+row.active=true;row.condition_json={...condition};row.last_state_json={pendingAlert:{key:'old-request'}}
+store.agent_watchers=store.agent_watchers.filter(w=>w.id===row.id||w.id==='foreign')
+const correction='Update my Christopher Ward C63 watch to: Christopher Ward C63 Sealander blue dial in India below 90000 excluding card offers'
+const correctionReply=await commandExports.tryUpdateWebWatchFromCommand({actor:{legacyTelegramId:101},text:correction})
+assert.equal(correctionReply.handledBy,'watcher-update')
+assert.equal(row.id,'watch-one');assert.equal(store.agent_watchers.length,2,'correction does not create another watch')
+assert.match(row.condition_json.query,/blue dial.*below 90000 excluding card offers/)
+assert.equal(row.condition_json.originalRequest,request)
+assert.equal(row.last_state_json.pendingAlert,undefined,'old pending result is revoked')
+results=[];clock+=31*86400000
+await freshWorker().processDueAgentWatchers()
+assert.match(queries.at(-1)!,/blue dial.*below 90000 excluding card offers/,'month-later worker uses actual conversational correction')
+const correctedPack=await contextExports.buildContextPack({actor:{legacyTelegramId:101},text:'What is saved for my Christopher Ward C63 Sealander watch?',options:{includeSemantic:false}})
+assert.match(contextExports.renderContextBlock(correctedPack),/blue dial.*below 90000 excluding card offers/)
+const dashboardCorrection=await dashboardExports.POST({headers:{get:()=> 'https://app.askgogo.in'},nextUrl:{host:'app.askgogo.in'},json:async()=>({text:'Update my Christopher Ward C63 watch to: Christopher Ward C63 Sealander black dial in India below 80000 excluding card offers'})})
+assert.equal(dashboardCorrection.body.handledBy,'watcher-update')
+assert.match(row.condition_json.query,/black dial.*below 80000/)
+assert.equal(routesToWatch(correction),true,'WhatsApp first-refusal routes explicit corrections')
+console.log('PASS: conversational correction retains task identity and original request; fresh month-later worker and dashboard recall use corrected criteria')

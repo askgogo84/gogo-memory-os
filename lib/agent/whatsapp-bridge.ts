@@ -8,7 +8,7 @@ import type { AgentActor } from './actor'
 import { decisionDomain, recordDecisionLearning, isSameBrainIntrospection, sameBrainIntrospection } from './decision-learning'
 import { observedOutcome, learningDecisionId } from './decision-evidence'
 import { isGmailVerificationQuery } from './gmail-verification'
-import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand } from './watch-command'
+import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand, tryUpdateWebWatchFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
@@ -265,6 +265,8 @@ export async function tryRunWhatsAppJevSpecialist(params:{
   if(params.intent==='watcher'){
     const priceClarification=await tryRunPriceWatchClarification({actor,surface:'whatsapp',text:params.text})
     if(priceClarification)return {...priceClarification,handledBy:String(priceClarification.handledBy||'price-watch-clarification')}
+    const corrected=await tryUpdateWebWatchFromCommand({actor,text:params.text})
+    if(corrected)return corrected
     const stop=await tryStopWatcherFromCommand({actor,text:params.text})
     if(stop)return {...stop,handledBy:String(stop.handledBy||'watcher-stop')}
     const status=await tryGetWatcherStatusFromCommand({actor,text:params.text})
@@ -398,6 +400,8 @@ export async function tryRunWhatsAppAgent(params: {
   const priceWatch = await tryRunPriceWatchClarification({actor,surface:'whatsapp',text:params.text})
   if(priceWatch)return {...priceWatch,handledBy:String(priceWatch.handledBy||'price-watch-clarification')}
 
+  const correctedWatch = await tryUpdateWebWatchFromCommand({actor,text:params.text})
+  if(correctedWatch)return correctedWatch
   const watcherStop = await tryStopWatcherFromCommand({ actor, text:params.text })
   if (watcherStop) return await learnedReturn(actor,params.text,watcherStop,'watcher-stop',params.messageId)
   const watcherRestart = await tryRestartWatcherFromCommand({ actor, text:params.text })

@@ -1118,6 +1118,7 @@ _"${originalText}"_
 
     // Watcher commands create/read persistent state; never downgrade them to one-shot search.
     const isDeterministicWatcherCommand =
+      /^(?:please\s+)?(?:update|change|correct)\s+.+?\s+(?:watch|monitor)\s+to\b/i.test(text.trim()) ||
       Boolean(parseWebWatchCommand(text)) ||
       /^(?:watch|monitor|track)\b/i.test(text.trim()) ||
       /^(?:show|list)\s+(?:my\s+)?(?:active\s+)?(?:watchers?|watches|monitors?)\b/i.test(text.trim()) ||
