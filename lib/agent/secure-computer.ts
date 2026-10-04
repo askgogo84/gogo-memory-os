@@ -799,6 +799,14 @@ function browserSourceUrl(raw:unknown):string|null{
       // observed product path; never expose tracking as a redacted link.
       url.pathname=url.pathname.replace(/(\/(?:dp|gp\/product)\/[A-Z0-9]{10})\/ref=[^/]*\/?$/i,'$1')
       url.search='';url.hash=''
+      // Descriptive slugs can contain numeric model codes (M185: 910-002225)
+      // or long tokens. Keep only the ASIN already observed in this product
+      // URL when its slug trips redaction. The resulting URL still passes the
+      // same privacy check below; never exempt arbitrary provider paths.
+      if(safeText(url.toString(),1200)!==url.toString()){
+        const product=url.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:\/|$)/i)
+        if(product)url.pathname='/dp/'+product[1]
+      }
     }
     const source=url.toString()
     return source.length<=1200&&safeText(source,1200)===source&&!/redacted|withheld/i.test(source)?source:null
