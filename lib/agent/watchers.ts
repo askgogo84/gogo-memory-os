@@ -927,7 +927,8 @@ async function processWebPageWatcher(watcher:any,now:Date){
 async function processWebSearchWatcher(watcher:any, now:Date) {
   const condition = normalizeWebSearchWatcher(watcher.condition_json)
   if (!condition) {
-    await supabaseAdmin.from('agent_watchers').update({ active:false, last_checked_at:now.toISOString(), last_state_json:{ error:'invalid_condition' } }).eq('id', watcher.id)
+    await supabaseAdmin.from('agent_watchers').update({ active:false, last_checked_at:now.toISOString(), last_state_json:{ error:'invalid_condition' } }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
+      .eq('condition_json', JSON.stringify(watcher.condition_json))
     return { triggered:false, failed:true }
   }
 
@@ -940,7 +941,8 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       last_state_json:{ ...(watcher.last_state_json || {}), costGuard:'plan_not_eligible', stoppedAt:now.toISOString() },
       next_check_at:null,
       updated_at:now.toISOString(),
-    }).eq('id', watcher.id)
+    }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
+      .eq('condition_json', JSON.stringify(watcher.condition_json))
     return { triggered:false, failed:false }
   }
 
@@ -961,7 +963,8 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
         costDeferredAt:now.toISOString(),
       },
       updated_at:now.toISOString(),
-    }).eq('id', watcher.id)
+    }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
+      .eq('condition_json', JSON.stringify(watcher.condition_json))
     return { triggered:false, failed:false }
   }
 
@@ -994,7 +997,8 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
       last_state_json:{ ...(watcher.last_state_json || {}), quietChecks, lastEmptyAt:now.toISOString(), costGuard:'ok' },
       updated_at:now.toISOString(),
-    }).eq('id', watcher.id)
+    }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
+      .eq('condition_json', JSON.stringify(watcher.condition_json))
     return { triggered:false, failed:false }
   }
 
