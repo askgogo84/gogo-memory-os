@@ -1,5 +1,5 @@
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
-import { parseWebWatchCommand } from '@/lib/agent/watch-command'
+import { parseWebWatchCommand, isWatcherStatusQuery } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { completeReminderOccurrence } from '@/lib/bot/handlers/reminder-completion'
@@ -1118,6 +1118,7 @@ _"${originalText}"_
 
     // Watcher commands create/read persistent state; never downgrade them to one-shot search.
     const isDeterministicWatcherCommand =
+      isWatcherStatusQuery(text) ||
       /^(?:please\s+)?(?:update|change|correct)\s+.+?\s+(?:watch|monitor)\s+to\b/i.test(text.trim()) ||
       Boolean(parseWebWatchCommand(text)) ||
       /^(?:watch|monitor|track)\b/i.test(text.trim()) ||

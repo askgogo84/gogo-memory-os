@@ -44,11 +44,15 @@ export function parseWebPageWatchCommand(text:string) {
   })
 }
 
-function isWatcherStatusQuery(text:string) {
-  const raw=clean(text,400).toLowerCase()
+export function isWatcherStatusQuery(text:string) {
+  const raw=clean(text,2000).toLowerCase().replace(/^please\s+/,'')
+  // Read questions can include a subject and follow-up sentences. Keep them
+  // separate from create/update/stop commands and recommendations to watch.
   return /^(?:what|which)\s+(?:are\s+you\s+)?(?:monitoring|watching|tracking)(?:\s+for\s+me)?(?:\s+and\s+why)?\??$/.test(raw)
-    || /^(?:show|list)\s+(?:my\s+)?(?:active\s+)?(?:monitors?|watchers?|watches)\??$/.test(raw)
+    || /^(?:show|list)\s+(?:my\s+)?(?:active\s+)?(?:monitors?|watchers?|watches)\b/.test(raw)
     || /^what\s+(?:monitors?|watchers?|watches)\s+(?:do\s+i\s+have|are\s+active)\??$/.test(raw)
+    || /^(?:what|which)\b[^.!?]*\b(?:am\s+i|are\s+you)\s+(?:monitoring|watching|tracking)\b/.test(raw)
+    || /^(?:what|when|how|is|are|do)\b[^.!?]*\bmy\b[^.!?]*\b(?:watches|watch|watchers?|monitors?)\b/.test(raw)
 }
 
 export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;text:string}) {
@@ -79,6 +83,8 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     else if(row.type==='email_triage') label=condition.title||'Inbox action watch'
     const cadence=Math.max(1,Number(row.cadence_minutes||60))
     const contextual=condition.contextual===true
+    const criteria=condition.query||condition.productUrl||condition.url||condition.originalRequest
+    const criteriaLine=criteria?`\n   Criteria: ${clean(criteria,1000)}`:''
     const why=contextual&&condition.reason?`\n   Why: ${String(condition.reason)}`:''
     const source=contextual?`\n   Source: saved ${condition.contextualKind||'context'}`:`\n   Source: your existing watch`
     const expires=contextual&&condition.expiresAt&&Number.isFinite(Date.parse(String(condition.expiresAt)))
@@ -88,8 +94,13 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     const notification=delivery==='outcome_unknown'?'\n   WhatsApp alert: delivery is unconfirmed; no blind resend.'
       :delivery==='failed'?'\n   WhatsApp alert: failed after bounded attempts; result remains in the app.'
       :row.last_state_json?.pendingAlert?'\n   WhatsApp alert: pending retry.':''
-    const next=row.next_check_at?'\n   Next check: '+new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(row.next_check_at)):''
-    return `${index+1}. ${label} — active, checking about every ${cadence} min${why}${source}${expires}${next}${notification}`
+    const checkTime=(value:unknown)=>{
+      const time=Date.parse(String(value||''))
+      return Number.isFinite(time)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(time))+' IST':null
+    }
+    const last='\n   Last checked: '+(checkTime(row.last_checked_at)||'no completed check recorded')
+    const next='\n   Next check: '+(checkTime(row.next_check_at)||'not scheduled')
+    return `${index+1}. ${label} — active, checking about every ${cadence} min${criteriaLine}${why}${source}${expires}${last}${next}${notification}`
   }
   const contextualRows=data.filter((row:any)=>row.condition_json?.contextual===true)
   const manualRows=data.filter((row:any)=>row.condition_json?.contextual!==true)

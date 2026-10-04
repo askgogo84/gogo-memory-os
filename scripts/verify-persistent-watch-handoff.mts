@@ -10,6 +10,7 @@ import * as cadence from '../lib/agent/watch-cost-policy'
 // in WhatsApp and app -> no duplicate. Fixture records, no real sends or DB writes.
 let clock=Date.parse('2026-10-03T08:00:00Z')
 let results:any[]=[]
+let watcherReadError=false
 let rejectDelivery=false
 let unknownDelivery=false
 let duringSearch=null as null|(()=>Promise<void>)
@@ -28,6 +29,7 @@ const db={from(table:string){
     order(){return b},limit(){return b},or(){return b},is(){return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},upsert(v:any){if(!store[table].some(r=>r.id===v.id))insert=v;return b},
     maybeSingle(){single=true;return b},single(){single=true;return b},
     then(resolve:any,reject:any){return Promise.resolve().then(()=>{
+      if(table==='agent_watchers'&&watcherReadError)return {data:null,error:{message:'fixture read unavailable'}}
       const rows=(store[table]||[]).filter(r=>filters.every(f=>f(r)))
       if(insert){const row={id:`${table}-${store[table].length}`, ...structuredClone(insert)};store[table].push(row);return {data:single?row:[row],error:null}}
       if(changes)rows.forEach(r=>Object.assign(r,structuredClone(changes)))
@@ -167,6 +169,7 @@ assert.equal(other.facts.some((f:any)=>f.source==='watcher'),false,'unrelated tu
 const commandsOutput=ts.transpileModule(fs.readFileSync('lib/agent/watch-command.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 const commandExports:any={}
 const commandMocks:any={
+  './typed-object-context':{rememberTypedObjects:async()=>{}},
   './watchers':freshWorker(), '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/services/cost-guard':{getCostBudget:async()=>budget}, './watch-cost-policy':cadence,
 }
@@ -182,7 +185,7 @@ console.log('PASS: corrected watch intent is recalled across surfaces, owner iso
 const route=fs.readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
 const predicate=route.match(/const isDeterministicWatcherCommand =([\s\S]*?)\n    if\(isDeterministicWatcherCommand\)/)?.[1]
 assert.ok(predicate,'webhook watch first-refusal predicate exists')
-const routesToWatch=(text:string)=>vm.runInNewContext(predicate!,{text,parseWebWatchCommand:commandExports.parseWebWatchCommand})
+const routesToWatch=(text:string)=>vm.runInNewContext(predicate!,{text,parseWebWatchCommand:commandExports.parseWebWatchCommand,isWatcherStatusQuery:commandExports.isWatcherStatusQuery})
 assert.equal(routesToWatch('Keep searching for Christopher Ward C63 Sealander in India'),true)
 assert.equal(routesToWatch('Please keep looking for Sony WH-1000XM5 below 22000'),true)
 assert.equal(routesToWatch('Show my watches'),true)
@@ -289,3 +292,40 @@ assert.equal(row.active,false);assert.equal(row.next_check_at,null,'in-flight em
 assert.deepEqual(row.last_state_json,{stoppedByUser:true})
 duringSearch=null
 console.log('PASS: a correction or stop arriving during search survives the stale worker result')
+
+// Screenshot regression: visible saved watches must be recalled by the actual
+// dashboard POST even when the request is conversational or has multiple sentences.
+row.active=true
+row.condition_json={...condition,title:'Watch: Sony WH-1000XM5',query:'Sony WH-1000XM5 on amazon.in below 22000 excluding bank/card offers'}
+row.last_checked_at='2026-10-04T10:30:42.474Z'
+row.next_check_at='2026-10-04T13:00:42.474Z'
+row.cadence_minutes=150
+const recallQuestions=[
+  'Show my watches. What are my Sony headphone criteria, when did you last check, and when will you check again?',
+  'Which headphones am I watching, and what offers did I ask you to exclude?',
+  'What are you monitoring for me?',
+]
+const beforeRecall=JSON.stringify(store.agent_watchers)
+for(const text of recallQuestions){
+  const reply=await dashboardExports.POST({headers:{get:()=> 'https://app.askgogo.in'},nextUrl:{host:'app.askgogo.in'},json:async()=>({text})})
+  assert.equal(reply.body.handledBy,'watcher-status',text)
+  assert.match(reply.body.text,/Sony WH-1000XM5 on amazon.in below 22000 excluding bank\/card offers/)
+  assert.match(reply.body.text,/Last checked:.*4 Oct.*4:00 pm/)
+  assert.match(reply.body.text,/Next check:.*4 Oct.*6:30 pm/)
+  assert.match(reply.body.text,/150 min/)
+  assert.doesNotMatch(reply.body.text,/PRIVATE OTHER OWNER|SECRET/)
+  assert.equal(routesToWatch(text),true,'same recall intent must enter WhatsApp bridge')
+}
+assert.equal(JSON.stringify(store.agent_watchers),beforeRecall,'recall never creates, changes or stops a watch')
+for(const text of ['Watch Sony headphones below 22000','Stop my Sony watch','Update my Sony watch to below 21000','Which headphones should I buy?','What should I watch tonight?']){
+  assert.equal(commandExports.isWatcherStatusQuery(text),false,text)
+}
+console.log('PASS: both screenshot questions read canonical owner watches through dashboard POST and WhatsApp routing, with criteria and check times')
+
+watcherReadError=true
+await assert.rejects(()=>commandExports.tryGetWatcherStatusFromCommand({actor:{legacyTelegramId:101},text:recallQuestions[0]}),/watcher_status_read_failed/,'failed retrieval must never claim there are no watches')
+watcherReadError=false
+row.active=false
+const emptyRecall=await commandExports.tryGetWatcherStatusFromCommand({actor:{legacyTelegramId:101},text:'Show my watches'})
+assert.equal(emptyRecall.runId,'watcher-status-none','foreign active watch cannot appear as this owner watch')
+console.log('PASS: failed reads do not fabricate empty memory; genuine empty owner state is distinguished')

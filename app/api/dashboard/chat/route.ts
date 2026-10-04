@@ -1,5 +1,5 @@
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
-import { tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand } from '@/lib/agent/watch-command'
+import { tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
@@ -105,6 +105,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+    const watcherStatus=await tryGetWatcherStatusFromCommand({actor,text})
+    if(watcherStatus){
+      await saveConversation(user.telegram_id,text,watcherStatus.text)
+      return NextResponse.json(watcherStatus)
+    }
     const meetingReply=await tryMeetingShareFollowup({actor,text,surface:'web'})
     if(meetingReply){
       await saveConversation(user.telegram_id,text,meetingReply.text)
