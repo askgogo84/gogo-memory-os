@@ -795,6 +795,9 @@ function browserSourceUrl(raw:unknown):string|null{
     const url=new URL(String(raw||''))
     if(!['https:','http:'].includes(url.protocol)||url.username||url.password)return null
     if(/^(?:www\.)?amazon\.in$/.test(url.hostname)&&/\/(?:dp|gp\/product)\/[A-Z0-9]{10}(?:\/|$)/i.test(url.pathname)){
+      // Amazon places tracking in /ref= as well as the query. Keep the
+      // observed product path; never expose tracking as a redacted link.
+      url.pathname=url.pathname.replace(/(\/(?:dp|gp\/product)\/[A-Z0-9]{10})\/ref=[^/]*\/?$/i,'$1')
       url.search='';url.hash=''
     }
     const source=url.toString()
