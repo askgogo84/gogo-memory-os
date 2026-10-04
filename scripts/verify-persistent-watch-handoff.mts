@@ -168,8 +168,9 @@ assert.equal(other.facts.some((f:any)=>f.source==='watcher'),false,'unrelated tu
 
 const commandsOutput=ts.transpileModule(fs.readFileSync('lib/agent/watch-command.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 const commandExports:any={}
+let recalledWatchContext:any=null
 const commandMocks:any={
-  './typed-object-context':{rememberTypedObjects:async()=>{}},
+  './typed-object-context':{rememberTypedObjects:async(_owner:any,domain:string,items:any[])=>{recalledWatchContext={domain,items}},latestTypedContext:async()=>recalledWatchContext},
   './watchers':freshWorker(), '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/services/cost-guard':{getCostBudget:async()=>budget}, './watch-cost-policy':cadence,
 }
@@ -300,6 +301,9 @@ row.condition_json={...condition,title:'Watch: Sony WH-1000XM5',query:'Sony WH-1
 row.last_checked_at='2026-10-04T10:30:42.474Z'
 row.next_check_at='2026-10-04T13:00:42.474Z'
 row.cadence_minutes=150
+store.agent_watchers.push({...structuredClone(row),id:'sony-broad',condition_json:{title:'Sony WH-1000XM5',query:'Sony WH-1000XM5 price amazon.in'}})
+store.agent_watchers.push({...structuredClone(row),id:'unrelated-flight',condition_json:{title:'Unrelated flight watch',query:'AT9 flight New York'}})
+store.life_event_actions=[{telegram_id:'101',title:'Unrelated itinerary task',action_key:'prepare-web-checkin',status:'blocked'}]
 const recallQuestions=[
   'Show my watches. What are my Sony headphone criteria, when did you last check, and when will you check again?',
   'Which headphones am I watching, and what offers did I ask you to exclude?',
@@ -314,9 +318,21 @@ for(const text of recallQuestions){
   assert.match(reply.body.text,/Next check:.*4 Oct.*6:30 pm/)
   assert.match(reply.body.text,/150 min/)
   assert.doesNotMatch(reply.body.text,/PRIVATE OTHER OWNER|SECRET/)
+  if(text!==recallQuestions[2]){
+    assert.doesNotMatch(reply.body.text,/AT9|Unrelated|Itinerary|Expires:|Source:/,'focused recall excludes unrelated tasks and repeated metadata')
+    assert.ok(reply.body.text.length<800,'focused response stays concise')
+    assert.match(reply.body.text,/2 matching watches/,'broader second Sony watch remains visible, not silently merged or stopped')
+    assert.equal((reply.body.text.match(/excluding bank\/card offers/g)||[]).length,1,'criteria are not repeated')
+    assert.deepEqual(Array.from(recalledWatchContext.items,(item:any)=>item.id),['watch-one','sony-broad'],'follow-up selection contains only shown watches')
+  }
   assert.equal(routesToWatch(text),true,'same recall intent must enter WhatsApp bridge')
 }
 assert.equal(JSON.stringify(store.agent_watchers),beforeRecall,'recall never creates, changes or stops a watch')
+// Missing product identity is not empty memory.
+const unmatchedWatch=await commandExports.tryGetWatcherStatusFromCommand({actor:{legacyTelegramId:101},text:'Which Samsung products am I watching?'})
+assert.equal(unmatchedWatch.status,'paused')
+assert.match(unmatchedWatch.text,/I have saved watches/)
+assert.doesNotMatch(unmatchedWatch.text,/Sony|AT9/)
 for(const text of ['Watch Sony headphones below 22000','Stop my Sony watch','Update my Sony watch to below 21000','Which headphones should I buy?','What should I watch tonight?']){
   assert.equal(commandExports.isWatcherStatusQuery(text),false,text)
 }
@@ -326,6 +342,7 @@ watcherReadError=true
 await assert.rejects(()=>commandExports.tryGetWatcherStatusFromCommand({actor:{legacyTelegramId:101},text:recallQuestions[0]}),/watcher_status_read_failed/,'failed retrieval must never claim there are no watches')
 watcherReadError=false
 row.active=false
+store.agent_watchers.filter(w=>w.telegram_id==='101').forEach(w=>{w.active=false})
 const emptyRecall=await commandExports.tryGetWatcherStatusFromCommand({actor:{legacyTelegramId:101},text:'Show my watches'})
 assert.equal(emptyRecall.runId,'watcher-status-none','foreign active watch cannot appear as this owner watch')
 console.log('PASS: failed reads do not fabricate empty memory; genuine empty owner state is distinguished')
