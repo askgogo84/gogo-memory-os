@@ -118,6 +118,7 @@ assert.match(routed,/delivery PIN code/,'exact production prompt is claimed befo
 const api:any={}
 runInNewContext(ts.transpileModule(readFileSync('app/api/agent/run/route.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports:api,console,process:{env:{}},require(name:string){
+    if(name==='@/lib/commerce/price-comparison')return {tryPriceComparison:async()=>null}
     if(name==='@/lib/agent/food-comparison')return exports
     if(name==='@/lib/supabase-admin')return {supabaseAdmin:db}
     if(name==='next/server')return {NextResponse:{json:(data:any)=>data}}

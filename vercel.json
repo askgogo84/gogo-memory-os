@@ -2,6 +2,10 @@
   "regions": ["bom1"],
   "crons": [
     {
+      "path": "/api/cron/price-comparisons",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/daily-briefings",
       "schedule": "*/15 * * * *"
     },

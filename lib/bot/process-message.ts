@@ -1,3 +1,4 @@
+import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { buildContextPack, renderContextBlock } from '@/lib/agent/context-brain'
@@ -389,6 +390,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
     await saveConversation(resolvedUser.telegramId,'assistant',typedReply.text)
     return {text:formatOutgoingText(params.channel,typedReply.text),resolvedUser}
+  }
+  const priceComparison=/\bcompar(?:e|ison|isons)\b/i.test(incomingText) ? await tryPriceComparison({telegramId:resolvedUser.telegramId,text:incomingText,surface:params.channel}) : null
+  if(priceComparison){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',priceComparison.text)
+    return {text:formatOutgoingText(params.channel,priceComparison.text),resolvedUser,handledBy:priceComparison.handledBy}
   }
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)

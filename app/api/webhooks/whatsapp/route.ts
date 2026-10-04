@@ -1,3 +1,4 @@
+import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
 import { parseWebWatchCommand, isWatcherStatusQuery } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
@@ -1200,7 +1201,7 @@ _"${originalText}"_
       }
     }
 
-    const foodComparison=await tryFoodComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'})
+    const foodComparison=(/\bcompar(?:e|ison|isons)\b/i.test(text) ? await tryPriceComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'}) : null) || await tryFoodComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'})
     if(foodComparison){
       await saveConversation(resolvedUser.telegramId,'user',text)
       await saveConversation(resolvedUser.telegramId,'assistant',foodComparison.text)

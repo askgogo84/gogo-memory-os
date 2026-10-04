@@ -1,3 +1,4 @@
+import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
 import { tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
@@ -115,7 +116,7 @@ export async function POST(req: NextRequest) {
       await saveConversation(user.telegram_id,text,meetingReply.text)
       return NextResponse.json(meetingReply)
     }
-    const foodComparison=await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:'web'})
+    const foodComparison=(/\bcompar(?:e|ison|isons)\b/i.test(text) ? await tryPriceComparison({telegramId:actor.legacyTelegramId,text,surface:'web'}) : null) || await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:'web'})
     if(foodComparison){
       await saveConversation(user.telegram_id,text,foodComparison.text)
       return NextResponse.json(foodComparison)
