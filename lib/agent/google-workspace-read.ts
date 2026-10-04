@@ -189,8 +189,16 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
 
 export async function searchWorkspaceEmails(actor:AgentActor, input:string) {
   const exactSubject=String(input||'').match(/subject\s+["“]([^"”]{2,240})["”]/i)?.[1]?.trim()
-  const terms=workspaceSearchTerms(input)
-  const q=exactSubject?`subject:"${exactSubject.replace(/"/g,'')}" -in:spam -in:trash`:[...terms,'newer_than:2y'].join(' ').trim()
+  // An explicit room identifier is the user's matching constraint, not a word
+  // to discard after six generic terms such as "connected", "contain" or "link".
+  const rooms=[...new Set([...String(input||'').matchAll(/(?:^|[\s(<])(?:https:\/\/)?meet\.google\.com\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?=$|[\s.,;!?)}\]])/gi)].map(match=>match[1].toLowerCase()))]
+  if(rooms.length>1)throw new Error('workspace_email_meeting_link_ambiguous')
+  const meetingLink=rooms.length?`meet.google.com/${rooms[0]}`:null
+  const terms=meetingLink?[meetingLink]:workspaceSearchTerms(input)
+  const subjectQuery=exactSubject?`subject:"${exactSubject.replace(/"/g,'')}"`:''
+  const q=meetingLink
+    ? [subjectQuery,`"${meetingLink}"`,'-in:spam','-in:trash'].filter(Boolean).join(' ')
+    : exactSubject?`${subjectQuery} -in:spam -in:trash`:[...terms,'newer_than:2y'].join(' ').trim()
   const params=new URLSearchParams({maxResults:String(MAX_EMAILS)})
   if(q)params.set('q',q)
   const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`)

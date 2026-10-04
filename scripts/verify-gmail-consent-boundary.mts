@@ -7,6 +7,7 @@ import ts from 'typescript'
 // No provider calls, real credentials or production mutations.
 const actor={legacyTelegramId:101,userId:'fixture-owner',whatsappId:'fixture',name:'Fixture'}
 let enabled:boolean|null=false,consentError=false,fetches=0,credentialReads=0,writes=0
+const requestedUrls:string[]=[]
 const db={from(table:string){
   let single=false
   const q:any={select(columns:string){assert.ok(!columns.includes('google_calendar_connected_at'),'Connections must use columns present in the production users schema');return q},eq(key:string,value:any){if(key==='telegram_id')assert.equal(String(value),'101');return q},gte(){return q},limit(){return q},maybeSingle(){single=true;return q},insert(){writes++;throw new Error('unexpected write')},then(resolve:any,reject:any){return Promise.resolve().then(()=>{
@@ -27,7 +28,7 @@ const mocks:any={
 function load(file:string){
   const exports:any={}
   const source=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText
-  vm.runInNewContext(source,{exports,module:{exports},require:(name:string)=>mocks[name]||{},URL,URLSearchParams,console,fetch:async()=>{fetches++;return {ok:true,status:200,json:async()=>({messages:[],files:[]})}}})
+  vm.runInNewContext(source,{exports,module:{exports},require:(name:string)=>mocks[name]||{},URL,URLSearchParams,console,fetch:async(url:string)=>{requestedUrls.push(String(url));fetches++;return {ok:true,status:200,json:async()=>({messages:[],files:[]})}}})
   return exports
 }
 const reads=load('lib/agent/google-workspace-read.ts')
@@ -110,3 +111,19 @@ assert.equal((await routeExports.POST(request)).status,401)
 assert.equal(genericPlans,0)
 assert.equal(writes,0,'existing watch reuse and disabled preference make no new watcher writes')
 console.log('PASS: actual dashboard POST routes inbox monitoring to consent-bound durable watch; existing reuse, saved response, blocked read and session boundary')
+
+// Live meeting-email search lost the room code beyond the generic six-term cap.
+// Exercise the real Gmail reader and inspect the outgoing provider query.
+enabled=true
+await reads.searchWorkspaceEmails(actor,'Search for emails in connected Gmail that contain the link https://meet.google.com/abc-defg-hij.')
+assert.equal(new URL(requestedUrls.at(-1)!).searchParams.get('q'),'"meet.google.com/abc-defg-hij" -in:spam -in:trash','explicit meeting link must survive the generic search-term limit')
+await reads.searchWorkspaceEmails(actor,'Find email subject "Design review" with https://meet.google.com/abc-defg-hij')
+assert.equal(new URL(requestedUrls.at(-1)!).searchParams.get('q'),'subject:"Design review" "meet.google.com/abc-defg-hij" -in:spam -in:trash')
+const callsBeforeAmbiguous=requestedUrls.length
+await assert.rejects(()=>reads.searchWorkspaceEmails(actor,'Find invitations for https://meet.google.com/abc-defg-hij and https://meet.google.com/xyz-abcd-efg'),/workspace_email_meeting_link_ambiguous/)
+assert.equal(requestedUrls.length,callsBeforeAmbiguous,'conflicting links never silently select one or broaden the provider search')
+await reads.searchWorkspaceEmails(actor,'Find email subject "Design review"')
+assert.equal(new URL(requestedUrls.at(-1)!).searchParams.get('q'),'subject:"Design review" -in:spam -in:trash')
+await reads.searchWorkspaceEmails(actor,'Find email for https://evilmeet.google.com/abc-defg-hij')
+assert.ok(!new URL(requestedUrls.at(-1)!).searchParams.get('q')!.includes('"meet.google.com/abc-defg-hij"'),'lookalike host is not canonicalized into a genuine Meet link')
+console.log('PASS: exact Meet search preserves room code and subject; multiple rooms fail closed; existing subject search retained')
