@@ -439,10 +439,10 @@ async function isConsequentialControl(page,selector,onUnavailable){
           let unavailable=false;
           consequential=await isConsequentialControl(page,a.selector,()=>{unavailable=true});
           if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential,failure:{reason:unavailable?'control_unavailable':'consequential_control'}});continue;}
-          // Zomato's observed restaurant launcher opens _blank. Keep read-only
-          // link navigation on the task page so the next wave sees its result.
+          // Follow the observed ordinary link on the task page. This also avoids
+          // pointer interception by overlays; consequence checks above still apply.
           const readLink=payload.mode==='read'?await page.locator(a.selector).first().evaluate(el=>
-            el.tagName==='A'&&el.getAttribute('target')==='_blank'&&/^https?:/.test(el.href||'')?el.href:null).catch(()=>null):null;
+            el.tagName==='A'&&/^https?:/.test(el.href||'')&&!el.hasAttribute?.('download')?el.href:null).catch(()=>null):null;
           if(readLink)await page.goto(readLink,{waitUntil:'domcontentloaded',timeout:navTimeout});
           else await page.locator(a.selector).first().click({timeout:10000});
         } else if(a.kind==='submit'){
@@ -714,7 +714,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
     })),
   }
   const choices=[...pageModel.controls.map((control:any)=>({kind:'control',selector:control.selector,label:control.label,tag:control.tag,role:control.role,...(control.href?{href:control.href}:{}),...('searchMode' in control?{searchMode:control.searchMode,value:control.value}:{})})),
-    ...pageModel.links.map((link:any)=>({kind:'link',url:link.href,label:link.text}))]
+    ...pageModel.links.map((link:any,index:number)=>({kind:'link',url:link.href,label:link.text,sourceIndex:index}))]
     .map((choice,index)=>({...choice,ref:'r'+index}))
   const modeRule = mode==='read'
     ? 'Research mode: actively navigate, fill search/filter fields, click safe search/filter/result controls, and wait for results until the objective is satisfied. Never book, buy, reserve, apply, submit personal data, authenticate, or trigger a consequential action. Return empty actions only when the current page already contains enough evidence to answer the objective.'
@@ -737,7 +737,10 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
       if(!action?.ref)return action
       const choice=choices.find(item=>item.ref===action.ref)
       if(!choice)return {kind:'invalid'}
-      if(choice.kind==='link')return action.kind==='goto'?{kind:'goto',url:(choice as any).url}:{kind:'invalid'}
+      if(choice.kind==='link'){
+        const observedHref=page.links?.[(choice as any).sourceIndex]?.href
+        return action.kind==='goto'&&typeof observedHref==='string'?{kind:'goto',url:observedHref}:{kind:'invalid'}
+      }
       return {...action,selector:(choice as any).selector}
     }):rawActions
     const normalized=normalizeActions(resolvedActions,page.url,canAuthorizeConsequentialAction({mode,objectiveTrust}))

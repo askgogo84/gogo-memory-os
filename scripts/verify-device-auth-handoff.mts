@@ -283,17 +283,17 @@ assert.doesNotMatch(JSON.stringify(diagnosticOutput),/private-fixture|private\.e
 
 // Actual emitted worker: public search Enter and _blank restaurant navigation.
 // No live values or writes are simulated as production evidence.
-for(const scenario of ['search','password','post','auth-form','blank-link','consequential-link']){
+for(const scenario of ['search','password','post','auth-form','blank-link','ordinary-link','consequential-link']){
  let pressed=0,clicked=0,currentUrl='https://provider.example/',out:any
- const attrs:any=scenario.includes('link')?{target:'_blank'}:{placeholder:'Search for Products, Brands and More',type:scenario==='password'?'password':'text'}
+ const attrs:any=scenario.includes('link')?{target:scenario==='ordinary-link'?'_self':'_blank'}:{placeholder:'Search for Products, Brands and More',type:scenario==='password'?'password':'text'}
  const form=scenario==='post'||scenario==='auth-form'?{getAttribute:(name:string)=>name==='method'?(scenario==='post'?'post':'get'):name==='action'?'/login':null,querySelectorAll:()=>[]}:null
  const el={tagName:scenario.includes('link')?'A':'INPUT',textContent:scenario==='consequential-link'?'Buy now':'Check it out',href:'https://provider.example/restaurants',id:'',form,getAttribute:(name:string)=>attrs[name]??null}
  const page={goto:async(url:string)=>{currentUrl=url},waitForTimeout:async()=>{},waitForFunction:async()=>{},evaluate:async()=>({url:currentUrl,text:'Public result'}),locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(el),press:async(key:string)=>{assert.equal(key,'Enter');pressed++},click:async()=>{clicked++}})})}
  await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[page],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example/',mode:'read',actions:[{kind:scenario.includes('link')?'click':'search_enter',selector:'#observed'}]})).toString('base64')],exit:()=>{throw new Error('unexpected exit')}},Buffer,console:{log:(value:string)=>{out=JSON.parse(value)},error:console.error}})
  assert.equal(pressed,scenario==='search'?1:0,scenario)
- assert.equal(clicked,0,scenario+' never clicks a guessed submission')
- assert.equal(currentUrl,scenario==='blank-link'?'https://provider.example/restaurants':'https://provider.example/',scenario+' navigates same task only after consequence guard')
- assert.equal(out.actions[0].status,['search','blank-link'].includes(scenario)?'done':'skipped',scenario)
+ assert.equal(clicked,0,scenario+' uses observed link navigation or safe search only')
+ assert.equal(currentUrl,['blank-link','ordinary-link'].includes(scenario)?'https://provider.example/restaurants':'https://provider.example/',scenario+' navigates same task only after consequence guard')
+ assert.equal(out.actions[0].status,['search','blank-link','ordinary-link'].includes(scenario)?'done':'skipped',scenario)
 }
 
 // 3 Oct Flipkart cloud search reached results, but the snapshot was captured
