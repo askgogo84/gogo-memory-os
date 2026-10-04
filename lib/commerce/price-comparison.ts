@@ -109,7 +109,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
       let startUrl: string = COMPARISON_PROVIDERS[next.provider].url
       if (['amazon', 'flipkart', 'croma'].includes(next.provider)) {
         const {searchWebResults} = await import('@/lib/web-search')
-        const leads = await searchWebResults(task.metadata_json.subject, {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain]})
+        const leads = await searchWebResults(task.metadata_json.subject, {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000})
         // Discovery is not price evidence. Only observed retailer URLs are used;
         // never synthesize a product ID or trust a search snippet's price.
         const productPath = next.provider === 'amazon' ? /\/(?:dp|gp\/product)\// : next.provider === 'flipkart' ? /\/p\// : /\/p\//

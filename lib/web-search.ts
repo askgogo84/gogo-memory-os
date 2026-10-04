@@ -8,7 +8,7 @@ function cleanText(input: string) {
   return (input || '').replace(/\s+/g, ' ').trim()
 }
 
-export type WebSearchOptions = { includeDomains?: string[] }
+export type WebSearchOptions = { includeDomains?: string[]; timeoutMs?: number }
 
 async function searchWithTavily(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
   const apiKey = process.env.TAVILY_API_KEY
@@ -33,6 +33,7 @@ async function searchWithTavily(query: string, opts: WebSearchOptions = {}): Pro
       ...(includeDomains.length ? { include_domains: includeDomains } : {}),
     }),
     cache: 'no-store',
+    ...(opts.timeoutMs ? {signal: AbortSignal.timeout(Math.max(1000, Math.min(opts.timeoutMs, 30_000)))} : {}),
   })
 
   if (!res.ok) {
