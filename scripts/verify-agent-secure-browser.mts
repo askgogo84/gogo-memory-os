@@ -99,7 +99,7 @@ assert.match(browser,/executeApprovedBrowserCommand/)
 // The returned pageText is only sent to the requesting surface, while Activity
 // records contain host/action-count or bounded error metadata.
 assert.match(browser,/text:`\$\{result\.summary\}[\s\S]*safe\(result\.pageText,1800\)/)
-assert.match(browser,/activity\(tg,params\.runId,'run_completed',result\.summary,\{host:new URL\(result\.url\)\.hostname,action_count:result\.actions\.length\}\)/)
+assert.match(browser,/activity\(tg,params\.runId,'run_completed',result\.summary,\{host:new URL\(sourceUrl\|\|params\.command\.url\)\.hostname,action_count:result\.actions\.length\}\)/)
 assert.doesNotMatch(browser,/metadata_json:\{[^}]*pageText/s)
 assert.doesNotMatch(browser,/activity\([^\n]*form[sVv]alue/s)
 
