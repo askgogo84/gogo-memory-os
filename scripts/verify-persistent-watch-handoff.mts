@@ -10,6 +10,7 @@ import * as cadence from '../lib/agent/watch-cost-policy'
 // in WhatsApp and app -> no duplicate. Fixture records, no real sends or DB writes.
 let clock=Date.parse('2026-10-03T08:00:00Z')
 let results:any[]=[]
+let inboxMessages:any[]=[], inboxReadingEnabled=true
 let watcherReadError=false
 let rejectDelivery=false
 let unknownDelivery=false
@@ -53,6 +54,7 @@ function freshWorker(){
     '@/lib/channels/whatsapp':{sendWhatsAppMessage:async(_phone:string,text:string)=>{if(rejectDelivery)throw Object.assign(new Error('fixture provider rejection'),{status:429});sent.push(text)}},
     '@/lib/web-search':{searchWebResults:async(query:string)=>{queries.push(query);await duringSearch?.();return structuredClone(results)}},
     '@/lib/services/cost-guard':{getCostBudget:async()=>budget,checkCostAllowance:async()=>({allowed:true,state:{usageRatio:0}}),recordCostEvent:async()=>{},COST_ESTIMATES_PAISE:{web_search_basic:1}},
+    './google-workspace-read':{listRecentWorkspaceInbox:async(actor:any)=>{assert.equal(actor.legacyTelegramId,101);if(!inboxReadingEnabled)throw new Error('workspace_email_reading_disabled');return {messages:structuredClone(inboxMessages)}}},
     './watch-cost-policy':cadence,'./watcher-quality':quality,
   }
   vm.runInNewContext(output,{exports,module:{exports},require:(name:string)=>mocks[name]||{},Date:Clock,URL,console,Buffer})
@@ -172,7 +174,8 @@ let recalledWatchContext:any=null
 const commandMocks:any={
   './typed-object-context':{rememberTypedObjects:async(_owner:any,domain:string,items:any[])=>{recalledWatchContext={domain,items}},latestTypedContext:async()=>recalledWatchContext},
   './watchers':freshWorker(), '@/lib/supabase-admin':{supabaseAdmin:db},
-  '@/lib/services/cost-guard':{getCostBudget:async()=>budget}, './watch-cost-policy':cadence,
+  '@/lib/services/cost-guard':{getCostBudget:async()=>budget}, './google-workspace-read':{listRecentWorkspaceInbox:async(actor:any)=>{assert.equal(actor.legacyTelegramId,101);if(!inboxReadingEnabled)throw new Error('workspace_email_reading_disabled');return {messages:structuredClone(inboxMessages)}}},
+    './watch-cost-policy':cadence,
 }
 vm.runInNewContext(commandsOutput,{exports:commandExports,module:{exports:commandExports},require:(name:string)=>commandMocks[name]||{},Date,URL,console,Buffer})
 const parsed=commandExports.parseWebWatchCommand('Keep searching for Christopher Ward C63 Sealander in India and alert me when you find a new listing')
@@ -346,3 +349,74 @@ store.agent_watchers.filter(w=>w.telegram_id==='101').forEach(w=>{w.active=false
 const emptyRecall=await commandExports.tryGetWatcherStatusFromCommand({actor:{legacyTelegramId:101},text:'Show my watches'})
 assert.equal(emptyRecall.runId,'watcher-status-none','foreign active watch cannot appear as this owner watch')
 console.log('PASS: failed reads do not fabricate empty memory; genuine empty owner state is distinguished')
+
+
+// Inbox alerts must use the same durable ledger as web watches. A five-item
+// digest cannot consume the remaining actionable messages as already seen.
+watcherReadError=false;rejectDelivery=false;unknownDelivery=false
+store.agent_watchers=[];store.agent_ideas=[];store.users=[{id:'fixture-owner',telegram_id:101,whatsapp_id:'fixture-phone'}]
+const inbox:any={id:'inbox-one',telegram_id:'101',type:'email_triage',active:true,
+ condition_json:{title:'Inbox action watch',delivery:'whatsapp',cadenceMinutes:60},last_state_json:{},next_check_at:new Date(clock).toISOString()}
+store.agent_watchers.push(inbox)
+inboxMessages=Array.from({length:7},(_,i)=>({id:'mail-'+i,threadId:'thread-'+i,subject:'Action required: fixture '+i,from:'Fixture <sender@example.test>',snippet:'Please review',date:'2026-10-05'}))
+rejectDelivery=true
+const inboxBefore=sent.length
+await freshWorker().processDueAgentWatchers()
+assert.ok(inbox.last_state_json.pendingInboxAlert?.key,'rejected inbox digest must persist before sending')
+assert.equal(sent.length,inboxBefore)
+assert.equal(inbox.last_state_json.seenMessageIds?.length||0,0,'rejected messages are not consumed')
+const inboxKey=inbox.last_state_json.pendingInboxAlert.key
+inboxMessages=[];clock=Date.parse(inbox.next_check_at);rejectDelivery=false
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,inboxBefore+1,'retained digest retries after worker restart and inbox changes')
+assert.equal(inbox.last_state_json.inboxAlertDelivery.key,inboxKey)
+assert.equal(inbox.last_state_json.inboxAlertDelivery.state,'provider_accepted')
+assert.equal(inbox.last_state_json.pendingInboxAlert,null)
+assert.equal(inbox.last_state_json.seenMessageIds.length,5)
+assert.equal(store.agent_ideas.length,1)
+assert.ok(store.agent_ideas[0].source_refs.some((r:any)=>r.type==='gmail_message'&&r.id==='mail-0'&&r.threadId==='thread-0'),'app keeps the originating message/thread')
+assert.ok(store.agent_ideas[0].source_refs.some((r:any)=>r.type==='notification_delivery'&&r.key===inboxKey),'app keeps receipt lookup identity')
+clock=Date.parse(inbox.next_check_at)
+inboxMessages=Array.from({length:7},(_,i)=>({id:'mail-'+i,threadId:'thread-'+i,subject:'Action required: fixture '+i,from:'Fixture',snippet:'Please review'}))
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,inboxBefore+2,'sixth and seventh action are not silently discarded')
+assert.equal(inbox.last_state_json.lastActionCount,2)
+clock=Date.parse(inbox.next_check_at)
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,inboxBefore+2,'accepted digests are deduplicated across fresh workers')
+// Ambiguous transport results become visible app items without a blind resend.
+inboxMessages=[{id:'unknown-mail',threadId:'unknown-thread',subject:'Please review fixture',from:'Fixture'}]
+unknownDelivery=true;clock=Date.parse(inbox.next_check_at)
+await freshWorker().processDueAgentWatchers()
+assert.equal(inbox.last_state_json.inboxAlertDelivery.state,'outcome_unknown')
+assert.equal(inbox.last_state_json.pendingInboxAlert,null)
+assert.match(store.agent_ideas.at(-1).reason,/not confirmed/i)
+unknownDelivery=false;clock=Date.parse(inbox.next_check_at)
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,inboxBefore+2)
+// A retained alert cannot bypass newly disabled mail reading.
+inboxMessages=[{id:'consent-mail',subject:'Action required fixture',from:'Fixture'}]
+rejectDelivery=true;clock=Date.parse(inbox.next_check_at)
+await freshWorker().processDueAgentWatchers()
+const retainedConsent=inbox.last_state_json.pendingInboxAlert.key
+inboxReadingEnabled=false;rejectDelivery=false;clock=Date.parse(inbox.next_check_at)
+await freshWorker().processDueAgentWatchers()
+assert.equal(inbox.last_state_json.pendingInboxAlert.key,retainedConsent)
+assert.equal(inbox.last_state_json.lastError,'workspace_email_reading_disabled')
+assert.ok(!sent.slice(inboxBefore+2).some(x=>x.includes('Action required fixture')),'disabled reading does not send saved email content')
+console.log('PASS: inbox rejection/restart, durable receipt identity, source refs, overflow, dedup, uncertainty and revoked consent')
+
+// A saved digest is revoked by corrected criteria, even after a failed attempt.
+inboxReadingEnabled=true
+inbox.condition_json={...inbox.condition_json,matchTerms:['different project']}
+inboxMessages=[{id:'consent-mail',subject:'Action required fixture',from:'Fixture'}]
+clock=Date.parse(inbox.next_check_at)
+const beforeCorrection=sent.length
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,beforeCorrection)
+assert.equal(inbox.last_state_json.pendingInboxAlert,null)
+assert.equal(inbox.last_state_json.lastActionCount,0)
+inbox.active=false;clock+=86400000
+await freshWorker().processDueAgentWatchers()
+assert.equal(sent.length,beforeCorrection,'stopped inbox watch never resumes itself')
+console.log('PASS: corrected inbox criteria revoke retained alerts; stopped watches remain stopped')
