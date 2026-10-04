@@ -448,6 +448,15 @@ assert.notEqual(redactBrowserSensitiveText(observedTrackedProduct),observedTrack
 assert.equal(sourceChecks.browserSourceUrl(observedTrackedProduct+'?tracking=fixture#fragment'),observedProduct,'strip only tracking from the observed product path before redaction')
 assert.equal(await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,url:observedTrackedProduct}),resultText.replace(/\s+/g,' ').trim(),'real redaction must not prevent assessment of the observed product page')
 assert.equal(sourceChecks.browserSourceUrl('https://provider.example/product/ref=private?token=secret'),null,'unrecognized provider URLs remain withheld')
+// Live M185 discovery on 4 Oct contained a numeric model code in the slug.
+// Preserve the observed ASIN, not the redacted descriptive text or tracking.
+const numericModelProduct='https://www.amazon.in/Logitech-910-002225-M185-Wireless-Mouse/dp/B00552K0GM'
+assert.notEqual(redactBrowserSensitiveText(numericModelProduct),numericModelProduct)
+assert.equal(sourceChecks.browserSourceUrl(numericModelProduct),'https://www.amazon.in/dp/B00552K0GM')
+assert.equal(sourceChecks.browserSourceUrl(numericModelProduct+'?session=private#secret'),'https://www.amazon.in/dp/B00552K0GM')
+assert.equal(sourceChecks.browserSourceUrl(numericModelProduct.replace('amazon.in','amazon.in.evil.example')),null)
+assert.equal(sourceChecks.browserSourceUrl(numericModelProduct.replace('B00552K0GM','1234567890')),null,'identifier redaction still applies to the product ID itself')
+assert.equal(await sourceChecks.assessReadOutcome('Find Logitech M185 and product link',{...resultPage,url:numericModelProduct}),resultText.replace(/\s+/g,' ').trim())
 console.log('PASS: observed product source handoff and search-result completion boundary')
 
 // Replay the actual duplicate browser command while its first read is running.
