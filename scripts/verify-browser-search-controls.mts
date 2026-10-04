@@ -174,7 +174,7 @@ plannerReply=null
 
 // Drive the real controller across the newly opened field and returned options.
 const airportExports:any={},airportWaves:any[]=[]
-const suggestionText='Bengaluru BLR — Kempegowda International Airport'
+const suggestionText='Bengaluru BLR ï¿½ Kempegowda International Airport'
 runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:airportExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
@@ -261,3 +261,42 @@ assessmentEvidence=['Model: Sony WH-1000XM5','Listed Price: â‚¹28,926']
 await assert.rejects(()=>resultExports.runSecureBrowser({userId:'fixture-user',url:'https://fixture.example/',objective:'Find Sony WH-1000XM5 headphones and listed price',mode:'read'}),/browser_objective_unverified/,'invented labels must still fail grounding')
 assert.ok(assessmentCalls>previousAssessments)
 console.log('PASS: search controls, location handoff, verified result convergence and fail-closed evidence')
+// Flight widgets need separate observations to open/fill/select two airports and dates.
+// Fixtures verify the actual loop, not live fares or provider access.
+async function multiStepFixture(scenario:'flight'|'blocked-control'|'never-complete') {
+  const exported:any={};let steps=0,plans=0
+  const required=scenario==='flight'?8:2
+  const makePage=()=>({url:'https://fixture.example/flights',title:'Flight search',
+    text:scenario!=='never-complete'&&steps>=required?'BLR to BOM 12 October 2026 1 adult Economy Fare INR 5000':(scenario==='never-complete'?'Choose route and date':'Choose route and date step '+steps),
+    forms:[],links:[],controls:[{selector:'#commit',tag:'button',label:'Book now'},{selector:'#safe',tag:'button',label:'Search flights'}],
+    actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:steps===1&&scenario==='blocked-control'?'skipped':'done',failure:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
+  runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+    exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+      if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
+      if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
+      if(id==='./browser-evidence')return browserEvidence
+      if(id==='./browser-auth-gate')return {detectHumanAuthGate}
+      if(id==='./browser-location-gate')return {needsBrowserDeliveryLocation}
+      if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
+      if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string,_u:any,system?:string)=>{
+        if(system?.startsWith('Evaluate whether'))return JSON.stringify({complete:scenario!=='never-complete'&&steps>=required,evidence:[makePage().text]})
+        plans++
+        if(scenario==='blocked-control'&&plans===2){
+          const choices=JSON.parse(prompt.split('OBSERVED_CHOICES: ')[1])
+          assert.ok(!choices.some((c:any)=>c.selector==='#commit'),'blocked commit cannot be offered for another read click')
+        }
+        return JSON.stringify({actions:[{kind:'click',selector:scenario==='blocked-control'&&plans===1?'#commit':'#safe'}]})
+      }}
+      return {}
+    }
+  })
+  const sandbox={updateNetworkPolicy:async()=>{},stop:async()=>{},runCommand:async()=>{steps++;return {exitCode:0,stdout:async()=>JSON.stringify(makePage())}}}
+  exported.testInspect(async()=>({page:makePage(),releaseOwnerLock:async()=>{},sandbox,name:'fixture',managed:{allow:{},env:{},release:async()=>{}}}))
+  const execute=()=>exported.runSecureBrowser({userId:'fixture',url:'https://fixture.example/flights',objective:'Find BLR to BOM for 12 October 2026, 1 adult economy and displayed fare',mode:'read'})
+  if(scenario==='never-complete'){await assert.rejects(execute,/browser_objective_unverified/);assert.equal(steps,2,'unchanged pages stop after two attempts instead of exhausting the larger budget')}
+  else {const result=await execute();assert.equal(result.status,'completed');assert.equal(steps,required)}
+}
+await multiStepFixture('flight')
+await multiStepFixture('blocked-control')
+await multiStepFixture('never-complete')
+console.log('PASS: multi-step flight research can complete, blocked commit stays blocked while another read control is tried, and unfinished research remains bounded')

@@ -18,7 +18,9 @@ import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_GENE
 import { canAuthorizeConsequentialAction, type TrustClass } from './trust'
 
 const MAX_ACTIONS = 12
-const MAX_RESEARCH_WAVES = 4
+// Airport autocomplete and date selection need several observed steps.
+// The existing 180-second deadline still bounds the entire read.
+const MAX_RESEARCH_WAVES = 12
 // 3 Oct: the IndiGo read exceeded the 300s route limit and left RUNNING in DB.
 // Reserve 120s for teardown, caller persistence and response. This is a read
 // budget, not permission to retry an interrupted consequential operation.
@@ -683,11 +685,12 @@ function observedReadActions(actions:BrowserAction[],page:any):BrowserAction[]{
 }
 
 async function planActions(objective:string,page:any,mode:BrowserMode,objectiveTrust:TrustClass):Promise<{actions:BrowserAction[];operation:ApprovedBrowserOperation|null;draftReady:boolean}>{
+  const rejectedControls=new Set((mode==='read'?page.actions||[]:[]).filter((action:any)=>action.status==='skipped').map((action:any)=>String(action.detail||'')))
   const pageModel={
     url:safeText(page.url,1200),
     title:safeText(page.title,500),
     text:safeText(page.text,10000),
-    controls:(page.controls||[]).slice(0,100).map((control:any)=>({
+    controls:(page.controls||[]).filter((control:any)=>!rejectedControls.has(String(control.selector))).slice(0,100).map((control:any)=>({
       selector:String(control.selector||'').slice(0,1800),tag:safeText(control.tag,30),
       role:safeText(control.role,50),label:safeText(control.label,180),
       ...(control.href?{href:safeText(control.href,1200)}:{}),
@@ -701,7 +704,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
     forms:(page.forms||[]).slice(0,12).map((form:any)=>({
       action:safeText(form?.action,1200),
       method:String(form?.method||'get'),
-      inputs:Array.isArray(form?.inputs)?form.inputs.slice(0,60):[],
+      inputs:Array.isArray(form?.inputs)?form.inputs.filter((field:any)=>!rejectedControls.has(String(field.selector))).slice(0,60):[],
     })),
   }
   const choices=[...pageModel.controls.map((control:any)=>({kind:'control',selector:control.selector,label:control.label,tag:control.tag,role:control.role,...(control.href?{href:control.href}:{}),...('searchMode' in control?{searchMode:control.searchMode,value:control.value}:{})})),
@@ -831,8 +834,11 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     let credentialSelectionRequired=false
     let readAnswer:string|null=null
     let assessedReadPage:any=null
+    let unchangedReadWaves=0
+    const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
     for(let wave=0;wave<(params.mode==='read'?MAX_RESEARCH_WAVES:1);wave++){
+      const beforeReadSnapshot=readSnapshot(page)
       const providerBlock=detectProviderAccessBlock(page)
       if(providerBlock){
         // Do NOT stop the sandbox on a block. A blocked result is precisely the
@@ -851,7 +857,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       // environment variables, and injected directly by Playwright. They are
       // never exposed to the model planner, task objective, Activity, or logs.
       if(!vaultAttempted && (authGate.reason==='password'||(!authGate.required&&loginish))){
-        const currentUrl=String(page.url||target.toString())
+      const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
         const credential=host
@@ -980,7 +986,13 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]))
       if(!Array.isArray(page.actions)||page.actions.length!==actions.length||actions.some((a,i)=>page.actions[i]?.kind!==a.kind))missingActionEvidence=true
       const doneCount=(page.actions||[]).filter((a:any)=>a.status==='done').length
-      if(doneCount===0)break
+      if(params.mode==='read'){
+        unchangedReadWaves=readSnapshot(page)===beforeReadSnapshot?unchangedReadWaves+1:0
+        if(unchangedReadWaves>=2)break
+      }
+      // A denied commit is not a failed provider page. Replan from the observed
+      // controls with denied selectors removed; never relax the execution guard.
+      if(doneCount===0&&!(params.mode==='read'&&(page.actions||[]).some((a:any)=>a.status==='skipped')))break
     }
 
     // The final action wave can itself open MFA. Non-read flows have only one
