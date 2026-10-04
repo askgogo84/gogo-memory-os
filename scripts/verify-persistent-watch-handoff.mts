@@ -12,6 +12,7 @@ let clock=Date.parse('2026-10-03T08:00:00Z')
 let results:any[]=[]
 let rejectDelivery=false
 let unknownDelivery=false
+let duringSearch=null as null|(()=>Promise<void>)
 const accepted=new Map<string,string>()
 const sent:string[]=[]
 const queries:string[]=[]
@@ -48,7 +49,7 @@ function freshWorker(){
       return {accepted:true,state:'provider_accepted',providerId:accepted.get(p.key)}
     }},
     '@/lib/channels/whatsapp':{sendWhatsAppMessage:async(_phone:string,text:string)=>{if(rejectDelivery)throw Object.assign(new Error('fixture provider rejection'),{status:429});sent.push(text)}},
-    '@/lib/web-search':{searchWebResults:async(query:string)=>{queries.push(query);return structuredClone(results)}},
+    '@/lib/web-search':{searchWebResults:async(query:string)=>{queries.push(query);await duringSearch?.();return structuredClone(results)}},
     '@/lib/services/cost-guard':{getCostBudget:async()=>budget,checkCostAllowance:async()=>({allowed:true,state:{usageRatio:0}}),recordCostEvent:async()=>{},COST_ESTIMATES_PAISE:{web_search_basic:1}},
     './watch-cost-policy':cadence,'./watcher-quality':quality,
   }
@@ -267,3 +268,24 @@ assert.equal(dashboardCorrection.body.handledBy,'watcher-update')
 assert.match(row.condition_json.query,/black dial.*below 80000/)
 assert.equal(routesToWatch(correction),true,'WhatsApp first-refusal routes explicit corrections')
 console.log('PASS: conversational correction retains task identity and original request; fresh month-later worker and dashboard recall use corrected criteria')
+
+// A correction/stop can arrive while an earlier provider search is still pending.
+results=[];row.active=true;row.next_check_at=new Date(clock).toISOString()
+let correctedWhileRunning:any
+const sentBeforeCorrection=sent.length
+duringSearch=async()=>{
+  await commandExports.tryUpdateWebWatchFromCommand({actor:{legacyTelegramId:101},text:'Update my Christopher Ward C63 watch to: Christopher Ward C63 Sealander white dial in India below 70000 excluding card offers'})
+  correctedWhileRunning=structuredClone(row)
+}
+await freshWorker().processDueAgentWatchers()
+assert.deepEqual(row.condition_json,correctedWhileRunning.condition_json,'empty old search cannot overwrite a newer conversational correction')
+assert.deepEqual(row.last_state_json,correctedWhileRunning.last_state_json,'old quiet-check state cannot erase corrected memory')
+assert.equal(row.next_check_at,correctedWhileRunning.next_check_at,'new criteria retain their queued check')
+assert.equal(sent.length,sentBeforeCorrection)
+duringSearch=async()=>{row.active=false;row.next_check_at=null;row.last_state_json={stoppedByUser:true}}
+row.next_check_at=new Date(clock).toISOString()
+await freshWorker().processDueAgentWatchers()
+assert.equal(row.active,false);assert.equal(row.next_check_at,null,'in-flight empty search cannot reschedule a stopped watch')
+assert.deepEqual(row.last_state_json,{stoppedByUser:true})
+duringSearch=null
+console.log('PASS: a correction or stop arriving during search survives the stale worker result')
