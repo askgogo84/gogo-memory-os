@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       await attachRunToThread(session.telegramId, result?.runId, thread?.id || null)
       return NextResponse.json(result, { status })
     }
-    const food=await tryPriceComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface}) || await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface})
+    const food=(/\bcompar(?:e|ison|isons)\b/i.test(text) ? await tryPriceComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface}) : null) || await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface})
     if(food){
       // The location handoff is resumed against the shared last assistant turn.
       // Persist it here too, so a reply can arrive on WhatsApp or dashboard chat.

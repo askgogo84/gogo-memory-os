@@ -1201,7 +1201,7 @@ _"${originalText}"_
       }
     }
 
-    const foodComparison=await tryPriceComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'}) || await tryFoodComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'})
+    const foodComparison=(/\bcompar(?:e|ison|isons)\b/i.test(text) ? await tryPriceComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'}) : null) || await tryFoodComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'})
     if(foodComparison){
       await saveConversation(resolvedUser.telegramId,'user',text)
       await saveConversation(resolvedUser.telegramId,'assistant',foodComparison.text)

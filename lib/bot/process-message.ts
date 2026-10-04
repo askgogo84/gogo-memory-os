@@ -391,7 +391,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId,'assistant',typedReply.text)
     return {text:formatOutgoingText(params.channel,typedReply.text),resolvedUser}
   }
-  const priceComparison=await tryPriceComparison({telegramId:resolvedUser.telegramId,text:incomingText,surface:params.channel})
+  const priceComparison=/\bcompar(?:e|ison|isons)\b/i.test(incomingText) ? await tryPriceComparison({telegramId:resolvedUser.telegramId,text:incomingText,surface:params.channel}) : null
   if(priceComparison){
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
     await saveConversation(resolvedUser.telegramId,'assistant',priceComparison.text)

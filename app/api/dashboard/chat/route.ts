@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
       await saveConversation(user.telegram_id,text,meetingReply.text)
       return NextResponse.json(meetingReply)
     }
-    const foodComparison=await tryPriceComparison({telegramId:actor.legacyTelegramId,text,surface:'web'}) || await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:'web'})
+    const foodComparison=(/\bcompar(?:e|ison|isons)\b/i.test(text) ? await tryPriceComparison({telegramId:actor.legacyTelegramId,text,surface:'web'}) : null) || await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:'web'})
     if(foodComparison){
       await saveConversation(user.telegram_id,text,foodComparison.text)
       return NextResponse.json(foodComparison)
