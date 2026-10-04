@@ -68,6 +68,7 @@ const db={from:(table:string)=>{
 }}
 let commandExecutionFailure:any
 let browserBlockReason='human_auth_required'
+let completedUrl='https://provider.example/account',completedSource:string|undefined
 let browserCompleted=false,vaultCalls=0,browserActions:any[]=[],reconciliationEvidence:any,browserExecutions=0
 const command=load('browser-command.ts',{
   './post-auth-outcome':{markAuthOutcomeUnknown:async(_tg:string,runId:string,meta:any)=>{metadata={...meta,browser_safe_to_retry:false};return {runId,status:'outcome_unknown'}},inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
@@ -75,7 +76,7 @@ const command=load('browser-command.ts',{
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
   './secure-computer':{runSecureBrowser:async()=>{browserExecutions++;if(commandExecutionFailure)throw commandExecutionFailure;return browserCompleted
-    ? {status:'completed',url:'https://provider.example/account',title:'Account',summary:'Read account',forms:[],actions:[]}
+    ? {status:'completed',url:completedUrl,sourceUrl:completedSource,title:'Account',summary:'Read account',forms:[],actions:[]}
     : {status:'blocked',blockReason:browserBlockReason,authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}}},
   '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff,cancelProviderBrowserHandoff:async()=>{directCancelled++}},
@@ -97,6 +98,14 @@ assert.ok(continued.text.includes('https://provider.example/account'),'completed
 assert.equal(metadata.handoff,undefined)
 assert.equal(released,2)
 assert.equal(mutations.some(m=>m.table==='agent_runs'&&m.insert),false,'handoff must never replace the run')
+completedUrl='[sensitive token withheld]'
+completedSource='https://www.amazon.in/Sony-WH-1000XM5-Wireless-Cancelling-Headphones/dp/B09XS7JWHH'
+const redactedCompletion=await command.executeBrowser(params)
+assert.equal(redactedCompletion.status,'completed','a redacted presentation URL cannot undo verified completion with a valid source')
+assert.ok(redactedCompletion.text.includes(completedSource))
+assert.equal(mutations.filter(m=>m.table==='agent_runs'&&m.update?.status).at(-1)?.update.status,'completed')
+assert.equal(mutations.filter(m=>m.table==='agent_activity'&&m.insert?.event_type==='run_completed').at(-1)?.insert.metadata_json?.host,'www.amazon.in')
+completedUrl='https://provider.example/account';completedSource=undefined
 browserCompleted=false;directSaveFails=true
 await assert.rejects(()=>command.executeBrowser(params),/browser_handoff_save_failed/)
 assert.equal(directCancelled,1,'direct browser commands must clean up an unsaved takeover')
