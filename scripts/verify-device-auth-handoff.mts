@@ -92,6 +92,7 @@ browserCompleted=true
 const continued=await command.executeBrowser(params)
 assert.equal(continued.runId,'same-run')
 assert.equal(continued.status,'completed')
+assert.ok(continued.text.includes('https://provider.example/account'),'completed browser replies must include their observed source link')
 assert.equal(metadata.handoff,undefined)
 assert.equal(released,2)
 assert.equal(mutations.some(m=>m.table==='agent_runs'&&m.insert),false,'handoff must never replace the run')

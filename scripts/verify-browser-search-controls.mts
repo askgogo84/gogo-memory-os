@@ -322,3 +322,25 @@ await multiStepFixture('flight')
 await multiStepFixture('blocked-control')
 await multiStepFixture('never-complete')
 console.log('PASS: multi-step flight research can complete, blocked commit stays blocked while another read control is tried, and unfinished research remains bounded')
+
+// Reproduce the live Amazon search-page false completion. Prices are fixtures.
+const sourceChecks:any={}
+runInNewContext(ts.transpileModule(source+'\nexport {browserSourceUrl, productLinkNeedsDetail, assessReadOutcome}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+ exports:sourceChecks,process:{env:{}},URL,console,require:(id:string)=>{
+  if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s.replace(/\?[^ ]+/, '?[redacted]')}
+  if(id==='./browser-evidence')return browserEvidence
+  if(id==='./planner-provider')return {completeAgentPlanPrompt:async()=>JSON.stringify({complete:true,evidence:[resultText]})}
+  return {}
+ }
+})
+const exactObjective='Find Sony WH-1000XM5, listed price and source product link'
+assert.equal(await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,url:'https://www.amazon.in/s?k=Sony'}),null,'search-price excerpt cannot fulfill a product-link objective')
+const productUrl='https://www.amazon.in/Sony-Headphones/dp/B0EXAMPLE1'
+// ASIN-shaped fixture only; it is not a real source or price assertion.
+assert.equal(sourceChecks.browserSourceUrl(productUrl+'?ref=tracking&session=private'),productUrl)
+assert.equal(sourceChecks.browserSourceUrl('https://provider.example/account?token=secret'),null)
+assert.equal(sourceChecks.browserSourceUrl('https://user:password@provider.example/'),null)
+assert.equal(sourceChecks.browserSourceUrl('javascript:alert(1)'),null)
+assert.equal(sourceChecks.productLinkNeedsDetail(exactObjective,productUrl),false)
+assert.equal(await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,url:productUrl}),resultText.replace(/\s+/g,' ').trim())
+console.log('PASS: observed product source handoff and search-result completion boundary')
