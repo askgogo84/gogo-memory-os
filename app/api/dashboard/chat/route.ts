@@ -1,6 +1,6 @@
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
-import { tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand } from '@/lib/agent/watch-command'
+import { tryCreateInboxTriageWatchFromCommand, tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
@@ -110,6 +110,13 @@ export async function POST(req: NextRequest) {
     if(watcherStatus){
       await saveConversation(user.telegram_id,text,watcherStatus.text)
       return NextResponse.json(watcherStatus)
+    }
+    // Inbox monitoring must create a real watcher before the generic planner
+    // can turn the same request into an ordinary task with no scheduled checks.
+    const inboxWatch=await tryCreateInboxTriageWatchFromCommand({actor,text,surface:'web'})
+    if(inboxWatch){
+      await saveConversation(user.telegram_id,text,inboxWatch.text)
+      return NextResponse.json(inboxWatch)
     }
     const meetingReply=await tryMeetingShareFollowup({actor,text,surface:'web'})
     if(meetingReply){

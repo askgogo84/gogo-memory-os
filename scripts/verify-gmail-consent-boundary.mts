@@ -66,3 +66,47 @@ assert.match(JSON.stringify(await page.default()),/Connected · Send enabled/)
 assert.match((await watches.tryCreateInboxTriageWatchFromCommand({actor,surface:'whatsapp',text:'Monitor my inbox for important emails'})).text,/already active/)
 assert.equal(writes,0)
 console.log('PASS: Gmail privacy preference enforced before tokens/network; watch, chat and dashboard agree; Drive retained; failed consent reads fail closed')
+
+
+// Live 5 Oct reproduction: dashboard said "Created task" but persisted no inbox
+// watcher because its general planner ran before the existing inbox-watch handler.
+const routeHistory:any[]=[]
+const routeDb={from(table:string){
+  const q:any={select(){return q},eq(k:string,v:any){if(k==='telegram_id')assert.equal(String(v),'101');return q},maybeSingle(){return q},insert(rows:any){assert.equal(table,'conversations');routeHistory.push(...rows);return q},then(resolve:any,reject:any){return Promise.resolve({data:table==='users'?{telegram_id:101,whatsapp_id:'fixture',name:'Fixture'}:null,error:null}).then(resolve,reject)}}
+  return q
+}}
+let genericPlans=0,routeSession=true
+const noops=new Proxy({},{get:()=>async()=>null})
+const routeMocks:any={
+  'crypto':{randomUUID:()=> 'fixture-event'},
+  'next/server':{NextResponse:{json:(body:any,options?:any)=>({body,status:options?.status||200})}},
+  '@/lib/supabase-admin':{supabaseAdmin:routeDb},
+  '@/lib/dashboard/session':{getSession:async()=>routeSession?{telegramId:'101'}:null},
+  '@/lib/agent/actor':{resolveAgentActor:async()=>actor},
+  '@/lib/agent/watch-command':{
+    tryGetWatcherStatusFromCommand:async()=>null,tryUpdateWebWatchFromCommand:async()=>null,tryCreateWebWatchFromCommand:async()=>null,
+    tryCreateInboxTriageWatchFromCommand:watches.tryCreateInboxTriageWatchFromCommand,
+  },
+  '@/lib/dashboard/day-chat':{detectDashboardDayIntent:()=>null},
+  '@/lib/agent/read-only-schedule':{detectReadOnlyScheduleRequest:()=>null},
+  '@/lib/agent/general-planner':{tryRunGeneralPlan:async()=>{genericPlans++;return {handledBy:'general-plan',text:'Created task: Monitor Gmail inbox hourly'}}},
+}
+const routeExports:any={}
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('app/api/dashboard/chat/route.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:routeExports,module:{exports:routeExports},require:(name:string)=>routeMocks[name]||noops,URL,console})
+const request={headers:{get:()=> 'https://app.askgogo.in'},nextUrl:{host:'app.askgogo.in'},json:async()=>({text:'Quietly watch my Gmail inbox hourly for important messages and meeting invitations that need my attention. Read only; do not send, delete or archive mail, or create calendar events. Reuse an existing general inbox watch if one exists.'})}
+enabled=true
+const inboxResult=await routeExports.POST(request)
+assert.equal(inboxResult.body.handledBy,'inbox-triage-watch','dashboard must create/reuse the durable inbox watch before generic planning')
+assert.match(inboxResult.body.text,/already active/)
+assert.equal(genericPlans,0)
+assert.equal(routeHistory.at(-1).content,inboxResult.body.text)
+enabled=false
+const disabledResult=await routeExports.POST(request)
+assert.equal(disabledResult.body.blockedReason,'workspace_email_reading_disabled')
+assert.equal(genericPlans,0,'disabled consent cannot fall through to a false task-success claim')
+assert.equal(routeHistory.at(-1).content,disabledResult.body.text)
+routeSession=false
+assert.equal((await routeExports.POST(request)).status,401)
+assert.equal(genericPlans,0)
+assert.equal(writes,0,'existing watch reuse and disabled preference make no new watcher writes')
+console.log('PASS: actual dashboard POST routes inbox monitoring to consent-bound durable watch; existing reuse, saved response, blocked read and session boundary')
