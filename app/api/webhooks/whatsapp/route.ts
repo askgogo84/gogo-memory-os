@@ -1,5 +1,5 @@
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
-import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
+import { tryMeetingShareFollowup, tryImageMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
 import { parseWebWatchCommand, isWatcherStatusQuery } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
@@ -445,6 +445,20 @@ export async function POST(req: NextRequest) {
 
     const firstMediaUrl = String(formData.get('MediaUrl0') || '')
     const firstMediaType = String(formData.get('MediaContentType0') || '')
+    // All image-note branches use the same durable meeting offer after OCR.
+    const handleImageMeeting = async (readerText: string) => {
+      const result = await tryImageMeetingShareFollowup({
+        actor: { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: resolvedUser.whatsappId, name: resolvedUser.name || 'Gogo' },
+        readerText, caption: bodyText,
+      })
+      if (!result) return false
+      await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[meeting invitation image]')
+      await saveConversation(resolvedUser.telegramId, 'assistant', result.text)
+      await sendWhatsAppMessage(from, result.text)
+      await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
+      return true
+    }
+
     // Meeting invitations and their bounded replies take precedence over link previews.
     const meetingReply=await tryMeetingShareFollowup({
       actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:resolvedUser.whatsappId,name:resolvedUser.name||'Gogo'},
@@ -564,6 +578,7 @@ export async function POST(req: NextRequest) {
             // Not a recognisable ticket → treat as a normal image note.
             const { readAndSummarizeImageNote } = await import('@/lib/services/image-note-reader')
             const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
+            if (await handleImageMeeting(noteReply)) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
             await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
             await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
             await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
@@ -636,9 +651,10 @@ export async function POST(req: NextRequest) {
                 await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[asset]', reply: asset.reply })
               } else {
               // Not food, not a ticket — treat as image note instead
-              await sendWhatsAppMessage(from, '📝 Saving as a note...')
+              await sendWhatsAppMessage(from, 'Reading your image...')
               const { readAndSummarizeImageNote } = await import('@/lib/services/image-note-reader')
               const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
+              if (await handleImageMeeting(noteReply)) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
               await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
               await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
               await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
@@ -734,13 +750,14 @@ export async function POST(req: NextRequest) {
             await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[asset]', reply: asset.reply })
             return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
           }
-          await sendWhatsAppMessage(from, 'Reading your note...')
+          await sendWhatsAppMessage(from, 'Reading your image...')
           const imageReply = await readAndSummarizeImageNote({
             mediaUrl: firstMediaUrl,
             contentType: firstMediaType,
             userCaption: bodyText,
             expectedPatientName: resolvedUser.name || profileName,
           })
+          if (await handleImageMeeting(imageReply)) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
           const savedNote = compactImageNoteForSaving(imageReply)
           await addToList(resolvedUser.telegramId, 'notes', [savedNote])
           const imageDocTitle = deriveNoteTitleFromReader(imageReply)
