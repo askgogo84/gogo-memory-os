@@ -57,6 +57,27 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
   if (!lease) return {runId: '', status: 'paused', capability: 'browser' as const, risk: 'low' as const,
     handledBy: 'price-comparison', text: 'A comparison request is being saved. Please check your latest price comparison shortly.'}
   try {
+    if (status) {
+      const {data: saved, error} = await supabaseAdmin.from('agent_runs').select(SELECT).eq('telegram_id', owner).eq('type', TYPE)
+        .order('started_at', {ascending: false}).limit(20)
+      if (error) throw new Error('comparison_lookup_failed')
+      const categories = [/\b(?:grocery|groceries)\b/i.test(params.text) && 'grocery', /\bfood\b/i.test(params.text) && 'food', /\b(?:shopping|electronics)\b/i.test(params.text) && 'shopping'].filter(Boolean)
+      const category = (row: PriceComparison) => row.metadata_json.providers.every(p => ['swiggy', 'zomato'].includes(p.provider)) ? 'food'
+        : row.metadata_json.providers.every(p => ['instamart', 'zepto', 'blinkit'].includes(p.provider)) ? 'grocery' : 'shopping'
+      const requestedProviders = Object.keys(COMPARISON_PROVIDERS).filter(key => new RegExp('\\b' + key + '\\b', 'i').test(params.text))
+      const matching = (saved || []).filter(row => (!categories.length || categories.includes(category(row as PriceComparison)))
+        && requestedProviders.every(key => row.metadata_json.providers.some((p: any) => p.provider === key))) as PriceComparison[]
+      const selected = categories.length > 1 ? categories.map(kind => matching.find(row => category(row) === kind)).filter(Boolean) as PriceComparison[] : matching.slice(0, 1)
+      const reports = []
+      for (const row of selected) {
+        const current = await readPriceComparison(owner, row.id)
+        if (current) reports.push(reply(current))
+      }
+      if (reports.length) return {...reports[0], text: reports.map(report => report.text).join('\n\n—\n\n')}
+      if (!/\b(?:price|shopping)\b/i.test(params.text)) return null
+      return {runId: '', status: 'paused', capability: 'browser' as const, risk: 'low' as const,
+        handledBy: 'price-comparison', text: 'There is no matching saved price comparison yet.'}
+    }
     let query = supabaseAdmin.from('agent_runs').select('id').eq('telegram_id', owner).eq('type', TYPE)
     if (parsed) query = query.eq('metadata_json->>request', parsed.request).in('status', ['queued', 'running'])
     const {data: existing, error: lookupError} = await query.order('started_at', {ascending: false}).limit(1).maybeSingle()
@@ -65,11 +86,7 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
       const current = await readPriceComparison(owner, existing.id)
       if (current) return reply(current)
     }
-    // Let existing food/grocery tasks answer their own status when there is no
-    // saved multi-store comparison. Never manufacture a new task for a status read.
-    if (!parsed && !/\b(?:price|shopping)\b/i.test(params.text)) return null
-    if (!parsed) return {runId: '', status: 'paused', capability: 'browser' as const, risk: 'low' as const,
-      handledBy: 'price-comparison', text: 'There is no saved price comparison yet.'}
+    if (!parsed) return null
     const now = new Date().toISOString()
     const {data, error} = await supabaseAdmin.from('agent_runs').insert({
       telegram_id: owner, type: TYPE, capability: 'browser', status: 'queued', title: parsed.subject,
