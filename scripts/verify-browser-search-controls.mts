@@ -5,6 +5,7 @@ import ts from 'typescript'
 import {needsBrowserDeliveryLocation} from '../lib/agent/browser-location-gate'
 import {browserPageAllowlist} from '../lib/agent/browser-page-network'
 import {detectHumanAuthGate} from '../lib/agent/browser-auth-gate'
+import {redactBrowserSensitiveText} from '../lib/agent/secure-browser-redaction'
 import * as browserEvidence from '../lib/agent/browser-evidence'
 const {isLoginDestination}=browserEvidence
 
@@ -107,11 +108,12 @@ assert.ok(!('cdn.zeptonow.com' in browserPageAllowlist('https://zepto.com.exampl
 // Exercise the actual planner serialization and action normalizer. The stub
 // represents a model response; it does not pretend to test model performance.
 let captured=''
+let redactLinkFixture=false
 let plannerReply:string|null=null
 const exports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport {planActions}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
-    if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
+    if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>redactLinkFixture?redactBrowserSensitiveText(s):s}
     if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
     if(id==='./browser-auth-gate')return {detectHumanAuthGate}
     if(id==='./browser-evidence')return {isLoginDestination}
@@ -180,6 +182,12 @@ assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Find Sony
 const linkedZomato={...zomatoPage,links:[{text:'Check it out',href:'https://www.zomato.com/restaurants'}]}
 plannerReply=JSON.stringify({actions:[{kind:'goto',ref:'r1',url:'https://invented.example'}]})
 assert.equal((await exports.planActions('Find vegetarian burgers',linkedZomato,'read','USER_INSTRUCTION')).actions[0].url,linkedZomato.links[0].href,'reference binds to observed destination, not model URL')
+redactLinkFixture=true
+const privateObservedLink='https://www.zomato.com/restaurants?selection=observed-fixture&session=secret-fixture'
+const queryLinkPage={...linkedZomato,links:[{text:'Check it out',href:privateObservedLink}]}
+assert.equal((await exports.planActions('Find burgers',queryLinkPage,'read','USER_INSTRUCTION')).actions[0].url,privateObservedLink,'execution resolves the original observed href, not its redacted model copy')
+assert.doesNotMatch(captured,/observed-fixture|secret-fixture/,'query values never reach the planner')
+redactLinkFixture=false
 plannerReply=JSON.stringify({actions:[{kind:'click',ref:'r999',selector:'#restaurants'}]})
 assert.equal((await exports.planActions('Find burgers',linkedZomato,'read','USER_INSTRUCTION')).actions.length,0,'invalid reference fails closed')
 // Live Zomato search Enter dismissed its unlabelled, pointer-style P options.

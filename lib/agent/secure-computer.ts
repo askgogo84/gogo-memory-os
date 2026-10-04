@@ -714,7 +714,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
     })),
   }
   const choices=[...pageModel.controls.map((control:any)=>({kind:'control',selector:control.selector,label:control.label,tag:control.tag,role:control.role,...(control.href?{href:control.href}:{}),...('searchMode' in control?{searchMode:control.searchMode,value:control.value}:{})})),
-    ...pageModel.links.map((link:any)=>({kind:'link',url:link.href,label:link.text}))]
+    ...pageModel.links.map((link:any,index:number)=>({kind:'link',url:link.href,label:link.text,sourceIndex:index}))]
     .map((choice,index)=>({...choice,ref:'r'+index}))
   const modeRule = mode==='read'
     ? 'Research mode: actively navigate, fill search/filter fields, click safe search/filter/result controls, and wait for results until the objective is satisfied. Never book, buy, reserve, apply, submit personal data, authenticate, or trigger a consequential action. Return empty actions only when the current page already contains enough evidence to answer the objective.'
@@ -737,7 +737,10 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
       if(!action?.ref)return action
       const choice=choices.find(item=>item.ref===action.ref)
       if(!choice)return {kind:'invalid'}
-      if(choice.kind==='link')return action.kind==='goto'?{kind:'goto',url:(choice as any).url}:{kind:'invalid'}
+      if(choice.kind==='link'){
+        const observedHref=page.links?.[(choice as any).sourceIndex]?.href
+        return action.kind==='goto'&&typeof observedHref==='string'?{kind:'goto',url:observedHref}:{kind:'invalid'}
+      }
       return {...action,selector:(choice as any).selector}
     }):rawActions
     const normalized=normalizeActions(resolvedActions,page.url,canAuthorizeConsequentialAction({mode,objectiveTrust}))
