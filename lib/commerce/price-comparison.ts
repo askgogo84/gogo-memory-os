@@ -77,9 +77,9 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
       const selected:PriceComparison[]=[]
       for(const focus of focuses){
         const kind = /^(?:grocery|groceries)$/.test(focus) ? 'grocery' : focus === 'food' ? 'food' : null
-        const row = matching.find(candidate => kind ? category(candidate) === kind
-          : category(candidate) === 'shopping' && (candidate.metadata_json.subject || candidate.title || '').toLowerCase().match(/[a-z0-9]+(?:-[a-z0-9]+)*/g)?.includes(focus))
-        if(row && !selected.some(existing => existing.id === row.id)) selected.push(row)
+        const row = matching.find(candidate => !selected.some(existing => existing.id === candidate.id) && (kind ? category(candidate) === kind
+          : category(candidate) === 'shopping' && (candidate.metadata_json.subject || candidate.title || '').toLowerCase().match(/[a-z0-9]+(?:-[a-z0-9]+)*/g)?.includes(focus)))
+        if(row) selected.push(row)
       }
       if(!selected.length){
         const requestedCategory = /\b(?:grocery|groceries)\b/i.test(params.text) ? 'grocery'
