@@ -13,6 +13,9 @@ const ZEPTO_PAGE_DEPENDENCIES = [
   '277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com',
   // 2 Oct live control: stylesheet and application scripts load from this CDN.
   'cdn.zeptonow.com',
+  // 6 Oct live location search: Zepto's address autocomplete uses this sibling
+  // API host, which is outside *.www.zepto.com and was failing with ERR_FAILED.
+  'bff-gateway.zepto.com',
 ]
 
 // 3 Oct electronics diagnostics: these stylesheet/bootstrap/image hosts were
