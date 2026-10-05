@@ -8,6 +8,7 @@ import { GogoCharacter } from '@/components/gogo/gogo-character'
 import { isActionablePause } from '@/lib/dashboard/run-state'
 import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
 import { reminderStateLabel } from '@/lib/dashboard/reminder-state'
+import { retiredRunReason } from '@/lib/agent/task-lifecycle'
 
 export const dynamic='force-dynamic'
 
@@ -34,11 +35,17 @@ function Row({tone,title,meta,right,href}:{tone:'teal'|'amber'|'muted'|'green';t
   return href?<Link href={href} className="block hover:bg-[#141414]">{body}</Link>:body
 }
 
+function updateState(status:string){
+  if(status==='completed')return {label:'Finished',tone:'text-[#83c3b8] bg-[#12302c]'}
+  if(status==='failed')return {label:'Could not finish',tone:'text-[#e4b6a6] bg-[#35221d]'}
+  return {label:'Paused',tone:'text-[#e4c17b] bg-[#322a1b]'}
+}
+
 export default async function HomePage(){
   const session=await getSession()
   const tg=session?.telegramId||''
   const tgNum=parseInt(tg,10)
-  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,waitingCountRes,pausedRunsRes,handoffs]=await Promise.all([
+  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,waitingCountRes,pausedRunsRes,handoffs,recentUpdatesResult]=await Promise.all([
     Number.isFinite(tgNum)?supabaseAdmin.from('users').select('name,timezone').eq('telegram_id',tgNum).maybeSingle():Promise.resolve({data:null as any}),
     session?getTodayReminders(tg):Promise.resolve({ok:true as const,reminders:[]}),
     session?getLists(tg):Promise.resolve({ok:true as const,lists:[]}),
@@ -55,6 +62,9 @@ export default async function HomePage(){
     // run does not. The signal lives in error OR metadata, so fetch rows and classify.
     session?supabaseAdmin.from('agent_runs').select('id,error,metadata_json,status').eq('telegram_id',tg).eq('status','paused').order('updated_at',{ascending:false}).limit(50):Promise.resolve({data:[] as any[]}),
     session?getPendingBrowserHandoffs(tg):Promise.resolve([]),
+    session?supabaseAdmin.from('agent_runs').select('id,type,title,summary,status,source,error,metadata_json,updated_at')
+      .eq('telegram_id',tg).in('status',['completed','paused','failed']).neq('type','secure_browser')
+      .order('updated_at',{ascending:false}).limit(12):Promise.resolve({data:[] as any[],error:null}),
   ])
 
   const tz=user?.timezone||'Asia/Kolkata'
@@ -66,6 +76,8 @@ export default async function HomePage(){
   const handoffRows=handoffs.filter(handoff=>!approvalRows.some((approval:any)=>String(approval.run_id)===handoff.id))
   const watcherRows=watchers.data||[]
   const runRows=runs.data||[]
+  const recentUpdates=((recentUpdatesResult as any)?.data||[]).filter((run:any)=>!retiredRunReason(run)).slice(0,3)
+  const updatesUnavailable=Boolean((recentUpdatesResult as any)?.error)
   // Distinguish actively-executing runs from runs awaiting an approval. Counts come from
   // untruncated head-counts so active work is never hidden by the display limit; only
   // running/queued is "Working" (a paused/blocked run must not read as working).
@@ -121,6 +133,30 @@ export default async function HomePage(){
           <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Today</div><span className="text-[10px] text-[#6a6a6a]">{reminders.length}</span></div>
           <div className="border-t border-[#1f1f1f] px-4">
             {reminders.length?reminders.slice(0,6).map(r=><Row key={String(r.id)} tone={r.status==='completed'||['read','delivered'].includes(r.delivery_state||'')?'green':'muted'} title={r.message||'Reminder'} meta={reminderStateLabel(r)} right={clock(r.remind_at,tz)}/>):<div className="py-5 text-[12px] text-[#6a6a6a]">No reminders scheduled for today.</div>}
+          </div>
+        </section>
+
+        <section className="final-dark-panel overflow-hidden" aria-labelledby="from-your-work">
+          <div className="flex items-center justify-between gap-3 px-4 py-3.5">
+            <div><h2 id="from-your-work" className="final-dark-eyebrow">From your work</h2><p className="mt-1 text-[12px] text-[#a8a8a8]">Recent updates from your saved tasks.</p></div>
+            <Link href="/dashboard/activity" className="shrink-0 text-[12px] font-medium text-[#77d2c4] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#77d2c4]">All activity →</Link>
+          </div>
+          <div className="border-t border-[#1f1f1f] px-4">
+            {recentUpdates.map((run:any)=>{
+              const state=updateState(String(run.status))
+              const when=run.updated_at&&Number.isFinite(Date.parse(run.updated_at))
+                ?new Intl.DateTimeFormat('en-GB',{timeZone:tz,day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}).format(new Date(run.updated_at))
+                :'Time unavailable'
+              const origin=run.source==='whatsapp'?'WhatsApp':run.source==='web'?'Dashboard':null
+              return <Link key={run.id} href={`/dashboard/activity/${encodeURIComponent(String(run.id))}`} className="block border-t border-[#242424] py-4 first:border-t-0 hover:bg-[#151515] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#77d2c4]">
+                <div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${state.tone}`}>{state.label}</span><span className="text-[11px] text-[#a8a8a8]">{when}{origin?` · ${origin}`:''}</span></div>
+                <h3 className="mt-2 text-[14px] font-semibold leading-5 text-[#f2efea]">{run.title||'Gogo task'}</h3>
+                <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-[#b7b7b7]">{run.summary||'Open the task to see what happened.'}</p>
+                <span className="mt-2 inline-block text-[11px] font-medium text-[#77d2c4]">View task details →</span>
+              </Link>
+            })}
+            {updatesUnavailable&&<p className="py-5 text-[12px] text-[#b7b7b7]">Recent updates could not be loaded. Open Activity to try again.</p>}
+            {!updatesUnavailable&&!recentUpdates.length&&<p className="py-5 text-[12px] text-[#b7b7b7]">No finished or paused task updates yet. They will appear here when Gogo has something to report.</p>}
           </div>
         </section>
       </div>

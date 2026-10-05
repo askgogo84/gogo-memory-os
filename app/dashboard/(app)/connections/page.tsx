@@ -33,6 +33,16 @@ function ConnRow({name,state,available,operations,approval,verification,detail,h
   return href?<Link href={href} className="block hover:bg-[#141414]">{body}</Link>:body
 }
 
+function ConnectionCard({name,state,detail,available,href}:{name:string;state:string;detail:string;available:boolean;href:string}){
+  return <Link href={href} className="final-dark-panel block min-h-[132px] p-4 transition-colors hover:border-[#2fb8a6] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#77d2c4]">
+    <div className="text-[14px] font-semibold text-[#f2efea]">{name}</div>
+    <div className={`mt-3 flex items-center gap-2 text-[12px] font-medium ${available?'text-[#83c3b8]':'text-[#e4c17b]'}`}>
+      <span className={`h-2 w-2 rounded-full ${available?'bg-[#7fb069]':'bg-[#d9a441]'}`} aria-hidden="true"/>{state}
+    </div>
+    <p className="mt-2 text-[11px] leading-4 text-[#a8a8a8]">{detail}</p>
+  </Link>
+}
+
 export default async function ConnectionsPage(){
   const session=await getSession()
   const profile=session?await getProfile(session.telegramId):({ok:false} as const)
@@ -64,6 +74,25 @@ export default async function ConnectionsPage(){
       <Link href="/dashboard/commerce" className="mt-3 inline-block text-sm text-[#2fb8a6]">Connect food and grocery accounts →</Link>
       <p className="mt-2 max-w-3xl text-[13px] leading-5 text-[#9a9a9a]">What Gogo can reach, what it is allowed to do there, and what evidence is required before it claims success.</p>
     </header>
+
+    <section className="mt-5" aria-labelledby="connection-overview">
+      <h2 id="connection-overview" className="final-dark-eyebrow">At a glance</h2>
+      <p className="mt-1 text-[12px] leading-5 text-[#a8a8a8]">Saved connection and permission state for this account. Open a card for what Gogo can do and how it verifies results.</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <ConnectionCard name="Gmail" state={!c.gmail?'Not connected':gmailReadUnknown?'Reading status unavailable':gmailReadOff?'Reading off':gmailSend?'Read and send connected':'Read only'}
+          detail={!c.gmail?'Connect Gmail in You.':gmailReadOff?'Your saved preference disables reading.':gmailReadUnknown?'Your reading preference could not be checked.':'Reading does not authorize a send.'}
+          available={c.gmail&&!gmailReadOff&&!gmailReadUnknown} href="/dashboard/you"/>
+        <ConnectionCard name="Google Calendar" state={c.googleCalendar?'Connected':'Not connected'}
+          detail={c.googleCalendar?'Events can be read; changes keep their approval boundary.':'Connect Calendar in You.'}
+          available={c.googleCalendar} href="/dashboard/calendar"/>
+        <ConnectionCard name="Secure Browser" state={browserAvailable?`Available · ${browserLevel}`:'Off'}
+          detail={browserAvailable?'Provider results still need page evidence.':'Browser access is disabled in your permissions.'}
+          available={browserAvailable} href="/dashboard/agent"/>
+        <ConnectionCard name="Vault" state={vaultCount>0?`${vaultCount} saved login${vaultCount===1?'':'s'}`:'No saved logins'}
+          detail={vaultCount>0?'Logins stay bound to their provider domains.':'Add a provider login only when you need one.'}
+          available={vaultCount>0} href="/dashboard/you/vault"/>
+      </div>
+    </section>
 
     <section className="mt-5 final-dark-panel overflow-hidden">
       <div className="hidden border-b border-[#1f1f1f] px-4 py-3 text-[9px] uppercase tracking-[.14em] text-[#555] lg:grid lg:grid-cols-[170px_130px_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
