@@ -6,6 +6,7 @@ import { getDashboardMemory } from '@/lib/dashboard/memory'
 import { CommandBar } from '@/components/dashboard/command-bar'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
 import { isActionablePause } from '@/lib/dashboard/run-state'
+import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
 import { reminderStateLabel } from '@/lib/dashboard/reminder-state'
 
 export const dynamic='force-dynamic'
@@ -37,12 +38,12 @@ export default async function HomePage(){
   const session=await getSession()
   const tg=session?.telegramId||''
   const tgNum=parseInt(tg,10)
-  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,waitingCountRes,pausedRunsRes]=await Promise.all([
+  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,waitingCountRes,pausedRunsRes,handoffs]=await Promise.all([
     Number.isFinite(tgNum)?supabaseAdmin.from('users').select('name,timezone').eq('telegram_id',tgNum).maybeSingle():Promise.resolve({data:null as any}),
     session?getTodayReminders(tg):Promise.resolve({ok:true as const,reminders:[]}),
     session?getLists(tg):Promise.resolve({ok:true as const,lists:[]}),
     session?getDashboardMemory(tg):Promise.resolve({ok:true as const,items:[]}),
-    session?supabaseAdmin.from('agent_approvals').select('id,title,description,risk_level,created_at').eq('telegram_id',tg).eq('status','pending').order('created_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
+    session?supabaseAdmin.from('agent_approvals').select('id,run_id,title,description,risk_level,created_at').eq('telegram_id',tg).eq('status','pending').order('created_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
     session?supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,active').eq('telegram_id',tg).eq('active',true).order('next_check_at',{ascending:true}).limit(4):Promise.resolve({data:[] as any[]}),
     session?supabaseAdmin.from('agent_runs').select('id,title,summary,status,updated_at').eq('telegram_id',tg).in('status',['running','queued','waiting_approval']).order('updated_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
     // Indicator counts come from untruncated head-counts, not the limited display list,
@@ -53,6 +54,7 @@ export default async function HomePage(){
     // browser-waiting) is actionable and counts as waiting; a rejected/terminal paused
     // run does not. The signal lives in error OR metadata, so fetch rows and classify.
     session?supabaseAdmin.from('agent_runs').select('id,error,metadata_json,status').eq('telegram_id',tg).eq('status','paused').order('updated_at',{ascending:false}).limit(50):Promise.resolve({data:[] as any[]}),
+    session?getPendingBrowserHandoffs(tg):Promise.resolve([]),
   ])
 
   const tz=user?.timezone||'Asia/Kolkata'
@@ -61,6 +63,7 @@ export default async function HomePage(){
   const reminders=today.ok?today.reminders:[]
   const pending=reminders.filter(r=>!r.sent)
   const approvalRows=approvals.data||[]
+  const handoffRows=handoffs.filter(handoff=>!approvalRows.some((approval:any)=>String(approval.run_id)===handoff.id))
   const watcherRows=watchers.data||[]
   const runRows=runs.data||[]
   // Distinguish actively-executing runs from runs awaiting an approval. Counts come from
@@ -106,9 +109,11 @@ export default async function HomePage(){
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,.65fr)]">
       <div className="space-y-5">
         <section className="final-dark-panel overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[10px] text-[#d9a441]">{approvalRows.length||0}</Link></div>
+          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[10px] text-[#d9a441]">{approvalRows.length+handoffRows.length}</Link></div>
           <div className="border-t border-[#1f1f1f] px-4">
-            {approvalRows.length?approvalRows.map((a:any)=><Row key={a.id} tone="amber" title={a.title||'Approval needed'} meta={a.description||'Gogo stopped before a consequential action.'} right="Review" href="/dashboard/agent?section=approvals"/>):<div className="py-5 text-[12px] text-[#6a6a6a]">Nothing is waiting for you.</div>}
+            {approvalRows.map((a:any)=><Row key={a.id} tone="amber" title={a.title||'Approval needed'} meta={a.description||'Gogo stopped before a consequential action.'} right="Review" href="/dashboard/agent?section=approvals"/>)}
+            {handoffRows.map(handoff=><Row key={handoff.id} tone="amber" title={handoff.title} meta={handoff.summary} right="Take control" href={`/dashboard/activity/${handoff.id}/browser`}/>)}
+            {!approvalRows.length&&!handoffRows.length&&<div className="py-5 text-[12px] text-[#6a6a6a]">Nothing is waiting for you.</div>}
           </div>
         </section>
 
