@@ -65,12 +65,30 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
     return {...base, status: 'failed', reason: 'The provider page did not yield usable source evidence.'}
   }
   const reason = String(child.error || '')
+  // Browser-ownership contention is not a provider verdict: the shared browser was
+  // busy (e.g. a paused human handoff) and this retailer was never opened. Surface it
+  // as a specific, blocked card — never a false "not verified", and never a phantom
+  // "pending"/"queued" that an old, finished comparison can never actually drain
+  // (its persisted status is terminal, so no worker would ever recheck it). New
+  // comparisons avoid this path entirely: advancePriceComparison's handoff gate keeps
+  // genuinely unstarted providers pending until the shared browser is free.
+  if (reason === 'browser_handoff_in_use') return {...base, status: 'blocked', needsInput: false,
+    reason: 'Another task was using the shared secure browser, so this store was not checked. Ask again once it is free.'}
   const needsInput = ['human_auth_required', 'delivery_location_required'].includes(reason)
   if (child.status === 'paused') return {...base, status: 'blocked', needsInput,
     reason: needsInput ? 'Choose your account or delivery location in this same browser task.' : 'The provider limited access; prices remain unverified.'}
   if (child.status === 'running') return {...base, status: 'checking'}
-  return {...base, status: 'failed', reason: reason === 'browser_handoff_in_use'
-    ? 'Another task owns the browser. Its session was preserved.' : 'The browser could not verify the requested item and price.'}
+  return {...base, status: 'failed', reason: comparisonFailureReason(reason)}
+}
+
+// Retain the exact failure family in a fixed, user-facing phrase. Never copy a raw
+// browser error (it can carry page text or private URLs) and never imply a price.
+function comparisonFailureReason(code: string) {
+  if (code === 'browser_read_deadline') return 'The provider page did not finish loading within the safe read time; no price was read.'
+  if (code === 'browser_objective_unverified' || code === 'browser_planning_failed') return 'The provider page loaded but did not expose the requested item and a verifiable price to a read-only check.'
+  if (code.includes('browser_live_session_expired')) return 'The live browser page expired before a price was verified; no provider action was taken.'
+  if (code.startsWith('secure_browser_action_failed') || code.startsWith('secure_browser_action_empty')) return 'The secure browser could not read this provider page; no price was verified.'
+  return 'The browser could not verify the requested item and price.'
 }
 
 export function comparisonState(rows: ProviderObservation[]) {
@@ -81,9 +99,17 @@ export function comparisonState(rows: ProviderObservation[]) {
 export function comparisonSummary(task: PriceComparison) {
   const rows = task.metadata_json.providers
   const pending = rows.some(row => ['pending', 'checking'].includes(row.status))
-  const lines = rows.map(row => `${COMPARISON_PROVIDERS[row.provider].label}: ${row.status === 'observed'
-    ? 'page evidence saved' : row.status === 'pending' ? 'queued' : row.status === 'checking' ? 'checking'
-    : row.needsInput ? 'needs your account/location' : 'not verified'}.${row.sourceUrl ? '\n' + row.sourceUrl : ''}`)
+  // Show the specific, fixed-phrase blocker for every stalled store, not a flat
+  // "not verified". Reasons are curated phrases (see comparisonFailureReason); they
+  // never carry raw page text, a private URL, or an unverified price.
+  const lines = rows.map(row => {
+    const state = row.status === 'observed' ? 'page evidence saved'
+      : row.status === 'pending' ? (row.reason || 'queued')
+      : row.status === 'checking' ? 'checking'
+      : (row.reason || (row.needsInput ? 'needs your account/location' : 'not verified'))
+    const line = `${COMPARISON_PROVIDERS[row.provider].label}: ${state}`
+    return (/[.!?]$/.test(line) ? line : line + '.') + (row.sourceUrl ? '\n' + row.sourceUrl : '')
+  })
   return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'Remaining store checks are queued.' : 'This check has finished; blocked stores are not being retried automatically.'}\nItem observations are not a verified delivered-total ranking. Fees, location-specific prices and conditional offers remain unverified unless explicitly shown in the evidence.`
 }
 
