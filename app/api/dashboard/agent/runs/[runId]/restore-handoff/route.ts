@@ -2,12 +2,12 @@ import {NextResponse} from 'next/server'
 import {getSession} from '@/lib/dashboard/session'
 import {verifySameOrigin} from '@/lib/dashboard/guard'
 import {supabaseAdmin} from '@/lib/supabase-admin'
-import {takeControlOfCommerceRead} from '@/lib/agent/browser-command'
+import {restoreReadBrowserHandoff} from '@/lib/agent/browser-command'
 
 export const dynamic = 'force-dynamic'
 
-// Recreate only the expired human browser for an existing owner-scoped read.
-// This does not start another retailer comparison or perform provider actions.
+// Recreate only an expired human browser for an existing owner-scoped read.
+// This does not start another task or perform provider actions.
 export async function POST(request: Request, {params}: {params: Promise<{runId: string}>}) {
   const blocked = verifySameOrigin(request)
   if (blocked) return blocked
@@ -19,7 +19,7 @@ export async function POST(request: Request, {params}: {params: Promise<{runId: 
     .eq('telegram_id', Number(session.telegramId)).maybeSingle()
   if (error || !user?.id || !user.whatsapp_id) return NextResponse.json({ok: false, error: 'user_unavailable'}, {status: 400})
   try {
-    await takeControlOfCommerceRead({actor: {
+    await restoreReadBrowserHandoff({actor: {
       userId: String(user.id), legacyTelegramId: Number(user.telegram_id),
       whatsappId: String(user.whatsapp_id), name: String(user.name || 'Gogo'),
     }, runId})

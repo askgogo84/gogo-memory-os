@@ -31,7 +31,7 @@ console.log('PASS: live handoff probe and stopped/untrusted sandbox rejection')
 // Exercise the actual restore function with a saved Zepto child: an expired
 // sandbox gets a new handoff on the SAME row, while a live one is untouched.
 const commandSource = readFileSync(new URL('../lib/agent/browser-command.ts', import.meta.url), 'utf8')
-const start = commandSource.indexOf('export async function takeControlOfCommerceRead(')
+const start = commandSource.indexOf('export async function restoreReadBrowserHandoff(')
 const end = commandSource.indexOf('// An overlapping read', start)
 assert.ok(start >= 0 && end > start)
 const program = ts.transpileModule(commandSource.slice(start, end),
@@ -59,17 +59,23 @@ const db = {from(table: string) {
   return query
 }}
 const exports: any = {}
-runInNewContext(program, {exports, Date, console, require: (name: string) => {
+runInNewContext(program, {exports, Date, URL, console, require: (name: string) => {
   if (name === '@/lib/commerce/task') return {readCommerceTask: async () => ({metadata_json: {state: 'browser_research', browser_runs: {zepto: row.id}}})}
   if (name === '@/lib/commerce/price-comparison') return {assertComparisonChild: async () => {parentChecks++}}
   if (name === './browser-handoff-health') return {browserHandoffIsLive: async () => live}
   if (name === './provider-browser-handoff') return {
-    startProviderBrowserHandoff: async (options: any) => {assert.equal(options.sessionTaskId, row.id); created++; return {token: 'new-token', takeoverUrl: handoff, releaseUrl: handoff.replace('/?', '/release?')}},
+    startProviderBrowserHandoff: async (options: any) => {
+      assert.equal(options.userId, row.metadata_json.commerce_parent_id || row.metadata_json.comparison_parent_id ? 'owner-uuid:commerce' : 'owner-uuid')
+      assert.equal(options.sessionTaskId, row.id)
+      assert.equal(options.keepAlive, row.metadata_json.commerce_parent_id || row.metadata_json.comparison_parent_id ? true : undefined)
+      created++; return {token: 'new-token', takeoverUrl: handoff, releaseUrl: handoff.replace('/?', '/release?')}
+    },
     cancelProviderBrowserHandoff: async () => {throw Error('unexpected_cancel')},
   }
   throw Error('unexpected_import:' + name)
 }, supabaseAdmin: db, permission: async () => 'read', evaluateAgentExecutionPolicy: () => ({allowed: true})})
 const restore = exports.takeControlOfCommerceRead as (params: any) => Promise<void>
+const restoreRead = exports.restoreReadBrowserHandoff as (params: any) => Promise<void>
 const actor = {userId: 'owner-uuid', legacyTelegramId: 42}
 await restore({actor, runId: row.id})
 assert.equal(created, 1)
@@ -86,4 +92,24 @@ live = false
 await restore({actor, runId: row.id})
 assert.equal(parentChecks, 1, 'a comparison child must retain its parent')
 assert.equal(created, 2)
-console.log('PASS: expired commerce handoff restores same owned task; live, other-owner and comparison-parent paths')
+row.metadata_json = {plan_type: 'secure_browser', mode: 'read', url: 'https://example.com/search', handoff: {token: 'old-token', takeoverUrl: handoff}}
+row.status = 'paused'
+await restoreRead({actor, runId: row.id})
+assert.equal(created, 3, 'a standalone read can restore its own expired browser')
+assert.equal(row.metadata_json.handoff.token, 'new-token')
+await assert.rejects(() => restore({actor, runId: row.id}), /browser_control_unavailable/, 'commerce action cannot take over a standalone task')
+row.metadata_json.mode = 'execute'
+await assert.rejects(() => restoreRead({actor, runId: row.id}), /browser_control_unavailable/, 'execute tasks need their approved resume path')
+row.metadata_json.mode = 'draft'
+await assert.rejects(() => restoreRead({actor, runId: row.id}), /browser_control_unavailable/, 'draft tasks are not read-only')
+row.metadata_json.mode = 'read'
+row.metadata_json.browser_safe_to_retry = false
+await assert.rejects(() => restoreRead({actor, runId: row.id}), /browser_control_unavailable/, 'possible prior provider action cannot be replayed')
+row.metadata_json.browser_safe_to_retry = true
+row.status = 'completed'
+await assert.rejects(() => restoreRead({actor, runId: row.id}), /browser_control_unavailable/, 'standalone terminal runs stay terminal')
+row.status = 'paused'
+row.metadata_json.url = 'http://localhost/admin'
+await assert.rejects(() => restoreRead({actor, runId: row.id}), /browser_control_unavailable/, 'private host cannot be opened')
+assert.equal(created, 3)
+console.log('PASS: expired commerce and standalone read handoffs restore only the same owned safe task')
