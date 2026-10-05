@@ -26,7 +26,8 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   const cloudTakeover=cloudHandoff&&await browserHandoffIsLive(handoff.takeoverUrl)
   const expiredHandoff=cloudHandoff&&!cloudTakeover
   const canRestore=expiredHandoff&&run.metadata?.mode==='read'&&run.metadata?.browser_safe_to_retry!==false
-    &&Boolean(run.metadata?.commerce_parent_id||run.metadata?.comparison_parent_id)
+    &&(Boolean(run.metadata?.commerce_parent_id||run.metadata?.comparison_parent_id)
+      ||(run.status==='paused'&&run.metadata?.plan_type==='secure_browser'))
   const deviceHandoff=handoffActive&&handoff?.mode==='device'&&Boolean(handoff?.providerUrl)
   const latest=[...run.steps].reverse().find(s=>s.toolName==='secure_browser'||/browser/i.test(s.toolName)||s.output?.browser)
   const raw:any=latest?.output?.browser||latest?.output?.browserState||latest?.output||{}
@@ -78,7 +79,7 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
         {expiredHandoff?
           <div className="grid min-h-[430px] place-items-center px-7 py-10 text-center">
             <div className="max-w-xl"><h2 className="font-serif text-[26px] font-semibold text-[#F2EFEA]">This temporary browser has stopped.</h2>
-              <p className="mt-3 text-[14px] leading-6 text-[#9A9A9A]">Your saved task and comparison are still here. The old Take control link cannot open this session. Restore a fresh secure browser for the same read-only task, then select your delivery location there.</p>
+              <p className="mt-3 text-[14px] leading-6 text-[#9A9A9A]">Your saved task is still here. The old Take control link cannot open this session. Restore a fresh secure browser for the same read-only task, then complete the human step there.</p>
             </div>
           </div>
         :browser.providerBlocked?
@@ -140,7 +141,7 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
         {expiredHandoff&&<section className="rounded-[16px] bg-[#1A1710] p-5">
           <p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#D9A441]">Browser session expired</p>
           <h2 className="mt-2 font-serif text-[22px] font-semibold text-[#F2EFEA]">Continue this saved task</h2>
-          <p className="mt-2 text-[12.5px] leading-5 text-[#9A9A9A]">Restoring opens a fresh browser on the same provider. It does not create a new comparison or submit an order. Any location selected only in the stopped browser needs to be selected again.</p>
+          <p className="mt-2 text-[12.5px] leading-5 text-[#9A9A9A]">Restoring opens a fresh browser on the same website. It keeps this task and does not submit anything. Choices made only in the stopped browser may need to be repeated.</p>
           {canRestore?<RestoreBrowserHandoffButton runId={run.id}/>:<p className="mt-3 text-[12px] text-[#D9A441]">This task cannot be safely restored automatically. Check the provider directly before retrying.</p>}
         </section>}
         {(cloudTakeover||deviceHandoff)&&<section className="rounded-[16px] bg-[#1A1710] p-5">
