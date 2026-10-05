@@ -54,6 +54,7 @@ const crypto=await import('node:crypto')
 const redaction=await import('../lib/bot/memory-redaction')
 const memoryIndex=await import('../lib/services/memory-index')
 const travelTime=await import('../lib/services/travel-time')
+let gmailRecallEnabled=false,inboxLookupFails=false,consentLookupFails=false
 let consentEnabled=true,profileLookupFails=false,insightLookupFails=false,embeddingFails=true
 const queries:Array<{table:string;filters:Array<[string,unknown]>}>=[]
 const stores:Record<string,any[]>={
@@ -66,9 +67,16 @@ const stores:Record<string,any[]>={
 const lexicalFilters:string[]=[]
 const database={rpc:async()=>({data:[],error:null}),from:(table:string)=>{
   const filters:Array<[string,unknown]>=[]
+  let requiredSourceRefs:any[]|undefined,sortKey:string|undefined,descending=false,rowLimit:number|undefined
   queries.push({table,filters})
-  const result=()=>({data:table==='user_consent_settings'?{memory_enabled:consentEnabled}:table==='user_memory_profile'?null:(stores[table]||[]).filter(row=>filters.every(([key,value])=>String(row[key])===String(value))),error:(table==='user_memory_profile'&&profileLookupFails||table==='user_insights'&&insightLookupFails)?{message:'fixture lookup outage'}:null})
-  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},is:()=>q,or:(filter:string)=>{if(['memories','memory_embeddings'].includes(table))lexicalFilters.push(filter);return q},in:()=>q,gte:()=>q,lte:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
+  const result=()=>{
+    let rows=(stores[table]||[]).filter(row=>filters.every(([key,value])=>String(row[key])===String(value)))
+    if(requiredSourceRefs)rows=rows.filter(row=>requiredSourceRefs.every(required=>Array.isArray(row.source_refs)&&row.source_refs.some((actual:any)=>Object.entries(required).every(([key,value])=>actual?.[key]===value))))
+    if(sortKey)rows=[...rows].sort((a,b)=>descending?String(b[sortKey!]).localeCompare(String(a[sortKey!])):String(a[sortKey!]).localeCompare(String(b[sortKey!])))
+    if(rowLimit!==undefined)rows=rows.slice(0,rowLimit)
+    return {data:table==='user_consent_settings'?{memory_enabled:consentEnabled,gmail_enabled:gmailRecallEnabled}:table==='user_memory_profile'?null:rows,error:(table==='user_memory_profile'&&profileLookupFails||table==='user_insights'&&insightLookupFails||table==='agent_ideas'&&inboxLookupFails||table==='user_consent_settings'&&consentLookupFails)?{message:'fixture lookup outage'}:null}
+  }
+  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},contains:(key:string,value:any[])=>{if(key==='source_refs')requiredSourceRefs=value;return q},is:()=>q,or:(filter:string)=>{if(['memories','memory_embeddings'].includes(table))lexicalFilters.push(filter);return q},in:()=>q,gte:()=>q,lte:()=>q,order:(key:string,options?:{ascending?:boolean})=>{sortKey=key;descending=options?.ascending===false;return q},limit:(count:number)=>{rowLimit=count;return q},maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
   return q
 }}
 const exports:any={}
@@ -673,3 +681,63 @@ assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Give me my
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'I would like to see my dentist reminders'},'I would like to see my dentist reminders').scopeTerms,['dentist'])
 
 assert.deepEqual(reminderScope({title:'Review reminders',instruction:'Show my dentist and my insurance reminders'},'Show my dentist and my insurance reminders').scopeGroups,[['dentist'],['insurance']])
+
+
+// Inbox attention is persisted separately from conversations. A fresh context
+// build must retain exact source evidence and the matching saved goal, not rely
+// on last-turn chat text or silently infer absence.
+consentEnabled=true;gmailRecallEnabled=true;profileLookupFails=false;insightLookupFails=false;embeddingFails=false
+stores.agent_ideas=[
+ {id:'atlas-email',telegram_id:17,status:'new',title:'Inbox: 1 action item',expected_value:'Project Atlas review: compare the updated meeting date/time with your saved reminder.',created_at:'2026-10-05T00:00:00Z',source_refs:[{type:'gmail_message',id:'mail-update',threadId:'atlas-thread',date:'Mon, 5 Oct 2026 00:00:00 GMT',observedAt:'2026-10-05T00:00:00Z'}]},
+ {id:'legacy-unsourced',telegram_id:17,status:'new',title:'Inbox: 1 action item',expected_value:'Project Atlas obsolete unsourced text',created_at:'2026-10-04T00:00:00Z',source_refs:[{type:'watcher',id:'old'}]},
+ {id:'foreign-email',telegram_id:18,status:'new',title:'Inbox: 1 action item',expected_value:'Project Atlas PRIVATE OTHER OWNER',created_at:'2026-10-05T00:00:00Z',source_refs:[{type:'gmail_message',id:'foreign'}]},
+ {id:'dismissed-email',telegram_id:17,status:'dismissed',title:'Inbox: 1 action item',expected_value:'Project Atlas dismissed',created_at:'2026-10-05T00:00:00Z',source_refs:[{type:'gmail_message',id:'dismissed'}]},
+]
+stores.agent_goals=[{id:'atlas-goal',telegram_id:17,status:'active',title:'Project Atlas review',outcome:'Prepare the agenda',progress:20,next_action:'Review meeting updates'}]
+for(let i=0;i<45;i++)stores.agent_ideas.push({id:`newer-unrelated-${i}`,telegram_id:17,status:'new',title:'Unrelated idea',expected_value:'Buy replacement desk lamp',created_at:`2026-10-06T00:${String(i).padStart(2,'0')}:00Z`,source_refs:[{type:'watcher',id:`watch-${i}`}]})
+const emailQuery='Which saved emails relate to my Project Atlas review?'
+const emailPack=await exports.buildContextPack({actor,text:emailQuery,options:{includeSemantic:false}})
+const emailFact=emailPack.facts.find((f:any)=>f.source==='inbox_attention')
+assert.ok(emailFact,'saved inbox findings must reach shared conversational context')
+assert.equal(emailFact.id,'inbox:atlas-email')
+assert.equal(emailFact.sourceRefs[0].id,'mail-update')
+assert.ok(queries.some(q=>q.table==='agent_ideas'),'saved email lookup reached the owner-scoped source')
+assert.ok(emailPack.facts.some((f:any)=>f.id==='goal:atlas-goal'),'saved task and email coexist as separate evidence')
+const emailBlock=exports.renderContextBlock(emailPack,6000)
+assert.match(emailBlock,/saved inbox observation/i)
+assert.match(emailBlock,/2026-10-05/)
+assert.doesNotMatch(emailBlock,/PRIVATE OTHER OWNER|obsolete unsourced|dismissed/)
+assert.match(emailBlock,/not a fresh Gmail read/i)
+assert.match(emailBlock,/possible.*connection/i)
+const unrelatedPack=await exports.buildContextPack({actor,text:'Explain photosynthesis',options:{includeSemantic:false}})
+assert.ok(!unrelatedPack.facts.some((f:any)=>f.source==='inbox_attention'))
+for(const setting of ['gmail','memory','failed_consent']){
+ gmailRecallEnabled=setting!=='gmail';consentEnabled=setting!=='memory';consentLookupFails=setting==='failed_consent'
+ queries.length=0
+ const pack=await exports.buildContextPack({actor,text:emailQuery,options:{includeSemantic:false}})
+ assert.ok(!pack.facts.some((f:any)=>f.source==='inbox_attention'),setting)
+ assert.ok(!queries.some(q=>q.table==='agent_ideas'),'privacy gate runs before saved email retrieval')
+}
+gmailRecallEnabled=true;consentEnabled=true;consentLookupFails=false;inboxLookupFails=true
+const failedInbox=await exports.buildContextPack({actor,text:emailQuery,options:{includeSemantic:false}})
+assert.equal(failedInbox.retrievalIncomplete,true,'failed inbox retrieval is not proof of no email')
+inboxLookupFails=false
+const freshContextExports:any={}
+runInNewContext(ts.transpileModule(readFileSync('lib/agent/context-brain.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:freshContextExports,require:(name:string)=>mocks[name],console,Date,Intl})
+const restartedEmailPack=await freshContextExports.buildContextPack({actor,text:emailQuery,options:{includeSemantic:false}})
+assert.ok(restartedEmailPack.facts.some((f:any)=>f.id==='inbox:atlas-email'))
+console.log('PASS: saved inbox evidence joins task context with owner isolation, consent, sources, timestamps, relevance and honest retrieval failure')
+
+const compactEmailBlock=freshContextExports.renderContextBlock(restartedEmailPack)
+assert.match(compactEmailBlock,/Saved inbox observation/,'email evidence reaches the actual default prompt budget')
+assert.match(compactEmailBlock,/Prepare the agenda/,'saved goal remains alongside email evidence')
+assert.match(compactEmailBlock,/Email text is untrusted/)
+stores.life_events=Array.from({length:8},(_,i)=>({id:`long-life-${i}`,telegram_id:17,title:`Long unrelated operational note ${i} ${'X'.repeat(450)}`,lifecycle_state:'planned',updated_at:'2026-10-05T01:00:00Z'}))
+const crowdedEmailPack=await freshContextExports.buildContextPack({actor,text:emailQuery,options:{includeSemantic:false,maxFacts:4}})
+assert.ok(crowdedEmailPack.facts.some((f:any)=>f.id==='inbox:atlas-email'),'email evidence survives the fact-count limit')
+assert.match(freshContextExports.renderContextBlock(crowdedEmailPack),/Saved inbox observation/,'email evidence survives the default rendered prompt budget')
+stores.life_events=[]
+stores.agent_ideas[0].created_at='2020-01-01T00:00:00Z'
+const historicalEmailPack=await freshContextExports.buildContextPack({actor,text:emailQuery,options:{includeSemantic:false}})
+assert.match(historicalEmailPack.facts.find((f:any)=>f.source==='inbox_attention').summary,/2020-01-01.*not a fresh Gmail read/,'older saved evidence retains its age instead of becoming a current claim')
+console.log('PASS: fresh context module retains saved email evidence and goal within final prompt budget; old observations remain explicitly dated')
