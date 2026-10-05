@@ -39,8 +39,17 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
 
   if(handoff?.mode!=='device'&&handoff?.managedSessionId){
     try{
-      const live=await managedLiveViewUrl(String(handoff.managedSessionId),browserSandboxName(String(session.telegramId)))
-      return privateRedirect(new URL(live))
+      const {data:owner,error:ownerError}=await supabaseAdmin.from('users')
+        .select('id').eq('telegram_id',String(session.telegramId)).maybeSingle()
+      if(!ownerError&&owner?.id){
+        const personal=browserSandboxName(String(owner.id))
+        const commerce=browserSandboxName(`${owner.id}:commerce`)
+        const sandboxName=String(handoff.sandboxName||'')
+        if(sandboxName===personal||sandboxName===commerce){
+          const live=await managedLiveViewUrl(String(handoff.managedSessionId),sandboxName)
+          return privateRedirect(new URL(live))
+        }
+      }
     }catch{return privateRedirect(url)}
   }
 
