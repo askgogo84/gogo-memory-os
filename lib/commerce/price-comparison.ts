@@ -128,6 +128,19 @@ async function saveProgress(owner: string, task: PriceComparison) {
   if (error) throw new Error('comparison_progress_save_failed')
 }
 
+// The shared per-owner commerce browser can be reserved for a human takeover
+// (e.g. a paused delivery-location handoff that preserves its reservation). While
+// that reservation is live, starting another provider read only hits
+// browser_handoff_in_use and looks like a failed retailer. Detect the reservation
+// so dependent checks stay queued and resume automatically once it is released.
+async function sharedBrowserHandoffPending(owner: string) {
+  const {data, error} = await supabaseAdmin.from('agent_runs').select('id,metadata_json')
+    .eq('telegram_id', owner).eq('type', 'secure_browser').eq('status', 'paused')
+    .order('updated_at', {ascending: false}).limit(25)
+  if (error) throw new Error('comparison_lease_probe_failed')
+  return (data || []).some((row: any) => Boolean(row.metadata_json?.handoff?.releaseUrl))
+}
+
 // One provider per invocation fits the browser's bounded deadline. Durable child
 // identity is stored BEFORE execution; a worker restart cannot repeat a purchase
 // or create an untracked replacement. All work here is read-only.
@@ -142,6 +155,13 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     if (task.metadata_json.providers.some(row => row.status === 'checking')) return task
     const next = task.metadata_json.providers.find(row => row.status === 'pending')
     if (next) {
+      // Queue, do not fail, while a human handoff still reserves the shared browser.
+      if (await sharedBrowserHandoffPending(owner)) {
+        task.metadata_json.providers = task.metadata_json.providers.map(row => row.status === 'pending'
+          ? {...row, reason: 'Waiting for the shared secure browser; another task is mid-handoff. This store stays queued and is not a failed retailer.'} : row)
+        await saveProgress(owner, task)
+        return task
+      }
       const {prepareLinkedBrowserRead, resumePausedBrowserRun} = await import('@/lib/agent/browser-command')
       const startedAt = new Date().toISOString()
       let childId: string

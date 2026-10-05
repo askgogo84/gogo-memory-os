@@ -21,6 +21,30 @@ assert.equal(model.comparisonSource('amazon', 'javascript:alert(1)'), null)
 assert.equal(model.comparisonSource('amazon', 'https://www.amazon.in/'), null)
 assert.equal(model.comparisonSource('amazon', 'https://www.amazon.in/dp/B123?token=secret'), null)
 
+// Browser-ownership contention is not a provider verdict: the retailer was never
+// opened. It must surface as a specific, blocked card with no price — never a generic
+// "not verified", never "unavailable", and never a phantom "pending"/"queued" that an
+// old finished comparison could never actually drain.
+const contention = model.providerObservation('blinkit', {id: 'child-contend', status: 'failed', error: 'browser_handoff_in_use', updated_at: '2026-10-05T00:00:00.000Z'}, null)
+assert.equal(contention.status, 'blocked')
+assert.equal(contention.evidence, undefined)
+assert.match(contention.reason!, /shared secure browser|was not checked/i)
+assert.doesNotMatch(contention.reason!, /unavailable|not verified/i)
+// A finished comparison carrying a historical contention child stays terminal, not 'queued'.
+assert.equal(model.comparisonState([contention, {provider: 'instamart', status: 'observed'} as any]), 'paused')
+// The specific blocker reaches the user instead of a flat "not verified".
+const contentionSummary = model.comparisonSummary({updated_at: 'x', id: 'x', status: 'paused', title: 'x', source: 'x',
+  metadata_json: {subject: 'Blinkit check', request: 'x', providers: [contention]}} as any)
+assert.match(contentionSummary, /shared secure browser|was not checked/i)
+assert.doesNotMatch(contentionSummary, /Blinkit: not verified/)
+// Terminal read failures keep a specific, distinguished reason and never a price.
+assert.match(model.providerObservation('amazon', {id: 'c1', status: 'failed', error: 'browser_read_deadline', updated_at: 'x'}, null).reason!, /read time|finish loading/i)
+assert.match(model.providerObservation('amazon', {id: 'c2', status: 'failed', error: 'browser_objective_unverified', updated_at: 'x'}, null).reason!, /did not expose|verifiable/i)
+assert.equal(model.providerObservation('amazon', {id: 'c3', status: 'failed', error: 'browser_read_deadline', updated_at: 'x'}, null).evidence, undefined)
+// A paused provider awaiting account/location stays a blocked needs-input card.
+const blocked = model.providerObservation('zepto', {id: 'c4', status: 'paused', error: 'delivery_location_required', updated_at: 'x'}, null)
+assert.equal(blocked.status, 'blocked'); assert.equal(blocked.needsInput, true)
+
 const tables: Record<string, any[]> = {agent_runs: [], agent_steps: [], conversations: []}
 let seq = 0, locked = false, calls = 0, failStart = false, auth = true, owner = '42'
 const id = () => '00000000-0000-4000-8000-' + String(++seq).padStart(12, '0')
@@ -170,5 +194,47 @@ assert.ok(allFour.text.indexOf(grocery.runId)<allFour.text.indexOf(food.runId))
 assert.ok(allFour.text.indexOf(food.runId)<allFour.text.indexOf(interrupted.runId))
 assert.ok(allFour.text.indexOf(interrupted.runId)<allFour.text.indexOf(start.runId))
 assert.equal(tables.agent_runs.length,beforeFourStatus,'multi-subject status readback cannot create another comparison')
-console.log('Price comparison handler, persisted restart, evidence isolation, partial results, bounded failures and private report API fixtures passed.')
+
+// Browser-ownership handoff gate: while a paused handoff reserves the shared
+// browser, queued providers must stay queued — not spin into browser_handoff_in_use
+// and get recorded as failed retailers. They resume once the handoff is released.
+const gated = await service.tryPriceComparison({telegramId: 42, text: 'Compare Sony WH-1000XM5 on Amazon India and Croma. Do not create a watch.'})
+tables.agent_runs.push({id: id(), telegram_id: '42', type: 'secure_browser', status: 'paused',
+  metadata_json: {comparison_parent_id: 'another-parent', mode: 'read', url: 'https://www.zepto.com/', handoff: {releaseUrl: 'https://sandbox.example/release?token=x'}}})
+const callsBeforeGate = calls
+const beforeGateRuns = tables.agent_runs.length
+const gatedTask = await service.advancePriceComparison(actor, gated.runId)
+assert.equal(calls, callsBeforeGate, 'queued providers must not spin while a handoff reserves the shared browser')
+assert.equal(tables.agent_runs.length, beforeGateRuns, 'no provider child is created while the browser is reserved')
+assert.ok(gatedTask.metadata_json.providers.every((p: any) => p.status === 'pending'), 'providers stay queued, not failed')
+assert.match(gatedTask.metadata_json.providers[0].reason, /Waiting for the shared secure browser/)
+assert.equal(model.comparisonState(gatedTask.metadata_json.providers), 'queued')
+// Once the handoff is released, the same queued providers advance normally.
+failStart = false
+tables.agent_runs = tables.agent_runs.filter(r => !r.metadata_json?.handoff)
+const released = await service.advancePriceComparison(actor, gated.runId)
+assert.equal(calls, callsBeforeGate + 1, 'released handoff lets the queued provider check run')
+assert.ok(released.metadata_json.providers.some((p: any) => p.status !== 'pending'), 'a provider advanced after release')
+
+// Old terminal comparison guard: a finished report (persisted terminal status) whose
+// only non-terminal-looking provider is a HISTORICAL browser_handoff_in_use child must
+// NOT resurrect to 'queued' on readback. The cron worker reads the persisted status and
+// would never drain it, so a "queued"/"Remaining store checks are queued" readback would
+// be a lie. It stays terminal and shows the specific contention blocker.
+const dormantParent = id(), dormantChild = id()
+tables.agent_runs.push({id: dormantParent, telegram_id: '42', type: 'price_comparison', status: 'paused',
+  title: 'Sony WH-1000XM5', source: 'whatsapp', started_at: '2026-10-04T00:00:00.000Z', updated_at: '2026-10-04T00:05:00.000Z', completed_at: '2026-10-04T00:05:00.000Z',
+  metadata_json: {request: 'Compare Sony WH-1000XM5 on Amazon and Croma', subject: 'Sony WH-1000XM5',
+    providers: [{provider: 'amazon', status: 'failed', reason: 'The browser could not verify the requested item and price.'}, {provider: 'croma', status: 'failed', runId: dormantChild, reason: 'old'}]}})
+tables.agent_runs.push({id: dormantChild, telegram_id: '42', type: 'secure_browser', status: 'failed', error: 'browser_handoff_in_use',
+  updated_at: '2026-10-04T00:04:00.000Z', metadata_json: {comparison_parent_id: dormantParent, mode: 'read', url: model.COMPARISON_PROVIDERS.croma.url}})
+const dormant = await service.readPriceComparison('42', dormantParent)
+assert.notEqual(dormant.status, 'queued', 'a finished comparison must not resurrect to queued from a historical contention child')
+assert.equal(dormant.metadata_json.providers[1].status, 'blocked')
+assert.match(model.comparisonSummary(dormant), /shared secure browser|was not checked/i)
+assert.doesNotMatch(model.comparisonSummary(dormant), /Remaining store checks are queued/)
+const {data: dormantQueue} = await db.from('agent_runs').select('id').eq('type', 'price_comparison').in('status', ['queued', 'running']).order('updated_at').limit(50)
+assert.ok(!(dormantQueue || []).some((r: any) => r.id === dormantParent), 'the cron worker must not pick up the finished comparison')
+
+console.log('Price comparison handler, persisted restart, evidence isolation, partial results, bounded failures, handoff-contention blocker surfacing, terminal readback guard and private report API fixtures passed.')
 
