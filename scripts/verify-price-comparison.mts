@@ -163,4 +163,12 @@ const grouped = await service.tryPriceComparison({telegramId: 42, text: 'Show th
 assert.match(grouped.text, new RegExp(grocery.runId))
 assert.match(grouped.text, new RegExp(food.runId))
 assert.doesNotMatch(grouped.text, /Logitech M185/)
+const beforeFourStatus = tables.agent_runs.length
+const allFour = await service.tryPriceComparison({telegramId: 42, text: 'Show the final status of my latest grocery, food, Sony and mouse comparisons. Name each verified provider and each blocked provider. Do not retry anything or create a new comparison.'})
+for(const runId of [grocery.runId,food.runId,interrupted.runId,start.runId]) assert.match(allFour.text,new RegExp(runId))
+assert.ok(allFour.text.indexOf(grocery.runId)<allFour.text.indexOf(food.runId))
+assert.ok(allFour.text.indexOf(food.runId)<allFour.text.indexOf(interrupted.runId))
+assert.ok(allFour.text.indexOf(interrupted.runId)<allFour.text.indexOf(start.runId))
+assert.equal(tables.agent_runs.length,beforeFourStatus,'multi-subject status readback cannot create another comparison')
 console.log('Price comparison handler, persisted restart, evidence isolation, partial results, bounded failures and private report API fixtures passed.')
+

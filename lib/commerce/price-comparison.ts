@@ -61,13 +61,32 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
       const {data: saved, error} = await supabaseAdmin.from('agent_runs').select(SELECT).eq('telegram_id', owner).eq('type', TYPE)
         .order('started_at', {ascending: false}).limit(20)
       if (error) throw new Error('comparison_lookup_failed')
-      const categories = [/\b(?:grocery|groceries)\b/i.test(params.text) && 'grocery', /\bfood\b/i.test(params.text) && 'food', /\b(?:shopping|electronics)\b/i.test(params.text) && 'shopping'].filter(Boolean)
       const category = (row: PriceComparison) => row.metadata_json.providers.every(p => ['swiggy', 'zomato'].includes(p.provider)) ? 'food'
         : row.metadata_json.providers.every(p => ['instamart', 'zepto', 'blinkit'].includes(p.provider)) ? 'grocery' : 'shopping'
       const requestedProviders = Object.keys(COMPARISON_PROVIDERS).filter(key => new RegExp('\\b' + key + '\\b', 'i').test(params.text))
-      const matching = (saved || []).filter(row => (!categories.length || categories.includes(category(row as PriceComparison)))
+      const matching = (saved || []).filter(row => Array.isArray(row.metadata_json?.providers)
         && requestedProviders.every(key => row.metadata_json.providers.some((p: any) => p.provider === key))) as PriceComparison[]
-      const selected = categories.length > 1 ? categories.map(kind => matching.find(row => category(row) === kind)).filter(Boolean) as PriceComparison[] : matching.slice(0, 1)
+      // A single readback may ask for several saved subjects across categories.
+      // Match each named focus to its latest owned report, preserving request order.
+      // Only saved comparison rows are read; this path never schedules a new check.
+      const focusSpan = params.text.match(/\b(?:my|the)\s+(?:latest|saved|last|previous)\s+(.+?)\s+comparisons?\b/i)?.[1]
+        || params.text.split(/[.!?\n]/)[0]
+      const ignored = new Set(['show','check','what','which','tell','the','my','latest','saved','last','previous','final','status','of','for','and','or','price','prices','comparison','comparisons','provider','providers','verified','blocked','each','on','from','at','in','with','all','shopping','electronics'])
+      const focuses = (focusSpan.match(/[a-z0-9]+(?:-[a-z0-9]+)*/gi) || []).map(word => word.toLowerCase())
+        .filter(word => word.length >= 3 && !ignored.has(word) && !requestedProviders.includes(word))
+      const selected:PriceComparison[]=[]
+      for(const focus of focuses){
+        const kind = /^(?:grocery|groceries)$/.test(focus) ? 'grocery' : focus === 'food' ? 'food' : null
+        const row = matching.find(candidate => !selected.some(existing => existing.id === candidate.id) && (kind ? category(candidate) === kind
+          : category(candidate) === 'shopping' && (candidate.metadata_json.subject || candidate.title || '').toLowerCase().match(/[a-z0-9]+(?:-[a-z0-9]+)*/g)?.includes(focus)))
+        if(row) selected.push(row)
+      }
+      if(!selected.length){
+        const requestedCategory = /\b(?:grocery|groceries)\b/i.test(params.text) ? 'grocery'
+          : /\bfood\b/i.test(params.text) ? 'food' : /\b(?:shopping|electronics)\b/i.test(params.text) ? 'shopping' : null
+        const row = matching.find(candidate => !requestedCategory || category(candidate) === requestedCategory)
+        if(row)selected.push(row)
+      }
       const reports = []
       for (const row of selected) {
         const current = await readPriceComparison(owner, row.id)
@@ -169,3 +188,4 @@ export async function assertComparisonChild(owner: string, parentId: string, chi
     .eq('id', parentId).eq('telegram_id', owner).eq('type', TYPE).maybeSingle()
   if (error || !data?.metadata_json?.providers?.some((row: any) => row.runId === childId)) throw new Error('comparison_parent_unavailable')
 }
+
