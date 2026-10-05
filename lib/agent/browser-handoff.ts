@@ -40,7 +40,7 @@ async function isConsequential(selector){try{return await page.locator(selector)
  const pageReadiness=observeBrowserPage(page);
  let changedTask=false;
  if(runtimeOptions.taskId){let active='';try{active=fs.readFileSync('${SANDBOX_WORKDIR}/commerce-active-task','utf8')}catch{}changedTask=active!==runtimeOptions.taskId;fs.writeFileSync('${SANDBOX_WORKDIR}/commerce-active-task',runtimeOptions.taskId);}
- if(initialUrl&&(changedTask||!page.url().startsWith('http')||page.url()==='about:blank'))await page.goto(initialUrl,{waitUntil:'domcontentloaded',timeout:45000}).catch(()=>pageReadiness.navigationFailed());
+ if(initialUrl&&(runtimeOptions.navigateToInitial||changedTask||!page.url().startsWith('http')||page.url()==='about:blank'))await page.goto(initialUrl,{waitUntil:'domcontentloaded',timeout:45000}).catch(()=>pageReadiness.navigationFailed());
  const server=http.createServer(async(req,res)=>{
   if(!auth(req))return ok(res,403).end(JSON.stringify({error:'forbidden'}));
   const u=new URL(req.url,'http://x');

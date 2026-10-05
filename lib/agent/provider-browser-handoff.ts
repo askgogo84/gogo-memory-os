@@ -20,7 +20,7 @@ export async function cancelProviderBrowserHandoff(userId:string,handoff:{token:
   }
 }
 
-export async function startProviderBrowserHandoff(params:{userId:string;url:string;originalUrl?:string;reservationToken?:string;keepAlive?:boolean;sessionTaskId?:string}){
+export async function startProviderBrowserHandoff(params:{userId:string;url:string;originalUrl?:string;reservationToken?:string;keepAlive?:boolean;sessionTaskId?:string;navigateToInitial?:boolean}){
   const target=new URL(params.url)
   const hosts=[target,...(params.originalUrl?[new URL(params.originalUrl)]:[])]
   if(hosts.some(url=>!['https:','http:'].includes(url.protocol)))throw new Error('browser_url_not_http')
@@ -45,7 +45,7 @@ export async function startProviderBrowserHandoff(params:{userId:string;url:stri
   const serverPath=`${SANDBOX_WORKDIR}/gogo-handoff.js`
   await sandbox.writeFiles([{path:serverPath,content:Buffer.from(HANDOFF_SERVER)}])
   const encoded=Buffer.from(params.url).toString('base64')
-  const runtimeOptions=Buffer.from(JSON.stringify({keepAlive:params.keepAlive===true,taskId:params.sessionTaskId||'',managed:managedBrowserEnabled()})).toString('base64')
+  const runtimeOptions=Buffer.from(JSON.stringify({keepAlive:params.keepAlive===true,taskId:params.sessionTaskId||'',managed:managedBrowserEnabled(),navigateToInitial:params.navigateToInitial===true})).toString('base64')
   // Credentials are written only after the owner reservation is acquired.
   // The launch process reads them privately; they never enter the handoff URL.
   // Hold one OS lock for the server lifetime. A second run must never kill or

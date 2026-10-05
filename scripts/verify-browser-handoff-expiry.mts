@@ -67,6 +67,7 @@ runInNewContext(program, {exports, Date, URL, console, require: (name: string) =
     startProviderBrowserHandoff: async (options: any) => {
       assert.equal(options.userId, row.metadata_json.commerce_parent_id || row.metadata_json.comparison_parent_id ? 'owner-uuid:commerce' : 'owner-uuid')
       assert.equal(options.sessionTaskId, row.id)
+      assert.equal(options.navigateToInitial, true, 'restores must return to the requested page without discarding the saved browser context')
       assert.equal(options.keepAlive, row.metadata_json.commerce_parent_id || row.metadata_json.comparison_parent_id ? true : undefined)
       created++; return {token: 'new-token', takeoverUrl: handoff, releaseUrl: handoff.replace('/?', '/release?')}
     },

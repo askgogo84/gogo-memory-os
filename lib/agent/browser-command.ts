@@ -499,7 +499,7 @@ export async function restoreReadBrowserHandoff(params:{actor:AgentActor;runId:s
   if(run.status==='paused'&&await browserHandoffIsLive(meta.handoff?.takeoverUrl))return
   const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
   const browserOwner=linked?params.actor.userId+':commerce':params.actor.userId
-  const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:target.toString(),sessionTaskId:run.id,...(linked?{keepAlive:true}:{})})
+  const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:target.toString(),sessionTaskId:run.id,navigateToInitial:true,...(linked?{keepAlive:true}:{})})
   let update=supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{...meta,handoff},summary:'Complete the human step in the provider browser, then resume this same task. Do not send login codes in chat.',completed_at:null,updated_at:new Date().toISOString()})
     .eq('id',run.id).eq('telegram_id',owner).eq('status',run.status)
   // A second restore must not overwrite a newer handoff on the same run.
