@@ -2,8 +2,17 @@ import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {browserHandoffIsLive} from '@/lib/agent/browser-handoff-health'
+import {managedLiveViewUrl} from '@/lib/agent/managed-browser'
+import {browserSandboxName} from '@/lib/agent/browser-handoff'
 
 export const dynamic='force-dynamic'
+
+function privateRedirect(url:URL){
+  const response=NextResponse.redirect(url)
+  response.headers.set('Cache-Control','private, no-store')
+  response.headers.set('Referrer-Policy','no-referrer')
+  return response
+}
 
 export async function GET(_request:Request,{params}:{params:Promise<{runId:string}>}){
   const session=await getSession()
@@ -25,8 +34,15 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
   try{url=new URL(String(target))}catch{return NextResponse.json({error:'handoff_invalid'},{status:400})}
   if(!['https:','http:'].includes(url.protocol))return NextResponse.json({error:'handoff_invalid'},{status:400})
   if(handoff?.mode!=='device'&&!await browserHandoffIsLive(target)){
-    return NextResponse.redirect(new URL('/dashboard/activity/'+encodeURIComponent(runId)+'/browser',_request.url))
+    return privateRedirect(new URL('/dashboard/activity/'+encodeURIComponent(runId)+'/browser',_request.url))
   }
 
-  return NextResponse.redirect(url)
+  if(handoff?.mode!=='device'&&handoff?.managedSessionId){
+    try{
+      const live=await managedLiveViewUrl(String(handoff.managedSessionId),browserSandboxName(String(session.telegramId)))
+      return privateRedirect(new URL(live))
+    }catch{return privateRedirect(url)}
+  }
+
+  return privateRedirect(url)
 }

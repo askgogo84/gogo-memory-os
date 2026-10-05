@@ -19,10 +19,31 @@ export function managedScope(url:string){
   return host
 }
 export function managedSessionConfig(projectId:string,contextId:string,owner:string,scope:string){
-  return {projectId,region:'ap-southeast-1',timeout:1200,keepAlive:true,
+  return {projectId,region:'ap-southeast-1',timeout:3600,keepAlive:true,
     proxies:[{type:'browserbase',geolocation:{country:'IN'}}],
     browserSettings:{context:{id:contextId,persist:true},allowedDomains:[scope],solveCaptchas:false,recordSession:false,logSession:false,ignoreCertificateErrors:false,viewport:{width:1280,height:900}},
     userMetadata:{owner,scope,application:'askgogo'}}
+}
+
+// Issued only after the dashboard authenticates the owner of the saved run.
+// Never persist the bearer URL or expose the Browserbase key.
+export async function managedLiveViewUrl(sessionId:string,owner:string,env:Env=process.env,fetcher:typeof fetch=fetch){
+  const key=env.BROWSERBASE_API_KEY,project=env.BROWSERBASE_PROJECT_ID
+  if(!uuid.test(sessionId)||!key||!project||!uuid.test(project))throw Error('managed_browser_live_view_unavailable')
+  const request=async(path:string)=>{
+    const response=await fetcher(`https://api.browserbase.com/v1/${path}`,{
+      headers:{'X-BB-API-Key':key},redirect:'error',cache:'no-store',signal:AbortSignal.timeout(10000),
+    })
+    if(!response.ok)throw Error('managed_browser_live_view_unavailable')
+    return response.json()
+  }
+  const session=await request(`sessions/${sessionId}`)
+  const ownerDigest=createHash('sha256').update(owner).digest('hex')
+  if(session.id!==sessionId||session.projectId!==project||session.userMetadata?.owner!==ownerDigest||session.status!=='RUNNING'||Date.parse(session.expiresAt)<=Date.now())throw Error('managed_browser_live_view_unavailable')
+  const debug=await request(`sessions/${sessionId}/debug?expiresIn=900`)
+  const url=new URL(String(debug.debuggerFullscreenUrl||''))
+  if(url.protocol!=='https:'||url.hostname!=='debug.browserbase.com'||url.username||url.password)throw Error('managed_browser_live_view_invalid')
+  return url.toString()
 }
 function connection(data:any){
   let u:URL
@@ -132,11 +153,11 @@ export async function ensureManagedBrowser(sandbox:any,owner:string,url:string){
     await sandbox.writeFiles([{path:`${SANDBOX_WORKDIR}/managed-browser-broker.cjs`,content:Buffer.from(MANAGED_BROWSER_BROKER)}])
     await sandbox.runCommand({cmd:'node',args:[`${SANDBOX_WORKDIR}/managed-browser-broker.cjs`],detached:true,env})
     for(let attempt=0;attempt<40;attempt++){
-      if((await ready()).exitCode===0)return {env,allow,release:session.release}
+      if((await ready()).exitCode===0)return {env,allow,release:session.release,sessionId:session.id}
       await new Promise(resolve=>setTimeout(resolve,250))
     }
     await session.release().catch(()=>{})
     throw Error('managed_browser_broker_not_ready')
   }
-  return {env,allow,release:session.release}
+  return {env,allow,release:session.release,sessionId:session.id}
 }

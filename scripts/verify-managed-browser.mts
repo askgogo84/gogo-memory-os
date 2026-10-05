@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
+import {createHash} from 'node:crypto'
 import {runInNewContext} from 'node:vm'
 import {browserPageAllowlist} from '../lib/agent/browser-page-network'
-import {resolveManagedSession,managedScope,MANAGED_BROWSER_BROKER,type ManagedState} from '../lib/agent/managed-browser'
+import {resolveManagedSession,managedScope,managedLiveViewUrl,MANAGED_BROWSER_BROKER,type ManagedState} from '../lib/agent/managed-browser'
 
 const project='11111111-1111-4111-8111-111111111111'
 const context='22222222-2222-4222-8222-222222222222'
@@ -26,7 +27,7 @@ const first=await resolveManagedSession('owner-a','https://www.swiggy.com/instam
 assert.equal(first.endpoint,endpoint)
 assert.equal(first.newSession,true)
 const creation=requests.find(r=>r.path==='sessions')!.body
-assert.equal(creation.timeout,1200)
+assert.equal(creation.timeout,3600)
 assert.equal(creation.proxies[0].geolocation.country,'IN')
 assert.equal(creation.browserSettings.context.persist,true)
 assert.equal(creation.browserSettings.solveCaptchas,false)
@@ -44,6 +45,17 @@ assert.equal(session.status,'COMPLETED')
 await resolveManagedSession('owner-a','https://www.swiggy.com/instamart',store,env,fetcher)
 assert.equal(requests.filter(r=>r.path==='contexts').length,1,'restart keeps saved login Context')
 assert.equal(requests.filter(r=>r.path==='sessions').length,2)
+const liveFetcher:typeof fetch=async(url)=>{
+  const path=String(url).split('/v1/')[1]
+  if(path===`sessions/${sessionId}`)return new Response(JSON.stringify({id:sessionId,projectId:project,userMetadata:{owner:createHash('sha256').update('owner-a').digest('hex')},status:'RUNNING',expiresAt:new Date(Date.now()+600000).toISOString()}))
+  if(path===`sessions/${sessionId}/debug?expiresIn=900`)return new Response(JSON.stringify({debuggerFullscreenUrl:`https://debug.browserbase.com/sessions/${sessionId}/fullscreen?token=fixture-only`}))
+  throw Error('unexpected live view request')
+}
+assert.match(await managedLiveViewUrl(sessionId,'owner-a',env,liveFetcher),/^https:\/\/debug\.browserbase\.com\//)
+await assert.rejects(()=>managedLiveViewUrl('not-a-session','owner-a',env,liveFetcher),/unavailable/)
+await assert.rejects(()=>managedLiveViewUrl(sessionId,'owner-b',env,liveFetcher),/unavailable/)
+await assert.rejects(()=>managedLiveViewUrl(sessionId,'owner-a',env,async()=>new Response(JSON.stringify({id:sessionId,projectId:'another-project',status:'RUNNING',expiresAt:new Date(Date.now()+600000).toISOString()}))),/unavailable/)
+await assert.rejects(()=>managedLiveViewUrl(sessionId,'owner-a',env,async(url)=>String(url).endsWith('/debug?expiresIn=900')?new Response(JSON.stringify({debuggerFullscreenUrl:'https://evil.example/steal'})):liveFetcher(url)),/invalid/)
 for(const value of ['http://127.0.0.1','http://localhost','http://169.254.169.254','http://[::1]','https://a:b@example.com','file:///tmp/foo'])assert.throws(()=>managedScope(value))
 
 state=null;requests=[]

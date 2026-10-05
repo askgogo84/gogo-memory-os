@@ -86,7 +86,7 @@ while(Date.now()<deadline){try{const r=await fetch('http://127.0.0.1:${BROWSER_H
   if(!domain)throw new Error('browser_handoff_domain_unavailable')
   const base=String(domain).startsWith('http')?String(domain):`https://${domain}`
   const q=encodeURIComponent(token)
-  return {sandboxName:name,token,takeoverUrl:`${base}/?token=${q}`,stateUrl:`${base}/state?token=${q}`,agentActionUrl:`${base}/agent-action?token=${q}`,releaseUrl:`${base}/release?token=${q}`}
+  return {sandboxName:name,token,takeoverUrl:`${base}/?token=${q}`,stateUrl:`${base}/state?token=${q}`,agentActionUrl:`${base}/agent-action?token=${q}`,releaseUrl:`${base}/release?token=${q}`,...(managed?{managedSessionId:managed.sessionId}:{})}
   }catch(error){
     await sandbox.writeFiles([{path:`gogo-handoff-abort-${token}`,content:Buffer.from(token)}]).catch(()=>{})
     await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');try{if(fs.readFileSync('gogo-handoff-transfer','utf8')===process.argv[1])fs.unlinkSync('gogo-handoff-transfer')}catch{}",token]}).catch(()=>{})
