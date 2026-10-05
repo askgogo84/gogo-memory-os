@@ -57,18 +57,22 @@ const rows:any[]=[
   {id:'other-owner',telegram_id:'43',type:'secure_browser',status:'paused',title:'Private task',updated_at:'2026-10-05T00:00:00Z',metadata_json:{handoff:{takeoverUrl:'foreign'}}},
   {id:'finished',telegram_id:'42',type:'secure_browser',status:'completed',title:'Finished task',updated_at:'2026-10-05T00:00:00Z',metadata_json:{handoff:{takeoverUrl:'old'}}},
   {id:'closed',telegram_id:'42',type:'secure_browser',status:'paused',title:'Closed task',updated_at:'2026-10-05T00:00:00Z',metadata_json:{state:'closed_stale',handoff:{takeoverUrl:'stale'}}},
+  {id:'rail',telegram_id:'42',type:'train_research',status:'paused',title:'Train provider',updated_at:'2026-10-04T15:11:00Z',metadata_json:{handoff:{takeoverUrl:'rail-token'}}},
+  {id:'device',telegram_id:'42',type:'train_research',status:'paused',title:'Train on device',updated_at:'2026-10-04T15:12:00Z',metadata_json:{handoff:{mode:'device',providerUrl:'https://provider.example/'}}},
+  {id:'json-null',telegram_id:'42',type:'life_event',status:'paused',title:'No takeover',updated_at:'2026-10-05T00:00:00Z',metadata_json:{handoff:null,browser_waiting:true}},
 ]
 for(let i=0;i<45;i++)rows.push({id:`unrelated-${i}`,telegram_id:'42',type:'secure_browser',status:'paused',updated_at:`2026-10-05T00:${String(i).padStart(2,'0')}:00Z`,metadata_json:{}})
+for(let i=0;i<110;i++)rows.push({id:`retired-${i}`,telegram_id:'42',type:'life_event',status:'paused',updated_at:`2026-10-05T02:${String(Math.floor(i/60)).padStart(2,'0')}:${String(i%60).padStart(2,'0')}Z`,metadata_json:{state:'closed_stale',handoff:{takeoverUrl:'retired-token'}}})
 rows.push(rows.shift()) // Keep the real handoff older than more than one page of unrelated pauses.
 const selected:Array<[string,string,unknown]>=[]
 const db={from(table:string){
   assert.equal(table,'agent_runs')
   const filters:Array<(row:any)=>boolean>=[]
-  let limit=Infinity
+  let range:[number,number]=[0,Infinity]
   const q:any={select:()=>q,eq:(key:string,value:unknown)=>{selected.push(['eq',key,value]);filters.push(row=>row[key]===value);return q},
-    not:(key:string,operator:string,value:unknown)=>{selected.push(['not',key,value]);assert.equal(operator,'is');filters.push(row=>key==='metadata_json->handoff'&&row.metadata_json?.handoff!=null);return q},
-    order:()=>q,limit:(count:number)=>{limit=count;return q},
-    then:(resolve:any)=>Promise.resolve({data:rows.filter(row=>filters.every(filter=>filter(row))).slice(0,limit),error:null}).then(resolve)}
+    contains:(key:string,value:any)=>{selected.push(['contains',key,value]);filters.push(row=>key==='metadata_json'&&typeof row.metadata_json?.handoff==='object'&&row.metadata_json.handoff!==null);return q},
+    order:()=>q,range:(from:number,to:number)=>{range=[from,to];return q},
+    then:(resolve:any)=>Promise.resolve({data:rows.filter(row=>filters.every(filter=>filter(row))).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)||b.id.localeCompare(a.id)).slice(range[0],range[1]+1),error:null}).then(resolve)}
   return q
 }}
 const handoffExports:any={}
@@ -76,10 +80,12 @@ runInNewContext(ts.transpileModule(readFileSync('lib/dashboard/human-handoffs.ts
   exports:handoffExports,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./run-state'?{isActionablePause}:null,
 })
 const handoffs=await handoffExports.getPendingBrowserHandoffs('42')
-assert.deepEqual(handoffs.map((row:any)=>row.id),['zepto'])
-assert.equal(handoffs[0].summary,'Select your delivery location.')
-assert.doesNotMatch(JSON.stringify(handoffs),/private-token|foreign/,'Needs you exposes task links, not takeover tokens')
+assert.deepEqual(handoffs.map((row:any)=>row.id),['device','rail','zepto'])
+assert.equal(handoffs[2].summary,'Select your delivery location.')
+assert.doesNotMatch(JSON.stringify(handoffs),/private-token|foreign|rail-token/,'Needs you exposes task links, not takeover tokens')
 assert.ok(selected.some(([op,key,value])=>op==='eq'&&key==='telegram_id'&&value==='42'))
-assert.ok(selected.some(([op,key])=>op==='not'&&key==='metadata_json->handoff'))
+assert.ok(selected.some(([op,key])=>op==='contains'&&key==='metadata_json'))
+assert.ok(!selected.some(([op,key])=>op==='eq'&&key==='type'),'Other run types can own browser handoffs')
 
 console.log('✅ dashboard run-state indicator: paused/blocked runs read as waiting, not working')
+
