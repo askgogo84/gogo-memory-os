@@ -9,6 +9,7 @@ import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from 
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
 import { needsBrowserDeliveryLocation } from '../lib/agent/browser-location-gate'
 import { browserPageAllowlist } from '../lib/agent/browser-page-network'
+import { needsHumanPageInteraction } from '../lib/agent/browser-interaction-gate'
 
 // 2 Oct live Browserbase acceptance: this exact title request was rejected.
 const titleRequest='Open https://example.com in the browser and report its page title. Read only.'
@@ -19,7 +20,7 @@ assert.equal(isTitleOnlyObjective('Open https://example.com in the browser and r
 function load(file: string, mocks: Record<string, any>, extra='', globals:Record<string,any>={}) {
   // Legacy action fixtures focus on receipts/forms. The real load observer is
   // exercised against challenge, HTTP and navigation failures in lifetime tests.
-  mocks={'./browser-read-diagnostics':{sanitizeBrowserReadDiagnostics},'./browser-failure-notice':{browserFailureSummary},'./managed-browser':{managedBrowserEnabled:()=>false,ensureManagedBrowser:async()=>null},'./browser-page-readiness':{BROWSER_PAGE_READINESS:'function observeBrowserPage(){return {read:async()=>({state:"ready",httpStatus:200})}}'},...mocks}
+  mocks={'./browser-read-diagnostics':{sanitizeBrowserReadDiagnostics},'./browser-interaction-gate':{needsHumanPageInteraction},'./browser-failure-notice':{browserFailureSummary},'./managed-browser':{managedBrowserEnabled:()=>false,ensureManagedBrowser:async()=>null},'./browser-page-readiness':{BROWSER_PAGE_READINESS:'function observeBrowserPage(){return {read:async()=>({state:"ready",httpStatus:200})}}'},...mocks}
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
@@ -69,15 +70,15 @@ const db={from:(table:string)=>{
 let commandExecutionFailure:any
 let browserBlockReason='human_auth_required'
 let completedUrl='https://provider.example/account',completedSource:string|undefined
-let browserCompleted=false,vaultCalls=0,browserActions:any[]=[],reconciliationEvidence:any,browserExecutions=0
+let browserCompleted=false,vaultCalls=0,browserActions:any[]=[],reconciliationEvidence:any,browserExecutions=0,lastBrowserOptions:any
 const command=load('browser-command.ts',{
   './post-auth-outcome':{markAuthOutcomeUnknown:async(_tg:string,runId:string,meta:any)=>{metadata={...meta,browser_safe_to_retry:false};return {runId,status:'outcome_unknown'}},inspectPostAuthRun:async()=>{if(reconciliationEvidence)return reconciliationEvidence;throw new Error('reconciliation_session_unavailable')}},
   '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
-  './secure-computer':{runSecureBrowser:async()=>{browserExecutions++;if(commandExecutionFailure)throw commandExecutionFailure;return browserCompleted
+  './secure-computer':{runSecureBrowser:async(options:any)=>{browserExecutions++;lastBrowserOptions=options;if(commandExecutionFailure)throw commandExecutionFailure;return browserCompleted
     ? {status:'completed',url:completedUrl,sourceUrl:completedSource,title:'Account',summary:'Read account',forms:[],actions:[]}
-    : {status:'blocked',blockReason:browserBlockReason,authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}}},
+    : {status:'blocked',blockReason:browserBlockReason,authReason:browserBlockReason==='human_auth_required'?'device_approval':undefined,handoffReservation:browserBlockReason==='page_interaction_required'?'transfer':undefined,url:'https://provider.example/account',summary:browserBlockReason==='page_interaction_required'?'Clear the page overlay':'Approve sign-in',actions:browserActions}}},
   '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff,cancelProviderBrowserHandoff:async()=>{directCancelled++}},
   './browser-handoff':{releaseBrowserHandoff:async(_url:string,options:any)=>{assert.equal(options.allowExpired,true);released++;return {ok:false,expired:true}}},
@@ -110,6 +111,19 @@ browserCompleted=false;directSaveFails=true
 await assert.rejects(()=>command.executeBrowser(params),/browser_handoff_save_failed/)
 assert.equal(directCancelled,1,'direct browser commands must clean up an unsaved takeover')
 directSaveFails=false
+browserBlockReason='page_interaction_required'
+browserActions=[{kind:'click',status:'failed',consequential:false}]
+const overlay=await command.executeBrowser(params)
+assert.equal(overlay.status,'paused')
+assert.equal(overlay.blockedReason,'page_interaction_required')
+assert.equal(metadata.handoff,handoff,'covered read control must retain the same browser for takeover')
+assert.equal(metadata.browser_safe_to_retry,true)
+assert.match(overlay.text,/Resume this task/)
+browserCompleted=true
+assert.equal((await command.executeBrowser(params)).status,'completed','human overlay clearance resumes the saved read')
+assert.equal(lastBrowserOptions.resumePage,true,'standalone read must inspect the human-cleared page without reopening the overlay')
+browserCompleted=false
+browserBlockReason='human_auth_required'
 browserActions=[{kind:'click',status:'done',consequential:true}]
 await command.executeBrowser(params)
 assert.equal(metadata.browser_safe_to_retry,false)
@@ -290,6 +304,29 @@ const diagnosticPage={goto:async()=>{},waitForTimeout:async()=>{},waitForFunctio
 await runInNewContext(lockedComputer.BROWSER_SCRIPT,{require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[diagnosticPage],close:async()=>{}})}}),process:{argv:['node','browser',Buffer.from(JSON.stringify({url:'https://provider.example',mode:'read',actions:[{kind:'click',selector:'#from'}]})).toString('base64')],exit:()=>{throw new Error('unexpected exit')}},Buffer,console:{log:(value:string)=>{diagnosticOutput=JSON.parse(value)},error:console.error}})
 assert.deepEqual(diagnosticOutput.actions[0].failure,{reason:'obscured',matches:1,rendered:1,firstTag:'div'})
 assert.doesNotMatch(JSON.stringify(diagnosticOutput),/private-fixture|private\.example/,'provider exception content and URLs must not enter diagnostics')
+
+let overlayReads=0,overlayStops=0,overlayUnlocks=0,overlayReservations=0
+const overlayComputer=load('secure-computer.ts',{
+  './planner-provider':{completeAgentPlanPrompt:async()=>'{"actions":[{"kind":"click","selector":"#product"}]}'},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{overlayStops++},
+    runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(overlayReads++===0
+      ? {url:'https://provider.example/products',title:'Products',text:'Browse items',forms:[],controls:[{selector:'#product',tag:'button',role:'button',label:'View product'}]}
+      : {url:'https://provider.example/products',title:'Products',text:'Browse items',forms:[],actions:diagnosticOutput.actions})})})}},
+  './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
+  './browser-auth-gate':{detectHumanAuthGate},
+  './browser-location-gate':{needsBrowserDeliveryLocation},
+  './browser-owner-lock':{acquireBrowserOwnerLock:async()=>Object.assign(async()=>{overlayUnlocks++},{reserveHandoff:async()=>{overlayReservations++;return 'overlay-transfer'}})},
+  './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owner',ensureBrowserRuntime:async()=>{}},
+  './trust':{canAuthorizeConsequentialAction:()=>true},
+})
+const overlayRead=await overlayComputer.runSecureBrowser({userId:'owner',url:'https://provider.example/products',objective:'Read the product details',mode:'read',reserveHumanHandoff:true})
+assert.equal(overlayRead.status,'blocked')
+assert.equal(overlayRead.blockReason,'page_interaction_required')
+assert.equal(overlayRead.handoffReservation,'overlay-transfer')
+assert.equal(overlayStops,0,'read overlay retains the same browser for takeover')
+assert.equal(overlayReservations,1)
+assert.equal(overlayUnlocks,1)
+assert.doesNotMatch(JSON.stringify(overlayRead),/private-fixture|private\.example/)
 
 // Actual emitted worker: public search Enter and _blank restaurant navigation.
 // No live values or writes are simulated as production evidence.

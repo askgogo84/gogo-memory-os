@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { redactBrowserSensitiveText } from '../lib/agent/secure-browser-redaction'
+import { needsHumanPageInteraction } from '../lib/agent/browser-interaction-gate'
 
 const computer=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
 const ticket=readFileSync(new URL('../lib/agent/secure-ticket-reader.ts',import.meta.url),'utf8')
 const bootstrap=readFileSync(new URL('../lib/agent/secure-browser-bootstrap.ts',import.meta.url),'utf8')
 const browser=readFileSync(new URL('../lib/agent/browser-command.ts',import.meta.url),'utf8')
+const browserPage=readFileSync(new URL('../app/dashboard/(app)/activity/[runId]/browser/page.tsx',import.meta.url),'utf8')
 const handoff=readFileSync(new URL('../lib/agent/browser-handoff.ts',import.meta.url),'utf8')
 const runRoute=readFileSync(new URL('../app/api/agent/run/route.ts',import.meta.url),'utf8')
 const execRoute=readFileSync(new URL('../app/api/agent/runs/[id]/execute/route.ts',import.meta.url),'utf8')
@@ -81,6 +83,15 @@ assert.match(bootstrap,/updateNetworkPolicy\(\{allow:\{\.\.\.BROWSER_SETUP_NETWO
 assert.match(computer,/MAX_ACTIONS = 12/)
 assert.match(computer,/Allowed action kinds: goto, click, fill, select, check, wait, submit/)
 assert.doesNotMatch(computer,/\beval\s*\(/)
+
+// A covered read control pauses in the retained browser. A possible write or
+// an ordinary timeout cannot be converted into an automatic retry.
+assert.equal(needsHumanPageInteraction([{kind:'click',status:'failed',failure:{reason:'obscured'},consequential:false}]),true)
+assert.equal(needsHumanPageInteraction([{kind:'submit',status:'failed',failure:{reason:'obscured'},consequential:true}]),false)
+assert.equal(needsHumanPageInteraction([{kind:'click',status:'failed',failure:{reason:'timeout'},consequential:false}]),false)
+assert.match(computer,/params\.mode==='read'&&needsHumanPageInteraction\(page\.actions\)/)
+assert.match(browser,/blockReason==='page_interaction_required'/)
+assert.match(browserPage,/run\.metadata\?\.mode==='read'\|\|run\.metadata\?\.commerce_parent_id/)
 
 // Draft mode physically skips submit controls, and the action planner is told not
 // to invent credentials/secrets.

@@ -1,4 +1,5 @@
 import { sanitizeBrowserReadDiagnostics } from '../lib/agent/browser-read-diagnostics'
+import { needsHumanPageInteraction } from '../lib/agent/browser-interaction-gate'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
@@ -134,6 +135,7 @@ let plannerReply:string|null=null
 const exports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport {planActions}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-interaction-gate')return {needsHumanPageInteraction}
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
     if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>redactLinkFixture?redactBrowserSensitiveText(s):s}
     if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
@@ -252,6 +254,7 @@ const airportExports:any={},airportWaves:any[]=[]
 const suggestionText='Bengaluru BLR � Kempegowda International Airport'
 runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:airportExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-interaction-gate')return {needsHumanPageInteraction}
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
   if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
@@ -285,6 +288,7 @@ assert.equal(airportResult.summary,suggestionText)
  const detail={url:'https://fixture.example/product/sony',text:'Sony WH-1000XM5 headphones. Fixture price INR 1.',title:'Sony',controls:[],forms:[],links:[],actions:[]}
  runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports:flow,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-interaction-gate')return {needsHumanPageInteraction}
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
    if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
    if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
@@ -347,6 +351,7 @@ let assessmentEvidence=['Sony WH-1000XM5 headphones Black','Price, product page 
 const resultExports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:resultExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-interaction-gate')return {needsHumanPageInteraction}
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
   if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
@@ -390,6 +395,7 @@ async function multiStepFixture(scenario:'flight'|'blocked-control'|'never-compl
     actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:steps===1&&scenario==='blocked-control'?'skipped':'done',failure:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
   runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
     exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-interaction-gate')return {needsHumanPageInteraction}
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
       if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
       if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
@@ -424,6 +430,7 @@ console.log('PASS: multi-step flight research can complete, blocked commit stays
 const sourceChecks:any={}
 runInNewContext(ts.transpileModule(source+'\nexport {browserSourceUrl, productLinkNeedsDetail, assessReadOutcome}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:sourceChecks,process:{env:{}},URL,console,require:(id:string)=>{
+    if(id==='./browser-interaction-gate')return {needsHumanPageInteraction}
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText}
   if(id==='./browser-evidence')return browserEvidence
@@ -472,6 +479,7 @@ const reuseDb={from:(table:string)=>{
 const reuseCommand:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/browser-command.ts','utf8')+'\nexport {findActiveBrowserRead}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:reuseCommand,process:{env:{}},URL,Date,console,require:(id:string)=>{
+    if(id==='./browser-interaction-gate')return {needsHumanPageInteraction}
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='@/lib/supabase-admin')return {supabaseAdmin:reuseDb}
   if(id==='@/lib/bot/memory-redaction')return {redactSecretShapedText:(s:string)=>s}

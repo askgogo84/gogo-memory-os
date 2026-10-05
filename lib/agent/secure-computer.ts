@@ -10,6 +10,7 @@ import { browserPageAllowlist } from './browser-page-network'
 import {BROWSER_PAGE_READINESS} from './browser-page-readiness'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
+import { needsHumanPageInteraction } from './browser-interaction-gate'
 import { needsBrowserDeliveryLocation } from './browser-location-gate'
 import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
@@ -65,7 +66,7 @@ export type SecureBrowserResult = {
   forms:Array<{action:string;method:string;inputs:Array<{selector:string;name:string;type:string;label:string}>}>
   actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed';consequential?:boolean}>
   sandboxName:string
-  blockReason?: 'human_auth_required'|'provider_access_limited'|'delivery_location_required'
+  blockReason?: 'human_auth_required'|'provider_access_limited'|'delivery_location_required'|'page_interaction_required'
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
   credentialSelectionRequired?: boolean
 }
@@ -1071,6 +1072,15 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       const previousPage=page
       page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]))
+      // An overlay can intercept a read-only click even when the requested
+      // control exists. Keep the observed page for the user to clear in the
+      // same browser, rather than retrying the click or claiming a result.
+      if(params.mode==='read'&&needsHumanPageInteraction(page.actions)){
+        const handoffReservation=params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
+        return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,
+          title:safeText(page.title,300),summary:'A page overlay is blocking the next browser step. Take control to clear it, then resume this same read-only task. Product details, prices and availability remain unverified.',
+          pageText:'A page overlay needs human interaction.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'page_interaction_required'}
+      }
       if(params.mode==='read')for(const action of actions){
         if(action.kind!=='search_enter'||!(page.actions||[]).some((a:any)=>a.kind==='search_enter'&&a.status==='done'&&a.detail===action.selector))continue
         const field=(previousPage.controls||[]).find((c:any)=>c.selector===action.selector)

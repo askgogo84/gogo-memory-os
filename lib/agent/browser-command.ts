@@ -345,7 +345,9 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   const runMetadata:any=currentRun.metadata_json||{}
   const persistentCommerce=Boolean(runMetadata.commerce_parent_id||runMetadata.comparison_parent_id)&&params.mode==='read'
   const browserOwner=persistentCommerce?params.actor.userId+':commerce':params.actor.userId
-  const resumePage=persistentCommerce&&Boolean(runMetadata.handoff)
+  // Standalone read handoffs also need the page the human just cleared.
+  // Navigating to the original URL again can recreate the same overlay.
+  const resumePage=params.mode==='read'&&Boolean(runMetadata.handoff)
   const reconciledResult=runMetadata.browser_safe_to_retry===false
     ? await (await import('./post-auth-outcome')).inspectPostAuthRun(String(tg),params.runId,runMetadata):undefined
   if(reconciledResult===null)return {runId:params.runId,status:'outcome_unknown' as const,capability:'browser' as const,risk:params.command.risk,text:'The browser session is unavailable. Verify the outcome directly with the provider; Gogo will not repeat the action.',handledBy:'secure-browser' as const}
@@ -364,7 +366,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   let pendingHandoffReservation:string|undefined
   try{
-    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce?{keepAlive:true,sessionTaskId:params.runId,resumePage}:{})})
+    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,resumePage,...(persistentCommerce?{keepAlive:true,sessionTaskId:params.runId}:{})})
     pendingHandoffReservation=result.handoffReservation
     const at=new Date().toISOString()
 
@@ -376,12 +378,12 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       const compact={url:result.url,title:result.title,summary:result.summary,blockReason,authReason:result.authReason||null,credentialSelectionRequired:result.credentialSelectionRequired===true}
       await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:compact,error:blockReason,completed_at:at}).eq('id',params.stepId)
       await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:blockReason,metadata_json:runMetadata,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
-      await activity(tg,params.runId,blockReason,blockReason==='delivery_location_required'?'Gogo needs a delivery location before looking up availability.':blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
+      await activity(tg,params.runId,blockReason,blockReason==='delivery_location_required'?'Gogo needs a delivery location before looking up availability.':blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':blockReason==='page_interaction_required'?'Gogo paused because a page overlay blocked the next step.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
       if(blockReason==='provider_access_limited'&&runMetadata.browser_safe_to_retry===false){
         const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
         return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}
       }
-      if(blockReason==='human_auth_required'||blockReason==='delivery_location_required'){
+      if(blockReason==='human_auth_required'||blockReason==='delivery_location_required'||blockReason==='page_interaction_required'){
         if((result.handoffReservation||(result.authReason&&result.authReason!=='password'))&&!result.credentialSelectionRequired){
           const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
           const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:result.url,originalUrl:params.command.url,reservationToken:result.handoffReservation,sessionTaskId:params.runId,...(persistentCommerce?{keepAlive:true}:{})})
@@ -398,7 +400,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
             blockedReason:blockReason,handledBy:'secure-browser' as const,
           }
         }
-        if(blockReason==='delivery_location_required')return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text:result.summary,blockedReason:blockReason,handledBy:'secure-browser' as const}
+        if(blockReason==='delivery_location_required'||blockReason==='page_interaction_required')return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text:result.summary,blockedReason:blockReason,handledBy:'secure-browser' as const}
         const host=new URL(result.url).hostname
         const vault=await buildVaultAddLink({
           telegramId:tg,
