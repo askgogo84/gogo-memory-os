@@ -50,7 +50,10 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
           return privateRedirect(new URL(live))
         }
       }
-    }catch{return privateRedirect(url)}
+    }catch(error){
+      console.warn('managed_browser_live_view_fallback',error instanceof Error?error.message:'unknown')
+      return privateRedirect(url)
+    }
   }
 
   return privateRedirect(url)

@@ -39,10 +39,14 @@ export async function managedLiveViewUrl(sessionId:string,owner:string,env:Env=p
   }
   const session=await request(`sessions/${sessionId}`)
   const ownerDigest=createHash('sha256').update(owner).digest('hex')
-  if(session.id!==sessionId||session.projectId!==project||session.userMetadata?.owner!==ownerDigest||session.status!=='RUNNING'||Date.parse(session.expiresAt)<=Date.now())throw Error('managed_browser_live_view_unavailable')
+  if(session.id!==sessionId)throw Error('managed_browser_live_view_session_mismatch')
+  if(session.projectId!==project)throw Error('managed_browser_live_view_project_mismatch')
+  if(session.userMetadata?.owner!==ownerDigest)throw Error('managed_browser_live_view_owner_mismatch')
+  if(session.status!=='RUNNING')throw Error('managed_browser_live_view_not_running')
+  if(Date.parse(session.expiresAt)<=Date.now())throw Error('managed_browser_live_view_expired')
   const debug=await request(`sessions/${sessionId}/debug?expiresIn=900`)
   const url=new URL(String(debug.debuggerFullscreenUrl||''))
-  if(url.protocol!=='https:'||url.hostname!=='debug.browserbase.com'||url.username||url.password)throw Error('managed_browser_live_view_invalid')
+  if(url.protocol!=='https:'||!['debug.browserbase.com','www.browserbase.com'].includes(url.hostname)||url.username||url.password)throw Error('managed_browser_live_view_invalid')
   return url.toString()
 }
 function connection(data:any){
