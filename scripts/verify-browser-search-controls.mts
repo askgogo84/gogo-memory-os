@@ -47,6 +47,20 @@ for(const [provider,label,tag,field] of [
   else assert.match(page.controls[0].selector,/^body:nth-of-type\(1\) > (div|input|button|p):nth-of-type\(1\)$/)
   if(field)assert.equal(page.forms[0].inputs[0].selector,page.controls[0].selector)
 }
+// Zepto renders product suggestions as clickable divs whose text contains no
+// generic "search" label. They must still be exported after a public query.
+{
+ const root:any={tagName:'BODY',nodeType:1,children:[],parentElement:null,id:'',innerText:'Amul taaza toned milk'}
+ const input:any={tagName:'INPUT',nodeType:1,id:'',parentElement:root,children:[],innerText:'',value:'Amul Taaza toned milk',
+  getAttribute:(key:string)=>key==='placeholder'?'Search for products':null,
+  getBoundingClientRect:()=>({width:300,height:40}),matches:()=>true,querySelectorAll:()=>[]}
+ const suggestion:any={tagName:'DIV',nodeType:1,id:'',parentElement:root,children:[],innerText:'Amul taaza toned milk',textContent:'Amul taaza toned milk',
+  getAttribute:()=>null,getBoundingClientRect:()=>({width:300,height:40}),matches:()=>false,querySelectorAll:()=>[]}
+ root.children=[input,suggestion];root.querySelectorAll=()=>[input]
+ const doc={title:'Zepto search fixture',body:root,forms:[],querySelectorAll:(selector:string)=>selector==='input,textarea,select'?[input]:selector==='a[href]'?[]:selector==='input[placeholder="Search for products"]'?[input]:[input,suggestion]}
+ const page=runInNewContext('(()=>{'+body+'})()',{document:doc,location:{href:'https://www.zepto.com/search'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
+ assert.ok(page.controls.some((control:any)=>control.label==='Amul taaza toned milk'&&control.tag==='div'),'clickable product suggestion is observable')
+}
 // Live IndiGo exposes an expanded input inside its still-clickable From wrapper.
 // Offering both lets the planner repeatedly close/reopen the same dropdown.
 {

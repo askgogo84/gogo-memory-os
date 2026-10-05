@@ -252,6 +252,10 @@ async function model(page){
       return parts.join(' > ');
     };
     const candidates=Array.from(document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[tabindex],div,span,p')).filter(visible);
+    const activeSearchTokens=[...new Set(candidates.filter(el=>el.tagName==='INPUT'
+      &&/\b(search|find)\b/i.test([el.getAttribute('placeholder'),el.getAttribute('aria-label')].join(' '))
+      &&!/(password|otp|code|email|phone|mobile|login|payment|card)/i.test([el.getAttribute('placeholder'),el.getAttribute('aria-label')].join(' ')))
+      .flatMap(el=>String(el.value||'').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>2)))].slice(0,12);
     const allControls=candidates.filter(el=>{
       if(el.disabled||el.getAttribute('aria-disabled')==='true')return false;
       // The observed IndiGo From wrapper remains clickable around an expanded
@@ -264,7 +268,11 @@ async function model(page){
       if(el.getAttribute('tabindex')==='-1'&&!el.getAttribute('role')&&el.querySelectorAll('input,button,a[href]').length>0)return false;
       if(el.matches('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[tabindex]'))return true;
       const text=clean(el.innerText||el.textContent);
-      return text.length>0&&text.length<160&&getComputedStyle(el).cursor==='pointer'&&(el.tagName==='P'||/\b(search|location|address)\b/i.test(text))&&!Array.from(el.children).some(child=>clean(child.innerText||child.textContent)===text);
+      const matchingSuggestion=activeSearchTokens.length>=2
+        &&activeSearchTokens.filter(token=>text.toLowerCase().includes(token)).length>=2;
+      return text.length>0&&text.length<160&&getComputedStyle(el).cursor==='pointer'
+        &&(el.tagName==='P'||/\b(search|location|address)\b/i.test(text)||matchingSuggestion)
+        &&!Array.from(el.children).some(child=>clean(child.innerText||child.textContent)===text);
     }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.innerText||el.textContent||el.getAttribute('title')).slice(0,180),
       ...(el.tagName==='A'&&el.href?{href:el.href}:{}),
       ...((el.tagName==='INPUT'&&['text','search'].includes((el.getAttribute('type')||'text').toLowerCase())
