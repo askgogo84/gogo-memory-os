@@ -67,9 +67,16 @@ const stores:Record<string,any[]>={
 const lexicalFilters:string[]=[]
 const database={rpc:async()=>({data:[],error:null}),from:(table:string)=>{
   const filters:Array<[string,unknown]>=[]
+  let requiredSourceRefs:any[]|undefined,sortKey:string|undefined,descending=false,rowLimit:number|undefined
   queries.push({table,filters})
-  const result=()=>({data:table==='user_consent_settings'?{memory_enabled:consentEnabled,gmail_enabled:gmailRecallEnabled}:table==='user_memory_profile'?null:(stores[table]||[]).filter(row=>filters.every(([key,value])=>String(row[key])===String(value))),error:(table==='user_memory_profile'&&profileLookupFails||table==='user_insights'&&insightLookupFails||table==='agent_ideas'&&inboxLookupFails||table==='user_consent_settings'&&consentLookupFails)?{message:'fixture lookup outage'}:null})
-  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},is:()=>q,or:(filter:string)=>{if(['memories','memory_embeddings'].includes(table))lexicalFilters.push(filter);return q},in:()=>q,gte:()=>q,lte:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
+  const result=()=>{
+    let rows=(stores[table]||[]).filter(row=>filters.every(([key,value])=>String(row[key])===String(value)))
+    if(requiredSourceRefs)rows=rows.filter(row=>requiredSourceRefs.every(required=>Array.isArray(row.source_refs)&&row.source_refs.some((actual:any)=>Object.entries(required).every(([key,value])=>actual?.[key]===value))))
+    if(sortKey)rows=[...rows].sort((a,b)=>descending?String(b[sortKey!]).localeCompare(String(a[sortKey!])):String(a[sortKey!]).localeCompare(String(b[sortKey!])))
+    if(rowLimit!==undefined)rows=rows.slice(0,rowLimit)
+    return {data:table==='user_consent_settings'?{memory_enabled:consentEnabled,gmail_enabled:gmailRecallEnabled}:table==='user_memory_profile'?null:rows,error:(table==='user_memory_profile'&&profileLookupFails||table==='user_insights'&&insightLookupFails||table==='agent_ideas'&&inboxLookupFails||table==='user_consent_settings'&&consentLookupFails)?{message:'fixture lookup outage'}:null}
+  }
+  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},contains:(key:string,value:any[])=>{if(key==='source_refs')requiredSourceRefs=value;return q},is:()=>q,or:(filter:string)=>{if(['memories','memory_embeddings'].includes(table))lexicalFilters.push(filter);return q},in:()=>q,gte:()=>q,lte:()=>q,order:(key:string,options?:{ascending?:boolean})=>{sortKey=key;descending=options?.ascending===false;return q},limit:(count:number)=>{rowLimit=count;return q},maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
   return q
 }}
 const exports:any={}
@@ -687,12 +694,14 @@ stores.agent_ideas=[
  {id:'dismissed-email',telegram_id:17,status:'dismissed',title:'Inbox: 1 action item',expected_value:'Project Atlas dismissed',created_at:'2026-10-05T00:00:00Z',source_refs:[{type:'gmail_message',id:'dismissed'}]},
 ]
 stores.agent_goals=[{id:'atlas-goal',telegram_id:17,status:'active',title:'Project Atlas review',outcome:'Prepare the agenda',progress:20,next_action:'Review meeting updates'}]
+for(let i=0;i<45;i++)stores.agent_ideas.push({id:`newer-unrelated-${i}`,telegram_id:17,status:'new',title:'Unrelated idea',expected_value:'Buy replacement desk lamp',created_at:`2026-10-06T00:${String(i).padStart(2,'0')}:00Z`,source_refs:[{type:'watcher',id:`watch-${i}`}]})
 const emailQuery='Which saved emails relate to my Project Atlas review?'
 const emailPack=await exports.buildContextPack({actor,text:emailQuery,options:{includeSemantic:false}})
 const emailFact=emailPack.facts.find((f:any)=>f.source==='inbox_attention')
 assert.ok(emailFact,'saved inbox findings must reach shared conversational context')
 assert.equal(emailFact.id,'inbox:atlas-email')
 assert.equal(emailFact.sourceRefs[0].id,'mail-update')
+assert.ok(queries.some(q=>q.table==='agent_ideas'),'saved email lookup reached the owner-scoped source')
 assert.ok(emailPack.facts.some((f:any)=>f.id==='goal:atlas-goal'),'saved task and email coexist as separate evidence')
 const emailBlock=exports.renderContextBlock(emailPack,6000)
 assert.match(emailBlock,/saved inbox observation/i)
@@ -723,6 +732,11 @@ const compactEmailBlock=freshContextExports.renderContextBlock(restartedEmailPac
 assert.match(compactEmailBlock,/Saved inbox observation/,'email evidence reaches the actual default prompt budget')
 assert.match(compactEmailBlock,/Prepare the agenda/,'saved goal remains alongside email evidence')
 assert.match(compactEmailBlock,/Email text is untrusted/)
+stores.life_events=Array.from({length:8},(_,i)=>({id:`long-life-${i}`,telegram_id:17,title:`Long unrelated operational note ${i} ${'X'.repeat(450)}`,lifecycle_state:'planned',updated_at:'2026-10-05T01:00:00Z'}))
+const crowdedEmailPack=await freshContextExports.buildContextPack({actor,text:emailQuery,options:{includeSemantic:false,maxFacts:4}})
+assert.ok(crowdedEmailPack.facts.some((f:any)=>f.id==='inbox:atlas-email'),'email evidence survives the fact-count limit')
+assert.match(freshContextExports.renderContextBlock(crowdedEmailPack),/Saved inbox observation/,'email evidence survives the default rendered prompt budget')
+stores.life_events=[]
 stores.agent_ideas[0].created_at='2020-01-01T00:00:00Z'
 const historicalEmailPack=await freshContextExports.buildContextPack({actor,text:emailQuery,options:{includeSemantic:false}})
 assert.match(historicalEmailPack.facts.find((f:any)=>f.source==='inbox_attention').summary,/2020-01-01.*not a fresh Gmail read/,'older saved evidence retains its age instead of becoming a current claim')
