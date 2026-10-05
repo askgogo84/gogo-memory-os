@@ -477,18 +477,27 @@ export async function takeControlOfCommerceRead(params:{actor:AgentActor;runId:s
   const owner=String(params.actor.legacyTelegramId)
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('id,status,metadata_json').eq('id',params.runId).eq('telegram_id',owner).eq('type','secure_browser').maybeSingle()
   const meta=run?.metadata_json
-  if(error||!run||!['paused','completed','failed'].includes(run.status)||meta?.mode!=='read'||!meta.commerce_parent_id)throw new Error('browser_control_unavailable')
-  const {readCommerceTask}=await import('@/lib/commerce/task')
-  const parent=await readCommerceTask(owner,meta.commerce_parent_id)
-  if(!parent||parent.metadata_json.state!=='browser_research'||!Object.values(parent.metadata_json.browser_runs||{}).includes(run.id))throw new Error('commerce_parent_unavailable')
+  if(error||!run||!['paused','completed','failed'].includes(run.status)||meta?.mode!=='read'||!(meta.commerce_parent_id||meta.comparison_parent_id)||meta.browser_safe_to_retry===false)throw new Error('browser_control_unavailable')
+  if(meta.comparison_parent_id){
+    const {assertComparisonChild}=await import('@/lib/commerce/price-comparison')
+    await assertComparisonChild(owner,String(meta.comparison_parent_id),run.id)
+  }else{
+    const {readCommerceTask}=await import('@/lib/commerce/task')
+    const parent=await readCommerceTask(owner,meta.commerce_parent_id)
+    if(!parent||parent.metadata_json.state!=='browser_research'||!Object.values(parent.metadata_json.browser_runs||{}).includes(run.id))throw new Error('commerce_parent_unavailable')
+  }
   const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:await permission(params.actor.legacyTelegramId),mode:'read',risk:'low',irreversible:false,approvalStatus:null})
   if(!policy.allowed)throw new Error('browser_control_permission_blocked')
-  if(meta.handoff?.takeoverUrl&&run.status==='paused')return
+  const {browserHandoffIsLive}=await import('./browser-handoff-health')
+  if(run.status==='paused'&&await browserHandoffIsLive(meta.handoff?.takeoverUrl))return
   const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
   const browserOwner=params.actor.userId+':commerce'
   const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:meta.url,keepAlive:true,sessionTaskId:run.id})
-  const {data:saved,error:saveError}=await supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{...meta,handoff},summary:'Choose your account or delivery location in the provider browser, then resume this same task. Do not send login codes in chat.',completed_at:null,updated_at:new Date().toISOString()})
-    .eq('id',run.id).eq('telegram_id',owner).eq('status',run.status).select('id').maybeSingle()
+  let update=supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{...meta,handoff},summary:'Choose your account or delivery location in the provider browser, then resume this same task. Do not send login codes in chat.',completed_at:null,updated_at:new Date().toISOString()})
+    .eq('id',run.id).eq('telegram_id',owner).eq('status',run.status)
+  // A second restore must not overwrite a newer handoff on the same run.
+  update=meta.handoff?.token?update.contains('metadata_json',{handoff:{token:meta.handoff.token}}):update.is('metadata_json->handoff',null)
+  const {data:saved,error:saveError}=await update.select('id').maybeSingle()
   if(saveError||!saved){await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{});throw new Error('browser_control_save_failed')}
 }
 

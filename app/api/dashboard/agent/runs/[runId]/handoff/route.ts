@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import {browserHandoffIsLive} from '@/lib/agent/browser-handoff-health'
 
 export const dynamic='force-dynamic'
 
@@ -9,12 +10,13 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
   if(!session)return NextResponse.json({error:'unauthorized'},{status:401})
   const {runId}=await params
   const {data,error}=await supabaseAdmin.from('agent_runs')
-    .select('metadata_json')
+    .select('metadata_json,status')
     .eq('id',runId)
     .eq('telegram_id',String(session.telegramId))
     .maybeSingle()
   if(error)return NextResponse.json({error:'read_failed'},{status:500})
   if(!data)return NextResponse.json({error:'not_found'},{status:404})
+  if(!['paused','waiting_approval'].includes(String(data.status)))return NextResponse.json({error:'handoff_unavailable'},{status:409})
 
   const handoff:any=(data.metadata_json as any)?.handoff||{}
   const target=handoff?.mode==='device'?handoff?.providerUrl:handoff?.takeoverUrl
@@ -22,6 +24,9 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
   let url:URL
   try{url=new URL(String(target))}catch{return NextResponse.json({error:'handoff_invalid'},{status:400})}
   if(!['https:','http:'].includes(url.protocol))return NextResponse.json({error:'handoff_invalid'},{status:400})
+  if(handoff?.mode!=='device'&&!await browserHandoffIsLive(target)){
+    return NextResponse.redirect(new URL('/dashboard/activity/'+encodeURIComponent(runId)+'/browser',_request.url))
+  }
 
   return NextResponse.redirect(url)
 }
