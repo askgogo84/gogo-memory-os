@@ -439,7 +439,8 @@ async function loadInboxFacts(actor:AgentActor,query:string){
   if(consent?.gmail_enabled!==true||consent?.memory_enabled===false)return empty
   const {data,error}=await supabaseAdmin.from('agent_ideas')
     .select('id,title,expected_value,source_refs,created_at,status').eq('telegram_id',String(actor.legacyTelegramId))
-    .eq('status','new').order('created_at',{ascending:false}).limit(40)
+    .eq('status','new').contains('source_refs',[{type:'gmail_message'}])
+    .order('created_at',{ascending:false}).limit(40)
   if(error)return {...empty,retrievalIncomplete:true}
   const topic=query.toLowerCase().replace(/\b(?:what|which|when|show|list|give|find|recall|please|the|that|this|are|was|were|have|has|had|with|from|does|about|saved|recent|latest|important|emails?|mails?|inbox|messages?|relate|related|connect|connected|connection|connections|tasks?|goals?|my|our|your|their|for|and|to|of|in|is|me)\b/g,' ')
   const hasTopic=tokens(topic).size>0
@@ -581,6 +582,10 @@ function dedupeFacts(facts:ContextFact[],preserveOrder=false){
 // before summaries or inferred presence windows. Apply this at BOTH truncation
 // boundaries: selecting maxFacts and rendering maxChars. No fields are invented.
 export function prioritizeRecallEvidence(query:string,facts:ContextFact[]):ContextFact[]{
+  if(/\b(?:emails?|mails?|inbox)\b/i.test(query)){
+    const matchingInbox=(f:ContextFact)=>f.source==='inbox_attention'&&lexicalScore(query,f.summary)>=0.25
+    return [...facts.filter(matchingInbox),...facts.filter(f=>!matchingInbox(f))]
+  }
   if(!isRetrospectiveTravelQuery(query))return [...facts]
   const recorded=(f:ContextFact)=>f.source==='travel_ticket'&&!f.inferred&&lexicalScore(query,f.summary)>=0.25
   return [...facts.filter(recorded),...facts.filter(f=>!recorded(f))]
