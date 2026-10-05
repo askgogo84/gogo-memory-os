@@ -98,9 +98,11 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
   // genuinely unstarted providers pending until the shared browser is free.
   if (reason === 'browser_handoff_in_use') return {...base, status: 'blocked', needsInput: false,
     reason: 'Another task was using the shared secure browser, so this store was not checked. Ask again once it is free.'}
-  const needsInput = ['human_auth_required', 'delivery_location_required'].includes(reason)
+  const needsInput = ['human_auth_required', 'delivery_location_required', 'page_interaction_required'].includes(reason)
   if (child.status === 'paused') return {...base, status: 'blocked', needsInput,
-    reason: needsInput ? 'Choose your account or delivery location in this same browser task.' : 'The provider limited access; prices remain unverified.'}
+    reason: reason === 'page_interaction_required'
+      ? 'A page overlay blocked this read-only check. Clear it in the same browser task, then resume.'
+      : needsInput ? 'Choose your account or delivery location in this same browser task.' : 'The provider limited access; prices remain unverified.'}
   if (child.status === 'running') return {...base, status: 'checking'}
   return {...base, status: 'failed', reason: comparisonFailureReason(reason)}
 }

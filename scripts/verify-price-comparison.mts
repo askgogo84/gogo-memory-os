@@ -70,6 +70,10 @@ assert.equal(model.providerObservation('amazon', {id: 'c3', status: 'failed', er
 // A paused provider awaiting account/location stays a blocked needs-input card.
 const blocked = model.providerObservation('zepto', {id: 'c4', status: 'paused', error: 'delivery_location_required', updated_at: 'x'}, null)
 assert.equal(blocked.status, 'blocked'); assert.equal(blocked.needsInput, true)
+const overlay = model.providerObservation('zepto', {id: 'c5', status: 'paused', error: 'page_interaction_required', updated_at: 'x'}, null)
+assert.equal(overlay.status, 'blocked'); assert.equal(overlay.needsInput, true)
+assert.match(overlay.reason!, /overlay.*same browser task/i)
+assert.equal(overlay.evidence, undefined, 'an obscured read must not publish a price')
 
 const tables: Record<string, any[]> = {agent_runs: [], agent_steps: [], conversations: []}
 let seq = 0, locked = false, calls = 0, failStart = false, auth = true, owner = '42'
