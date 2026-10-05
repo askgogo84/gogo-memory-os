@@ -138,7 +138,10 @@ async function sharedBrowserHandoffPending(owner: string) {
     .eq('telegram_id', owner).eq('type', 'secure_browser').eq('status', 'paused')
     .order('updated_at', {ascending: false}).limit(25)
   if (error) throw new Error('comparison_lease_probe_failed')
-  return (data || []).some((row: any) => Boolean(row.metadata_json?.handoff?.releaseUrl))
+  const {browserHandoffIsLive} = await import('@/lib/agent/browser-handoff-health')
+  const probes = (data || []).filter((row: any) => Boolean(row.metadata_json?.handoff?.takeoverUrl))
+  const live = await Promise.all(probes.map((row: any) => browserHandoffIsLive(row.metadata_json.handoff.takeoverUrl)))
+  return live.some(Boolean)
 }
 
 // One provider per invocation fits the browser's bounded deadline. Durable child

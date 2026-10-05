@@ -101,6 +101,7 @@ const db = {from(table: string) {
 }}
 const lease = {acquireBrainUserLease: async () => locked ? null : {ownerToken: 'fixture'}, releaseBrainUserLease: async () => true}
 const actor = {userId: 'fixture-owner', legacyTelegramId: 42, whatsappId: 'fixture', name: 'Fixture'}
+let liveHandoff = false
 const browser = {
   async prepareLinkedBrowserRead(p: any) {
     if (failStart) throw new Error('fixture_start_failed')
@@ -127,6 +128,7 @@ function load(file: string, deps: Record<string, any>) {
 }
 const service = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
   './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
+  '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async () => liveHandoff},
   '@/lib/web-search': {searchWebResults: async () => [{url: 'https://evil.test/p/fake', snippet: '₹1 free delivery'}]}})
 const start = await service.tryPriceComparison({telegramId: 42, text: request, surface: 'web'})
 assert.equal(start.status, 'queued'); assert.match(start.text, /Saved comparison:/)
@@ -139,6 +141,8 @@ assert.equal(statusReply.runId, start.runId)
 assert.equal(tables.agent_runs.length, savedCount, 'status questions must not create another search')
 assert.equal(await service.readPriceComparison('43', start.runId), null, 'another owner cannot read this report')
 await assert.rejects(() => service.assertComparisonChild('43', start.runId, 'unknown'), /comparison_parent_unavailable/)
+tables.agent_runs.push({id: id(), telegram_id: '42', type: 'secure_browser', status: 'paused', updated_at: new Date().toISOString(),
+  metadata_json: {handoff: {takeoverUrl: 'https://sb-stopped.vercel.run/?token=fixture', releaseUrl: 'https://sb-stopped.vercel.run/release?token=fixture'}}})
 locked = true
 await service.advancePriceComparison(actor, start.runId)
 assert.equal(calls, 0); locked = false
@@ -149,6 +153,7 @@ assert.equal(calls, 1)
 // New module instance simulates loss of all worker-local state between providers.
 const restarted = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
   './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
+  '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async () => liveHandoff},
   '@/lib/web-search': {searchWebResults: async () => [{url: 'https://www.flipkart.com/fixture-m185/p/fixture', snippet: '₹1 free delivery'}]}})
 partial = await restarted.advancePriceComparison(actor, start.runId)
 assert.equal(partial.metadata_json.providers[1].status, 'observed')
@@ -225,8 +230,9 @@ assert.equal(tables.agent_runs.length,beforeFourStatus,'multi-subject status rea
 // browser, queued providers must stay queued — not spin into browser_handoff_in_use
 // and get recorded as failed retailers. They resume once the handoff is released.
 const gated = await service.tryPriceComparison({telegramId: 42, text: 'Compare Sony WH-1000XM5 on Amazon India and Croma. Do not create a watch.'})
+liveHandoff = true
 tables.agent_runs.push({id: id(), telegram_id: '42', type: 'secure_browser', status: 'paused',
-  metadata_json: {comparison_parent_id: 'another-parent', mode: 'read', url: 'https://www.zepto.com/', handoff: {releaseUrl: 'https://sandbox.example/release?token=x'}}})
+  metadata_json: {comparison_parent_id: 'another-parent', mode: 'read', url: 'https://www.zepto.com/', handoff: {takeoverUrl: 'https://sb-active.vercel.run/?token=x', releaseUrl: 'https://sb-active.vercel.run/release?token=x'}}})
 const callsBeforeGate = calls
 const beforeGateRuns = tables.agent_runs.length
 const gatedTask = await service.advancePriceComparison(actor, gated.runId)
@@ -238,6 +244,7 @@ assert.equal(model.comparisonState(gatedTask.metadata_json.providers), 'queued')
 // Once the handoff is released, the same queued providers advance normally.
 failStart = false
 tables.agent_runs = tables.agent_runs.filter(r => !r.metadata_json?.handoff)
+liveHandoff = false
 const released = await service.advancePriceComparison(actor, gated.runId)
 assert.equal(calls, callsBeforeGate + 1, 'released handoff lets the queued provider check run')
 assert.ok(released.metadata_json.providers.some((p: any) => p.status !== 'pending'), 'a provider advanced after release')
@@ -269,6 +276,7 @@ assert.ok(!(dormantQueue || []).some((r: any) => r.id === dormantParent), 'the c
 const flipkartLead = 'https://www.flipkart.com/sony-wh-1000xm5/p/itm5f3b?pid=ACCGFKZH&lid=LSTACC9&marketplace=FLIPKART&otracker=search&fm=organic'
 const discover = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
   './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
+  '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async () => liveHandoff},
   '@/lib/web-search': {searchWebResults: async () => [{url: flipkartLead, snippet: '₹1 free delivery'}]}})
 const flipTask = await discover.tryPriceComparison({telegramId: 42, text: 'Compare Sony WH-1000XM5 black on Amazon India and Flipkart. Do not create a watch.', surface: 'web'})
 await discover.advancePriceComparison(actor, flipTask.runId) // amazon: no amazon.in lead -> homepage -> blocked

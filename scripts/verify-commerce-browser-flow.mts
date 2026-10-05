@@ -19,7 +19,7 @@ const db={from(table:string){
     if(row&&patch)Object.assign(row,patch)
     return {data:row?structuredClone(row):null,error:null}
   }
-  const q:any={select(){return q},eq(k:string,v:any){filters.push(r=>r[k]===v);return q},order(){return q},limit(){return q},insert(p:any){insert=p;return q},update(p:any){patch=p;return q},async maybeSingle(){return execute()},async single(){return execute()},then(resolve:any,reject:any){return Promise.resolve(execute()).then(resolve,reject)}}
+  const q:any={select(){return q},eq(k:string,v:any){filters.push(r=>r[k]===v);return q},is(k:string,v:any){filters.push(r=>k==='metadata_json->handoff'?r.metadata_json?.handoff==null:r[k]===v);return q},contains(k:string,v:any){filters.push(r=>k==='metadata_json'?r.metadata_json?.handoff?.token===v.handoff?.token:false);return q},order(){return q},limit(){return q},insert(p:any){insert=p;return q},update(p:any){patch=p;return q},async maybeSingle(){return execute()},async single(){return execute()},then(resolve:any,reject:any){return Promise.resolve(execute()).then(resolve,reject)}}
   return q
 }}
 function load(file:string,deps:Record<string,any>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,process,Date,URL,console,require(name:string){if(name==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics};if(name in deps)return deps[name];throw Error(name)}});return exports}
@@ -35,6 +35,7 @@ const command=load('lib/agent/browser-command.ts',{
   '@/lib/vault/connect-link':{},'@/lib/vault/providers':{},'./approval-binding':{},'@/lib/services/reporting-directive':{},'@/lib/commerce/task':tasks,
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>({takeoverUrl:'https://private.example/?token=secret',releaseUrl:'https://private.example/release?token=secret'}),cancelBrowserHandoffReservation:async()=>{}},
   './browser-handoff':{releaseBrowserHandoff:async()=>{releaseCalls++}},
+  './browser-handoff-health':{browserHandoffIsLive:async()=>false},
 })
 const browser=load('lib/commerce/browser.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/agent/browser-command':command,'./task':tasks})
 const grocery=load('lib/agent/grocery-comparison.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/commerce/task':tasks})

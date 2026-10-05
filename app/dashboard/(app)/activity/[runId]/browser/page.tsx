@@ -6,6 +6,8 @@ import { BrowserLiveShot } from '@/components/dashboard/browser-live-shot'
 import { listVaultCredentialsForDomain } from '@/lib/vault/credential-store'
 import { findVaultProviderForDomain } from '@/lib/vault/providers'
 import { VaultResumeTaskButton } from '@/components/dashboard/vault-resume-task-button'
+import {RestoreBrowserHandoffButton} from '@/components/dashboard/restore-browser-handoff-button'
+import {browserHandoffIsLive} from '@/lib/agent/browser-handoff-health'
 
 export const dynamic='force-dynamic'
 
@@ -20,7 +22,11 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
 
   const handoff:any=run.metadata?.handoff||{}
   const handoffActive=['paused','waiting_approval'].includes(run.status)
-  const cloudTakeover=handoffActive&&Boolean(handoff?.takeoverUrl)
+  const cloudHandoff=handoffActive&&Boolean(handoff?.takeoverUrl)
+  const cloudTakeover=cloudHandoff&&await browserHandoffIsLive(handoff.takeoverUrl)
+  const expiredHandoff=cloudHandoff&&!cloudTakeover
+  const canRestore=expiredHandoff&&run.metadata?.mode==='read'&&run.metadata?.browser_safe_to_retry!==false
+    &&Boolean(run.metadata?.commerce_parent_id||run.metadata?.comparison_parent_id)
   const deviceHandoff=handoffActive&&handoff?.mode==='device'&&Boolean(handoff?.providerUrl)
   const latest=[...run.steps].reverse().find(s=>s.toolName==='secure_browser'||/browser/i.test(s.toolName)||s.output?.browser)
   const raw:any=latest?.output?.browser||latest?.output?.browserState||latest?.output||{}
@@ -43,7 +49,7 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   const vaultCredential=vaultAccounts.length===1?vaultAccounts[0]:null
   const vaultNeedsSelection=vaultAccounts.length>1
 
-  const headline=browser.providerBlocked?'Blocked by the provider':cloudTakeover?'Gogo is standing by':run.status==='running'?'Gogo is working in the browser':'Browser task'
+  const headline=expiredHandoff?'Secure browser expired':browser.providerBlocked?'Blocked by the provider':cloudTakeover?'Gogo is standing by':run.status==='running'?'Gogo is working in the browser':'Browser task'
 
   return <div className="mx-auto w-full max-w-[1180px] pb-10">
     <header className="border-b border-[#2A2A2A] pb-4">
@@ -69,7 +75,13 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
           <span className="truncate text-[10px] text-[#6A6A6A]">{displayUrl}</span>
         </div>
 
-        {browser.providerBlocked?
+        {expiredHandoff?
+          <div className="grid min-h-[430px] place-items-center px-7 py-10 text-center">
+            <div className="max-w-xl"><h2 className="font-serif text-[26px] font-semibold text-[#F2EFEA]">This temporary browser has stopped.</h2>
+              <p className="mt-3 text-[14px] leading-6 text-[#9A9A9A]">Your saved task and comparison are still here. The old Take control link cannot open this session. Restore a fresh secure browser for the same read-only task, then select your delivery location there.</p>
+            </div>
+          </div>
+        :browser.providerBlocked?
           <div className="grid min-h-[430px] place-items-center px-7 py-10">
             <div className="max-w-xl">
               <div className="grid h-11 w-11 place-items-center rounded-full bg-[#161616] text-[#2FB8A6]">▣</div>
@@ -124,6 +136,12 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
         {run.metadata?.auth_reconciliation_required&&<section className="rounded-[16px] bg-[#1A1710] p-5">
           <h2 className="font-serif text-[22px] text-[#F2EFEA]">Verify the outcome with the provider</h2>
           <p className="mt-2 text-[12.5px] leading-5 text-[#D9A441]">The retained browser is unavailable after a possible submission. Check your booking, check-in, or payment status directly with the provider before taking any further action. Gogo will not repeat the action.</p>
+        </section>}
+        {expiredHandoff&&<section className="rounded-[16px] bg-[#1A1710] p-5">
+          <p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#D9A441]">Browser session expired</p>
+          <h2 className="mt-2 font-serif text-[22px] font-semibold text-[#F2EFEA]">Continue this saved task</h2>
+          <p className="mt-2 text-[12.5px] leading-5 text-[#9A9A9A]">Restoring opens a fresh browser on the same provider. It does not create a new comparison or submit an order. Any location selected only in the stopped browser needs to be selected again.</p>
+          {canRestore?<RestoreBrowserHandoffButton runId={run.id}/>:<p className="mt-3 text-[12px] text-[#D9A441]">This task cannot be safely restored automatically. Check the provider directly before retrying.</p>}
         </section>}
         {(cloudTakeover||deviceHandoff)&&<section className="rounded-[16px] bg-[#1A1710] p-5">
           <p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#D9A441]">{deviceHandoff?'Your device':'Human handoff'}</p>
