@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 const LEVELS = ['off','read','draft','ask','auto'] as const
 
 type Snapshot = {
-  runs:any[]; watchers:any[]; goals:any[]; ideas:any[]; approvals:any[]; permissions:any[]; artifacts:any[]; runtime?:any
+  runs:any[]; watchers:any[]; goals:any[]; ideas:any[]; approvals:any[]; handoffs?:Array<{id:string;title:string;summary:string}>; permissions:any[]; artifacts:any[]; runtime?:any
 }
 
 async function api(path:string, init:RequestInit={}){
@@ -45,7 +46,7 @@ export default function AgentDashboardPage(){
 
   const counts=useMemo(()=>({
     active:(snapshot?.runs||[]).filter(r=>['queued','running','waiting_approval'].includes(r.status)).length,
-    approvals:snapshot?.approvals?.length||0,
+    needsYou:(snapshot?.approvals?.length||0)+(snapshot?.handoffs?.length||0),
     watchers:snapshot?.watchers?.length||0,
     goals:snapshot?.goals?.length||0,
   }),[snapshot])
@@ -136,8 +137,8 @@ export default function AgentDashboardPage(){
 
   const runtime=snapshot?.runtime||{}
   const sectionTitle=section==='approvals'?'Needs you':section==='background'?'Background':section==='goals'?'Goals':'Gogo Agent'
-  const sectionCopy=section==='approvals'?'Gogo asks before anything that sends, spends, books or submits.':section==='background'?'What Gogo is watching for you, and what it has actually seen.':section==='goals'?'Longer outcomes Gogo can keep moving in the background.':'Plan, act and keep working. Consequential actions stop for your approval.'
-  const agentState = busy ? 'acting' : counts.approvals ? 'approval' : counts.watchers ? 'watching' : 'acting'
+  const sectionCopy=section==='approvals'?'Review approvals and browser tasks waiting for your account or delivery location.':section==='background'?'What Gogo is watching for you, and what it has actually seen.':section==='goals'?'Longer outcomes Gogo can keep moving in the background.':'Plan, act and keep working. Consequential actions stop for your approval.'
+  const agentState = busy ? 'acting' : counts.needsYou ? 'approval' : counts.watchers ? 'watching' : 'acting'
 
   return <div className="mx-auto w-full max-w-[1440px] space-y-5 pb-10">
     <header className="border-b border-[#1f1f1f] pb-5 pt-1">
@@ -172,7 +173,11 @@ export default function AgentDashboardPage(){
     </section>}
 
     <div className="grid gap-5 xl:grid-cols-2">
-      {(!section||section==='approvals')&&<Panel title="Approvals" eyebrow="You stay in control" badge={String(snapshot?.approvals?.length||0)}>{!snapshot?.approvals?.length?<Empty text="Nothing is waiting for your approval."/>:snapshot.approvals.map((a:any)=><Card key={a.id}><div className="flex items-start justify-between gap-3"><div><b>{a.title}</b><p>{a.description}</p><span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-1 text-[8px] font-bold uppercase text-amber-700">{a.risk} risk</span></div></div><div className="mt-3 flex gap-2"><button onClick={()=>resolveApproval(a,'reject')} className="btn-secondary">Reject</button><button onClick={()=>resolveApproval(a,'approve')} className="btn-primary">Approve & run</button></div></Card>)}</Panel>}
+      {(!section||section==='approvals')&&<Panel title="Needs you" eyebrow="You stay in control" badge={String(counts.needsYou)}>
+        {!counts.needsYou&&<Empty text="Nothing needs your input right now."/>}
+        {snapshot?.approvals?.map((a:any)=><Card key={a.id}><div className="flex items-start justify-between gap-3"><div><b>{a.title}</b><p>{a.description}</p><span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-1 text-[8px] font-bold uppercase text-amber-700">{a.risk} risk</span></div></div><div className="mt-3 flex gap-2"><button onClick={()=>resolveApproval(a,'reject')} className="btn-secondary">Reject</button><button onClick={()=>resolveApproval(a,'approve')} className="btn-primary">Approve & run</button></div></Card>)}
+        {snapshot?.handoffs?.map(handoff=><Card key={handoff.id}><b>{handoff.title}</b><p>{handoff.summary}</p><Link href={`/dashboard/activity/${handoff.id}/browser`} className="btn-primary mt-3 inline-flex">Take control</Link></Card>)}
+      </Panel>}
       {(!section||section==='background')&&<Panel title="Background Gogo" eyebrow="Keeps watching" badge={String(snapshot?.watchers?.length||0)}>{!snapshot?.watchers?.length?<Empty text="No active watches. Ask Gogo to watch a price, deadline or change."/>:snapshot.watchers.map((w:any)=><Card key={w.id}><b>{w.title}</b><p>{w.type.replaceAll('_',' ')} · every {w.cadenceMinutes} min</p><p>Next: {w.nextCheckAt?new Date(w.nextCheckAt).toLocaleString():'—'}</p><button onClick={()=>stopWatcher(w.id)} className="mt-3 btn-secondary">Stop</button></Card>)}</Panel>}
       {(!section||section==='goals')&&<Panel title="Goals" eyebrow="Longer outcomes" badge={String(snapshot?.goals?.length||0)}>
         <p className="mb-3 text-[11px] leading-5 text-gogo-ink-3">A Goal is an outcome Gogo should keep moving over time — for example, “Prepare my New York trip and keep checking anything that needs my attention.” Gogo can research and monitor automatically, but it still stops for approval before consequential actions.</p>

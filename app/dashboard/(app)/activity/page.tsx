@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { browserContextForRun, getDashboardActivityRuns, type DashboardActivityRun } from '@/lib/dashboard/agent-activity'
+import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
 
 export const dynamic='force-dynamic'
 
@@ -67,8 +68,9 @@ function iconFor(run:DashboardActivityRun){
 
 export default async function ActivityPage({searchParams}:{searchParams:Promise<{filter?:string}>}){
   const session=await getSession()
-  const runs=session?await getDashboardActivityRuns(session.telegramId):[]
-  const [watchersResult,approvalsResult]=session?await Promise.all([
+  const [runs,handoffs,watchersResult,approvalsResult]=session?await Promise.all([
+    getDashboardActivityRuns(session.telegramId),
+    getPendingBrowserHandoffs(session.telegramId),
     supabaseAdmin.from('agent_watchers')
       .select('id,type,condition_json,cadence_minutes,last_checked_at,next_check_at')
       .eq('telegram_id',String(session.telegramId))
@@ -81,9 +83,10 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
       .eq('status','pending')
       .order('requested_at',{ascending:false})
       .limit(5),
-  ]):[{data:[]},{data:[]}]
+  ]):[[],[],{data:[]},{data:[]}]
   const watchers=(watchersResult as any).data||[]
   const approvals=(approvalsResult as any).data||[]
+  const handoffRows=handoffs.filter(handoff=>!approvals.some((approval:any)=>String(approval.run_id)===handoff.id))
   const activeRun=runs.find(r=>['running','queued','paused','waiting_approval'].includes(r.status))||null
   const params=await searchParams
   const requested=String(params?.filter||'All')
@@ -181,15 +184,20 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#6A6A6A]">Needs you</p>
-                <h2 className="mt-1 font-serif text-[21px] font-semibold text-[#F2EFEA]">Approvals</h2>
+                <h2 className="mt-1 font-serif text-[21px] font-semibold text-[#F2EFEA]">Approvals and handoffs</h2>
               </div>
-              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#161616] px-2 text-[11px] font-bold text-[#2FB8A6]">{approvals.length}</span>
+              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#161616] px-2 text-[11px] font-bold text-[#2FB8A6]">{approvals.length+handoffRows.length}</span>
             </div>
-            {approvals.length===0?<p className="mt-3 text-[12.5px] leading-5 text-[#9A9A9A]">Nothing is waiting for your approval.</p>:
+            {!approvals.length&&!handoffRows.length?<p className="mt-3 text-[12.5px] leading-5 text-[#9A9A9A]">Nothing needs your input right now.</p>:
               <div className="mt-3 space-y-2">
                 {approvals.slice(0,3).map((a:any)=><Link key={a.id} href="/dashboard/agent" className="block rounded-[14px] bg-[#1A1710] px-3.5 py-3 transition hover:bg-[#221D13]">
                   <div className="text-[12.5px] font-semibold text-[#F2EFEA]">{a.title}</div>
                   <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-[#9A9A9A]">{a.description||'Gogo is waiting for your decision.'}</div>
+                </Link>)}
+                {handoffRows.slice(0,3).map(handoff=><Link key={handoff.id} href={`/dashboard/activity/${handoff.id}/browser`} className="block rounded-[14px] bg-[#1A1710] px-3.5 py-3 transition hover:bg-[#221D13]">
+                  <div className="text-[12.5px] font-semibold text-[#F2EFEA]">{handoff.title}</div>
+                  <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-[#9A9A9A]">{handoff.summary}</div>
+                  <div className="mt-2 text-[11px] font-bold text-[#D9A441]">Take control →</div>
                 </Link>)}
               </div>}
           </section>

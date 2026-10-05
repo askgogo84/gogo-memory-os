@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentSession } from '@/lib/agent/session'
 import { retiredRunReason } from '@/lib/agent/task-lifecycle'
+import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,7 +43,7 @@ export async function GET(request: Request) {
   if (!isAgentSession(session)) return session
   const tg = session.telegramId
 
-  const [runs, steps, watchers, goals, ideas, approvals, permissions, artifacts] = await Promise.all([
+  const [runs, steps, watchers, goals, ideas, approvals, permissions, artifacts, handoffs] = await Promise.all([
     supabaseAdmin.from('agent_runs').select('id, goal_id, title, summary, status, capability, progress, started_at, updated_at, next_check_at, why, error, metadata_json').eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_steps').select('id, run_id, ordinal, tool_name, title, status, output_json, error, started_at, completed_at').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(120),
     supabaseAdmin.from('agent_watchers').select('id, goal_id, type, condition_json, cadence_minutes, active, last_checked_at, next_check_at, created_at, updated_at').eq('telegram_id', tg).eq('active', true).order('created_at', { ascending: false }).limit(30),
@@ -51,6 +52,7 @@ export async function GET(request: Request) {
     supabaseAdmin.from('agent_approvals').select('id, run_id, action_type, title, description, payload_preview, risk_level, status, requested_at, resolved_at').eq('telegram_id', tg).eq('status', 'pending').order('requested_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_permissions').select('capability, level, irreversible_always_ask, updated_at').eq('telegram_id', tg),
     supabaseAdmin.from('agent_artifacts').select('id, type, title, subtitle, updated_at').eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(20),
+    getPendingBrowserHandoffs(tg),
   ])
 
   const queryError = runs.error || steps.error || watchers.error || goals.error || ideas.error || approvals.error || permissions.error || artifacts.error
@@ -124,6 +126,7 @@ export async function GET(request: Request) {
       status: a.status, requestedAt: a.requested_at, resolvedAt: a.resolved_at,
       primaryLabel: 'Approve & run', secondaryLabel: 'Not now',
     })),
+    handoffs: handoffs.filter(handoff=>!(approvals.data||[]).some((approval:any)=>String(approval.run_id)===handoff.id)),
     permissions: mergedPermissions,
     artifacts: (artifacts.data || []).map((a: any) => ({
       id: a.id, type: a.type, title: a.title, subtitle: a.subtitle, updatedAt: a.updated_at,
