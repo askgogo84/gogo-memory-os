@@ -51,10 +51,26 @@ export function comparisonSource(provider: ComparisonProvider, value: unknown) {
     // substantiate an exact-item quote even if they display a promotional price.
     const productPath = provider === 'amazon' ? /\/(?:dp|gp\/product)\/[A-Z0-9]{10}(?:\/|$)/i
       : provider === 'flipkart' || provider === 'croma' ? /\/p\/[^/]+(?:\/|$)/i : null
-    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash ||
+    if (url.protocol !== 'https:' || url.username || url.password || url.hash ||
       !(url.hostname === domain || url.hostname.endsWith('.' + domain)) || url.pathname === '/' ||
       /redacted|withheld|login|signin/i.test(url.pathname) ||
       (productPath && !productPath.test(url.pathname))) return null
+    // Flipkart's exact listing identity is the `pid` query param (with optional
+    // `lid`/`marketplace`), not the path — Amazon puts the ASIN in the path, Croma the
+    // product code, but a Flipkart product page is ambiguous without `pid`. Keep ONLY
+    // those identity keys and drop every tracking/affiliate/token param, so discovery
+    // can reach the real product page while no secret or tracker is ever persisted or
+    // shown. Every other provider's identity is in the path, so any query there is
+    // unnecessary and rejected outright (a query could only smuggle a token).
+    if (url.search) {
+      if (provider !== 'flipkart') return null
+      const identity = new URLSearchParams()
+      for (const key of ['pid', 'lid', 'marketplace']) {
+        const next = url.searchParams.get(key)
+        if (next) identity.set(key, next)
+      }
+      url.search = identity.toString()
+    }
     return url.href
   } catch { return null }
 }
