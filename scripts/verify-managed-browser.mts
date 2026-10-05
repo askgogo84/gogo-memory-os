@@ -52,9 +52,10 @@ const liveFetcher:typeof fetch=async(url)=>{
   throw Error('unexpected live view request')
 }
 assert.match(await managedLiveViewUrl(sessionId,'owner-a',env,liveFetcher),/^https:\/\/debug\.browserbase\.com\//)
+assert.match(await managedLiveViewUrl(sessionId,'owner-a',env,async(url)=>String(url).endsWith('/debug?expiresIn=900')?new Response(JSON.stringify({debuggerFullscreenUrl:`https://www.browserbase.com/devtools-internal-compiled/index.html?token=fixture-only`})) : liveFetcher(url)),/^https:\/\/www\.browserbase\.com\//)
 await assert.rejects(()=>managedLiveViewUrl('not-a-session','owner-a',env,liveFetcher),/unavailable/)
-await assert.rejects(()=>managedLiveViewUrl(sessionId,'owner-b',env,liveFetcher),/unavailable/)
-await assert.rejects(()=>managedLiveViewUrl(sessionId,'owner-a',env,async()=>new Response(JSON.stringify({id:sessionId,projectId:'another-project',status:'RUNNING',expiresAt:new Date(Date.now()+600000).toISOString()}))),/unavailable/)
+await assert.rejects(()=>managedLiveViewUrl(sessionId,'owner-b',env,liveFetcher),/owner_mismatch/)
+await assert.rejects(()=>managedLiveViewUrl(sessionId,'owner-a',env,async()=>new Response(JSON.stringify({id:sessionId,projectId:'another-project',status:'RUNNING',expiresAt:new Date(Date.now()+600000).toISOString()}))),/project_mismatch/)
 await assert.rejects(()=>managedLiveViewUrl(sessionId,'owner-a',env,async(url)=>String(url).endsWith('/debug?expiresIn=900')?new Response(JSON.stringify({debuggerFullscreenUrl:'https://evil.example/steal'})):liveFetcher(url)),/invalid/)
 for(const value of ['http://127.0.0.1','http://localhost','http://169.254.169.254','http://[::1]','https://a:b@example.com','file:///tmp/foo'])assert.throws(()=>managedScope(value))
 

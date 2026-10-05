@@ -33,10 +33,6 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
   let url:URL
   try{url=new URL(String(target))}catch{return NextResponse.json({error:'handoff_invalid'},{status:400})}
   if(!['https:','http:'].includes(url.protocol))return NextResponse.json({error:'handoff_invalid'},{status:400})
-  if(handoff?.mode!=='device'&&!await browserHandoffIsLive(target)){
-    return privateRedirect(new URL('/dashboard/activity/'+encodeURIComponent(runId)+'/browser',_request.url))
-  }
-
   if(handoff?.mode!=='device'&&handoff?.managedSessionId){
     try{
       const {data:owner,error:ownerError}=await supabaseAdmin.from('users')
@@ -50,10 +46,11 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
           return privateRedirect(new URL(live))
         }
       }
-    }catch(error){
-      console.warn('managed_browser_live_view_fallback',error instanceof Error?error.message:'unknown')
-      return privateRedirect(url)
-    }
+    }catch(error){console.warn('managed_browser_live_view_fallback',error instanceof Error?error.message:'unknown')}
+  }
+
+  if(handoff?.mode!=='device'&&!await browserHandoffIsLive(target)){
+    return privateRedirect(new URL('/dashboard/activity/'+encodeURIComponent(runId)+'/browser',_request.url))
   }
 
   return privateRedirect(url)

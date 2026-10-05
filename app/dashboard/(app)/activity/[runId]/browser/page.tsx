@@ -23,7 +23,9 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   const handoff:any=run.metadata?.handoff||{}
   const handoffActive=['paused','waiting_approval'].includes(run.status)
   const cloudHandoff=handoffActive&&Boolean(handoff?.takeoverUrl)
-  const cloudTakeover=cloudHandoff&&await browserHandoffIsLive(handoff.takeoverUrl)
+  // Managed Browserbase sessions outlive the legacy sandbox controller. The
+  // authenticated handoff route validates the live session before redirecting.
+  const cloudTakeover=cloudHandoff&&(Boolean(handoff?.managedSessionId)||await browserHandoffIsLive(handoff.takeoverUrl))
   const expiredHandoff=cloudHandoff&&!cloudTakeover
   const failedRead=run.status==='failed'&&run.metadata?.mode==='read'
     &&Boolean(run.metadata?.commerce_parent_id||run.metadata?.comparison_parent_id)
