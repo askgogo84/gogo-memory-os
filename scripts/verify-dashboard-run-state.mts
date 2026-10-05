@@ -68,11 +68,18 @@ const selected:Array<[string,string,unknown]>=[]
 const db={from(table:string){
   assert.equal(table,'agent_runs')
   const filters:Array<(row:any)=>boolean>=[]
-  let range:[number,number]=[0,Infinity]
+  let limit=Infinity
   const q:any={select:()=>q,eq:(key:string,value:unknown)=>{selected.push(['eq',key,value]);filters.push(row=>row[key]===value);return q},
     contains:(key:string,value:any)=>{selected.push(['contains',key,value]);filters.push(row=>key==='metadata_json'&&typeof row.metadata_json?.handoff==='object'&&row.metadata_json.handoff!==null);return q},
-    order:()=>q,range:(from:number,to:number)=>{range=[from,to];return q},
-    then:(resolve:any)=>Promise.resolve({data:rows.filter(row=>filters.every(filter=>filter(row))).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)||b.id.localeCompare(a.id)).slice(range[0],range[1]+1),error:null}).then(resolve)}
+    or:(expression:string)=>{selected.push(['or',expression,null]);
+      if(expression.includes('takeoverUrl'))filters.push(row=>Boolean(row.metadata_json?.handoff?.takeoverUrl||row.metadata_json?.handoff?.providerUrl))
+      else if(expression.includes('closed_stale'))filters.push(row=>!['closed_stale','closed'].includes(row.metadata_json?.state))
+      else if(expression.includes('summary.neq'))filters.push(row=>row.summary!=='Superseded by duplicate mission submission')
+      else if(expression.includes('stale_provider_access_limited'))filters.push(row=>!['stale_provider_access_limited','background_browser_resume_expired','stale_run_recovered','background_browser_actor_missing'].includes(row.error))
+      else assert.fail(`Unexpected database filter: ${expression}`)
+      return q},
+    order:()=>q,limit:(count:number)=>{limit=count;return q},
+    then:(resolve:any)=>Promise.resolve({data:rows.filter(row=>filters.every(filter=>filter(row))).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)||b.id.localeCompare(a.id)).slice(0,limit),error:null}).then(resolve)}
   return q
 }}
 const handoffExports:any={}
@@ -86,6 +93,7 @@ assert.doesNotMatch(JSON.stringify(handoffs),/private-token|foreign|rail-token/,
 assert.ok(selected.some(([op,key,value])=>op==='eq'&&key==='telegram_id'&&value==='42'))
 assert.ok(selected.some(([op,key])=>op==='contains'&&key==='metadata_json'))
 assert.ok(!selected.some(([op,key])=>op==='eq'&&key==='type'),'Other run types can own browser handoffs')
+assert.ok(selected.some(([op,key])=>op==='or'&&String(key).includes('closed_stale')),'Retired states are filtered before the result limit')
 
 console.log('✅ dashboard run-state indicator: paused/blocked runs read as waiting, not working')
 
