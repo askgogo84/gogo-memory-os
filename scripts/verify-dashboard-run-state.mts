@@ -80,7 +80,7 @@ runInNewContext(ts.transpileModule(readFileSync('lib/dashboard/human-handoffs.ts
   exports:handoffExports,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./run-state'?{isActionablePause}:null,
 })
 const handoffs=await handoffExports.getPendingBrowserHandoffs('42')
-assert.deepEqual(handoffs.map((row:any)=>row.id),['device','rail','zepto'])
+assert.equal(handoffs.map((row:any)=>row.id).join(','),'device,rail,zepto')
 assert.equal(handoffs[2].summary,'Select your delivery location.')
 assert.doesNotMatch(JSON.stringify(handoffs),/private-token|foreign|rail-token/,'Needs you exposes task links, not takeover tokens')
 assert.ok(selected.some(([op,key,value])=>op==='eq'&&key==='telegram_id'&&value==='42'))
