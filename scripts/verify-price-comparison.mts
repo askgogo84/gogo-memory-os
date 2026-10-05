@@ -20,6 +20,21 @@ assert.equal(model.comparisonSource('amazon', 'https://user:secret@amazon.in/dp/
 assert.equal(model.comparisonSource('amazon', 'javascript:alert(1)'), null)
 assert.equal(model.comparisonSource('amazon', 'https://www.amazon.in/'), null)
 assert.equal(model.comparisonSource('amazon', 'https://www.amazon.in/dp/B123?token=secret'), null)
+// Flipkart's exact-listing identity is the required `pid` query param (with optional
+// `lid`/`marketplace`). Rejecting EVERY query — correct for Amazon's path-based ASIN —
+// meant a real Flipkart product page was never discovered, re-validated or accepted:
+// discovery dropped the lead, the read fell back to the store homepage and burned its
+// read budget (browser_read_deadline). Carry ONLY the identity keys; drop trackers/tokens.
+assert.equal(model.comparisonSource('flipkart', 'https://www.flipkart.com/sony-wh-1000xm5/p/itm5f3b?pid=ACCGFKZH&lid=LSTACC9&marketplace=FLIPKART&otracker=search&fm=organic&affid=partner'),
+  'https://www.flipkart.com/sony-wh-1000xm5/p/itm5f3b?pid=ACCGFKZH&lid=LSTACC9&marketplace=FLIPKART')
+assert.equal(model.comparisonSource('flipkart', 'https://www.flipkart.com/sony/p/itm5f3b?otracker=search&affid=partner'),
+  'https://www.flipkart.com/sony/p/itm5f3b')
+const flipkartSecret = model.comparisonSource('flipkart', 'https://www.flipkart.com/sony/p/itm5f3b?pid=ACCGFKZH&token=secret')
+assert.equal(flipkartSecret, 'https://www.flipkart.com/sony/p/itm5f3b?pid=ACCGFKZH')
+assert.doesNotMatch(String(flipkartSecret), /secret|token/)
+// Path-based providers stay strictly query-free: a query there could only smuggle a token.
+assert.equal(model.comparisonSource('croma', 'https://www.croma.com/sony/p/236417?tracker=x'), null)
+assert.equal(model.comparisonSource('flipkart', 'https://www.flipkart.com/search?q=sony&pid=x'), null)
 
 // Browser-ownership contention is not a provider verdict: the retailer was never
 // opened. It must surface as a specific, blocked card with no price — never a generic
@@ -37,6 +52,17 @@ const contentionSummary = model.comparisonSummary({updated_at: 'x', id: 'x', sta
   metadata_json: {subject: 'Blinkit check', request: 'x', providers: [contention]}} as any)
 assert.match(contentionSummary, /shared secure browser|was not checked/i)
 assert.doesNotMatch(contentionSummary, /Blinkit: not verified/)
+// Same shared-browser mechanism for the grocery/food providers: Instamart, Swiggy, Zomato
+// and Blinkit all open the store (no product-page discovery) and need a delivery-location
+// or login handoff, so a busy shared browser surfaces identically — a specific blocked card
+// with no invented price, never a flat "not verified" and never a resurrected "queued".
+for (const provider of ['instamart', 'swiggy', 'zomato', 'blinkit'] as const) {
+  const busy = model.providerObservation(provider, {id: 'child-' + provider, status: 'failed', error: 'browser_handoff_in_use', updated_at: '2026-10-05T00:00:00.000Z'}, null)
+  assert.equal(busy.status, 'blocked', provider)
+  assert.equal(busy.evidence, undefined, provider)
+  assert.doesNotMatch(busy.reason!, /unavailable|not verified/i, provider)
+  assert.equal(model.comparisonState([busy, {provider: 'amazon', status: 'observed'} as any]), 'paused', provider)
+}
 // Terminal read failures keep a specific, distinguished reason and never a price.
 assert.match(model.providerObservation('amazon', {id: 'c1', status: 'failed', error: 'browser_read_deadline', updated_at: 'x'}, null).reason!, /read time|finish loading/i)
 assert.match(model.providerObservation('amazon', {id: 'c2', status: 'failed', error: 'browser_objective_unverified', updated_at: 'x'}, null).reason!, /did not expose|verifiable/i)
@@ -235,6 +261,25 @@ assert.match(model.comparisonSummary(dormant), /shared secure browser|was not ch
 assert.doesNotMatch(model.comparisonSummary(dormant), /Remaining store checks are queued/)
 const {data: dormantQueue} = await db.from('agent_runs').select('id').eq('type', 'price_comparison').in('status', ['queued', 'running']).order('updated_at').limit(50)
 assert.ok(!(dormantQueue || []).some((r: any) => r.id === dormantParent), 'the cron worker must not pick up the finished comparison')
+
+// Flipkart read-timeout regression: a real, tracker-laden Flipkart product lead must be
+// discovered and opened as the exact /p/ product page — not dropped (pre-fix) so the read
+// falls back to the store homepage and burns its budget. The started child's URL is the
+// clean product page carrying only identity params; trackers never reach the browser.
+const flipkartLead = 'https://www.flipkart.com/sony-wh-1000xm5/p/itm5f3b?pid=ACCGFKZH&lid=LSTACC9&marketplace=FLIPKART&otracker=search&fm=organic'
+const discover = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
+  './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
+  '@/lib/web-search': {searchWebResults: async () => [{url: flipkartLead, snippet: '₹1 free delivery'}]}})
+const flipTask = await discover.tryPriceComparison({telegramId: 42, text: 'Compare Sony WH-1000XM5 black on Amazon India and Flipkart. Do not create a watch.', surface: 'web'})
+await discover.advancePriceComparison(actor, flipTask.runId) // amazon: no amazon.in lead -> homepage -> blocked
+const flipAdvanced = await discover.advancePriceComparison(actor, flipTask.runId) // flipkart: discovered product page
+const flipRow = flipAdvanced.metadata_json.providers.find((p: any) => p.provider === 'flipkart')
+assert.equal(flipRow.startUrl, 'https://www.flipkart.com/sony-wh-1000xm5/p/itm5f3b?pid=ACCGFKZH&lid=LSTACC9&marketplace=FLIPKART',
+  'discovery opens the exact /p/ product page with only identity params')
+assert.doesNotMatch(flipRow.startUrl, /otracker|fm=organic/)
+assert.equal(flipRow.status, 'observed', 'the exact Flipkart product page is read, not a homepage read-deadline')
+const flipChild = tables.agent_runs.find(r => r.id === flipRow.runId)
+assert.doesNotMatch(flipChild.metadata_json.url, /otracker|fm=organic/, 'trackers never reach the browser task URL')
 
 console.log('Price comparison handler, persisted restart, evidence isolation, partial results, bounded failures, handoff-contention blocker surfacing, terminal readback guard and private report API fixtures passed.')
 
