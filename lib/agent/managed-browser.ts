@@ -27,7 +27,7 @@ export function managedSessionConfig(projectId:string,contextId:string,owner:str
 
 // Issued only after the dashboard authenticates the owner of the saved run.
 // Never persist the bearer URL or expose the Browserbase key.
-export async function managedLiveViewUrl(sessionId:string,owner:string,env:Env=process.env,fetcher:typeof fetch=fetch){
+async function verifiedManagedSession(sessionId:string,owner:string,env:Env,fetcher:typeof fetch){
   const key=env.BROWSERBASE_API_KEY,project=env.BROWSERBASE_PROJECT_ID
   if(!uuid.test(sessionId)||!key||!project||!uuid.test(project))throw Error('managed_browser_live_view_unavailable')
   const request=async(path:string)=>{
@@ -43,7 +43,18 @@ export async function managedLiveViewUrl(sessionId:string,owner:string,env:Env=p
   if(session.projectId!==project)throw Error('managed_browser_live_view_project_mismatch')
   if(session.userMetadata?.owner!==ownerDigest)throw Error('managed_browser_live_view_owner_mismatch')
   if(session.status!=='RUNNING')throw Error('managed_browser_live_view_not_running')
-  if(Date.parse(session.expiresAt)<=Date.now())throw Error('managed_browser_live_view_expired')
+  const expiresAt=Date.parse(String(session.expiresAt||''))
+  if(!Number.isFinite(expiresAt)||expiresAt<=Date.now())throw Error('managed_browser_live_view_expired')
+  return request
+}
+
+export async function managedSessionIsLive(sessionId:unknown,owner:unknown,env:Env=process.env,fetcher:typeof fetch=fetch){
+  if(typeof sessionId!=='string'||typeof owner!=='string'||!owner)return false
+  try{await verifiedManagedSession(sessionId,owner,env,fetcher);return true}catch{return false}
+}
+
+export async function managedLiveViewUrl(sessionId:string,owner:string,env:Env=process.env,fetcher:typeof fetch=fetch){
+  const request=await verifiedManagedSession(sessionId,owner,env,fetcher)
   const debug=await request(`sessions/${sessionId}/debug?expiresIn=900`)
   const url=new URL(String(debug.debuggerFullscreenUrl||''))
   if(url.protocol!=='https:'||!['debug.browserbase.com','www.browserbase.com'].includes(url.hostname)||url.username||url.password)throw Error('managed_browser_live_view_invalid')

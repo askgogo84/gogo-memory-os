@@ -24,7 +24,7 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
   try{
     url=new URL(takeover)
     const token=url.searchParams.get('token')
-    if(!token)throw new Error('missing_token')
+    if(url.protocol!=='https:'||!/^sb-[a-z0-9-]+\.vercel\.run$/i.test(url.hostname)||url.username||url.password||!token)throw new Error('invalid_preview_origin')
     url.pathname='/shot'
     url.search=''
     url.searchParams.set('token',token)
@@ -33,7 +33,7 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
   }
 
   try{
-    const res=await fetch(url,{cache:'no-store'})
+    const res=await fetch(url,{cache:'no-store',signal:AbortSignal.timeout(5000)})
     if(!res.ok)return NextResponse.json({error:'browser_preview_failed'},{status:502})
     const bytes=await res.arrayBuffer()
     return new NextResponse(bytes,{status:200,headers:{'content-type':'image/png','cache-control':'no-store, max-age=0'}})

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
 import {runInNewContext} from 'node:vm'
 import {browserPageAllowlist} from '../lib/agent/browser-page-network'
-import {resolveManagedSession,managedScope,managedLiveViewUrl,MANAGED_BROWSER_BROKER,type ManagedState} from '../lib/agent/managed-browser'
+import {resolveManagedSession,managedScope,managedLiveViewUrl,managedSessionIsLive,MANAGED_BROWSER_BROKER,type ManagedState} from '../lib/agent/managed-browser'
 
 const project='11111111-1111-4111-8111-111111111111'
 const context='22222222-2222-4222-8222-222222222222'
@@ -54,6 +54,9 @@ const liveFetcher:typeof fetch=async(url)=>{
   throw Error('unexpected live view request')
 }
 assert.match(await managedLiveViewUrl(sessionId,'owner-a',env,liveFetcher),/^https:\/\/debug\.browserbase\.com\//)
+assert.equal(await managedSessionIsLive(sessionId,'owner-a',env,liveFetcher),true)
+assert.equal(await managedSessionIsLive(sessionId,'owner-b',env,liveFetcher),false)
+assert.equal(await managedSessionIsLive(sessionId,'owner-a',env,async()=>new Response(JSON.stringify({id:sessionId,projectId:project,userMetadata:{owner:createHash('sha256').update('owner-a').digest('hex')},status:'TIMED_OUT',expiresAt:new Date(Date.now()-1000).toISOString()}))),false,'expired Browserbase sessions must offer restore')
 assert.match(await managedLiveViewUrl(sessionId,'owner-a',env,async(url)=>String(url).endsWith('/debug?expiresIn=900')?new Response(JSON.stringify({debuggerFullscreenUrl:`https://www.browserbase.com/devtools-internal-compiled/index.html?token=fixture-only`})) : liveFetcher(url)),/^https:\/\/www\.browserbase\.com\//)
 await assert.rejects(()=>managedLiveViewUrl('not-a-session','owner-a',env,liveFetcher),/unavailable/)
 await assert.rejects(()=>managedLiveViewUrl(sessionId,'owner-b',env,liveFetcher),/owner_mismatch/)

@@ -63,6 +63,7 @@ runInNewContext(program, {exports, Date, URL, console, require: (name: string) =
   if (name === '@/lib/commerce/task') return {readCommerceTask: async () => ({metadata_json: {state: 'browser_research', browser_runs: {zepto: row.id}}})}
   if (name === '@/lib/commerce/price-comparison') return {assertComparisonChild: async () => {parentChecks++}}
   if (name === './browser-handoff-health') return {browserHandoffIsLive: async () => live}
+  if (name === './managed-browser') return {managedSessionIsLive: async () => live}
   if (name === './provider-browser-handoff') return {
     startProviderBrowserHandoff: async (options: any) => {
       assert.equal(options.userId, row.metadata_json.commerce_parent_id || row.metadata_json.comparison_parent_id ? 'owner-uuid:commerce' : 'owner-uuid')

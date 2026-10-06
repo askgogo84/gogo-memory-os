@@ -496,7 +496,11 @@ export async function restoreReadBrowserHandoff(params:{actor:AgentActor;runId:s
   const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:await permission(params.actor.legacyTelegramId),mode:'read',risk:'low',irreversible:false,approvalStatus:null})
   if(!policy.allowed)throw new Error('browser_control_permission_blocked')
   const {browserHandoffIsLive}=await import('./browser-handoff-health')
-  if(run.status==='paused'&&await browserHandoffIsLive(meta.handoff?.takeoverUrl))return
+  const {managedSessionIsLive}=await import('./managed-browser')
+  const handoffLive=meta.handoff?.managedSessionId
+    ?await managedSessionIsLive(meta.handoff.managedSessionId,meta.handoff.sandboxName)
+    :await browserHandoffIsLive(meta.handoff?.takeoverUrl)
+  if(run.status==='paused'&&handoffLive)return
   const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
   const browserOwner=linked?params.actor.userId+':commerce':params.actor.userId
   const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:target.toString(),sessionTaskId:run.id,navigateToInitial:true,...(linked?{keepAlive:true}:{})})

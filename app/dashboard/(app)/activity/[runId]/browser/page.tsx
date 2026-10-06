@@ -8,6 +8,7 @@ import { findVaultProviderForDomain } from '@/lib/vault/providers'
 import { VaultResumeTaskButton } from '@/components/dashboard/vault-resume-task-button'
 import {RestoreBrowserHandoffButton} from '@/components/dashboard/restore-browser-handoff-button'
 import {browserHandoffIsLive} from '@/lib/agent/browser-handoff-health'
+import {managedSessionIsLive} from '@/lib/agent/managed-browser'
 
 export const dynamic='force-dynamic'
 
@@ -23,9 +24,11 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   const handoff:any=run.metadata?.handoff||{}
   const handoffActive=['paused','waiting_approval'].includes(run.status)
   const cloudHandoff=handoffActive&&Boolean(handoff?.takeoverUrl)
-  // Managed Browserbase sessions outlive the legacy sandbox controller. The
-  // authenticated handoff route validates the live session before redirecting.
-  const cloudTakeover=cloudHandoff&&(Boolean(handoff?.managedSessionId)||await browserHandoffIsLive(handoff.takeoverUrl))
+  // A stored session ID is not proof that the one-hour provider session is
+  // still running. Show restore rather than a dead takeover link on expiry.
+  const cloudTakeover=cloudHandoff&&(handoff?.managedSessionId
+    ?await managedSessionIsLive(handoff.managedSessionId,handoff.sandboxName)
+    :await browserHandoffIsLive(handoff.takeoverUrl))
   const expiredHandoff=cloudHandoff&&!cloudTakeover
   const failedRead=run.status==='failed'&&run.metadata?.mode==='read'
     &&Boolean(run.metadata?.commerce_parent_id||run.metadata?.comparison_parent_id)
