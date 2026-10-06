@@ -5,7 +5,23 @@ import {SANDBOX_WORKDIR} from './secure-browser-bootstrap'
 
 // Browserbase is infrastructure, never an authority source. Existing action,
 // owner-lock, authentication and outcome checks remain in the browser executor.
-export const managedBrowserEnabled=()=>process.env.GOGO_BROWSER_RUNTIME==='browserbase'
+// Staged rollout resolver. Byte-for-byte identical to the old boolean when the
+// allowlist is UNSET (managed mode for everyone iff runtime==='browserbase');
+// a SET allowlist restricts managed mode to the listed telegram_ids (WhatsApp ids
+// are negative, compared as strings), and additionally enables all Preview traffic.
+export function managedBrowserEnabledFor(telegramId:string|number|null|undefined,env:Env=process.env):boolean{
+  if(env.GOGO_BROWSER_RUNTIME!=='browserbase')return false
+  const allow=String(env.GOGO_BROWSER_MANAGED_ALLOWLIST||'').trim()
+  if(!allow)return true // unset → today's behaviour: managed mode for everyone
+  if(String(env.VERCEL_ENV||'').trim()==='preview')return true // set allowlist + preview → all preview traffic
+  const id=String(telegramId??'').trim()
+  if(!id)return false
+  const ids=new Set(allow.split(',').map(value=>value.trim()).filter(Boolean))
+  return ids.has(id)
+}
+// Back-compat wrapper for callers without a telegram id; identical to pre-rollout
+// behaviour when the allowlist is unset, and conservatively sandbox when it is set.
+export const managedBrowserEnabled=(env:Env=process.env)=>managedBrowserEnabledFor(undefined,env)
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const metadataPath=`${SANDBOX_WORKDIR}/managed-browser.json`
 type Session={id:string;scope:string;fingerprint:string}
