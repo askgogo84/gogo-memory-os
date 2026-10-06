@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { startProviderBrowserHandoff, cancelProviderBrowserHandoff, cancelBrowserHandoffReservation } from './provider-browser-handoff'
 import { releaseBrowserHandoff } from './browser-handoff'
+import { releaseManagedSessionById } from './managed-browser'
 import type { SecureBrowserResult } from './secure-computer'
 import type { AgentActor } from './actor'
 import { inspectPostAuthRun, markAuthOutcomeUnknown } from './post-auth-outcome'
@@ -52,6 +53,9 @@ export async function releaseRunAuthHandoff(telegramId:string,runId:string){
   if(error||!run)throw new Error('auth_handoff_run_missing')
   const meta:any=run.metadata_json||{}
   if(meta.handoff?.releaseUrl)await releaseBrowserHandoff(String(meta.handoff.releaseUrl),{allowExpired:true})
+  // Closing the takeover (/release) only drops the CDP connection; the keepAlive
+  // Browserbase session must be explicitly released or it lingers until timeout.
+  if(meta.handoff?.managedSessionId)await releaseManagedSessionById(String(meta.handoff.managedSessionId)).catch(()=>{})
   const {handoff,secondary_auth,browser_waiting,...remaining}=meta
   const {error:saveError}=await supabaseAdmin.from('agent_runs').update({metadata_json:remaining}).eq('id',runId).eq('telegram_id',telegramId)
   if(saveError)throw new Error('auth_handoff_release_save_failed')

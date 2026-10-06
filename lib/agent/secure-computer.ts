@@ -571,7 +571,7 @@ async function getComputer(userId:string,targetUrl:string,keepAlive=false){
   let managed:Awaited<ReturnType<typeof ensureManagedBrowser>>=null
   try{
   await ensureBrowserRuntime(sandbox,managedBrowserEnabled()?{'*.browserbase.com':[]}: {})
-  managed=await ensureManagedBrowser(sandbox,name,targetUrl)
+  managed=await ensureManagedBrowser(sandbox,name,targetUrl,keepAlive)
   if(keepAlive&&!managed)await ensurePersistentCommerceBrowser(sandbox,targetUrl)
   await sandbox.writeFiles([
     {path:`${SANDBOX_WORKDIR}/gogo-browser.js`,content:Buffer.from(BROWSER_SCRIPT)},
@@ -901,6 +901,9 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
   let executionStarted=false
   let activeSandbox:{stop:()=>Promise<unknown>}|undefined
   let releaseManaged:(()=>Promise<void>)|undefined
+  let managedReleased=false
+  // Release the managed (Browserbase) session at most once, from any exit path.
+  const releaseManagedOnce=async()=>{if(managedReleased)return;managedReleased=true;await releaseManaged?.().catch(()=>{})}
   try {
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
@@ -1124,7 +1127,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     const executionEvidence=params.mode==='execute'&&typeof page.executionBeforeText==='string'&&typeof page.executionAfterText==='string'?localExecutionConfirmation(approvedOperation,page.executionBeforeText,page.executionAfterText,actionLog):null
     if(params.mode==='execute'&&!executionEvidence)throw new Error('browser_objective_unverified')
     if(params.mode==='draft'&&(!draftReady||page.draftVerified!==true||draftObjectiveCovered(params.objective,page,draftActions)===false))throw new Error('browser_objective_unverified')
-    if(!params.keepAlive){await releaseManaged?.();await first.sandbox.stop().catch(()=>{})}
+    if(!params.keepAlive){await releaseManagedOnce();await first.sandbox.stop().catch(()=>{})}
     const prepared=params.mode==='draft'
     return {
       status:prepared?'prepared':'completed',url:safeText(page.url||target,1200),sourceUrl:browserSourceUrl(page.url)||undefined,title:safeText(page.title,300),
@@ -1132,11 +1135,16 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       pageText:safeText(page.text,9000),forms:Array.isArray(page.forms)?page.forms.slice(0,12).map((form:any)=>({...form,action:safeText(form?.action,1200)})):[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
     }
   } catch (error:any) {
-    if(!params.keepAlive){await releaseManaged?.().catch(()=>{});await activeSandbox?.stop().catch(()=>{})}
+    if(!params.keepAlive){await releaseManagedOnce();await activeSandbox?.stop().catch(()=>{})}
     const safeError=safeText(error?.message||error,1000)
     console.error('SECURE_BROWSER_FAILED:',safeError)
     throw Object.assign(new Error(safeError||'secure_browser_failed'),{browserExecutionStarted:executionStarted,...(params.mode==='read'?{browserReadDiagnostics:sanitizeBrowserReadDiagnostics(readDiagnostics)}:{})})
   }finally{
+    // Guaranteed release on EVERY non-keepAlive exit — including the blocked/auth/
+    // delivery early returns that skip the success and catch branches. keepAlive
+    // (persistent commerce / human takeover) sessions are released by their own
+    // teardown and the orphan sweep. releaseManagedOnce is idempotent.
+    if(!params.keepAlive)await releaseManagedOnce()
     await releaseOwnerLock?.()
   }
 }
