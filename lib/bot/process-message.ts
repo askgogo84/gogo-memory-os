@@ -39,7 +39,7 @@ import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPla
 import { recallQuery } from '@/lib/agent/recall-query'
 import { indexMemory, isIndexable } from '@/lib/services/memory-index'
 import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePreference, listPreferences, forgetPreference, getPreferenceBlock, MAX_RULES } from '@/lib/bot/handlers/preferences'
-import { detectFriendReminder, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, cap0 } from '@/lib/bot/handlers/friend-reminders'
+import { detectFriendReminder, isFriendReminderFollowupCandidate, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, parseFriendTime, friendTaskWithoutTime, friendTimeLabel, cap0 } from '@/lib/bot/handlers/friend-reminders'
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
 import { handleCreditIqCards } from '@/lib/bot/handlers/creditiq-cards'
 import { pickRecurringDuplicate } from '@/lib/bot/reminder-dedup'
@@ -402,7 +402,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   const intent = detectIntent(incomingText)
   console.log('PIM:intent', intent)
-  const timingProblem=intent.type==='set_reminder'?reminderTimingProblem(incomingText):null
+  // A delegated reminder needs its own pending task so a corrected time can
+  // complete the same request. Do not discard it in the self-reminder guard.
+  const timingProblem=intent.type==='set_reminder'&&!detectFriendReminder(incomingText)?reminderTimingProblem(incomingText):null
   if(timingProblem){
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
     await saveConversation(resolvedUser.telegramId,'assistant',timingProblem)
@@ -464,34 +466,69 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
-  // ── Friend reminders (1C) — must run before self-reminder handling ──────────
-  // (a) reply with a phone number after we asked "what's their number?"
+  // ── Friend reminders (1C) — establish time, recipient and owner approval first ──
   {
-    const maybeNumber = normalizePhoneNumber(incomingText)
-    if (maybeNumber && !detectFriendReminder(incomingText)) {
-      const pending = await getPendingFriend(resolvedUser.telegramId)
-      if (pending) {
+    const mayContinueFriend = isFriendReminderFollowupCandidate(incomingText)
+    const pending = mayContinueFriend ? await getPendingFriend(resolvedUser.telegramId) : null
+    if (pending && !detectFriendReminder(incomingText)) {
+      const maybeNumber = normalizePhoneNumber(incomingText)
+      const answer = incomingText.trim()
+      let reply: string | null = null
+      if (pending.stage !== 'confirm' && /^(?:no|cancel)[.!]?$/i.test(answer)) {
+        await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(pending.name, pending.rest, 'done'))
+        reply = 'Cancelled. No friend reminder was saved.'
+      } else if (pending.stage !== 'confirm' && /^(?:yes|confirm)[.!]?$/i.test(answer)) {
+        reply = pending.stage === 'time'
+          ? `Please send a specific future date and time for ${cap0(pending.name)} first. Nothing has been saved.`
+          : `Please send ${cap0(pending.name)}'s WhatsApp number first. Nothing has been saved.`
+      } else if (pending.stage === 'time' && /\b(?:today|tomorrow|\d{1,2}(?::\d{2})?\s*(?:am|pm)|noon|midnight)\b/i.test(answer)) {
+        const rest = `${pending.rest} ${answer}`.trim()
+        const parsed = parseFriendTime(rest)
+        if (!parsed) reply = 'I still need a specific future date and time for that friend reminder. Nothing has been saved.'
+        else {
+          const contact = pending.number || await resolveFriendContact(resolvedUser.telegramId, pending.name)
+          await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(pending.name, rest, contact ? 'confirm' : 'number', contact || undefined, parsed))
+          reply = contact
+            ? `Please confirm: remind ${cap0(pending.name)} to ${parsed.task} on ${friendTimeLabel(parsed.remindAtIso)}. Reply YES to schedule or NO to cancel.`
+            : `What is ${cap0(pending.name)}'s WhatsApp number? The proposed time is ${friendTimeLabel(parsed.remindAtIso)}. I'll ask you to confirm before scheduling.`
+        }
+      } else if (pending.stage === 'number' && maybeNumber) {
+        const planned = pending.whenIso && pending.task ? {remindAtIso: pending.whenIso, task: pending.task} : parseFriendTime(pending.rest)
+        const parsed = planned && Date.parse(planned.remindAtIso) > Date.now() ? planned : null
+        if (!parsed) {
+          await saveFriendContact(resolvedUser.telegramId, pending.name, maybeNumber)
+          await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(pending.name, friendTaskWithoutTime(pending.rest), 'time', maybeNumber))
+          reply = 'That time has passed. Please send a new future date and time. Nothing has been saved.'
+        }
+        else {
+          await saveFriendContact(resolvedUser.telegramId, pending.name, maybeNumber)
+          await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(pending.name, pending.rest, 'confirm', maybeNumber, parsed))
+          reply = `Please confirm: remind ${cap0(pending.name)} to ${parsed.task} on ${friendTimeLabel(parsed.remindAtIso)}. Reply YES to schedule or NO to cancel.`
+        }
+      } else if (pending.stage === 'confirm' && /^(?:yes|confirm|no|cancel)[.!]?$/i.test(answer)) {
+        if (/^(?:no|cancel)/i.test(answer)) reply = 'Cancelled. No friend reminder was saved.'
+        else if (!pending.number || !pending.whenIso || !pending.task || Date.parse(pending.whenIso) <= Date.now()) {
+          await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(pending.name, friendTaskWithoutTime(pending.rest), 'time', pending.number))
+          reply = 'That reminder time has passed. Nothing has been saved; please send a new future time.'
+        }
+        else {
+          const {whenHuman} = await createFriendReminder({ownerTelegramId: resolvedUser.telegramId, senderName: resolvedUser.name, recipientWhatsapp: pending.number, rest: pending.rest, whenIso: pending.whenIso, task: pending.task})
+          reply = `Done — I'll remind ${cap0(pending.name)} ${whenHuman}.`
+        }
+        if (/^(?:no|cancel)/i.test(answer) || /^Done/.test(reply))
+          await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(pending.name, pending.rest, 'done'))
+      }
+      if (reply) {
         await saveConversation(resolvedUser.telegramId, 'user', incomingText)
-        await saveFriendContact(resolvedUser.telegramId, pending.name, maybeNumber)
-        const { whenHuman } = await createFriendReminder({ ownerTelegramId: resolvedUser.telegramId, senderName: resolvedUser.name, recipientWhatsapp: maybeNumber, rest: pending.rest })
-        const reply = `Saved ${cap0(pending.name)}'s number. I'll remind ${cap0(pending.name)} ${whenHuman}.\n\n(If they've never messaged AskGogo, they may need to send it a "hi" first for delivery.)`
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+        return {text: formatOutgoingText(params.channel, reply), resolvedUser}
       }
     }
   }
-  // (b) "remind <name> to <task>" where <name> != me
+  // A named recipient plus a task belongs to this flow, never a self reminder.
   {
     const friend = detectFriendReminder(incomingText)
-    // Bug 1: detectFriendReminder greedily reads the first word after "remind" as a
-    // recipient, so self-reminders like "remind this Thursday 5B we work…" mis-parse
-    // "this" as a friend name. detectIntent already classified this message as
-    // set_reminder; a genuine friend reminder links recipient→task with an explicit
-    // "to" ("remind Priya to call me"). Treat it as a self-reminder — and skip the
-    // friend path so the set_reminder handler below takes it — when it's a
-    // set_reminder that lacks that "to" connector.
-    const isSelfReminder = intent.type === 'set_reminder' && !/^\s*remind\s+\S+\s+to\s+/i.test(incomingText)
-    if (friend && !isSelfReminder) {
+    if (friend) {
       await saveConversation(resolvedUser.telegramId, 'user', incomingText)
       const cap = getFriendReminderCap(resolvedUser.tier)
       const used = await countTodayFriendReminders(resolvedUser.telegramId)
@@ -500,15 +537,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         return { text: formatOutgoingText(params.channel, reply), resolvedUser }
       }
-      const contact = await resolveFriendContact(resolvedUser.telegramId, friend.name)
-      if (contact) {
-        const { whenHuman } = await createFriendReminder({ ownerTelegramId: resolvedUser.telegramId, senderName: resolvedUser.name, recipientWhatsapp: contact, rest: friend.rest })
-        const reply = `Done — I'll remind ${cap0(friend.name)} ${whenHuman}.`
+      const parsed = parseFriendTime(friend.rest)
+      if (!parsed) {
+        await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(friend.name, friendTaskWithoutTime(friend.rest), 'time'))
+        const reply = reminderTimingProblem(friend.rest)
+          ? `That time has already passed. What future date and time should I remind ${cap0(friend.name)}? Nothing has been saved.`
+          : `What exact date and time should I remind ${cap0(friend.name)}? I won't guess from “when they wake up.” Nothing has been saved.`
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         return { text: formatOutgoingText(params.channel, reply), resolvedUser }
       }
-      await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(friend.name, friend.rest))
-      const reply = `What's ${cap0(friend.name)}'s WhatsApp number? Send it with country code (e.g. +91 98765 43210) and I'll set the reminder.`
+      const contact = await resolveFriendContact(resolvedUser.telegramId, friend.name)
+      await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(friend.name, friend.rest, contact ? 'confirm' : 'number', contact || undefined, parsed))
+      const reply = contact
+        ? `Please confirm: remind ${cap0(friend.name)} to ${parsed.task} on ${friendTimeLabel(parsed.remindAtIso)}. Reply YES to schedule or NO to cancel.`
+        : `What's ${cap0(friend.name)}'s WhatsApp number? Send it with country code (e.g. +91 98765 43210). I'll confirm the task and time with you before scheduling.`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }

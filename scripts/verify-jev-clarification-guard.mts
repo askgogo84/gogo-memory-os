@@ -17,7 +17,7 @@ assert.match(jevClarificationReply({...base,referentKind:{choice:'travel_option'
 const wa=readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts',import.meta.url),'utf8')
 const guardPos=wa.indexOf('const jevClarify=jevClarificationReply')
 const promotePos=wa.indexOf('const jevIntent=promotedJevIntent')
-const legacyPos=wa.indexOf('const featureReply = await routeFeatureIntent')
+const legacyPos=wa.indexOf('const featureReply = preserveFriendFlow')
 assert.ok(guardPos>=0&&promotePos>guardPos,'clarification guard must run before Jev promotion')
 assert.ok(legacyPos>guardPos,'clarification guard must run before broad feature fallback')
 assert.match(wa,/actualHandler:'jev-clarification-guard'/)

@@ -236,9 +236,9 @@ assert.ok(
 
 const whatsappRoute=await import('node:fs').then(fs=>fs.readFileSync('app/api/webhooks/whatsapp/route.ts','utf8'))
 const providerPreflight=whatsappRoute.indexOf('if (parseConnectedProviderReadCommand(text) || parseConnectedProviderCartAction(text))')
-const legacyFeature=whatsappRoute.indexOf('const featureReply = await routeFeatureIntent')
+const legacyFeature=whatsappRoute.indexOf('const featureReply = preserveFriendFlow')
 assert.ok(providerPreflight>=0,'WhatsApp must have a provider-browser preflight')
 assert.ok(legacyFeature>providerPreflight,'Vault-backed provider tasks must beat legacy feature routing on WhatsApp')
 assert.ok(whatsappRoute.indexOf('const jevIntent=')<providerPreflight,'Memory questions retain semantic specialist first refusal')
-assert.match(whatsappRoute,/if\(jevIntent&&!isExplicitProviderBrowserRead\(text\)\)/,'Explicit navigation must bypass semantic memory/save promotion')
+assert.match(whatsappRoute,/if\(jevIntent&&!isExplicitProviderBrowserRead\(text\)&&!preserveFriendFlow\)/,'Explicit navigation and delegated reminders must bypass semantic promotion')
 assert.match(whatsappRoute,/tryRunWhatsAppAgent/)

@@ -1,7 +1,7 @@
 import {NextResponse} from 'next/server'
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {resolveAgentActor} from '@/lib/agent/actor'
-import {advancePriceComparison, comparisonLink} from '@/lib/commerce/price-comparison'
+import {advancePriceComparison, comparisonLink, comparisonWebFallback} from '@/lib/commerce/price-comparison'
 import {comparisonState, comparisonSummary} from '@/lib/commerce/comparison-model'
 import {sendWhatsApp} from '@/lib/whatsapp'
 
@@ -19,7 +19,8 @@ export async function GET(request: Request) {
       const actor = await resolveAgentActor({telegramId: String(row.telegram_id), surface: 'web'})
       const task = await advancePriceComparison(actor, row.id)
       if (!task || comparisonState(task.metadata_json.providers) === 'queued') continue
-      const text = comparisonSummary(task) + '\n\nSaved comparison: ' + comparisonLink(task.id)
+      const fallback = await comparisonWebFallback(task)
+      const text = comparisonSummary(task) + (fallback ? '\n\n' + fallback : '') + '\n\nSaved comparison: ' + comparisonLink(task.id)
       // Claim terminal delivery once. Provider failures remain visible in the
       // saved report even if WhatsApp delivery itself fails.
       const {data: claimed, error: claimError} = await supabaseAdmin.from('agent_runs')

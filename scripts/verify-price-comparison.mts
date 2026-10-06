@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import * as model from '../lib/commerce/comparison-model'
+import {indiaShoppingSearch} from '../lib/web-search'
 
 // Reproduces 4 Oct: two retailers previously bypassed browser execution and a
 // model invented M185 prices, sellers and free delivery. Fixtures are NOT live.
@@ -11,6 +12,13 @@ assert.deepEqual(model.parsePriceComparison(request)?.providers, ['amazon', 'fli
 assert.ok(model.parsePriceComparison('Compare Sony WH-1000XM5 black on Amazon India, Flipkart and Croma. Do not create a watch.'))
 assert.deepEqual(model.parsePriceComparison('Compare grocery prices for Amul Taaza 1 litre x1 and atta 1kg on Instamart, Zepto and Blinkit.')?.providers, ['instamart', 'zepto', 'blinkit'])
 assert.deepEqual(model.parsePriceComparison('Compare vegetarian burger delivery on Swiggy and Zomato')?.providers, ['swiggy', 'zomato'])
+assert.deepEqual(model.parsePriceComparison("What's the price of iPhone 17 Pro 256GB on flipkart.com?")?.providers, ['flipkart'])
+assert.deepEqual(model.parsePriceComparison('Check the live price of Sony WH-1000XM5 on croma.com')?.providers, ['croma'])
+assert.equal(model.parsePriceComparison("What's the price of iPhone 17 Pro 256GB on flipkart.com?")?.subject, 'iPhone 17 Pro 256GB')
+assert.equal(model.parsePriceComparison('Check the live price of Sony WH-1000XM5 on croma.com')?.subject, 'Sony WH-1000XM5')
+assert.deepEqual(model.parsePriceComparison('What is the price of Amazon Echo on croma.com?')?.providers, ['croma'], 'a brand in the product name must not start another retailer browser')
+for (const text of ["what's the gold price today", 'upgrade price', 'price of bitcoin', 'Find a well-rated veg burger near Rajajinagar on swiggy'])
+  assert.equal(model.parsePriceComparison(text), null, text)
 assert.equal(model.parsePriceComparison('Watch Sony prices on Amazon and Flipkart every hour and compare them'), null)
 assert.equal(model.parsePriceComparison('Show my watches'), null)
 assert.equal(model.parsePriceComparison('Show the final status of my Amazon and Flipkart comparison. Do not retry anything.'), null)
@@ -129,7 +137,20 @@ function load(file: string, deps: Record<string, any>) {
 const service = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
   './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
   '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async () => liveHandoff},
-  '@/lib/web-search': {searchWebResults: async () => [{url: 'https://evil.test/p/fake', snippet: '₹1 free delivery'}]}})
+  '@/lib/web-search': {indiaShoppingSearch, searchWebResults: async (query: string, opts: any) => {
+    if (opts?.includeDomains?.[0] === 'croma.com') {
+      assert.match(query, /India.*INR/i)
+      return [
+        {url: 'https://www.croma.com/blogs/spotify-lossless-audio', snippet: '₹28,990 on an old blog'},
+        {url: 'https://www.croma.com/sony-wh-1000xm5/p/251234', snippet: '₹29,990 unverified search snippet'},
+      ]
+    }
+    return [{url: 'https://evil.test/p/fake', snippet: '₹1 free delivery'}]
+  }}})
+const fallback = await service.comparisonWebFallback({metadata_json: {subject: 'Sony WH-1000XM5', providers: [{provider: 'croma', status: 'failed'}]}} as any)
+assert.match(fallback, /browser could not verify a live price/i)
+assert.match(fallback, /croma\.com\/sony-wh-1000xm5\/p\/251234/)
+assert.doesNotMatch(fallback, /blogs|28,990|29,990|unverified search snippet/i)
 const start = await service.tryPriceComparison({telegramId: 42, text: request, surface: 'web'})
 assert.equal(start.status, 'queued'); assert.match(start.text, /Saved comparison:/)
 assert.doesNotMatch(start.text, /₹|free delivery|in stock/i)
@@ -154,7 +175,7 @@ assert.equal(calls, 1)
 const restarted = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
   './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
   '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async () => liveHandoff},
-  '@/lib/web-search': {searchWebResults: async () => [{url: 'https://www.flipkart.com/fixture-m185/p/fixture', snippet: '₹1 free delivery'}]}})
+  '@/lib/web-search': {indiaShoppingSearch, searchWebResults: async () => [{url: 'https://www.flipkart.com/fixture-m185/p/fixture', snippet: '₹1 free delivery'}]}})
 partial = await restarted.advancePriceComparison(actor, start.runId)
 assert.equal(partial.metadata_json.providers[1].status, 'observed')
 assert.match(partial.metadata_json.providers[1].evidence, /₹926/)
@@ -199,7 +220,7 @@ finishedParent.status = 'queued'
 const worker = load('app/api/cron/price-comparisons/route.ts', {
   'next/server': {NextResponse: {json: (body: any, opts: any) => ({body, status: opts?.status || 200})}},
   '@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},
-  '@/lib/commerce/price-comparison': {comparisonLink: service.comparisonLink, advancePriceComparison: async () => terminalTask},
+  '@/lib/commerce/price-comparison': {comparisonLink: service.comparisonLink, advancePriceComparison: async () => terminalTask, comparisonWebFallback: async () => ''},
   '@/lib/commerce/comparison-model': model, '@/lib/whatsapp': {sendWhatsApp: async () => {notifications++}},
 })
 process.env.CRON_SECRET = 'fixture-cron'
@@ -277,7 +298,7 @@ const flipkartLead = 'https://www.flipkart.com/sony-wh-1000xm5/p/itm5f3b?pid=ACC
 const discover = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
   './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
   '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async () => liveHandoff},
-  '@/lib/web-search': {searchWebResults: async () => [{url: flipkartLead, snippet: '₹1 free delivery'}]}})
+  '@/lib/web-search': {indiaShoppingSearch, searchWebResults: async () => [{url: flipkartLead, snippet: '₹1 free delivery'}]}})
 const flipTask = await discover.tryPriceComparison({telegramId: 42, text: 'Compare Sony WH-1000XM5 black on Amazon India and Flipkart. Do not create a watch.', surface: 'web'})
 await discover.advancePriceComparison(actor, flipTask.runId) // amazon: no amazon.in lead -> homepage -> blocked
 const flipAdvanced = await discover.advancePriceComparison(actor, flipTask.runId) // flipkart: discovered product page
