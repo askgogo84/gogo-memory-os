@@ -29,13 +29,19 @@ export const NORMAL_SESSION_TIMEOUT_SECONDS=300
 // capped at the 20-minute owner-lock window (browser-owner-lock.ts). keepAlive sessions
 // run until REQUEST_RELEASE or this timeout, so PR-0 also guarantees release and sweeps.
 export const KEEPALIVE_SESSION_TIMEOUT_SECONDS=1200
-export function managedSessionConfig(projectId:string,contextId:string,owner:string,scope:string,timeoutSeconds:number,keepAlive:boolean,envTag:string){
-  // userMetadata (session-metadata.md) carries our ownership + deployment tags. The
-  // orphan sweep releases ONLY sessions tagged app:'askgogo' AND env:'production', so a
-  // Preview deploy sharing this project/key can never release a live production session.
+export function managedSessionConfig(projectId:string,contextId:string,owner:string,scope:string,timeoutSeconds:number,keepAlive:boolean,envTag:string,recordSession:boolean){
+  // keepAlive is ALWAYS true for managed sessions: the broker and the per-wave executor
+  // each open their own CDP connection (managed-browser.ts broker connectOverCDP +
+  // secure-computer.ts executor connectOverCDP that closes after every runCommand), so a
+  // non-keepAlive session would end on the first executor disconnect and kill the run
+  // mid-way. Cost is still bounded by the explicit `timeout` tier (300s normal / 1200s
+  // persistent), the guaranteed REQUEST_RELEASE at run end, and the orphan sweep.
+  // userMetadata (session-metadata.md) carries our ownership + deployment tags; the sweep
+  // releases ONLY app:'askgogo' AND env:'production'. recordSession/logSession are the
+  // debug flag (off unless GOGO_BROWSER_RECORD_SESSIONS==='1').
   return {projectId,region:'ap-southeast-1',timeout:timeoutSeconds,keepAlive,
     proxies:[{type:'browserbase',geolocation:{country:'IN'}}],
-    browserSettings:{context:{id:contextId,persist:true},allowedDomains:[scope],solveCaptchas:false,recordSession:false,logSession:false,ignoreCertificateErrors:false,viewport:{width:1280,height:900}},
+    browserSettings:{context:{id:contextId,persist:true},allowedDomains:[scope],solveCaptchas:false,recordSession,logSession:recordSession,ignoreCertificateErrors:false,viewport:{width:1280,height:900}},
     userMetadata:{owner,scope,application:'askgogo',app:'askgogo',env:envTag}}
 }
 function connection(data:any){
@@ -49,8 +55,11 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
   const key=env.BROWSERBASE_API_KEY,project=env.BROWSERBASE_PROJECT_ID
   if(!key||!project||!uuid.test(project))throw Error('managed_browser_configuration_missing')
   const scope=managedScope(url)
-  const keepAlive=opts.keepAlive===true
-  const sessionTimeout=keepAlive?KEEPALIVE_SESSION_TIMEOUT_SECONDS:NORMAL_SESSION_TIMEOUT_SECONDS
+  // opts.keepAlive selects the TIMEOUT TIER only (persistent/takeout runs live longer).
+  // The keepAlive flag sent to Browserbase is always true (see managedSessionConfig).
+  const persistent=opts.keepAlive===true
+  const sessionTimeout=persistent?KEEPALIVE_SESSION_TIMEOUT_SECONDS:NORMAL_SESSION_TIMEOUT_SECONDS
+  const recordSessions=String(env.GOGO_BROWSER_RECORD_SESSIONS||'')==='1'
   const digest=createHash('sha256').update(owner).digest('hex')
   let state=await store.load()||{owner:digest,contexts:{}}
   if(state.owner!==digest)throw Error('managed_browser_owner_mismatch')
@@ -74,7 +83,7 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
       state.contexts[scope]=imported;await store.save(state)
     }
   }
-  const fingerprint=createHash('sha256').update(JSON.stringify({project,scope,policy:browserPageAllowlist(url),version:1,keepAlive})).digest('hex')
+  const fingerprint=createHash('sha256').update(JSON.stringify({project,scope,policy:browserPageAllowlist(url),version:1,persistent})).digest('hex')
   const connect=async(data:any)=>{try{return connection(data)}catch(error){await api(`sessions/${data.id}`,{status:'REQUEST_RELEASE'}).catch(()=>{});throw error}}
   if(state.session){
     if(!uuid.test(state.session.id))throw Error('managed_browser_session_invalid')
@@ -100,7 +109,7 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
   }
   if(!uuid.test(state.contexts[scope]))throw Error('managed_browser_context_invalid')
   state.pending='session';await store.save(state)
-  const created=await api('sessions',managedSessionConfig(project,state.contexts[scope],digest,scope,sessionTimeout,keepAlive,String(env.VERCEL_ENV||'')))
+  const created=await api('sessions',managedSessionConfig(project,state.contexts[scope],digest,scope,sessionTimeout,true,String(env.VERCEL_ENV||''),recordSessions))
   if(!uuid.test(created.id)||created.projectId!==project||created.contextId!==state.contexts[scope])throw Error('managed_browser_session_invalid')
   state.session={id:created.id,scope,fingerprint};delete state.pending;await store.save(state)
   return {...await connect(created),id:created.id,newSession:true,scope,release:async()=>{await api(`sessions/${created.id}`,{status:'REQUEST_RELEASE'})}}

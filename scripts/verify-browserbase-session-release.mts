@@ -36,14 +36,14 @@ function makeFetcher(running: any[] = []) {
 }
 const memStore = () => { let s: any = null; return { load: async () => s && structuredClone(s), save: async (v: any) => { s = structuredClone(v) } } }
 
-// 1. Timeout/keepAlive values sent at session creation.
+// 1. keepAlive is ALWAYS true; the timeout tier follows the run type (normal 300 / persistent 1200).
 {
   const { fetcher, reqs } = makeFetcher()
   await resolveManagedSession('owner', 'https://www.amazon.in', memStore(), env, fetcher, { keepAlive: false })
   const normal = reqs.find(r => r.path === 'sessions' && r.method === 'POST')!.body
   assert.equal(normal.timeout, 300)
   assert.equal(normal.timeout, NORMAL_SESSION_TIMEOUT_SECONDS)
-  assert.equal(normal.keepAlive, false)
+  assert.equal(normal.keepAlive, true, 'normal runs keep the session alive across per-wave executor disconnects')
 }
 {
   const { fetcher, reqs } = makeFetcher()
@@ -60,6 +60,31 @@ const memStore = () => { let s: any = null; return { load: async () => s && stru
   const body = reqs.find(r => r.path === 'sessions' && r.method === 'POST')!.body
   assert.equal(body.userMetadata.app, 'askgogo')
   assert.equal(body.userMetadata.env, 'production')
+}
+// 1c. No REQUEST_RELEASE between the inspect wave and the action waves — released exactly
+// once at run end. Per-wave executors connectOverCDP to the live session and disconnect;
+// keepAlive:true keeps it alive, so nothing releases mid-run.
+{
+  const { fetcher, reqs, released } = makeFetcher()
+  const session = await resolveManagedSession('owner', 'https://www.amazon.in', memStore(), { ...env, VERCEL_ENV: 'production' }, fetcher, { keepAlive: false })
+  const releaseCalls = () => reqs.filter(r => r.method === 'POST' && /^sessions\/[^?]+$/.test(r.path)).length
+  assert.equal(releaseCalls(), 0, 'no REQUEST_RELEASE between waves')
+  await session.release() // run end
+  assert.equal(released.size, 1, 'exactly one release, at run end')
+  assert.equal(releaseCalls(), 1)
+}
+// 1d. recordSession/logSession debug flag: off by default, on only with GOGO_BROWSER_RECORD_SESSIONS=1.
+{
+  const off = makeFetcher()
+  await resolveManagedSession('owner', 'https://www.amazon.in', memStore(), env, off.fetcher, { keepAlive: false })
+  const bOff = off.reqs.find(r => r.path === 'sessions' && r.method === 'POST')!.body
+  assert.equal(bOff.browserSettings.recordSession, false)
+  assert.equal(bOff.browserSettings.logSession, false)
+  const on = makeFetcher()
+  await resolveManagedSession('owner', 'https://www.amazon.in', memStore(), { ...env, GOGO_BROWSER_RECORD_SESSIONS: '1' }, on.fetcher, { keepAlive: false })
+  const bOn = on.reqs.find(r => r.path === 'sessions' && r.method === 'POST')!.body
+  assert.equal(bOn.browserSettings.recordSession, true)
+  assert.equal(bOn.browserSettings.logSession, true)
 }
 
 // 2. Release on a thrown error while wiring up the sandbox (network policy fails).
