@@ -27,7 +27,7 @@ assert.equal(first.endpoint,endpoint)
 assert.equal(first.newSession,true)
 const creation=requests.find(r=>r.path==='sessions')!.body
 assert.equal(creation.timeout,300,'normal (non-keepAlive) runs end promptly at the 5-minute project default')
-assert.equal(creation.keepAlive,false,'normal runs do not keep the session alive after disconnect')
+assert.equal(creation.keepAlive,true,'all managed sessions keep-alive; cost bounded by the timeout tier (300s normal)')
 assert.equal(creation.proxies[0].geolocation.country,'IN')
 assert.equal(creation.browserSettings.context.persist,true)
 assert.equal(creation.browserSettings.solveCaptchas,false)
