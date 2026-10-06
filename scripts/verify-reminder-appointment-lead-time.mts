@@ -60,7 +60,7 @@ const noMatch = new Set([
   'handleLinkVaultText', 'tryTypedTimeRouting', 'normalizePhoneNumber',
   'detectFriendReminder', 'getLatestFollowupState', 'isAmPmChoice',
   'isCalendarConflictMoveCommand', 'parsePlanSelection', 'isPlanMyDayIntent',
-  'isTranslationRequest', 'isFollowupReminderText',
+  'isTranslationRequest', 'isFollowupReminderText', 'namesRetailerPriceRead',
 ])
 const actual: Record<string, any> = {
   './handlers/reminders': reminders,

@@ -420,7 +420,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       }
       return {
         runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
-        text:`${result.summary}\n\nThe provider page did not expose verifiable live availability to the secure browser. No provider-side action was made.`,
+        text:`${result.summary}\n\nNo provider-side action was made.`,
         blockedReason:'provider_access_limited' as const,handledBy:'secure-browser' as const,
       }
     }

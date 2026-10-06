@@ -9,6 +9,22 @@ export const COMPARISON_PROVIDERS = {
   zomato: {label: 'Zomato', url: 'https://www.zomato.com/', domain: 'zomato.com'},
 } as const
 export type ComparisonProvider = keyof typeof COMPARISON_PROVIDERS
+
+// A single-retailer price/stock read ("live price of X on flipkart.com") should open the
+// commerce browser even without the word "compare" — but must NOT hijack unrelated messages
+// that merely contain "price" (gold price, upgrade price, bitcoin price). Requires BOTH a
+// named PRODUCT retailer/domain AND a price/stock verb. Swiggy/Zomato (food) are excluded so
+// the food-comparison flow is untouched.
+const RETAILER_PRICE_KEYS: ComparisonProvider[] = ['amazon', 'flipkart', 'croma', 'instamart', 'zepto', 'blinkit']
+const RETAILER_PRICE_DOMAINS = ['amazon.in', 'flipkart.com', 'croma.com', 'zepto.com', 'blinkit.com']
+export function namesRetailerPriceRead(text: string): boolean {
+  const t = String(text || '')
+  const lower = t.toLowerCase()
+  const namesRetailer = RETAILER_PRICE_KEYS.some(k => new RegExp('\\b' + k + '\\b', 'i').test(t))
+    || RETAILER_PRICE_DOMAINS.some(d => lower.includes(d))
+  const priceVerb = /\b(price|cost|how much|in stock|out of stock|availability|available)\b/i.test(t)
+  return namesRetailer && priceVerb
+}
 export type ProviderObservation = {
   provider: ComparisonProvider; status: 'pending'|'checking'|'observed'|'blocked'|'failed';
   runId?: string; startedAt?: string; checkedAt?: string; sourceUrl?: string; startUrl?: string;

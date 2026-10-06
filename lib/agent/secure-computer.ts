@@ -2,7 +2,8 @@ import { sanitizeBrowserReadDiagnostics, type BrowserReadDiagnostic, type Browse
 import { draftObjectiveCovered } from './draft-coverage'
 import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
 import {ensurePersistentCommerceBrowser, COMMERCE_CDP_URL} from './persistent-commerce-browser'
-import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from './browser-evidence'
+import { isLoginDestination, isLoginUrl, isTitleOnlyObjective, verifiedBrowserAnswer } from './browser-evidence'
+import { blockedHostsLogLine } from './browser-blocked-hosts'
 import { completeAgentPlanPrompt } from './planner-provider'
 import { Sandbox } from '@vercel/sandbox'
 import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
@@ -411,6 +412,9 @@ async function isConsequentialControl(page,selector,onUnavailable){
   const context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
   const page=context.pages()[0]||await context.newPage();
   const pageReadiness=observeBrowserPage(page);
+  // Collect hostnames of requests the broker allowlist aborted (visibility for self-
+  // inflicted starvation). Hostnames only; never URLs/query/tokens.
+  const __blocked={};if(page&&typeof page.on==='function')page.on('requestfailed',(req)=>{try{const h=new URL(req.url()).hostname;__blocked[h]=(__blocked[h]||0)+1}catch{}});
   const log=[];
   let executionBeforeText=null;
   let executionAfterText=null;
@@ -555,7 +559,7 @@ return receiptCount(after)>receiptCount(before);
     // Search Enter can return while the next document is still empty. Settle
     // within the existing bounded readiness wait BEFORE capturing its evidence.
     const pageLoad=await pageReadiness.read(payload.mode==='read');
-    const out=await model(page); out.pageLoad=pageLoad; out.draftVerified=draftVerified; out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; console.log(JSON.stringify(out));
+    const out=await model(page); out.pageLoad=pageLoad; out.draftVerified=draftVerified; out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; out.blockedHosts=__blocked; console.log(JSON.stringify(out));
   } finally { if(attached)await attached.close();else await context.close(); }
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
 `
@@ -657,7 +661,7 @@ function detectProviderAccessBlock(page:any){
   if(page?.pageLoad?.state==='security_check')return 'The provider security check has not finished in the cloud browser. Availability and prices remain unverified; this is not an account sign-in request.'
   if(page?.pageLoad?.httpStatus===403)return 'The provider refused access from the cloud browser (HTTP 403). Availability and prices remain unverified.'
   if(page?.pageLoad?.httpStatus===429)return 'The provider limited requests from the cloud browser (HTTP 429). Availability and prices remain unverified. Gogo has stopped retrying.'
-  if(['http_error','navigation_error','empty'].includes(page?.pageLoad?.state))return 'The provider page could not load in the cloud browser. Availability and prices remain unverified; there is no usable sign-in page yet.'
+  if(['http_error','navigation_error','empty'].includes(page?.pageLoad?.state))return 'The page didn’t load in the secure browser.'
   const text=`${page?.title || ''} ${page?.text || ''}`.replace(/\s+/g,' ').toLowerCase()
   const blocked=/\b(your access to this site has been limited|access denied|access has been denied|request blocked|security policy prevents access|temporarily blocked|unusual traffic|automated requests|bot protection)\b/i.test(text)
   return blocked ? 'The provider site is limiting automated access, so Gogo cannot verify live availability from this page.' : null
@@ -913,6 +917,9 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     activeSandbox=first.sandbox
     releaseManaged=first.managed?.release
     let page=first.page
+    const blockedHostsAll:Record<string,number>={}
+    const mergeBlocked=(p:any)=>{if(p&&p.blockedHosts)for(const [h,n] of Object.entries(p.blockedHosts))blockedHostsAll[h]=(blockedHostsAll[h]||0)+(Number(n)||0)}
+    mergeBlocked(first.page)
     let approvedOperation:ApprovedBrowserOperation|null=null
     let draftReady=false
     let draftActions:BrowserAction[]=[]
@@ -1032,7 +1039,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         const reason=authGate.reason||'password'
         const summary=credentialSelectionRequired
           ? 'Multiple saved logins match this site. Choose which account Gogo should use.'
-          : authGate.message||'This site needs a secure sign-in before Gogo can continue.'
+          : authGate.message||'This site needs you to sign in first — secure reconnect is coming soon.'
         const handoffReservation=!credentialSelectionRequired&&(reason!=='password'||params.reservePasswordHandoff===true)&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
         return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
       }
@@ -1053,7 +1060,9 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         if(readAnswer)break
       }
       const plan=await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose))
-      const actions=plan.actions
+      // Public reads must never navigate INTO a login wall (/ap/signin, /account/login, …).
+      // If the site itself redirects there, the auth-gate check handles it as a sign-in pause.
+      const actions=params.mode==='read'?plan.actions.filter(a=>!(a.kind==='goto'&&isLoginUrl(a.url))):plan.actions
       if(!actions.length)break
       if(params.mode==='execute'&&(!plan.operation||actions.filter(a=>a.kind==='submit').length!==1))throw new Error('browser_objective_unverified')
       approvedOperation=plan.operation
@@ -1073,7 +1082,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       const previousPage=page
-      page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]))
+      page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]));mergeBlocked(page)
       if(params.mode==='read')for(const action of actions){
         if(action.kind!=='search_enter'||!(page.actions||[]).some((a:any)=>a.kind==='search_enter'&&a.status==='done'&&a.detail===action.selector))continue
         const field=(previousPage.controls||[]).find((c:any)=>c.selector===action.selector)
@@ -1091,6 +1100,10 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       // controls with denied selectors removed; never relax the execution guard.
       if(doneCount===0&&!(params.mode==='read'&&(page.actions||[]).some((a:any)=>a.status==='skipped')))break
     }
+
+    // One structured line per run of the hosts the broker allowlist aborted (hostnames
+    // only). Surfaces self-inflicted starvation without a probe.
+    if(Object.keys(blockedHostsAll).length){try{console.warn(blockedHostsLogLine({runId:params.sessionTaskId||null,site:new URL(params.url).hostname,hosts:blockedHostsAll}))}catch{}}
 
     // The final action wave can itself open MFA. Non-read flows have only one
     // wave, so this page must be checked before completion or sandbox teardown.
