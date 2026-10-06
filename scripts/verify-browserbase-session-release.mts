@@ -53,6 +53,14 @@ const memStore = () => { let s: any = null; return { load: async () => s && stru
   assert.equal(ka.timeout, KEEPALIVE_SESSION_TIMEOUT_SECONDS)
   assert.equal(ka.keepAlive, true)
 }
+// 1b. Session is tagged with app + deployment env at creation (userMetadata).
+{
+  const { fetcher, reqs } = makeFetcher()
+  await resolveManagedSession('owner', 'https://www.amazon.in', memStore(), { ...env, VERCEL_ENV: 'production' }, fetcher, { keepAlive: false })
+  const body = reqs.find(r => r.path === 'sessions' && r.method === 'POST')!.body
+  assert.equal(body.userMetadata.app, 'askgogo')
+  assert.equal(body.userMetadata.env, 'production')
+}
 
 // 2. Release on a thrown error while wiring up the sandbox (network policy fails).
 {
@@ -82,27 +90,51 @@ const memStore = () => { let s: any = null; return { load: async () => s && stru
   assert.equal(await releaseManagedSessionById('not-a-uuid', env, fetcher), false, 'invalid id is a no-op')
 }
 
-// 4 & 5. Sweep skips an active handoff; releases an aged orphan; spares a young session.
+// 4 & 5. Sweep releases only a production-tagged, aged, non-active orphan; skips an
+// active handoff, a young session, a preview-tagged session, and an untagged session.
 {
   const now = 1_000_000_000_000
-  const OLD = '44444444-4444-4444-8444-444444444444'
-  const ACTIVE = '55555555-5555-4555-8555-555555555555'
-  const YOUNG = '66666666-6666-4666-8666-666666666666'
+  const OLD = '44444444-4444-4444-8444-444444444444'      // production, aged, orphan → released
+  const ACTIVE = '55555555-5555-4555-8555-555555555555'   // production, aged, active handoff → skipped
+  const YOUNG = '66666666-6666-4666-8666-666666666666'    // production, young → skipped
+  const PREVIEW = '77777777-7777-4777-8777-777777777777'  // preview-tagged, aged → skipped (not production)
+  const UNTAGGED = '88888888-8888-4888-8888-888888888888' // no tag, aged → skipped
+  const prod = (id: string, mins: number) => ({ id, projectId: PROJECT, startedAt: new Date(now - mins * 60000).toISOString(), userMetadata: { app: 'askgogo', env: 'production' } })
   const running = [
-    { id: OLD, projectId: PROJECT, startedAt: new Date(now - 30 * 60000).toISOString() },
-    { id: ACTIVE, projectId: PROJECT, startedAt: new Date(now - 30 * 60000).toISOString() },
-    { id: YOUNG, projectId: PROJECT, startedAt: new Date(now - 60000).toISOString() },
+    prod(OLD, 30), prod(ACTIVE, 30), prod(YOUNG, 1),
+    { id: PREVIEW, projectId: PROJECT, startedAt: new Date(now - 30 * 60000).toISOString(), userMetadata: { app: 'askgogo', env: 'preview' } },
+    { id: UNTAGGED, projectId: PROJECT, startedAt: new Date(now - 30 * 60000).toISOString() },
   ]
   assert.equal(ORPHAN_AGE_SECONDS, 1500)
   const { fetcher, released } = makeFetcher(running)
   const res = await sweepOrphanManagedSessions({ env, fetcher, now, activeSessionIds: new Set([ACTIVE]) })
-  assert.equal(res.inspected, 3)
+  assert.equal(res.inspected, 5)
   assert.equal(res.released, 1)
-  assert.ok(released.has(OLD), 'aged orphan released')
+  assert.ok(released.has(OLD), 'production aged orphan released')
   assert.ok(!released.has(ACTIVE), 'active handoff session never released')
   assert.ok(!released.has(YOUNG), 'young session not released')
+  assert.ok(!released.has(PREVIEW), 'preview-tagged session never released by a production sweep')
+  assert.ok(!released.has(UNTAGGED), 'untagged session never released')
   assert.equal(res.skippedActive, 1)
   assert.equal(res.skippedYoung, 1)
+  assert.equal(res.skippedUntagged, 2) // preview + untagged
+}
+
+// 6. The cron route refuses outside production and releases nothing (shared project/key).
+{
+  const { GET } = await import('../app/api/cron/browser-session-sweep/route')
+  const savedFetch = globalThis.fetch
+  globalThis.fetch = (async () => { throw new Error('non-production sweep must not reach Browserbase') }) as any
+  const saved = { cron: process.env.CRON_SECRET, ve: process.env.VERCEL_ENV, rt: process.env.GOGO_BROWSER_RUNTIME }
+  process.env.CRON_SECRET = 'sweep-secret'
+  process.env.VERCEL_ENV = 'preview'
+  process.env.GOGO_BROWSER_RUNTIME = 'browserbase'
+  const res = await GET(new Request('https://x/api/cron/browser-session-sweep?secret=sweep-secret'))
+  const body: any = await res.json()
+  assert.equal(body.skipped, 'non_production', 'non-production sweep releases nothing')
+  globalThis.fetch = savedFetch
+  const restore = (k: string, v: string | undefined) => { if (v === undefined) delete (process.env as any)[k]; else process.env[k] = v }
+  restore('CRON_SECRET', saved.cron); restore('VERCEL_ENV', saved.ve); restore('GOGO_BROWSER_RUNTIME', saved.rt)
 }
 
 console.log('Browserbase session release + sweep verification passed')

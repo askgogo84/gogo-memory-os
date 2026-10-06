@@ -13,6 +13,10 @@ export const maxDuration = 60
 // after review. Cron/internal-secret protected via lib/security/cron-auth.ts.
 export async function GET(request: Request) {
   if (!isCronAuthorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Preview and Production share one Browserbase project/key. Only the PRODUCTION
+  // deployment may run the sweep; a Preview sweep could otherwise list and release live
+  // production takeovers. Refuse everywhere else, releasing nothing.
+  if (process.env.VERCEL_ENV !== 'production') return NextResponse.json({ ok: true, skipped: 'non_production' })
   if (!managedBrowserEnabled()) return NextResponse.json({ ok: true, skipped: 'managed_mode_disabled' })
   try {
     const result = await sweepOrphanManagedSessions()

@@ -36,12 +36,17 @@ export async function sweepOrphanManagedSessions(opts: {
   const active = opts.activeSessionIds ?? await activeHandoffManagedSessionIds()
   const running = await listRunningManagedSessions(env, fetcher)
   const cutoff = now - ORPHAN_AGE_SECONDS * 1000
-  let released = 0, skippedActive = 0, skippedYoung = 0
+  let released = 0, skippedActive = 0, skippedYoung = 0, skippedUntagged = 0
   for (const session of running) {
     if (active.has(session.id)) { skippedActive++; continue } // never release an active handoff
+    // Preview and Production share one Browserbase project + key, so a sweep can SEE the
+    // other environment's sessions. Release ONLY sessions this production deployment
+    // created (userMetadata app:'askgogo' AND env:'production'). Untagged sessions
+    // (created before this amendment) are never released.
+    if (session.app !== 'askgogo' || session.env !== 'production') { skippedUntagged++; continue }
     const started = Date.parse(String(session.startedAt || ''))
     if (!Number.isFinite(started) || started > cutoff) { skippedYoung++; continue }
     if (await releaseManagedSessionById(session.id, env, fetcher)) released++
   }
-  return { inspected: running.length, released, skippedActive, skippedYoung, active: active.size }
+  return { inspected: running.length, released, skippedActive, skippedYoung, skippedUntagged, active: active.size }
 }

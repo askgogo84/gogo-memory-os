@@ -29,11 +29,14 @@ export const NORMAL_SESSION_TIMEOUT_SECONDS=300
 // capped at the 20-minute owner-lock window (browser-owner-lock.ts). keepAlive sessions
 // run until REQUEST_RELEASE or this timeout, so PR-0 also guarantees release and sweeps.
 export const KEEPALIVE_SESSION_TIMEOUT_SECONDS=1200
-export function managedSessionConfig(projectId:string,contextId:string,owner:string,scope:string,timeoutSeconds:number,keepAlive:boolean){
+export function managedSessionConfig(projectId:string,contextId:string,owner:string,scope:string,timeoutSeconds:number,keepAlive:boolean,envTag:string){
+  // userMetadata (session-metadata.md) carries our ownership + deployment tags. The
+  // orphan sweep releases ONLY sessions tagged app:'askgogo' AND env:'production', so a
+  // Preview deploy sharing this project/key can never release a live production session.
   return {projectId,region:'ap-southeast-1',timeout:timeoutSeconds,keepAlive,
     proxies:[{type:'browserbase',geolocation:{country:'IN'}}],
     browserSettings:{context:{id:contextId,persist:true},allowedDomains:[scope],solveCaptchas:false,recordSession:false,logSession:false,ignoreCertificateErrors:false,viewport:{width:1280,height:900}},
-    userMetadata:{owner,scope,application:'askgogo'}}
+    userMetadata:{owner,scope,application:'askgogo',app:'askgogo',env:envTag}}
 }
 function connection(data:any){
   let u:URL
@@ -97,7 +100,7 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
   }
   if(!uuid.test(state.contexts[scope]))throw Error('managed_browser_context_invalid')
   state.pending='session';await store.save(state)
-  const created=await api('sessions',managedSessionConfig(project,state.contexts[scope],digest,scope,sessionTimeout,keepAlive))
+  const created=await api('sessions',managedSessionConfig(project,state.contexts[scope],digest,scope,sessionTimeout,keepAlive,String(env.VERCEL_ENV||'')))
   if(!uuid.test(created.id)||created.projectId!==project||created.contextId!==state.contexts[scope])throw Error('managed_browser_session_invalid')
   state.session={id:created.id,scope,fingerprint};delete state.pending;await store.save(state)
   return {...await connect(created),id:created.id,newSession:true,scope,release:async()=>{await api(`sessions/${created.id}`,{status:'REQUEST_RELEASE'})}}
@@ -116,7 +119,7 @@ export async function releaseManagedSessionById(sessionId:string,env:Env=process
 }
 
 // List this project's RUNNING sessions with their start time, for the orphan sweep.
-export async function listRunningManagedSessions(env:Env=process.env,fetcher:typeof fetch=fetch):Promise<Array<{id:string;startedAt:string|null}>>{
+export async function listRunningManagedSessions(env:Env=process.env,fetcher:typeof fetch=fetch):Promise<Array<{id:string;startedAt:string|null;app:string;env:string}>>{
   const key=env.BROWSERBASE_API_KEY,project=env.BROWSERBASE_PROJECT_ID
   if(!key||!project)throw Error('managed_browser_configuration_missing')
   const response=await fetcher('https://api.browserbase.com/v1/sessions?status=RUNNING',{headers:{'X-BB-API-Key':key},redirect:'error',signal:AbortSignal.timeout(30000)})
@@ -124,7 +127,7 @@ export async function listRunningManagedSessions(env:Env=process.env,fetcher:typ
   const data=await response.json()
   return (Array.isArray(data)?data:[])
     .filter((s:any)=>s&&s.projectId===project&&uuid.test(String(s.id||'')))
-    .map((s:any)=>({id:String(s.id),startedAt:s.startedAt||s.createdAt||null}))
+    .map((s:any)=>({id:String(s.id),startedAt:s.startedAt||s.createdAt||null,app:String(s.userMetadata?.app||s.userMetadata?.application||''),env:String(s.userMetadata?.env||'')}))
 }
 
 // Remains connected while agent/human clients come and go. The broker owns the
