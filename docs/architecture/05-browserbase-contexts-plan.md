@@ -351,5 +351,105 @@ not blocking these PRs.
 
 ---
 
-*Plan only. No source files changed on this branch. PR-0 and all PRs are proposals;
-PR-0 is implemented only after its plan is approved; PR-D requires the §J mockup gate.*
+# PR-0b — Proxy bandwidth (PLAN ONLY)
+
+**Why this is urgent:** on the Developer plan the binding cost is **proxy bandwidth**,
+not browser minutes — 797 MB / 1 GB (79%) used in ~5 days of mostly owner testing vs
+644 / 6,000 minutes (10%). Overage is **$12/GB (~₹1/MB)**. Root cause: in managed mode
+every session sets `proxies:[{type:'browserbase',geolocation:{country:'IN'}}]`
+(`managed-browser.ts:22-23`), so **all** egress — HTML, APIs, **and every image / font /
+video / CDN asset** — is tunnelled through the metered India proxy. The broker already
+intercepts every request (`MANAGED_BROWSER_BROKER` `managed-browser.ts` `context.route('**/*')`)
+but only for host-allowlisting, not to drop heavy resources or bypass the proxy for
+assets. (PR-0 deliberately did **not** touch proxy settings; PR-0b owns that.)
+
+### 1. Measuring proxy MB per task
+- **Per session (authoritative):** read the Browserbase session's reported data after
+  close — the dashboard shows per-session "data"; verify the exact field on
+  `GET /v1/sessions/{id}` (or the project usage/metrics endpoint) and record it against
+  the `agent_runs` id in `metadata_json` (e.g. `proxy_bytes`). Confirm the field name
+  against the Browserbase usage docs before relying on it.
+- **In-process fallback / live cap:** the broker can meter bytes via CDP
+  `Network.loadingFinished` / `dataReceived` per request and sum them, enabling the
+  live per-run cap in §4 without waiting for post-hoc billing.
+- **Best current estimate (to be replaced by measured numbers):** with the proxy
+  carrying everything today, a provider page with images is heavy — q-commerce /
+  storefront reads ≈ **8–25 MB per wave**, and a read can run up to
+  `MAX_RESEARCH_WAVES=12`, so a Swiggy/Amazon read plausibly spends **20–60 MB**; a
+  visual step adds more. 797 MB over a handful of such tasks fits this. **Action:
+  instrument first (step 1), then publish real per-task-type numbers.**
+
+### 2. India proxy only where an Indian IP is required (first-match-wins)
+Per proxies.md, pass an **ordered** `proxies` array; the first matching `domainPattern`
+wins. Route only hosts that genuinely need an Indian IP through `type:'browserbase'`,
+and send everything else direct (`type:'none'`, no proxy bandwidth):
+```json
+"proxies": [
+  { "type": "browserbase", "geolocation": { "country": "IN" },
+    "domainPattern": "^([a-z0-9-]+\\.)*(amazon\\.in|flipkart\\.com|swiggy\\.com)$" },
+  { "type": "none" }
+]
+```
+- The `([a-z0-9-]+\.)*` prefix keeps the needed API/app subdomains (e.g. Instamart's
+  `*.swiggy.com` APIs) on the Indian IP while static CDNs
+  (`m.media-amazon.com`, `rukminim2.flixcart.com`, `*.flixcart.com`,
+  `media-assets.swiggy.com`, `cdn.zeptonow.com` — `browser-page-network.ts:21-22,37-38`)
+  go direct.
+- **Main-site vs CDN IP-mismatch risk (flag):** some providers geo-/bot-gate assets or
+  tie them to the session IP; serving HTML from an Indian IP while assets come from the
+  datacenter IP can trip bot protection (notably the AWS-WAF token hosts for Swiggy,
+  `*.awswaf.com` `browser-page-network.ts:7-10`) or break image loads. **Mitigation:**
+  per provider, start with main + API + WAF-token hosts proxied and CDNs direct; if a
+  provider breaks, move its asset host back into the proxied pattern. Validate each of
+  amazon.in / flipkart.com / swiggy.com individually before enabling.
+
+### 3. Block images / media / fonts when a step needs no visuals
+Extend the broker's existing `context.route('**/*')` to `route.abort()` on
+`resourceType` ∈ {`image`,`media`,`font`} (and optionally large `stylesheet`) for
+non-visual steps, via an env flag (e.g. `GOGO_BROWSER_BLOCK_HEAVY=1`). Biggest single
+saver, independent of the proxy routing.
+- **Steps that do NOT need visuals (block heavy):** price/availability reads, order /
+  booking-history reads, confirmation-text detection, form fill / draft, add-to-cart,
+  login flows.
+- **Steps that DO need visuals (keep heavy):** ticket-screenshot completion
+  (`booking-screenshot-worker` / `secure-ticket-reader`), the live-view human takeover
+  (`/shot` screenshots `browser-handoff.ts:49`), CAPTCHA / visual verification, and any
+  objective that must read product imagery.
+
+### 4. Per-run and daily per-user proxy caps
+- **Per-run cap** (e.g. **25 MB**, tunable) enforced live via the broker byte meter
+  (§1): on breach, stop and pause rather than keep streaming.
+- **Daily per-user cap** (e.g. **150 MB/day**) summed from recorded `proxy_bytes` per
+  `telegram_id`; on breach, refuse new proxied runs until reset.
+- **User message (clear, non-technical; default +91 WhatsApp):** *"I've paused this
+  task to stay within today's safe data limit. I didn't buy, book or submit anything.
+  Reply CONTINUE to let me keep going, or I'll resume automatically tomorrow."* Caps +
+  message are a small new module wired into `runSecureBrowser` and the
+  watcher/commerce callers.
+
+### 5. Target MB & ₹ per task after PR-0b (at ≈₹1/MB)
+| Task type | Today (all proxied, images on) | After (assets direct + heavy blocked) |
+|-----------|-------------------------------|----------------------------------------|
+| Text read (price / availability) | ~20–60 MB (₹20–60) | **~1–3 MB (₹1–3)** |
+| Add-to-cart / order-history | ~15–40 MB (₹15–40) | **~2–4 MB (₹2–4)** |
+| Visual step (screenshot / takeover) | ~25–60 MB (₹25–60) | **~5–10 MB (₹5–10)** (images needed; assets-direct where safe) |
+
+Daily spend per user is then bounded by the §4 caps regardless. **Numbers are
+estimates until step-1 instrumentation lands; treat the post-change targets as the
+acceptance bar.**
+
+### PR-0b work split (sequence)
+1. **Meter** proxy bytes (broker CDP counter + record `proxy_bytes` on the run) — ship first so savings are measurable.
+2. **Block heavy resources** by step (env flag + per-step classification) — biggest, lowest-risk saver.
+3. **Per-domain proxy routing** (`domainPattern`), validated per provider for the IP-mismatch risk.
+4. **Caps + user message.**
+
+Each with a `verify-*.mts` appended to the test chain. PR-0b changes proxy settings, so
+it lands **after** PR-0 and is gated behind the rollout flag like the rest.
+
+---
+
+*Plan only on this branch. The PR-0 leak hotfix is implemented on branch
+`claude/browserbase-leak-hotfix-pr0`; PR-1 (rollout resolver + identity store) on
+`claude/browserbase-identity-pr1`. PR-0b and the remaining PRs here are proposals;
+PR-D requires the §J mockup gate.*
