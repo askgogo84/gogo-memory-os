@@ -1138,6 +1138,16 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         links:page.links?.length||0,actions:actionLog.map(a=>({kind:a.kind,status:a.status,...(a.failure?{failure:a.failure}:{})})),
         controls:page.controls?.length||0,
       }))
+      // A live store can render its shell while withholding search results or
+      // leaving an interactive overlay for the account owner. Keep the same
+      // read-only browser available for takeover instead of terminating the
+      // saved commerce task with no verifiable product evidence.
+      if(params.keepAlive&&params.reserveHumanHandoff===true){
+        const handoffReservation=await releaseOwnerLock.reserveHandoff()
+        return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,
+          title:safeText(page.title,300),summary:'The store page did not expose enough product evidence. Open Take control to finish any location or sign-in step in the store, then resume this same read-only task.',
+          pageText:'Product, price and availability are unverified.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'page_interaction_required'}
+      }
       throw new Error('browser_objective_unverified')
     }
     if(params.mode!=='read'&&!actionLog.some(a=>a.status==='done'&&['fill','select','check','click','submit'].includes(a.kind)))throw new Error('browser_objective_unverified')
