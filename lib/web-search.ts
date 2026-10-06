@@ -63,9 +63,20 @@ export async function searchWebResults(query: string, opts: WebSearchOptions = {
   }
 }
 
+// Price/shopping queries must return Indian ₹ answers from Indian retailers, not USD from
+// camelcamelcamel US. For shopping intents only, scope the query to India + INR and bias the
+// results to Indian retailer domains. Non-shopping queries (news, scores, weather) are untouched.
+const SHOPPING_RE = /\b(price|cost|cheapest|deal|deals|discount|how much|in stock|availability|buy)\b/i
+export function indiaShoppingSearch(query: string): { query: string; includeDomains: string[] } {
+  if (!SHOPPING_RE.test(query)) return { query, includeDomains: [] }
+  const q = /\b(india|inr|₹|rupee|rupees)\b/i.test(query) ? query : `${query} price in India in INR`
+  return { query: q, includeDomains: ['amazon.in', 'flipkart.com', 'croma.com', 'reliancedigital.in'] }
+}
+
 export async function searchWeb(query: string): Promise<string> {
   try {
-    const results = await searchWebResults(query)
+    const loc = indiaShoppingSearch(query)
+    const results = await searchWebResults(loc.query, loc.includeDomains.length ? { includeDomains: loc.includeDomains } : {})
 
     if (!results.length) {
       return ''

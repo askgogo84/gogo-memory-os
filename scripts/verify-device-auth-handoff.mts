@@ -567,7 +567,7 @@ console.log('Production browser rejects empty shells, model errors, and unsuppor
 const beforeBlockedPlanCalls=primaryAttempts+fallbackAttempts
 for(const [state,httpStatus,expected] of [
   ['security_check',202,/security check/],['http_error',403,/refused.*403/],
-  ['http_error',429,/limited.*429/],['empty',200,/could not load/],
+  ['http_error',429,/limited.*429/],['empty',200,/didn[’']t load/],
 ] as const){
   evidencePage={url:'https://www.zepto.com/',title:'',text:'',forms:[],pageLoad:{state,httpStatus}}
   const result=await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url})

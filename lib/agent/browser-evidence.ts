@@ -6,6 +6,18 @@ export function isLoginDestination(page:{url?:string;text?:string;title?:string}
   }catch{return false}
 }
 
+/** True when a URL's PATH is a sign-in/login destination. Covers Amazon (/ap/signin),
+ *  Flipkart (/account/login) and the generic /login,/signin,/sign-in forms. Used to keep
+ *  public product/price/search reads from navigating into a login wall. */
+export function isLoginUrl(url:string):boolean {
+  try {
+    const path=new URL(url).pathname.toLowerCase()
+    return /(?:^|\/)(?:login|signin|sign-in)(?:\/|$)/.test(path)
+      || /\/ap\/signin/.test(path)
+      || /\/accounts?\/(?:login|signin|sign-in)/.test(path)
+  } catch { return false }
+}
+
 /** Conservative metadata-only grammar; extra requested fields require body evidence. */
 export function isTitleOnlyObjective(objective:string):boolean {
   const text=objective.toLowerCase()
