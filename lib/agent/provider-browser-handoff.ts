@@ -4,7 +4,7 @@ import { ensureBrowserRuntime, SANDBOX_WORKDIR } from './secure-browser-bootstra
 import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
 import { browserPageAllowlist } from './browser-page-network'
 import {ensurePersistentCommerceBrowser} from './persistent-commerce-browser'
-import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
+import {ensureManagedBrowser,managedBrowserEnabled,releaseManagedSessionById} from './managed-browser'
 
 export async function cancelBrowserHandoffReservation(userId:string,token:string){
   const {sandbox}=await getPersistentBrowserSandbox(userId,{bootstrap:false})
@@ -12,11 +12,13 @@ export async function cancelBrowserHandoffReservation(userId:string,token:string
   await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');try{if(fs.readFileSync('gogo-handoff-transfer','utf8')===process.argv[1])fs.unlinkSync('gogo-handoff-transfer')}catch{}",token]})
 }
 
-export async function cancelProviderBrowserHandoff(userId:string,handoff:{token:string;releaseUrl:string}){
+export async function cancelProviderBrowserHandoff(userId:string,handoff:{token:string;releaseUrl:string;managedSessionId?:string|null}){
   try{await releaseBrowserHandoff(handoff.releaseUrl,{allowExpired:true})}finally{
     // Also stop a server still starting up, using only this reservation's token.
     const {sandbox}=await getPersistentBrowserSandbox(userId,{bootstrap:false})
     await sandbox.writeFiles([{path:`gogo-handoff-abort-${handoff.token}`,content:Buffer.from(handoff.token)}])
+    // Release the managed (keepAlive) session so a cancelled takeover never lingers.
+    if(handoff.managedSessionId)await releaseManagedSessionById(String(handoff.managedSessionId)).catch(()=>{})
   }
 }
 
@@ -39,6 +41,7 @@ export async function startProviderBrowserHandoff(params:{userId:string;url:stri
   }
   const {sandbox,name}=await getPersistentBrowserSandbox(params.userId,{bootstrap:false})
   const token=params.reservationToken||randomBytes(24).toString('base64url')
+  let managed:Awaited<ReturnType<typeof ensureManagedBrowser>>=null
   try{
   // Production's command cwd is /vercel, but Playwright is installed in the
   // shared runtime directory. Resolve the server (and its imports) there.
@@ -66,7 +69,10 @@ if(!launched&&ready===token){launched=true;if(JSON.parse(Buffer.from(options,'ba
   const reservation=await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');let value='';try{value=fs.readFileSync('gogo-handoff-reserved','utf8')}catch{};process.exit(value===process.argv[1]?0:1)",token]})
   if(reservation.exitCode!==0)throw new Error('browser_handoff_in_use')
   await ensureBrowserRuntime(sandbox,managedBrowserEnabled()?{'*.browserbase.com':[]}: {})
-  const managed=await ensureManagedBrowser(sandbox,name,params.originalUrl||params.url)
+  // keepAlive: a human takeover must survive the agent's CDP disconnect while the
+  // person completes OTP / live view (keep-alive.md). Teardown (/release, cancel,
+  // resume) and the orphan sweep guarantee the session is released afterwards.
+  managed=await ensureManagedBrowser(sandbox,name,params.originalUrl||params.url,true)
   if(params.keepAlive&&!managed)await ensurePersistentCommerceBrowser(sandbox,params.originalUrl||params.url)
   if(managed){
     await sandbox.writeFiles([{path:`${SANDBOX_WORKDIR}/managed-handoff-env`,content:Buffer.from(JSON.stringify({token,values:managed.env}))}])
@@ -86,8 +92,11 @@ while(Date.now()<deadline){try{const r=await fetch('http://127.0.0.1:${BROWSER_H
   if(!domain)throw new Error('browser_handoff_domain_unavailable')
   const base=String(domain).startsWith('http')?String(domain):`https://${domain}`
   const q=encodeURIComponent(token)
-  return {sandboxName:name,token,takeoverUrl:`${base}/?token=${q}`,stateUrl:`${base}/state?token=${q}`,agentActionUrl:`${base}/agent-action?token=${q}`,releaseUrl:`${base}/release?token=${q}`}
+  return {sandboxName:name,token,managedSessionId:managed?.env?.GOGO_BROWSER_SESSION_ID||null,takeoverUrl:`${base}/?token=${q}`,stateUrl:`${base}/state?token=${q}`,agentActionUrl:`${base}/agent-action?token=${q}`,releaseUrl:`${base}/release?token=${q}`}
   }catch(error){
+    // Guaranteed release: a managed session created for this takeover must not be
+    // orphaned if provisioning fails after it was created.
+    if(managed?.env?.GOGO_BROWSER_SESSION_ID)await releaseManagedSessionById(managed.env.GOGO_BROWSER_SESSION_ID).catch(()=>{})
     await sandbox.writeFiles([{path:`gogo-handoff-abort-${token}`,content:Buffer.from(token)}]).catch(()=>{})
     await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');try{if(fs.readFileSync('gogo-handoff-transfer','utf8')===process.argv[1])fs.unlinkSync('gogo-handoff-transfer')}catch{}",token]}).catch(()=>{})
     throw error
