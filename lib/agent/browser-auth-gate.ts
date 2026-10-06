@@ -43,6 +43,10 @@ export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
   const hasOtpField = descriptors.some(x => /\b(otp|one[- ]?time|verification code|security code|authenticator code|passcode)\b/.test(x))
   const hasPaymentAuthField = descriptors.some(x => /\b(cvv|cvc|3d secure|3ds|bank otp|card otp)\b/.test(x))
   const hasLoginCopy = /\b(sign in|log in|login|verify your identity|verify it'?s you|authentication required|enter your password)\b/.test(text)
+  // Some stores let guests browse the home page but replace search results
+  // with an explicit login wall. There is no credential field until the user
+  // selects Login, so requiring an input would misclassify this as a failed read.
+  const hasBlockingLoginCopy = /\b(?:please|must|need to)\s+(?:log\s?in|sign\s?in)\s+to\s+continue\b/.test(text)
   const hasOtpCopy = /\b(one[- ]?time password|verification code|enter (?:the )?code|we sent (?:you )?a code|authenticator app)\b/.test(text)
   const hasPasskey = /\b(passkey|security key|use your device|windows hello|touch id|face id)\b/.test(text)
   const hasCaptcha = /\b(captcha|i'?m not a robot|verify you are human|human verification)\b/.test(text)
@@ -81,7 +85,7 @@ export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
   if (hasCaptcha) {
     return { required:true, reason:'captcha', message:'This site requires human verification.' }
   }
-  if (hasPasswordField && hasLoginCopy) {
+  if (hasBlockingLoginCopy || (hasPasswordField && hasLoginCopy)) {
     return { required:true, reason:'password', message:'This site requires a human sign-in.' }
   }
   return { required:false }

@@ -9,6 +9,10 @@ assert.equal(detectHumanAuthGate(publicForm).required,false,'ordinary public for
 const password={title:'Sign in',text:'Log in to continue',forms:[{inputs:[{name:'password',type:'password',label:'Password'}]}]}
 assert.deepEqual(detectHumanAuthGate(password),{required:true,reason:'password',message:'This site requires a human sign-in.'})
 
+const zeptoSearchWall={title:'Search',text:'Please Login\nOops! Please login to continue searching\nLogin',forms:[{inputs:[{name:'search',type:'text',label:'Search'}]}]}
+assert.equal(detectHumanAuthGate(zeptoSearchWall).reason,'password','store search login wall must pause for takeover even before credentials appear')
+assert.equal(detectHumanAuthGate({title:'Store',text:'Login\nSearch products and browse categories',forms:[]}).required,false,'ordinary login navigation must not block browsing')
+
 const otp={title:'Verify',text:'We sent you a code',forms:[{inputs:[{name:'otp',type:'text',label:'Verification code'}]}]}
 assert.equal(detectHumanAuthGate(otp).reason,'otp')
 
