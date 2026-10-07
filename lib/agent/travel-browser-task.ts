@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { runSecureBrowser } from './secure-computer'
+import { sanitizeBrowserReadDiagnostics } from './browser-read-diagnostics'
 import type { AgentActor } from './actor'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -154,8 +155,9 @@ export async function runLiveFlightBrowserTask(params: {
   }) } catch (error: any) {
     // Browser verification/timeouts are expected provider failures. The travel
     // orchestrator must still deliver its clearly labelled public-source fallback.
+    const browserReadDiagnostics = sanitizeBrowserReadDiagnostics(error?.browserReadDiagnostics)
     console.warn('TRAVEL_BROWSER_READ_FAILED:', String(error?.message || 'browser_read_failed').slice(0, 200))
-    return {status: 'failed' as const, options: [] as BrowserFlightOption[], browser: null, source: 'google-flights-browser' as const}
+    return {status: 'failed' as const, options: [] as BrowserFlightOption[], browser: null, source: 'google-flights-browser' as const, browserReadDiagnostics}
   }
 
   if (result.status === 'blocked') {
