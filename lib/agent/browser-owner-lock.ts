@@ -5,7 +5,17 @@ export type BrowserOwnerRelease=(()=>Promise<void>)&{reserveHandoff:()=>Promise<
 export async function acquireBrowserOwnerLock(sandbox:any):Promise<BrowserOwnerRelease>{
   const token=randomBytes(18).toString('base64url')
   const hold=String.raw`const fs=require('fs'),token=process.argv[1];
-if(fs.existsSync('gogo-handoff-transfer'))process.exit(1);
+if(fs.existsSync('gogo-handoff-transfer')){
+  // This process already holds flock: a live human takeover cannot be here.
+  // A cancelled reservation may survive a failed cleanup or snapshot restore.
+  // Only the matching explicit abort permits clearing it; every other transfer
+  // still reserves the browser and blocks automation.
+  const transfer=fs.readFileSync('gogo-handoff-transfer','utf8');
+  let aborted=false;
+  if(/^[A-Za-z0-9_-]+$/.test(transfer))try{aborted=fs.readFileSync('gogo-handoff-abort-'+transfer,'utf8')===transfer}catch{}
+  if(!aborted)process.exit(1);
+  fs.unlinkSync('gogo-handoff-transfer');
+}
 fs.writeFileSync('gogo-browser-held-'+token,'ready');
 const deadline=Date.now()+20*60*1000;
 setInterval(()=>{if(Date.now()>deadline||fs.existsSync('gogo-browser-release-'+token))process.exit(0)},50);`
