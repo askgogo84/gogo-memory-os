@@ -29,9 +29,13 @@ const FLIPKART_PAGE_DEPENDENCIES = ['static-assets-web.flixcart.com','rukminim2.
 // media-ik.croma.com, api.croma.com) were aborted and the SPA failed to render. First-party
 // croma.com hosts only; third-party (adobedtm/fullstory/rudderlabs/appdynamics/go-mpulse) stay blocked.
 const CROMA_PAGE_DEPENDENCIES = ['assets.croma.com','media-ik.croma.com','api.croma.com']
+// 7 Oct live flight read: the broker aborted these script/font hosts 12 times.
+// Grant only the observed hosts for Google Flights, never wildcard Google egress.
+const GOOGLE_FLIGHTS_PAGE_DEPENDENCIES = ['www.gstatic.com','fonts.googleapis.com','fonts.gstatic.com']
 
 export function browserPageAllowlist(url:string):Record<string,string[]>{
-  const host=new URL(url).hostname.toLowerCase()
+  const target=new URL(url)
+  const host=target.hostname.toLowerCase()
   const hosts=[host,`*.${host}`]
   // 3 Oct live cloud page lacked the flight widget. The public DOM loads its
   // booking/remoteEntry.js from a sibling host, not *.www.goindigo.in.
@@ -46,5 +50,7 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
   if(host==='www.croma.com'||host==='croma.com')hosts.push(...CROMA_PAGE_DEPENDENCIES)
   if(host==='www.swiggy.com'||host==='swiggy.com')hosts.push(...SWIGGY_PAGE_DEPENDENCIES)
   if(host==='www.zepto.com'||host==='zepto.com')hosts.push(...ZEPTO_PAGE_DEPENDENCIES)
+  if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights(?:\/|$)/.test(target.pathname))
+    hosts.push(...GOOGLE_FLIGHTS_PAGE_DEPENDENCIES)
   return Object.fromEntries(hosts.map(name=>[name,[]]))
 }
