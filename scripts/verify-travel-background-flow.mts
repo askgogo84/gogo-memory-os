@@ -60,6 +60,7 @@ const actor = {userId:'fixture-owner',legacyTelegramId:42,whatsappId:'+155555501
 const diagnostics = load('lib/agent/browser-read-diagnostics.ts',{})
 const rejectedActions = [{phase:'plan',reason:'unsupported_field',proposed:3,accepted:0,token:'fixture-private-token',selector:'#private'},
   {phase:'execution',reason:'control_unavailable',target:'passengers',matches:0,rendered:0,token:'fixture-private-token',selector:'#private'},
+  {phase:'execution',reason:'consequential_control',target:'passengers',guardContext:503,label:'fixture-private-token',selector:'#private'},
   {phase:'plan',reason:'not_allowlisted',proposed:3},{phase:'plan',reason:'plan_empty',accepted:0}]
 const browser = load('lib/agent/travel-browser-task.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[]})}}},
@@ -209,6 +210,7 @@ const failedBrowserStep=tables.agent_steps.find(step=>step.run_id===reply.runId)
 assert.equal(JSON.stringify(failedBrowserStep.output_json.browserReadDiagnostics),JSON.stringify([
   {phase:'plan',reason:'unsupported_field',proposed:3,accepted:0},
   {phase:'execution',reason:'control_unavailable',target:'passengers',matches:0,rendered:0},
+  {phase:'execution',reason:'consequential_control',target:'passengers',guardContext:503},
   {phase:'plan',reason:'plan_empty',accepted:0},
 ]),'the real queued fallback must retain safe action-rejection reasons after the sandbox stops')
 assert.doesNotMatch(JSON.stringify(failedBrowserStep.output_json),/fixture-private-token|#private|not_allowlisted/,'diagnostics never persist arbitrary fields')

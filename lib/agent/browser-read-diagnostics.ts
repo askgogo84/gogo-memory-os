@@ -16,6 +16,8 @@ export type BrowserReadDiagnostic = {
   target?:typeof browserReadTargets[number]
   matches?:number
   rendered?:number
+  /** Public-flight guard predicate bits only; no DOM labels or selectors. */
+  guardContext?:number
   proposed?:number
   normalized?:number
   accepted?:number
@@ -31,6 +33,7 @@ export function sanitizeBrowserReadDiagnostics(value:unknown):BrowserReadDiagnos
     if(!item||!['plan','assessment','execution'].includes(item.phase)||!browserReadReasons.includes(item.reason))return []
     const clean:BrowserReadDiagnostic={phase:item.phase,reason:item.reason}
     if(browserReadTargets.includes(item.target))clean.target=item.target
+    if(Number.isInteger(item.guardContext)&&item.guardContext>=0&&item.guardContext<=8191)clean.guardContext=item.guardContext
     for(const key of ['proposed','normalized','accepted','evidenceCount','pageChars','matches','rendered'] as const){
       if(Number.isInteger(item[key])&&item[key]>=0&&item[key]<=20000)clean[key]=item[key]
     }

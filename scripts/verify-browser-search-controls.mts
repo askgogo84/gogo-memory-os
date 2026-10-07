@@ -268,7 +268,7 @@ for(const [url,label,expectedWaits,expectedClicks] of [
 await exports.planActions('Find vegetarian burgers',observedLinkPage,'read','USER_INSTRUCTION')
 // Live two-adult research stopped after a form action was rejected as
 // consequential. Observed passenger controls reproduce the rejection below.
-const passengerGuard=exports.BROWSER_SCRIPT.match(/async function isConsequentialControl\(page,selector,onUnavailable\)\{[\s\S]*?\n\}\n(?=\(async)/)![0]
+const passengerGuard=exports.BROWSER_SCRIPT.match(/async function isConsequentialControl\(page,selector,onUnavailable,onContext\)\{[\s\S]*?\n\}\n(?=\(async)/)![0]
 for(const [url,label,dialogLabel,searchRegion,form,expected] of [
  ['https://www.google.com/travel/flights','1 passenger, change number of passengers.','',true,false,false],
  ['https://www.google.com/travel/flights','2 passengers, change number of passengers.','',false,false,true],
@@ -292,6 +292,11 @@ for(const [url,label,dialogLabel,searchRegion,form,expected] of [
  const page={url:()=>url,locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element)})})}
  const result=await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed")',{page,location:{href:url}})
  assert.equal(result,expected,`public passenger guard: ${url} / ${label} / ${dialogLabel}`)
+ let guardContext:any
+ await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed",undefined,onContext)',{page,location:{href:url},onContext:(value:any)=>{guardContext=value}})
+ if(url==='https://www.google.com/travel/flights'&&label.startsWith('2 passengers')){
+   assert.equal(guardContext,503,'the real rejection preserves which public passenger guard predicates were satisfied; missing search ancestry clears bit8')
+ }
 }
 assert.match(captured,/"href":"https:\/\/www.zomato.com\/restaurants"/,'planner can distinguish restaurant navigation from a same-page footer link')
 assert.match(captured,/"previousActions":\[{"kind":"click","status":"done"/,'last attempted action survives into the next planning wave')
@@ -566,13 +571,13 @@ assert.equal(recoveryClicks,1,'an unchanged search may be recovered once, never 
 
 // Flight widgets need separate observations to open/fill/select two airports and dates.
 // Fixtures verify the actual loop, not live fares or provider access.
-async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight-late'|'google-flight-skipped'|'blocked-control'|'never-complete') {
+async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight-late'|'google-flight-skipped'|'blocked-control'|'never-complete',guardContext?:number) {
   const exported:any={};let steps=0,plans=0,assessments=0
   const required=scenario==='google-flight-late'?14:scenario==='flight'||scenario==='google-flight'?8:2
   const makePage=()=>({url:scenario.startsWith('google-flight')?'https://www.google.com/travel/flights':'https://fixture.example/flights',title:'Flight search',
     text:scenario!=='never-complete'&&steps>=required?'BLR to BOM 12 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000':(scenario==='never-complete'?'Choose route and date':'Choose route and date step '+steps),
     forms:[],links:[],controls:[{selector:'#commit',tag:'button',label:'Book now'},{selector:'#safe',tag:'button',label:scenario==='google-flight-skipped'?'1 passenger, change number of passengers.':'Search flights'}],
-    actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:scenario==='google-flight-skipped'||steps===1&&scenario==='blocked-control'?'skipped':'done',failure:scenario==='google-flight-skipped'?{reason:'control_unavailable',matches:0,rendered:0,token:'private',selector:'#private'}:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
+    actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:scenario==='google-flight-skipped'||steps===1&&scenario==='blocked-control'?'skipped':'done',failure:scenario==='google-flight-skipped'?{reason:guardContext===undefined?'control_unavailable':'consequential_control',guardContext,matches:0,rendered:0,token:'private',selector:'#private'}:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
   runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
     exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
@@ -601,7 +606,8 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight
   if(scenario==='google-flight-skipped'){
     await assert.rejects(execute,(error:any)=>{
       const action=error.browserReadDiagnostics?.find((d:any)=>d.phase==='execution')
-      assert.equal(action?.reason,'control_unavailable','the real failed read preserves its first worker rejection')
+      assert.equal(action?.reason,guardContext===undefined?'control_unavailable':'consequential_control','the real failed read preserves its first worker rejection')
+      assert.equal(action?.guardContext,guardContext,'fixed public guard predicates survive the actual worker loop')
       assert.equal(action?.target,'passengers');assert.equal(action?.matches,0);assert.equal(action?.rendered,0)
       assert.doesNotMatch(JSON.stringify(error.browserReadDiagnostics),/private|selector|token/)
       return /browser_objective_unverified/.test(error.message)
@@ -616,6 +622,7 @@ await multiStepFixture('flight')
 await multiStepFixture('google-flight')
 await multiStepFixture('google-flight-late')
 await multiStepFixture('google-flight-skipped')
+await multiStepFixture('google-flight-skipped',503)
 await multiStepFixture('blocked-control')
 await multiStepFixture('never-complete')
 console.log('PASS: multi-step flight research can complete, blocked commit stays blocked while another read control is tried, and unfinished research remains bounded')
@@ -779,6 +786,7 @@ assert.equal(boundedExecution.length,32);assert.equal(boundedExecution[0].reason
 assert.doesNotMatch(JSON.stringify(boundedExecution),/private|selector|token/)
 assert.deepEqual(sanitizeBrowserReadDiagnostics([{phase:'execution',reason:'control_unavailable',target:'private-selector',matches:-1,rendered:20001}]),[{phase:'execution',reason:'control_unavailable'}])
 assert.deepEqual(sanitizeBrowserReadDiagnostics('private'),[])
+assert.deepEqual(sanitizeBrowserReadDiagnostics([{phase:'execution',reason:'consequential_control',guardContext:503,selector:'#private',label:'private'},{phase:'execution',reason:'consequential_control',guardContext:8192},{phase:'execution',reason:'consequential_control',guardContext:'private'}]),[{phase:'execution',reason:'consequential_control',guardContext:503},{phase:'execution',reason:'consequential_control'},{phase:'execution',reason:'consequential_control'}])
 const assessmentDiagnostics:any[]=[]
 await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,url:'https://www.amazon.in/s?k=Sony'},(e:any)=>assessmentDiagnostics.push(e))
 assert.equal(assessmentDiagnostics[0].reason,'needs_product_detail')
