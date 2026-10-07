@@ -405,6 +405,21 @@ async function isPublicSearchInput(page,selector){
 }
 async function isConsequentialControl(page,selector,onUnavailable){
   try{return await page.locator(selector).first().evaluate(el=>{
+    // The observed Google passenger dialog adjusts a public search filter.
+    // Its launcher, Add/Remove adult and Done buttons have no type attribute. Scope the
+    // exception to this exact HTTPS provider, search region and modal; generic
+    // Add, cancellation, form submission and booking controls stay blocked.
+    const passengerDialog=el.closest?.('[role="dialog"]');
+    const passengerLabel=(el.getAttribute('aria-label')||el.textContent||'').trim();
+    if(typeof location!=='undefined'&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href)
+      &&el.tagName==='BUTTON'&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'
+      &&el.closest?.('[role="search"]')
+      &&!el.form&&!el.closest('form')&&el.getAttribute('formaction')===null&&el.getAttribute('formmethod')===null
+      &&el.getAttribute('type')!=='submit'
+      &&(!passengerDialog&&/^[1-9] passengers?, change number of passengers\.$/.test(passengerLabel)
+        ||passengerDialog?.getAttribute('aria-label')==='Number of passengers'
+          &&passengerDialog.getAttribute('aria-modal')==='true'&&passengerDialog.closest('[role="search"]')
+          &&/^(?:Add adult|Remove adult|Done|Cancel)$/.test(passengerLabel)))return false;
     const t=(el.getAttribute('type')||'').toLowerCase();
     const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
     if(/\b(add|remove|increase|decrease)\b/.test(text)||/^[+−-]$/.test(text))return true;
