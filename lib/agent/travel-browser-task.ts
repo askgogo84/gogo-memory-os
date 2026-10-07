@@ -129,7 +129,7 @@ export function googleFlightOptionsFromEvidence(result:any,context:BrowserFlight
   const date=new Date(`${context.startDate}T00:00:00Z`)
   // The selected count alone does not say whether a price is per-person or
   // for the whole party. Require Google's visible, explicit fare-basis line.
-  const basis=String(result.pageText||'').match(/\bPrices include required taxes\s*\+\s*fees for (one|[1-9]) adults?\b/i)
+  const basis=String(evidence.fareBasisLabel||result.pageText||'').match(/\bPrices include required taxes\s*\+\s*fees for (one|[1-9]) adults?\b/i)
   const farePassengers=basis?.[1]?.toLowerCase()==='one'?1:Number(basis?.[1])
   const partyTotal=Number.isInteger(farePassengers)&&farePassengers===(context.adults||1)
   const month=new Intl.DateTimeFormat('en',{month:'long',timeZone:'UTC'}).format(date)

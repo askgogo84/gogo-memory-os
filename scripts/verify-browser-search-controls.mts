@@ -643,6 +643,15 @@ assert.equal(await sourceChecks.assessReadOutcome('Read the flight rows',{...par
 assert.equal(await sourceChecks.assessReadOutcome('Read the flight rows',{...partyPage,flightEvidence:{...partyPage.flightEvidence,searchControls:partyControls.map(label=>label.replace('2026-10-20','2026-02-30'))}}),null,
  'an invalid observed ISO date cannot become a validated public date')
 flightAssessment=false
+// The assessor reads 18k of body evidence, while the published browser result
+// intentionally retains only 9k. Fare basis must survive that boundary.
+const lateFareBasis='Prices include required taxes + fees for 2 adults.'
+recoveryClicks=1;recoveryResultRows=true
+const lateBasisPage={...partyPage,text:'Public flight information. '.repeat(380)+lateFareBasis+' BLR to BOM 20 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000',controls:[],forms:[],links:[]}
+recoveryExports.testInspect(async()=>({page:lateBasisPage,releaseOwnerLock:async()=>{},sandbox:recoverySandbox,name:'fixture',managed:{allow:{},env:{},release:async()=>{}}}))
+const lateBasisResult=await recoveryExports.runSecureBrowser({userId:'fixture',url:lateBasisPage.url,objective:'Read flight rows',mode:'read'})
+assert.doesNotMatch(lateBasisResult.pageText,/Prices include required/,'the fixture actually exercises the 9k output truncation')
+assert.equal(lateBasisResult.flightEvidence.fareBasisLabel,lateFareBasis,'the real secure-browser return preserves observed fare basis before body truncation')
 console.log('PASS: observed product source handoff and search-result completion boundary')
 
 // 7 Oct production: the page was ready and the assessor claimed completion,

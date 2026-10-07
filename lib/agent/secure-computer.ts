@@ -58,7 +58,7 @@ type BrowserAction =
   | { kind:'submit'; selector:string }
 
 export type SecureBrowserResult = {
-  flightEvidence?:{searchControls:string[];resultLabels:string[]}
+  flightEvidence?:{searchControls:string[];resultLabels:string[];fareBasisLabel?:string}
   status:'completed'|'prepared'|'blocked'|'failed'
   url:string
   sourceUrl?:string
@@ -1258,11 +1258,13 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     if(params.mode==='draft'&&(!draftReady||page.draftVerified!==true||draftObjectiveCovered(params.objective,page,draftActions)===false))throw new Error('browser_objective_unverified')
     if(!params.keepAlive){await releaseManagedOnce();await first.sandbox.stop().catch(()=>{})}
     const prepared=params.mode==='draft'
+    const fareBasisLabel=googleFlightReadProgress(page)
+      ?String(page.text||'').match(/\bPrices include required taxes\s*\+\s*fees for (?:one|[1-9]) adults?\b\.?/i)?.[0]:undefined
     return {
       status:prepared?'prepared':'completed',url:safeText(page.url||target,1200),sourceUrl:browserSourceUrl(page.url)||undefined,title:safeText(page.title,300),
       summary:params.mode==='read'?readAnswer!:prepared?'Gogo prepared the browser flow and stopped before submit.':executionEvidence!,
       pageText:safeText(page.text,9000),forms:Array.isArray(page.forms)?page.forms.slice(0,12).map((form:any)=>({...form,action:safeText(form?.action,1200)})):[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
-      ...(page.flightEvidence?{flightEvidence:page.flightEvidence}:{}),
+      ...(page.flightEvidence?{flightEvidence:{...page.flightEvidence,...(fareBasisLabel?{fareBasisLabel:safeText(fareBasisLabel,120)}:{})}}:{}),
     }
   } catch (error:any) {
     if(!params.keepAlive){await releaseManagedOnce();await activeSandbox?.stop().catch(()=>{})}

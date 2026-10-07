@@ -152,6 +152,8 @@ const partyGoogle={...observedGoogle,pageText:'Prices include required taxes + f
 const partyOptions=browser.googleFlightOptionsFromEvidence(partyGoogle,partyContext)
 assert.equal(partyOptions[0].fareInr,8846)
 assert.match(browser.formatBrowserFlightResult(partyContext,partyOptions,partyGoogle.url),/total for 2 adults/,'a verified displayed party total is labelled and never multiplied')
+const structuredParty=browser.googleFlightOptionsFromEvidence({...partyGoogle,pageText:'Truncated public body',flightEvidence:{...partyGoogle.flightEvidence,fareBasisLabel:partyGoogle.pageText}},partyContext)
+assert.match(browser.formatBrowserFlightResult(partyContext,structuredParty,partyGoogle.url),/₹8,846 total for 2 adults/,'structured observed fare basis survives truncated result text')
 for(const pageText of ['','Prices include required taxes + fees for one adult.','Prices include required taxes + fees for 3 adults.']){
  const unknownBasis=browser.googleFlightOptionsFromEvidence({...partyGoogle,pageText},partyContext)
  assert.match(browser.formatBrowserFlightResult(partyContext,unknownBasis,partyGoogle.url),/party total not verified/,'selected passengers alone cannot establish fare basis')
