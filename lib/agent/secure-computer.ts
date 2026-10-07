@@ -734,7 +734,15 @@ function detectProviderAccessBlock(page:any){
 function googleFlightReadProgress(page:any,actions:BrowserAction[]=[]){
   try{const url=new URL(page.url);if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))return null}catch{return null}
   const controls=page.controls||[]
-  const target=(control:any)=>control?.role==='option'?'option':/^where (?:from|to|else)\?/i.test(control?.label||'')?'airport':/^(?:departure|return)$/i.test(control?.label||'')?'date':/ticket type/i.test(control?.label||'')?'trip-type':/^done\b/i.test(control?.label||'')?'calendar-done':/^search$/i.test(control?.label||'')?'search':'other'
+  const target=(control:any):NonNullable<BrowserReadDiagnostic['target']>=>control?.role==='option'?'option'
+    :/^where (?:from|to|else)\?/i.test(control?.label||'')?'airport'
+    :/^(?:departure|return)$/i.test(control?.label||'')?'date'
+    :/ticket type/i.test(control?.label||'')?'trip-type'
+    :/seating class/i.test(control?.label||'')?'cabin'
+    :/^\d+ passengers?\b/i.test(control?.label||'')?'passengers'
+    :/^(?:add|remove) adult$/i.test(control?.label||'')?'adult-count'
+    :/^done\b/i.test(control?.label||'')?(/number of passengers/i.test(page.activeDialog||'')?'passenger-done':'calendar-done')
+    :/^search$/i.test(control?.label||'')?'search':'other'
   return {options:controls.filter((c:any)=>c.role==='option').length,
     airportFieldsFilled:controls.filter((c:any)=>target(c)==='airport'&&c.value).length,
     dateFieldsFilled:controls.filter((c:any)=>c.publicFilter==='flight-date'&&c.value).length,
@@ -1016,7 +1024,7 @@ function normalizeActionLog(values:any[]){
 export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean}):Promise<SecureBrowserResult>{
   const readDeadline=params.mode==='read'?Date.now()+READ_BUDGET_MS:undefined
   const readDiagnostics:BrowserReadDiagnostic[]=[]
-  const diagnose=(event:BrowserReadDiagnostic)=>{readDiagnostics.push(event);if(readDiagnostics.length>32)readDiagnostics.shift()}
+  const diagnose=(event:BrowserReadDiagnostic)=>{readDiagnostics.splice(0,readDiagnostics.length,...sanitizeBrowserReadDiagnostics([...readDiagnostics,event]))}
   let releaseOwnerLock:BrowserOwnerRelease|undefined
   let executionStarted=false
   let activeSandbox:{stop:()=>Promise<unknown>}|undefined
@@ -1213,6 +1221,20 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       const previousPage=page
       page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]));mergeBlocked(page)
+      if(params.mode==='read'&&googleFlightReadProgress(previousPage)){
+        // Keep only fixed public control categories and worker reason/counts.
+        // The fresh two-adult failure retained skipped reasons but lost which
+        // boundary was skipped; raw selectors/page/account data are unnecessary.
+        for(const [index,outcome] of (page.actions||[]).entries()){
+          if(outcome?.kind!==actions[index]?.kind)continue
+          const diagnostic=sanitizeBrowserReadDiagnostics([{
+            phase:'execution',reason:outcome.status==='done'?'action_done':outcome.failure?.reason||'action_skipped',
+            target:googleFlightReadProgress(previousPage,[actions[index]])?.actions[0]?.target,
+            matches:outcome.failure?.matches,rendered:outcome.failure?.rendered,
+          }])[0]
+          if(diagnostic){diagnose(diagnostic);console.log('BROWSER_FLIGHT_ACTION:',JSON.stringify(diagnostic))}
+        }
+      }
       if(params.mode==='read')for(const action of actions){
         if(action.kind!=='search_enter'||!(page.actions||[]).some((a:any)=>a.kind==='search_enter'&&a.status==='done'&&a.detail===action.selector))continue
         const field=(previousPage.controls||[]).find((c:any)=>c.selector===action.selector)

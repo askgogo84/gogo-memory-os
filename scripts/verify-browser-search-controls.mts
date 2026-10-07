@@ -566,13 +566,13 @@ assert.equal(recoveryClicks,1,'an unchanged search may be recovered once, never 
 
 // Flight widgets need separate observations to open/fill/select two airports and dates.
 // Fixtures verify the actual loop, not live fares or provider access.
-async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight-late'|'blocked-control'|'never-complete') {
+async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight-late'|'google-flight-skipped'|'blocked-control'|'never-complete') {
   const exported:any={};let steps=0,plans=0,assessments=0
   const required=scenario==='google-flight-late'?14:scenario==='flight'||scenario==='google-flight'?8:2
   const makePage=()=>({url:scenario.startsWith('google-flight')?'https://www.google.com/travel/flights':'https://fixture.example/flights',title:'Flight search',
     text:scenario!=='never-complete'&&steps>=required?'BLR to BOM 12 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000':(scenario==='never-complete'?'Choose route and date':'Choose route and date step '+steps),
-    forms:[],links:[],controls:[{selector:'#commit',tag:'button',label:'Book now'},{selector:'#safe',tag:'button',label:'Search flights'}],
-    actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:steps===1&&scenario==='blocked-control'?'skipped':'done',failure:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
+    forms:[],links:[],controls:[{selector:'#commit',tag:'button',label:'Book now'},{selector:'#safe',tag:'button',label:scenario==='google-flight-skipped'?'1 passenger, change number of passengers.':'Search flights'}],
+    actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:scenario==='google-flight-skipped'||steps===1&&scenario==='blocked-control'?'skipped':'done',failure:scenario==='google-flight-skipped'?{reason:'control_unavailable',matches:0,rendered:0,token:'private',selector:'#private'}:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
   runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
     exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
@@ -585,6 +585,7 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight
       if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string,_u:any,system?:string)=>{
         if(system?.startsWith('Evaluate whether')){assessments++;return JSON.stringify({complete:scenario!=='never-complete'&&steps>=required,evidence:[makePage().text]})}
         plans++
+        if(scenario==='google-flight-skipped'&&plans>1)return JSON.stringify({actions:[]})
         if(scenario==='blocked-control'&&plans===2){
           const choices=JSON.parse(prompt.split('OBSERVED_CHOICES: ')[1])
           assert.ok(!choices.some((c:any)=>c.selector==='#commit'),'blocked commit cannot be offered for another read click')
@@ -597,13 +598,24 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight
   const sandbox={updateNetworkPolicy:async()=>{},stop:async()=>{},runCommand:async()=>{steps++;return {exitCode:0,stdout:async()=>JSON.stringify(makePage())}}}
   exported.testInspect(async()=>({page:makePage(),releaseOwnerLock:async()=>{},sandbox,name:'fixture',managed:{allow:{},env:{},release:async()=>{}}}))
   const execute=()=>exported.runSecureBrowser({userId:'fixture',url:'https://fixture.example/flights',objective:'Find BLR to BOM for 12 October 2026, 1 adult economy and displayed fare',mode:'read'})
-  if(scenario==='never-complete'){await assert.rejects(execute,/browser_objective_unverified/);assert.equal(steps,2,'unchanged pages stop after two attempts instead of exhausting the larger budget')}
+  if(scenario==='google-flight-skipped'){
+    await assert.rejects(execute,(error:any)=>{
+      const action=error.browserReadDiagnostics?.find((d:any)=>d.phase==='execution')
+      assert.equal(action?.reason,'control_unavailable','the real failed read preserves its first worker rejection')
+      assert.equal(action?.target,'passengers');assert.equal(action?.matches,0);assert.equal(action?.rendered,0)
+      assert.doesNotMatch(JSON.stringify(error.browserReadDiagnostics),/private|selector|token/)
+      return /browser_objective_unverified/.test(error.message)
+    })
+    assert.equal(steps,1,'diagnosis does not retry an unchanged missing control')
+  }
+  else if(scenario==='never-complete'){await assert.rejects(execute,/browser_objective_unverified/);assert.equal(steps,2,'unchanged pages stop after two attempts instead of exhausting the larger budget')}
   else {const result=await execute();assert.equal(result.status,'completed');assert.equal(steps,required)}
   if(scenario.startsWith('google-flight'))assert.equal(assessments,1,'only the result page is assessed; empty form steps do not consume completion calls')
 }
 await multiStepFixture('flight')
 await multiStepFixture('google-flight')
 await multiStepFixture('google-flight-late')
+await multiStepFixture('google-flight-skipped')
 await multiStepFixture('blocked-control')
 await multiStepFixture('never-complete')
 console.log('PASS: multi-step flight research can complete, blocked commit stays blocked while another read control is tried, and unfinished research remains bounded')
@@ -761,6 +773,11 @@ console.log('PASS: overlapping read reuses the original owner task, without anot
 // Persist only bounded diagnostic metadata, never page content or model output.
 assert.deepEqual(sanitizeBrowserReadDiagnostics([{phase:'plan',reason:'invalid_reference',proposed:1,accepted:0,text:'private',url:'https://private',token:'secret',pageChars:NaN,evidenceCount:-1,normalized:20001},{phase:'plan',reason:'private-secret'},null]),[{phase:'plan',reason:'invalid_reference',proposed:1,accepted:0}])
 assert.equal(sanitizeBrowserReadDiagnostics(Array.from({length:40},()=>({phase:'assessment',reason:'model_incomplete'}))).length,32)
+const firstExecutionFailure={phase:'execution',reason:'control_unavailable',target:'passengers',matches:0,rendered:0,selector:'#private',token:'private'}
+const boundedExecution=sanitizeBrowserReadDiagnostics([firstExecutionFailure,...Array.from({length:40},()=>({phase:'execution',reason:'action_done',target:'date'}))])
+assert.equal(boundedExecution.length,32);assert.equal(boundedExecution[0].reason,'control_unavailable')
+assert.doesNotMatch(JSON.stringify(boundedExecution),/private|selector|token/)
+assert.deepEqual(sanitizeBrowserReadDiagnostics([{phase:'execution',reason:'control_unavailable',target:'private-selector',matches:-1,rendered:20001}]),[{phase:'execution',reason:'control_unavailable'}])
 assert.deepEqual(sanitizeBrowserReadDiagnostics('private'),[])
 const assessmentDiagnostics:any[]=[]
 await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,url:'https://www.amazon.in/s?k=Sony'},(e:any)=>assessmentDiagnostics.push(e))

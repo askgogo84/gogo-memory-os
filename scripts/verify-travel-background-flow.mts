@@ -59,6 +59,7 @@ const db = {
 const actor = {userId:'fixture-owner',legacyTelegramId:42,whatsappId:'+15555550101',name:'Fixture',timezone:'Asia/Kolkata'}
 const diagnostics = load('lib/agent/browser-read-diagnostics.ts',{})
 const rejectedActions = [{phase:'plan',reason:'unsupported_field',proposed:3,accepted:0,token:'fixture-private-token',selector:'#private'},
+  {phase:'execution',reason:'control_unavailable',target:'passengers',matches:0,rendered:0,token:'fixture-private-token',selector:'#private'},
   {phase:'plan',reason:'not_allowlisted',proposed:3},{phase:'plan',reason:'plan_empty',accepted:0}]
 const browser = load('lib/agent/travel-browser-task.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[]})}}},
@@ -206,7 +207,9 @@ assert.doesNotMatch(tables.agent_runs[0].metadata_json.result_text,/₹4,999/,'u
 assert.match(tables.agent_runs[0].metadata_json.result_text,/could not|not completed live|could not find/i)
 const failedBrowserStep=tables.agent_steps.find(step=>step.run_id===reply.runId)
 assert.equal(JSON.stringify(failedBrowserStep.output_json.browserReadDiagnostics),JSON.stringify([
-  {phase:'plan',reason:'unsupported_field',proposed:3,accepted:0},{phase:'plan',reason:'plan_empty',accepted:0},
+  {phase:'plan',reason:'unsupported_field',proposed:3,accepted:0},
+  {phase:'execution',reason:'control_unavailable',target:'passengers',matches:0,rendered:0},
+  {phase:'plan',reason:'plan_empty',accepted:0},
 ]),'the real queued fallback must retain safe action-rejection reasons after the sandbox stops')
 assert.doesNotMatch(JSON.stringify(failedBrowserStep.output_json),/fixture-private-token|#private|not_allowlisted/,'diagnostics never persist arbitrary fields')
 assert.equal(JSON.stringify(tables.agent_activity.find(row=>row.run_id===reply.runId&&row.event_type==='browser_research_incomplete')?.metadata_json?.browserReadDiagnostics),
