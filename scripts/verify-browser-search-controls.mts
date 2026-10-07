@@ -45,6 +45,23 @@ for(const label of ['One way','Chhatrapati Shivaji Maharaj International Airport
 const departure=snapshot('Departure','INPUT',true,false,false,'https://www.google.com/travel/flights','Tue, Oct 20').controls[0]
 assert.equal(departure.publicFilter,'flight-date');assert.equal(departure.value,'Tue, Oct 20')
 assert.equal(snapshot('Departure','INPUT',true,false,false,'https://www.google.com.evil.example/travel/flights','private').controls[0].value,undefined)
+// Both real airport dialogs use Where else?. The actual dialog identifies
+// which route end is being edited; background fields must not compete.
+for(const end of ['origin','destination']){
+ const root:any={tagName:'BODY',nodeType:1,children:[],parentElement:null,id:'',innerText:'Public flight form'}
+ const make=(label:string)=>({tagName:'INPUT',nodeType:1,id:'',children:[],parentElement:root,innerText:'',textContent:'',value:'Mumbai',
+  getAttribute:(key:string)=>key==='placeholder'?label:null,matches:()=>true,querySelectorAll:()=>[],getBoundingClientRect:()=>({width:200,height:40})})
+ const background=make('Where from?'),picker=make('Where else?')
+ const dialog:any={tagName:'DIV',nodeType:1,id:'',children:[picker],parentElement:root,
+  getAttribute:(key:string)=>key==='role'?'dialog':key==='aria-modal'?'true':key==='aria-label'?`Enter your ${end}`:null,
+  getBoundingClientRect:()=>({width:300,height:400}),contains:(el:any)=>el===picker}
+ picker.parentElement=dialog;root.children=[background,dialog];root.querySelectorAll=()=>[background,picker]
+ const doc={title:'Flight form',body:root,forms:[],querySelectorAll:(selector:string)=>selector==='[role="dialog"][aria-modal="true"]'?[dialog]:selector==='a[href]'?[]:[background,picker]}
+ const modalPage=runInNewContext(`(()=>{${body}})()`,{document:doc,location:{href:'https://www.google.com/travel/flights'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
+ assert.equal(modalPage.activeDialog,`Enter your ${end}`)
+ assert.equal(modalPage.controls.length,1);assert.equal(modalPage.controls[0].label,'Where else?')
+ assert.equal(modalPage.forms[0].inputs.length,1,'background form inputs are omitted as well as controls')
+}
 for(const [provider,label,tag,field] of [
   ['Instamart','Search for milk','DIV',false],
   ['Amazon','Search Amazon.in','INPUT',true],
@@ -87,7 +104,7 @@ assert.equal(snapshot('Search','DIV',false,true).controls.length,0,'hidden contr
 assert.equal(snapshot('Search Veg Burger - Delivery','DIV',false,false,true).controls.length,0,'focus shell is not an actionable search control')
 // Observed IndiGo From wrapper has role=button and a labelled direct child.
 // Inserting a sibling during hydration must not redirect its observed locator.
-const selectorSource=body.slice(body.indexOf('const selectorFor ='),body.indexOf('const candidates='))
+const selectorSource=body.slice(body.indexOf('const selectorFor ='),body.indexOf('// Google labels BOTH'))
 const airportLabel={tagName:'DIV',nodeType:1,getAttribute:(key:string)=>key==='aria-label'?'sourceCity Delhi Selected':null}
 const airportWrapper:any={tagName:'DIV',nodeType:1,id:'',children:[airportLabel],getAttribute:(key:string)=>key==='role'?'button':null}
 const airportRoot:any={tagName:'BODY',nodeType:1,id:'',parentElement:null,children:[airportWrapper],getAttribute:()=>null}

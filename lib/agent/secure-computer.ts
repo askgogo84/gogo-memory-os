@@ -251,7 +251,12 @@ async function model(page){
       }
       return parts.join(' > ');
     };
-    const candidates=Array.from(document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[role="option"],[tabindex],div,span,p')).filter(visible);
+    // Google labels BOTH airport dialog inputs "Where else?". Preserve the
+    // observed origin/destination dialog and omit competing background fields.
+    const activeDialog=/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href)
+      ?Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).find(el=>el.getAttribute('role')==='dialog'&&el.getAttribute('aria-modal')==='true'&&visible(el)):null;
+    const actionable=el=>visible(el)&&(!activeDialog||activeDialog.contains(el));
+    const candidates=Array.from(document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[role="option"],[tabindex],div,span,p')).filter(actionable);
     const allControls=candidates.filter(el=>{
       if(el.disabled||el.getAttribute('aria-disabled')==='true')return false;
       // The observed IndiGo From wrapper remains clickable around an expanded
@@ -292,12 +297,13 @@ async function model(page){
     };
     return {
       url:location.href,title:document.title,
+      ...(activeDialog?{activeDialog:clean(activeDialog.getAttribute('aria-label')||activeDialog.getAttribute('aria-labelledby')||'Public flight picker')}:{}),
       text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
-      links:Array.from(document.querySelectorAll('a[href]')).filter(visible).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).sort((a,b)=>relevance(b.text)-relevance(a.text)).slice(0,100),
+      links:Array.from(document.querySelectorAll('a[href]')).filter(actionable).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).sort((a,b)=>relevance(b.text)-relevance(a.text)).slice(0,100),
       controls,
-      forms:[...Array.from(document.forms).filter(visible),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&visible(el))?[document.body]:[])].slice(0,16).map(f=>({
+      forms:[...Array.from(document.forms).filter(visible),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&actionable(el))?[document.body]:[])].slice(0,16).map(f=>({
         action:f.action||location.href,method:(f.method||'get').toLowerCase(),
-        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(visible).slice(0,60).map(inputs)
+        inputs:Array.from(f.querySelectorAll('input,textarea,select')).filter(actionable).slice(0,60).map(inputs)
       }))
     };
   });
@@ -735,6 +741,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
   const pageModel={
     url:safeText(page.url,1200),
     title:safeText(page.title,500),
+    ...(page.activeDialog?{activeDialog:safeText(page.activeDialog,180)}:{}),
     text:safeText(page.text,10000),
     controls:(page.controls||[]).filter((control:any)=>!rejectedControls.has(String(control.selector))).slice(0,100).map((control:any)=>({
       selector:String(control.selector||'').slice(0,1800),tag:safeText(control.tag,30),
