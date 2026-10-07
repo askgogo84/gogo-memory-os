@@ -1,4 +1,5 @@
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
+import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
 import { namesRetailerPriceRead } from '@/lib/commerce/comparison-model'
 import {detectFriendReminder, getPendingFriend, isFriendReminderFollowupCandidate} from '@/lib/bot/handlers/friend-reminders'
 import {runCompoundShoppingFriendRequests} from '@/lib/bot/compound-shopping-friend'
@@ -875,6 +876,13 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, images and PDFs now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    const contentDraft = await tryRunContentWorkflow({userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId,
+      whatsappId: String(resolvedUser.whatsappId || from), name: resolvedUser.name || profileName || 'Gogo'}, text, inboundMessageSid)
+    if (contentDraft) {
+      await sendWhatsAppMessage(from, contentDraft.text)
+      return new NextResponse(emptyTwiml(), {status: 200, headers: {'Content-Type': 'text/xml'}})
     }
 
     // A multiline WhatsApp bubble can contain separate retailer reads and a

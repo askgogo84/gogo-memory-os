@@ -1,4 +1,6 @@
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
+import {namesRetailerPriceRead} from '@/lib/commerce/comparison-model'
+import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { randomUUID } from 'node:crypto'
@@ -45,6 +47,8 @@ export async function POST(request: Request) {
 
   try {
     const actor = await resolveAgentActor(session)
+    const contentDraft = await tryRunContentWorkflow(actor, text, body?.messageId)
+    if (contentDraft) return NextResponse.json({...contentDraft, status: 'completed', capability: 'memory', risk: 'low'})
     const typedReply=await tryTypedTimeRouting({actor,text,surface:session.surface,messageId:`agent-${randomUUID()}`})
     if(typedReply)return NextResponse.json(typedReply)
     const brainReply = await trySameBrainIntrospection({ actor, text })
@@ -54,7 +58,7 @@ export async function POST(request: Request) {
       await attachRunToThread(session.telegramId, result?.runId, thread?.id || null)
       return NextResponse.json(result, { status })
     }
-    const food=(/\bcompar(?:e|ison|isons)\b/i.test(text) ? await tryPriceComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface}) : null) || await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface})
+    const food=(/\bcompar(?:e|ison|isons)\b/i.test(text)||namesRetailerPriceRead(text) ? await tryPriceComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface}) : null) || await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface})
     if(food){
       // The location handoff is resumed against the shared last assistant turn.
       // Persist it here too, so a reply can arrive on WhatsApp or dashboard chat.

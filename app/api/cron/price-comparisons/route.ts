@@ -28,10 +28,7 @@ export async function GET(request: Request) {
     }
     // Scan terminal tasks separately: a Twilio rejection must not strand a
     // completed browser result after its agent_run leaves the active queue.
-    const {data: terminal, error: terminalError} = await supabaseAdmin.from('agent_runs')
-      .select('id,telegram_id').eq('type', 'price_comparison').eq('source', 'whatsapp')
-      .in('status', ['completed', 'paused']).is('metadata_json->>notified', null)
-      .order('updated_at', {ascending: false}).limit(20)
+    const {data: terminal, error: terminalError} = await supabaseAdmin.rpc('due_price_comparison_deliveries', {p_limit: 20})
     if (terminalError) throw new Error('comparison_delivery_queue_read_failed')
     let attempted = 0
     let deliveryFailures = 0
@@ -52,7 +49,8 @@ export async function GET(request: Request) {
         console.error('PRICE_COMPARISON_DELIVERY_FAILED:', {runId: row.id, error: error instanceof Error ? error.message : 'unknown'})
       }
     }
-    return NextResponse.json({ok: true, checked: rows?.length || 0, advanceFailures, deliveryAttempts: attempted, deliveryFailures})
+    const ok = advanceFailures === 0 && deliveryFailures === 0
+    return NextResponse.json({ok, checked: rows?.length || 0, advanceFailures, deliveryAttempts: attempted, deliveryFailures}, {status: ok ? 200 : 503})
   } catch (error) {
     console.error('PRICE_COMPARISON_WORKER_FAILED', error instanceof Error ? error.message : 'unknown')
     return NextResponse.json({error: 'comparison_worker_failed'}, {status: 500})

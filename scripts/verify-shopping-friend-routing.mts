@@ -4,6 +4,7 @@ import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import {parsePriceComparison, namesRetailerPriceRead} from '../lib/commerce/comparison-model'
 import {formatOutgoingText} from '../lib/bot/format-response'
+import * as contentWorkflows from '../lib/agent/content-workflows'
 
 // Fixed phone incident: Wed 7 Oct 2026, 12:37 IST.
 const RealDate = Date
@@ -80,6 +81,7 @@ const db = {from(table: string) {
 }}
 const noMatch = new Set(['handleLinkVaultText', 'tryTypedTimeRouting', 'tryFoodComparison', 'getLatestFollowupState', 'isAmPmChoice'])
 const actual: Record<string, any> = {
+  '@/lib/agent/content-workflows': contentWorkflows,
   '@/lib/supabase-admin': {supabaseAdmin: db},
   './resolve-user': {resolveUser: async () => ({id: 'owner', telegramId: 42, whatsappId: '+919999999999', name: 'Gogo', tier: 'free'})},
   './detect-intent': {detectIntent},

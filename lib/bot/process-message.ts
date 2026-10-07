@@ -1,4 +1,6 @@
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
+import {selectContentWorkflow, contentWorkflowInputQuestion} from '@/lib/agent/content-workflows'
+import {researchRedditDiscussions} from '@/lib/agent/content-workflow-research'
 import { namesRetailerPriceRead } from '@/lib/commerce/comparison-model'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
@@ -376,6 +378,40 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const resolvedUser = await resolveUser({ channel: params.channel, externalUserId: params.externalUserId, userName: params.userName })
 
   const incomingText = (params.text || '').trim()
+  // Draft material can mention tomorrow, price or "remind me" without being
+  // permission to execute those actions. Claim explicit workflows before routing.
+  const contentWorkflow = selectContentWorkflow(incomingText)
+  if (contentWorkflow) {
+    const inputQuestion = contentWorkflowInputQuestion(incomingText, contentWorkflow)
+    if (inputQuestion) {
+      await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      await saveConversation(resolvedUser.telegramId, 'assistant', inputQuestion)
+      return {text: formatOutgoingText(params.channel, inputQuestion), resolvedUser, handledBy: 'content-workflow'}
+    }
+    const limit = await checkAndIncrementLimit(resolvedUser.telegramId)
+    if (!limit.allowed) return {text: formatOutgoingText(params.channel, limit.upgradeMessage || 'Daily limit reached.'), resolvedUser}
+    await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+    let evidence = '', footer = ''
+    if (contentWorkflow.research) {
+      const guard = await guardAiAction(resolvedUser.telegramId)
+      if (guard.ok === false) {
+        await saveConversation(resolvedUser.telegramId, 'assistant', guard.reply)
+        return {text: formatOutgoingText(params.channel, guard.reply), resolvedUser}
+      }
+      evidence = await researchRedditDiscussions(incomingText)
+      footer = await recordWebSearch(resolvedUser, params.channel, params.messageId ?? null, guard.usage)
+    }
+    const [history, memories, preferences] = await Promise.all([
+      getConversationHistory(resolvedUser.telegramId), getMemories(resolvedUser.telegramId), getPreferenceBlock(resolvedUser.telegramId),
+    ])
+    const draft = await askClaude(incomingText, history, memories, resolvedUser.name, preferences, evidence)
+    if (!draft.trim()) throw new Error('content_workflow_empty_response')
+    const reply = formatOutgoingText(params.channel, draft + footer)
+    // A draft is returned as text even if it contains a control-line example.
+    // It never passes through parseClaudeResponse's mutation dispatcher.
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return {text: reply, resolvedUser, handledBy: 'content-workflow'}
+  }
   const linkVaultReply=await handleLinkVaultText({
     actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'},
     text:incomingText,

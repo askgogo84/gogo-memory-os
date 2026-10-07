@@ -222,7 +222,10 @@ const stalledParent = {id: id(), type: 'price_comparison', telegram_id: '42', st
 tables.agent_runs.push(stalledParent)
 const worker = load('app/api/cron/price-comparisons/route.ts', {
   'next/server': {NextResponse: {json: (body: any, opts: any) => ({body, status: opts?.status || 200})}},
-  '@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},
+  '@/lib/supabase-admin': {supabaseAdmin: {...db, rpc: async (name: string) => {
+    assert.equal(name, 'due_price_comparison_deliveries')
+    return {data: finishedParent.metadata_json.notified ? [] : [finishedParent], error: null}
+  }}}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},
   '@/lib/commerce/price-comparison': {advancePriceComparison: async () => {throw new Error('browser_stalled')}, readPriceComparison: async (_owner: string, id: string) => id === terminalTask.id ? terminalTask : null},
   '@/lib/commerce/comparison-delivery': {deliverCompletedComparison: async () => {
     notifications++
@@ -236,11 +239,11 @@ assert.equal((await worker.GET({headers: new Headers()})).status, 401)
 assert.equal(notifications, 0)
 const workerRequest = {headers: new Headers({authorization: 'Bearer fixture-cron'})}
 const stalledResult = await worker.GET(workerRequest)
-assert.equal(stalledResult.status, 200)
+assert.equal(stalledResult.status, 503, 'a worker with failures must not report a successful heartbeat')
 assert.equal(stalledResult.body.advanceFailures, 1, 'one stalled browser run must not block completed-result delivery')
 assert.equal(notifications, 1)
 assert.match(tables.conversations.at(-1).content, /Full saved report:/)
-assert.equal((await worker.GET(workerRequest)).status, 200)
+assert.equal((await worker.GET(workerRequest)).status, 503)
 assert.equal(notifications, 1, 'overlapping cron delivery cannot duplicate the terminal message')
 assert.ok(JSON.parse(readFileSync('vercel.json', 'utf8')).crons.some((cron: any) => cron.path === '/api/cron/price-comparisons'))
 const grocery = await service.tryPriceComparison({telegramId: 42, text: 'Compare Amul Taaza 1 litre on Zepto and Blinkit'})
