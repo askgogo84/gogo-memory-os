@@ -376,7 +376,11 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       const compact={url:result.url,title:result.title,summary:result.summary,blockReason,authReason:result.authReason||null,credentialSelectionRequired:result.credentialSelectionRequired===true}
       await supabaseAdmin.from('agent_steps').update({status:'failed',output_json:compact,error:blockReason,completed_at:at}).eq('id',params.stepId)
       await supabaseAdmin.from('agent_runs').update({status:'paused',summary:result.summary,progress:50,error:blockReason,metadata_json:runMetadata,completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
-      await activity(tg,params.runId,blockReason,blockReason==='delivery_location_required'?'Gogo needs a delivery location before looking up availability.':blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(result.url).hostname,auth_reason:result.authReason||null})
+      // Display URLs can be redacted. Use the validated original for operations
+      // when redaction made the observed URL unusable.
+      let continuationUrl=params.command.url
+      try{const observed=new URL(result.url);if(['https:','http:'].includes(observed.protocol)&&!observed.username&&!observed.password&&!/redacted|withheld/i.test(result.url))continuationUrl=observed.href}catch{}
+      await activity(tg,params.runId,blockReason,blockReason==='delivery_location_required'?'Gogo needs a delivery location before looking up availability.':blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(continuationUrl).hostname,auth_reason:result.authReason||null})
       if(blockReason==='provider_access_limited'&&runMetadata.browser_safe_to_retry===false){
         const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
         return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}
@@ -384,7 +388,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       if(blockReason==='human_auth_required'||blockReason==='delivery_location_required'){
         if((result.handoffReservation||(result.authReason&&result.authReason!=='password'))&&!result.credentialSelectionRequired){
           const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
-          const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:result.url,originalUrl:params.command.url,reservationToken:result.handoffReservation,sessionTaskId:params.runId,...(persistentCommerce?{keepAlive:true}:{})})
+          const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:continuationUrl,originalUrl:params.command.url,reservationToken:result.handoffReservation,sessionTaskId:params.runId,...(persistentCommerce?{keepAlive:true}:{})})
           const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff},completed_at:null}).eq('id',params.runId).eq('telegram_id',String(tg))
           if(error){
             await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{})
@@ -399,7 +403,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
           }
         }
         if(blockReason==='delivery_location_required')return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text:result.summary,blockedReason:blockReason,handledBy:'secure-browser' as const}
-        const host=new URL(result.url).hostname
+        const host=new URL(continuationUrl).hostname
         const vault=await buildVaultAddLink({
           telegramId:tg,
           domain:host,

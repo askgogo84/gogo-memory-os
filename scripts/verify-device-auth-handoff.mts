@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from '../lib/agent/browser-evidence'
+import * as browserEvidence from '../lib/agent/browser-evidence'
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
 import { needsBrowserDeliveryLocation } from '../lib/agent/browser-location-gate'
 import { browserPageAllowlist } from '../lib/agent/browser-page-network'
@@ -23,7 +24,7 @@ function load(file: string, mocks: Record<string, any>, extra='', globals:Record
   const source=readFileSync(new URL(`../lib/agent/${file}`,import.meta.url),'utf8')+extra
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const exports:any={}
-  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./browser-page-network'?{browserPageAllowlist}:undefined)||(name==='./draft-coverage'?{draftObjectiveCovered}:undefined)||(name==='./browser-evidence'?{isLoginDestination,isTitleOnlyObjective,verifiedBrowserAnswer}:undefined)||(name==='./browser-proxy'?{resolveBrowserProxy:()=>null,proxyAllowlistHost:()=>null}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,setTimeout,clearTimeout,...globals})
+  runInNewContext(code,{exports,require:(name:string)=>mocks[name]||(name==='./browser-page-network'?{browserPageAllowlist}:undefined)||(name==='./draft-coverage'?{draftObjectiveCovered}:undefined)||(name==='./browser-evidence'?browserEvidence:undefined)||(name==='./browser-proxy'?{resolveBrowserProxy:()=>null,proxyAllowlistHost:()=>null}:{}),process:{env:{}},Buffer,URL,console,AbortSignal,setTimeout,clearTimeout,...globals})
   return exports
 }
 
@@ -68,6 +69,7 @@ const db={from:(table:string)=>{
 }}
 let commandExecutionFailure:any
 let browserBlockReason='human_auth_required'
+let blockedUrl='https://provider.example/account',handoffUrl=''
 let completedUrl='https://provider.example/account',completedSource:string|undefined
 let browserCompleted=false,vaultCalls=0,browserActions:any[]=[],reconciliationEvidence:any,browserExecutions=0
 const command=load('browser-command.ts',{
@@ -77,9 +79,9 @@ const command=load('browser-command.ts',{
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
   './secure-computer':{runSecureBrowser:async()=>{browserExecutions++;if(commandExecutionFailure)throw commandExecutionFailure;return browserCompleted
     ? {status:'completed',url:completedUrl,sourceUrl:completedSource,title:'Account',summary:'Read account',forms:[],actions:[]}
-    : {status:'blocked',blockReason:browserBlockReason,authReason:'device_approval',url:'https://provider.example/account',summary:'Approve sign-in',actions:browserActions}}},
+    : {status:'blocked',blockReason:browserBlockReason,authReason:'device_approval',url:blockedUrl,summary:'Approve sign-in',actions:browserActions}}},
   '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
-  './provider-browser-handoff':{startProviderBrowserHandoff:async()=>handoff,cancelProviderBrowserHandoff:async()=>{directCancelled++}},
+  './provider-browser-handoff':{startProviderBrowserHandoff:async(value:any)=>{handoffUrl=value.url;return handoff},cancelProviderBrowserHandoff:async()=>{directCancelled++}},
   './browser-handoff':{releaseBrowserHandoff:async(_url:string,options:any)=>{assert.equal(options.allowExpired,true);released++;return {ok:false,expired:true}}},
 },'\nexport { executeBrowser }')
 const params={actor:{userId:'user',legacyTelegramId:1},runId:'same-run',stepId:'same-step',command:{url:metadata.url,objective:metadata.objective,risk:'low'},mode:'read'}
@@ -90,13 +92,18 @@ assert.equal(metadata.handoff,handoff)
 assert.equal(metadata.objective,'Read my account')
 assert.equal(vaultCalls,0,'device approval must not send the user back through Vault login')
 assert.match(blocked.text,/Resume this task/)
+blockedUrl='https://www.croma.[sensitive token withheld]'
+const redactedBlocked=await command.executeBrowser(params)
+assert.equal(redactedBlocked.status,'paused','a redacted presentation URL must not crash the authentication handoff')
+assert.equal(handoffUrl,params.command.url,'handoff must retain the validated original URL when the display URL is redacted')
+blockedUrl='https://provider.example/account'
 browserCompleted=true
 const continued=await command.executeBrowser(params)
 assert.equal(continued.runId,'same-run')
 assert.equal(continued.status,'completed')
 assert.ok(continued.text.includes('https://provider.example/account'),'completed browser replies must include their observed source link')
 assert.equal(metadata.handoff,undefined)
-assert.equal(released,2)
+assert.equal(released,3)
 assert.equal(mutations.some(m=>m.table==='agent_runs'&&m.insert),false,'handoff must never replace the run')
 completedUrl='[sensitive token withheld]'
 completedSource='https://www.amazon.in/Sony-WH-1000XM5-Wireless-Cancelling-Headphones/dp/B09XS7JWHH'
