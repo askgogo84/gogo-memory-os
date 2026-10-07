@@ -26,7 +26,7 @@ function parseDates(text: string, defaultYear: number) {
 
 function stripInrPrices(text: string) {
   return text
-    .replace(/(?:₹|INR\s*|Rs\.?\s*)[\d,]+(?:\.\d{1,2})?/gi, 'fare not verified')
+    .replace(/(?:₹|\bINR|\bRs\.?)[^\S\r\n]*[\d,]+(?:\.\d{1,2})?/gi, 'fare not verified')
     .replace(/\bfare not verified[^\S\r\n]*(?:\+|from|onwards)?/gi, 'fare not verified')
     .replace(/[^\S\r\n]{2,}/g, ' ')
 }
@@ -52,8 +52,10 @@ export function sanitizeTravelResearchText(raw: string, requestText: string, now
       if (hasDates && inWindow.length !== dates.length) return null
 
       let cleaned = block
+      // Search snippets are not live inventory even when they mention the date.
+      // Withhold all snippet fares, including prices embedded in result titles.
+      cleaned = stripInrPrices(cleaned)
       if (!hasDates) {
-        cleaned = stripInrPrices(cleaned)
         cleaned = cleaned.replace(/Public snippet mentions[^\n]*/i, 'INR fare: not verified for your requested dates')
         cleaned = cleaned.replace(/INR fare:[^\n]*/i, 'INR fare: not verified for your requested dates')
       }

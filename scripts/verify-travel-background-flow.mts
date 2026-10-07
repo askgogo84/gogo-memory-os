@@ -74,6 +74,10 @@ const fallback=sanitizer.sanitizeTravelResearchText('Task could not obtain verif
   'Compare flights from BLR to BOM on 20 October 2026')
 assert.match(fallback,/\nOpen source: https:\/\/example.com\/flights/,'stripping an unverified fare must preserve its provider link')
 assert.match(fallback,/fallback sources only/,'fallback disclaimer survives sanitation')
+const titleFare=sanitizer.sanitizeTravelResearchText('Task could not obtain verified live rows\n\n1. MakeMyTrip — Fares @ ₹ 4269 on 20 October 2026\nPublic snippet mentions INR 4,269\nOpen source: https://example.com/flights\n\nThese are fallback sources only, not completed live inventory.',
+ 'Compare flights from Bengaluru to Mumbai on 20 October 2026 for 1 adult in economy.',new Date('2026-10-07T12:00:00Z'))
+assert.doesNotMatch(titleFare,/4269|4,269|₹/,'a matching date in a search title does not verify its fare')
+assert.match(titleFare,/https:\/\/example.com\/flights/)
 queue = load('lib/agent/travel-research-queue.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:db},'./travel-research':travel,'./travel-research-sanitize':sanitizer,
   './brain-runtime-guard':{acquireBrainUserLease:async()=>({ownerToken:'fixture'}),releaseBrainUserLease:async()=>{}},
