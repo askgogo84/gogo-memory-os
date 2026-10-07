@@ -1,4 +1,6 @@
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
+import {runCompoundShoppingFriendRequests} from '@/lib/bot/compound-shopping-friend'
+import {detectFriendReminder, getPendingFriend, isFriendReminderFollowupCandidate} from '@/lib/bot/handlers/friend-reminders'
 import {namesRetailerPriceRead} from '@/lib/commerce/comparison-model'
 import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
@@ -110,6 +112,32 @@ export async function POST(req: NextRequest) {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
     const contentDraft = await tryRunContentWorkflow(actor, text, `web-${randomUUID()}`)
     if (contentDraft) return NextResponse.json(contentDraft)
+    // Match WhatsApp's per-request routing before a whole-message handler can
+    // combine different products or swallow a delegated reminder.
+    const compoundEventId = `web-${randomUUID()}`
+    const compoundReplies = await runCompoundShoppingFriendRequests(text, {
+      checkPrice: async stepText => {
+        const comparison = await tryPriceComparison({telegramId: actor.legacyTelegramId, text: stepText, surface: 'web'})
+        if (!comparison) throw new Error('compound_price_unhandled')
+        await saveConversation(user.telegram_id, stepText, comparison.text)
+        return comparison.text
+      },
+      prepareFriend: async (stepText, index) => {
+        const reminder = await processIncomingMessage({channel: 'whatsapp', externalUserId: String(user.whatsapp_id),
+          text: stepText, userName: user.name || 'Gogo', messageType: 'text', messageId: `${compoundEventId}:${index}`})
+        return redactSecretShapedText(reminder.text)
+      },
+      onError: (error, kind, index) => console.error('DASHBOARD_COMPOUND_STEP_FAILED:',
+        {kind, index, error: error instanceof Error ? error.message : String(error)}),
+    })
+    if (compoundReplies) return NextResponse.json({text: compoundReplies.join('\n\n—\n\n'), handledBy: 'compound-shopping-friend'})
+    // Keep the number/time/YES continuation with the same reminder state that
+    // the compound request opened, rather than allowing a planner to claim it.
+    if (detectFriendReminder(text) || (isFriendReminderFollowupCandidate(text) && await getPendingFriend(Number(user.telegram_id)))) {
+      const reminder = await processIncomingMessage({channel: 'whatsapp', externalUserId: String(user.whatsapp_id),
+        text, userName: user.name || 'Gogo', messageType: 'text', messageId: compoundEventId})
+      return NextResponse.json({text: redactSecretShapedText(reminder.text), handledBy: reminder.handledBy || 'same-brain'})
+    }
     const watcherStatus=await tryGetWatcherStatusFromCommand({actor,text})
     if(watcherStatus){
       await saveConversation(user.telegram_id,text,watcherStatus.text)

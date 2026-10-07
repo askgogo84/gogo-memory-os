@@ -308,3 +308,82 @@ try{
   else process.env.TWILIO_AUTH_TOKEN=previousToken
 }
 console.log('Actual signed webhook POST → compound router/PIM → retailer claim; upstream search and duplicate dispatch checks passed')
+
+// Execute web POST too: the live incident combined two different products into
+// a single subject with both retailers, despite WhatsApp's splitter passing.
+const webClaims:any[]=[]
+const webHistory:any[]=[]
+let webSession:any={telegramId:'42'}
+let failFlipkart=false
+const web=executeModule('app/api/dashboard/chat/route.ts',{
+  'crypto':{randomUUID:()=> 'fixture-web'},
+  'next/server':{NextResponse:{json:(data:any,options:any={})=>new Response(JSON.stringify(data),{status:options.status||200})}},
+  '@/lib/dashboard/session':{getSession:async()=>webSession},
+  '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{
+    if(table==='conversations')return {insert:async(rows:any[])=>{webHistory.push(...rows);return {error:null}}}
+    assert.equal(table,'users')
+    const query:any={select:()=>query,eq:(key:string,value:any)=>{assert.equal(key,'telegram_id');assert.equal(value,42);return query},
+      maybeSingle:async()=>({data:{telegram_id:42,whatsapp_id:fixtureUser.whatsappId,name:'Gogo'}})}
+    return query
+  }}},
+  '@/lib/agent/actor':{resolveAgentActor:async()=>({userId:'owner',legacyTelegramId:42,whatsappId:fixtureUser.whatsappId,name:'Gogo'})},
+  '@/lib/agent/content-workflow-entry':{tryRunContentWorkflow:async()=>null},
+  '@/lib/bot/compound-shopping-friend':compound,
+  '@/lib/commerce/comparison-model':{namesRetailerPriceRead},
+  '@/lib/bot/handlers/friend-reminders':actual['@/lib/bot/handlers/friend-reminders'],
+  '@/lib/commerce/price-comparison':{tryPriceComparison:async(params:any)=>{
+    const parsed=parsePriceComparison(params.text)
+    assert.ok(parsed)
+    webClaims.push({...params,...parsed})
+    if(failFlipkart&&parsed.providers.includes('flipkart'))throw Error('fixture provider failure')
+    return {text:`Browser check queued: ${parsed.subject} on ${parsed.providers.join(', ')}`,handledBy:'price-comparison'}
+  }},
+  '@/lib/bot/process-message':{processIncomingMessage:exports.processIncomingMessage},
+  '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},
+  '@/lib/feature-intents':realFeature,
+})
+const postWeb=(text:string,origin='https://fixture.invalid')=>{
+  const req=new Request('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({text})})
+  return web.POST(Object.assign(req,{nextUrl:new URL(req.url)}))
+}
+const freshWeb="Check the price of iPhone 17 Pro 256GB on flipkart.com\nWhat's the price of Sony WH-1000XM5 on croma.com?"
+const beforeWeb=featureClaims
+for(const text of [freshWeb,combined]){
+  pending=null;contacts.clear();webClaims.length=0;webHistory.length=0
+  const response=await postWeb(text)
+  assert.equal(response.status,200)
+  const reply=await response.json()
+  assert.equal(reply.handledBy,'compound-shopping-friend')
+  assert.deepEqual(webClaims.map(row=>[row.subject,Array.from(row.providers),row.surface]),[
+    ['iPhone 17 Pro 256GB',['flipkart'],'web'],['Sony WH-1000XM5',['croma'],'web'],
+  ],'each product must keep its own retailer and web completion surface')
+  assert.equal(webHistory.length,4,'save each price request and its own acknowledgement')
+  if(text===combined){assert.match(reply.text,/Matthew.*WhatsApp number/i);assert.equal(pending?.stage,'number')}
+  else assert.equal(pending,null)
+  assert.equal(featureClaims,beforeWeb,'an upstream whole-message feature claim is a failure')
+  assert.deepEqual(webhookErrors,[],'caught web route failures must fail the harness')
+}
+const createdBeforeWeb=created
+const webNumber=await (await postWeb('+91 98765 43210')).json()
+assert.match(webNumber.text,/confirm|YES/i)
+assert.equal(created,createdBeforeWeb,'a supplied number must not bypass confirmation')
+assert.equal(pending?.stage,'confirm')
+const webConfirm=await (await postWeb('YES')).json()
+assert.match(webConfirm.text,/Done.*remind Matthew.*11:00 am IST/)
+assert.equal(created,createdBeforeWeb+1)
+assert.equal(featureClaims,beforeWeb,'number and YES must continue the pending reminder, not another planner')
+assert.deepEqual(webhookErrors,[])
+failFlipkart=true;pending=null;contacts.clear();webClaims.length=0
+const partialWeb=await (await postWeb(combined)).json()
+assert.match(partialWeb.text,/resend that request separately/)
+assert.match(partialWeb.text,/Sony WH-1000XM5 on croma/)
+assert.match(partialWeb.text,/Matthew.*WhatsApp number/i)
+assert.equal(webClaims.length,2,'a failed first store must not swallow the second store or reminder')
+assert.equal(webhookErrors.length,1)
+assert.equal(webhookErrors[0][0],'DASHBOARD_COMPOUND_STEP_FAILED:')
+const writesBeforeAuth=webHistory.length
+assert.equal((await postWeb(combined,'https://other.invalid')).status,403)
+webSession=null
+assert.equal((await postWeb(combined)).status,401)
+assert.equal(webHistory.length,writesBeforeAuth,'compound handling must remain behind origin and session checks')
+console.log('Actual web POST → separate product/retailer claims and friend clarification, partial failure and auth checks passed')
