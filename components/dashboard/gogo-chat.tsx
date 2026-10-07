@@ -84,7 +84,7 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
 
   async function loadSnapshot(){
     try{
-      const res=await fetch('/api/agent/snapshot',{cache:'no-store',credentials:'same-origin'})
+      const res=await fetch('/api/agent/snapshot',{cache:'no-store',credentials:'same-origin',signal:AbortSignal.timeout(12000)})
       if(!res.ok)return
       const data=await res.json()
       setSnapshot({
@@ -103,23 +103,20 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
       refreshing=true
       const version=conversationVersion.current
       try{
-        const [chat,agent]=await Promise.all([
-          fetch('/api/dashboard/chat',{cache:'no-store'}).then(async res=>{
-            if(!res.ok)throw new Error('history')
-            return res.json()
-          }),
-          fetch('/api/agent/snapshot',{cache:'no-store',credentials:'same-origin'}).then(r=>r.ok?r.json():null).catch(()=>null),
-        ])
+        // A slow activity rail must not hold conversation history hostage.
+        void fetch('/api/agent/snapshot',{cache:'no-store',credentials:'same-origin',signal:AbortSignal.timeout(12000)})
+          .then(r=>r.ok?r.json():null).then(agent=>{
+            if(!agent||!live||sendingRef.current||version!==conversationVersion.current)return
+            setSnapshot({runs:Array.isArray(agent.runs)?agent.runs:[],watchers:Array.isArray(agent.watchers)?agent.watchers:[],approvals:Array.isArray(agent.approvals)?agent.approvals:[]})
+          }).catch(()=>{})
+        const response=await fetch('/api/dashboard/chat',{cache:'no-store',signal:AbortSignal.timeout(12000)})
+        if(!response.ok)throw new Error('history')
+        const chat=await response.json()
         // A response started before a new send must not overwrite its optimistic
         // message or its reply. Poll only persisted, owner-scoped conversation.
         if(!live||sendingRef.current||version!==conversationVersion.current)return
         const next=Array.isArray(chat.messages)?chat.messages:[]
         setMessages(current=>JSON.stringify(current)===JSON.stringify(next)?current:next)
-        if(agent)setSnapshot({
-          runs:Array.isArray(agent.runs)?agent.runs:[],
-          watchers:Array.isArray(agent.watchers)?agent.watchers:[],
-          approvals:Array.isArray(agent.approvals)?agent.approvals:[],
-        })
       }catch{if(initial&&live)setError('I could not load the recent conversation. You can still start a new message.')}
       finally{refreshing=false;if(live)setLoading(false)}
     }
@@ -162,6 +159,7 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
       })
       const data=await res.json().catch(()=>({}))
       if(!res.ok)throw new Error(data?.message||'chat')
+      setLoading(false)
       setMessages(m=>[...m,{role:'assistant',content:String(data.text||'Done.'),mediaUrl:data.mediaUrl||null}])
       void loadSnapshot()
     }catch(e:any){

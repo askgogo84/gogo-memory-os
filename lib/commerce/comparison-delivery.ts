@@ -8,6 +8,20 @@ import {comparisonLink, comparisonWebFallback, readPriceComparison} from './pric
 /** The notification outbox owns retries and callback receipts for a finished read. */
 export async function deliverCompletedComparison(task: PriceComparison, actor: AgentActor, deadline: number) {
   const owner = Number(actor.legacyTelegramId)
+  if(task.source==='web'){
+    if(Date.now()>=deadline)return 'skipped'
+    const current=await readPriceComparison(String(owner),task.id)
+    if(!current||current.source!=='web'||comparisonState(current.metadata_json.providers)==='queued')return 'skipped'
+    const fallback=await comparisonWebFallback(current)
+    const content=comparisonWhatsAppSummary(current)+(fallback?'\n\n'+fallback:'')+'\n\nFull saved report: '+comparisonLink(task.id)
+    if(Date.now()>=deadline)return 'skipped'
+    // Publish and mark notified in one transaction. Overlapping workers cannot
+    // duplicate history or lose the result between two database writes.
+    const {data,error}=await supabaseAdmin.rpc('publish_web_comparison_result',{p_owner:String(owner),p_run_id:task.id,p_content:content})
+    if(error)throw new Error('comparison_web_delivery_failed')
+    return data===true?'history_published':'skipped'
+  }
+  if(task.source!=='whatsapp')return 'skipped'
   const recipient = actor.whatsappId || ''
   let current: PriceComparison | null = null
   let message = ''

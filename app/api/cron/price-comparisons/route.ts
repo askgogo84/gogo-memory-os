@@ -30,9 +30,20 @@ export async function GET(request: Request) {
     // completed browser result after its agent_run leaves the active queue.
     const {data: terminal, error: terminalError} = await supabaseAdmin.rpc('due_price_comparison_deliveries', {p_limit: 20})
     if (terminalError) throw new Error('comparison_delivery_queue_read_failed')
+    // Web reads share conversation history, without sending a WhatsApp message.
+    const {data:webTerminal,error:webError}=await supabaseAdmin.from('agent_runs').select('id,telegram_id')
+      .eq('type','price_comparison').eq('source','web').in('status',['completed','paused'])
+      .is('metadata_json->>notified',null).order('updated_at',{ascending:true}).limit(5)
+    if(webError)throw new Error('comparison_web_delivery_queue_read_failed')
     let attempted = 0
     let deliveryFailures = 0
-    for (const row of terminal || []) {
+    // Interleave channels so an older web backlog cannot obscure WhatsApp sends.
+    const pending:Array<{id:string;telegram_id:string}>=[]
+    for(let i=0;i<Math.max(terminal?.length||0,webTerminal?.length||0);i++){
+      if(terminal?.[i])pending.push(terminal[i])
+      if(webTerminal?.[i])pending.push(webTerminal[i])
+    }
+    for (const row of pending) {
       if (Date.now() >= deadline || attempted >= 5) break
       try {
         const actor = await resolveAgentActor({telegramId: String(row.telegram_id), surface: 'web'})

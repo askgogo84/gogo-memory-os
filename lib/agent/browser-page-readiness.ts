@@ -15,6 +15,11 @@ function observeBrowserPage(page){
   hasContent:Boolean(document.body?.innerText?.trim())||Array.from(document.querySelectorAll('input,button,select,canvas,img')).some(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0}),
   challenge:Array.from(document.scripts).some(script=>{try{const u=new URL(script.src);return u.hostname.endsWith('.token.awswaf.com')&&/\/(?:challenge|captcha)\.js$/.test(u.pathname)}catch{return false}}),
  }));
+ const pricePending=()=>page.evaluate(()=>{
+  if(location.protocol!=='https:'||!['croma.com','www.croma.com'].includes(location.hostname)||!/^\/[a-z0-9]+(?:-[a-z0-9]+){3,}-?\/p\/\d{6,7}\/?$/i.test(location.pathname))return false;
+  const text=document.body?.innerText||'';
+  return !/₹\s*\d[\d,]*(?:\.\d+)?/.test(text)||/(?:^|\s)NaN(?:\s|$)/.test(text);
+ });
  return {
   navigationFailed:()=>{navigationFailed=true},
   read:async(wait=false)=>{
@@ -25,6 +30,17 @@ function observeBrowserPage(page){
     await page.waitForFunction(()=>{
      const challenge=Array.from(document.scripts).some(script=>{try{const u=new URL(script.src);return u.hostname.endsWith('.token.awswaf.com')&&/\/(?:challenge|captcha)\.js$/.test(u.pathname)}catch{return false}});
      return !challenge&&(Boolean(document.body?.innerText?.trim())||Array.from(document.querySelectorAll('input,button,select,canvas,img')).some(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0}));
+    },null,{timeout:12000,polling:250}).catch(()=>{});
+    observed=await sample();
+   }
+   // Croma renders the product before its price request finishes: the early
+   // body has NaN and a temporary unavailable message. Wait for visible price
+   // hydration, without clicking, selecting a location or inferring a value.
+   if(wait&&!(httpStatus>=400)&&!observed.challenge&&!wafAction&&await pricePending()){
+    await page.waitForFunction(()=>{
+     if(location.protocol!=='https:'||!['croma.com','www.croma.com'].includes(location.hostname)||!/^\/[a-z0-9]+(?:-[a-z0-9]+){3,}-?\/p\/\d{6,7}\/?$/i.test(location.pathname))return true;
+     const text=document.body?.innerText||'';
+     return /₹\s*\d[\d,]*(?:\.\d+)?/.test(text)&&!/(?:^|\s)NaN(?:\s|$)/.test(text);
     },null,{timeout:12000,polling:250}).catch(()=>{});
     observed=await sample();
    }

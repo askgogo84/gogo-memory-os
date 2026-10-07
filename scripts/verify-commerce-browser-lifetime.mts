@@ -54,7 +54,7 @@ const page:any={
   goto:async(url:string)=>{gotoCount++;currentUrl=url;field='';sessionMarker=''},
   waitForTimeout:async()=>{},
   locator:()=>({first:()=>({fill:async(value:string)=>{field=value}})}),
-  evaluate:async(fn:any)=>String(fn).includes('hasContent')?{hasContent:true,challenge:false}:{url:currentUrl,title:'Fixture',text:field,forms:[],links:[]},
+  evaluate:async(fn:any)=>String(fn).includes('location.protocol')?false:String(fn).includes('hasContent')?{hasContent:true,challenge:false}:{url:currentUrl,title:'Fixture',text:field,forms:[],links:[]},
 }
 const context={pages:()=>[page],close:async()=>{contextClosed++}}
 const chromium={
@@ -138,7 +138,8 @@ const frame={}
 const observedPage={on:(_event:string,fn:any)=>{responseListener=fn},mainFrame:()=>frame,
   evaluate:async(fn:any)=>fn(),waitForFunction:async(fn:any,_arg:any,options:any)=>{waits++;assert.equal(options.timeout,12000);settle?.();if(!fn())throw Error('bounded timeout')},
 }
-const observerScope:any={URL,document:dom}
+const pageLocation={protocol:'https:',hostname:'provider.example',pathname:'/'}
+const observerScope:any={URL,document:dom,location:pageLocation}
 runInNewContext(BROWSER_PAGE_READINESS+';this.observe=observeBrowserPage',observerScope)
 const observer=observerScope.observe(observedPage)
 const emit=(status:number,action?:string)=>responseListener({request:()=>({isNavigationRequest:()=>true}),frame:()=>frame,status:()=>status,headers:()=>({'x-amzn-waf-action':action,'set-cookie':'must-never-escape'})})
@@ -155,3 +156,21 @@ assert.equal((await observer.read()).state,'navigation_error')
 emit(200);dom.body.innerText='Sign in. Select your delivery location.'
 assert.deepEqual(JSON.parse(JSON.stringify(await observer.read())),{state:'ready',httpStatus:200},'real loaded content clears previous refusal')
 console.log('PASS: cloud challenge, blank 429, 403 and failed navigation are explicit; only state/status leave page observer')
+pageLocation.hostname='www.croma.com'
+pageLocation.pathname='/sony-wh-1000xm5-bluetooth-headphone-silver-/p/262566'
+dom.body.innerText='SONY WH-1000XM5 Brand Color Silver Not Available for your pincode NaN Buy Now'
+const beforePrice=waits
+settle=()=>{dom.body.innerText='SONY WH-1000XM5 Silver ₹29,990.00 (Incl. all Taxes)'}
+assert.equal((await observer.read(true)).state,'ready')
+assert.equal(waits,beforePrice+1,'Croma waits for the actual price after its early NaN placeholder')
+assert.match(dom.body.innerText,/₹29,990/)
+await observer.read(true)
+assert.equal(waits,beforePrice+1,'a hydrated product does not wait again')
+dom.body.innerText='SONY WH-1000XM5 NaN'
+settle=undefined
+assert.equal((await observer.read(true)).state,'ready','timeout leaves the real incomplete observation for the verifier to reject')
+assert.equal(waits,beforePrice+2,'missing price gets a bounded wait, never a synthetic quote')
+pageLocation.hostname='www.croma.com.evil.example'
+await observer.read(true)
+assert.equal(waits,beforePrice+2,'lookalike domains do not trigger retailer hydration logic')
+console.log('PASS: public Croma price hydration, ready-page fast path, bounded absence and exact domain')
