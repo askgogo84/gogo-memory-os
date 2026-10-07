@@ -59,7 +59,8 @@ export function redactEmailAuthSecrets(value:string) {
 }
 
 export function formatEmailSnippet(value:unknown,max=260) {
-  const text=clean(redactEmailAuthSecrets(String(value??'').replace(/(?:[\u200B-\u200F\uFEFF]\s*){3,}/g,' ')), Math.max(max * 2, max))
+  const decoded=decodeHtmlEntities(String(value??'')).replace(/(?:[\u200B-\u200F\uFEFF]\s*){3,}/g,' ')
+  const text=clean(redactEmailAuthSecrets(decoded), Math.max(max * 2, max))
   if(text.length<=max)return text
   const slice=text.slice(0,max+1)
   const sentence=[...slice.matchAll(/[.!?](?=\s|$)/g)].pop()
@@ -168,9 +169,9 @@ async function gmailMetadata(actor:AgentActor, id:string, auditBody=false) {
   return {
     id:String(data?.id||id),
     threadId:String(data?.threadId||''),
-    subject:clean(header(headers,'Subject')||'(No subject)',240),
-    from:clean(header(headers,'From')||'Unknown sender',240),
-    to:clean(header(headers,'To'),240),
+    subject:formatEmailSnippet(header(headers,'Subject')||'(No subject)',240),
+    from:formatEmailSnippet(header(headers,'From')||'Unknown sender',240),
+    to:formatEmailSnippet(header(headers,'To'),240),
     date:clean(header(headers,'Date'),120),
     snippet:formatEmailSnippet(data?.snippet||''),
     ...(auditBody?{evidence:formatEmailSnippet(body||data?.snippet||'',5000)}:{}),

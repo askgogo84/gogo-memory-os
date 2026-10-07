@@ -1,4 +1,4 @@
-import { redactEmailAuthSecrets } from './google-workspace-read'
+import { formatEmailSnippet } from './google-workspace-read'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 
 export function artifactSections(content:unknown):{title:string;tool:string;text:string}[] {
@@ -7,7 +7,7 @@ export function artifactSections(content:unknown):{title:string;tool:string;text
     const result=section?.result||{}
     // Display known prose only; internal IDs, tokens and arbitrary result JSON are not a report.
     const text=typeof result.reply==='string'?result.reply:typeof result.text==='string'?result.text:''
-    const sanitize=(s:unknown,max:number)=>redactSecretShapedText(redactEmailAuthSecrets(String(s??'').slice(0,max)))
+    const sanitize=(s:unknown,max:number)=>String(s??'').split('\n').map(line=>redactSecretShapedText(formatEmailSnippet(line,max))).join('\n').slice(0,max)
     return {title:sanitize(section.title||'Result',180),tool:sanitize(section.tool,40),text:sanitize(text||'This step has no readable summary saved.',20000)}
   })
 }

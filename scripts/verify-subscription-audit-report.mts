@@ -25,6 +25,7 @@ function load(file:string,extra:any={}){
   return exports
 }
 const reader=load('lib/agent/google-workspace-read.ts')
+assert.ok(!reader.formatEmailSnippet('Verification code: &#49;&#50;&#51;&#52;&#53;&#54;').includes('123456'),'decode HTML entities before authentication redaction')
 const result=await reader.searchWorkspaceEmails(actor,instruction,{missionText:mission})
 const request=new URL(urls[0])
 assert.match(request.searchParams.get('q')!,/^\{(?=[^}]*receipt)(?=[^}]*renewal)[^}]+\}/,'receipt categories must be OR alternatives, not required instruction words')
