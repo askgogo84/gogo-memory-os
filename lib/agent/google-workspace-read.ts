@@ -214,9 +214,10 @@ export function hasEmailBillingEvidence(message:{subject?:string;evidence?:strin
   const evidence=String(message.evidence||message.snippet||'')
   if(/\(PR #\d+\)|\bpull request\b|\bissue #\d+\b/i.test(subject))return false
   const billingSubject=/\b(receipt|invoice|payment|billed|charged|renewal|renews?|renewed|expiration|expires?)\b/i.test(subject)
-  const transaction=/\b(amount (?:paid|due)|paid (?:on|\d|[A-Za-z]+ \d)|payment (?:was|is|of|to|due)|confirm (?:your|the|monthly) (?:[A-Z]{2,3})?\s*[$₹£€\d]|monthly payment|invoice balance|outstanding (?:balance|dues)|(?:has been|was|is) (?:debited|charged)|bill payment (?:was|is) due)\b/i.test(evidence)
+  const receiptAmount=/\b(receipt|invoice)\b/i.test(subject)&&/(?:\b(?:INR|USD|GBP|EUR|Rs\.?)\s*|[₹$£€]\s*)\d[\d,]*(?:\.\d{1,2})?/i.test(evidence)
+  const transaction=/\b(amount (?:paid|due)|paid (?:on|\d|[A-Za-z]+ \d)|payment (?:was|is|of|to|due)|confirm (?:your|the) monthly payment|confirm (?:your|the|monthly) (?:[A-Z]{2,3})?\s*[$₹£€\d]|invoice balance|outstanding (?:balance|dues)|(?:has been|was|is) (?:debited|charged)|bill payment (?:was|is) due)\b/i.test(evidence)
   const renewal=/\b(?:renewal(?: date)?|renews?|expiration(?: date)?|expires?)\s*(?:on|at|:|is)?\s*(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i.test(evidence)
-  return (billingSubject&&transaction)||(/\b(subscription|membership|renewal|renews?|expiration|expires?)\b/i.test(subject)&&renewal)
+  return receiptAmount||(billingSubject&&transaction)||(/\b(subscription|membership|renewal|renews?|expiration|expires?)\b/i.test(subject)&&renewal)
 }
 
 export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:number;limit:number;hasMore:boolean;inspected?:number;excluded?:number}|null}) {
