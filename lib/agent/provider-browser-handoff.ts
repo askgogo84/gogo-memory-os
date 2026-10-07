@@ -9,7 +9,7 @@ import {ensureManagedBrowser,managedBrowserEnabled,releaseManagedSessionById} fr
 export async function cancelBrowserHandoffReservation(userId:string,token:string){
   const {sandbox}=await getPersistentBrowserSandbox(userId,{bootstrap:false})
   await sandbox.writeFiles([{path:`gogo-handoff-abort-${token}`,content:Buffer.from(token)}])
-  await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');try{if(fs.readFileSync('gogo-handoff-transfer','utf8')===process.argv[1])fs.unlinkSync('gogo-handoff-transfer')}catch{}",token]})
+  await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');try{if(fs.readFileSync('gogo-handoff-transfer','utf8')===process.argv[1])fs.unlinkSync('gogo-handoff-transfer')}catch{}",'--',token]})
 }
 
 export async function cancelProviderBrowserHandoff(userId:string,handoff:{token:string;releaseUrl:string;managedSessionId?:string|null}){
@@ -64,9 +64,9 @@ const timer=setInterval(()=>{let abort='';try{abort=fs.readFileSync('gogo-handof
 if(abort===token||(!launched&&Date.now()>deadline))process.exit(1);
 let ready='';try{ready=fs.readFileSync('gogo-handoff-go','utf8')}catch{}
 if(!launched&&ready===token){launched=true;if(JSON.parse(Buffer.from(options,'base64').toString()).managed){try{const env=JSON.parse(fs.readFileSync('${SANDBOX_WORKDIR}/managed-handoff-env','utf8'));if(env.token!==token||!env.values?.GOGO_BROWSER_CDP_URL)process.exit(1);Object.assign(process.env,env.values);fs.unlinkSync('${SANDBOX_WORKDIR}/managed-handoff-env')}catch{process.exit(1)}};process.argv=['node','${serverPath}',token,url,options];require('${serverPath}')}},100);`
-  await sandbox.runCommand({cmd:'flock',args:['-n','--close','gogo-handoff.lock','node','-e',launch,token,encoded,params.reservationToken?'required':'new',runtimeOptions],detached:true,...(Object.keys(proxyEnv).length?{env:proxyEnv}:{})} as any)
+  await sandbox.runCommand({cmd:'flock',args:['-n','--close','gogo-handoff.lock','node','-e',launch,'--',token,encoded,params.reservationToken?'required':'new',runtimeOptions],detached:true,...(Object.keys(proxyEnv).length?{env:proxyEnv}:{})} as any)
   await new Promise(r=>setTimeout(r,500))
-  const reservation=await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');let value='';try{value=fs.readFileSync('gogo-handoff-reserved','utf8')}catch{};process.exit(value===process.argv[1]?0:1)",token]})
+  const reservation=await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');let value='';try{value=fs.readFileSync('gogo-handoff-reserved','utf8')}catch{};process.exit(value===process.argv[1]?0:1)",'--',token]})
   if(reservation.exitCode!==0)throw new Error('browser_handoff_in_use')
   await ensureBrowserRuntime(sandbox,managedBrowserEnabled()?{'*.browserbase.com':[]}: {})
   // keepAlive: a human takeover must survive the agent's CDP disconnect while the
@@ -86,7 +86,7 @@ if(!launched&&ready===token){launched=true;if(JSON.parse(Buffer.from(options,'ba
   const readiness=await sandbox.runCommand({cmd:'node',args:['-e',String.raw`(async()=>{
 const deadline=Date.now()+55000;
 while(Date.now()<deadline){try{const r=await fetch('http://127.0.0.1:${BROWSER_HANDOFF_PORT}/health',{headers:{'x-gogo-handoff-token':process.argv[1]},signal:AbortSignal.timeout(1000)});if(r.ok&&(await r.json()).ready===true)process.exit(0)}catch{};await new Promise(r=>setTimeout(r,250))}process.exit(1)
-})()`,token]})
+})()`,'--',token]})
   if(readiness.exitCode!==0)throw new Error('browser_handoff_not_ready')
   const domain=typeof (sandbox as any).domain==='function' ? await (sandbox as any).domain(BROWSER_HANDOFF_PORT) : ''
   if(!domain)throw new Error('browser_handoff_domain_unavailable')
@@ -98,7 +98,7 @@ while(Date.now()<deadline){try{const r=await fetch('http://127.0.0.1:${BROWSER_H
     // orphaned if provisioning fails after it was created.
     if(managed?.env?.GOGO_BROWSER_SESSION_ID)await releaseManagedSessionById(managed.env.GOGO_BROWSER_SESSION_ID).catch(()=>{})
     await sandbox.writeFiles([{path:`gogo-handoff-abort-${token}`,content:Buffer.from(token)}]).catch(()=>{})
-    await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');try{if(fs.readFileSync('gogo-handoff-transfer','utf8')===process.argv[1])fs.unlinkSync('gogo-handoff-transfer')}catch{}",token]}).catch(()=>{})
+    await sandbox.runCommand({cmd:'node',args:['-e',"const fs=require('fs');try{if(fs.readFileSync('gogo-handoff-transfer','utf8')===process.argv[1])fs.unlinkSync('gogo-handoff-transfer')}catch{}",'--',token]}).catch(()=>{})
     throw error
   }
 }

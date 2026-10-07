@@ -4,6 +4,7 @@ import { browserFailureSummary } from '../lib/agent/browser-failure-notice'
 import { draftObjectiveCovered } from '../lib/agent/draft-coverage'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
+import { spawnSync } from 'node:child_process'
 import ts from 'typescript'
 import { isLoginDestination, isTitleOnlyObjective, verifiedBrowserAnswer } from '../lib/agent/browser-evidence'
 import * as browserEvidence from '../lib/agent/browser-evidence'
@@ -213,7 +214,7 @@ tokenSaveFails=false
 let reserved=true,handoffReady=true,policyUpdates=0,bootstraps=0,lastPolicy:any
 const launches:any[]=[]
 const provider=load('provider-browser-handoff.ts',{
-  crypto:{randomBytes:()=>({toString:()=> 'new-token'})},
+  crypto:{randomBytes:()=>({toString:()=> '-new-token'})},
   './secure-browser-bootstrap':{SANDBOX_WORKDIR:'/home/vercel-sandbox',ensureBrowserRuntime:async()=>{bootstraps++}},
   './browser-handoff':{BROWSER_HANDOFF_PORT:3001,HANDOFF_SERVER:'fixture',getPersistentBrowserSandbox:async(_id:string,options:any)=>{assert.equal(options.bootstrap,false);return {name:'owner',sandbox:{
     writeFiles:async()=>{},updateNetworkPolicy:async(policy:any)=>{policyUpdates++;lastPolicy=policy},domain:async()=> 'browser.example',
@@ -240,19 +241,39 @@ assert.ok('instamart-media-assets.swiggy.com' in lastPolicy.allow,'human takeove
 assert.equal(launches.some(c=>JSON.stringify(c).includes('pkill')),false,'never replace a live owner takeover token')
 console.log('Provisioning failure, consumed auth markers, and concurrent owner takeover safety verified')
 
+// Production 19:57 IST: a valid base64url token began with '-', causing Node
+// exit 9 ('bad option') and a false ownership collision. Run emitted arguments
+// through the actual CLI; VM-only fixtures cannot detect option parsing.
+function verifyTokenCli(command:any){
+ const args=command.cmd==='flock'?command.args.slice(4):command.args
+ assert.equal(args[0],'-e')
+ assert.equal(args[2],'--','tokens must be separated from interpreter options')
+ assert.ok(args[3].startsWith('-')&&args[3]!=='--','exercise a valid leading-hyphen token')
+ const prefix=String.raw`const taskFs={existsSync:path=>path!=='gogo-handoff-transfer',readFileSync:path=>path==='gogo-handoff-transfer'?'':process.argv[1],writeFileSync:()=>{},unlinkSync:()=>{}};require=()=>taskFs;setInterval=()=>0;fetch=async()=>({ok:true,json:async()=>({ready:true})});`
+ const result=spawnSync(process.execPath,['-e',prefix+`if(process.argv[1]!==${JSON.stringify(args[3])})throw Error('token argument shifted');`+args[1],...args.slice(2)],{encoding:'utf8',timeout:2000})
+ assert.equal(result.error,undefined)
+ assert.equal(result.status,0,result.stderr)
+}
+for(const c of launches.filter(c=>c.cmd==='flock'||c.cmd==='node'))verifyTokenCli(c)
+await provider.cancelBrowserHandoffReservation('owner','-cancel-token')
+verifyTokenCli(launches.at(-1))
+
+
 let lockAvailable=false
 const lockCommands:any[]=[]
-const lockModule=load('browser-owner-lock.ts',{'node:crypto':{randomBytes:()=>({toString:()=> 'reservation'})}},'',{setTimeout:(f:()=>void)=>{f();return 0}})
+const lockModule=load('browser-owner-lock.ts',{'node:crypto':{randomBytes:()=>({toString:()=> '-reservation'})}},'',{setTimeout:(f:()=>void)=>{f();return 0}})
 const lockSandbox={status:'running',runCommand:async(c:any)=>{lockCommands.push(c);return {exitCode:c.cmd==='flock'?0:lockAvailable?0:1}},writeFiles:async(files:any)=>{lockCommands.push({files})}}
 await assert.rejects(()=>lockModule.acquireBrowserOwnerLock(lockSandbox),/browser_handoff_in_use/)
 assert.equal(lockCommands[0].args[2],'gogo-handoff.lock','automated readers and takeover must reserve the same lock')
+verifyTokenCli(lockCommands[0])
+verifyTokenCli(lockCommands[1])
 lockAvailable=true
 const unlock=await lockModule.acquireBrowserOwnerLock(lockSandbox)
-assert.equal(await unlock.reserveHandoff(),'reservation')
+assert.equal(await unlock.reserveHandoff(),'-reservation')
 await unlock()
-assert.ok(lockCommands.some(c=>c.files?.[0]?.path==='gogo-browser-release-reservation'))
+assert.ok(lockCommands.some(c=>c.files?.[0]?.path==='gogo-browser-release--reservation'))
 const transferWrite=lockCommands.findIndex(c=>c.files?.[0]?.path==='gogo-handoff-transfer')
-const releaseWrite=lockCommands.findIndex((c,i)=>i>transferWrite&&c.files?.[0]?.path==='gogo-browser-release-reservation')
+const releaseWrite=lockCommands.findIndex((c,i)=>i>transferWrite&&c.files?.[0]?.path==='gogo-browser-release--reservation')
 assert.ok(transferWrite>=0&&releaseWrite>transferWrite,'reserve the next human owner before releasing automation')
 // Actual SDK writeFiles auto-resumes stopped persistent sessions. Stopping the
 // VM already releases its flock; cleanup must not restart it after completion.
