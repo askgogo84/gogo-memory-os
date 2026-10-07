@@ -16,7 +16,7 @@ export function isReminderReadQuery(text: string): boolean {
   if (!/\breminders?\b/.test(t)) return false
   if (/\b(set|create|make|add|schedule)\b/.test(t) || /\bremind\s+me\b/.test(t)) return false
   return (
-    /^(?:show|list|display)(?:\s+me)?(?:\s+my)?\s+reminders?\b/.test(t) ||
+    /^(?:show|list|display)(?:\s+me)?(?:\s+my)?\s+(?:(?:pending|active|upcoming)\s+)?reminders?\b/.test(t) ||
     /^(?:my|pending|active)\s+reminders?\b/.test(t) ||
     /^(?:what|which)\s+reminders?\b/.test(t) ||
     /^what\s+are\s+my\s+reminders?\b/.test(t) ||
@@ -138,6 +138,7 @@ async function showReminderReadQuery(telegramId: number, text: string): Promise<
       : null
 
   let rows = (data || []).filter((r:any) => r?.remind_at && Number.isFinite(new Date(r.remind_at).getTime()))
+  if(/\bupcoming\b/i.test(text))rows=rows.filter((r:any)=>Date.parse(r.remind_at)>=now.getTime())
   if (targetKey) rows = rows.filter((r:any) => istDateKey(new Date(r.remind_at)) === targetKey)
 
   const seen = new Set<string>()
@@ -154,7 +155,7 @@ async function showReminderReadQuery(telegramId: number, text: string): Promise<
 
   return (
     `⏰ *Your ${scope} reminders*\n\n` +
-    rows.map((r:any, i:number) => `${i + 1}. ${String(r.message || 'Reminder').replace(/^to\s+/i,'').trim()} — ${formatReminderWhen(r.remind_at)}`).join('\n')
+    rows.map((r:any, i:number) => `${i + 1}. ${String(r.message || 'Reminder').replace(/^to\s+/i,'').trim()} — ${formatReminderWhen(r.remind_at)}${Date.parse(r.remind_at)<now.getTime()?' · overdue':''}`).join('\n')
   )
 }
 
