@@ -7,6 +7,7 @@ import {needsBrowserDeliveryLocation} from '../lib/agent/browser-location-gate'
 import {browserPageAllowlist} from '../lib/agent/browser-page-network'
 import {detectHumanAuthGate} from '../lib/agent/browser-auth-gate'
 import {redactBrowserSensitiveText} from '../lib/agent/secure-browser-redaction'
+import {BROWSER_PAGE_READINESS} from '../lib/agent/browser-page-readiness'
 import * as browserEvidence from '../lib/agent/browser-evidence'
 const {isLoginDestination}=browserEvidence
 
@@ -41,6 +42,22 @@ assert.equal(emittedFlight.flightEvidence.searchControls.length,6)
 assert.doesNotMatch(JSON.stringify(emittedFlight.flightEvidence),/private@example/)
 const lookalikeFlight=runInNewContext(`(()=>{${body}})()`,{document:observedDoc,location:{href:'https://www.google.com.evil.example/travel/flights/search'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
 assert.equal(lookalikeFlight.flightEvidence,undefined)
+
+// Run the emitted worker's actual post-Search wait against visible/hidden rows.
+// It only waits for readiness; the controller's grounding gate still decides
+// completion, including when the provider never produces a row.
+const flightWaitSource=source.match(/async function waitForPublicFlightResults\(page\)\{[\s\S]*?\r?\n\}\r?\n(?=async function isPublicSearchInput)/)![0]
+for(const visibleRows of [false,true]){
+ let waitCalls=0
+ const waitDocument={querySelectorAll:()=>visibleRows?[hiddenRow,observedRow]:[hiddenRow]}
+ const workerWaitPage={waitForFunction:async(fn:any,_arg:any,options:any)=>{
+  waitCalls++;assert.equal(options.timeout,7000)
+  assert.equal(fn(),visibleRows,'hidden rows cannot end the load wait')
+  if(!visibleRows)throw new Error('fixture result load timeout')
+ }}
+ await runInNewContext(flightWaitSource+'waitForPublicFlightResults(page)',{document:waitDocument,page:workerWaitPage})
+ assert.equal(waitCalls,1,'timeout remains bounded and does not invent a result')
+}
 
 // Simulated DOMs, not claims of live access to these providers. The Instamart
 // div and Blinkit location prompt reproduce the observed 2 Oct page shapes.
@@ -191,8 +208,9 @@ let captured=''
 let redactLinkFixture=false
 let plannerReply:string|null=null
 const exports:any={}
-runInNewContext(ts.transpileModule(source+'\nexport {planActions}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+runInNewContext(ts.transpileModule(source+'\nexport {planActions,BROWSER_SCRIPT}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    if(id==='./browser-page-readiness')return {BROWSER_PAGE_READINESS}
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
     if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>redactLinkFixture?redactBrowserSensitiveText(s):s}
     if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
@@ -209,6 +227,29 @@ runInNewContext(ts.transpileModule(source+'\nexport {planActions}; export functi
   },
 })
 const observedLinkPage={url:'https://www.zomato.com/',text:'zomato Check it out',controls:[{selector:'a[href="https://www.zomato.com/restaurants"]',tag:'a',label:'zomato Get the app now to start ordering your favorite dishes! Check it out',href:'https://www.zomato.com/restaurants'}],links:[],forms:[],actions:[{kind:'click',detail:'a[href="https://www.zomato.com/"]',status:'done'}]}
+
+// Execute the emitted worker, including its real consequence gate and wait
+// invocation. Search on a lookalike or another provider must not get this wait;
+// a consequential control on the real flight page must still be skipped.
+for(const [url,label,expectedWaits,expectedClicks] of [
+ ['https://www.google.com/travel/flights','Search',1,1],
+ ['https://www.google.com.evil.example/travel/flights','Search',0,1],
+ ['https://fixture.example/','Search',0,1],
+ ['https://www.google.com/travel/flights','Book now',0,0],
+] as const){
+ let waited=0,clicked=0,output:any
+ const element={tagName:'BUTTON',textContent:label,id:'search',getAttribute:(key:string)=>key==='type'?'button':null}
+ const page={url:()=>url,on:()=>{},goto:async()=>{},waitForTimeout:async()=>{},
+  waitForFunction:async(fn:any)=>{waited++;assert.equal(fn(),true)},
+  evaluate:async(fn:any)=>String(fn).includes('hasContent')?{hasContent:true,challenge:false}:String(fn).includes('location.protocol')?false:{url,text:'Fixture flight page',forms:[],controls:[]},
+  locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element),click:async()=>{clicked++}})})}
+ await runInNewContext(exports.BROWSER_SCRIPT,{document:{querySelectorAll:()=>[observedRow]},
+  require:()=>({chromium:{launchPersistentContext:async()=>({pages:()=>[page],close:async()=>{}})}}),
+  process:{argv:['node','browser',Buffer.from(JSON.stringify({url,mode:'read',actions:[{kind:'click',selector:'#observed-search'}]})).toString('base64')],exit:()=>{throw new Error('unexpected exit')}},
+  Buffer,console:{log:(value:string)=>{output=JSON.parse(value)},error:console.error}})
+ assert.equal(waited,expectedWaits);assert.equal(clicked,expectedClicks)
+ assert.equal(output.actions[0].status,expectedClicks?'done':'skipped')
+}
 await exports.planActions('Find vegetarian burgers',observedLinkPage,'read','USER_INSTRUCTION')
 assert.match(captured,/"href":"https:\/\/www.zomato.com\/restaurants"/,'planner can distinguish restaurant navigation from a same-page footer link')
 assert.match(captured,/"previousActions":\[{"kind":"click","status":"done"/,'last attempted action survives into the next planning wave')
@@ -440,10 +481,10 @@ assert.ok(assessmentCalls>previousAssessments)
 console.log('PASS: search controls, location handoff, verified result convergence and fail-closed evidence')
 // Flight widgets need separate observations to open/fill/select two airports and dates.
 // Fixtures verify the actual loop, not live fares or provider access.
-async function multiStepFixture(scenario:'flight'|'google-flight'|'blocked-control'|'never-complete') {
+async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight-late'|'blocked-control'|'never-complete') {
   const exported:any={};let steps=0,plans=0,assessments=0
-  const required=scenario==='flight'||scenario==='google-flight'?8:2
-  const makePage=()=>({url:scenario==='google-flight'?'https://www.google.com/travel/flights':'https://fixture.example/flights',title:'Flight search',
+  const required=scenario==='google-flight-late'?14:scenario==='flight'||scenario==='google-flight'?8:2
+  const makePage=()=>({url:scenario.startsWith('google-flight')?'https://www.google.com/travel/flights':'https://fixture.example/flights',title:'Flight search',
     text:scenario!=='never-complete'&&steps>=required?'BLR to BOM 12 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000':(scenario==='never-complete'?'Choose route and date':'Choose route and date step '+steps),
     forms:[],links:[],controls:[{selector:'#commit',tag:'button',label:'Book now'},{selector:'#safe',tag:'button',label:'Search flights'}],
     actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:steps===1&&scenario==='blocked-control'?'skipped':'done',failure:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
@@ -473,10 +514,11 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'blocked-contr
   const execute=()=>exported.runSecureBrowser({userId:'fixture',url:'https://fixture.example/flights',objective:'Find BLR to BOM for 12 October 2026, 1 adult economy and displayed fare',mode:'read'})
   if(scenario==='never-complete'){await assert.rejects(execute,/browser_objective_unverified/);assert.equal(steps,2,'unchanged pages stop after two attempts instead of exhausting the larger budget')}
   else {const result=await execute();assert.equal(result.status,'completed');assert.equal(steps,required)}
-  if(scenario==='google-flight')assert.equal(assessments,1,'only the result page is assessed; empty form steps do not consume completion calls')
+  if(scenario.startsWith('google-flight'))assert.equal(assessments,1,'only the result page is assessed; empty form steps do not consume completion calls')
 }
 await multiStepFixture('flight')
 await multiStepFixture('google-flight')
+await multiStepFixture('google-flight-late')
 await multiStepFixture('blocked-control')
 await multiStepFixture('never-complete')
 console.log('PASS: multi-step flight research can complete, blocked commit stays blocked while another read control is tried, and unfinished research remains bounded')

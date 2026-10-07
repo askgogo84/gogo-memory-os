@@ -23,6 +23,9 @@ const MAX_ACTIONS = 12
 // Airport autocomplete and date selection need several observed steps.
 // The existing 180-second deadline still bounds the entire read.
 const MAX_RESEARCH_WAVES = 12
+// The observed Google form needed all 12 waves just to press Search. Leave
+// room to observe loaded results; the same hard read deadline still applies.
+const MAX_FLIGHT_RESEARCH_WAVES = 16
 // 3 Oct: the IndiGo read exceeded the 300s route limit and left RUNNING in DB.
 // Reserve 120s for teardown, caller persistence and response. This is a read
 // budget, not permission to retry an interrupted consequential operation.
@@ -375,6 +378,14 @@ const receiptCount=(text)=>{
 return receiptSnapshot();
   },{pattern,confirmationSnapshot:true});
 }
+async function waitForPublicFlightResults(page){
+  // Search changes this SPA after the click returns. Read actual visible rows
+  // before taking the final snapshot; a timeout is not evidence of success.
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('[role="link"][aria-label]')).some(el=>{
+    const box=el.getBoundingClientRect();
+    return box.width>0&&box.height>0&&/^From [\d,]+ Indian rupees\. .+ flight with /i.test(el.getAttribute('aria-label')||'');
+  }),undefined,{timeout:7000}).catch(()=>{});
+}
 async function isPublicSearchInput(page,selector){
   try{return await page.locator(selector).first().evaluate(el=>{
     if(el.tagName!=='INPUT'||el.disabled||el.readOnly)return false;
@@ -458,6 +469,7 @@ async function isConsequentialControl(page,selector,onUnavailable){
     for(const a of (payload.actions||[])){
       let consequential=a.kind==='submit';
       let captureEvidence=false;
+      let flightResultSearch=false;
       try{
         if(a.kind==='goto') await page.goto(a.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
         else if(a.kind==='fill') await page.locator(a.selector).first().fill(a.value,{timeout:10000});
@@ -472,6 +484,9 @@ async function isConsequentialControl(page,selector,onUnavailable){
           let unavailable=false;
           consequential=await isConsequentialControl(page,a.selector,()=>{unavailable=true});
           if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential,failure:{reason:unavailable?'control_unavailable':'consequential_control'}});continue;}
+          flightResultSearch=payload.mode==='read'&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(payload.url)
+            &&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(page.url())
+            &&await page.locator(a.selector).first().evaluate(el=>/^Search$/i.test((el.getAttribute('aria-label')||el.textContent||'').trim())).catch(()=>false);
           // Follow the observed ordinary link on the task page. This also avoids
           // pointer interception by overlays; consequence checks above still apply.
           const readLink=payload.mode==='read'?await page.locator(a.selector).first().evaluate(el=>
@@ -486,6 +501,7 @@ async function isConsequentialControl(page,selector,onUnavailable){
         }
         log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
         await page.waitForTimeout(650);
+        if(flightResultSearch)await waitForPublicFlightResults(page);
         if(captureEvidence){
           await page.waitForFunction(({before,pattern})=>{
 const confirmation=new RegExp('\\b'+pattern+'\\s+(?:(?:is|was|has\\s+been)\\s+)?(?:confirmed|completed|complete|placed|processed|successful|succeeded|submitted(?: successfully)?|received|successfully (?:completed|placed|confirmed|processed|submitted))\\b','i');
@@ -974,7 +990,8 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     let unchangedReadWaves=0
     const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
-    for(let wave=0;wave<(params.mode==='read'?MAX_RESEARCH_WAVES:1);wave++){
+    const readWaves=googleFlightReadProgress(page)?MAX_FLIGHT_RESEARCH_WAVES:MAX_RESEARCH_WAVES
+    for(let wave=0;wave<(params.mode==='read'?readWaves:1);wave++){
       const beforeReadSnapshot=readSnapshot(page)
       const providerBlock=detectProviderAccessBlock(page)
       if(providerBlock){
@@ -1178,6 +1195,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         inputs:(page.forms||[]).reduce((n:number,f:any)=>n+(f.inputs?.length||0),0),
         links:page.links?.length||0,actions:actionLog.map(a=>({kind:a.kind,status:a.status,...(a.failure?{failure:a.failure}:{})})),
         controls:page.controls?.length||0,
+        ...(googleFlightReadProgress(page)?{flight:{...googleFlightReadProgress(page),selectedControls:page.flightEvidence?.searchControls?.length||0,observedRows:page.flightEvidence?.resultLabels?.length||0}}:{}),
       }))
       throw new Error('browser_objective_unverified')
     }
