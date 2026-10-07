@@ -142,7 +142,7 @@ export async function runLiveFlightBrowserTask(params: {
     userId:params.actor.userId,
     url,
     objective:`Read actual flight rows for ${query}. User research criteria: ${params.objective}. Verify the selected route, departure date, passengers and cabin using the visible search controls before reporting airline, departure, arrival and INR fare evidence. Do not book, purchase, sign in or submit passenger/payment information.`,
-    mode:'read',
+    mode:'read',recoverFlightSearch:true,
   }) } catch (error: any) {
     // Browser verification/timeouts are expected provider failures. The travel
     // orchestrator must still deliver its clearly labelled public-source fallback.

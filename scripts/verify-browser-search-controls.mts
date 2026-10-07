@@ -494,6 +494,49 @@ assessmentEvidence=['Model: Sony WH-1000XM5','Listed Price: ₹28,926']
 await assert.rejects(()=>resultExports.runSecureBrowser({userId:'fixture-user',url:'https://fixture.example/',objective:'Find Sony WH-1000XM5 headphones and listed price',mode:'read'}),(error:any)=>{assert.match(error.message,/browser_objective_unverified/);assert.ok(error.browserReadDiagnostics.some((d:any)=>d.reason==='unverified_quotes'));return true},'invented labels must still fail grounding')
 assert.ok(assessmentCalls>previousAssessments)
 console.log('PASS: search controls, location handoff, verified result convergence and fail-closed evidence')
+// 7 Oct production: after a skipped Enter on the departure field, the next
+// model plan had zero accepted actions and stopped before public Search.
+const recoveryExports:any={};let recoveryClicks=0,recoveryResultRows=true
+const recoveryPage={url:'https://www.google.com/travel/flights',title:'Flight search',text:'Choose route and date',forms:[],links:[],controls:[
+ {selector:'#from',tag:'input',label:'Where from? Bengaluru BLR',value:'Bengaluru',searchMode:'suggestions'},
+ {selector:'#to',tag:'input',label:'Where to? Mumbai BOM',value:'Mumbai',searchMode:'suggestions'},
+ {selector:'#departure',tag:'input',label:'Departure',publicFilter:'flight-date',value:'Tue, Oct 20'},
+ {selector:'#search',tag:'button',role:'button',label:'Search'},
+]}
+runInNewContext(ts.transpileModule(source+'\nexport {recoverGoogleFlightSearch}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+ exports:recoveryExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+  if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
+  if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
+  if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
+  if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
+  if(id==='./browser-evidence')return browserEvidence
+  if(id==='./browser-auth-gate')return {detectHumanAuthGate}
+  if(id==='./browser-location-gate')return {needsBrowserDeliveryLocation}
+  if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string,_usage:any,system?:string)=>system?.startsWith('Evaluate whether')?JSON.stringify({complete:recoveryResultRows&&recoveryClicks>0,evidence:['BLR to BOM 20 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000']}):JSON.stringify({actions:[]})}
+  return {}
+ },
+})
+for(const page of [{...recoveryPage,url:'https://www.google.com.evil.example/travel/flights'}, {...recoveryPage,activeDialog:'Date picker'}, {...recoveryPage,controls:recoveryPage.controls.filter(c=>c.selector!=='#departure')}, {...recoveryPage,controls:recoveryPage.controls.map(c=>c.selector==='#search'?{...c,label:'Book now'}:c)}]){
+ assert.equal(recoveryExports.recoverGoogleFlightSearch(page),null)
+}
+assert.equal(recoveryExports.recoverGoogleFlightSearch(recoveryPage)?.selector,'#search')
+const recoverySandbox={updateNetworkPolicy:async()=>{},stop:async()=>{},runCommand:async(command:any)=>{
+ const payload=JSON.parse(Buffer.from(command.args.at(-1),'base64').toString())
+ assert.deepEqual(payload.actions,[{kind:'click',selector:'#search'}]);recoveryClicks++
+ return {exitCode:0,stdout:async()=>JSON.stringify({...recoveryPage,text:recoveryResultRows?'BLR to BOM 20 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000':'Choose route and date',actions:[{kind:'click',detail:'#search',status:'done'}]})}
+}}
+recoveryExports.testInspect(async()=>({page:recoveryPage,releaseOwnerLock:async()=>{},sandbox:recoverySandbox,name:'fixture',managed:{allow:{},env:{},release:async()=>{}}}))
+await assert.rejects(()=>recoveryExports.runSecureBrowser({userId:'fixture',url:recoveryPage.url,objective:'Read flight rows',mode:'read'}),/browser_objective_unverified/)
+assert.equal(recoveryClicks,0,'generic reads do not opt into flight adapter recovery')
+await assert.rejects(()=>recoveryExports.runSecureBrowser({userId:'fixture',url:recoveryPage.url,objective:'Read flight rows',mode:'execute',recoverFlightSearch:true}),/browser_objective_unverified/)
+assert.equal(recoveryClicks,0,'execute mode cannot use read Search recovery')
+const recoveredFlight=await recoveryExports.runSecureBrowser({userId:'fixture',url:recoveryPage.url,objective:'Read flight rows',mode:'read',recoverFlightSearch:true})
+assert.equal(recoveredFlight.status,'completed');assert.equal(recoveryClicks,1)
+assert.match(recoveredFlight.summary,/₹5000/)
+recoveryClicks=0;recoveryResultRows=false
+await assert.rejects(()=>recoveryExports.runSecureBrowser({userId:'fixture',url:recoveryPage.url,objective:'Read flight rows',mode:'read',recoverFlightSearch:true}),/browser_objective_unverified/)
+assert.equal(recoveryClicks,1,'an unchanged search may be recovered once, never looped into success')
+
 // Flight widgets need separate observations to open/fill/select two airports and dates.
 // Fixtures verify the actual loop, not live fares or provider access.
 async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight-late'|'blocked-control'|'never-complete') {
