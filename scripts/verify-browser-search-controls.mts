@@ -138,7 +138,7 @@ runInNewContext(ts.transpileModule(source+'\nexport {planActions}; export functi
     if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>redactLinkFixture?redactBrowserSensitiveText(s):s}
     if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
     if(id==='./browser-auth-gate')return {detectHumanAuthGate}
-    if(id==='./browser-evidence')return {isLoginDestination}
+    if(id==='./browser-evidence')return browserEvidence
     if(id==='./browser-location-gate')return {needsBrowserDeliveryLocation}
     if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string)=>{
       captured=prompt
@@ -458,6 +458,44 @@ assert.equal(sourceChecks.browserSourceUrl(numericModelProduct.replace('amazon.i
 assert.equal(sourceChecks.browserSourceUrl(numericModelProduct.replace('B00552K0GM','1234567890')),null,'identifier redaction still applies to the product ID itself')
 assert.equal(await sourceChecks.assessReadOutcome('Find Logitech M185 and product link',{...resultPage,url:numericModelProduct}),resultText.replace(/\s+/g,' ').trim())
 console.log('PASS: observed product source handoff and search-result completion boundary')
+
+// 7 Oct production: the page was ready and the assessor claimed completion,
+// but its seven quotes were not exact observed spans. Recover only via IDs
+// resolved to original page text, without accepting invented labels or prices.
+const retailerText='Apple iPhone 17 Pro (256 GB Storage) Cosmic Orange. Listed price ₹1,34,900. Delivery fees and card offers are not verified.'
+let recoveryCalls=0
+let repairMode:'valid'|'invented'|'incomplete'='valid'
+const recoveryChecks:any={}
+runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+ exports:recoveryChecks,process:{env:{}},URL,console,require:(id:string)=>{
+  if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
+  if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText}
+  if(id==='./browser-evidence')return browserEvidence
+  if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string)=>{
+    recoveryCalls++
+    const data=JSON.parse(prompt)
+    if(data.choices)return '```json\n'+JSON.stringify({complete:true,evidenceIds:[repairMode==='invented'?'missing-id':'p0']})+'\n```\nThe listed price is ₹1, this is the cheapest delivered option.'
+    return JSON.stringify({complete:repairMode!=='incomplete',evidence:['Model: Apple iPhone 17 Pro','Listed price: ₹1,34,900']})
+  }}
+  return {}
+ }
+})
+const retailerPage={url:'https://www.flipkart.com/apple-iphone-17-pro/p/itm76fe37ca9ea8c',title:'Apple iPhone 17 Pro',text:retailerText}
+assert.equal(await recoveryChecks.assessReadOutcome('Find exact iPhone 17 Pro 256GB listed price and product link',retailerPage),retailerText)
+assert.equal(recoveryCalls,2,'one bounded repair call after unverified quotes')
+repairMode='invented'
+assert.equal(await recoveryChecks.assessReadOutcome('Find the exact listed price',retailerPage),null,'invented excerpt ID never becomes evidence')
+repairMode='incomplete';recoveryCalls=0
+assert.equal(await recoveryChecks.assessReadOutcome('Find the exact listed price',retailerPage),null)
+assert.equal(recoveryCalls,1,'an incomplete page does not trigger quote repair')
+const cromaPublic='https://www.croma.com/sony-wh-1000xm5-bluetooth-headphone-with-mic-auto-noise-cancelling-optimizer-over-ear-silver-/p/262566'
+assert.equal(sourceChecks.browserSourceUrl(cromaPublic),cromaPublic,'observed long public Croma slug is not an opaque credential')
+assert.equal(sourceChecks.browserSourceUrl(cromaPublic.replace('croma.com','croma.com.evil.example')),null)
+assert.equal(browserEvidence.publicCromaProductUrl('https://www.croma.com/account/session-private-token/p/262566'),null)
+assert.equal(browserEvidence.isLoginFormPage({url:cromaPublic,title:'Buy Sony WH-1000XM5 Online - Croma',text:'Login | Products | Subscribe to updates',forms:[{inputs:[{name:'email',type:'email'}]}]}),false)
+assert.equal(browserEvidence.isLoginFormPage({url:'https://www.croma.com/account/login',title:'Croma',text:'Login',forms:[]}),true)
+assert.equal(browserEvidence.isLoginFormPage({url:'https://provider.example/',title:'Sign in',forms:[{inputs:[{name:'email',type:'email'}]}]}),true)
+console.log('PASS: retailer quote recovery, Croma public source, and optional email fields versus active login')
 
 // Replay the actual duplicate browser command while its first read is running.
 // The duplicate must return the same owner-scoped task without a new execution.
