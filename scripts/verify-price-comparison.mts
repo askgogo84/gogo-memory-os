@@ -341,6 +341,35 @@ const sonySource = 'https://www.amazon.in/dp/B09XS7JWHH'
 const sonyEvidence = 'Sony WH-1000XM5 Black. Price ₹28,926. Seller Premium Authorized Distributions. Deliver to Chennai 600078.'
 const sonyObservation = model.providerObservation('amazon', {id: 'sony-child', status: 'completed', updated_at: '2026-10-04T15:12:00Z'},
   {status: 'completed', output_json: {sourceUrl: sonySource, summary: sonyEvidence}})
+
+// Actual production shapes: an ad price was the first rupee token on Flipkart,
+// and other capacities/offers appeared before the selected listing's price.
+const phoneEvidence = 'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\n'
+  + '(Maroon), 256 GB) 44% 84,999 ₹47,999 AD g37 power (128 GB) ₹19,999 AD '
+  + 'Selected Color: Cosmic Orange Variant: 256 GB 256 GB ₹1,34,900 512 GB ₹1,54,900 2 left 1 TB ₹1,74,900 '
+  + 'Apple iPhone 17 Pro (Cosmic Orange, 256 GB) 4.7 | 5,581 ₹1,34,900 +₹299 Protect Promise Fee Buy at ₹1,30,900 Apply offers'
+const phoneRow:model.ProviderObservation = {provider:'flipkart',status:'observed',checkedAt:'2026-10-07T09:11:59Z',sourceUrl:'https://www.flipkart.com/apple-iphone-17-pro/p/fixture',evidence:phoneEvidence}
+assert.deepEqual(model.comparisonQuote('iPhone 17 Pro 256GB',phoneRow),{price:'₹1,34,900',fee:'₹299 Protect Promise Fee',taxesIncluded:false})
+const shortPhone = model.comparisonWhatsAppSummary({metadata_json:{subject:'iPhone 17 Pro 256GB',providers:[phoneRow]}} as any)
+assert.match(shortPhone,/₹1,34,900/);assert.match(shortPhone,/₹299 Protect Promise Fee/)
+assert.doesNotMatch(shortPhone,/47,999|19,999|54,900|74,900|30,900|Maroon|AD |page excerpt/)
+assert.match(shortPhone,/7 Oct.*IST/)
+const cromaRow:model.ProviderObservation = {provider:'croma',status:'observed',sourceUrl:'https://www.croma.com/sony-wh-1000xm5/p/262566',
+  evidence:'Buy Sony WH-1000XM5 Bluetooth Headset with Mic (Over Ear, Silver) Online - Croma\nCompare Connect to Store 4.3 (8 Ratings & 7 Reviews) ₹29,990.00 (Incl. all Taxes) MRP: ₹34,990.00 (Save ₹5,000, 14.29% off)'}
+assert.deepEqual(model.comparisonQuote('Sony WH-1000XM5',cromaRow),{price:'₹29,990',taxesIncluded:true})
+assert.equal(model.comparisonQuote('Sony WH-1000XM5 Black',cromaRow),null,'do not hide a wrong requested colour')
+for(const row of [{...phoneRow,status:'failed' as const},{...phoneRow,sourceUrl:'https://evil.test/p/fixture'},
+  {...phoneRow,evidence:'Apple iPhone 16 Pro (Cosmic Orange, 256 GB)\n₹1,34,900'},
+  {...phoneRow,evidence:'Apple iPhone 17 Pro Max (Cosmic Orange, 256 GB)\n₹1,34,900'},
+  {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 512 GB)\n₹1,34,900'},
+  {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\nBuy at ₹1,30,900 with bank offers'},
+  {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\nMRP: ₹1,34,900'},
+  {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\nAD ₹47,999'},
+  {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\n₹1,34,900 or ₹1,30,900'}])
+  assert.equal(model.comparisonQuote('iPhone 17 Pro 256GB',row),null,JSON.stringify(row))
+const ambiguous = model.comparisonWhatsAppSummary({metadata_json:{subject:'iPhone 17 Pro 256GB',providers:[{...phoneRow,evidence:phoneRow.evidence!.split('\n')[0]+'\n₹1,34,900 or ₹1,30,900'}]}} as any)
+assert.match(ambiguous,/could not be isolated/);assert.doesNotMatch(ambiguous,/₹/,'ambiguity does not choose the cheaper offer')
+assert.match(model.comparisonWhatsAppSummary({metadata_json:{subject:'Sony',providers:[{provider:'croma',status:'pending'}]}} as any),/send the results/)
 assert.equal(sonyObservation.status, 'observed')
 const sonySummary = model.comparisonSummary({updated_at: 'x', id: 'sony-parent', status: 'paused', title: 'Sony', source: 'whatsapp',
   metadata_json: {subject: 'Sony WH-1000XM5 black', request: 'Compare Sony', providers: [sonyObservation]}} as any)
@@ -382,7 +411,8 @@ const delivery = load('lib/commerce/comparison-delivery.ts', {
   }},
   '@/lib/whatsapp': {sendWhatsApp: async (_to: string, text: string, _media: any, token: string) => {
     assert.equal(token, '00000000-0000-4000-8000-000000000001')
-    for (const fact of ['₹28,926', 'Chennai 600078', sonySource]) assert.ok(text.includes(fact), fact)
+    for (const fact of ['₹28,926', sonySource]) assert.ok(text.includes(fact), fact)
+    assert.doesNotMatch(text,/Chennai 600078/,'a page location is not the user\'s verified delivery location')
     assert.doesNotMatch(text, /Stale unsupported|search snippet/i)
     if (rejectSend) throw Object.assign(new Error('inactive account'), {status: 401})
     acceptedSends++

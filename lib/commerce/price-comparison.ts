@@ -2,7 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
-import {COMPARISON_PROVIDERS, comparisonObjective, comparisonSource, comparisonState, comparisonSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, comparisonObjective, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
@@ -44,7 +44,7 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
 
 function reply(task: PriceComparison) {
   return {runId: task.id, status: task.status, capability: 'browser' as const, risk: 'low' as const,
-    handledBy: 'price-comparison', text: comparisonSummary(task) + '\n\nSaved comparison: ' + comparisonLink(task.id)}
+    handledBy: 'price-comparison', text: comparisonWhatsAppSummary(task) + '\n\nSaved comparison: ' + comparisonLink(task.id)}
 }
 
 /** Search is a labelled fallback only; a snippet is never a live retailer quote. */

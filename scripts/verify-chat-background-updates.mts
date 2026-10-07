@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
+import * as runState from '../lib/dashboard/run-state'
 
 // Execute the shipped component's effects and send callbacks with a controlled
 // clock/network. This reproduces a worker finishing while chat stays open.
@@ -37,7 +38,7 @@ runInNewContext(ts.transpileModule(readFileSync('components/dashboard/gogo-chat.
     }
     if(id==='react/jsx-runtime')return {jsx:(type:any,props:any)=>({type,props}),jsxs:(type:any,props:any)=>({type,props})}
     if(id==='next/navigation')return {useSearchParams:()=>({get:()=>null})}
-    if(id.includes('run-state'))return {summarizeActiveRunState:()=>({label:'Ready',tone:'ready'})}
+    if(id.includes('run-state'))return {selectActiveRun:()=>null,summarizeActiveRunState:()=>({label:'Ready',tone:'idle'})}
     return {}
   },
 })
@@ -95,3 +96,36 @@ for(const marker of ['pending_friend','pending_friend_confirm','pending_skin_che
 assert.equal(historyRoute.cleanHistory('user','Remind Matthew tomorrow at 11am.'),'Remind Matthew tomorrow at 11am.')
 assert.equal(historyRoute.cleanHistory('assistant','Flipkart ₹1,34,900. Product page: https://www.flipkart.com/product/p/example'),'Flipkart ₹1,34,900. Product page: https://www.flipkart.com/product/p/example')
 console.log('PASS: internal pending records stay out of chat while real requests and retailer results remain visible')
+
+// Render the shipped chat with the real status helper, not a status-only fixture.
+function renderStatus(runs:any[]) {
+  const component:any={}
+  runInNewContext(ts.transpileModule(readFileSync('components/dashboard/gogo-chat.tsx','utf8'),{
+    compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX},
+  }).outputText,{exports:component,require:(id:string)=>{
+    if(id==='react')return {useState:(initial:any)=>[initial?.runs?{runs,watchers:[],approvals:[]}:initial,()=>{}],useRef:(current:any)=>({current}),useEffect:()=>{},useMemo:(fn:any)=>fn()}
+    if(id==='react/jsx-runtime')return {jsx:(type:any,props:any)=>({type,props}),jsxs:(type:any,props:any)=>({type,props})}
+    if(id==='next/navigation')return {useSearchParams:()=>({get:()=>null})}
+    if(id.includes('run-state'))return runState
+    return {}
+  }})
+  const labels:string[]=[]
+  function visit(node:any):void {
+    if(typeof node==='string'){labels.push(node);return}
+    if(!node||typeof node!=='object')return
+    for(const child of Array.isArray(node)?node:Array.isArray(node.props?.children)?node.props.children:[node.props?.children])visit(child)
+  }
+  const tree=component.GogoChat({});visit(tree)
+  return labels
+}
+const oldBrowser={type:'secure_browser',capability:'browser',status:'paused',error:'human_auth_required',summary:'Old sign-in failed.',metadata:{}}
+const failedRead={type:'price_comparison',capability:'browser',status:'paused',summary:'Old price check failed.',metadata:{}}
+const ready=renderStatus([failedRead,oldBrowser])
+assert.ok(ready.includes('Ready'))
+assert.ok(ready.includes('Gogo is ready. Nothing consequential happens without your approval.'),'history failures stay in activity, not the current task summary')
+assert.ok(!ready.includes('Waiting for you'))
+const working=renderStatus([failedRead,{status:'running',summary:'Checking Croma now.'}])
+assert.ok(working.includes('Working'));assert.ok(working.includes('Checking Croma now.'))
+const waiting=renderStatus([{...oldBrowser,metadata:{handoff:{takeoverUrl:'https://fixture.invalid/takeover'}}}])
+assert.ok(waiting.includes('Waiting for you'),'real human takeovers remain actionable')
+console.log('PASS: real chat status ignores old failures, prioritizes running work and preserves actionable handoffs')

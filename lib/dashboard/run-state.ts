@@ -7,7 +7,7 @@
 
 import { retiredRunReason } from '../agent/task-lifecycle'
 
-export type RunStatusLike = { status?: string | null; summary?: string | null; error?: string | null; metadata?: any; metadata_json?: any }
+export type RunStatusLike = { type?: string | null; capability?: string | null; status?: string | null; summary?: string | null; error?: string | null; metadata?: any; metadata_json?: any }
 export type RunStateSummary = {
   working: number
   waiting: number
@@ -30,8 +30,20 @@ export function isActionablePause(run: RunStatusLike): boolean {
   // Actionable pauses can be signalled by metadata (handoff, secure-browser waiting,
   // auth-resume) OR by an error reason, and some producers clear one while setting the
   // other — so check both.
+  // A legacy browser auth failure without a reconnect action cannot be resumed
+  // by the user. Keep it in activity history, not the current Needs you indicator.
+  if (run.type === 'secure_browser' || run.capability === 'browser') {
+    return Boolean(meta.handoff?.takeoverUrl || (meta.handoff?.mode === 'device' && meta.handoff?.providerUrl)
+      || meta.awaiting || meta.secondary_auth || meta.browser_waiting || meta.auth_resume)
+  }
   if (meta && (meta.handoff || meta.awaiting || meta.secondary_auth || meta.browser_waiting || meta.auth_resume)) return true
   return ACTIONABLE_PAUSE.test(String(run?.error || ''))
+}
+
+export function selectActiveRun<T extends RunStatusLike>(runs: T[] | null | undefined): T | null {
+  const list = Array.isArray(runs) ? runs.filter(run => !retiredRunReason(run)) : []
+  return list.find(run => WORKING.has(String(run.status || '')))
+    || list.find(run => run.status === 'waiting_approval' || isActionablePause(run)) || null
 }
 
 export function summarizeActiveRunState(runs: RunStatusLike[] | null | undefined): RunStateSummary {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
-import { isActionablePause, summarizeActiveRunState } from '../lib/dashboard/run-state'
+import { isActionablePause, selectActiveRun, summarizeActiveRunState } from '../lib/dashboard/run-state'
 
 // Production incident: a Blinkit run that ended blocked (status 'paused') still showed
 // "Working" on the dashboard. Paused / waiting_approval runs are waiting on the user,
@@ -36,6 +36,22 @@ assert.equal(summarizeActiveRunState([{ status: 'completed' }]).label, 'Ready')
 assert.equal(summarizeActiveRunState([{ status: 'failed' }]).label, 'Ready')
 assert.equal(summarizeActiveRunState([]).label, 'Ready')
 assert.equal(summarizeActiveRunState(null).label, 'Ready')
+
+// Production: an old browser auth failure had no takeover or reconnect action,
+// while a newer finished comparison was displayed as the active task summary.
+const oldAuth = {type:'secure_browser', capability:'browser', status:'paused', error:'human_auth_required', summary:'Secure reconnect is coming soon.', metadata:{}}
+const finishedComparison = {type:'price_comparison', capability:'browser', status:'paused', summary:'The check has finished.', metadata:{providers:[{status:'failed',needsInput:false}]}}
+assert.equal(summarizeActiveRunState([oldAuth,finishedComparison]).label,'Ready')
+assert.equal(selectActiveRun([oldAuth,finishedComparison]),null,'historical failure summaries cannot become current work')
+assert.equal(isActionablePause({...oldAuth,metadata:{handoff:{}}}),false)
+assert.equal(isActionablePause({...oldAuth,metadata:{handoff:{releaseUrl:'https://fixture.invalid/release'}}}),false,'releasing a session is not a usable sign-in action')
+const liveBrowser = {...oldAuth, metadata:{handoff:{takeoverUrl:'https://fixture.invalid/takeover'}}}
+assert.equal(summarizeActiveRunState([liveBrowser]).label,'Waiting for you','a real same-task takeover remains visible')
+const newWork = {status:'running',summary:'Checking Croma'}
+assert.equal(selectActiveRun([liveBrowser,newWork]),newWork,'active execution wins over older waiting tasks')
+assert.equal(selectActiveRun([oldAuth,liveBrowser]),liveBrowser)
+assert.equal(selectActiveRun([{status:'running',metadata:{state:'closed_stale'}}]),null)
+assert.match(readFileSync('app/api/agent/snapshot/route.ts','utf8'),/type: r\.type/,'browser type reaches the real chat status helper')
 
 // A genuinely-running run reads as Working even alongside a paused one.
 const mixed = summarizeActiveRunState([{ status: 'paused' }, { status: 'running' }])
