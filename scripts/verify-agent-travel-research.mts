@@ -86,10 +86,10 @@ if (hardened.includes('₹4333') || hardened.includes('₹4,984')) {
   console.error('✗ unverified-date INR fare survived hardening', hardened)
 } else console.log('✓ unverified-date INR fares are suppressed')
 
-if (!hardened.includes('Ixigo') || !hardened.includes('₹4106')) {
+if (!hardened.includes('Ixigo') || !hardened.includes('https://ixigo.example/blr-bom') || hardened.includes('₹4106') || hardened.includes('₹5,109')) {
   failed++
-  console.error('✗ valid in-window fare was removed', hardened)
-} else console.log('✓ in-window INR fare remains visible with verification language')
+  console.error('✗ dated snippet lost its source or exposed an unverified fare', hardened)
+} else console.log('✓ dated snippet retains its source while all unverified fares are withheld')
 
 const bridgeSource = readFileSync(new URL('../lib/integrations/creditiq-travel.ts', import.meta.url), 'utf8')
 if (!bridgeSource.includes('/api/internal/gogo/travel/flights')) {
