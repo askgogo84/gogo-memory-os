@@ -429,6 +429,7 @@ export async function fetchGmailAttentionThreads(accessToken:string,maxThreads=1
   const refs=await listAttentionMessageRefs(accessToken,Math.max(20,maxThreads*3))
   const threadIds=[...new Set<string>((refs||[]).map((row:any)=>String(row.threadId||'')).filter(Boolean))].slice(0,Math.max(1,Math.min(20,maxThreads)))
   const settled=await Promise.allSettled(threadIds.map(id=>fetchAttentionThread(accessToken,id)))
+  if(settled.some(x=>x.status==='rejected'||!x.value))throw new Error('gmail_attention_thread_read_incomplete')
   return settled
     .filter((x):x is PromiseFulfilledResult<GmailAttentionThread|null>=>x.status==='fulfilled')
     .map(x=>x.value)
