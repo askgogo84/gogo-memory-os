@@ -82,7 +82,7 @@ function isReminderReadQuery(text: string) {
   const raw = String(text || '').trim().toLowerCase().replace(/[?!.]+$/g, '')
   return (
     /^(?:what|which)\s+reminders?\s+(?:do\s+i\s+have|have\s+i|are\s+(?:set|scheduled))(?:\s+for\s+.+)?$/.test(raw) ||
-    /^(?:show|list|display)\s+(?:me\s+)?(?:my\s+)?reminders?(?:\s+for\s+.+)?$/.test(raw) ||
+    /^(?:show|list|display)\s+(?:me\s+)?(?:my\s+)?(?:(?:pending|active|upcoming)\s+)?reminders?(?:\s+for\s+.+)?$/.test(raw) ||
     /^(?:show|find)\s+(?:me\s+)?(?:my\s+)?reminder\s+(?:to|for|about)\s+.+$/.test(raw) ||
     /^(?:how\s+many)\s+reminders?\s+do\s+i\s+have\s+(?:to|for|about)\s+.+$/.test(raw) ||
     /^(?:my|pending|active|upcoming)\s+reminders?(?:\s+for\s+.+)?$/.test(raw)
@@ -123,8 +123,10 @@ async function readReminderQuery(actor: AgentActor, text: string) {
     const year = Number(explicit[3] || new Intl.DateTimeFormat('en',{timeZone:timezone,year:'numeric'}).format(new Date()))
     explicitDate = `${year}-${String(months[explicit[2].toLowerCase()]).padStart(2,'0')}-${String(Number(explicit[1])).padStart(2,'0')}`
   }
+  const tomorrow = new Date(localDateKey(new Date(),timezone)+'T12:00:00Z')
+  tomorrow.setUTCDate(tomorrow.getUTCDate()+1)
   const targetDate = explicitDate || (/\btomorrow\b/i.test(lower)
-    ? localDateKey(new Date(Date.now() + 36 * 60 * 60 * 1000), timezone)
+    ? tomorrow.toISOString().slice(0,10)
     : /\btoday\b/i.test(lower)
       ? localDateKey(new Date(), timezone)
       : null)
@@ -138,9 +140,10 @@ async function readReminderQuery(actor: AgentActor, text: string) {
   if (error) throw new Error(`compound_reminder_read_failed:${error.message}`)
 
   let rows = (data || []).filter((row: any) => {
-    if (!targetDate) return true
     const due = new Date(String(row.remind_at || ''))
-    return Number.isFinite(due.getTime()) && localDateKey(due, timezone) === targetDate
+    if(!Number.isFinite(due.getTime()))return false
+    if(/\bupcoming\b/.test(lower)&&due.getTime()<Date.now())return false
+    return !targetDate || localDateKey(due, timezone) === targetDate
   })
   const targeted=targetedReminderQuery(text)
   if(targeted){
@@ -156,10 +159,10 @@ async function readReminderQuery(actor: AgentActor, text: string) {
 
   const fmt = new Intl.DateTimeFormat('en-IN', {
     timeZone: timezone,
-    weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true,
+    weekday: 'short', day: 'numeric', month: 'short', year:'numeric', hour: 'numeric', minute: '2-digit', hour12: true,timeZoneName:'short',
   })
   const heading = /\btomorrow\b/i.test(lower) ? '⏰ *Reminders for tomorrow*' : /\btoday\b/i.test(lower) ? '⏰ *Reminders for today*' : '⏰ *Your reminders*'
-  return `${heading}\n\n${rows.map((row: any, index: number) => `${index + 1}. ${row.message || 'Reminder'} — ${fmt.format(new Date(row.remind_at))}`).join('\n')}`
+  return `${heading}\n\n${rows.map((row: any, index: number) => `${index + 1}. ${row.message || 'Reminder'} — ${fmt.format(new Date(row.remind_at))}${Date.parse(row.remind_at)<Date.now()?' · overdue':''}`).join('\n')}`
 }
 
 
