@@ -48,8 +48,20 @@ export function redactSecretShapedText(content: string): string {
   // Preserve the label/context and replace only its value.
   out = out.replace(LABELED_SECRET_VALUE_RE, (_match, label) => `${label} [sensitive detail withheld]`)
 
+  // Generated authenticated report links carry UUIDs, whose first group can be
+  // all digits. Preserve only these exact first-party routes, never arbitrary
+  // URLs, query values or fragments, so redaction cannot break the saved result.
+  const reportLinks = [...out.matchAll(/https:\/\/[^\s<>)\]]+/gi)].filter(match => {
+    try {
+      const url = new URL(match[0])
+      return url.hostname === 'app.askgogo.in' && !url.username && !url.password && !url.port && !url.search && !url.hash
+        && /^\/dashboard\/(?:comparisons|activity)\/[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}(?:\/browser)?$/i.test(url.pathname)
+    } catch { return false }
+  })
   // Catch long unlabelled identifier-like digit runs that survived the labelled pass.
-  out = out.replace(/\b(?:\d[\s-]?){8,}\b/g, '[sensitive detail withheld]')
+  out = out.replace(/\b(?:\d[\s-]?){8,}\b/g, (value, offset: number) =>
+    reportLinks.some(link => offset >= link.index! && offset + value.length <= link.index! + link[0].length)
+      ? value : '[sensitive detail withheld]')
 
   return out
 }
