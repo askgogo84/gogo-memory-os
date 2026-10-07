@@ -17,6 +17,7 @@ import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildContextPack, renderContextBlock } from './context-brain'
 import { artifactReply } from './artifact-presentation'
+import { workspaceEmailAuditScope } from './google-workspace-read'
 
 const MAX_STEPS = 10
 const CONSEQUENTIAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments'])
@@ -149,7 +150,26 @@ function domainCount(text: string) {
 }
 
 /** Only invoke the expensive planner for genuinely cross-feature/outcome requests. */
+export function readOnlySubscriptionAuditPlan(text:string):GeneralPlan|null {
+  if(!/^\s*(?:(?:can|could) you\s+)?(?:please\s+)?audit\b/i.test(text)||!/\b(?:last|past)\s+\d+\s+days?\b/i.test(text))return null
+  const positive=String(text).replace(/\b(?:do not|don't|never)\b[^.!?\n]*/gi,'')
+  // A report's "list each service" is not a request to mutate saved checklists.
+  // Retain compound missions and explicit writes in the general approval pipeline.
+  if(/\b(send|forward|compose|create|schedule|remind|cancel|delete|archive|modify|buy|pay|book|post|publish|renew)\b/i.test(positive))return null
+  if(/\b(?:show|check|find|read|compare|list)\s+(?:my\s+)?(?:calendar|reminders?|flights?|contacts?|files?|tasks?)\b/i.test(positive))return null
+  if(/\b(?:and|then|also|plus)\s+(?:please\s+)?(?:show|check|find|read|compare|audit|research|search)\b/i.test(positive))return null
+  let scope:ReturnType<typeof workspaceEmailAuditScope>
+  try{scope=workspaceEmailAuditScope(text)}catch{return null}
+  if(!scope)return null
+  const title=`Gmail subscription audit · last ${scope.days} days`
+  return {title,reason:'Read matching email evidence and return a private report; no checklist or external changes.',steps:[
+    {tool:'email',title:'Read subscription receipt and renewal evidence',instruction:`Search connected Gmail for subscription receipts and renewal notices from the last ${scope.days} days, at most ${scope.limit} messages. Read only; extract only amounts, currencies and renewal dates explicitly shown in the email text. Do not infer usage or active subscription status.`},
+    {tool:'artifact',title:'Return the subscription audit report',instruction:'Create a private report from the completed email evidence. Preserve unknown fields and search limits.',artifactTitle:title,artifactType:'research_brief'},
+  ]}
+}
+
 export function shouldUseGeneralPlanner(text: string) {
+  if(readOnlySubscriptionAuditPlan(text))return true
   const t = String(text || '').trim()
   if (t.length < 18) return false
   if (domainCount(t) >= 2 && /\b(and|then|also|after|before|plus|while)\b/i.test(t)) return true
@@ -160,6 +180,8 @@ export function shouldUseGeneralPlanner(text: string) {
 }
 
 export async function planGeneralAgentRequest(text: string, onUsage?:(usage:ModelUsage)=>void, contextualBlock = ''): Promise<GeneralPlan | null> {
+  const auditPlan=readOnlySubscriptionAuditPlan(text)
+  if(auditPlan)return auditPlan
   if (!shouldUseGeneralPlanner(text)) return null
   const prompt = `You are the planning layer for AskGogo, a private personal agent. Turn the user's OUTCOME into 2-${MAX_STEPS} concrete executable steps using ONLY these tools:\n\nmemory, files, reminders, lists, tasks, email, calendar, web_search, travel, artifact\n\nMission rules:\n- Cover every explicit deliverable in the user's request. Do not collapse a multi-part mission into one search or one prose answer.\n- Prefer safe, reversible work first. Put consequential actions such as calendar changes, sends, bookings or external submissions after safe preparation so useful work can finish before an approval pause.\n- If the user says to use what AskGogo already knows, include a memory step near the beginning. Never reveal sensitive identifiers in the plan.\n- If the user explicitly names multiple tasks, use separate task steps when needed so every named task is represented. Each task instruction must literally include the task text; do not rely on hidden context from another step.\n- If the user requests a packing/list deliverable, include a lists step.\n- If the user requests a reminder, include a reminders step. If its exact trigger depends on a future choice that is not known yet, do not invent a date or flight; make the dependency explicit so execution pauses for the missing input.\n- For flight research, phrase the executable instruction as “Search flights from ORIGIN to DESTINATION on DATE” so route direction and date can be verified deterministically.\n- If the user requests a brief/report/artifact, place the artifact after the safe preparatory work but BEFORE a later approval-required or unresolved-dependency step when the artifact can summarize the prepared plan. Do not block a useful draft artifact behind an approval unless it explicitly requires post-execution results.\n- For calendar writes, include exact dates in the instruction. Calendar writes always wait for deterministic approval before execution.\n- The plan sees ONLY this user request. Never assume hidden values, credentials, document numbers or account data.\n- Each instruction must be self-contained and executable by that tool.\n- Use web_search only for public-web research; it can read/search but cannot submit forms.\n- email can read/draft/send, but sending will be stopped by a deterministic approval gate.\n- calendar can read/create/change; writes will be stopped by approval.\n- travel can read/organize; bookings will be stopped by approval.\n- payments/purchases are NOT an available planner tool; if the user asks to spend money, prepare only and let deterministic browser/travel execution stop before purchase.\n- artifact creates a private structured output from the results of previous steps.\n- Do not put secrets or guessed private values into instructions.\n- Return JSON only.\n\nShape:\n{"title":"short outcome","reason":"why multiple tools are needed","steps":[{"tool":"memory","title":"Review relevant context","instruction":"Find relevant saved context for this trip without revealing sensitive identifiers."},{"tool":"web_search","title":"Research flight options","instruction":"Search flights from Bengaluru to Mumbai on 15 September 2026"},{"tool":"tasks","title":"Create check-in task","instruction":"Create task: Complete web check-in"},{"tool":"artifact","title":"Create trip brief","instruction":"Create a concise private brief from this run","artifactType":"trip","artifactTitle":"Mumbai work trip brief"}]}\n\nRelevant owner-bound context (may be empty):
 ${contextualBlock || 'No extra context loaded.'}

@@ -203,7 +203,7 @@ export function workspaceEmailAuditScope(input:string) {
   const limit=Number(text.match(/\b(?:at most|up to|return|maximum|max)\s+(\d+)\s+messages?\b/i)?.[1]||15)
   if(days<1||days>366||limit<1||limit>20)throw new Error('workspace_email_audit_scope_out_of_range')
   // An audit asks for category alternatives; AND-ing the prose removes real receipts.
-  return {days,limit,query:`{subscription subscriptions renewal renewals receipt receipts invoice invoices} newer_than:${days}d -in:spam -in:trash`}
+  return {days,limit,query:`{subject:receipt subject:invoice subject:renewal subject:renews subject:renewed subject:expiration subject:subscription subject:payment subject:billed subject:charged} newer_than:${days}d -in:spam -in:trash`}
 }
 
 export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:number;limit:number;hasMore:boolean}|null}) {
@@ -217,7 +217,7 @@ export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:nu
     const renewal=evidence.match(new RegExp('\\b(?:renewal(?: date)?|renews?|expiration(?: date)?|expires?)\\s*(?:on|at|:|is)?\\s*('+date+')','i'))?.[1]
     return `${index+1}. ${m.subject}\nSender/service evidence: ${m.from}${m.date?`\nEmail date: ${m.date}`:''}\nAmounts/currencies shown: ${amounts.join('; ')||'Not shown in the readable text'}\nRenewal/expiration date: ${renewal||'Not explicitly shown in the readable text'}\nEmail evidence: ${formatEmailSnippet(evidence,700)}`
   })
-  return `Gmail subscription audit · last ${days} days · up to ${limit} messages\n\n${lines.length?lines.join('\n\n'):'No matching messages in this search window.'}\n\n${hasMore?'More matching messages exist; this is a bounded audit, not a complete inbox inventory.':'Only matching messages returned by this bounded search were checked.'} Sender names and email text are evidence; subscription status, usage and future charges are not inferred. No email, cancellation, reminder or calendar change was made.`
+  return `Gmail subscription audit · last ${days} days · up to ${limit} messages\nMatching billing/renewal email candidates (subject search; not a verified active-subscription inventory).\n\n${lines.length?lines.join('\n\n'):'No matching messages in this search window.'}\n\n${hasMore?'More matching messages exist; this is a bounded audit, not a complete inbox inventory.':'Only matching messages returned by this bounded search were checked.'} Sender names and email text are evidence; subscription status, usage and future charges are not inferred. No email, cancellation, reminder or calendar change was made.`
 }
 
 export async function searchWorkspaceEmails(actor:AgentActor, input:string, options:{missionText?:string}={}) {
