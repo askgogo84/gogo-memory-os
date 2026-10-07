@@ -15,6 +15,21 @@ assert.equal(detectHumanAuthGate(otp).reason,'otp')
 const passkey={title:'Sign in',text:'Use your passkey or security key to continue',forms:[]}
 assert.equal(detectHumanAuthGate(passkey).reason,'passkey')
 
+for(const text of [
+  'Apple iPhone 17 Pro 256GB. ₹1,34,900. Face ID. Add to cart. Sign in',
+  'Apple iPhone 17 Pro. Security: Face ID. Touch ID not supported.',
+  'Use Face ID to unlock your iPhone. Shop iPhone 17 Pro 256GB.',
+  'Shop security keys and Windows Hello compatible laptops.',
+  'Sign in to your account\n\nApple iPhone 17 Pro 256GB. Face ID.',
+]) assert.equal(detectHumanAuthGate({title:'Buy Apple iPhone 17 Pro - Croma',text}).required,false,'product specs are not authentication')
+for(const page of [
+  {title:'Sign in',text:'Face ID'},
+  {text:'Verify your identity using Face ID.'},
+  {text:'Use Touch ID to continue.'},
+  {text:'Use your device to sign in.'},
+  {text:'Passkey required to continue.'},
+]) assert.equal(detectHumanAuthGate(page).reason,'passkey','real biometric/passkey challenges still pause')
+
 const captcha={title:'Verification',text:'Verify you are human',forms:[]}
 assert.equal(detectHumanAuthGate(captcha).reason,'captcha')
 
@@ -89,6 +104,8 @@ for (const [file, expectedExtractions] of [['secure-computer.ts', 2], ['secure-t
       const page = extract('Tickets and products', `Sign in to your account\r\n \r\n${copy}`)
       assert.equal(detectHumanAuthGate(page).required, false, `${file} must preserve separate paragraphs`)
     }
+    assert.equal(detectHumanAuthGate(extract('Buy iPhone 17 Pro 256GB - Croma', 'Login\n\nApple iPhone 17 Pro 256GB\n₹1,34,900\nFace ID')).required,false,
+      `${file} must not turn product Face ID specifications into a passkey handoff`)
     assert.equal(detectHumanAuthGate(extract('Help', 'Please approve this\n\nsign-in documentation update.')).required,
       false, 'explicit approval phrases must not bridge unrelated paragraphs')
     assert.equal(detectHumanAuthGate(extract('How to approve this', 'Sign-in notification documentation')).required,

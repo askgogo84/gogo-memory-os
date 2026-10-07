@@ -61,10 +61,42 @@ runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/bot/handlers/fri
 }})
 
 const compound: any = {}
+// Run the real read planner against an owner-scoped fixture. Any reminder
+// mutation fails immediately; agent audit writes are allowed.
+const reminderAudit: any[] = []
+const planner: any = {}
+const readDb = {from(table: string) {
+  const filters: Record<string, any> = {}
+  const query: any = {
+    select: () => query, order: () => query, limit: () => query,
+    eq: (key: string, value: any) => {filters[key] = value; return query},
+    maybeSingle: async () => ({data: {timezone: 'Asia/Kolkata'}}),
+    single: async () => ({data: {id: `audit-${reminderAudit.length}`}, error: null}),
+    insert: (row: any) => {assert.notEqual(table, 'reminders', 'read cannot create a reminder'); reminderAudit.push({table, ...row}); return query},
+    update: (row: any) => {assert.notEqual(table, 'reminders', 'read cannot update a reminder'); reminderAudit.push({table, ...row}); return query},
+    then: (resolve: any) => {
+      if (table === 'reminders') {
+        assert.equal(filters.telegram_id, 42, 'read is scoped to the requesting owner')
+        assert.equal(filters.sent, false, 'read excludes completed reminders')
+      }
+      return Promise.resolve({error: null, data: table === 'reminders'
+        ? [{id: 'r-water', message: 'Drink water', remind_at: '2026-10-08T14:30:00Z'}] : []}).then(resolve)
+    },
+  }
+  return query
+}}
+runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/agent/compound-planner.ts', import.meta.url), 'utf8'),
+  {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText,
+{exports: planner, Date: FixedDate, Intl, console, require(name: string) {
+  if (name === '@/lib/supabase-admin') return {supabaseAdmin: readDb}
+  if (name === './typed-object-context') return {rememberTypedObjects: async () => {}}
+  return new Proxy({}, {get: (_target, key) => {throw Error(`Unexpected planner dependency ${name}.${String(key)}`)}})
+}})
 runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/bot/compound-shopping-friend.ts', import.meta.url), 'utf8'),
   {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText,
 {exports: compound, require(name: string) {
   if (name === '@/lib/commerce/comparison-model') return {parsePriceComparison}
+  if (name === '@/lib/agent/compound-planner') return planner
   if (name === '@/lib/bot/handlers/friend-reminders') return {detectFriendReminder: friend.detectFriendReminder}
   throw new Error(name)
 }})
@@ -161,6 +193,7 @@ try {
   const combinedReplies = await compound.runCompoundShoppingFriendRequests(combined, {
     checkPrice: async (step: string) => (await run(step)).text,
     prepareFriend: async (step: string) => (await run(step)).text,
+    readReminders: async () => {throw Error('No read in this case')},
     onError: (error: unknown) => {compoundErrors.push(error)},
   })
   assert.equal(combinedReplies?.length, 3, 'one bubble must produce three independently routed replies')
@@ -174,6 +207,7 @@ try {
   const partial = await compound.runCompoundShoppingFriendRequests(combined, {
     checkPrice: async (step: string) => {if (/flipkart/i.test(step)) throw new Error('store failed'); return 'Croma queued'},
     prepareFriend: async () => 'Matthew needs a number',
+    readReminders: async () => {throw Error('No read in this case')},
     onError: (error: unknown) => {compoundErrors.push(error)},
   })
   assert.match(partial[0], /resend that request separately/i)
@@ -246,6 +280,11 @@ const realFeature=executeModule('lib/feature-intents.ts',{
   '@/lib/bot/input-normalizer':inputNormalizer,
   '@/lib/feature-intents-legacy':{routeFeatureIntent:async()=>{featureClaims++;return 'Upstream web search claimed this request'}},
 })
+const bridge=executeModule('lib/agent/whatsapp-bridge.ts',{
+  './compound-planner':planner,
+  './adaptive-autonomy':{parseAutonomyCommand:()=>null,capabilityIsOff:async()=>false},
+})
+const phoneClaims:any[]=[]
 const webhook=executeModule('app/api/webhooks/whatsapp/route.ts',{
   ...actual,
   'next/server':{NextResponse:Response},
@@ -254,6 +293,13 @@ const webhook=executeModule('app/api/webhooks/whatsapp/route.ts',{
   '@/lib/services/whatsapp-preview-routing':previewRouting,
   '@/lib/bot/process-message':{processIncomingMessage:exports.processIncomingMessage},
   '@/lib/bot/compound-shopping-friend':compound,
+  '@/lib/agent/whatsapp-bridge':bridge,
+  '@/lib/commerce/price-comparison':{tryPriceComparison:async(params:any)=>{
+    const parsed=parsePriceComparison(params.text)
+    assert.ok(parsed)
+    phoneClaims.push({...params,...parsed});browserClaims++
+    return {text:`Browser check queued: ${parsed.subject} on ${parsed.providers.join(', ')}`,handledBy:'price-comparison'}
+  }},
   '@/lib/bot/handlers/friend-reminders':{...actual['@/lib/bot/handlers/friend-reminders'],isFriendReminderFollowupCandidate:()=>false},
   '@/lib/bot/resolve-user':{resolveUser:async()=>fixtureUser},
   '@/lib/agent/actor':{resolveAgentActor:async()=>({userId:'owner',legacyTelegramId:42,whatsappId:fixtureUser.whatsappId,name:'Gogo'})},
@@ -279,6 +325,16 @@ const postWebhook=(text:string,sid:string)=>{
   const signed=signature.computeTwilioSignature('fixture-token',url,params)
   return webhook.POST(new Request(url,{method:'POST',body:new URLSearchParams(params),headers:{'x-twilio-signature':signed}}))
 }
+const incident="What's the live price of iPhone 17 Pro 256GB on flipkart.com?\n"+
+  'Check the live price of Sony WH-1000XM5 on croma.com.\n'+
+  'Show my pending reminders.\nDo not buy anything or create new reminders.'
+const expectedProducts=[['iPhone 17 Pro 256GB',['flipkart']],['Sony WH-1000XM5',['croma']]]
+for(const value of [incident,incident.split('\n').slice(-1).concat(incident.split('\n').slice(0,-1)).join('\n')]){
+  const steps=compound.splitCompoundShoppingFriendRequests(value)
+  assert.deepEqual(Array.from(steps,(step:any)=>step.kind),['price','price','reminder_read'])
+  assert.ok(steps.every((step:any)=>step.constraints.includes('Do not buy anything or create new reminders.')))
+}
+assert.equal(compound.splitCompoundShoppingFriendRequests(incident+'\nEmail these prices to Matthew'),null,'unknown clauses cannot be discarded')
 try{
   pending=null
   contacts.clear()
@@ -304,6 +360,26 @@ try{
   assert.equal(featureClaims,0,'the real webhook must claim retailer reads before exported feature routing')
   assert.equal(webSearchClaims,0,'the real PIM must not dispatch retailer reads to web search')
   assert.deepEqual(webhookErrors,[],'a caught webhook failure is not a successful routing test')
+  pending=null;phoneClaims.length=0
+  const beforeIncident=sent.length
+  const createdBeforeIncident=created
+  assert.equal((await postWebhook(incident,'SMincident-reminder-read')).status,200)
+  assert.deepEqual(phoneClaims.map(row=>[row.subject,Array.from(row.providers)]),expectedProducts)
+  assert.ok(phoneClaims.every(row=>row.request.includes('Do not buy anything or create new reminders.')))
+  assert.equal(sent.length,beforeIncident+3)
+  assert.match(sent[beforeIncident+2],/Your reminders[\s\S]*Drink water[\s\S]*8:00 pm/i)
+  assert.equal(created,createdBeforeIncident);assert.equal(pending,null)
+  assert.equal(featureClaims,0);assert.equal(webSearchClaims,0)
+  assert.deepEqual(webhookErrors,[])
+  assert.ok(reminderAudit.some(row=>row.tool_name==='reminders.read'))
+  assert.ok(reminderAudit.some(row=>row.output_json?.readOnly===true&&row.output_json?.mutated===false))
+  const vetoed=await compound.runCompoundShoppingFriendRequests(combined+'\nDo not create new reminders.',{
+    checkPrice:async()=> 'queued',readReminders:async()=>{throw Error('No read')},
+    prepareFriend:async()=>{throw Error('No-new-reminder restriction must veto preparation')},
+    onError:()=>{throw Error('Unexpected compound failure')},
+  })
+  assert.match(vetoed.at(-1),/did not create.*not to create/s)
+  assert.equal(pending,null)
 }finally{
   if(previousToken===undefined)delete process.env.TWILIO_AUTH_TOKEN
   else process.env.TWILIO_AUTH_TOKEN=previousToken
@@ -331,6 +407,7 @@ const web=executeModule('app/api/dashboard/chat/route.ts',{
   '@/lib/agent/actor':{resolveAgentActor:async()=>({userId:'owner',legacyTelegramId:42,whatsappId:fixtureUser.whatsappId,name:'Gogo'})},
   '@/lib/agent/content-workflow-entry':{tryRunContentWorkflow:async()=>null},
   '@/lib/bot/compound-shopping-friend':compound,
+  '@/lib/agent/compound-planner':planner,
   '@/lib/commerce/comparison-model':{namesRetailerPriceRead},
   '@/lib/bot/handlers/friend-reminders':actual['@/lib/bot/handlers/friend-reminders'],
   '@/lib/commerce/price-comparison':{tryPriceComparison:async(params:any)=>{
@@ -375,6 +452,14 @@ assert.match(webConfirm.text,/Done.*remind Matthew.*11:00 am IST/)
 assert.equal(created,createdBeforeWeb+1)
 assert.equal(featureClaims,beforeWeb,'number and YES must continue the pending reminder, not another planner')
 assert.deepEqual(webhookErrors,[])
+pending=null;webClaims.length=0;webHistory.length=0
+const incidentWeb=await (await postWeb(incident)).json()
+assert.equal(incidentWeb.handledBy,'compound-shopping-friend')
+assert.deepEqual(webClaims.map(row=>[row.subject,Array.from(row.providers)]),expectedProducts)
+assert.match(incidentWeb.text,/Your reminders[\s\S]*Drink water/i)
+assert.equal(webHistory.length,6,'both products and the read must retain separate conversation history')
+assert.equal(pending,null);assert.equal(created,createdBeforeWeb+1)
+assert.equal(featureClaims,beforeWeb);assert.deepEqual(webhookErrors,[])
 failFlipkart=true;pending=null;contacts.clear();webClaims.length=0
 const partialWeb=await (await postWeb(combined)).json()
 assert.match(partialWeb.text,/resend that request separately/)
@@ -383,6 +468,12 @@ assert.match(partialWeb.text,/Matthew.*WhatsApp number/i)
 assert.equal(webClaims.length,2,'a failed first store must not swallow the second store or reminder')
 assert.equal(webhookErrors.length,1)
 assert.equal(webhookErrors[0][0],'DASHBOARD_COMPOUND_STEP_FAILED:')
+webhookErrors.length=0;webClaims.length=0
+const partialIncident=await (await postWeb(incident)).json()
+assert.match(partialIncident.text,/resend that request separately/)
+assert.match(partialIncident.text,/Sony WH-1000XM5 on croma/)
+assert.match(partialIncident.text,/Your reminders[\s\S]*Drink water/i)
+assert.equal(webClaims.length,2);assert.equal(webhookErrors.length,1)
 const writesBeforeAuth=webHistory.length
 assert.equal((await postWeb(combined,'https://other.invalid')).status,403)
 webSession=null

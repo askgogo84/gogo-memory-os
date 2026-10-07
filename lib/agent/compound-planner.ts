@@ -78,7 +78,7 @@ function parseExplicitListRead(text: string): string | null {
   return null
 }
 
-function isReminderReadQuery(text: string) {
+export function isReminderReadQuery(text: string) {
   const raw = String(text || '').trim().toLowerCase().replace(/[?!.]+$/g, '')
   return (
     /^(?:what|which)\s+reminders?\s+(?:do\s+i\s+have|have\s+i|are\s+(?:set|scheduled))(?:\s+for\s+.+)?$/.test(raw) ||

@@ -44,7 +44,6 @@ export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
   const hasPaymentAuthField = descriptors.some(x => /\b(cvv|cvc|3d secure|3ds|bank otp|card otp)\b/.test(x))
   const hasLoginCopy = /\b(sign in|log in|login|verify your identity|verify it'?s you|authentication required|enter your password)\b/.test(text)
   const hasOtpCopy = /\b(one[- ]?time password|verification code|enter (?:the )?code|we sent (?:you )?a code|authenticator app)\b/.test(text)
-  const hasPasskey = /\b(passkey|security key|use your device|windows hello|touch id|face id)\b/.test(text)
   const hasCaptcha = /\b(captcha|i'?m not a robot|verify you are human|human verification)\b/.test(text)
   const hasExplicitDeviceApproval = [titleText, bodyText].some(copy => /\bapprove (?:this )?(?:sign[- ]?in|login)\b/.test(copy))
   // A bare login/navigation label is not evidence of an active auth prompt.
@@ -64,6 +63,20 @@ export function detectHumanAuthGate(page: BrowserPageModel): HumanAuthGate {
     return gap.length <= 160 && !/\n\s*\n/.test(gap)
   }))
   const hasDeviceApproval = hasExplicitDeviceApproval || hasNearbyDeviceApproval
+  // Product specifications (notably iPhone Face ID) are not an active sign-in
+  // challenge. Require an instruction or nearby actionable authentication copy.
+  const passkeyCues = [...promptText.matchAll(/\b(passkeys?|security key|windows hello|touch id|face id)\b/g)]
+  const hasPasskeyInstruction = /\b(?:use|enter|provide|authenticate with|verify with|sign[- ]?in with|log in with|continue with)\s+(?:your\s+|a\s+|the\s+)?(?:passkey|security key|windows hello)\b/.test(promptText)
+    || /\b(?:authenticate with|verify with|sign[- ]?in with|log in with|continue with)\s+(?:your\s+)?(?:touch id|face id)\b/.test(promptText)
+    || /\buse\s+(?:your\s+)?(?:touch id|face id)\s+to\s+(?:continue|sign[- ]?in|log in|authenticate|verify)\b/.test(promptText)
+    || /\b(?:use your device|(?:passkey|security key|windows hello|touch id|face id) (?:is )?required)\s+to\s+(?:continue|sign[- ]?in|log in|authenticate|verify)\b/.test(promptText)
+  const hasNearbyPasskeyPrompt = authPrompts.some(auth => passkeyCues.some(cue => {
+    const first = auth.index! < cue.index! ? auth : cue
+    const second = first === auth ? cue : auth
+    const gap = promptText.slice(first.index! + first[0].length, second.index!)
+    return gap.length <= 160 && !/\n\s*\n/.test(gap)
+  }))
+  const hasPasskey = hasPasskeyInstruction || hasNearbyPasskeyPrompt
   const hasPaymentAuth = /\b(3d secure|3ds|bank authentication|confirm this payment|approve this payment)\b/.test(text)
 
   if (hasPaymentAuthField || hasPaymentAuth) {

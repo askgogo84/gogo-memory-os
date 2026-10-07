@@ -100,6 +100,39 @@ export function comparisonSource(provider: ComparisonProvider, value: unknown) {
   } catch { return null }
 }
 
+/** Discovery selects the requested product, never the first retailer URL. No
+ * snippet price is evidence; this only chooses where the browser starts. */
+export function comparisonProductLead(provider: ComparisonProvider, subject: string, leads: Array<{url: string; title?: string}>) {
+  const compact = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const tokens = subject.replace(/(\d+)\s+(GB|TB)\b/gi, '$1$2').match(/[a-z0-9]+/gi) || []
+  if (tokens.length < 2) return null
+  const accessory = /\b(?:screen\s*(?:guard|protector)|case|cover|skin|cable|adapter|replacement|ear\s*pads?)\b/i
+  const matches = (label: string) => {
+    if (accessory.test(label) && !accessory.test(subject)) return false
+    if (/\biPhone\b/i.test(subject) && ['max', 'plus', 'mini', 'pro'].some(tier =>
+      new RegExp('\\b' + tier + '\\b', 'i').test(label) && !new RegExp('\\b' + tier + '\\b', 'i').test(subject))) return false
+    const capacity = compact(subject.match(/\b\d+\s*(?:GB|TB)\b/i)?.[0] || '')
+    if (capacity && (label.match(/\b\d+\s*(?:GB|TB)\b/gi) || []).some(value => compact(value) !== capacity)) return false
+    let cursor = 0
+    const identity = compact(label)
+    for (const token of tokens) {
+      const position = identity.indexOf(compact(token), cursor)
+      if (position < 0) return false
+      cursor = position + compact(token).length
+    }
+    return true
+  }
+  for (const lead of leads) {
+    const url = comparisonSource(provider, lead.url)
+    if (!url) continue
+    const path = new URL(url).pathname.replace(/[-_/]+/g, ' ')
+    // An explicit conflicting title cannot be rescued by a keyword-stuffed URL.
+    const title = String(lead.title || '').trim()
+    if (title ? matches(title) : matches(path)) return url
+  }
+  return null
+}
+
 // A completed browser run alone is insufficient: require its owned completed
 // step and observed source. Failed/paused runs never expose stale numeric claims.
 export function providerObservation(provider: ComparisonProvider, child: any, step: any): ProviderObservation {
