@@ -293,9 +293,11 @@ for(const [url,label,dialogLabel,searchRegion,form,expected] of [
  const result=await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed")',{page,location:{href:url}})
  assert.equal(result,expected,`public passenger guard: ${url} / ${label} / ${dialogLabel}`)
  let guardContext:any
- await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed",undefined,onContext)',{page,location:{href:url},onContext:(value:any)=>{guardContext=value}})
+ let guardNameShape:any
+ await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed",undefined,onContext)',{page,location:{href:url},onContext:(value:any,shape:any)=>{guardContext=value;guardNameShape=shape}})
  if(url==='https://www.google.com/travel/flights'&&label.startsWith('2 passengers')){
    assert.equal(guardContext,503,'the real rejection preserves which public passenger guard predicates were satisfied; missing search ancestry clears bit8')
+   assert.equal(guardNameShape,'full_passenger','the real guard reports only a fixed name shape, never raw label text')
  }
 }
 // The production guard mask383 has every launcher predicate except its name.
@@ -331,6 +333,21 @@ linkedPassengerElement.getAttribute=(key:string)=>key==='aria-label'?'Pay now':k
 linkedLabels.passengerName=linkedName('1 passenger, change number of passengers.')
 assert.equal(await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed")',{page:linkedPassengerBrowser,document:observedDoc,location:{href:'https://www.google.com/travel/flights'}}),true,'an explicit consequential aria-label cannot be overridden by a referenced passenger name')
 passengerNode.getAttribute=previousPassengerAttributes;passengerNode.textContent=previousPassengerText
+const originalInnerText=passengerNode.innerText
+passengerNode.getAttribute=(key:string)=>key==='role'?'button':null
+passengerNode.innerText='1 passenger, change number of passengers.'
+passengerNode.textContent='1 passenger, change number of passengers. hidden menu text'
+const visibleNamePage=runInNewContext(`(()=>{${body}})()`,{document:observedDoc,location:{href:'https://www.google.com/travel/flights'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
+assert.ok(visibleNamePage.flightEvidence.searchControls.includes('1 passenger, change number of passengers.'))
+const visibleNameElement={...passengerNode,tagName:'BUTTON',form:null,disabled:false,closest:(selector:string)=>selector==='[role="search"]'?{}:null}
+assert.equal(await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed")',{page:{locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(visibleNameElement)})})},document:observedDoc,location:{href:'https://www.google.com/travel/flights'}}),false,'the guard must use the same visible-name fallback as the real emitted observation, without hidden textContent suffixes')
+passengerNode.getAttribute=previousPassengerAttributes;passengerNode.innerText=originalInnerText;passengerNode.textContent=previousPassengerText
+for(const [label,shape,expected] of [['1 passenger','bare_passenger',true],['1','count_only',true],['1 passenger, change number of passengers.','full_passenger',false],['1 passenger, change number of passengers','full_passenger_variant',true],['1 passenger, change number of passengers. extra','passenger_prefix_other',true]] as const){
+ let actualShape:any
+ const element={tagName:'BUTTON',textContent:label,innerText:label,form:null,disabled:false,getAttribute:(key:string)=>key==='aria-label'?label:null,closest:(selector:string)=>selector==='[role="search"]'?{}:null}
+ const result=await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed",undefined,onContext)',{page:{locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element)})})},location:{href:'https://www.google.com/travel/flights'},onContext:(_mask:any,nameShape:any)=>{actualShape=nameShape}})
+ assert.equal(actualShape,shape);assert.equal(result,expected,'name-shape diagnosis alone never broadens the accepted launcher grammar')
+}
 assert.match(captured,/"href":"https:\/\/www.zomato.com\/restaurants"/,'planner can distinguish restaurant navigation from a same-page footer link')
 assert.match(captured,/"previousActions":\[{"kind":"click","status":"done"/,'last attempted action survives into the next planning wave')
 const plan=await exports.planActions('Find Amul Taaza 1 litre',snapshot('Search for milk'),'read','USER_INSTRUCTION')
@@ -610,7 +627,7 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight
   const makePage=()=>({url:scenario.startsWith('google-flight')?'https://www.google.com/travel/flights':'https://fixture.example/flights',title:'Flight search',
     text:scenario!=='never-complete'&&steps>=required?'BLR to BOM 12 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000':(scenario==='never-complete'?'Choose route and date':'Choose route and date step '+steps),
     forms:[],links:[],controls:[{selector:'#commit',tag:'button',label:'Book now'},{selector:'#safe',tag:'button',label:scenario==='google-flight-skipped'?'1 passenger, change number of passengers.':'Search flights'}],
-    actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:scenario==='google-flight-skipped'||steps===1&&scenario==='blocked-control'?'skipped':'done',failure:scenario==='google-flight-skipped'?{reason:guardContext===undefined?'control_unavailable':'consequential_control',guardContext,matches:0,rendered:0,token:'private',selector:'#private'}:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
+    actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:scenario==='google-flight-skipped'||steps===1&&scenario==='blocked-control'?'skipped':'done',failure:scenario==='google-flight-skipped'?{reason:guardContext===undefined?'control_unavailable':'consequential_control',guardContext,guardNameShape:guardContext===undefined?undefined:'bare_passenger',matches:0,rendered:0,token:'private',selector:'#private'}:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
   runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
     exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
@@ -641,6 +658,8 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight
       const action=error.browserReadDiagnostics?.find((d:any)=>d.phase==='execution')
       assert.equal(action?.reason,guardContext===undefined?'control_unavailable':'consequential_control','the real failed read preserves its first worker rejection')
       assert.equal(action?.guardContext,guardContext,'fixed public guard predicates survive the actual worker loop')
+      assert.equal(action?.observedNameShape,'full_passenger')
+      assert.equal(action?.guardNameShape,guardContext===undefined?undefined:'bare_passenger')
       assert.equal(action?.target,'passengers');assert.equal(action?.matches,0);assert.equal(action?.rendered,0)
       assert.doesNotMatch(JSON.stringify(error.browserReadDiagnostics),/private|selector|token/)
       return /browser_objective_unverified/.test(error.message)
@@ -819,6 +838,7 @@ assert.equal(boundedExecution.length,32);assert.equal(boundedExecution[0].reason
 assert.doesNotMatch(JSON.stringify(boundedExecution),/private|selector|token/)
 assert.deepEqual(sanitizeBrowserReadDiagnostics([{phase:'execution',reason:'control_unavailable',target:'private-selector',matches:-1,rendered:20001}]),[{phase:'execution',reason:'control_unavailable'}])
 assert.deepEqual(sanitizeBrowserReadDiagnostics('private'),[])
+assert.deepEqual(sanitizeBrowserReadDiagnostics([{phase:'execution',reason:'consequential_control',guardNameShape:'bare_passenger',observedNameShape:'full_passenger',label:'private'},{phase:'execution',reason:'consequential_control',guardNameShape:'private-name',observedNameShape:{token:'private'}}]),[{phase:'execution',reason:'consequential_control',guardNameShape:'bare_passenger',observedNameShape:'full_passenger'},{phase:'execution',reason:'consequential_control'}])
 assert.deepEqual(sanitizeBrowserReadDiagnostics([{phase:'execution',reason:'consequential_control',guardContext:503,selector:'#private',label:'private'},{phase:'execution',reason:'consequential_control',guardContext:8192},{phase:'execution',reason:'consequential_control',guardContext:'private'}]),[{phase:'execution',reason:'consequential_control',guardContext:503},{phase:'execution',reason:'consequential_control'},{phase:'execution',reason:'consequential_control'}])
 const assessmentDiagnostics:any[]=[]
 await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,url:'https://www.amazon.in/s?k=Sony'},(e:any)=>assessmentDiagnostics.push(e))

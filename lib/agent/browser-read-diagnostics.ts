@@ -9,6 +9,7 @@ export const browserReadReasons = [
   'obscured','wrong_input_type','not_actionable','page_closed','timeout','action_error',
 ] as const
 export const browserReadTargets = ['option','airport','date','trip-type','cabin','passengers','adult-count','passenger-done','calendar-done','search','other'] as const
+export const browserPassengerNameShapes = ['full_passenger','full_passenger_variant','bare_passenger','count_only','passenger_prefix_other','other'] as const
 export type BrowserReadReason = typeof browserReadReasons[number]
 export type BrowserReadDiagnostic = {
   phase:'plan'|'assessment'|'execution'
@@ -18,6 +19,8 @@ export type BrowserReadDiagnostic = {
   rendered?:number
   /** Public-flight guard predicate bits only; no DOM labels or selectors. */
   guardContext?:number
+  guardNameShape?:typeof browserPassengerNameShapes[number]
+  observedNameShape?:typeof browserPassengerNameShapes[number]
   proposed?:number
   normalized?:number
   accepted?:number
@@ -34,6 +37,9 @@ export function sanitizeBrowserReadDiagnostics(value:unknown):BrowserReadDiagnos
     const clean:BrowserReadDiagnostic={phase:item.phase,reason:item.reason}
     if(browserReadTargets.includes(item.target))clean.target=item.target
     if(Number.isInteger(item.guardContext)&&item.guardContext>=0&&item.guardContext<=8191)clean.guardContext=item.guardContext
+    for(const key of ['guardNameShape','observedNameShape'] as const){
+      if(browserPassengerNameShapes.includes(item[key]))clean[key]=item[key]
+    }
     for(const key of ['proposed','normalized','accepted','evidenceCount','pageChars','matches','rendered'] as const){
       if(Number.isInteger(item[key])&&item[key]>=0&&item[key]<=20000)clean[key]=item[key]
     }

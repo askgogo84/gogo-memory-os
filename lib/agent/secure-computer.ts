@@ -415,10 +415,14 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
     // text is only "1"; textContent alone misclassifies that public filter.
     const passengerLabel=(el.getAttribute('aria-label')
       ||(el.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean).map(id=>{const node=document.getElementById?.(id);return node?.getAttribute?.('aria-label')||node?.textContent||''}).join(' ')
-      ||el.textContent||'').replace(/\s+/g,' ').trim();
+      ||el.getAttribute('placeholder')||el.innerText||el.textContent||el.getAttribute('title')||'').replace(/\s+/g,' ').trim();
     // Fixed predicate bits expose a rejected public control's context without
     // its selector, label, URL, account content or arbitrary DOM attributes.
     const publicFlight=typeof location!=='undefined'&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href);
+    const guardNameShape=publicFlight?(/^[1-9] passengers?, change number of passengers\.$/.test(passengerLabel)?'full_passenger'
+      :/^[1-9] passengers?, change number of passengers\.?$/i.test(passengerLabel)?'full_passenger_variant'
+      :/^[1-9] passengers?\.?$/i.test(passengerLabel)?'bare_passenger':/^[1-9]$/.test(passengerLabel)?'count_only'
+      :/^[1-9] passengers?\b/i.test(passengerLabel)?'passenger_prefix_other':'other'):undefined;
     const guardContext=publicFlight?1
       |(el.tagName==='BUTTON'?2:0)
       |(!el.disabled&&el.getAttribute('aria-disabled')!=='true'?4:0)
@@ -466,8 +470,8 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
     if(consequential)return true;
     if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;
     return false;
-    })();return {consequential,guardContext};
-  });if(onContext&&Number.isInteger(decision.guardContext))onContext(decision.guardContext);return decision.consequential;}catch{if(onUnavailable)onUnavailable();return true;}
+    })();return {consequential,guardContext,guardNameShape};
+  });if(onContext&&Number.isInteger(decision.guardContext))onContext(decision.guardContext,decision.guardNameShape);return decision.consequential;}catch{if(onUnavailable)onUnavailable();return true;}
 }
 (async()=>{
   const __env=(process&&process.env)||{};
@@ -512,9 +516,9 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
         }
         else if(a.kind==='click'){
           let unavailable=false;
-          let guardContext;
-          consequential=await isConsequentialControl(page,a.selector,()=>{unavailable=true},value=>{guardContext=value});
-          if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential,failure:{reason:unavailable?'control_unavailable':'consequential_control',guardContext}});continue;}
+          let guardContext,guardNameShape;
+          consequential=await isConsequentialControl(page,a.selector,()=>{unavailable=true},(value,shape)=>{guardContext=value;guardNameShape=shape});
+          if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential,failure:{reason:unavailable?'control_unavailable':'consequential_control',guardContext,guardNameShape}});continue;}
           flightResultSearch=payload.mode==='read'&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(payload.url)
             &&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(page.url())
             &&await page.locator(a.selector).first().evaluate(el=>/^Search$/i.test((el.getAttribute('aria-label')||el.textContent||'').trim())).catch(()=>false);
@@ -747,6 +751,13 @@ function detectProviderAccessBlock(page:any){
 
 // 3 Oct: a public-DOM replay planned a DIV fill before the airport input opened.
 // Execute only a prefix grounded in this snapshot, then observe the changed UI.
+function passengerReadNameShape(value:unknown):NonNullable<BrowserReadDiagnostic['observedNameShape']>{
+  const label=String(value||'').replace(/\s+/g,' ').trim()
+  return /^[1-9] passengers?, change number of passengers\.$/.test(label)?'full_passenger'
+    :/^[1-9] passengers?, change number of passengers\.?$/i.test(label)?'full_passenger_variant'
+    :/^[1-9] passengers?\.?$/i.test(label)?'bare_passenger':/^[1-9]$/.test(label)?'count_only'
+    :/^[1-9] passengers?\b/i.test(label)?'passenger_prefix_other':'other'
+}
 function googleFlightReadProgress(page:any,actions:BrowserAction[]=[]){
   try{const url=new URL(page.url);if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))return null}catch{return null}
   const controls=page.controls||[]
@@ -1243,11 +1254,14 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         // boundary was skipped; raw selectors/page/account data are unnecessary.
         for(const [index,outcome] of (page.actions||[]).entries()){
           if(outcome?.kind!==actions[index]?.kind)continue
+          const target=googleFlightReadProgress(previousPage,[actions[index]])?.actions[0]?.target
           const diagnostic=sanitizeBrowserReadDiagnostics([{
             phase:'execution',reason:outcome.status==='done'?'action_done':outcome.failure?.reason||'action_skipped',
-            target:googleFlightReadProgress(previousPage,[actions[index]])?.actions[0]?.target,
+            target,
             matches:outcome.failure?.matches,rendered:outcome.failure?.rendered,
             guardContext:outcome.failure?.guardContext,
+            guardNameShape:outcome.failure?.guardNameShape,
+            observedNameShape:target==='passengers'?passengerReadNameShape((previousPage.controls||[]).find((control:any)=>control.selector===(actions[index] as any).selector)?.label):undefined,
           }])[0]
           if(diagnostic){diagnose(diagnostic);console.log('BROWSER_FLIGHT_ACTION:',JSON.stringify(diagnostic))}
         }
