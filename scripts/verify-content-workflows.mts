@@ -5,6 +5,7 @@ import {randomUUID} from 'node:crypto'
 import ts from 'typescript'
 import * as workflows from '../lib/agent/content-workflows'
 import {formatOutgoingText} from '../lib/bot/format-response'
+import {handleInboxReplyRead} from '../lib/agent/open-loops'
 
 const request = 'Write a LinkedIn post about what I learned today building AskGogo. Mention tomorrow as a goal.'
 for (const [text, id] of [[request, 'linkedin-post'], ['/linkedin-post My lesson', 'linkedin-post'],
@@ -116,6 +117,7 @@ assert.equal(await entry.tryRunContentWorkflow(actor, 'remind Matthew tomorrow a
 // Execute actual authenticated dashboard and Agent route exports. Any upstream
 // specialist stealing a writing request throws through the strict fixture.
 const common = {'next/server': {NextResponse: {json: (body: any, options: any) => ({body, status: options?.status || 200})}},
+  '@/lib/agent/open-loops':{handleInboxReplyRead},
   '@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},
   '@/lib/agent/content-workflow-entry': entry, crypto: {randomUUID}, 'node:crypto': {randomUUID}}
 const dashboard = load('app/api/dashboard/chat/route.ts', {...common, '@/lib/dashboard/session': {getSession: async () => ({telegramId: '42'})}})

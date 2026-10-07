@@ -4,6 +4,7 @@ import type { AgentActor } from './actor'
 import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { fetchGmailAttentionThreads, refreshGmailAccessToken } from '@/lib/services/google-gmail'
+import { formatEmailSnippet } from './google-workspace-read'
 import { retiredRunReason, isTaskInventoryQuestion, isRelevantOpenLoop, openLoopStatus } from './task-lifecycle'
 
 export type OpenLoopKind='followup'|'waiting_on'|'commitment'|'approval'|'mission'|'life_event'|'meeting_action'|'other'
@@ -461,7 +462,7 @@ async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string
   return ids.length
 }
 
-async function syncGmailAttention(telegramId:string,current:Set<string>){
+async function readGmailAttention(telegramId:string){
   const [{data:user,error:userError},{data:consent,error:consentError}]=await Promise.all([
     supabaseAdmin.from('users')
       .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token')
@@ -471,10 +472,11 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
   ])
   if(userError)throw new Error(`open_loop_gmail_user_failed:${userError.message}`)
   if(consentError)throw new Error(`open_loop_gmail_consent_failed:${consentError.message}`)
-  if(!user?.gmail_connected||consent?.gmail_enabled===false)return 'skip' as const
+  if(consent?.gmail_enabled===false)return {reason:'disabled' as const}
+  if(!user?.gmail_connected)return {reason:'disconnected' as const}
 
   const ownEmail=String(user.gmail_email||'').trim().toLowerCase()
-  if(!ownEmail)return 'skip' as const
+  if(!ownEmail)return {reason:'disconnected' as const}
 
   let accessToken=''
   const refreshToken=decryptGoogleToken(user.gmail_refresh_token)
@@ -485,6 +487,54 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
   if(!accessToken)throw new Error('open_loop_gmail_token_unavailable')
 
   const threads=await fetchGmailAttentionThreads(accessToken,12)
+  return {threads,ownEmail}
+}
+
+export function isInboxReplyReadQuery(text:string){
+  const raw=clean(text,1200).replace(/[.?!]+$/,'')
+    .replace(/(?:[.;]\s*|\s+)(?:do not|don't)\s+send\s+anything$/i,'').replace(/[.?!]+$/,'').trim()
+  return /^(?:show|list|find)(?:\s+me)?(?:\s+(?:my|the))?\s+(?:emails?|messages?)(?:\s+that)?\s+(?:need|needs|require|requires)\s+(?:my|a)\s+(?:reply|response)$/i.test(raw)
+    || /^(?:which|what)\s+emails?(?:\s+(?:do\s+i\s+need\s+to\s+reply\s+to|need\s+my\s+(?:reply|response)))$/i.test(raw)
+}
+
+// Always read current Gmail thread metadata. Never substitute reminders, old
+// attention rows or model memory, and never write a draft or send a message.
+export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}){
+  if(!isInboxReplyReadQuery(params.text))return null
+  const base={runId:'inbox-reply-read',capability:'orchestrator' as const,risk:'low' as const,handledBy:'inbox-reply-read'}
+  try{
+    const read=await readGmailAttention(String(params.actor.legacyTelegramId))
+    if('reason' in read)return {...base,status:'completed' as const,text:read.reason==='disabled'
+      ? 'Email reading is turned off. Enable it in Connections to check emails needing a reply.'
+      : 'Connect Gmail in Connections so I can check emails needing a reply.'}
+    const candidates=read.threads.flatMap(thread=>{
+      const last=[...thread.messages].sort((a,b)=>a.internalDate-b.internalDate).at(-1)
+      if(!last||headerEmail(last.from)===read.ownEmail||isAutomatedGmailMessage(last))return []
+      const combined=clean(`${last.subject||thread.subject} ${last.snippet}`,900)
+      if(looksLikeIncomingPromise(combined)&&!(/\?|\b(?:please|could you|can you|would you|need you to|kindly|action required)\b/i.test(combined)))return []
+      if(!looksLikeIncomingAction(combined)&&(!looksLikeReplyExpected(combined)||looksLikeIncomingPromise(combined)))return []
+      return [{threadId:thread.id,last}]
+    }).slice(0,12)
+    let timezone=params.actor.timezone||'Asia/Kolkata'
+    try{new Intl.DateTimeFormat('en-GB',{timeZone:timezone})}catch{timezone='Asia/Kolkata'}
+    const stamp=new Date().toLocaleString('en-GB',{timeZone:timezone})
+    const lines=candidates.map(({last},index)=>{
+      const received=Number.isFinite(last.internalDate)&&last.internalDate>0
+        ? new Date(last.internalDate).toLocaleString('en-GB',{timeZone:timezone}) : 'date unavailable'
+      return `${index+1}. ${formatEmailSnippet(headerName(last.from),100)} — ${formatEmailSnippet(last.subject,180)}\nReceived: ${received}\n${formatEmailSnippet(last.snippet,240)}`
+    })
+    const result=lines.length ? `These may need your reply:\n\n${lines.join('\n\n')}` : 'No likely reply requests found in the threads checked.'
+    return {...base,status:'completed' as const,text:`Gmail checked at ${stamp} (${timezone}).\nChecked ${read.threads.length} recent threads from the last 14 days; this is a limited scan.\n\n${result}\n\nNothing sent.`,
+      verification:{verified:true,source:'gmail_api',kind:'read',objectKind:'gmail_threads',objectRef:null}}
+  }catch{
+    return {...base,status:'failed' as const,text:'I could not complete a fresh Gmail read. Please check the Gmail connection and try again. I cannot confirm which emails need a reply. Nothing sent.'}
+  }
+}
+
+async function syncGmailAttention(telegramId:string,current:Set<string>){
+  const read=await readGmailAttention(telegramId)
+  if('reason' in read)return 'skip' as const
+  const {threads,ownEmail}=read
   for(const thread of threads){
     const messages=thread.messages||[]
     if(!messages.length)continue

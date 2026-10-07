@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
+import { formatEmailSnippet } from '../lib/agent/google-workspace-read'
 import { readFileSync } from 'node:fs'
 import { retiredRunReason } from '../lib/agent/task-lifecycle'
 import { draftFromOpenLoop, parseExplicitOpenLoop, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate, isUncertainOrNegatedCompletion, parseOpenLoopResolution } from '../lib/agent/open-loops'
@@ -197,6 +200,83 @@ console.log('Attention numbered actions are snapshot-bound and snooze truth matc
 assert.match(openLoops,/snooze 2 for 4 hours/)
 assert.match(openLoops,/draft follow-up for 2/)
 console.log('Attention scout page rotation + action discoverability verified')
+
+// Execute the exported production handler and both entry points with a fresh
+// Gmail transport. Stored reminders/open loops are deliberately inaccessible.
+let inboxConnected=true, inboxEnabled=true, readFails=false, freshCalls=0
+const queries:Array<{table:string;owner:any}>=[]
+const fixtureDb={from:(table:string)=>{
+  assert.ok(['users','user_consent_settings'].includes(table),'inbox read must not use saved attention or reminder rows')
+  const record={table,owner:null as any};queries.push(record)
+  const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')record.owner=value;return q},maybeSingle:async()=>({error:null,data:table==='users'
+    ? {gmail_connected:inboxConnected,gmail_email:'owner@example.test',gmail_access_token:'fixture-token',telegram_id:42,whatsapp_id:'fixture-wa',name:'Fixture'}
+    : {gmail_enabled:inboxEnabled}})}
+  return q
+}}
+const message=(id:string,from:string,snippet:string,extra:any={})=>({id,from,to:'owner@example.test',subject:'Please review You&#39;re invited',snippet,internalDate:Date.parse('2026-10-07T12:00:00Z'),...extra})
+const fixtureThreads=[
+  {id:'needs-reply',messages:[message('old','owner@example.test','My earlier message'),message('new','Alice <alice@example.test>','Can you review the plan? Your verification code is 123456.')]},
+  {id:'already-replied',messages:[message('before','Alice <alice@example.test>','Please review'),message('after','owner@example.test','Done',{internalDate:Date.parse('2026-10-07T12:01:00Z')})]},
+  {id:'newsletter',messages:[message('bulk','news@example.test','Please reply',{listId:'newsletter'})]},
+  {id:'auto',messages:[message('auto','no-reply@example.test','Please confirm')]},
+  {id:'promise',messages:[message('promise','Bob <bob@example.test>',"I will send the update tomorrow.",{subject:'Update'})]},
+]
+function loadFixture(path:string,requireFn:(name:string)=>any,extra:any={}){
+  const exports:any={}
+  runInNewContext(ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:requireFn,console,Date,Intl,Set,Map,URL,process,...extra})
+  return exports
+}
+const inboxModule=loadFixture('lib/agent/open-loops.ts',name=>
+  name==='@/lib/supabase-admin'?{supabaseAdmin:fixtureDb}:
+  name==='@/lib/security/google-token-crypto'?{decryptGoogleToken:(value:any)=>value||''}:
+  name==='./google-workspace-read'?{formatEmailSnippet}:
+  name==='@/lib/services/google-gmail'?{fetchGmailAttentionThreads:async()=>{freshCalls++;if(readFails)throw Error('fixture read failure');return fixtureThreads},refreshGmailAccessToken:async()=>''}:{}
+)
+const actor={legacyTelegramId:42,userId:'fixture-user',whatsappId:'fixture-wa',name:'Fixture',timezone:'Asia/Kolkata'}
+const exactInboxPrompt='Show emails that need my reply. Do not send anything.'
+assert.equal(inboxModule.isInboxReplyReadQuery(exactInboxPrompt),true)
+assert.equal(inboxModule.isInboxReplyReadQuery('Which emails do I need to reply to?'),true)
+for(const text of ['Send emails that need my reply','Show emails that need my reply and send them','Remind me to reply to Alice'])assert.equal(inboxModule.isInboxReplyReadQuery(text),false)
+const fresh=await inboxModule.handleInboxReplyRead({actor,text:exactInboxPrompt})
+assert.match(fresh.text,/Gmail checked at/);assert.match(fresh.text,/Checked 5 recent threads/)
+assert.match(fresh.text,/Alice/);assert.match(fresh.text,/You're invited/)
+assert.doesNotMatch(fresh.text,/123456|Bob|newsletter|no-reply|reminder set/i)
+assert.match(fresh.text,/Nothing sent/);assert.equal(fresh.verification.verified,true)
+const callsBeforeDisabled=freshCalls
+inboxEnabled=false
+assert.match((await inboxModule.handleInboxReplyRead({actor,text:exactInboxPrompt})).text,/turned off/)
+assert.equal(freshCalls,callsBeforeDisabled);inboxEnabled=true;inboxConnected=false
+assert.match((await inboxModule.handleInboxReplyRead({actor,text:exactInboxPrompt})).text,/Connect Gmail/)
+assert.equal(freshCalls,callsBeforeDisabled);inboxConnected=true;readFails=true
+const failed=await inboxModule.handleInboxReplyRead({actor,text:exactInboxPrompt})
+assert.equal(failed.status,'failed');assert.doesNotMatch(failed.text,/Alice|no emails need|Gmail checked/i);readFails=false
+
+const waInbox=loadFixture('lib/agent/whatsapp-bridge.ts',name=>name==='./open-loops'?inboxModule:name==='./gmail-verification'?{isGmailVerificationQuery:()=>false}:{})
+assert.equal((await waInbox.tryRunWhatsAppAttentionCommand({user:{id:'fixture-user',telegramId:42,whatsappId:'fixture-wa',name:'Fixture'},text:exactInboxPrompt})).handledBy,'inbox-reply-read')
+const webInbox=loadFixture('app/api/dashboard/chat/route.ts',name=>
+  name==='@/lib/agent/open-loops'?inboxModule:
+  name==='@/lib/supabase-admin'?{supabaseAdmin:{from:(table:string)=>table==='conversations'?{insert:async()=>({error:null})}:fixtureDb.from(table)}}:
+  name==='@/lib/dashboard/session'?{getSession:async()=>({telegramId:'42'})}:
+  name==='@/lib/agent/actor'?{resolveAgentActor:async()=>actor}:
+  name==='next/server'?{NextResponse:{json:(data:any)=>data}}:{}
+)
+const webFresh=await webInbox.POST({headers:{get:()=> 'https://app.example.test'},nextUrl:{host:'app.example.test'},json:async()=>({text:exactInboxPrompt})})
+assert.equal(webFresh.handledBy,'inbox-reply-read','real web POST must claim the read before content/general planners')
+assert.ok(queries.every(q=>q.owner===42),'every connection/consent read is owner scoped')
+console.log('Fresh inbox reply reads: real handler + web POST + WhatsApp first refusal, ownership, consent, errors, automation suppression and secret-safe text verified')
+
+let failThread=false
+const gmailTransport=loadFixture('lib/services/google-gmail.ts',()=>({}),{setTimeout,clearTimeout,fetch:async(url:string,options:any)=>{
+  assert.equal(options.method,undefined,'Gmail attention performs only GET requests')
+  assert.equal(options.cache,'no-store')
+  const list=url.includes('/messages?')
+  return {ok:list||!failThread,status:list||!failThread?200:503,json:async()=>list
+    ? {messages:[{threadId:'fixture-thread'}]}
+    : {id:'fixture-thread',messages:[{id:'message',internalDate:'1791374400000',payload:{headers:[{name:'From',value:'Alice <alice@example.test>'}]},snippet:'Please review'}]}}
+}})
+assert.equal((await gmailTransport.fetchGmailAttentionThreads('fixture-token',12)).length,1)
+failThread=true
+await assert.rejects(()=>gmailTransport.fetchGmailAttentionThreads('fixture-token',12),/gmail_attention_thread_read_incomplete/,'a partial transport failure must not be reported as an empty successful inbox scan')
 
 assert.ok(retiredRunReason({status:'paused',error:'stale_provider_access_limited'}))
 assert.equal(retiredRunReason({status:'paused',updated_at:'2020-01-01'}),null)
