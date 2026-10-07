@@ -206,7 +206,20 @@ export function workspaceEmailAuditScope(input:string) {
   return {days,limit,query:`{subject:receipt subject:invoice subject:renewal subject:renews subject:renewed subject:expiration subject:subscription subject:payment subject:billed subject:charged} newer_than:${days}d -in:spam -in:trash`}
 }
 
-export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:number;limit:number;hasMore:boolean}|null}) {
+// Search is candidate discovery, not proof that every keyword match is a bill.
+// Keep explicit receipts, dues and dated renewal notices; do not infer a bill
+// from developer threads, newsletters or generic subscription/payment marketing.
+export function hasEmailBillingEvidence(message:{subject?:string;evidence?:string;snippet?:string}) {
+  const subject=String(message.subject||'')
+  const evidence=String(message.evidence||message.snippet||'')
+  if(/\(PR #\d+\)|\bpull request\b|\bissue #\d+\b/i.test(subject))return false
+  const billingSubject=/\b(receipt|invoice|payment|billed|charged|renewal|renews?|renewed|expiration|expires?)\b/i.test(subject)
+  const transaction=/\b(amount (?:paid|due)|paid (?:on|\d|[A-Za-z]+ \d)|payment (?:was|is|of|to|due)|confirm (?:your|the|monthly) (?:[A-Z]{2,3})?\s*[$₹£€\d]|monthly payment|invoice balance|outstanding (?:balance|dues)|(?:has been|was|is) (?:debited|charged)|bill payment (?:was|is) due)\b/i.test(evidence)
+  const renewal=/\b(?:renewal(?: date)?|renews?|expiration(?: date)?|expires?)\s*(?:on|at|:|is)?\s*(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i.test(evidence)
+  return (billingSubject&&transaction)||(/\b(subscription|membership|renewal|renews?|expiration|expires?)\b/i.test(subject)&&renewal)
+}
+
+export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:number;limit:number;hasMore:boolean;inspected?:number;excluded?:number}|null}) {
   if(!result.audit)return ''
   const {days,limit,hasMore}=result.audit
   const lines=result.messages.map((m:any,index:number)=>{
@@ -217,7 +230,8 @@ export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:nu
     const renewal=evidence.match(new RegExp('\\b(?:renewal(?: date)?|renews?|expiration(?: date)?|expires?)\\s*(?:on|at|:|is)?\\s*('+date+')','i'))?.[1]
     return `${index+1}. ${m.subject}\nSender/service evidence: ${m.from}${m.date?`\nEmail date: ${m.date}`:''}\nAmounts/currencies shown: ${amounts.join('; ')||'Not shown in the readable text'}\nRenewal/expiration date: ${renewal||'Not explicitly shown in the readable text'}\nEmail evidence: ${formatEmailSnippet(evidence,700)}`
   })
-  return `Gmail subscription audit · last ${days} days · up to ${limit} messages\nMatching billing/renewal email candidates (subject search; not a verified active-subscription inventory).\n\n${lines.length?lines.join('\n\n'):'No matching messages in this search window.'}\n\n${hasMore?'More matching messages exist; this is a bounded audit, not a complete inbox inventory.':'Only matching messages returned by this bounded search were checked.'} Sender names and email text are evidence; subscription status, usage and future charges are not inferred. No email, cancellation, reminder or calendar change was made.`
+  const scope=result.audit.inspected!==undefined?`\n${result.audit.inspected} candidate messages checked; ${result.audit.excluded||0} excluded because their readable text did not establish a billing or renewal notice.`:''
+  return `Gmail subscription audit · last ${days} days · up to ${limit} messages\nBilling/renewal email evidence (subject search; not a verified active-subscription inventory).${scope}\n\n${lines.length?lines.join('\n\n'):'No billing or renewal evidence found among the checked candidates.'}\n\n${hasMore?'More matching messages exist; this is a bounded audit, not a complete inbox inventory.':'Only matching messages returned by this bounded search were checked.'} Sender names and email text are evidence; subscription status, usage and future charges are not inferred. No email, cancellation, reminder or calendar change was made.`
 }
 
 export async function searchWorkspaceEmails(actor:AgentActor, input:string, options:{missionText?:string}={}) {
@@ -244,8 +258,9 @@ export async function searchWorkspaceEmails(actor:AgentActor, input:string, opti
   const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id,Boolean(audit))))
   const failed=settled.find(x=>x.status==='rejected')
   if(failed?.status==='rejected')throw failed.reason
-  const messages=settled.filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled').map(x=>x.value).filter(Boolean)
-  return {queryTerms:terms,messages,audit:audit?{days:audit.days,limit:audit.limit,hasMore:Boolean(data?.nextPageToken)}:null}
+  const candidates=settled.filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled').map(x=>x.value).filter(Boolean)
+  const messages=audit?candidates.filter(hasEmailBillingEvidence):candidates
+  return {queryTerms:terms,messages,audit:audit?{days:audit.days,limit:audit.limit,hasMore:Boolean(data?.nextPageToken),inspected:candidates.length,excluded:candidates.length-messages.length}:null}
 }
 
 function contactName(person:any) {

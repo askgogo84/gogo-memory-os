@@ -152,10 +152,12 @@ function domainCount(text: string) {
 /** Only invoke the expensive planner for genuinely cross-feature/outcome requests. */
 export function readOnlySubscriptionAuditPlan(text:string):GeneralPlan|null {
   if(!/^\s*(?:(?:can|could) you\s+)?(?:please\s+)?audit\b/i.test(text)||!/\b(?:last|past)\s+\d+\s+days?\b/i.test(text))return null
-  const positive=String(text).replace(/\b(?:do not|don't|never)\b[^.!?\n]*/gi,'')
+  // Stop a negative clause at a contrast: "do not send, but create" contains
+  // an independent affirmative action which must retain the approval pipeline.
+  const positive=String(text).replace(/\b(?:do not|don't|never)\b(?:(?!\b(?:but|however|instead|then)\b)[^.!?\n])*/gi,'')
   // A report's "list each service" is not a request to mutate saved checklists.
   // Retain compound missions and explicit writes in the general approval pipeline.
-  if(/\b(send|forward|compose|create|schedule|remind|cancel|delete|archive|modify|buy|pay|book|post|publish|renew)\b/i.test(positive))return null
+  if(/\b(send|forward|compose|create|add|save|remember|update|set|schedule|remind|cancel|delete|archive|modify|buy|pay|book|post|publish|renew)\b/i.test(positive))return null
   if(/\b(?:show|check|find|read|compare|list)\s+(?:my\s+)?(?:calendar|reminders?|flights?|contacts?|files?|tasks?)\b/i.test(positive))return null
   if(/\b(?:and|then|also|plus)\s+(?:please\s+)?(?:show|check|find|read|compare|audit|research|search)\b/i.test(positive))return null
   let scope:ReturnType<typeof workspaceEmailAuditScope>
