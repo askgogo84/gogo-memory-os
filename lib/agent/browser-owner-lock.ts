@@ -32,6 +32,9 @@ setInterval(()=>{if(Date.now()>deadline||fs.existsSync('gogo-browser-release-'+t
     throw new Error('browser_handoff_in_use')
   }
   const release=async()=>{
+    // SDK writeFiles resumes a stopped persistent sandbox. Stopping the VM
+    // already releases flock; do not restart it just to write a release marker.
+    if(['stopped','stopping','failed','aborted','snapshotting'].includes(sandbox.status))return
     await sandbox.writeFiles([{path:`gogo-browser-release-${token}`,content:Buffer.from('release')}]).catch(()=>{})
     await new Promise(r=>setTimeout(r,150))
   }

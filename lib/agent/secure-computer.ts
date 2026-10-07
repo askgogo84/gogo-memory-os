@@ -604,6 +604,16 @@ return receiptCount(after)>receiptCount(before);
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
 `
 
+export async function ensureBrowserSessionWindow(sandbox:any,keepAlive=false){
+  // getOrCreate's creation timeout does not renew a reused running session.
+  // Check the actual expiry, not the default timeout accessor (SDK 2.x).
+  const expires=Number(sandbox.expiresAt?.getTime?.())
+  const remaining=expires-Date.now()
+  if(!Number.isFinite(remaining)||remaining<=0)throw new Error('browser_session_deadline_missing_or_expired')
+  const window=keepAlive?20*60_000:5*60_000
+  if(remaining<window)await sandbox.extendTimeout(Math.ceil(window-remaining))
+}
+
 async function getComputer(userId:string,targetUrl:string,keepAlive=false){
   const canonicalUserId=await canonicalBrowserOwnerId(userId)
   const name=userSandboxName(canonicalUserId)
@@ -614,6 +624,8 @@ async function getComputer(userId:string,targetUrl:string,keepAlive=false){
   const releaseOwnerLock=await acquireBrowserOwnerLock(sandbox)
   let managed:Awaited<ReturnType<typeof ensureManagedBrowser>>=null
   try{
+  // Extend only after ownership is acquired, before bootstrap or any page work.
+  await ensureBrowserSessionWindow(sandbox,keepAlive)
   await ensureBrowserRuntime(sandbox,managedBrowserEnabled()?{'*.browserbase.com':[]}: {})
   managed=await ensureManagedBrowser(sandbox,name,targetUrl,keepAlive)
   if(keepAlive&&!managed)await ensurePersistentCommerceBrowser(sandbox,targetUrl)

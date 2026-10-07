@@ -243,7 +243,7 @@ console.log('Provisioning failure, consumed auth markers, and concurrent owner t
 let lockAvailable=false
 const lockCommands:any[]=[]
 const lockModule=load('browser-owner-lock.ts',{'node:crypto':{randomBytes:()=>({toString:()=> 'reservation'})}},'',{setTimeout:(f:()=>void)=>{f();return 0}})
-const lockSandbox={runCommand:async(c:any)=>{lockCommands.push(c);return {exitCode:c.cmd==='flock'?0:lockAvailable?0:1}},writeFiles:async(files:any)=>{lockCommands.push({files})}}
+const lockSandbox={status:'running',runCommand:async(c:any)=>{lockCommands.push(c);return {exitCode:c.cmd==='flock'?0:lockAvailable?0:1}},writeFiles:async(files:any)=>{lockCommands.push({files})}}
 await assert.rejects(()=>lockModule.acquireBrowserOwnerLock(lockSandbox),/browser_handoff_in_use/)
 assert.equal(lockCommands[0].args[2],'gogo-handoff.lock','automated readers and takeover must reserve the same lock')
 lockAvailable=true
@@ -254,6 +254,15 @@ assert.ok(lockCommands.some(c=>c.files?.[0]?.path==='gogo-browser-release-reserv
 const transferWrite=lockCommands.findIndex(c=>c.files?.[0]?.path==='gogo-handoff-transfer')
 const releaseWrite=lockCommands.findIndex((c,i)=>i>transferWrite&&c.files?.[0]?.path==='gogo-browser-release-reservation')
 assert.ok(transferWrite>=0&&releaseWrite>transferWrite,'reserve the next human owner before releasing automation')
+// Actual SDK writeFiles auto-resumes stopped persistent sessions. Stopping the
+// VM already releases its flock; cleanup must not restart it after completion.
+const beforeStoppedRelease=lockCommands.length
+for(const status of ['stopped','stopping','failed','aborted','snapshotting']){
+ lockSandbox.status=status
+ await unlock()
+ assert.equal(lockCommands.length,beforeStoppedRelease,'terminal VM cleanup must not perform an auto-resuming write')
+}
+lockSandbox.status='running'
 const transferFiles=new Map([['gogo-handoff-transfer','reserved-token']])
 const transferFs={existsSync:(path:string)=>transferFiles.has(path),readFileSync:(path:string)=>transferFiles.get(path)||'',writeFileSync:(path:string,value:string)=>{transferFiles.set(path,value)},unlinkSync:(path:string)=>{transferFiles.delete(path)}}
 assert.throws(()=>runInNewContext(lockCommands[0].args[5],{require:()=>transferFs,process:{argv:['node','contender'],exit:()=>{throw new Error('contender blocked')}},setInterval:()=>{}}),/contender blocked/)
@@ -285,6 +294,39 @@ const lockedComputer=load('secure-computer.ts',{
 },'\nexport { getComputer, BROWSER_SCRIPT, normalizeActionLog }')
 await assert.rejects(()=>lockedComputer.getComputer('user','https://provider.example'),/browser_handoff_in_use/)
 assert.equal(unexpectedBootstrap,0,'ordinary browser tasks must not bootstrap an active owner takeover')
+// Production expiry: the reused session had <2 minutes left during a 3-minute
+// read. Test the actual expiry accessor (not the default timeout field).
+for(const [remaining,keepAlive,expectedWindow] of [[120000,false,300000],[120000,true,1200000],[1200000,false,0]] as const){
+ const extensions:number[]=[]
+ const before=Date.now()
+ await lockedComputer.ensureBrowserSessionWindow({timeout:1200000,expiresAt:new Date(before+remaining),extendTimeout:async(ms:number)=>{extensions.push(ms)}},keepAlive)
+ if(expectedWindow){assert.equal(extensions.length,1);assert.ok(extensions[0]>=expectedWindow-remaining&&extensions[0]<=expectedWindow-remaining+1000)}
+ else assert.equal(extensions.length,0,'a fresh session must not receive an unnecessary extension')
+}
+await assert.rejects(()=>lockedComputer.ensureBrowserSessionWindow({timeout:1200000}),/deadline_missing_or_expired/)
+await assert.rejects(()=>lockedComputer.ensureBrowserSessionWindow({expiresAt:new Date(Date.now()-1)}),/deadline_missing_or_expired/)
+await assert.rejects(()=>lockedComputer.ensureBrowserSessionWindow({expiresAt:new Date(Date.now()+1000),extendTimeout:async()=>{throw new Error('fixture extension denied')}}),/extension denied/)
+// Drive actual getComputer + owner release with the SDK's resume-on-write
+// behavior. Ownership precedes extension, extension precedes page setup, and
+// shutdown cannot silently start a replacement session.
+const lifetimeEvents:string[]=[]
+const lifetimeSandbox={status:'running',expiresAt:new Date(Date.now()+120000),
+ extendTimeout:async(ms:number)=>{lifetimeEvents.push('extend');assert.ok(ms>=180000);lifetimeSandbox.expiresAt=new Date(Date.now()+300000)},
+ runCommand:async()=>({exitCode:0}),
+ writeFiles:async()=>{if(lifetimeSandbox.status==='stopped'){lifetimeEvents.push('unwanted-resume');lifetimeSandbox.status='running'}lifetimeEvents.push('write')},
+ updateNetworkPolicy:async()=>{},stop:async()=>{lifetimeEvents.push('stop');lifetimeSandbox.status='stopped'}}
+const lifetimeComputer=load('secure-computer.ts',{
+ '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>lifetimeSandbox}},
+ './browser-owner-lock':{acquireBrowserOwnerLock:async(sb:any)=>{lifetimeEvents.push('lock');return lockModule.acquireBrowserOwnerLock(sb)}},
+ './secure-browser-bootstrap':{browserSandboxNameFor:()=> 'owned-fixture',ensureBrowserRuntime:async()=>{lifetimeEvents.push('bootstrap')}},
+},'\nexport {getComputer}')
+const ownedComputer=await lifetimeComputer.getComputer('owned-fixture','https://provider.example')
+assert.ok(lifetimeEvents.indexOf('lock')<lifetimeEvents.indexOf('extend'))
+assert.ok(lifetimeEvents.indexOf('extend')<lifetimeEvents.indexOf('bootstrap'))
+await ownedComputer.sandbox.stop()
+await ownedComputer.releaseOwnerLock()
+assert.equal(lifetimeSandbox.status,'stopped')
+assert.equal(lifetimeEvents.includes('unwanted-resume'),false,'cleanup after actual preparation leaves the environment stopped')
 console.log('Automated browser reservations and direct handoff persistence failure verified')
 for(const [label,throws,expected,mode] of [['Cancel booking',false,true,'execute'],['Cancel reservation',false,true,'execute'],['Cancel booking',false,true,'read'],['Confirm reservation',false,true,'execute'],['Confirm reservation',true,true,'execute'],['Search',false,false,'execute'],['Confirm reservation',false,true,'read']] as const){
   let output:any
@@ -339,7 +381,7 @@ let browserReads=0,finalStops=0,finalUnlocks=0
 let finalChallenge:any={url:'https://login.example',title:'Sign in',text:'Approve this sign-in',forms:[],actions:[{kind:'submit',detail:'#confirm',status:'done',consequential:true}]}
 const finalGateComputer=load('secure-computer.ts',{
   './planner-provider':{completeAgentPlanPrompt:async()=>'{"approvedOperation":"booking","actions":[{"kind":"submit","selector":"#confirm"}]}'},
-  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{finalStops++},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({expiresAt:new Date(Date.now()+1200000),writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{finalStops++},
     runCommand:async()=>({exitCode:0,stdout:async()=>JSON.stringify(browserReads++===0
       ? {url:'https://provider.example',title:'Reservation',text:'Review reservation',forms:[],controls:[{selector:'#confirm',tag:'button',role:'button',label:'Confirm'}]}
       : finalChallenge)})})}},
@@ -553,7 +595,7 @@ const browserPlanner=load('planner-provider.ts',{
 },'',{process:{env:{OPENAI_API_KEY:'fixture-not-a-key'}}})
 const evidenceComputer=load('secure-computer.ts',{
   './planner-provider':browserPlanner,
-  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async(policy:any)=>{browserPolicies.push(policy)},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(queuedObservations.shift()??evidencePage)})})}},
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({expiresAt:new Date(Date.now()+1200000),writeFiles:async()=>{},updateNetworkPolicy:async(policy:any)=>{browserPolicies.push(policy)},stop:async()=>{evidenceStops++},runCommand:async()=>({exitCode:0,stdout:async()=>inspectionOutput??JSON.stringify(queuedObservations.shift()??evidencePage)})})}},
   './secure-browser-redaction':{redactBrowserSensitiveText:(text:string)=>text},
   './browser-auth-gate':{detectHumanAuthGate},
   './browser-location-gate':{needsBrowserDeliveryLocation},
@@ -1156,7 +1198,7 @@ assert.equal(finalMonitorReservationReleased,1)
 let deadlineNow=0,deadlineWaves=0,deadlineStops=0,deadlineUnlocks=0
 const deadlinePage={url:'https://provider.example',title:'Flight search',text:'Choose departure airport',forms:[],controls:[{selector:'#from',tag:'div',role:'button',label:'From'}],actions:[{kind:'click',status:'done'}]}
 const deadlineComputer=load('secure-computer.ts',{
-  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{deadlineStops++},runCommand:async(c:any)=>{
+  '@vercel/sandbox':{Sandbox:{getOrCreate:async()=>({expiresAt:new Date(Date.now()+1200000),writeFiles:async()=>{},updateNetworkPolicy:async()=>{},stop:async()=>{deadlineStops++},runCommand:async(c:any)=>{
     const payload=JSON.parse(Buffer.from(c.args.at(-1),'base64').toString())
     if(payload.actions.length){deadlineWaves++;deadlineNow+=181000}
     return {exitCode:0,stdout:async()=>JSON.stringify(deadlinePage)}
