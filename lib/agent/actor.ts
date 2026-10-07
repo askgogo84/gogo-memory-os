@@ -7,12 +7,13 @@ export type AgentActor = {
   whatsappId: string
   name: string
   creditiqUserId?: string | null
+  timezone?: string
 }
 
 export async function resolveAgentActor(session: Omit<AgentSession,'surface'> & {surface:AgentSession['surface']|'whatsapp'}): Promise<AgentActor> {
   let query = supabaseAdmin
     .from('users')
-    .select('id, telegram_id, whatsapp_id, name')
+    .select('id, telegram_id, whatsapp_id, name, timezone')
 
   if (session.userId) query = query.eq('id', session.userId)
   else query = query.eq('telegram_id', Number(session.telegramId))
@@ -48,6 +49,7 @@ export async function resolveAgentActor(session: Omit<AgentSession,'surface'> & 
     whatsappId,
     name: String(data.name || 'Gogo'),
     creditiqUserId,
+    timezone: String(data.timezone || 'Asia/Kolkata'),
   }
 }
 
