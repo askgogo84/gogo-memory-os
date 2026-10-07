@@ -886,7 +886,8 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     }
 
     // A multiline WhatsApp bubble can contain separate retailer reads and a
-    // delegated reminder. Route each recognised line before whole-message intent
+    // delegated reminder or reminder lookup. Preserve shared read restrictions.
+    // Route each recognised line before whole-message intent
     // handlers can collapse all of them into a single search or reminder.
     const compoundReplies = await runCompoundShoppingFriendRequests(text, {
       checkPrice: async stepText => {
@@ -900,6 +901,14 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         const reminder = await processIncomingMessage({channel: 'whatsapp', externalUserId: from,
           text: stepText, userName: profileName, messageType: 'text',
           messageId: inboundMessageSid ? `${inboundMessageSid}:${index}` : null})
+        return reminder.text
+      },
+      readReminders: async (stepText, index) => {
+        const reminder = await tryRunWhatsAppJevSpecialist({user: resolvedUser, text: stepText,
+          messageId: inboundMessageSid ? `${inboundMessageSid}:${index}` : null, intent: 'reminder_read'})
+        if (!reminder) throw new Error('compound_reminder_read_unhandled')
+        await saveConversation(resolvedUser.telegramId, 'user', stepText)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reminder.text)
         return reminder.text
       },
       onError: (error, kind, index) => console.error('WHATSAPP_COMPOUND_STEP_FAILED:',

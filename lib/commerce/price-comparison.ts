@@ -2,7 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
-import {COMPARISON_PROVIDERS, comparisonObjective, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
@@ -56,7 +56,7 @@ export async function comparisonWebFallback(task: PriceComparison): Promise<stri
     const provider = COMPARISON_PROVIDERS[row.provider]
     const scoped = indiaShoppingSearch(`${task.metadata_json.subject} price on ${provider.label}`)
     const results = await searchWebResults(scoped.query, {includeDomains: [provider.domain], timeoutMs: 10_000})
-    const product = results.map(result => comparisonSource(row.provider, result.url)).find(Boolean)
+    const product = comparisonProductLead(row.provider, task.metadata_json.subject, results)
     if (product) lines.push(`${provider.label} product-page lead: ${product}`)
   }
   return `The browser could not verify a live price, so I checked India-scoped web search. Search links are leads, not confirmed prices or stock.${lines.length ? '\n' + lines.join('\n') : ' No matching product page was found.'}`
@@ -190,8 +190,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
         const leads = await searchWebResults(task.metadata_json.subject, {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000})
         // Discovery is not price evidence. Only observed retailer URLs are used;
         // never synthesize a product ID or trust a search snippet's price.
-        const productPath = next.provider === 'amazon' ? /\/(?:dp|gp\/product)\// : next.provider === 'flipkart' ? /\/p\// : /\/p\//
-        const candidate = leads.map(lead => comparisonSource(next.provider, lead.url)).find(url => url && productPath.test(new URL(url).pathname))
+        const candidate = comparisonProductLead(next.provider, task.metadata_json.subject, leads)
         if (candidate) startUrl = candidate
       }
       try {

@@ -44,6 +44,20 @@ assert.doesNotMatch(String(flipkartSecret), /secret|token/)
 assert.equal(model.comparisonSource('croma', 'https://www.croma.com/sony/p/236417?tracker=x'), null)
 assert.equal(model.comparisonSource('flipkart', 'https://www.flipkart.com/search?q=sony&pid=x'), null)
 
+// 8 Oct phone incident: the first result was a Samsung A35 screen guard.
+// Match product identity before starting a paid browser, including variants.
+const iphoneLead='https://www.flipkart.com/apple-iphone-17-pro-silver-256-gb/p/itm106f475c264c7'
+const wrongLead='https://www.flipkart.com/riticoll-screen-guard-samsung-galaxy-a35-256gb/p/itme41863b45639f'
+assert.equal(model.comparisonProductLead('flipkart','iPhone 17 Pro 256GB',[{url:wrongLead}]),null)
+assert.equal(model.comparisonProductLead('flipkart','iPhone 17 Pro 256GB',[{url:wrongLead},{url:iphoneLead}]),iphoneLead)
+for(const title of ['Apple iPhone 17 Pro Max 256GB','Apple iPhone 17 Pro 512GB','Screen protector for Apple iPhone 17 Pro 256GB'])
+  assert.equal(model.comparisonProductLead('flipkart','iPhone 17 Pro 256GB',[{url:iphoneLead,title}]),null,title)
+const sonyLead='https://www.croma.com/sony-wh-1000xm5/p/251234'
+assert.equal(model.comparisonProductLead('croma','Sony WH-1000XM5',[{url:sonyLead}]),sonyLead)
+assert.equal(model.comparisonProductLead('croma','Sony WH-1000XM5',[{url:sonyLead,title:'Sony WH-1000XM4'}]),null)
+assert.equal(model.comparisonProductLead('croma','Sony WH-1000XM5',[{url:sonyLead,title:'Replacement ear pads for Sony WH-1000XM5'}]),null)
+assert.equal(model.comparisonProductLead('flipkart','iPhone 17 Pro 256GB',[{url:iphoneLead.replace('flipkart.com','flipkart.com.evil.test')}]),null)
+
 // Browser-ownership contention is not a provider verdict: the retailer was never
 // opened. It must surface as a specific, blocked card with no price — never a generic
 // "not verified", never "unavailable", and never a phantom "pending"/"queued" that an
@@ -317,7 +331,10 @@ const flipkartLead = 'https://www.flipkart.com/sony-wh-1000xm5/p/itm5f3b?pid=ACC
 const discover = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
   './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
   '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async () => liveHandoff},
-  '@/lib/web-search': {indiaShoppingSearch, searchWebResults: async () => [{url: flipkartLead, snippet: '₹1 free delivery'}]}})
+  '@/lib/web-search': {indiaShoppingSearch, searchWebResults: async () => [
+    {url: wrongLead, title: 'Riticoll screen guard Samsung Galaxy A35 256GB', snippet: '₹1'},
+    {url: flipkartLead, title: 'Sony WH-1000XM5 black', snippet: '₹1 free delivery'},
+  ]}})
 const flipTask = await discover.tryPriceComparison({telegramId: 42, text: 'Compare Sony WH-1000XM5 black on Amazon India and Flipkart. Do not create a watch.', surface: 'web'})
 await discover.advancePriceComparison(actor, flipTask.runId) // amazon: no amazon.in lead -> homepage -> blocked
 const flipAdvanced = await discover.advancePriceComparison(actor, flipTask.runId) // flipkart: discovered product page

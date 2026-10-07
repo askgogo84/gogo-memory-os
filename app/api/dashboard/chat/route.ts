@@ -30,6 +30,7 @@ import { tryRunRestaurantReservation } from '@/lib/agent/restaurant-reservation'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunTrainResearch } from '@/lib/agent/train-research'
 import { handleInboxReplyRead } from '@/lib/agent/open-loops'
+import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 
 export const dynamic = 'force-dynamic'
 
@@ -132,6 +133,13 @@ export async function POST(req: NextRequest) {
       prepareFriend: async (stepText, index) => {
         const reminder = await processIncomingMessage({channel: 'whatsapp', externalUserId: String(user.whatsapp_id),
           text: stepText, userName: user.name || 'Gogo', messageType: 'text', messageId: `${compoundEventId}:${index}`})
+        return redactSecretShapedText(reminder.text)
+      },
+      readReminders: async (stepText, index) => {
+        const reminder = await tryRunExpiryReminderPlan({actor, surface: 'web', text: stepText,
+          messageId: `${compoundEventId}:${index}`})
+        if (!reminder) throw new Error('compound_reminder_read_unhandled')
+        await saveConversation(user.telegram_id, stepText, reminder.text)
         return redactSecretShapedText(reminder.text)
       },
       onError: (error, kind, index) => console.error('DASHBOARD_COMPOUND_STEP_FAILED:',
