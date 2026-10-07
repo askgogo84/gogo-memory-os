@@ -209,14 +209,24 @@ export function workspaceEmailAuditScope(input:string) {
 // Search is candidate discovery, not proof that every keyword match is a bill.
 // Keep explicit receipts, dues and dated renewal notices; do not infer a bill
 // from developer threads, newsletters or generic subscription/payment marketing.
+function emailBillingAmounts(evidence:string) {
+  // Preserve explicit currency codes instead of inferring USD from "$" or a
+  // currency from the account locale. Uppercase ISO codes avoid prose like "all 15".
+  const codes=Intl.supportedValuesOf('currency').join('|')
+  const pattern=new RegExp(`(?:\\b(?:${codes}|[Rr][Ss]\\.?)\\s*|[₹$£€¥]\\s*)\\d[\\d,]*(?:\\.\\d{1,2})?`,'g')
+  return [...new Set(evidence.match(pattern)||[])]
+}
+
 export function hasEmailBillingEvidence(message:{subject?:string;evidence?:string;snippet?:string}) {
   const subject=String(message.subject||'')
   const evidence=String(message.evidence||message.snippet||'')
   if(/\(PR #\d+\)|\bpull request\b|\bissue #\d+\b/i.test(subject))return false
+  if(/\b(?:read|return|delivery|message) receipts?\b/i.test(subject))return false
   const billingSubject=/\b(receipt|invoice|payment|billed|charged|renewal|renews?|renewed|expiration|expires?)\b/i.test(subject)
-  const transaction=/\b(amount (?:paid|due)|paid (?:on|\d|[A-Za-z]+ \d)|payment (?:was|is|of|to|due)|confirm (?:your|the|monthly) (?:[A-Z]{2,3})?\s*[$₹£€\d]|monthly payment|invoice balance|outstanding (?:balance|dues)|(?:has been|was|is) (?:debited|charged)|bill payment (?:was|is) due)\b/i.test(evidence)
+  const receiptAmount=/\b(receipt|invoice)\b/i.test(subject)&&emailBillingAmounts(evidence).length>0
+  const transaction=/\b(amount (?:paid|due)|paid (?:on|\d|[A-Za-z]+ \d)|payment (?:was|is|of|to|due)|confirm (?:your|the) monthly payment|confirm (?:your|the|monthly) (?:[A-Z]{2,3})?\s*[$₹£€\d]|invoice balance|outstanding (?:balance|dues)|(?:has been|was|is) (?:debited|charged)|bill payment (?:was|is) due)\b/i.test(evidence)
   const renewal=/\b(?:renewal(?: date)?|renews?|expiration(?: date)?|expires?)\s*(?:on|at|:|is)?\s*(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i.test(evidence)
-  return (billingSubject&&transaction)||(/\b(subscription|membership|renewal|renews?|expiration|expires?)\b/i.test(subject)&&renewal)
+  return receiptAmount||(billingSubject&&transaction)||(/\b(subscription|membership|renewal|renews?|expiration|expires?)\b/i.test(subject)&&renewal)
 }
 
 export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:number;limit:number;hasMore:boolean;inspected?:number;excluded?:number}|null}) {
@@ -225,7 +235,7 @@ export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:nu
   const lines=result.messages.map((m:any,index:number)=>{
     const evidence=String(m.evidence||m.snippet||'')
     // Preserve all amounts as quoted evidence; never decide which amount is a recurring bill.
-    const amounts=[...new Set(evidence.match(/(?:\b(?:INR|USD|GBP|EUR|Rs\.?)\s*|[₹$£€]\s*)\d[\d,]*(?:\.\d{1,2})?/gi)||[])]
+    const amounts=emailBillingAmounts(evidence)
     const date='(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4}|[A-Za-z]{3,9}\\s+\\d{1,2},?\\s+\\d{4})'
     const renewal=evidence.match(new RegExp('\\b(?:renewal(?: date)?|renews?|expiration(?: date)?|expires?)\\s*(?:on|at|:|is)?\\s*('+date+')','i'))?.[1]
     return `${index+1}. ${m.subject}\nSender/service evidence: ${m.from}${m.date?`\nEmail date: ${m.date}`:''}\nAmounts/currencies shown: ${amounts.join('; ')||'Not shown in the readable text'}\nRenewal/expiration date: ${renewal||'Not explicitly shown in the readable text'}\nEmail evidence: ${formatEmailSnippet(evidence,700)}`
