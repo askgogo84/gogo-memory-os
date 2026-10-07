@@ -352,6 +352,13 @@ const phoneEvidence = 'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\n'
   + 'NGIVR RETAILS See other sellers 4.7 • 6 years with Flipkart Shop with peace of mind Apple One (1) Year Limited Warranty 7-day brand support Cash on Delivery Flipkart Assured'
 const phoneRow:model.ProviderObservation = {provider:'flipkart',status:'observed',checkedAt:'2026-10-07T09:11:59Z',sourceUrl:'https://www.flipkart.com/apple-iphone-17-pro/p/fixture',evidence:phoneEvidence}
 assert.deepEqual(model.comparisonQuote('iPhone 17 Pro 256GB',phoneRow),{price:'₹1,34,900',fee:'₹299 Protect Promise Fee',taxesIncluded:false})
+const repeatedFeeEvidence = 'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\n'
+  + 'in Selected Color: Cosmic Orange Variant: 256 GB 256 GB ₹1,34,900 512 GB ₹1,54,900 1 left 1 TB ₹1,74,900 Apple iPhone 17 Pro (Cosmic Orange, 256 GB) 4.7 | 5,581 ₹1,34,900 +₹299\n'
+  + '₹1,74,900 Apple iPhone 17 Pro (Cosmic Orange, 256 GB) 4.7 | 5,581 ₹1,34,900 +₹299 Protect Promise Fee Buy at ₹1,30,900 Apply offers for maximum savings ₹1,30,900 Lowest price for\n'
+  + 'details Location not set Select delivery location Delivery by Saturday, 10 Oct Seller: NGIVR RETAILS See other sellers 4.7 • 6 years with Flipkart Shop with peace of mind Apple One\n'
+  + 'See other sellers 4.7 • 6 years with Flipkart Shop with peace of mind Apple One (1) Year Limited Warranty 7-day brand support Cash on Delivery Flipkart Assured Product highlights'
+assert.deepEqual(model.comparisonQuote('iPhone 17 Pro 256GB',{...phoneRow,evidence:repeatedFeeEvidence}),
+  {price:'₹1,34,900',fee:'₹299 Protect Promise Fee',taxesIncluded:false},'a truncated repeated price cannot hide its later complete fee evidence')
 const shortPhone = model.comparisonWhatsAppSummary({metadata_json:{subject:'iPhone 17 Pro 256GB',providers:[phoneRow]}} as any)
 assert.match(shortPhone,/₹1,34,900/);assert.match(shortPhone,/₹299 Protect Promise Fee/)
 assert.doesNotMatch(shortPhone,/47,999|19,999|54,900|74,900|30,900|Maroon|AD |page excerpt/)

@@ -198,10 +198,15 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
     choices = values(local)
   }
   if (choices.length !== 1) return null
-  const chosen = selected.find(match => Number(match[1].replace(/,/g,'')) === choices[0])!
+  const samePrice = selected.filter(match => Number(match[1].replace(/,/g,'')) === choices[0])
+  const following = (match: typeof candidates[number]) => text.slice(match.index! + match[0].length, match.index! + match[0].length + 100)
+  const feePattern = /^\s*\+\s*(₹\s*\d[\d,]*(?:\.\d{1,2})?)\s+(Protect Promise Fee)\b/i
+  // Overlapping excerpts can cut the fee label off after the first occurrence.
+  // Prefer a complete labelled fee attached to the same verified item price.
+  const chosen = samePrice.find(match => feePattern.test(following(match))) || samePrice[0]
   const amount = '₹' + new Intl.NumberFormat('en-IN', {maximumFractionDigits: 2}).format(choices[0])
-  const after = text.slice(chosen.index! + chosen[0].length, chosen.index! + chosen[0].length + 100)
-  const fee = after.match(/^\s*\+\s*(₹\s*\d[\d,]*(?:\.\d{1,2})?)\s+(Protect Promise Fee)\b/i)
+  const after = following(chosen)
+  const fee = after.match(feePattern)
   return {price: amount, ...(fee ? {fee: fee[1].replace(/\s+/g,'')+' '+fee[2]} : {}),
     taxesIncluded: /^\s*\(?\s*Incl\.?\s+(?:all\s+)?Taxes\b/i.test(after)}
 }

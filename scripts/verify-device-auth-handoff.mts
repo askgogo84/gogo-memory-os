@@ -258,6 +258,17 @@ const transferFiles=new Map([['gogo-handoff-transfer','reserved-token']])
 const transferFs={existsSync:(path:string)=>transferFiles.has(path),readFileSync:(path:string)=>transferFiles.get(path)||'',writeFileSync:(path:string,value:string)=>{transferFiles.set(path,value)},unlinkSync:(path:string)=>{transferFiles.delete(path)}}
 assert.throws(()=>runInNewContext(lockCommands[0].args[5],{require:()=>transferFs,process:{argv:['node','contender'],exit:()=>{throw new Error('contender blocked')}},setInterval:()=>{}}),/contender blocked/)
 assert.equal(transferFiles.has('gogo-browser-held-contender'),false)
+// 7 Oct live failure: flock was free but a cancelled transfer survived cleanup.
+// Execute the actual lock-holder script; only its matching abort may clear it.
+transferFiles.set('gogo-handoff-abort-reserved-token','different-token')
+assert.throws(()=>runInNewContext(lockCommands[0].args[5],{require:()=>transferFs,process:{argv:['node','contender'],exit:()=>{throw new Error('contender blocked')}},setInterval:()=>{}}),/contender blocked/)
+assert.equal(transferFiles.get('gogo-handoff-transfer'),'reserved-token','a mismatched abort cannot release a reservation')
+transferFiles.set('gogo-handoff-abort-reserved-token','reserved-token')
+runInNewContext(lockCommands[0].args[5],{require:()=>transferFs,process:{argv:['node','contender'],exit:()=>{throw new Error('unexpected exit')}},setInterval:()=>{}})
+assert.equal(transferFiles.has('gogo-handoff-transfer'),false,'explicitly cancelled orphan reservation recovers under flock')
+assert.equal(transferFiles.get('gogo-browser-held-contender'),'ready')
+transferFiles.set('gogo-handoff-transfer','reserved-token')
+transferFiles.delete('gogo-handoff-abort-reserved-token')
 const launchScript=launches[0].args[5]
 assert.throws(()=>runInNewContext(launchScript,{require:()=>transferFs,process:{argv:['node','wrong-token','url','required'],exit:()=>{throw new Error('wrong transfer token')}},setInterval:()=>{}}),/wrong transfer token/)
 assert.equal(transferFiles.get('gogo-handoff-transfer'),'reserved-token')
