@@ -22,12 +22,16 @@ const observedNode=(label:string,role='button',hidden=false)=>({tagName:'DIV',no
  getAttribute:(key:string)=>key==='aria-label'?label:key==='role'?role:null,
  getBoundingClientRect:()=>({width:hidden?0:240,height:hidden?0:40}),matches:()=>true,querySelectorAll:()=>[]})
 const observedSearch=[observedNode('Where from? Bengaluru BLR','combobox'),observedNode('Where to? Mumbai BOM','combobox'),observedNode('Change ticket type. One way','combobox'),observedNode('Change seating class. Economy','combobox'),observedNode('1 passenger, change number of passengers.')]
+// Actual Google trip/cabin controls have aria-labelledby, not aria-label.
+const linkedLabels:any={tripLabel:{textContent:'Change ticket type.'},tripValue:{textContent:'One way'},cabinLabel:{textContent:'Change seating class.'},cabinValue:{textContent:'Economy'}}
+observedSearch[2].getAttribute=(key:string)=>key==='role'?'combobox':key==='aria-labelledby'?'tripLabel tripValue':null
+observedSearch[3].getAttribute=(key:string)=>key==='role'?'combobox':key==='aria-labelledby'?'cabinLabel cabinValue':null
 const observedTrack=observedNode('Track prices from Bengaluru to Mumbai departing 2026-10-20','switch')
 const observedRow=observedNode('From 4423 Indian rupees. Nonstop flight with IndiGo. Leaves Bengaluru at 3:45 AM on Tuesday, October 20 and arrives at Mumbai at 5:30 AM on Tuesday, October 20. Total duration 1 hr 45 min. Select flight','link')
 const hiddenRow=observedNode(observedRow.innerText,'link',true)
 const privateControl=observedNode('Google Account: private@example.test')
 observedRoot.children=[...observedSearch,observedTrack,observedRow,hiddenRow,privateControl];observedRoot.querySelectorAll=()=>[]
-const observedDoc={title:'Public Google flights',body:observedRoot,forms:[],querySelectorAll:(selector:string)=>
+const observedDoc={title:'Public Google flights',body:observedRoot,forms:[],getElementById:(id:string)=>linkedLabels[id],querySelectorAll:(selector:string)=>
  selector==='[role="dialog"][aria-modal="true"]'||selector==='a[href]'||selector==='input,textarea,select'?[]:
  selector==='[role="switch"][aria-label]'?[observedTrack]:selector==='[role="link"][aria-label]'?[observedRow,hiddenRow]:observedRoot.children}
 const emittedFlight=runInNewContext(`(()=>{${body}})()`,{document:observedDoc,location:{href:'https://www.google.com/travel/flights/search'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})

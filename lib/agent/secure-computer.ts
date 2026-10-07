@@ -257,6 +257,9 @@ async function model(page){
     const activeDialog=/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href)
       ?Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).find(el=>el.getAttribute('role')==='dialog'&&el.getAttribute('aria-modal')==='true'&&visible(el)):null;
     const actionable=el=>visible(el)&&(!activeDialog||activeDialog.contains(el));
+    const accessibleLabel=el=>clean(el.getAttribute('aria-label')
+      ||(el.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean).map(id=>document.getElementById?.(id)?.textContent||'').join(' ')
+      ||el.getAttribute('placeholder')||el.innerText||el.textContent||el.getAttribute('title'));
     const candidates=Array.from(document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[role="option"],[tabindex],div,span,p')).filter(actionable);
     const allControls=candidates.filter(el=>{
       if(el.disabled||el.getAttribute('aria-disabled')==='true')return false;
@@ -271,7 +274,7 @@ async function model(page){
       if(el.matches('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[role="option"],[tabindex]'))return true;
       const text=clean(el.innerText||el.textContent);
       return text.length>0&&text.length<160&&getComputedStyle(el).cursor==='pointer'&&(el.tagName==='P'||/\b(search|location|address)\b/i.test(text))&&!Array.from(el.children).some(child=>clean(child.innerText||child.textContent)===text);
-    }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.innerText||el.textContent||el.getAttribute('title')).slice(0,180),
+    }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:accessibleLabel(el).slice(0,180),
       ...(el.tagName==='A'&&el.href?{href:el.href}:{}),
       ...((el.tagName==='INPUT'&&['text','search'].includes((el.getAttribute('type')||'text').toLowerCase())
         &&(/\b(search|find)\b/i.test([el.getAttribute('placeholder'),el.getAttribute('aria-label')].join(' '))
