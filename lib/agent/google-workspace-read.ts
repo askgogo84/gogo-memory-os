@@ -153,12 +153,18 @@ function header(headers:any[], name:string) {
   return String((headers || []).find((x:any) => String(x?.name || '').toLowerCase() === name.toLowerCase())?.value || '')
 }
 
-async function gmailMetadata(actor:AgentActor, id:string) {
-  const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID`
+async function gmailMetadata(actor:AgentActor, id:string, auditBody=false) {
+  const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=${auditBody?'full':'metadata'}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID`
   const response=await workspaceFetch(actor,url)
-  if(!response.ok)return null
+  if(!response.ok)throw new Error(`workspace_email_message_failed:${response.status}`)
   const data:any=await response.json()
   const headers=data?.payload?.headers||[]
+  // Read inline text only: no attachment downloads, remote images or HTML execution.
+  const parts=auditBody?flattenMimeParts(data?.payload).filter(p=>!p.filename&&p.body?.data):[]
+  const plain=parts.filter(p=>p.mimeType==='text/plain')
+  const selected=plain.length?plain:parts.filter(p=>p.mimeType==='text/html')
+  const body=selected.slice(0,8).map(p=>decodeBase64Url(String(p.body.data).slice(0,90_000)).toString('utf8').slice(0,60_000)
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi,' ').replace(/<[^>]+>/g,' ')).join(' ')
   return {
     id:String(data?.id||id),
     threadId:String(data?.threadId||''),
@@ -167,6 +173,7 @@ async function gmailMetadata(actor:AgentActor, id:string) {
     to:clean(header(headers,'To'),240),
     date:clean(header(headers,'Date'),120),
     snippet:formatEmailSnippet(data?.snippet||''),
+    ...(auditBody?{evidence:formatEmailSnippet(body||data?.snippet||'',5000)}:{}),
   }
 }
 
@@ -187,7 +194,34 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
   return {messages}
 }
 
-export async function searchWorkspaceEmails(actor:AgentActor, input:string) {
+export function workspaceEmailAuditScope(input:string) {
+  const text=String(input||'')
+  const categoryAudit=/\baudit\b/i.test(text)||(/\bsubscription receipts\b/i.test(text)&&/\brenewal notices\b/i.test(text))
+  if(!/\b(gmail|emails?|inbox|mail)\b/i.test(text)||!categoryAudit||!/\b(subscription|subscriptions|renewal|renewals)\b/i.test(text))return null
+  const days=Number(text.match(/\b(?:last|past)\s+(\d+)\s+days?\b/i)?.[1]||14)
+  const limit=Number(text.match(/\b(?:at most|up to|return|maximum|max)\s+(\d+)\s+messages?\b/i)?.[1]||15)
+  if(days<1||days>366||limit<1||limit>20)throw new Error('workspace_email_audit_scope_out_of_range')
+  // An audit asks for category alternatives; AND-ing the prose removes real receipts.
+  return {days,limit,query:`{subscription subscriptions renewal renewals receipt receipts invoice invoices} newer_than:${days}d -in:spam -in:trash`}
+}
+
+export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:number;limit:number;hasMore:boolean}|null}) {
+  if(!result.audit)return ''
+  const {days,limit,hasMore}=result.audit
+  const lines=result.messages.map((m:any,index:number)=>{
+    const evidence=String(m.evidence||m.snippet||'')
+    // Preserve all amounts as quoted evidence; never decide which amount is a recurring bill.
+    const amounts=[...new Set(evidence.match(/(?:\b(?:INR|USD|GBP|EUR|Rs\.?)\s*|[₹$£€]\s*)\d[\d,]*(?:\.\d{1,2})?/gi)||[])]
+    const date='(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4}|[A-Za-z]{3,9}\\s+\\d{1,2},?\\s+\\d{4})'
+    const renewal=evidence.match(new RegExp('\\b(?:renewal(?: date)?|renews?|expiration(?: date)?|expires?)\\s*(?:on|at|:|is)?\\s*('+date+')','i'))?.[1]
+    return `${index+1}. ${m.subject}\nSender/service evidence: ${m.from}${m.date?`\nEmail date: ${m.date}`:''}\nAmounts/currencies shown: ${amounts.join('; ')||'Not shown in the readable text'}\nRenewal/expiration date: ${renewal||'Not explicitly shown in the readable text'}\nEmail evidence: ${formatEmailSnippet(evidence,700)}`
+  })
+  return `Gmail subscription audit · last ${days} days · up to ${limit} messages\n\n${lines.length?lines.join('\n\n'):'No matching messages in this search window.'}\n\n${hasMore?'More matching messages exist; this is a bounded audit, not a complete inbox inventory.':'Only matching messages returned by this bounded search were checked.'} Sender names and email text are evidence; subscription status, usage and future charges are not inferred. No email, cancellation, reminder or calendar change was made.`
+}
+
+export async function searchWorkspaceEmails(actor:AgentActor, input:string, options:{missionText?:string}={}) {
+  const stepAudit=workspaceEmailAuditScope(input)
+  const audit=stepAudit?(workspaceEmailAuditScope(options.missionText||'')||stepAudit):null
   const exactSubject=String(input||'').match(/subject\s+["“]([^"”]{2,240})["”]/i)?.[1]?.trim()
   // An explicit room identifier is the user's matching constraint, not a word
   // to discard after six generic terms such as "connected", "contain" or "link".
@@ -196,18 +230,21 @@ export async function searchWorkspaceEmails(actor:AgentActor, input:string) {
   const meetingLink=rooms.length?`meet.google.com/${rooms[0]}`:null
   const terms=meetingLink?[meetingLink]:workspaceSearchTerms(input)
   const subjectQuery=exactSubject?`subject:"${exactSubject.replace(/"/g,'')}"`:''
-  const q=meetingLink
+  const q=audit?audit.query:meetingLink
     ? [subjectQuery,`"${meetingLink}"`,'-in:spam','-in:trash'].filter(Boolean).join(' ')
     : exactSubject?`${subjectQuery} -in:spam -in:trash`:[...terms,'newer_than:2y'].join(' ').trim()
-  const params=new URLSearchParams({maxResults:String(MAX_EMAILS)})
+  const maxEmails=audit?.limit||MAX_EMAILS
+  const params=new URLSearchParams({maxResults:String(maxEmails)})
   if(q)params.set('q',q)
   const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`)
   if(!response.ok)throw new Error(`workspace_email_search_failed:${response.status}`)
   const data:any=await response.json()
-  const ids=(Array.isArray(data?.messages)?data.messages:[]).slice(0,MAX_EMAILS).map((x:any)=>String(x?.id||'')).filter(Boolean)
-  const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id)))
+  const ids=(Array.isArray(data?.messages)?data.messages:[]).slice(0,maxEmails).map((x:any)=>String(x?.id||'')).filter(Boolean)
+  const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id,Boolean(audit))))
+  const failed=settled.find(x=>x.status==='rejected')
+  if(failed?.status==='rejected')throw failed.reason
   const messages=settled.filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled').map(x=>x.value).filter(Boolean)
-  return {queryTerms:terms,messages}
+  return {queryTerms:terms,messages,audit:audit?{days:audit.days,limit:audit.limit,hasMore:Boolean(data?.nextPageToken)}:null}
 }
 
 function contactName(person:any) {
