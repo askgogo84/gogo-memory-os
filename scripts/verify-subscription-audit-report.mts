@@ -8,7 +8,7 @@ const actor={legacyTelegramId:101,whatsappId:'fixture-owner',userId:'fixture',na
 const mission='Audit my connected Gmail for subscription receipts and renewal notices from the last 14 days, at most 15 messages. List each service, amount, currency and renewal date only when the email shows it. Do not infer whether I use a service. Read only; do not cancel anything, send emails, create reminders or change my calendar.'
 const instruction="Search connected Gmail for subscription receipts and renewal notices from the last 14 days. Use search terms: 'receipt OR renewal OR subscription OR invoice' with date filter: after:2026-09-28. Return at most 15 messages. Read-only."
 const urls:string[]=[]
-let consent=true,failedMessage=false
+let consent=true,failedMessage=false,auditNoise=false
 const mocks:any={
   '@/lib/supabase-admin':{supabaseAdmin:{from(table:string){const q:any={select(){return q},eq(key:string,value:any){assert.equal(key,'telegram_id');assert.equal(String(value),'101');return q},maybeSingle(){return q},then(resolve:any){return Promise.resolve({data:table==='users'?{gmail_connected:true,gmail_access_token:'fixture'}:{gmail_enabled:consent},error:null}).then(resolve)}};return q}}},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(v:string)=>v},
@@ -19,7 +19,12 @@ function load(file:string,extra:any={}){
   const source=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText
   vm.runInNewContext(source,{exports,module:{exports},require:(name:string)=>mocks[name]||{},URL,URLSearchParams,Date,Buffer,console,fetch:async(url:string)=>{
     urls.push(String(url));const u=new URL(url)
-    if(!u.pathname.endsWith('/messages'))return {ok:!failedMessage,status:failedMessage?503:200,json:async()=>({id:u.pathname.split('/').pop(),snippet:'Your subscription receipt. Amount paid: INR 499. Renewal date: 20 October 2026. Verification code: 123456',payload:{headers:[{name:'Subject',value:'Monthly subscription receipt'},{name:'From',value:'Fixture Service <billing@example.test>'}],mimeType:'text/plain',body:{data:Buffer.from('Amount paid: INR 499. Renewal date: 20 October 2026. Verification code: 123456').toString('base64url')}}})}
+    if(!u.pathname.endsWith('/messages')){
+      const noisy=auditNoise&&['mail-0','mail-1','mail-2'].includes(u.pathname.split('/').pop()!)
+      const noiseSubject=u.pathname.endsWith('mail-0')?'Re: [owner/repo] Keep read-only subscription audits out of checklist writes (PR #407)':u.pathname.endsWith('mail-1')?'Important: Payment benefits on your account':'Your subscription expires soon'
+      const body=noisy?(u.pathname.endsWith('mail-2')?'Your subscription expires on 20 October 2026.':'New tools and payment benefits. Our guide mentions a subscription invoice.'): 'Amount paid: INR 499. Renewal date: 20 October 2026. Verification code: 123456'
+      return {ok:!failedMessage,status:failedMessage?503:200,json:async()=>({id:u.pathname.split('/').pop(),snippet:body,payload:{headers:[{name:'Subject',value:noisy?noiseSubject:'Monthly subscription receipt'},{name:'From',value:'Fixture Service <billing@example.test>'}],mimeType:'text/plain',body:{data:Buffer.from(body).toString('base64url')}}})}
+    }
     return {ok:true,status:200,json:async()=>({messages:Array.from({length:15},(_,i)=>({id:`mail-${i}`})),nextPageToken:'more-exist'})}
   },...extra})
   return exports
@@ -47,6 +52,18 @@ assert.equal(urls.length,before)
 console.log('PASS: real Gmail audit query, original window, fifteen-message bound, body evidence, redaction, pagination and failed/disabled reads')
 
 consent=true
+auditNoise=true
+const filtered=await reader.searchWorkspaceEmails(actor,instruction,{missionText:mission})
+assert.equal(filtered.messages.length,13,'development notifications and payment marketing are not billing evidence; explicit expiry without an amount remains evidence')
+assert.equal(filtered.audit.inspected,15)
+assert.equal(filtered.audit.excluded,2)
+assert.ok(!reader.formatWorkspaceEmailAudit(filtered).includes('PR #407'))
+assert.match(reader.formatWorkspaceEmailAudit(filtered),/15 candidate messages checked; 2 excluded/)
+assert.match(reader.formatWorkspaceEmailAudit(filtered),/20 October 2026/)
+auditNoise=false
+assert.equal(reader.hasEmailBillingEvidence({subject:'Reminder - Your Outstanding WeWork invoice',evidence:'This is regarding the outstanding dues on your account. Your invoice balance has not been settled.'}),true)
+assert.equal(reader.hasEmailBillingEvidence({subject:'Your receipt from Anthropic, PBC',evidence:'Receipt from Anthropic, PBC $23.60 Paid October 5, 2026'}),true)
+assert.equal(reader.hasEmailBillingEvidence({subject:'Confirm your US$9.99 payment',evidence:'Confirm your monthly payment to the service.'}),true)
 assert.equal(reader.workspaceEmailAuditScope('Find my Netflix invoice in Gmail'),null,'a targeted invoice lookup must not become an inbox audit')
 await reader.searchWorkspaceEmails(actor,'Find email subject "Flight ticket"',{missionText:mission})
 assert.equal(new URL(urls.at(-2)!).searchParams.get('format'),'metadata')
@@ -98,6 +115,9 @@ assert.equal(planner.shouldUseGeneralPlanner('Audit my Gmail subscriptions from 
 assert.equal(planner.readOnlySubscriptionAuditPlan('Audit my Gmail subscriptions from the last 14 days and show my calendar.'),null,'an independent calendar read must not be swallowed')
 assert.equal(planner.readOnlySubscriptionAuditPlan('Audit my Gmail subscriptions from the last 14 days and cancel Netflix.'),null,'positive consequential actions retain normal approval routing')
 assert.equal(planner.readOnlySubscriptionAuditPlan('Audit my Gmail subscriptions from the last 14 days and create a shopping list.'),null)
+assert.equal(planner.readOnlySubscriptionAuditPlan('Audit my Gmail subscriptions from the last 14 days; do not send email, but create a reminder.'),null,'an affirmative request after negation must survive')
+assert.equal(planner.readOnlySubscriptionAuditPlan('Audit my Gmail subscriptions from the last 14 days and add a review event to my calendar.'),null,'add is a positive calendar write')
+assert.equal(planner.readOnlySubscriptionAuditPlan('Audit my Gmail subscriptions from the last 14 days and remember my renewal date.'),null,'memory writes are independent requests')
 const steps=[{tool:'email',title:'Search subscription receipts',instruction},{tool:'artifact',title:'Save subscription report',instruction:'Create a private report from the email findings',artifactTitle:'Subscription audit',artifactType:'research_brief'}]
 const prepared={plan:{title:'Subscription audit',reason:'Read and report',steps},modelUsage:[],startedAt:new Date().toISOString()}
 const completed=await planner.tryRunGeneralPlan({actor,surface:'web',text:mission,prepared:{...prepared,plan:livePlan}})
