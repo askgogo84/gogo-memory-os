@@ -410,7 +410,12 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
     // exception to this exact HTTPS provider, search region and modal; generic
     // Add, cancellation, form submission and booking controls stay blocked.
     const passengerDialog=el.closest?.('[role="dialog"]');
-    const passengerLabel=(el.getAttribute('aria-label')||el.textContent||'').trim();
+    // Use the same observed accessible-name sources as model(page). Google
+    // may expose the full passenger name via aria-labelledby while the button
+    // text is only "1"; textContent alone misclassifies that public filter.
+    const passengerLabel=(el.getAttribute('aria-label')
+      ||(el.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean).map(id=>{const node=document.getElementById?.(id);return node?.getAttribute?.('aria-label')||node?.textContent||''}).join(' ')
+      ||el.textContent||'').replace(/\s+/g,' ').trim();
     // Fixed predicate bits expose a rejected public control's context without
     // its selector, label, URL, account content or arbitrary DOM attributes.
     const publicFlight=typeof location!=='undefined'&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href);
