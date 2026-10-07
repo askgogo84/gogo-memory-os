@@ -251,7 +251,7 @@ async function model(page){
       }
       return parts.join(' > ');
     };
-    const candidates=Array.from(document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[tabindex],div,span,p')).filter(visible);
+    const candidates=Array.from(document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[role="option"],[tabindex],div,span,p')).filter(visible);
     const allControls=candidates.filter(el=>{
       if(el.disabled||el.getAttribute('aria-disabled')==='true')return false;
       // The observed IndiGo From wrapper remains clickable around an expanded
@@ -262,7 +262,7 @@ async function model(page){
       // Zomato's tabindex=-1 focus shell contains the real search controls.
       // It is not itself a button/search action. Keep explicit semantic roles.
       if(el.getAttribute('tabindex')==='-1'&&!el.getAttribute('role')&&el.querySelectorAll('input,button,a[href]').length>0)return false;
-      if(el.matches('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[tabindex]'))return true;
+      if(el.matches('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[role="option"],[tabindex]'))return true;
       const text=clean(el.innerText||el.textContent);
       return text.length>0&&text.length<160&&getComputedStyle(el).cursor==='pointer'&&(el.tagName==='P'||/\b(search|location|address)\b/i.test(text))&&!Array.from(el.children).some(child=>clean(child.innerText||child.textContent)===text);
     }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.innerText||el.textContent||el.getAttribute('title')).slice(0,180),
@@ -273,6 +273,10 @@ async function model(page){
             && /^where (?:from|to|else)\?/i.test(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')))
         &&!/\b(password|otp|code|email|phone|mobile|login|payment|card)\b/i.test([el.getAttribute('placeholder'),el.getAttribute('aria-label')].join(' ')))
         ?{value:String(el.value||'').slice(0,180),searchMode:el.form&&(el.form.getAttribute('method')||'get').toLowerCase()==='get'?'enter':'suggestions'}:{}),
+      ...((el.tagName==='INPUT'&&['text','date'].includes((el.getAttribute('type')||'text').toLowerCase())
+        &&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href)
+        &&/^(?:departure|return)$/i.test(el.getAttribute('aria-label')||el.getAttribute('placeholder')||''))
+        ?{value:String(el.value||'').slice(0,80),publicFilter:'flight-date'}:{}),
     }));
     // Preserve relevant observed results before truncating header-heavy pages.
     // Only values already classified as public search fields participate.
@@ -666,6 +670,17 @@ function detectProviderAccessBlock(page:any){
 
 // 3 Oct: a public-DOM replay planned a DIV fill before the airport input opened.
 // Execute only a prefix grounded in this snapshot, then observe the changed UI.
+function googleFlightReadProgress(page:any,actions:BrowserAction[]=[]){
+  try{const url=new URL(page.url);if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))return null}catch{return null}
+  const controls=page.controls||[]
+  const target=(control:any)=>control?.role==='option'?'option':/^where (?:from|to|else)\?/i.test(control?.label||'')?'airport':/^(?:departure|return)$/i.test(control?.label||'')?'date':/ticket type/i.test(control?.label||'')?'trip-type':/^done\b/i.test(control?.label||'')?'calendar-done':/^search$/i.test(control?.label||'')?'search':'other'
+  return {options:controls.filter((c:any)=>c.role==='option').length,
+    airportFieldsFilled:controls.filter((c:any)=>target(c)==='airport'&&c.value).length,
+    dateFieldsFilled:controls.filter((c:any)=>c.publicFilter==='flight-date'&&c.value).length,
+    rowSignals:/₹\s*[\d,]+/.test(page.text||'')&&(String(page.text||'').match(/\b\d{1,2}:\d{2}\b/g)||[]).length>=2,
+    actions:actions.map(a=>({kind:a.kind,target:'selector' in a?target(controls.find((c:any)=>c.selector===a.selector)):'other'}))}
+}
+
 function observedReadActions(actions:BrowserAction[],page:any,reject:(reason:BrowserReadReason)=>void=()=>{}):BrowserAction[]{
   const controls=new Map<string,any>((page.controls||[]).map((control:any)=>[String(control.selector),control]))
   const fields=new Map<string,any>((page.forms||[]).flatMap((form:any)=>(form.inputs||[]).map((field:any)=>[String(field.selector),field])))
@@ -682,7 +697,7 @@ function observedReadActions(actions:BrowserAction[],page:any,reject:(reason:Bro
         if(control&&!['input','textarea'].includes(tag)){reject('noneditable_control');break}
         if(['hidden','password','radio','checkbox','file','submit','button','select'].includes(type)){reject('unsupported_field');break}
         // Live Zomato repeated the unchanged query and dismissed its suggestions.
-        if(control?.searchMode&&control.value===action.value){reject('unchanged_search');continue}
+        if((control?.searchMode||control?.publicFilter)&&control.value===action.value){reject('unchanged_search');continue}
       }
       if(action.kind==='search_enter'&&control?.searchMode==='suggestions'){reject('autocomplete_enter');break}
       if(action.kind==='select'&&control?.tag!=='select'&&field?.type!=='select'){reject('nonselect_control');break}
@@ -726,6 +741,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
       role:safeText(control.role,50),label:safeText(control.label,180),
       ...(control.href?{href:safeText(control.href,1200)}:{}),
       ...(control.searchMode?{searchMode:control.searchMode,value:safeText(control.value,180)}:{}),
+      ...(control.publicFilter==='flight-date'?{publicFilter:'flight-date',value:safeText(control.value,80)}:{}),
     })),
     links:(page.links||[]).slice(0,70).map((link:any)=>({
       text:safeText(link?.text,180),
@@ -739,7 +755,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
       inputs:Array.isArray(form?.inputs)?form.inputs.filter((field:any)=>!rejectedControls.has(String(field.selector))).slice(0,60):[],
     })),
   }
-  const choices=[...pageModel.controls.map((control:any)=>({kind:'control',selector:control.selector,label:control.label,tag:control.tag,role:control.role,...(control.href?{href:control.href}:{}),...('searchMode' in control?{searchMode:control.searchMode,value:control.value}:{})})),
+  const choices=[...pageModel.controls.map((control:any)=>({kind:'control',selector:control.selector,label:control.label,tag:control.tag,role:control.role,...(control.href?{href:control.href}:{}),...('searchMode' in control?{searchMode:control.searchMode,value:control.value}:{}),...(control.publicFilter?{publicFilter:control.publicFilter,value:control.value}:{})})),
     ...pageModel.links.map((link:any,index:number)=>({kind:'link',url:link.href,label:link.text,sourceIndex:index}))]
     .map((choice,index)=>({...choice,ref:'r'+index}))
   const modeRule = mode==='read'
@@ -1060,7 +1076,11 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       // 3 Oct Amazon replay: the planner searched again even on a result page.
       // Check grounded completion before another action, after every safety gate.
       // Keep the verifier fail-closed and do not assess the same snapshot twice.
-      if(params.mode==='read'&&wave>0){
+      // The real Google form needs several option/date steps. Do not spend a
+      // model assessment call on an empty form at each step; final verification
+      // remains mandatory, and result signals never establish completion alone.
+      const flightProgress=params.mode==='read'?googleFlightReadProgress(page):null
+      if(params.mode==='read'&&wave>0&&(!flightProgress||flightProgress.rowSignals)){
         readAnswer=await withinReadBudget(readDeadline,()=>assessReadOutcome(params.objective,page,diagnose))
         assessedReadPage=page
         if(readAnswer)break
@@ -1069,6 +1089,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       // Public reads must never navigate INTO a login wall (/ap/signin, /account/login, …).
       // If the site itself redirects there, the auth-gate check handles it as a sign-in pause.
       const actions=params.mode==='read'?plan.actions.filter(a=>!(a.kind==='goto'&&isLoginUrl(a.url))):plan.actions
+      if(flightProgress)console.log('BROWSER_FLIGHT_PROGRESS:',JSON.stringify({wave,...googleFlightReadProgress(page,actions)}))
       if(!actions.length)break
       if(params.mode==='execute'&&(!plan.operation||actions.filter(a=>a.kind==='submit').length!==1))throw new Error('browser_objective_unverified')
       approvedOperation=plan.operation

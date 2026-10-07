@@ -17,12 +17,12 @@ assert.ok(body,'test the emitted worker DOM extraction')
 
 // Simulated DOMs, not claims of live access to these providers. The Instamart
 // div and Blinkit location prompt reproduce the observed 2 Oct page shapes.
-function snapshot(label:string, tag='DIV', field=false, hidden=false, focusShell=false,url='https://fixture.example/',value=''){
+function snapshot(label:string, tag='DIV', field=false, hidden=false, focusShell=false,url='https://fixture.example/',value='',role=''){
   const root:any={tagName:'BODY',nodeType:1,children:[],parentElement:null,id:'',innerText:label}
   const control:any={tagName:tag,nodeType:1,id:'',parentElement:root,children:[],innerText:field?'':label,textContent:field?'':label,value,
-    getAttribute:(name:string)=>name==='placeholder'&&field?label:focusShell&&name==='tabindex'?'-1':null,
+    getAttribute:(name:string)=>name==='role'?role:name==='placeholder'&&field?label:focusShell&&name==='tabindex'?'-1':null,
     getBoundingClientRect:()=>({width:hidden?0:200,height:hidden?0:40}),
-    matches:()=>field||tag==='BUTTON'||focusShell,querySelectorAll:()=>focusShell?[{}]:[]}
+    matches:(selector:string)=>field||tag==='BUTTON'||focusShell||role==='option'&&selector.includes('[role="option"]'),querySelectorAll:()=>focusShell?[{}]:[]}
   root.children=[control]
   root.querySelectorAll=()=>field?[control]:[]
   const document={title:'Simulated provider',body:root,forms:[],
@@ -36,6 +36,15 @@ for(const label of ['Where from?','Where to?','Where else?']){
 }
 assert.equal(snapshot('Where to?','INPUT',true,false,false,'https://www.google.com.evil.example/travel/flights','private').controls[0].value,undefined)
 assert.equal(snapshot('Payment card','INPUT',true,false,false,'https://www.google.com/travel/flights','private').controls[0].value,undefined)
+for(const label of ['One way','Chhatrapati Shivaji Maharaj International Airport Mumbai BOM']){
+ const option=snapshot(label,'DIV',false,false,false,'https://www.google.com/travel/flights','','option').controls[0]
+ assert.ok(option,'actual Google airport and trip-type options must be offered to the planner')
+ assert.equal(option.role,'option');assert.equal(option.label,label)
+ assert.equal(snapshot(label,'DIV',false,true,false,'https://www.google.com/travel/flights','','option').controls.length,0)
+}
+const departure=snapshot('Departure','INPUT',true,false,false,'https://www.google.com/travel/flights','Tue, Oct 20').controls[0]
+assert.equal(departure.publicFilter,'flight-date');assert.equal(departure.value,'Tue, Oct 20')
+assert.equal(snapshot('Departure','INPUT',true,false,false,'https://www.google.com.evil.example/travel/flights','private').controls[0].value,undefined)
 for(const [provider,label,tag,field] of [
   ['Instamart','Search for milk','DIV',false],
   ['Amazon','Search Amazon.in','INPUT',true],
@@ -387,11 +396,11 @@ assert.ok(assessmentCalls>previousAssessments)
 console.log('PASS: search controls, location handoff, verified result convergence and fail-closed evidence')
 // Flight widgets need separate observations to open/fill/select two airports and dates.
 // Fixtures verify the actual loop, not live fares or provider access.
-async function multiStepFixture(scenario:'flight'|'blocked-control'|'never-complete') {
-  const exported:any={};let steps=0,plans=0
-  const required=scenario==='flight'?8:2
-  const makePage=()=>({url:'https://fixture.example/flights',title:'Flight search',
-    text:scenario!=='never-complete'&&steps>=required?'BLR to BOM 12 October 2026 1 adult Economy Fare INR 5000':(scenario==='never-complete'?'Choose route and date':'Choose route and date step '+steps),
+async function multiStepFixture(scenario:'flight'|'google-flight'|'blocked-control'|'never-complete') {
+  const exported:any={};let steps=0,plans=0,assessments=0
+  const required=scenario==='flight'||scenario==='google-flight'?8:2
+  const makePage=()=>({url:scenario==='google-flight'?'https://www.google.com/travel/flights':'https://fixture.example/flights',title:'Flight search',
+    text:scenario!=='never-complete'&&steps>=required?'BLR to BOM 12 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000':(scenario==='never-complete'?'Choose route and date':'Choose route and date step '+steps),
     forms:[],links:[],controls:[{selector:'#commit',tag:'button',label:'Book now'},{selector:'#safe',tag:'button',label:'Search flights'}],
     actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:steps===1&&scenario==='blocked-control'?'skipped':'done',failure:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
   runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
@@ -404,7 +413,7 @@ async function multiStepFixture(scenario:'flight'|'blocked-control'|'never-compl
       if(id==='./browser-location-gate')return {needsBrowserDeliveryLocation}
       if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
       if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string,_u:any,system?:string)=>{
-        if(system?.startsWith('Evaluate whether'))return JSON.stringify({complete:scenario!=='never-complete'&&steps>=required,evidence:[makePage().text]})
+        if(system?.startsWith('Evaluate whether')){assessments++;return JSON.stringify({complete:scenario!=='never-complete'&&steps>=required,evidence:[makePage().text]})}
         plans++
         if(scenario==='blocked-control'&&plans===2){
           const choices=JSON.parse(prompt.split('OBSERVED_CHOICES: ')[1])
@@ -420,8 +429,10 @@ async function multiStepFixture(scenario:'flight'|'blocked-control'|'never-compl
   const execute=()=>exported.runSecureBrowser({userId:'fixture',url:'https://fixture.example/flights',objective:'Find BLR to BOM for 12 October 2026, 1 adult economy and displayed fare',mode:'read'})
   if(scenario==='never-complete'){await assert.rejects(execute,/browser_objective_unverified/);assert.equal(steps,2,'unchanged pages stop after two attempts instead of exhausting the larger budget')}
   else {const result=await execute();assert.equal(result.status,'completed');assert.equal(steps,required)}
+  if(scenario==='google-flight')assert.equal(assessments,1,'only the result page is assessed; empty form steps do not consume completion calls')
 }
 await multiStepFixture('flight')
+await multiStepFixture('google-flight')
 await multiStepFixture('blocked-control')
 await multiStepFixture('never-complete')
 console.log('PASS: multi-step flight research can complete, blocked commit stays blocked while another read control is tried, and unfinished research remains bounded')
