@@ -5,7 +5,7 @@ import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-in
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { buildGmailConnectUrl, revokeGoogleToken } from '@/lib/google-gmail'
-import { readWorkspaceDriveText, readWorkspaceEmailBrief, searchWorkspaceContacts, searchWorkspaceDrive, searchWorkspaceEmails } from './google-workspace-read'
+import { formatWorkspaceEmailAudit, readWorkspaceDriveText, readWorkspaceEmailBrief, searchWorkspaceContacts, searchWorkspaceDrive, searchWorkspaceEmails } from './google-workspace-read'
 import { clearFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import type { AgentActor } from './actor'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
@@ -67,7 +67,8 @@ async function disconnectWorkspace(actor:AgentActor) {
 }
 
 function isEmailRead(text:string) {
-  return /\b(email|emails|gmail|inbox|mail)\b/i.test(text) && /\b(find|show|read|latest|recent|unread|search|look for|check|attached|attachment|brief)\b/i.test(text) && !/\b(send|forward|compose)\b/i.test(text)
+  const actions=text.replace(/\b(?:do not|don't|never)\s+(?:cancel anything,\s*)?(?:send|forward|compose)\s+(?:any\s+)?(?:emails?|mail|anything)\b/gi,'')
+  return /\b(email|emails|gmail|inbox|mail)\b/i.test(text) && /\b(audit|find|show|read|latest|recent|unread|search|look for|check|attached|attachment|brief)\b/i.test(text) && !/\b(send|forward|compose)\b/i.test(actions)
 }
 function wantsEmailAttachment(text:string) {
   return /\b(attached|attachment|attachments|brief|document|deck|proposal|pdf)\b/i.test(text)
@@ -79,12 +80,13 @@ function isDriveRead(text:string) {
   return /\b(google drive|drive file|google doc|google sheet|in drive)\b/i.test(text) && /\b(find|show|read|search|open|use|look for|get)\b/i.test(text)
 }
 
-async function tryWorkspaceRead(actor:AgentActor,text:string):Promise<string|null> {
+async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string):Promise<string|null> {
   try {
     if(isWorkspaceDisconnect(text)) return await disconnectWorkspace(actor)
     if(isEmailRead(text)) {
-      const result=await searchWorkspaceEmails(actor,text)
+      const result=await searchWorkspaceEmails(actor,text,{missionText})
       await rememberTypedObjects(actor.legacyTelegramId,'email',result.messages.slice(0,5).map((m:any)=>({id:String(m.id),title:String(m.subject||'Email')}))).catch(()=>{})
+      if(result.audit)return formatWorkspaceEmailAudit(result)
       if(!result.messages.length)return 'I searched your connected Gmail and did not find a matching recent message. I did not invent one.'
 
       if(wantsEmailAttachment(text)) {
@@ -153,6 +155,7 @@ async function tryWorkspaceRead(actor:AgentActor,text:string):Promise<string|nul
  */
 export async function dispatchThroughSameBrain(params: {
   internalStep?: boolean
+  missionText?: string
   actor: AgentActor
   text: string
   messageId?: string | number | null
@@ -160,7 +163,7 @@ export async function dispatchThroughSameBrain(params: {
   const text = String(params.text || '').trim().slice(0, 2000)
   if (!text) throw new Error('empty_agent_request')
 
-  const workspaceReply=await tryWorkspaceRead(params.actor,text)
+  const workspaceReply=await tryWorkspaceRead(params.actor,text,params.missionText)
   if(workspaceReply) {
     return {
       text:redactSecretShapedText(workspaceReply),
