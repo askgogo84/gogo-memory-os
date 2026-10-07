@@ -95,6 +95,31 @@ async function extractFlightOptions(pageText: string, context: BrowserFlightCont
   }
 }
 
+// Google renders each result as an accessible link containing the complete
+// observed row. These exact labels preserve fares/times that prose can reorder.
+export function googleFlightOptionsFromEvidence(result:any,context:BrowserFlightContext):BrowserFlightOption[]{
+  try{const url=new URL(result.url);if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))return []}catch{return []}
+  const evidence=result.flightEvidence
+  if(!Array.isArray(evidence?.searchControls)||!Array.isArray(evidence?.resultLabels))return []
+  const controls=evidence.searchControls.filter((v:any)=>typeof v==='string').join('\n')
+  if(!/Change ticket type\. One way/i.test(controls)||!browserFlightContextVisible(controls,context))return []
+  for(const [prefix,place] of [['from',context.origin],['to',context.destination]] as const){
+    const label=evidence.searchControls.find((v:any)=>typeof v==='string'&&new RegExp(`^Where ${prefix}\\?`,'i').test(v))
+    if(!label||!place?.code||!new RegExp(`\\b${place.code}\\b`,'i').test(label))return []
+  }
+  const date=new Date(`${context.startDate}T00:00:00Z`)
+  const month=new Intl.DateTimeFormat('en',{month:'long',timeZone:'UTC'}).format(date)
+  const departureDay=new RegExp(`\\bon \\w+, ${month} ${date.getUTCDate()}\\b`,'i')
+  return evidence.resultLabels.flatMap((raw:any)=>{
+    if(typeof raw!=='string')return []
+    const label=raw.replace(/\s+/g,' ').trim()
+    const match=label.match(/^From ([\d,]+) Indian rupees\. Nonstop flight with (.+?)\. Leaves (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?) and arrives at (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?)\. Total duration /i)
+    if(!match||!departureDay.test(match[5])||!match[3].toLowerCase().includes(context.origin!.label.toLowerCase())||!match[6].toLowerCase().includes(context.destination!.label.toLowerCase()))return []
+    const fareInr=Number(match[1].replace(/,/g,''));if(!Number.isFinite(fareInr)||fareInr<=0)return []
+    return [{airline:match[2],departure:match[4],arrival:`${match[7]}${match[5]!==match[8]?` ${match[8]}`:''}`,stops:0,fareInr,route:context.routeLabel,evidence:label}]
+  })
+}
+
 export async function runLiveFlightBrowserTask(params: {
   actor: AgentActor
   context: BrowserFlightContext
@@ -121,6 +146,9 @@ export async function runLiveFlightBrowserTask(params: {
   if (result.status === 'blocked') {
     return { status:'blocked' as const, options:[] as BrowserFlightOption[], browser:result, source:'google-flights-browser' as const }
   }
-  const options = (await extractFlightOptions(result.pageText, context)).filter(option => !context.nonStop || option.stops === 0)
+  const observedOptions=googleFlightOptionsFromEvidence(result,context)
+  const options = (observedOptions.length?observedOptions:await extractFlightOptions(result.pageText, context)).filter(option => !context.nonStop || option.stops === 0)
+  console.log('TRAVEL_BROWSER_EVIDENCE:',JSON.stringify({status:result.status,observedRows:result.flightEvidence?.resultLabels?.length||0,
+    selectedControls:result.flightEvidence?.searchControls?.length||0,contextMatches:browserFlightContextVisible(result.flightEvidence?.searchControls?.join('\n')||result.pageText,context),verifiedRows:options.length}))
   return { status:'completed' as const, options, browser:result, source:'google-flights-browser' as const }
 }

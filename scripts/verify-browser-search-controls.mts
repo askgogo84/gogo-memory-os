@@ -15,6 +15,29 @@ const body=[...source.matchAll(/page\.evaluate\(\(\)\s*=>\s*\{([\s\S]*?)\n\s*\}\
   .map(match=>match[1]).find(body=>body.includes('const controls='))!
 assert.ok(body,'test the emitted worker DOM extraction')
 
+// Replay the observed public Google accessibility labels through the emitted
+// worker, including a hidden row and an unrelated account control.
+const observedRoot:any={tagName:'BODY',nodeType:1,children:[],parentElement:null,id:'',innerText:'Flight search results'}
+const observedNode=(label:string,role='button',hidden=false)=>({tagName:'DIV',nodeType:1,id:'',parentElement:observedRoot,children:[],innerText:label,textContent:label,
+ getAttribute:(key:string)=>key==='aria-label'?label:key==='role'?role:null,
+ getBoundingClientRect:()=>({width:hidden?0:240,height:hidden?0:40}),matches:()=>true,querySelectorAll:()=>[]})
+const observedSearch=[observedNode('Where from? Bengaluru BLR','combobox'),observedNode('Where to? Mumbai BOM','combobox'),observedNode('Change ticket type. One way','combobox'),observedNode('Change seating class. Economy','combobox'),observedNode('1 passenger, change number of passengers.')]
+const observedTrack=observedNode('Track prices from Bengaluru to Mumbai departing 2026-10-20','switch')
+const observedRow=observedNode('From 4423 Indian rupees. Nonstop flight with IndiGo. Leaves Bengaluru at 3:45 AM on Tuesday, October 20 and arrives at Mumbai at 5:30 AM on Tuesday, October 20. Total duration 1 hr 45 min. Select flight','link')
+const hiddenRow=observedNode(observedRow.innerText,'link',true)
+const privateControl=observedNode('Google Account: private@example.test')
+observedRoot.children=[...observedSearch,observedTrack,observedRow,hiddenRow,privateControl];observedRoot.querySelectorAll=()=>[]
+const observedDoc={title:'Public Google flights',body:observedRoot,forms:[],querySelectorAll:(selector:string)=>
+ selector==='[role="dialog"][aria-modal="true"]'||selector==='a[href]'||selector==='input,textarea,select'?[]:
+ selector==='[role="switch"][aria-label]'?[observedTrack]:selector==='[role="link"][aria-label]'?[observedRow,hiddenRow]:observedRoot.children}
+const emittedFlight=runInNewContext(`(()=>{${body}})()`,{document:observedDoc,location:{href:'https://www.google.com/travel/flights/search'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
+assert.equal(emittedFlight.flightEvidence.resultLabels.length,1)
+assert.equal(emittedFlight.flightEvidence.resultLabels[0],observedRow.innerText)
+assert.equal(emittedFlight.flightEvidence.searchControls.length,6)
+assert.doesNotMatch(JSON.stringify(emittedFlight.flightEvidence),/private@example/)
+const lookalikeFlight=runInNewContext(`(()=>{${body}})()`,{document:observedDoc,location:{href:'https://www.google.com.evil.example/travel/flights/search'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
+assert.equal(lookalikeFlight.flightEvidence,undefined)
+
 // Simulated DOMs, not claims of live access to these providers. The Instamart
 // div and Blinkit location prompt reproduce the observed 2 Oct page shapes.
 function snapshot(label:string, tag='DIV', field=false, hidden=false, focusShell=false,url='https://fixture.example/',value='',role=''){
