@@ -51,7 +51,8 @@ async function main() {
     create table followups(id uuid primary key default gen_random_uuid(),whatsapp_id text,contact_name text,context text,
       check_at timestamptz,status text default 'pending',created_at timestamptz default now());
     create table agent_runs(id uuid primary key default gen_random_uuid(),telegram_id text,type text,source text,
-      status text,updated_at timestamptz default now(),metadata_json jsonb default '{}'::jsonb);`)
+      status text,updated_at timestamptz default now(),metadata_json jsonb default '{}'::jsonb);
+    create table conversations(id uuid primary key default gen_random_uuid(),telegram_id bigint,role text,content text,created_at timestamptz default now());`)
   await db.exec(fs.readFileSync('supabase/reminder-insert-idempotency-20260915.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925110046_reminder_delivery_leases.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925111441_delivery_callback_inbox.sql','utf8'))
@@ -62,6 +63,7 @@ async function main() {
   await db.exec(fs.readFileSync('supabase/migrations/20260925180012_delivery_health_details.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20261007044858_comparison_result_delivery.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20261007052139_comparison_delivery_due_queue.sql','utf8'))
+  await db.exec(fs.readFileSync('supabase/migrations/20261007091720_web_comparison_chat_delivery.sql','utf8'))
   const query = async (sql, params = []) => (await db.query(sql, params)).rows
   const rpc = async (name,args) => {
     const rows = await query(`select * from ${name}(${Object.keys(args).map((k,i)=>k+' => $'+(i+1)).join(',')})`,Object.values(args))
@@ -256,6 +258,23 @@ async function main() {
   }
   const queueGrants=(await query("select has_function_privilege('anon','public.due_price_comparison_deliveries(integer)','execute') as anon,has_function_privilege('authenticated','public.due_price_comparison_deliveries(integer)','execute') as authenticated,has_function_privilege('service_role','public.due_price_comparison_deliveries(integer)','execute') as service"))[0]
   assert.deepEqual(queueGrants,{anon:false,authenticated:false,service:true})
+  const webRun=crypto.randomUUID(),webDue='2026-10-07T09:12:01.158Z'
+  await query("insert into agent_runs(id,telegram_id,type,source,status,updated_at) values($1,'-42','price_comparison','web','completed',$2)",[webRun,webDue])
+  const webArgs={p_owner:'-42',p_run_id:webRun,p_content:'iPhone 17 Pro 256GB · Flipkart ₹1,34,900. Product page: https://www.flipkart.com/fixture/p/fixture'}
+  assert.equal(await rpc('publish_web_comparison_result',{...webArgs,p_owner:'43'}),false,'wrong owner cannot publish')
+  const parallelWeb=await Promise.all([rpc('publish_web_comparison_result',webArgs),rpc('publish_web_comparison_result',webArgs)])
+  assert.equal(parallelWeb.filter(Boolean).length,1,'overlapping workers publish exactly once')
+  const webHistory=await query('select telegram_id,role,content,created_at from conversations where telegram_id=-42')
+  assert.equal(webHistory.length,1);assert.equal(webHistory[0].content,webArgs.p_content)
+  assert.equal(webHistory[0].created_at.toISOString(),webDue,'backfilled results retain completion time')
+  assert.equal((await query('select metadata_json from agent_runs where id=$1',[webRun]))[0].metadata_json.notified,true)
+  for(const [source,status] of [['whatsapp','completed'],['web','queued'],['web','running']]){
+    const unsafe=crypto.randomUUID()
+    await query("insert into agent_runs(id,telegram_id,type,source,status) values($1,'-42','price_comparison',$2,$3)",[unsafe,source,status])
+    assert.equal(await rpc('publish_web_comparison_result',{...webArgs,p_run_id:unsafe}),false)
+  }
+  const webGrant=(await query("select has_function_privilege('anon','public.publish_web_comparison_result(text,uuid,text)','execute') as anon,has_function_privilege('authenticated','public.publish_web_comparison_result(text,uuid,text)','execute') as authenticated,has_function_privilege('service_role','public.publish_web_comparison_result(text,uuid,text)','execute') as service"))[0]
+  assert.deepEqual(webGrant,{anon:false,authenticated:false,service:true})
   // Actual briefing route paginates beyond the old 150-user cap, including negative
   // legacy IDs, catches up later today, and propagates final preferences into ready.
   let scanCursor=null,seen=[],disabled=false

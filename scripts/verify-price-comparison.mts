@@ -220,14 +220,18 @@ finishedParent.status = 'paused'
 finishedParent.source = 'whatsapp'
 const stalledParent = {id: id(), type: 'price_comparison', telegram_id: '42', status: 'queued', source: 'whatsapp', updated_at: '2020-01-01T00:00:00Z', metadata_json: {}}
 tables.agent_runs.push(stalledParent)
+const webFinished={...structuredClone(terminalTask),id:id(),source:'web',telegram_id:'42',type:'price_comparison'}
+tables.agent_runs.push(webFinished)
+let webPublished=0
 const worker = load('app/api/cron/price-comparisons/route.ts', {
   'next/server': {NextResponse: {json: (body: any, opts: any) => ({body, status: opts?.status || 200})}},
   '@/lib/supabase-admin': {supabaseAdmin: {...db, rpc: async (name: string) => {
     assert.equal(name, 'due_price_comparison_deliveries')
     return {data: finishedParent.metadata_json.notified ? [] : [finishedParent], error: null}
   }}}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},
-  '@/lib/commerce/price-comparison': {advancePriceComparison: async () => {throw new Error('browser_stalled')}, readPriceComparison: async (_owner: string, id: string) => id === terminalTask.id ? terminalTask : null},
-  '@/lib/commerce/comparison-delivery': {deliverCompletedComparison: async () => {
+  '@/lib/commerce/price-comparison': {advancePriceComparison: async () => {throw new Error('browser_stalled')}, readPriceComparison: async (_owner: string, id: string) => id === terminalTask.id ? terminalTask : id===webFinished.id?webFinished:null},
+  '@/lib/commerce/comparison-delivery': {deliverCompletedComparison: async (task:any) => {
+    if(task.source==='web'){webPublished++;webFinished.metadata_json.notified=true;return 'history_published'}
     notifications++
     finishedParent.metadata_json.notified = true
     tables.conversations.push({content: 'Full saved report: ' + service.comparisonLink(terminalTask.id)})
@@ -242,9 +246,11 @@ const stalledResult = await worker.GET(workerRequest)
 assert.equal(stalledResult.status, 503, 'a worker with failures must not report a successful heartbeat')
 assert.equal(stalledResult.body.advanceFailures, 1, 'one stalled browser run must not block completed-result delivery')
 assert.equal(notifications, 1)
+assert.equal(webPublished,1,'a web completion must be published even when another browser advance fails')
 assert.match(tables.conversations.at(-1).content, /Full saved report:/)
 assert.equal((await worker.GET(workerRequest)).status, 503)
 assert.equal(notifications, 1, 'overlapping cron delivery cannot duplicate the terminal message')
+assert.equal(webPublished,1,'published web results must leave the worker queue')
 assert.ok(JSON.parse(readFileSync('vercel.json', 'utf8')).crons.some((cron: any) => cron.path === '/api/cron/price-comparisons'))
 const grocery = await service.tryPriceComparison({telegramId: 42, text: 'Compare Amul Taaza 1 litre on Zepto and Blinkit'})
 const food = await service.tryPriceComparison({telegramId: 42, text: 'Compare vegetarian burger on Swiggy and Zomato'})
@@ -394,6 +400,27 @@ assert.equal(await delivery.deliverCompletedComparison(deliveryTask, actor, Date
 assert.equal(deliveryTask.metadata_json.notified, true)
 assert.equal(acceptedSends, 1)
 assert.match(tables.conversations.at(-1).content, /Full saved report:/)
+let webWriteFails=true,webWrites=0
+const webDeliveryTask={...structuredClone(deliveryTask),id:id(),source:'web',metadata_json:{...deliveryTask.metadata_json,notified:undefined}}
+const webDelivery=load('lib/commerce/comparison-delivery.ts',{
+  '@/lib/supabase-admin':{supabaseAdmin:{rpc:async(name:string,args:any)=>{
+    assert.equal(name,'publish_web_comparison_result');assert.equal(args.p_owner,'42');assert.equal(args.p_run_id,webDeliveryTask.id)
+    assert.match(args.p_content,/₹28,926/);assert.match(args.p_content,/Full saved report:/)
+    if(webWriteFails)return {error:{message:'fixture failure'}}
+    if(webDeliveryTask.metadata_json.notified)return {data:false,error:null}
+    webDeliveryTask.metadata_json.notified=true;webWrites++;tables.conversations.push({content:args.p_content});return {data:true,error:null}
+  }}},
+  '@/lib/services/notification-delivery':{deliverNotification:async()=>{throw new Error('web must not create a WhatsApp delivery')}},
+  '@/lib/whatsapp':{sendWhatsApp:async()=>{throw new Error('web must not send WhatsApp')}},
+  './comparison-model':model,
+  './price-comparison':{comparisonLink:service.comparisonLink,comparisonWebFallback:async()=>'',readPriceComparison:async()=>webDeliveryTask},
+})
+await assert.rejects(()=>webDelivery.deliverCompletedComparison(webDeliveryTask,actor,Date.now()+30000),/comparison_web_delivery_failed/)
+assert.equal(webDeliveryTask.metadata_json.notified,undefined,'failed history write remains eligible')
+webWriteFails=false
+assert.equal(await webDelivery.deliverCompletedComparison(webDeliveryTask,{...actor,whatsappId:''},Date.now()+30000),'history_published')
+assert.equal(await webDelivery.deliverCompletedComparison(webDeliveryTask,actor,Date.now()+30000),'skipped')
+assert.equal(webWrites,1,'web completion writes history once without requiring a phone')
 if (oldCallbackUrl === undefined) delete process.env.TWILIO_STATUS_CALLBACK_URL
 else process.env.TWILIO_STATUS_CALLBACK_URL = oldCallbackUrl
 const deliveryMigration = readFileSync('supabase/migrations/20261007044858_comparison_result_delivery.sql', 'utf8')

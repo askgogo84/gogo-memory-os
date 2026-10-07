@@ -38,7 +38,7 @@ function sameOrigin(req: NextRequest): boolean {
 function cleanHistory(role: string, raw: string): string | null {
   const text = String(raw || '').trim()
   if (!text) return null
-  if (/^\[(?:image_media|pending_skin_check|completed_skin_check|button:|dashboard link sent)/i.test(text)) return null
+  if (/^\[(?:image_media|pending_[a-z_]+\]|completed_skin_check|button:|dashboard link sent)/i.test(text)) return null
   if (role === 'user' && /^\[(?:asset|asset pdf|image|image note|food photo|image ticket|pdf|pdf document|meeting audio|typed meeting notes)\]/i.test(text)) {
     const trailing = text.replace(/^\[[^\]]+\]\s*/i, '').trim()
     return trailing || 'Shared something with Gogo'
