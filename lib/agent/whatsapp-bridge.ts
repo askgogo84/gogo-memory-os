@@ -28,7 +28,7 @@ import { executeApprovedGmailSend, tryRunGmailSendCommand, tryRunGmailContextCom
 import { tryRunAdaptiveTrustCommand } from './adaptive-trust'
 import { capabilityIsOff, parseAutonomyCommand } from './adaptive-autonomy'
 import { tryRunAdaptiveAutonomyCommand } from './adaptive-autonomy'
-import { handleOpenLoopAction, handleOpenLoopQuery, handleOpenLoopResolution, shouldHandleOpenLoopAction, shouldHandleOpenLoopResolution } from './open-loops'
+import { handleInboxReplyRead, handleOpenLoopAction, handleOpenLoopQuery, handleOpenLoopResolution, shouldHandleOpenLoopAction, shouldHandleOpenLoopResolution } from './open-loops'
 import { tryRecoverAppointmentOption } from './appointment-followup-recovery'
 import { tryRunAppointmentFollowup } from './appointment-followup'
 import { tryRunAppointmentResearch } from './appointment-research'
@@ -310,6 +310,9 @@ export async function tryRunWhatsAppAttentionCommand(params:{
   if(isGmailVerificationQuery(params.text))return null
   const actor=actorFromResolvedUser(params.user)
   if(!actor)return null
+
+  const inboxReplyRead=await handleInboxReplyRead({actor,text:params.text})
+  if(inboxReplyRead)return inboxReplyRead
 
   if(await shouldHandleOpenLoopAction({actor,text:params.text})){
     const action=await handleOpenLoopAction({actor,text:params.text})

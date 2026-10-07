@@ -29,6 +29,7 @@ import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
 import { tryRunRestaurantReservation } from '@/lib/agent/restaurant-reservation'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunTrainResearch } from '@/lib/agent/train-research'
+import { handleInboxReplyRead } from '@/lib/agent/open-loops'
 
 export const dynamic = 'force-dynamic'
 
@@ -111,6 +112,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+    const inboxReplyRead = await handleInboxReplyRead({actor,text})
+    if(inboxReplyRead){
+      await saveConversation(user.telegram_id,text,inboxReplyRead.text)
+      return NextResponse.json(inboxReplyRead)
+    }
     const contentDraft = await tryRunContentWorkflow(actor, text, `web-${randomUUID()}`)
     if (contentDraft) return NextResponse.json(contentDraft)
     // Match WhatsApp's per-request routing before a whole-message handler can
