@@ -3,7 +3,7 @@
 //
 // Imports the REAL shipped filter so test and prod can't drift. Models getMemories'
 // post-fetch step: stripSecretShapedMemories over an in-memory row list.
-import { isSecretShapedMemory, stripSecretShapedMemories } from '../lib/bot/memory-redaction'
+import { isSecretShapedMemory, stripSecretShapedMemories, redactSecretShapedText } from '../lib/bot/memory-redaction'
 
 let fails = 0
 function check(label: string, cond: boolean) {
@@ -36,6 +36,18 @@ const rows = [
 const kept = stripSecretShapedMemories(rows)
 check('mixed list keeps exactly the 2 normal rows', kept.length === 2)
 check('kept = [tea, Bruno] in order', kept[0] === 'I prefer tea over coffee' && kept[1] === 'my dog is called Bruno')
+
+// Exact production regression: 34398485 was redacted as a sensitive identifier,
+// turning the saved comparison into a broken /comparisons/[sensitive URL.
+const report = 'https://app.askgogo.in/dashboard/comparisons/34398485-8a78-44ad-80ae-6016efbdf15c'
+check('generated comparison UUID link remains clickable', redactSecretShapedText(`Saved comparison: ${report}`) === `Saved comparison: ${report}`)
+const activity = report.replace('/comparisons/', '/activity/') + '/browser'
+check('same-task browser UUID link retained', redactSecretShapedText(`[Open task](${activity})`) === `[Open task](${activity})`)
+const mixedReport = redactSecretShapedText(`123456789\n${report}`)
+check('sensitive number beside a report stays hidden', !mixedReport.includes('123456789') && mixedReport.includes('[sensitive detail withheld]') && mixedReport.includes(report))
+for (const url of [report.replace('app.askgogo.in','app.askgogo.in.evil.test'),report+'?token=123456789',report+'#123456789',report.replace('/comparisons/','/other/')])
+  check('unsupported/secret-bearing URL gets no exemption', redactSecretShapedText(url).includes('[sensitive detail withheld]'))
+check('labelled password still redacted', !redactSecretShapedText('password: hunter2').includes('hunter2'))
 
 console.log(`\n${fails === 0 ? '✅ all cases passed' : `❌ ${fails} case(s) failed`}\n`)
 process.exit(fails === 0 ? 0 : 1)
