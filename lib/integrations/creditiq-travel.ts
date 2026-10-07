@@ -71,6 +71,7 @@ function normalizeCabin(value: string | undefined): Cabin {
 }
 
 function finiteNumber(value: unknown): number | null {
+  if (value == null || value === '') return null
   const n = Number(value)
   return Number.isFinite(n) ? n : null
 }
@@ -135,7 +136,6 @@ export async function searchCreditIQLiveFlights(params: {
   const from = clean(params.from, 3).toUpperCase()
   const to = clean(params.to, 3).toUpperCase()
   const date = clean(params.date, 10)
-  const dateTo = clean(params.dateTo || params.date, 10)
   const cabin = normalizeCabin(params.cabin)
   if (!/^[A-Z]{3}$/.test(from) || !/^[A-Z]{3}$/.test(to) || !/^20\d{2}-\d{2}-\d{2}$/.test(date)) return null
 
@@ -145,7 +145,8 @@ export async function searchCreditIQLiveFlights(params: {
     origin: from,
     destination: to,
     departDate: date,
-    returnDate: dateTo !== date ? dateTo : null,
+    // dateTo is a departure search window, never an implicit return journey.
+    returnDate: null,
     cabin,
     adults: Math.max(1, Math.min(9, Number(params.adults || 1))),
     limit: 20,
@@ -192,7 +193,7 @@ export async function searchCreditIQLiveFlights(params: {
       stops: finiteNumber(f.stops),
       bookingLink: f.bookingLink ? clean(f.bookingLink, 1200) : null,
       provider: clean(f.provider || source, 80),
-      cabin,
+      cabin: f.cabin ? normalizeCabin(f.cabin) : cabin,
       live: f.live === true && live,
       cashFareVerifiedForCabin: f.cashFareVerifiedForCabin === true,
       awardGuide: f.awardGuide && typeof f.awardGuide === 'object' ? f.awardGuide : null,

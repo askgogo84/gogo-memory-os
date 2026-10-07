@@ -84,6 +84,11 @@ console.log('PASS: managed browser owner/site isolation, profile restore, bounde
 // searches. Test the real broker against the exact stylesheet/bootstrap hosts,
 // not a mock claiming that a provider journey succeeded.
 for(const [site,resources] of [
+ ['https://www.google.com/travel/flights',[
+  'https://www.gstatic.com/_/travel/flights/application.js',
+  'https://fonts.googleapis.com/css',
+  'https://fonts.gstatic.com/font.woff2',
+ ]],
  ['https://www.amazon.in/',[
   'https://m.media-amazon.com/images/I/11mVszy8FIL.js?AUIClients/AmazonRushAssetLoader',
   'https://images-na.ssl-images-amazon.com/images/I/215h87l68bL.js',
@@ -117,4 +122,6 @@ for(const [site,resources] of [
  await route({request:()=>({url:()=> 'https://unrelated.example/collect'}),continue:()=>{unrelatedAllowed=true},abort:()=>{unrelatedAllowed=false}})
  assert.equal(unrelatedAllowed,false,'provider resources do not authorize arbitrary egress')
 }
+for(const url of ['https://www.google.com/search','https://www.google.com/travel/flightsfake','https://www.google.com.evil.example/travel/flights'])
+  assert.ok(!('www.gstatic.com' in browserPageAllowlist(url)),'flight resources are scoped to the real flight page')
 console.log('PASS: observed Amazon/Flipkart/IndiGo resources load through the actual scoped broker')

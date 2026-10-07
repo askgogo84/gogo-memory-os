@@ -18,6 +18,7 @@ import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
 import { isPublicTravelResearchRequest, tryRunTravelResearch } from '@/lib/agent/travel-research'
+import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
@@ -286,9 +287,10 @@ export async function POST(req: NextRequest) {
     if (isPublicTravelResearchRequest(text)) {
       const travel = await tryRunTravelResearch({ actor, surface:'web', text })
       if (travel) {
+        const hardened = await hardenTravelResearchResult(travel, text)
         await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:travel.handledBy,actualCapability:(travel as any).capability||'travel',status:(travel as any).status||null,runId:(travel as any).runId||null}).catch(()=>{})
-        await saveConversation(user.telegram_id, text, travel.text)
-        return NextResponse.json({ text: travel.text, handledBy: travel.handledBy })
+        await saveConversation(user.telegram_id, text, hardened.text)
+        return NextResponse.json({ text: hardened.text, handledBy: hardened.handledBy, status: hardened.status, runId: 'runId' in hardened ? hardened.runId : undefined })
       }
     }
 

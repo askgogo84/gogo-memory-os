@@ -75,7 +75,7 @@ export async function hardenTravelResearchResult<T extends { runId?: string; tex
   // their own evidence. The public-web sanitizer is intentionally conservative
   // and would otherwise erase valid fares simply because each result block does
   // not repeat the requested date.
-  if (result.handledBy === 'browser-flight-task' || result.handledBy === 'creditiq-travel') return result
+  if (result.handledBy && result.handledBy !== 'travel-research') return result
 
   const text = sanitizeTravelResearchText(result.text, requestText)
   if (result.runId && text !== result.text) {

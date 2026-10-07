@@ -2,6 +2,10 @@
   "regions": ["bom1"],
   "crons": [
     {
+      "path": "/api/cron/travel-research",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/price-comparisons",
       "schedule": "* * * * *"
     },
