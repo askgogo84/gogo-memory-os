@@ -403,23 +403,32 @@ async function isPublicSearchInput(page,selector){
       input.getAttribute('formaction')!==null||input.getAttribute('formmethod')!==null);
   });}catch{return false;}
 }
-async function isConsequentialControl(page,selector,onUnavailable){
-  try{return await page.locator(selector).first().evaluate(el=>{
+async function isConsequentialControl(page,selector,onUnavailable,onContext){
+  try{const decision=await page.locator(selector).first().evaluate(el=>{
     // The observed Google passenger dialog adjusts a public search filter.
     // Its launcher, Add/Remove adult and Done buttons have no type attribute. Scope the
     // exception to this exact HTTPS provider, search region and modal; generic
     // Add, cancellation, form submission and booking controls stay blocked.
     const passengerDialog=el.closest?.('[role="dialog"]');
     const passengerLabel=(el.getAttribute('aria-label')||el.textContent||'').trim();
-    if(typeof location!=='undefined'&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href)
-      &&el.tagName==='BUTTON'&&!el.disabled&&el.getAttribute('aria-disabled')!=='true'
-      &&el.closest?.('[role="search"]')
-      &&!el.form&&!el.closest('form')&&el.getAttribute('formaction')===null&&el.getAttribute('formmethod')===null
-      &&el.getAttribute('type')!=='submit'
-      &&(!passengerDialog&&/^[1-9] passengers?, change number of passengers\.$/.test(passengerLabel)
-        ||passengerDialog?.getAttribute('aria-label')==='Number of passengers'
-          &&passengerDialog.getAttribute('aria-modal')==='true'&&passengerDialog.closest('[role="search"]')
-          &&/^(?:Add adult|Remove adult|Done|Cancel)$/.test(passengerLabel)))return false;
+    // Fixed predicate bits expose a rejected public control's context without
+    // its selector, label, URL, account content or arbitrary DOM attributes.
+    const publicFlight=typeof location!=='undefined'&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href);
+    const guardContext=publicFlight?1
+      |(el.tagName==='BUTTON'?2:0)
+      |(!el.disabled&&el.getAttribute('aria-disabled')!=='true'?4:0)
+      |(el.closest?.('[role="search"]')?8:0)
+      |(!el.form&&!el.closest?.('form')?16:0)
+      |(el.getAttribute('formaction')===null&&el.getAttribute('formmethod')===null?32:0)
+      |(el.getAttribute('type')!=='submit'?64:0)
+      |(/^[1-9] passengers?, change number of passengers\.$/.test(passengerLabel)?128:0)
+      |(!passengerDialog?256:0)
+      |(passengerDialog?.getAttribute('aria-label')==='Number of passengers'?512:0)
+      |(passengerDialog?.getAttribute('aria-modal')==='true'?1024:0)
+      |(passengerDialog?.closest('[role="search"]')?2048:0)
+      |(/^(?:Add adult|Remove adult|Done|Cancel)$/.test(passengerLabel)?4096:0):undefined;
+    const consequential=(()=>{
+    if((guardContext&127)===127&&((guardContext&384)===384||(guardContext&7680)===7680))return false;
     const t=(el.getAttribute('type')||'').toLowerCase();
     const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
     if(/\b(add|remove|increase|decrease)\b/.test(text)||/^[+−-]$/.test(text))return true;
@@ -452,7 +461,8 @@ async function isConsequentialControl(page,selector,onUnavailable){
     if(consequential)return true;
     if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;
     return false;
-  });}catch{if(onUnavailable)onUnavailable();return true;}
+    })();return {consequential,guardContext};
+  });if(onContext&&Number.isInteger(decision.guardContext))onContext(decision.guardContext);return decision.consequential;}catch{if(onUnavailable)onUnavailable();return true;}
 }
 (async()=>{
   const __env=(process&&process.env)||{};
@@ -497,8 +507,9 @@ async function isConsequentialControl(page,selector,onUnavailable){
         }
         else if(a.kind==='click'){
           let unavailable=false;
-          consequential=await isConsequentialControl(page,a.selector,()=>{unavailable=true});
-          if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential,failure:{reason:unavailable?'control_unavailable':'consequential_control'}});continue;}
+          let guardContext;
+          consequential=await isConsequentialControl(page,a.selector,()=>{unavailable=true},value=>{guardContext=value});
+          if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential,failure:{reason:unavailable?'control_unavailable':'consequential_control',guardContext}});continue;}
           flightResultSearch=payload.mode==='read'&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(payload.url)
             &&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(page.url())
             &&await page.locator(a.selector).first().evaluate(el=>/^Search$/i.test((el.getAttribute('aria-label')||el.textContent||'').trim())).catch(()=>false);
@@ -1231,6 +1242,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
             phase:'execution',reason:outcome.status==='done'?'action_done':outcome.failure?.reason||'action_skipped',
             target:googleFlightReadProgress(previousPage,[actions[index]])?.actions[0]?.target,
             matches:outcome.failure?.matches,rendered:outcome.failure?.rendered,
+            guardContext:outcome.failure?.guardContext,
           }])[0]
           if(diagnostic){diagnose(diagnostic);console.log('BROWSER_FLIGHT_ACTION:',JSON.stringify(diagnostic))}
         }
