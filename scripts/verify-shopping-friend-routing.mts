@@ -8,6 +8,7 @@ import * as contentWorkflows from '../lib/agent/content-workflows'
 import * as signature from '../lib/security/webhook-signature'
 import * as inputNormalizer from '../lib/bot/input-normalizer'
 import * as previewRouting from '../lib/services/whatsapp-preview-routing'
+import {handleInboxReplyRead} from '../lib/agent/open-loops'
 
 // Fixed phone incident: Wed 7 Oct 2026, 12:37 IST.
 const RealDate = Date
@@ -316,6 +317,7 @@ const webHistory:any[]=[]
 let webSession:any={telegramId:'42'}
 let failFlipkart=false
 const web=executeModule('app/api/dashboard/chat/route.ts',{
+  '@/lib/agent/open-loops':{handleInboxReplyRead},
   'crypto':{randomUUID:()=> 'fixture-web'},
   'next/server':{NextResponse:{json:(data:any,options:any={})=>new Response(JSON.stringify(data),{status:options.status||200})}},
   '@/lib/dashboard/session':{getSession:async()=>webSession},
