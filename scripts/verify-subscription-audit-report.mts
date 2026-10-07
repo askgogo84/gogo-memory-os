@@ -30,6 +30,7 @@ const result=await reader.searchWorkspaceEmails(actor,instruction,{missionText:m
 const request=new URL(urls[0])
 assert.match(request.searchParams.get('q')!,/^\{(?=[^}]*receipt)(?=[^}]*renewal)[^}]+\}/,'receipt categories must be OR alternatives, not required instruction words')
 assert.match(request.searchParams.get('q')!,/newer_than:14d/,'rolling window must come from the owner request, not a planner-invented absolute date')
+assert.match(request.searchParams.get('q')!,/subject:receipt/,'billing evidence must not be crowded out by newsletters that only mention subscriptions in their body')
 assert.equal(request.searchParams.get('maxResults'),'15')
 assert.equal(result.messages.length,15,'the requested bounded audit must not silently drop to six or display only five')
 assert.equal(result.audit.hasMore,true,'provider pagination must be reported as an incomplete audit')
@@ -87,10 +88,19 @@ mocks['./classifier']=load('lib/agent/classifier.ts')
 mocks['./approval-fingerprint']=load('lib/agent/approval-fingerprint.ts')
 mocks['./approval-binding']=load('lib/agent/approval-binding.ts')
 mocks['./model-usage']={recordTaskModelUsage:async()=>{}}
+let plannerCalls=0
+mocks['./planner-provider']={completeAgentPlanPrompt:async()=>{plannerCalls++;return JSON.stringify({title:'Audit',reason:'Read and list',steps:[{tool:'email',title:'Read mail',instruction},{tool:'lists',title:'Create subscription audit list',instruction:"Create a list titled 'Gmail Subscription Audit (Last 14 Days)' with columns: Service Name | Amount | Currency | Renewal Date. Populate only with data explicitly shown in the emails retrieved."}]})}}
 const planner=load('lib/agent/general-planner.ts')
+const livePlan=await planner.planGeneralAgentRequest(mission)
+assert.equal(plannerCalls,0,'a pure read-only audit must have a deterministic report plan instead of delegating list/report semantics to a model')
+assert.deepEqual(Array.from(livePlan.steps,(s:any)=>s.tool),['email','artifact'],'the exact live prompt must return findings, not mutate the checklist store')
+assert.equal(planner.shouldUseGeneralPlanner('Audit my Gmail subscriptions from the last 7 days, at most 3 messages.'),true,'a simple audit must reach the deterministic plan even without another domain')
+assert.equal(planner.readOnlySubscriptionAuditPlan('Audit my Gmail subscriptions from the last 14 days and show my calendar.'),null,'an independent calendar read must not be swallowed')
+assert.equal(planner.readOnlySubscriptionAuditPlan('Audit my Gmail subscriptions from the last 14 days and cancel Netflix.'),null,'positive consequential actions retain normal approval routing')
+assert.equal(planner.readOnlySubscriptionAuditPlan('Audit my Gmail subscriptions from the last 14 days and create a shopping list.'),null)
 const steps=[{tool:'email',title:'Search subscription receipts',instruction},{tool:'artifact',title:'Save subscription report',instruction:'Create a private report from the email findings',artifactTitle:'Subscription audit',artifactType:'research_brief'}]
 const prepared={plan:{title:'Subscription audit',reason:'Read and report',steps},modelUsage:[],startedAt:new Date().toISOString()}
-const completed=await planner.tryRunGeneralPlan({actor,surface:'web',text:mission,prepared})
+const completed=await planner.tryRunGeneralPlan({actor,surface:'web',text:mission,prepared:{...prepared,plan:livePlan}})
 assert.equal(completed.status,'completed')
 assert.match(completed.text,/INR 499/,'the last artifact step must preserve findings in the reply')
 assert.match(completed.text,new RegExp('/dashboard/reports/'+reportId))
