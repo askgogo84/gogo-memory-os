@@ -345,9 +345,11 @@ const sonyObservation = model.providerObservation('amazon', {id: 'sony-child', s
 // Actual production shapes: an ad price was the first rupee token on Flipkart,
 // and other capacities/offers appeared before the selected listing's price.
 const phoneEvidence = 'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\n'
-  + '(Maroon), 256 GB) 44% 84,999 ₹47,999 AD g37 power (128 GB) ₹19,999 AD '
-  + 'Selected Color: Cosmic Orange Variant: 256 GB 256 GB ₹1,34,900 512 GB ₹1,54,900 2 left 1 TB ₹1,74,900 '
-  + 'Apple iPhone 17 Pro (Cosmic Orange, 256 GB) 4.7 | 5,581 ₹1,34,900 +₹299 Protect Promise Fee Buy at ₹1,30,900 Apply offers'
+  + '(Maroon), 256 GB) 44% 84,999 ₹47,999 AD g37 power (PANTONE Impenetrable, 128 GB) 34% 30,499 ₹19,999 AD Sale starts in Selected Color: Cosmic Orange Variant: 256 GB 256 GB ₹1,34,900\n'
+  + '₹19,999 AD Sale starts in Selected Color: Cosmic Orange Variant: 256 GB 256 GB ₹1,34,900 512 GB ₹1,54,900 2 left 1 TB ₹1,74,900 Apple iPhone 17 Pro (Cosmic Orange, 256 GB) 4.7 |\n'
+  + '2 left 1 TB ₹1,74,900 Apple iPhone 17 Pro (Cosmic Orange, 256 GB) 4.7 | 5,581 ₹1,34,900 +₹299 Protect Promise Fee Buy at ₹1,30,900 Apply offers for maximum savings ₹1,30,900 Lowest\n'
+  + '• 10% off Delivery details Location not set Select delivery location Delivery by Saturday, 10 Oct Seller: NGIVR RETAILS See other sellers 4.7 • 6 years with Flipkart Shop with\n'
+  + 'NGIVR RETAILS See other sellers 4.7 • 6 years with Flipkart Shop with peace of mind Apple One (1) Year Limited Warranty 7-day brand support Cash on Delivery Flipkart Assured'
 const phoneRow:model.ProviderObservation = {provider:'flipkart',status:'observed',checkedAt:'2026-10-07T09:11:59Z',sourceUrl:'https://www.flipkart.com/apple-iphone-17-pro/p/fixture',evidence:phoneEvidence}
 assert.deepEqual(model.comparisonQuote('iPhone 17 Pro 256GB',phoneRow),{price:'₹1,34,900',fee:'₹299 Protect Promise Fee',taxesIncluded:false})
 const shortPhone = model.comparisonWhatsAppSummary({metadata_json:{subject:'iPhone 17 Pro 256GB',providers:[phoneRow]}} as any)
@@ -362,6 +364,7 @@ for(const row of [{...phoneRow,status:'failed' as const},{...phoneRow,sourceUrl:
   {...phoneRow,evidence:'Apple iPhone 16 Pro (Cosmic Orange, 256 GB)\n₹1,34,900'},
   {...phoneRow,evidence:'Apple iPhone 17 Pro Max (Cosmic Orange, 256 GB)\n₹1,34,900'},
   {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 512 GB)\n₹1,34,900'},
+  {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\n1 TB ₹1,74,900'},
   {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\nBuy at ₹1,30,900 with bank offers'},
   {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\nMRP: ₹1,34,900'},
   {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\nAD ₹47,999'},
