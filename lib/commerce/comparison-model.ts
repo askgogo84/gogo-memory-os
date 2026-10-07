@@ -166,6 +166,24 @@ export function comparisonSummary(task: PriceComparison) {
   return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'Remaining store checks are queued.' : 'This check has finished; blocked stores are not being retried automatically.'}\nItem observations are not a verified delivered-total ranking. Fees, location-specific prices and conditional offers remain unverified unless explicitly shown in the evidence.`
 }
 
+/** Short phone update; the saved report keeps the complete browser evidence. */
+export function comparisonWhatsAppSummary(task: PriceComparison) {
+  const lines = task.metadata_json.providers.map(row => {
+    const label = COMPARISON_PROVIDERS[row.provider].label
+    if (row.status === 'observed' && row.sourceUrl && row.evidence) {
+      const excerpt = row.evidence.replace(/\s+/g, ' ').trim().slice(0, 420)
+      const checked = row.checkedAt && Number.isFinite(Date.parse(row.checkedAt))
+        ? new Intl.DateTimeFormat('en-IN', {timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true}).format(new Date(row.checkedAt)) + ' IST'
+        : 'time unavailable'
+      return `*${label}* · checked ${checked}\n${excerpt}\nProduct page: ${row.sourceUrl}`
+    }
+    const reason = row.reason || (row.status === 'pending' || row.status === 'checking'
+      ? 'Still checking the store.' : 'No product-page price was verified.')
+    return `*${label}* · ${reason}`
+  })
+  return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\nPrices are page observations, not confirmed delivered totals. Fees, location and conditional offers need checking unless shown above.`
+}
+
 export function comparisonObjective(task: PriceComparison, provider: ComparisonProvider) {
   const productPage = ['amazon', 'flipkart', 'croma'].includes(provider)
     ? 'Open the exact product page link; a search or category page is not sufficient. ' : ''
