@@ -27,8 +27,8 @@ function parseDates(text: string, defaultYear: number) {
 function stripInrPrices(text: string) {
   return text
     .replace(/(?:₹|INR\s*|Rs\.?\s*)[\d,]+(?:\.\d{1,2})?/gi, 'fare not verified')
-    .replace(/\bfare not verified\s*(?:\+|from|onwards)?/gi, 'fare not verified')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/\bfare not verified[^\S\r\n]*(?:\+|from|onwards)?/gi, 'fare not verified')
+    .replace(/[^\S\r\n]{2,}/g, ' ')
 }
 
 export function sanitizeTravelResearchText(raw: string, requestText: string, now = new Date()) {
@@ -37,7 +37,7 @@ export function sanitizeTravelResearchText(raw: string, requestText: string, now
 
   const blocks = String(raw || '').split(/\n\n+/)
   const intro = blocks.filter(b => !/^\d+\./.test(b.trim()) && !/^These are public-web/.test(b.trim()))[0] || ''
-  const disclaimer = blocks.find(b => /^These are public-web/.test(b.trim())) || ''
+  const disclaimer = blocks.find(b => /^These are (?:public-web|fallback sources)/.test(b.trim())) || ''
   const defaultYear = Number(context.startDate.slice(0,4))
 
   const kept = blocks

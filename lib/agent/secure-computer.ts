@@ -268,7 +268,9 @@ async function model(page){
     }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.innerText||el.textContent||el.getAttribute('title')).slice(0,180),
       ...(el.tagName==='A'&&el.href?{href:el.href}:{}),
       ...((el.tagName==='INPUT'&&['text','search'].includes((el.getAttribute('type')||'text').toLowerCase())
-        &&/\b(search|find)\b/i.test([el.getAttribute('placeholder'),el.getAttribute('aria-label')].join(' '))
+        &&(/\b(search|find)\b/i.test([el.getAttribute('placeholder'),el.getAttribute('aria-label')].join(' '))
+          || (/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href)
+            && /^where (?:from|to|else)\?/i.test(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')))
         &&!/\b(password|otp|code|email|phone|mobile|login|payment|card)\b/i.test([el.getAttribute('placeholder'),el.getAttribute('aria-label')].join(' ')))
         ?{value:String(el.value||'').slice(0,180),searchMode:el.form&&(el.form.getAttribute('method')||'get').toLowerCase()==='get'?'enter':'suggestions'}:{}),
     }));

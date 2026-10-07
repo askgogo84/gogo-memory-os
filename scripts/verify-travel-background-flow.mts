@@ -70,6 +70,10 @@ const travel = load('lib/agent/travel-research.ts',{
   './travel-research-queue':{enqueueTravelResearch:(params:any)=>queue.enqueueTravelResearch(params)},
 })
 const sanitizer = load('lib/agent/travel-research-sanitize.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./travel-research':travel})
+const fallback=sanitizer.sanitizeTravelResearchText('Task could not obtain verified live rows\n\n1. Airline\nPublic snippet mentions ₹4,159\nOpen source: https://example.com/flights\n\nThese are fallback sources only, not completed live inventory.',
+  'Compare flights from BLR to BOM on 20 October 2026')
+assert.match(fallback,/\nOpen source: https:\/\/example.com\/flights/,'stripping an unverified fare must preserve its provider link')
+assert.match(fallback,/fallback sources only/,'fallback disclaimer survives sanitation')
 queue = load('lib/agent/travel-research-queue.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:db},'./travel-research':travel,'./travel-research-sanitize':sanitizer,
   './brain-runtime-guard':{acquireBrainUserLease:async()=>({ownerToken:'fixture'}),releaseBrainUserLease:async()=>{}},
@@ -91,7 +95,9 @@ assert.equal(preferences.cabin,'premium_economy');assert.equal(preferences.adult
 const late=new Date('2026-10-07T20:00:00Z')
 assert.equal(travel.buildTravelResearchContext('Search flights from BLR to BOM tomorrow',late,'Asia/Kolkata').startDate,'2026-10-09')
 assert.equal(travel.buildTravelResearchContext('Search flights from BLR to BOM today',late,'America/New_York').startDate,'2026-10-07')
-for(const input of ['Search flights from BLR to BOM on 2027-02-30','Search flights from BLR to BOM on 30/02/2027']){
+for(const input of ['Search flights from BLR to BOM on 2027-02-30','Search flights from BLR to BOM on 30/02/2027',
+  'Compare flights from Bengaluru to Mumbai on 30 February 2027 for 1 adult in economy.',
+  'Compare flights from BLR to BOM on February 30, 2027']){
   assert.equal(travel.buildTravelResearchContext(input,fixedNow).startDate,undefined,'invalid dates must not roll into March')
   assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:input})).text,/not a valid/)
 }

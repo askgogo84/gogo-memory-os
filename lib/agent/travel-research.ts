@@ -72,6 +72,16 @@ export function localTravelDate(now: Date, timezone = 'Asia/Kolkata') {
 }
 
 export function flightDateIssue(text: string, context: TravelContext, now = new Date(), timezone = 'Asia/Kolkata') {
+  const months = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?'
+  const dayMonth = text.match(new RegExp(`\\b(\\d{1,2})\\s+(${months})\\b(?:[,\\s]+(20\\d{2}))?`, 'i'))
+  const monthDay = text.match(new RegExp(`\\b(${months})\\s+(\\d{1,2})\\b(?:[,\\s]+(20\\d{2}))?`, 'i'))
+  if(dayMonth || monthDay) {
+    const year = Number((dayMonth || monthDay)![3] || localTravelDate(now,timezone).getUTCFullYear())
+    const month = MONTHS[(dayMonth ? dayMonth[2] : monthDay![1]).toLowerCase()]
+    const day = Number(dayMonth ? dayMonth[1] : monthDay![2])
+    const parsed = new Date(Date.UTC(year,month,day))
+    if(parsed.getUTCFullYear()!==year || parsed.getUTCMonth()!==month || parsed.getUTCDate()!==day) return 'invalid'
+  }
   const iso = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/)
   const numeric = text.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/)
   if(iso || numeric) {
@@ -84,7 +94,21 @@ export function flightDateIssue(text: string, context: TravelContext, now = new 
 }
 function nextWeekRange(now:Date){const base=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));const day=base.getUTCDay()||7;const monday=new Date(base);monday.setUTCDate(base.getUTCDate()+(8-day));const sunday=new Date(monday);sunday.setUTCDate(monday.getUTCDate()+6);return{label:`${fmtDate(monday)} – ${fmtDate(sunday)}`,search:`${fmtDate(monday)} ${fmtDate(sunday)}`,startDate:isoDay(monday),endDate:isoDay(sunday)}}
 function thisWeekRange(now:Date){const base=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));const day=base.getUTCDay()||7;const sunday=new Date(base);sunday.setUTCDate(base.getUTCDate()+(7-day));return{label:`${fmtDate(base)} – ${fmtDate(sunday)}`,search:`${fmtDate(base)} ${fmtDate(sunday)}`,startDate:isoDay(base),endDate:isoDay(sunday)}}
-function explicitDateFromText(text:string,now:Date){let m=text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);if(m){const d=new Date(Date.UTC(Number(m[1]),Number(m[2])-1,Number(m[3])));if(d.getUTCFullYear()===Number(m[1])&&d.getUTCMonth()===Number(m[2])-1&&d.getUTCDate()===Number(m[3]))return isoDay(d)}m=text.match(/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(20\d{2}))?/i);if(m){const month=MONTHS[m[2].toLowerCase()];const year=Number(m[3]||now.getUTCFullYear());const d=new Date(Date.UTC(year,month,Number(m[1])));if(d.getUTCFullYear()===year&&d.getUTCMonth()===month&&d.getUTCDate()===Number(m[1]))return isoDay(d)}m=text.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:[,\s]+(20\d{2}))?/i);if(m){const month=MONTHS[m[1].toLowerCase()];const year=Number(m[3]||now.getUTCFullYear());const d=new Date(Date.UTC(year,month,Number(m[2])));if(d.getUTCFullYear()===year&&d.getUTCMonth()===month&&d.getUTCDate()===Number(m[2]))return isoDay(d)}m=text.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/);if(m){const d=new Date(Date.UTC(Number(m[3]),Number(m[2])-1,Number(m[1])));if(d.getUTCFullYear()===Number(m[3])&&d.getUTCMonth()===Number(m[2])-1&&d.getUTCDate()===Number(m[1]))return isoDay(d)}return null}
+function explicitDateFromText(text:string,now:Date) {
+  const valid = (year:number,month:number,day:number) => {
+    const date = new Date(Date.UTC(year,month,day))
+    return date.getUTCFullYear()===year && date.getUTCMonth()===month && date.getUTCDate()===day ? isoDay(date) : null
+  }
+  const months = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?'
+  const iso = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/)
+  if(iso)return valid(Number(iso[1]),Number(iso[2])-1,Number(iso[3]))
+  const dayMonth = text.match(new RegExp(String.raw`\b(\d{1,2})\s+(${months})\b(?:[,\s]+(20\d{2}))?`, 'i'))
+  if(dayMonth)return valid(Number(dayMonth[3]||now.getUTCFullYear()),MONTHS[dayMonth[2].toLowerCase()],Number(dayMonth[1]))
+  const monthDay = text.match(new RegExp(String.raw`\b(${months})\s+(\d{1,2})\b(?:[,\s]+(20\d{2}))?`, 'i'))
+  if(monthDay)return valid(Number(monthDay[3]||now.getUTCFullYear()),MONTHS[monthDay[1].toLowerCase()],Number(monthDay[2]))
+  const numeric = text.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/)
+  return numeric ? valid(Number(numeric[3]),Number(numeric[2])-1,Number(numeric[1])) : null
+}
 function normalizeWhen(text:string,now=new Date()):{label:string;search:string;startDate?:string;endDate?:string}{const t=text.toLowerCase();if(/\bnext week\b/.test(t))return nextWeekRange(now);if(/\bthis week\b/.test(t))return thisWeekRange(now);if(/\bnext month\b/.test(t)){const start=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+1,1));const end=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+2,0));return{label:new Intl.DateTimeFormat('en-GB',{month:'long',year:'numeric',timeZone:'UTC'}).format(start),search:`${fmtDate(start)} ${fmtDate(end)}`,startDate:isoDay(start),endDate:isoDay(end)}}if(/\btoday\b/.test(t)){const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));return{label:fmtDate(d),search:fmtDate(d),startDate:isoDay(d),endDate:isoDay(d)}}if(/\btomorrow\b/.test(t)){const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1));return{label:fmtDate(d),search:fmtDate(d),startDate:isoDay(d),endDate:isoDay(d)}}const explicit=explicitDateFromText(text,now);if(explicit){const d=new Date(`${explicit}T00:00:00Z`);return{label:fmtDate(d),search:fmtDate(d),startDate:explicit,endDate:explicit}}return{label:'dates not specified',search:`${now.getUTCFullYear()}`}}
 export function buildTravelResearchContext(rawText:string,now=new Date(),timezone='Asia/Kolkata'):TravelContext{const text=String(rawText||'').trim();const t=text.toLowerCase();const kind:'flight'|'hotel'=/\bhotel|hotels\b/.test(t)&&!/\bflight|flights|airfare\b/.test(t)?'hotel':'flight';let origin=placeFrom(extractSegment(text,'from'));let destination=placeFrom(extractSegment(text,'to'));if(kind==='flight'&&(!origin||!destination)){const pair=text.replace(/^(?:(?:please|find|search|compare|check|look|for|me|a|an|the|cheap|cheapest|available|actual|non-stop|direct|flight|flights|airfare|options)\s+)+/i,'').match(/\b([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28})\s*(?:→|->| to )\s*([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)(?=\s+(?:next|this|tomorrow|on|for|under|below|with|one-way|round-trip)\b|$)/i);origin||=placeFrom(pair?.[1]);destination||=placeFrom(pair?.[2])}if(kind==='hotel'&&!destination)destination=placeFrom(extractSegment(text,'in'));const when=normalizeWhen(text,localTravelDate(now,timezone));const routeLabel=origin&&destination?`${origin.code||origin.label} → ${destination.code||destination.label}`:destination?destination.label:'Travel search';return{kind,origin,destination,whenLabel:when.label,searchWhen:when.search,routeLabel,startDate:when.startDate,endDate:when.endDate}}
 export function isPublicTravelResearchRequest(rawText:string){const t=String(rawText||'').trim().toLowerCase();if(!/\b(flight|flights|airfare|fare|fares|hotel|hotels|travel|trip)\b/.test(t))return false;if(/\b(my\s+(flight|ticket|booking|reservation|pnr|boarding pass|itinerary)|saved\s+(flight|ticket|booking)|show\s+my\s+(flight|ticket)|find\s+my\s+(flight|ticket))\b/.test(t))return false;return/\b(cheap|cheapest|best\s+(fare|price|deal)|compare|comparison|price|prices|fare|fares|deal|deals|available|availability|options|search|research|look\s+for|find\s+(a|me\s+a)|next\s+week|this\s+week|next\s+month)\b/.test(t)}
