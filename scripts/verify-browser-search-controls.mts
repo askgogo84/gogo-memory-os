@@ -298,6 +298,39 @@ for(const [url,label,dialogLabel,searchRegion,form,expected] of [
    assert.equal(guardContext,503,'the real rejection preserves which public passenger guard predicates were satisfied; missing search ancestry clears bit8')
  }
 }
+// The production guard mask383 has every launcher predicate except its name.
+// Replay the worker's public ARIA-labelledby name through both emitted readers:
+// the planner recognizes it while the pre-click guard used only textContent.
+const passengerNode=observedSearch[4]
+const previousPassengerAttributes=passengerNode.getAttribute
+passengerNode.getAttribute=(key:string)=>key==='aria-labelledby'?'passengerName':key==='role'?'button':null
+const previousPassengerText=passengerNode.textContent
+passengerNode.textContent='1'
+linkedLabels.passengerName=linkedName('1 passenger, change number of passengers.')
+const linkedPassengerPage=runInNewContext(`(()=>{${body}})()`,{document:observedDoc,location:{href:'https://www.google.com/travel/flights'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
+assert.ok(linkedPassengerPage.flightEvidence.searchControls.includes('1 passenger, change number of passengers.'),'the real emitted observation recognizes the referenced public passenger name')
+const linkedPassengerElement={...passengerNode,tagName:'BUTTON',form:null,disabled:false,closest:(selector:string)=>selector==='[role="search"]'?{}:null}
+const linkedPassengerBrowser={locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(linkedPassengerElement)})})}
+assert.equal(await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed")',{page:linkedPassengerBrowser,document:observedDoc,location:{href:'https://www.google.com/travel/flights'}}),false,'the guard must recognize the same referenced passenger name as the emitted observation')
+for(const [label,url,searchRegion,form,expected] of [
+ ['1 passenger, change number of passengers.','https://www.google.com/travel/flights',true,false,false],
+ [' 2   passengers, change number of passengers. ','https://www.google.com/travel/flights',true,false,false],
+ ['Book now','https://www.google.com/travel/flights',true,false,true],
+ ['Add child aged 2 to 11','https://www.google.com/travel/flights',true,false,true],
+ ['1 passenger, change number of passengers.','https://www.google.com.evil.example/travel/flights',true,false,true],
+ ['1 passenger, change number of passengers.','https://www.google.com/travel/flights',false,false,true],
+ ['1 passenger, change number of passengers.','https://www.google.com/travel/flights',true,true,true],
+] as const){
+ linkedLabels.passengerName=linkedName(label)
+ linkedPassengerElement.form=form?{}:null
+ linkedPassengerElement.closest=(selector:string)=>selector==='[role="search"]'&&searchRegion?{}:selector==='form'&&form?{}:null
+ assert.equal(await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed")',{page:linkedPassengerBrowser,document:observedDoc,location:{href:url}}),expected,'referenced names preserve provider/search/form and unsupported-action boundaries')
+}
+linkedPassengerElement.form=null;linkedPassengerElement.closest=(selector:string)=>selector==='[role="search"]'?{}:null
+linkedPassengerElement.getAttribute=(key:string)=>key==='aria-label'?'Pay now':key==='aria-labelledby'?'passengerName':key==='role'?'button':null
+linkedLabels.passengerName=linkedName('1 passenger, change number of passengers.')
+assert.equal(await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed")',{page:linkedPassengerBrowser,document:observedDoc,location:{href:'https://www.google.com/travel/flights'}}),true,'an explicit consequential aria-label cannot be overridden by a referenced passenger name')
+passengerNode.getAttribute=previousPassengerAttributes;passengerNode.textContent=previousPassengerText
 assert.match(captured,/"href":"https:\/\/www.zomato.com\/restaurants"/,'planner can distinguish restaurant navigation from a same-page footer link')
 assert.match(captured,/"previousActions":\[{"kind":"click","status":"done"/,'last attempted action survives into the next planning wave')
 const plan=await exports.planActions('Find Amul Taaza 1 litre',snapshot('Search for milk'),'read','USER_INSTRUCTION')
