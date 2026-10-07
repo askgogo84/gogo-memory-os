@@ -23,8 +23,10 @@ const observedNode=(label:string,role='button',hidden=false)=>({tagName:'DIV',no
  getAttribute:(key:string)=>key==='aria-label'?label:key==='role'?role:null,
  getBoundingClientRect:()=>({width:hidden?0:240,height:hidden?0:40}),matches:()=>true,querySelectorAll:()=>[]})
 const observedSearch=[observedNode('Where from? Bengaluru BLR','combobox'),observedNode('Where to? Mumbai BOM','combobox'),observedNode('Change ticket type. One way','combobox'),observedNode('Change seating class. Economy','combobox'),observedNode('1 passenger, change number of passengers.')]
-// Actual Google trip/cabin controls have aria-labelledby, not aria-label.
-const linkedLabels:any={tripLabel:{textContent:'Change ticket type.'},tripValue:{textContent:'One way'},cabinLabel:{textContent:'Change seating class.'},cabinValue:{textContent:'Economy'}}
+// Actual 7 Oct DOM: the referenced hidden label spans have empty text and
+// aria-label; the separate visible selected-value spans contain the text.
+const linkedName=(name:string)=>({textContent:'',getAttribute:(key:string)=>key==='aria-label'?name:null})
+const linkedLabels:any={tripLabel:linkedName('Change ticket type.'),tripValue:{textContent:'One way'},cabinLabel:linkedName('Change seating class.'),cabinValue:{textContent:'Economy'}}
 observedSearch[2].getAttribute=(key:string)=>key==='role'?'combobox':key==='aria-labelledby'?'tripLabel tripValue':null
 observedSearch[3].getAttribute=(key:string)=>key==='role'?'combobox':key==='aria-labelledby'?'cabinLabel cabinValue':null
 const observedTrack=observedNode('Track prices from Bengaluru to Mumbai departing 2026-10-20','switch')
@@ -42,6 +44,19 @@ assert.equal(emittedFlight.flightEvidence.searchControls.length,6)
 assert.doesNotMatch(JSON.stringify(emittedFlight.flightEvidence),/private@example/)
 const lookalikeFlight=runInNewContext(`(()=>{${body}})()`,{document:observedDoc,location:{href:'https://www.google.com.evil.example/travel/flights/search'},CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
 assert.equal(lookalikeFlight.flightEvidence,undefined)
+
+// Feed the emitted DOM result directly into the actual travel verifier, rather
+// than testing the extractor and hand-assembled evidence independently.
+const observedTravel:any={}
+runInNewContext(ts.transpileModule(readFileSync('lib/agent/travel-browser-task.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+ exports:observedTravel,require:(name:string)=>name==='@anthropic-ai/sdk'?{default:class {}}:{},process:{env:{}},URL,console,
+})
+const observedContext={origin:{code:'BLR',label:'Bengaluru'},destination:{code:'BOM',label:'Mumbai'},startDate:'2026-10-20',routeLabel:'BLR → BOM',whenLabel:'20 Oct 2026',adults:1,cabin:'economy',nonStop:true}
+assert.equal(observedTravel.googleFlightOptionsFromEvidence(emittedFlight,observedContext)[0]?.fareInr,4423)
+assert.equal(observedTravel.googleFlightOptionsFromEvidence(lookalikeFlight,observedContext).length,0)
+const missingCabin={...emittedFlight,flightEvidence:{...emittedFlight.flightEvidence,searchControls:emittedFlight.flightEvidence.searchControls.filter((label:string)=>!label.startsWith('Change seating class.'))}}
+assert.equal(observedTravel.googleFlightOptionsFromEvidence(missingCabin,observedContext).length,0,'missing cabin evidence must still reject the observed fare')
+
 
 // Run the emitted worker's actual post-Search wait against visible/hidden rows.
 // It only waits for readiness; the controller's grounding gate still decides

@@ -261,7 +261,7 @@ async function model(page){
       ?Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]')).find(el=>el.getAttribute('role')==='dialog'&&el.getAttribute('aria-modal')==='true'&&visible(el)):null;
     const actionable=el=>visible(el)&&(!activeDialog||activeDialog.contains(el));
     const accessibleLabel=el=>clean(el.getAttribute('aria-label')
-      ||(el.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean).map(id=>document.getElementById?.(id)?.textContent||'').join(' ')
+      ||(el.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean).map(id=>{const node=document.getElementById?.(id);return node?.getAttribute?.('aria-label')||node?.textContent||''}).join(' ')
       ||el.getAttribute('placeholder')||el.innerText||el.textContent||el.getAttribute('title'));
     const candidates=Array.from(document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[role="option"],[tabindex],div,span,p')).filter(actionable);
     const allControls=candidates.filter(el=>{
