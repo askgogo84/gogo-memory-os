@@ -271,6 +271,8 @@ await exports.planActions('Find vegetarian burgers',observedLinkPage,'read','USE
 const passengerGuard=exports.BROWSER_SCRIPT.match(/async function isConsequentialControl\(page,selector,onUnavailable,onContext\)\{[\s\S]*?\n\}\n(?=\(async)/)![0]
 for(const [url,label,dialogLabel,searchRegion,form,expected] of [
  ['https://www.google.com/travel/flights','1 passenger, change number of passengers.','',true,false,false],
+ ['https://www.google.com/travel/flights','1 passenger','',true,false,false],
+ ['https://www.google.com/travel/flights/search','2 passengers','',true,false,false],
  ['https://www.google.com/travel/flights','2 passengers, change number of passengers.','',false,false,true],
  ['https://www.google.com/travel/flights','Add adult','Number of passengers',true,false,false],
  ['https://www.google.com/travel/flights/search','Remove adult','Number of passengers',true,false,false],
@@ -284,6 +286,12 @@ for(const [url,label,dialogLabel,searchRegion,form,expected] of [
  ['https://www.google.com/travel/flights','Add to cart','Number of passengers',true,false,true],
  ['https://www.google.com/travel/flights','Confirm booking','Number of passengers',true,false,true],
  ['https://www.google.com/travel/flights','Add child aged 2 to 11','Number of passengers',true,false,true],
+ ['https://www.google.com.evil.example/travel/flights','1 passenger','',true,false,true],
+ ['http://www.google.com/travel/flights','1 passenger','',true,false,true],
+ ['https://www.google.com/travel/flights','1 passenger','',false,false,true],
+ ['https://www.google.com/travel/flights','1 passenger','',true,true,true],
+ ['https://www.google.com/travel/flights','1 passenger','Booking passengers',true,false,true],
+ ['https://www.google.com/travel/flights','1 passenger buy','',true,false,true],
 ] as const){
  const dialog={getAttribute:(key:string)=>key==='aria-label'?dialogLabel:key==='aria-modal'?'true':null,closest:(selector:string)=>searchRegion&&selector==='[role="search"]'?{}:null}
  const element={tagName:'BUTTON',textContent:label,id:'',form:form?{}:null,disabled:false,
@@ -299,6 +307,22 @@ for(const [url,label,dialogLabel,searchRegion,form,expected] of [
    assert.equal(guardContext,503,'the real rejection preserves which public passenger guard predicates were satisfied; missing search ancestry clears bit8')
    assert.equal(guardNameShape,'full_passenger','the real guard reports only a fixed name shape, never raw label text')
  }
+}
+// The first production selector disappears as Google rerenders the trip filter;
+// a default30-second wait consumed the bounded read's remaining budget.
+let absentGuardOptions:any,absentGuardRejected=false
+const absentPublicPage={url:()=> 'https://www.google.com/travel/flights',locator:()=>({first:()=>({evaluate:async(_fn:any,_arg:any,options:any)=>{absentGuardOptions=options;throw new Error('fixture vanished control')}})})}
+assert.equal(await runInNewContext(passengerGuard+'isConsequentialControl(page,"#vanished",onUnavailable)',{page:absentPublicPage,onUnavailable:()=>{absentGuardRejected=true}}),true)
+assert.equal(absentGuardRejected,true,'a vanished public control stays blocked')
+assert.equal(absentGuardOptions?.timeout,2000,'public flight pre-click availability must refresh promptly instead of default30-second waits')
+for(const [attribute,value,disabled] of [['type','submit',false],['formaction','/book',false],['formmethod','post',false],['aria-disabled','true',false],['','',true]] as const){
+ const element={tagName:'BUTTON',textContent:'1 passenger',form:null,disabled,getAttribute:(key:string)=>key==='aria-label'?'1 passenger':key===attribute?value:null,closest:(selector:string)=>selector==='[role="search"]'?{}:null}
+ assert.equal(await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed")',{page:{locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element)})})},location:{href:'https://www.google.com/travel/flights'}}),true,'short passenger labels cannot exempt submit, overrides or disabled controls')
+}
+for(const url of ['https://www.google.com.evil.example/travel/flights','http://www.google.com/travel/flights','https://fixture.example/']){
+ let options:any
+ await runInNewContext(passengerGuard+'isConsequentialControl(page,"#vanished")',{page:{url:()=>url,locator:()=>({first:()=>({evaluate:async(_fn:any,_arg:any,opts:any)=>{options=opts;throw new Error('fixture unavailable')}})})}})
+ assert.equal(options,undefined,'the bounded availability change is restricted to the exact public flight provider')
 }
 // The production guard mask383 has every launcher predicate except its name.
 // Replay the worker's public ARIA-labelledby name through both emitted readers:
@@ -342,11 +366,11 @@ assert.ok(visibleNamePage.flightEvidence.searchControls.includes('1 passenger, c
 const visibleNameElement={...passengerNode,tagName:'BUTTON',form:null,disabled:false,closest:(selector:string)=>selector==='[role="search"]'?{}:null}
 assert.equal(await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed")',{page:{locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(visibleNameElement)})})},document:observedDoc,location:{href:'https://www.google.com/travel/flights'}}),false,'the guard must use the same visible-name fallback as the real emitted observation, without hidden textContent suffixes')
 passengerNode.getAttribute=previousPassengerAttributes;passengerNode.innerText=originalInnerText;passengerNode.textContent=previousPassengerText
-for(const [label,shape,expected] of [['1 passenger','bare_passenger',true],['1','count_only',true],['1 passenger, change number of passengers.','full_passenger',false],['1 passenger, change number of passengers','full_passenger_variant',true],['1 passenger, change number of passengers. extra','passenger_prefix_other',true]] as const){
+for(const [label,shape,expected] of [['1 passenger','bare_passenger',false],['1','count_only',true],['1 passenger, change number of passengers.','full_passenger',false],['1 passenger, change number of passengers','full_passenger_variant',true],['1 passenger, change number of passengers. extra','passenger_prefix_other',true]] as const){
  let actualShape:any
  const element={tagName:'BUTTON',textContent:label,innerText:label,form:null,disabled:false,getAttribute:(key:string)=>key==='aria-label'?label:null,closest:(selector:string)=>selector==='[role="search"]'?{}:null}
  const result=await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed",undefined,onContext)',{page:{locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element)})})},location:{href:'https://www.google.com/travel/flights'},onContext:(_mask:any,nameShape:any)=>{actualShape=nameShape}})
- assert.equal(actualShape,shape);assert.equal(result,expected,'name-shape diagnosis alone never broadens the accepted launcher grammar')
+ assert.equal(actualShape,shape);assert.equal(result,expected,'only verified full or short passenger names are public launchers; other shapes remain blocked')
 }
 assert.match(captured,/"href":"https:\/\/www.zomato.com\/restaurants"/,'planner can distinguish restaurant navigation from a same-page footer link')
 assert.match(captured,/"previousActions":\[{"kind":"click","status":"done"/,'last attempted action survives into the next planning wave')

@@ -430,7 +430,9 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
       |(!el.form&&!el.closest?.('form')?16:0)
       |(el.getAttribute('formaction')===null&&el.getAttribute('formmethod')===null?32:0)
       |(el.getAttribute('type')!=='submit'?64:0)
-      |(/^[1-9] passengers?, change number of passengers\.$/.test(passengerLabel)?128:0)
+      // Production changes the full launcher name to a short passenger count
+      // after trip-type selection. Both denote the same scoped search filter.
+      |((/^[1-9] passengers?, change number of passengers\.$/.test(passengerLabel)||/^[1-9] passengers?\.?$/i.test(passengerLabel))?128:0)
       |(!passengerDialog?256:0)
       |(passengerDialog?.getAttribute('aria-label')==='Number of passengers'?512:0)
       |(passengerDialog?.getAttribute('aria-modal')==='true'?1024:0)
@@ -471,7 +473,7 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
     if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;
     return false;
     })();return {consequential,guardContext,guardNameShape};
-  });if(onContext&&Number.isInteger(decision.guardContext))onContext(decision.guardContext,decision.guardNameShape);return decision.consequential;}catch{if(onUnavailable)onUnavailable();return true;}
+  },undefined,/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(page.url?.()||'')?{timeout:2000}:undefined);if(onContext&&Number.isInteger(decision.guardContext))onContext(decision.guardContext,decision.guardNameShape);return decision.consequential;}catch{if(onUnavailable)onUnavailable();return true;}
 }
 (async()=>{
   const __env=(process&&process.env)||{};
