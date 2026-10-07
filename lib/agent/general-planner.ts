@@ -402,7 +402,7 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
     if (!policy.allowed) {
       if ((policy.reason==='approval_required'||policy.reason==='auto_not_allowed_for_consequential_action') && classified.approvalAction) {
         const approvalId=await requestApproval({actor:params.actor,runId:params.runId,step,stepId,ordinal,totalSteps:params.plan.steps.length,approvalAction:classified.approvalAction,risk:classified.risk,reason:classified.why})
-        return {runId:params.runId,status:'waiting_approval',capability:classified.capability,risk:classified.risk,text:`I finished the safe steps. I need your approval before: ${step.title}`,approvalId,approvalRequired:true,handledBy:'general-plan'}
+        return {runId:params.runId,status:'waiting_approval',capability:classified.capability,risk:classified.risk,text:[lastText,`I finished the safe steps. I need your approval before: ${step.title}`].filter(Boolean).join('\n\n'),approvalId,approvalRequired:true,handledBy:'general-plan'}
       }
       await updateStep(stepId,'failed',{},policy.reason)
       await supabaseAdmin.from('agent_runs').update({status:'paused',summary:`Blocked by Gogo Safe Mode: ${policy.reason}`,updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))

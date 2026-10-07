@@ -116,6 +116,7 @@ reportReadError=false
 const approvalPlan={...prepared,plan:{...prepared.plan,steps:[...steps,{tool:'calendar',title:'Schedule review',instruction:'Create calendar event: Subscription review on 2026-10-20 at 10am'}]}}
 const gated=await planner.tryRunGeneralPlan({actor,surface:'web',text:'Audit subscriptions and prepare a calendar review',prepared:approvalPlan})
 assert.equal(gated.status,'waiting_approval')
+assert.match(gated.text,new RegExp('/dashboard/reports/'+reportId),'an approval pause must publish the safe report link instead of discarding its completed output')
 assert.equal(rows.agent_approvals.length,1)
 assert.match(rows.agent_artifacts[0].content_json.sections[0].result.reply,/Gmail subscription audit/,'the readable artifact survives the later approval pause')
 assert.equal(rows.agent_steps.at(-1).status,'waiting_approval')
