@@ -220,6 +220,8 @@ const fixtureThreads=[
   {id:'newsletter',messages:[message('bulk','news@example.test','Please reply',{listId:'newsletter'})]},
   {id:'auto',messages:[message('auto','no-reply@example.test','Please confirm')]},
   {id:'promise',messages:[message('promise','Bob <bob@example.test>',"I will send the update tomorrow.",{subject:'Update'})]},
+  {id:'marketing',messages:[message('marketing','Bank Offers <offers@example.test>','Activate Now! ‌ ‌ ‌ ‌ ‌ ‌ ‌',{subject:'Insta EMI Card Update'})]},
+  {id:'promotion',messages:[message('promotion','Sale <sale@example.test>','Please reply now for a discount',{labelIds:['CATEGORY_PROMOTIONS']})]},
 ]
 function loadFixture(path:string,requireFn:(name:string)=>any,extra:any={}){
   const exports:any={}
@@ -238,9 +240,10 @@ assert.equal(inboxModule.isInboxReplyReadQuery(exactInboxPrompt),true)
 assert.equal(inboxModule.isInboxReplyReadQuery('Which emails do I need to reply to?'),true)
 for(const text of ['Send emails that need my reply','Show emails that need my reply and send them','Remind me to reply to Alice'])assert.equal(inboxModule.isInboxReplyReadQuery(text),false)
 const fresh=await inboxModule.handleInboxReplyRead({actor,text:exactInboxPrompt})
-assert.match(fresh.text,/Gmail checked at/);assert.match(fresh.text,/Checked 5 recent threads/)
+assert.match(fresh.text,/Gmail checked at/);assert.match(fresh.text,/Checked 7 recent threads/)
 assert.match(fresh.text,/Alice/);assert.match(fresh.text,/You're invited/)
-assert.doesNotMatch(fresh.text,/123456|Bob|newsletter|no-reply|reminder set/i)
+assert.doesNotMatch(fresh.text,/123456|Bob|newsletter|no-reply|reminder set|Insta EMI|discount/i)
+assert.equal(formatEmailSnippet('Activate Now! ‌ ‌ ‌ ‌ ‌ ‌ ‌'), 'Activate Now!')
 assert.match(fresh.text,/Nothing sent/);assert.equal(fresh.verification.verified,true)
 const callsBeforeDisabled=freshCalls
 inboxEnabled=false

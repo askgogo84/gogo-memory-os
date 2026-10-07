@@ -59,7 +59,7 @@ export function redactEmailAuthSecrets(value:string) {
 }
 
 export function formatEmailSnippet(value:unknown,max=260) {
-  const text=clean(redactEmailAuthSecrets(String(value??'')), Math.max(max * 2, max))
+  const text=clean(redactEmailAuthSecrets(String(value??'').replace(/(?:[\u200B-\u200F\uFEFF]\s*){3,}/g,' ')), Math.max(max * 2, max))
   if(text.length<=max)return text
   const slice=text.slice(0,max+1)
   const sentence=[...slice.matchAll(/[.!?](?=\s|$)/g)].pop()

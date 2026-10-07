@@ -511,8 +511,12 @@ export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}
       const last=[...thread.messages].sort((a,b)=>a.internalDate-b.internalDate).at(-1)
       if(!last||headerEmail(last.from)===read.ownEmail||isAutomatedGmailMessage(last))return []
       const combined=clean(`${last.subject||thread.subject} ${last.snippet}`,900)
-      if(looksLikeIncomingPromise(combined)&&!(/\?|\b(?:please|could you|can you|would you|need you to|kindly|action required)\b/i.test(combined)))return []
-      if(!looksLikeIncomingAction(combined)&&(!looksLikeReplyExpected(combined)||looksLikeIncomingPromise(combined)))return []
+      // Subject words such as "Update" and promotional "Activate now" are
+      // notifications, not requests for a human response.
+      if((last.labelIds||[]).some(label=>['CATEGORY_PROMOTIONS','CATEGORY_SOCIAL'].includes(label)))return []
+      const directRequest=/\b(?:reply|respond|please|kindly|could you|can you|would you|need you to|let me know|your (?:feedback|thoughts))\b/i.test(combined)
+      if(!directRequest)return []
+      if(looksLikeIncomingPromise(combined)&&!(/\?|\b(?:please|could you|can you|would you|need you to|kindly)\b/i.test(combined)))return []
       return [{threadId:thread.id,last}]
     }).slice(0,12)
     let timezone=params.actor.timezone||'Asia/Kolkata'
