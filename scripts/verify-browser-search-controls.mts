@@ -583,12 +583,18 @@ console.log('PASS: multi-step flight research can complete, blocked commit stays
 
 // Reproduce the live Amazon search-page false completion. Prices are fixtures.
 const sourceChecks:any={}
+let flightAssessment=false
 runInNewContext(ts.transpileModule(source+'\nexport {browserSourceUrl, productLinkNeedsDetail, assessReadOutcome}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:sourceChecks,process:{env:{}},URL,console,require:(id:string)=>{
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText}
   if(id==='./browser-evidence')return browserEvidence
-  if(id==='./planner-provider')return {completeAgentPlanPrompt:async()=>JSON.stringify({complete:true,evidence:[resultText]})}
+  if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string)=>{
+    if(!flightAssessment)return JSON.stringify({complete:true,evidence:[resultText]})
+    const observed=JSON.parse(prompt).observation.text
+    const complete=['2 passengers','departing 20 October 2026','From 8846 Indian rupees'].every(value=>observed.includes(value))
+    return JSON.stringify({complete,evidence:complete?[observed]:[]})
+  }}
   return {}
  }
 })
@@ -620,6 +626,23 @@ assert.equal(sourceChecks.browserSourceUrl(numericModelProduct+'?session=private
 assert.equal(sourceChecks.browserSourceUrl(numericModelProduct.replace('amazon.in','amazon.in.evil.example')),null)
 assert.equal(sourceChecks.browserSourceUrl(numericModelProduct.replace('B00552K0GM','1234567890')),null,'identifier redaction still applies to the product ID itself')
 assert.equal(await sourceChecks.assessReadOutcome('Find Logitech M185 and product link',{...resultPage,url:numericModelProduct}),resultText.replace(/\s+/g,' ').trim())
+// The live two-adult run reached rows, but the completion assessor saw only
+// body prose. Google exposes selected route/date/passengers in ARIA labels.
+const partyControls=['Where from? Bengaluru BLR','Where to? Mumbai BOM','Change ticket type. One way',
+ 'Change seating class. Economy','2 passengers, change number of passengers.','Track prices from Bengaluru to Mumbai departing 2026-10-20']
+const partyRow='From 8846 Indian rupees. Nonstop flight with IndiGo. Leaves Bengaluru at 3:45 AM on Tuesday, October 20 and arrives at Mumbai at 5:30 AM on Tuesday, October 20. Total duration 1 hr 45 min. Select flight'
+const partyPage={...resultPage,url:'https://www.google.com/travel/flights/search',text:'IndiGo 3:45 AM – 5:30 AM ₹8,846. Prices include required taxes + fees for 2 adults.',
+ flightEvidence:{searchControls:partyControls,resultLabels:[partyRow]}}
+flightAssessment=true
+assert.match((await sourceChecks.assessReadOutcome('Read the BLR to BOM flight rows on 2026-10-20 for 2 adults',partyPage))||'',/departing 20 October 2026/,
+ 'the real completion assessor must receive selected public flight controls and exact observed result labels')
+assert.equal(await sourceChecks.assessReadOutcome('Read the flight rows',{...partyPage,url:'https://www.google.com.evil.example/travel/flights/search'}),null,
+ 'lookalike hosts cannot supply privileged flight observations')
+assert.equal(await sourceChecks.assessReadOutcome('Read the flight rows',{...partyPage,flightEvidence:{...partyPage.flightEvidence,searchControls:partyControls.filter(label=>!label.includes('passengers'))}}),null,
+ 'missing selected passenger evidence remains incomplete')
+assert.equal(await sourceChecks.assessReadOutcome('Read the flight rows',{...partyPage,flightEvidence:{...partyPage.flightEvidence,searchControls:partyControls.map(label=>label.replace('2026-10-20','2026-02-30'))}}),null,
+ 'an invalid observed ISO date cannot become a validated public date')
+flightAssessment=false
 console.log('PASS: observed product source handoff and search-result completion boundary')
 
 // 7 Oct production: the page was ready and the assessor claimed completion,

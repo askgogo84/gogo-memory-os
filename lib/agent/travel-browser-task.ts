@@ -22,6 +22,8 @@ export type BrowserFlightOption = {
   arrival: string
   stops: number | null
   fareInr: number | null
+  fareBasis?: 'party_total' | 'unverified'
+  farePassengers?: number
   route: string
   evidence: string
 }
@@ -29,7 +31,8 @@ export type BrowserFlightOption = {
 export function formatBrowserFlightResult(context:BrowserFlightContext,options:BrowserFlightOption[],sourceUrl:string){
   const url=new URL(sourceUrl)
   if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))throw new Error('flight_result_source_unverified')
-  const rows=options.slice(0,8).map((f,i)=>`${i+1}. ${f.airline} · ${f.departure} → ${f.arrival} · ${f.stops===null?'stops not verified':f.stops===0?'non-stop':`${f.stops} stop${f.stops===1?'':'s'}`} · ${f.fareInr?`₹${f.fareInr.toLocaleString('en-IN')}`:'fare not verified'}`)
+  const passengers=context.adults||1
+  const rows=options.slice(0,8).map((f,i)=>`${i+1}. ${f.airline} · ${f.departure} → ${f.arrival} · ${f.stops===null?'stops not verified':f.stops===0?'non-stop':`${f.stops} stop${f.stops===1?'':'s'}`} · ${f.fareInr?`₹${f.fareInr.toLocaleString('en-IN')}${f.fareBasis==='party_total'&&f.farePassengers===passengers?` total for ${passengers} adult${passengers===1?'':'s'}`:passengers>1?' displayed fare; party total not verified':''}`:'fare not verified'}`)
   return `Flight check · ${context.routeLabel} · ${context.whenLabel}\n${context.adults||1} adult${context.adults===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')}\nSource: Google Flights, read from the live browser page\n\n${rows.join('\n')}\n\nOpen source: ${sourceUrl}\nBaggage and optional charges need final verification. Nothing booked or paid.`
 }
 
@@ -124,6 +127,11 @@ export function googleFlightOptionsFromEvidence(result:any,context:BrowserFlight
   if(!Array.isArray(evidence?.searchControls)||!Array.isArray(evidence?.resultLabels))return []
   if(!browserFlightControlsMatch(evidence.searchControls,context))return []
   const date=new Date(`${context.startDate}T00:00:00Z`)
+  // The selected count alone does not say whether a price is per-person or
+  // for the whole party. Require Google's visible, explicit fare-basis line.
+  const basis=String(result.pageText||'').match(/\bPrices include required taxes\s*\+\s*fees for (one|[1-9]) adults?\b/i)
+  const farePassengers=basis?.[1]?.toLowerCase()==='one'?1:Number(basis?.[1])
+  const partyTotal=Number.isInteger(farePassengers)&&farePassengers===(context.adults||1)
   const month=new Intl.DateTimeFormat('en',{month:'long',timeZone:'UTC'}).format(date)
   const departureDay=new RegExp(`\\bon \\w+, ${month} ${date.getUTCDate()}\\b`,'i')
   return evidence.resultLabels.flatMap((raw:any)=>{
@@ -132,7 +140,8 @@ export function googleFlightOptionsFromEvidence(result:any,context:BrowserFlight
     const match=label.match(/^From ([\d,]+) Indian rupees\. Nonstop flight with (.+?)\. Leaves (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?) and arrives at (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?)\. Total duration /i)
     if(!match||!departureDay.test(match[5])||!match[3].toLowerCase().includes(context.origin!.label.toLowerCase())||!match[6].toLowerCase().includes(context.destination!.label.toLowerCase()))return []
     const fareInr=Number(match[1].replace(/,/g,''));if(!Number.isFinite(fareInr)||fareInr<=0)return []
-    return [{airline:match[2],departure:match[4],arrival:`${match[7]}${match[5]!==match[8]?` ${match[8]}`:''}`,stops:0,fareInr,route:context.routeLabel,evidence:label}]
+    return [{airline:match[2],departure:match[4],arrival:`${match[7]}${match[5]!==match[8]?` ${match[8]}`:''}`,stops:0,fareInr,
+      fareBasis:partyTotal?'party_total' as const:'unverified' as const,...(partyTotal?{farePassengers}:{}),route:context.routeLabel,evidence:label}]
   })
 }
 
@@ -150,7 +159,7 @@ export async function runLiveFlightBrowserTask(params: {
   try { result = await runSecureBrowser({
     userId:params.actor.userId,
     url,
-    objective:`Read actual flight rows for ${query}. User research criteria: ${params.objective}. Verify the selected route, departure date, passengers and cabin using the visible search controls before reporting airline, departure, arrival and INR fare evidence. Do not book, purchase, sign in or submit passenger/payment information.`,
+    objective:`Read actual flight rows for ${query}. Before Search, explicitly set ${context.adults||1} adult${context.adults===1?'':'s'}, one-way and ${(context.cabin||'economy').replace(/_/g,' ')} using the observed controls; query URL prose does not set them. User research criteria: ${params.objective}. Verify the selected route, departure date, passengers and cabin using visible search controls. For the party total, read the visible "Prices include required taxes + fees for ... adults" statement; do not multiply a per-person or unknown fare. Report airline, departure, arrival and INR fare evidence. Do not book, purchase, sign in or submit passenger/payment information.`,
     mode:'read',recoverFlightSearch:true,
   }) } catch (error: any) {
     // Browser verification/timeouts are expected provider failures. The travel

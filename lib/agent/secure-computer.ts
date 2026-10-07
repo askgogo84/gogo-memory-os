@@ -904,7 +904,25 @@ function productLinkNeedsDetail(objective:string,raw:unknown):boolean{
 export async function assessReadOutcome(objective:string,page:any,diagnose:(event:BrowserReadDiagnostic)=>void=()=>{}):Promise<string|null>{
   if(productLinkNeedsDetail(objective,page.url)){diagnose({phase:'assessment',reason:'needs_product_detail'});return null}
   if(/\b(?:link|url)\b/i.test(objective)&&!browserSourceUrl(page.url)){diagnose({phase:'assessment',reason:'source_unusable'});return null}
-  const pageText=safeText(page.text,18000)
+  // Google keeps selected airports, date, cabin and passenger count in ARIA
+  // labels. Body prose alone cannot verify a multi-passenger search, even when
+  // real rows have loaded. Use only the bounded public labels emitted by our
+  // exact-host observer; the same text grounds the model's verbatim excerpts.
+  const flightEvidence=googleFlightReadProgress(page)?page.flightEvidence:null
+  const flightLabels=[
+    ...(Array.isArray(flightEvidence?.searchControls)?flightEvidence.searchControls:[])
+      .filter((label:any)=>typeof label==='string'&&/^(?:Where (?:from|to)\?|Change (?:ticket type|seating class)\.|\d+ passengers?\b|Track prices from .+ to .+ departing \d{4}-\d{2}-\d{2}$)/i.test(label)).slice(0,12),
+    ...(Array.isArray(flightEvidence?.resultLabels)?flightEvidence.resultLabels:[])
+      .filter((label:any)=>typeof label==='string'&&/^From [\d,]+ Indian rupees\. .+ flight with .+\. Leaves .+ and arrives at .+\. Total duration /i.test(label)).slice(0,8),
+  ].map(label=>String(label).slice(0,1200).replace(/\bdeparting (20\d{2}-\d{2}-\d{2})$/,(match,dateText)=>{
+    const date=new Date(`${dateText}T00:00:00Z`)
+    if(!Number.isFinite(date.getTime())||date.toISOString().slice(0,10)!==dateText)return match
+    // The generic secret redactor intentionally hides eight-digit identifier
+    // shapes, including ISO dates. Render this observed public date as words
+    // before that unchanged privacy boundary, rather than exempting digit runs.
+    return `departing ${new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'}).format(date)}`
+  }))
+  const pageText=safeText([...flightLabels,String(page.text||'')].join('\n'),flightLabels.length?24000:18000)
   const title=safeText(page.title,500)
   const titleOnly=isTitleOnlyObjective(objective)
   if(!pageText.trim()&&!(titleOnly&&title)){diagnose({phase:'assessment',reason:'empty_page'});return null}

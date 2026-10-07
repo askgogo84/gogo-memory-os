@@ -147,6 +147,15 @@ assert.equal(exactRows[0].departure,'3:45 AM');assert.equal(exactRows[0].evidenc
 const formattedFlight=browser.formatBrowserFlightResult(context,exactRows,observedGoogle.url)
 assert.match(formattedFlight,/₹4,423/);assert.match(formattedFlight,/Open source: https:\/\/www.google.com\/travel\/flights\/search/)
 assert.match(formattedFlight,/Nothing booked or paid/);assert.match(formattedFlight,/Baggage and optional charges/)
+const partyContext={...context,adults:2}
+const partyGoogle={...observedGoogle,pageText:'Prices include required taxes + fees for 2 adults.',flightEvidence:{searchControls:selected.map(label=>label.replace('1 passenger','2 passengers')),resultLabels:[googleLabel.replace('4423','8846')]}}
+const partyOptions=browser.googleFlightOptionsFromEvidence(partyGoogle,partyContext)
+assert.equal(partyOptions[0].fareInr,8846)
+assert.match(browser.formatBrowserFlightResult(partyContext,partyOptions,partyGoogle.url),/total for 2 adults/,'a verified displayed party total is labelled and never multiplied')
+for(const pageText of ['','Prices include required taxes + fees for one adult.','Prices include required taxes + fees for 3 adults.']){
+ const unknownBasis=browser.googleFlightOptionsFromEvidence({...partyGoogle,pageText},partyContext)
+ assert.match(browser.formatBrowserFlightResult(partyContext,unknownBasis,partyGoogle.url),/party total not verified/,'selected passengers alone cannot establish fare basis')
+}
 assert.throws(()=>browser.formatBrowserFlightResult(context,exactRows,'https://www.google.com.evil.example/travel/flights'),/flight_result_source_unverified/)
 for(const replacement of [['2026-10-20','2026-10-21'],['Economy','Business'],['1 passenger','2 passengers'],['One way','Round trip'],['Where from? Bengaluru BLR','Where from? Mumbai BOM']]){
   assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,flightEvidence:{...observedGoogle.flightEvidence,searchControls:selected.map(s=>s.replace(replacement[0],replacement[1]))}},context).length,0)
