@@ -266,6 +266,33 @@ for(const [url,label,expectedWaits,expectedClicks] of [
  assert.equal(output.actions[0].status,expectedClicks?'done':'skipped')
 }
 await exports.planActions('Find vegetarian burgers',observedLinkPage,'read','USER_INSTRUCTION')
+// Live two-adult research stopped after a form action was rejected as
+// consequential. Observed passenger controls reproduce the rejection below.
+const passengerGuard=exports.BROWSER_SCRIPT.match(/async function isConsequentialControl\(page,selector,onUnavailable\)\{[\s\S]*?\n\}\n(?=\(async)/)![0]
+for(const [url,label,dialogLabel,searchRegion,form,expected] of [
+ ['https://www.google.com/travel/flights','1 passenger, change number of passengers.','',true,false,false],
+ ['https://www.google.com/travel/flights','2 passengers, change number of passengers.','',false,false,true],
+ ['https://www.google.com/travel/flights','Add adult','Number of passengers',true,false,false],
+ ['https://www.google.com/travel/flights/search','Remove adult','Number of passengers',true,false,false],
+ ['https://www.google.com/travel/flights','Done','Number of passengers',true,false,false],
+ ['https://www.google.com/travel/flights','Cancel','Number of passengers',true,false,false],
+ ['https://www.google.com.evil.example/travel/flights','Add adult','Number of passengers',true,false,true],
+ ['http://www.google.com/travel/flights','Add adult','Number of passengers',true,false,true],
+ ['https://www.google.com/travel/flights','Add adult','Booking passengers',true,false,true],
+ ['https://www.google.com/travel/flights','Add adult','Number of passengers',false,false,true],
+ ['https://www.google.com/travel/flights','Add adult','Number of passengers',true,true,true],
+ ['https://www.google.com/travel/flights','Add to cart','Number of passengers',true,false,true],
+ ['https://www.google.com/travel/flights','Confirm booking','Number of passengers',true,false,true],
+ ['https://www.google.com/travel/flights','Add child aged 2 to 11','Number of passengers',true,false,true],
+] as const){
+ const dialog={getAttribute:(key:string)=>key==='aria-label'?dialogLabel:key==='aria-modal'?'true':null,closest:(selector:string)=>searchRegion&&selector==='[role="search"]'?{}:null}
+ const element={tagName:'BUTTON',textContent:label,id:'',form:form?{}:null,disabled:false,
+   getAttribute:(key:string)=>key==='aria-label'?label:null,
+   closest:(selector:string)=>selector==='[role="dialog"]'&&dialogLabel?dialog:selector==='[role="search"]'&&searchRegion?{}:selector==='form'&&form?{}:null}
+ const page={url:()=>url,locator:()=>({first:()=>({evaluate:async(fn:any)=>fn(element)})})}
+ const result=await runInNewContext(passengerGuard+'isConsequentialControl(page,"#observed")',{page,location:{href:url}})
+ assert.equal(result,expected,`public passenger guard: ${url} / ${label} / ${dialogLabel}`)
+}
 assert.match(captured,/"href":"https:\/\/www.zomato.com\/restaurants"/,'planner can distinguish restaurant navigation from a same-page footer link')
 assert.match(captured,/"previousActions":\[{"kind":"click","status":"done"/,'last attempted action survives into the next planning wave')
 const plan=await exports.planActions('Find Amul Taaza 1 litre',snapshot('Search for milk'),'read','USER_INSTRUCTION')
