@@ -137,6 +137,10 @@ const observedGoogle={url:'https://www.google.com/travel/flights/search',flightE
 const exactRows=browser.googleFlightOptionsFromEvidence(observedGoogle,context)
 assert.equal(exactRows.length,1);assert.equal(exactRows[0].fareInr,4423);assert.equal(exactRows[0].stops,0)
 assert.equal(exactRows[0].departure,'3:45 AM');assert.equal(exactRows[0].evidence,googleLabel)
+const formattedFlight=browser.formatBrowserFlightResult(context,exactRows,observedGoogle.url)
+assert.match(formattedFlight,/₹4,423/);assert.match(formattedFlight,/Open source: https:\/\/www.google.com\/travel\/flights\/search/)
+assert.match(formattedFlight,/Nothing booked or paid/);assert.match(formattedFlight,/Baggage and optional charges/)
+assert.throws(()=>browser.formatBrowserFlightResult(context,exactRows,'https://www.google.com.evil.example/travel/flights'),/flight_result_source_unverified/)
 for(const replacement of [['2026-10-20','2026-10-21'],['Economy','Business'],['1 passenger','2 passengers'],['One way','Round trip'],['Where from? Bengaluru BLR','Where from? Mumbai BOM']]){
   assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,flightEvidence:{...observedGoogle.flightEvidence,searchControls:selected.map(s=>s.replace(replacement[0],replacement[1]))}},context).length,0)
 }

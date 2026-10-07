@@ -25,6 +25,13 @@ export type BrowserFlightOption = {
   evidence: string
 }
 
+export function formatBrowserFlightResult(context:BrowserFlightContext,options:BrowserFlightOption[],sourceUrl:string){
+  const url=new URL(sourceUrl)
+  if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))throw new Error('flight_result_source_unverified')
+  const rows=options.slice(0,8).map((f,i)=>`${i+1}. ${f.airline} · ${f.departure} → ${f.arrival} · ${f.stops===null?'stops not verified':f.stops===0?'non-stop':`${f.stops} stop${f.stops===1?'':'s'}`} · ${f.fareInr?`₹${f.fareInr.toLocaleString('en-IN')}`:'fare not verified'}`)
+  return `Flight check · ${context.routeLabel} · ${context.whenLabel}\n${context.adults||1} adult${context.adults===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')}\nSource: Google Flights, read from the live browser page\n\n${rows.join('\n')}\n\nOpen source: ${sourceUrl}\nBaggage and optional charges need final verification. Nothing booked or paid.`
+}
+
 export function browserFlightContextVisible(pageText: string, context: BrowserFlightContext) {
   const text = String(pageText || '').replace(/\s+/g, ' ').toLowerCase()
   const placeIndex = (place: BrowserFlightContext['origin']) => Math.min(...[place?.code,place?.label].filter(Boolean)
