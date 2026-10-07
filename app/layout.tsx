@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { Geist_Mono, Newsreader, Onest } from "next/font/google";
+import { Geist_Mono, Onest } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
 const geistMono = Geist_Mono({
@@ -10,11 +11,15 @@ const geistMono = Geist_Mono({
 // Final AskGogo website typography. The logged-in product uses the exact same
 // editorial/display voice so the handoff from askgogo.in to app.askgogo.in feels
 // like one product, not a separate SaaS dashboard.
-const newsreader = Newsreader({
+// Bundle Newsreader: CI's Google font response can fail Turbopack URL parsing.
+const newsreader = localFont({
   variable: "--font-newsreader",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
-  style: ["normal", "italic"],
+  src: [
+    { path: "./fonts/newsreader/Newsreader-Latin.woff2", weight: "300 600", style: "normal" },
+    { path: "./fonts/newsreader/Newsreader-Latin-Italic.woff2", weight: "300 600", style: "italic" },
+  ],
+  display: "swap",
+  adjustFontFallback: "Times New Roman",
 });
 
 const onest = Onest({

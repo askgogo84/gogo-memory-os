@@ -49,7 +49,9 @@ async function main() {
     is_recurring boolean,recurring_pattern text,timezone text,nudge_count integer,followup_started_at timestamptz,
     fail_attempts integer default 0,last_failed_at timestamptz,sent_at timestamptz,twilio_sid text,delivery_status text);
     create table followups(id uuid primary key default gen_random_uuid(),whatsapp_id text,contact_name text,context text,
-      check_at timestamptz,status text default 'pending',created_at timestamptz default now());`)
+      check_at timestamptz,status text default 'pending',created_at timestamptz default now());
+    create table agent_runs(id uuid primary key default gen_random_uuid(),telegram_id text,type text,source text,
+      status text,updated_at timestamptz default now(),metadata_json jsonb default '{}'::jsonb);`)
   await db.exec(fs.readFileSync('supabase/reminder-insert-idempotency-20260915.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925110046_reminder_delivery_leases.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925111441_delivery_callback_inbox.sql','utf8'))
@@ -58,6 +60,8 @@ async function main() {
   await db.exec(fs.readFileSync('supabase/migrations/20260925115445_delivery_monitoring.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925172132_delivery_retry_boundaries.sql','utf8'))
   await db.exec(fs.readFileSync('supabase/migrations/20260925180012_delivery_health_details.sql','utf8'))
+  await db.exec(fs.readFileSync('supabase/migrations/20261007044858_comparison_result_delivery.sql','utf8'))
+  await db.exec(fs.readFileSync('supabase/migrations/20261007052139_comparison_delivery_due_queue.sql','utf8'))
   const query = async (sql, params = []) => (await db.query(sql, params)).rows
   const rpc = async (name,args) => {
     const rows = await query(`select * from ${name}(${Object.keys(args).map((k,i)=>k+' => $'+(i+1)).join(',')})`,Object.values(args))
@@ -214,6 +218,44 @@ async function main() {
   const job=(await query("select * from notification_deliveries where delivery_key='race'"))[0]
   await post('SM-race','delivered',job.claim_token)
   assert.equal((await query("select state from notification_deliveries where delivery_key='race'"))[0].state,'delivered')
+  // Actual comparison migration + outbox: newer backoff/final rows cannot
+  // crowd an older unsent result out of the worker's bounded due selection.
+  const oldest=crypto.randomUUID(), rejected=crypto.randomUUID(), unknown=crypto.randomUUID()
+  await query("insert into agent_runs(id,telegram_id,type,source,status,updated_at) values($1,'1','price_comparison','whatsapp','completed',now()-interval '2 days')",[oldest])
+  for(let i=0;i<25;i++){
+    const run=crypto.randomUUID(),key='price_comparison/'+run
+    await query("insert into agent_runs(id,telegram_id,type,source,status) values($1,'1','price_comparison','whatsapp','completed')",[run])
+    await query("insert into notification_deliveries(delivery_key,source,owner_id,channel,due_at,state,retry_at) values($1,'price_comparison',1,'whatsapp',now(),$2,now()+interval '1 hour')",[key,i%2?'pending':'failed'])
+  }
+  assert.deepEqual((await query('select * from due_price_comparison_deliveries(20)')).map(x=>x.id),[oldest])
+  for(const run of [rejected,unknown])await query("insert into agent_runs(id,telegram_id,type,source,status) values($1,'1','price_comparison','whatsapp','paused')",[run])
+  let comparisonSends=0
+  const comparisonNotify=(id,send)=>notify('price_comparison/'+id,{source:'price_comparison',due:'2020-01-01',send})
+  const rejection=async()=>{comparisonSends++;throw {status:401,code:20003}}
+  assert.equal(await comparisonNotify(rejected,rejection),'failed')
+  assert.equal((await query('select * from due_price_comparison_deliveries(20)')).some(x=>x.id===rejected),false,'backoff respected')
+  for(let i=0;i<3;i++){
+    await query("update notification_deliveries set retry_at=now()-interval '1 second' where delivery_key=$1",['price_comparison/'+rejected])
+    assert.equal((await query('select * from due_price_comparison_deliveries(20)')).some(x=>x.id===rejected),true)
+    assert.equal(await comparisonNotify(rejected,rejection),'failed')
+  }
+  assert.equal((await query('select state from notification_deliveries where delivery_key=$1',['price_comparison/'+rejected]))[0].state,'pending','comparison recovers beyond the old three-attempt limit')
+  await query("update notification_deliveries set retry_at=now()-interval '1 second' where delivery_key=$1",['price_comparison/'+rejected])
+  assert.equal(await comparisonNotify(rejected,async()=>{comparisonSends++;return 'SMcomparison-recovered'}),'provider_accepted')
+  await comparisonNotify(rejected,rejection)
+  assert.equal(comparisonSends,5,'an accepted comparison cannot be resent')
+  assert.equal(await comparisonNotify(unknown,async()=>{throw Error('socket closed after send')}),'outcome_unknown')
+  assert.equal((await query('select * from due_price_comparison_deliveries(20)')).some(x=>x.id===unknown),false,'unknown delivery is never blindly resent')
+  // The extended window still has a hard bound; unrelated sources keep three attempts.
+  for(const [key,source,attempts] of [['comparison-bound','price_comparison',71],['briefing-bound','briefing',2]]){
+    const token=crypto.randomUUID()
+    await rpc('claim_notification_delivery',{p_key:key,p_source:source,p_owner:1,p_channel:'whatsapp',p_due:'2020-01-01',p_token:token})
+    await query('update notification_deliveries set attempts=$2 where delivery_key=$1',[key,attempts])
+    assert.equal(await rpc('retry_notification_delivery',{p_key:key,p_token:token}),true)
+    assert.equal((await query('select state from notification_deliveries where delivery_key=$1',[key]))[0].state,'failed')
+  }
+  const queueGrants=(await query("select has_function_privilege('anon','public.due_price_comparison_deliveries(integer)','execute') as anon,has_function_privilege('authenticated','public.due_price_comparison_deliveries(integer)','execute') as authenticated,has_function_privilege('service_role','public.due_price_comparison_deliveries(integer)','execute') as service"))[0]
+  assert.deepEqual(queueGrants,{anon:false,authenticated:false,service:true})
   // Actual briefing route paginates beyond the old 150-user cap, including negative
   // legacy IDs, catches up later today, and propagates final preferences into ready.
   let scanCursor=null,seen=[],disabled=false

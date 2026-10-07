@@ -54,7 +54,7 @@ assert.ok(agentRoute.indexOf("const restaurantReservation = await tryRunRestaura
 assert.match(dashboardRoute,/tryRunRestaurantReservation/)
 assert.ok(dashboardRoute.indexOf("const restaurantReservation = await tryRunRestaurantReservation") < dashboardRoute.indexOf("const appointmentFollowup = await tryRunAppointmentFollowup"), 'dashboard restaurant routing must outrank appointment routing')
 assert.match(whatsappWebhook,/isRestaurantReservationRequest/)
-assert.ok(whatsappWebhook.indexOf('isRestaurantReservationRequest(text)') < whatsappWebhook.indexOf('const featureReply = await routeFeatureIntent'), 'WhatsApp reservation workflow must outrank legacy feature routing')
+assert.ok(whatsappWebhook.indexOf('isRestaurantReservationRequest(text)') < whatsappWebhook.indexOf('const featureReply = preserveFriendFlow'), 'WhatsApp reservation workflow must outrank legacy feature routing')
 assert.match(whatsappBridge,/queueRestaurantReservationResearch/)
 assert.doesNotMatch(whatsappBridge,/withWhatsAppBrowserBudget\(actor, tryRunRestaurantReservation/,'WhatsApp restaurant research must not die inside the 42s generic browser race')
 assert.ok(whatsappBridge.indexOf('const restaurantReservation = await queueRestaurantReservationResearch') < whatsappBridge.indexOf('const appointmentRecovery = await'), 'durable restaurant queue must outrank appointment workflow')

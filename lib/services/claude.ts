@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import {selectContentWorkflow, contentWorkflowPrompt} from '@/lib/agent/content-workflows'
 
 export interface Message {
   role: 'user' | 'assistant'
@@ -56,6 +57,8 @@ export async function askClaude(
   const isoNow = new Date().toISOString()
 
   const contextualContext = contextualBlock ? `\n\n${contextualBlock}` : ''
+  const workflow = selectContentWorkflow(userMessage)
+  const maxTokens = workflow?.maxTokens || 1024
 
   const systemPrompt = `You are AskGogo, a brilliant personal AI assistant for ${userName}. Warm, concise, genuinely helpful.
 ${memoryContext}${preferenceBlock}${contextualContext}
@@ -127,7 +130,8 @@ RULES:
    - If a location window is marked INFERRED, say it is inferred from recorded itinerary evidence. Do not promote it to a recorded booking/fact.
    - Never say "when you're back", "after you return", or equivalent about a location unless the owner-bound context contains RECORDED evidence of a return leg/event to that location after the date in question. If that evidence is absent, simply avoid the return claim.
 
-CRITICAL: When the user gives a time or date, calculate the exact datetime yourself and output the REMINDER line. If the user gives NO time or date (e.g. "remind me about the thing"), do NOT guess a time and do NOT output a REMINDER line - instead reply in one short sentence asking when. The [message] field must be a short clean task label only (e.g. "Call the bank") - never include words like "today", "tomorrow", "at 1pm", or "day after".`
+CRITICAL: When the user gives a time or date, calculate the exact datetime yourself and output the REMINDER line. If the user gives NO time or date (e.g. "remind me about the thing"), do NOT guess a time and do NOT output a REMINDER line - instead reply in one short sentence asking when. The [message] field must be a short clean task label only (e.g. "Call the bank") - never include words like "today", "tomorrow", "at 1pm", or "day after".
+${workflow ? contentWorkflowPrompt(workflow) : ''}`
 
   const safeHistory = history.map((m) => ({ ...m, content: redactSecretShapedText(m.content) }))
   // Context-synthesis turns deliberately rely on the durable owner-bound context pack
@@ -139,14 +143,14 @@ CRITICAL: When the user gives a time or date, calculate the exact datetime yours
   try{
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5',
-      max_tokens: 1024,
+      max_tokens: maxTokens,
       system: systemPrompt,
       messages,
     })
     return response.content[0].type === 'text' ? response.content[0].text : ''
   }catch(error:any){
     console.error('ANTHROPIC_FREEFORM_FAILED_FALLING_BACK:',providerErrorSummary(error))
-    return await askOpenAiFallback({system:systemPrompt,messages,maxTokens:1024})
+    return await askOpenAiFallback({system:systemPrompt,messages,maxTokens})
   }
 }
 

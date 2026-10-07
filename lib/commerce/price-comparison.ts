@@ -3,6 +3,7 @@ import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-ru
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
 import {COMPARISON_PROVIDERS, comparisonObjective, comparisonSource, comparisonState, comparisonSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
 const SELECT = 'id,status,title,source,updated_at,metadata_json'
@@ -44,6 +45,21 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
 function reply(task: PriceComparison) {
   return {runId: task.id, status: task.status, capability: 'browser' as const, risk: 'low' as const,
     handledBy: 'price-comparison', text: comparisonSummary(task) + '\n\nSaved comparison: ' + comparisonLink(task.id)}
+}
+
+/** Search is a labelled fallback only; a snippet is never a live retailer quote. */
+export async function comparisonWebFallback(task: PriceComparison): Promise<string> {
+  const failed = task.metadata_json.providers.filter(row => row.status === 'failed')
+  if (!failed.length) return ''
+  const lines: string[] = []
+  for (const row of failed.slice(0, 3)) {
+    const provider = COMPARISON_PROVIDERS[row.provider]
+    const scoped = indiaShoppingSearch(`${task.metadata_json.subject} price on ${provider.label}`)
+    const results = await searchWebResults(scoped.query, {includeDomains: [provider.domain], timeoutMs: 10_000})
+    const product = results.map(result => comparisonSource(row.provider, result.url)).find(Boolean)
+    if (product) lines.push(`${provider.label} product-page lead: ${product}`)
+  }
+  return `The browser could not verify a live price, so I checked India-scoped web search. Search links are leads, not confirmed prices or stock.${lines.length ? '\n' + lines.join('\n') : ' No matching product page was found.'}`
 }
 
 export async function tryPriceComparison(params: {telegramId: number; text: string; surface?: string}) {

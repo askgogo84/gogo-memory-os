@@ -2,13 +2,14 @@
   title: string
   snippet: string
   url: string
+  publishedDate?: string
 }
 
 function cleanText(input: string) {
   return (input || '').replace(/\s+/g, ' ').trim()
 }
 
-export type WebSearchOptions = { includeDomains?: string[]; timeoutMs?: number }
+export type WebSearchOptions = { includeDomains?: string[]; timeoutMs?: number; startDate?: string; endDate?: string; filterByPublishedDate?: boolean }
 
 async function searchWithTavily(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
   const apiKey = process.env.TAVILY_API_KEY
@@ -31,6 +32,9 @@ async function searchWithTavily(query: string, opts: WebSearchOptions = {}): Pro
       max_results: 5,
       include_answer: false,
       ...(includeDomains.length ? { include_domains: includeDomains } : {}),
+      ...(opts.startDate ? {start_date: opts.startDate} : {}),
+      ...(opts.endDate ? {end_date: opts.endDate} : {}),
+      ...(opts.filterByPublishedDate ? {include_published_date: true, filter_by_published_date: true} : {}),
     }),
     cache: 'no-store',
     ...(opts.timeoutMs ? {signal: AbortSignal.timeout(Math.max(1000, Math.min(opts.timeoutMs, 30_000)))} : {}),
@@ -49,6 +53,7 @@ async function searchWithTavily(query: string, opts: WebSearchOptions = {}): Pro
     title: cleanText(r.title || ''),
     snippet: cleanText(r.content || r.snippet || ''),
     url: r.url || '',
+    ...(r.published_date ? {publishedDate: String(r.published_date)} : {}),
   }))
 }
 

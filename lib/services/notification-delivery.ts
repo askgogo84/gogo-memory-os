@@ -4,7 +4,7 @@ import { isDefiniteProviderRejection } from './delivery-state'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export async function deliverNotification(p: {
-  key: string; source: 'briefing' | 'followup'; owner: number; channel: 'whatsapp' | 'email'; due: string
+  key: string; source: 'briefing' | 'followup' | 'price_comparison'; owner: number; channel: 'whatsapp' | 'email'; due: string
   prepare: () => Promise<void>; ready: () => Promise<boolean>; send: (token: string) => Promise<string>
   accepted?: (id: string) => Promise<void>; deadline: number
 }): Promise<string> {

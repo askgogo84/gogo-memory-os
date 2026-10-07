@@ -16,14 +16,19 @@ export type ComparisonProvider = keyof typeof COMPARISON_PROVIDERS
 // named PRODUCT retailer/domain AND a price/stock verb. Swiggy/Zomato (food) are excluded so
 // the food-comparison flow is untouched.
 const RETAILER_PRICE_KEYS: ComparisonProvider[] = ['amazon', 'flipkart', 'croma', 'instamart', 'zepto', 'blinkit']
-const RETAILER_PRICE_DOMAINS = ['amazon.in', 'flipkart.com', 'croma.com', 'zepto.com', 'blinkit.com']
+function priceReadProviders(text: string): ComparisonProvider[] {
+  const lower = String(text || '').toLowerCase()
+  return RETAILER_PRICE_KEYS.filter(key => {
+    const domain = key === 'instamart' ? '' : COMPARISON_PROVIDERS[key].domain
+    const name = new RegExp(`\\b(?:on|from|at)\\s+(?:the\\s+)?(?:www\\.)?${key}\\b|\\b${key}\\s+(?:price|cost|stock|availability)\\b`, 'i')
+    const domainMention = domain && new RegExp(`(?:^|[^\\w.-])(?:www\\.)?${domain.replace(/\./g, '\\.')}\\b`, 'i').test(lower)
+    return name.test(text) || Boolean(domainMention)
+  })
+}
 export function namesRetailerPriceRead(text: string): boolean {
   const t = String(text || '')
-  const lower = t.toLowerCase()
-  const namesRetailer = RETAILER_PRICE_KEYS.some(k => new RegExp('\\b' + k + '\\b', 'i').test(t))
-    || RETAILER_PRICE_DOMAINS.some(d => lower.includes(d))
   const priceVerb = /\b(price|cost|how much|in stock|out of stock|availability|available)\b/i.test(t)
-  return namesRetailer && priceVerb
+  return priceVerb && priceReadProviders(t).length > 0
 }
 export type ProviderObservation = {
   provider: ComparisonProvider; status: 'pending'|'checking'|'observed'|'blocked'|'failed';
@@ -44,18 +49,22 @@ export function parsePriceComparison(text: string) {
   if (isPriceComparisonStatus(text)) return null
   const intentText = text.replace(/\b(?:do not|don't|never)\b[^.!?\n]*/gi, '')
     .replace(/\bno\s+(?:new\s+)?(?:watches|watch|monitors|monitor|reminders|reminder)\b/gi, '')
-  if (!/\bcompar(?:e|ison|isons)\b/i.test(text) || /\b(?:watch|monitor|remind|remember|every|keep checking)\b/i.test(intentText)) return null
+  if (/\b(?:watch|monitor|remind|remember|every|keep checking)\b/i.test(intentText)) return null
+  const compares = /\bcompar(?:e|ison|isons)\b/i.test(text)
+  if (!compares && !namesRetailerPriceRead(text)) return null
   const lower = text.toLowerCase()
-  const providers = (Object.keys(COMPARISON_PROVIDERS) as ComparisonProvider[]).filter(key => {
-    if (key === 'swiggy' && /instamart/.test(lower) && !/swiggy\s+(?:food|and\s+zomato)/.test(lower)) return false
-    return new RegExp('\\b' + key + '\\b').test(lower)
-  })
-  if (providers.length < 2) return null
+  const providers = compares ? (Object.keys(COMPARISON_PROVIDERS) as ComparisonProvider[]).filter(key => {
+    if (key === 'swiggy') return compares && (!/instamart/.test(lower) || /swiggy\s+(?:food|and\s+zomato)/.test(lower)) && /\bswiggy\b/.test(lower)
+    if (key === 'zomato') return compares && /\bzomato\b/.test(lower)
+    return new RegExp('\\b' + key + '\\b').test(lower) || lower.includes(COMPARISON_PROVIDERS[key].domain)
+  }) : priceReadProviders(text)
+  if (providers.length < (compares ? 2 : 1)) return null
   // Preserve all original criteria separately. This is a display label, never a
   // model-extracted product specification or a substitute for the full request.
   const subject = text.replace(/^.*?\bcompare\s+(?:grocery prices for\s+|prices for\s+)?/i, '')
+    .replace(/^\s*(?:(?:what(?:'s| is)|check|find|show|tell me)\s+(?:me\s+)?(?:the\s+)?(?:live\s+)?(?:price|cost|availability|stock)\s+(?:of\s+|for\s+)?|(?:is|are)\s+the\s+|(?:how much (?:is|does)\s+))/i, '')
     .split(/\s+(?:on|across|between|from)\s+(?:amazon|flipkart|croma|instamart|swiggy|zepto|blinkit|zomato)\b/i)[0]
-    .split(/[.!?]\s/)[0].trim().slice(0, 180)
+    .replace(/[?.!]+$/g, '').split(/[.!?]\s/)[0].trim().slice(0, 180)
   return {subject: subject || 'Price comparison', request: text.slice(0, 2000), providers}
 }
 
@@ -155,6 +164,24 @@ export function comparisonSummary(task: PriceComparison) {
     return `${line}.\nObserved page excerpt (${checked}): ${row.evidence.replace(/\s+/g, ' ').trim()}\nSource: ${row.sourceUrl}`
   })
   return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'Remaining store checks are queued.' : 'This check has finished; blocked stores are not being retried automatically.'}\nItem observations are not a verified delivered-total ranking. Fees, location-specific prices and conditional offers remain unverified unless explicitly shown in the evidence.`
+}
+
+/** Short phone update; the saved report keeps the complete browser evidence. */
+export function comparisonWhatsAppSummary(task: PriceComparison) {
+  const lines = task.metadata_json.providers.map(row => {
+    const label = COMPARISON_PROVIDERS[row.provider].label
+    if (row.status === 'observed' && row.sourceUrl && row.evidence) {
+      const excerpt = row.evidence.replace(/\s+/g, ' ').trim().slice(0, 420)
+      const checked = row.checkedAt && Number.isFinite(Date.parse(row.checkedAt))
+        ? new Intl.DateTimeFormat('en-IN', {timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true}).format(new Date(row.checkedAt)) + ' IST'
+        : 'time unavailable'
+      return `*${label}* · checked ${checked}\n${excerpt}\nProduct page: ${row.sourceUrl}`
+    }
+    const reason = row.reason || (row.status === 'pending' || row.status === 'checking'
+      ? 'Still checking the store.' : 'No product-page price was verified.')
+    return `*${label}* · ${reason}`
+  })
+  return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\nPrices are page observations, not confirmed delivered totals. Fees, location and conditional offers need checking unless shown above.`
 }
 
 export function comparisonObjective(task: PriceComparison, provider: ComparisonProvider) {

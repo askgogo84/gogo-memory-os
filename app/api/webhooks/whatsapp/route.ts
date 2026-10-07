@@ -1,4 +1,8 @@
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
+import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
+import { namesRetailerPriceRead } from '@/lib/commerce/comparison-model'
+import {detectFriendReminder, getPendingFriend, isFriendReminderFollowupCandidate} from '@/lib/bot/handlers/friend-reminders'
+import {runCompoundShoppingFriendRequests} from '@/lib/bot/compound-shopping-friend'
 import { tryMeetingShareFollowup, tryImageMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
 import { parseWebWatchCommand, isWatcherStatusQuery } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
@@ -866,9 +870,43 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
 
     const originalText = incoming.text.trim()
     const text = incoming.wasVoice ? normalizeVoicePromptForBot(originalText) : originalText
+    const preserveFriendFlow = Boolean(detectFriendReminder(text)) ||
+      (isFriendReminderFollowupCandidate(text) && Boolean(await getPendingFriend(resolvedUser.telegramId)))
 
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, images and PDFs now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.`)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    const contentDraft = await tryRunContentWorkflow({userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId,
+      whatsappId: String(resolvedUser.whatsappId || from), name: resolvedUser.name || profileName || 'Gogo'}, text, inboundMessageSid)
+    if (contentDraft) {
+      await sendWhatsAppMessage(from, contentDraft.text)
+      return new NextResponse(emptyTwiml(), {status: 200, headers: {'Content-Type': 'text/xml'}})
+    }
+
+    // A multiline WhatsApp bubble can contain separate retailer reads and a
+    // delegated reminder. Route each recognised line before whole-message intent
+    // handlers can collapse all of them into a single search or reminder.
+    const compoundReplies = await runCompoundShoppingFriendRequests(text, {
+      checkPrice: async stepText => {
+        const comparison = await tryPriceComparison({telegramId: resolvedUser.telegramId, text: stepText, surface: 'whatsapp'})
+        if (!comparison) throw new Error('compound_price_unhandled')
+        await saveConversation(resolvedUser.telegramId, 'user', stepText)
+        await saveConversation(resolvedUser.telegramId, 'assistant', comparison.text)
+        return comparison.text
+      },
+      prepareFriend: async (stepText, index) => {
+        const reminder = await processIncomingMessage({channel: 'whatsapp', externalUserId: from,
+          text: stepText, userName: profileName, messageType: 'text',
+          messageId: inboundMessageSid ? `${inboundMessageSid}:${index}` : null})
+        return reminder.text
+      },
+      onError: (error, kind, index) => console.error('WHATSAPP_COMPOUND_STEP_FAILED:',
+        {kind, index, error: error instanceof Error ? error.message : String(error)}),
+    })
+    if (compoundReplies) {
+      for (const reply of compoundReplies) await sendWhatsAppMessage(from, reply)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
@@ -1002,7 +1040,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     }
 
     const yesFollowup = /^(yes|yeah|yep|haan|ok|okay|create reminders|add reminders)( .*)?$/i.test(text)
-    if (yesFollowup) {
+    if (yesFollowup && !preserveFriendFlow) {
       const meetingReminderReply = await createMeetingActionReminders({ telegramId: resolvedUser.telegramId, whatsappTo: from })
       if (meetingReminderReply) {
         await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
@@ -1218,7 +1256,9 @@ _"${originalText}"_
       }
     }
 
-    const foodComparison=(/\bcompar(?:e|ison|isons)\b/i.test(text) ? await tryPriceComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'}) : null) || await tryFoodComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'})
+    // Claim named retailer price/stock reads before Jev, feature routing or PIM
+    // can classify "price" as a generic web search.
+    const foodComparison=(/\bcompar(?:e|ison|isons)\b/i.test(text)||namesRetailerPriceRead(text) ? await tryPriceComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'}) : null) || await tryFoodComparison({telegramId:resolvedUser.telegramId,text,surface:'whatsapp'})
     if(foodComparison){
       await saveConversation(resolvedUser.telegramId,'user',text)
       await saveConversation(resolvedUser.telegramId,'assistant',foodComparison.text)
@@ -1296,7 +1336,7 @@ _"${originalText}"_
     // fallback gets a chance to act on the wrong object. This does not grant Jev
     // execution authority; it only asks for the missing identifying detail.
     const jevClarify=jevClarificationReply(brainObservation?.jev)
-    if(jevClarify){
+    if(jevClarify && !preserveFriendFlow){
       await recordShadowRouterOutcome({
         telegramId:resolvedUser.telegramId,
         surface:'whatsapp',
@@ -1316,7 +1356,7 @@ _"${originalText}"_
     // execution authority. The specialist still has to validate the command and all
     // existing approval/policy/provider-verification gates remain unchanged.
     const jevIntent=promotedJevIntent(brainObservation?.jev)
-    if(jevIntent&&!isExplicitProviderBrowserRead(text)){
+    if(jevIntent&&!isExplicitProviderBrowserRead(text)&&!preserveFriendFlow){
       const agentIntent=['watcher','reminder_read','reminder_mutation','email_read','email_mutation','list_task','memory_context','travel_research','browser_action'].includes(jevIntent)
       if(agentIntent){
         const promotedAgent=await tryRunWhatsAppJevSpecialist({
@@ -1403,8 +1443,10 @@ _"${originalText}"_
       }
     }
 
-    const featureReply = await routeFeatureIntent(from, text, { telegramId: resolvedUser.telegramId, caption: bodyText }) ||
+    const featureReply = preserveFriendFlow ? null : (
+      await routeFeatureIntent(from, text, { telegramId: resolvedUser.telegramId, caption: bodyText }) ||
       (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText, { telegramId: resolvedUser.telegramId }) : null)
+    )
     if (featureReply) {
       await recordShadowRouterOutcome({
         telegramId:resolvedUser.telegramId,

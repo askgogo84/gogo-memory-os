@@ -5,6 +5,8 @@ import ts from 'typescript'
 import * as intent from '../lib/agent/food-comparison-intent'
 import {detectIntent} from '../lib/bot/detect-intent'
 import {retiredRunReason} from '../lib/agent/task-lifecycle'
+import * as contentWorkflows from '../lib/agent/content-workflows'
+import * as comparisonModel from '../lib/commerce/comparison-model'
 
 const incident='Find me a veg burger nearest my house.. best and the cheapest one compare with all good delivery apps'
 assert.equal(detectIntent(incident).type,'food_comparison')
@@ -115,10 +117,20 @@ runInNewContext(ts.transpileModule(readFileSync('lib/feature-intents.ts','utf8')
 const routed=await router.routeFeatureIntent('test-owner',incident,{telegramId:42})
 assert.match(routed,/delivery PIN code/,'exact production prompt is claimed before generic model routing')
 // The agent API also persists the location question, allowing a cross-surface reply.
+const contentEntry:any={}
+runInNewContext(ts.transpileModule(readFileSync('lib/agent/content-workflow-entry.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+  exports:contentEntry,require(name:string){
+    if(name==='./content-workflows')return contentWorkflows
+    if(name==='@/lib/bot/process-message')return {processIncomingMessage:async()=>{throw new Error('A food request must not enter a draft workflow')}}
+    throw new Error(`Unexpected content entry dependency ${name}`)
+  },
+})
 const api:any={}
 runInNewContext(ts.transpileModule(readFileSync('app/api/agent/run/route.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports:api,console,process:{env:{}},require(name:string){
     if(name==='@/lib/commerce/price-comparison')return {tryPriceComparison:async()=>null}
+    if(name==='@/lib/commerce/comparison-model')return comparisonModel
+    if(name==='@/lib/agent/content-workflow-entry')return contentEntry
     if(name==='@/lib/agent/food-comparison')return exports
     if(name==='@/lib/supabase-admin')return {supabaseAdmin:db}
     if(name==='next/server')return {NextResponse:{json:(data:any)=>data}}

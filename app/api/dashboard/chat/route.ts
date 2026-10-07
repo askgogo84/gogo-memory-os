@@ -1,4 +1,6 @@
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
+import {namesRetailerPriceRead} from '@/lib/commerce/comparison-model'
+import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
 import { tryCreateInboxTriageWatchFromCommand, tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
@@ -106,6 +108,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+    const contentDraft = await tryRunContentWorkflow(actor, text, `web-${randomUUID()}`)
+    if (contentDraft) return NextResponse.json(contentDraft)
     const watcherStatus=await tryGetWatcherStatusFromCommand({actor,text})
     if(watcherStatus){
       await saveConversation(user.telegram_id,text,watcherStatus.text)
@@ -123,7 +127,7 @@ export async function POST(req: NextRequest) {
       await saveConversation(user.telegram_id,text,meetingReply.text)
       return NextResponse.json(meetingReply)
     }
-    const foodComparison=(/\bcompar(?:e|ison|isons)\b/i.test(text) ? await tryPriceComparison({telegramId:actor.legacyTelegramId,text,surface:'web'}) : null) || await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:'web'})
+    const foodComparison=(/\bcompar(?:e|ison|isons)\b/i.test(text)||namesRetailerPriceRead(text) ? await tryPriceComparison({telegramId:actor.legacyTelegramId,text,surface:'web'}) : null) || await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:'web'})
     if(foodComparison){
       await saveConversation(user.telegram_id,text,foodComparison.text)
       return NextResponse.json(foodComparison)

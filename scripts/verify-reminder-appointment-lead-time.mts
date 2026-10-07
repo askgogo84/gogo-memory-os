@@ -10,6 +10,7 @@ import * as pendingFollowup from '../lib/bot/pending-followup'
 import * as amPmFollowup from '../lib/bot/handlers/reminder-ampm-followup'
 import { isCalendarAction, buildCalendarActionReply } from '../lib/bot/handlers/calendar-actions'
 import { isCalendarMutation } from '../lib/bot/handlers/calendar-mutations'
+import * as contentWorkflows from '../lib/agent/content-workflows'
 
 // Oct 1 WhatsApp failure: 16:30 appointment minus ten minutes was saved as 17:20.
 // Exercise the actual processIncomingMessage -> insert -> confirmation path with
@@ -58,11 +59,12 @@ const db = {
 
 const noMatch = new Set([
   'handleLinkVaultText', 'tryTypedTimeRouting', 'normalizePhoneNumber',
-  'detectFriendReminder', 'getLatestFollowupState', 'isAmPmChoice',
+  'detectFriendReminder', 'getPendingFriend', 'isFriendReminderFollowupCandidate', 'getLatestFollowupState', 'isAmPmChoice',
   'isCalendarConflictMoveCommand', 'parsePlanSelection', 'isPlanMyDayIntent',
   'isTranslationRequest', 'isFollowupReminderText', 'namesRetailerPriceRead',
 ])
 const actual: Record<string, any> = {
+  '@/lib/agent/content-workflows': contentWorkflows,
   './handlers/reminders': reminders,
   './detect-intent': { detectIntent },
   './handlers/response-style': responseStyle,
