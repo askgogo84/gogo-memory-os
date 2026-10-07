@@ -205,6 +205,7 @@ const dashboardMocks:any={
   '@/lib/dashboard/session':{getSession:async()=>({telegramId:'101'})},
   '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/agent/actor':{resolveAgentActor:async()=>({legacyTelegramId:101})},
+  '@/lib/bot/handlers/friend-reminders':{detectFriendReminder:()=>null,isFriendReminderFollowupCandidate:()=>false},
   '@/lib/agent/watch-command':commandExports,
 }
 vm.runInNewContext(dashboardOutput,{exports:dashboardExports,module:{exports:dashboardExports},require:(name:string)=>dashboardMocks[name]||noop,URL,console,Buffer})

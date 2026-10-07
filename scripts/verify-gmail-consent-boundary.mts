@@ -84,6 +84,7 @@ const routeMocks:any={
   '@/lib/supabase-admin':{supabaseAdmin:routeDb},
   '@/lib/dashboard/session':{getSession:async()=>routeSession?{telegramId:'101'}:null},
   '@/lib/agent/actor':{resolveAgentActor:async()=>actor},
+  '@/lib/bot/handlers/friend-reminders':{detectFriendReminder:()=>null,isFriendReminderFollowupCandidate:()=>false},
   '@/lib/agent/watch-command':{
     tryGetWatcherStatusFromCommand:async()=>null,tryUpdateWebWatchFromCommand:async()=>null,tryCreateWebWatchFromCommand:async()=>null,
     tryCreateInboxTriageWatchFromCommand:watches.tryCreateInboxTriageWatchFromCommand,
