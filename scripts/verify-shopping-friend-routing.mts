@@ -5,6 +5,9 @@ import ts from 'typescript'
 import {parsePriceComparison, namesRetailerPriceRead} from '../lib/commerce/comparison-model'
 import {formatOutgoingText} from '../lib/bot/format-response'
 import * as contentWorkflows from '../lib/agent/content-workflows'
+import * as signature from '../lib/security/webhook-signature'
+import * as inputNormalizer from '../lib/bot/input-normalizer'
+import * as previewRouting from '../lib/services/whatsapp-preview-routing'
 
 // Fixed phone incident: Wed 7 Oct 2026, 12:37 IST.
 const RealDate = Date
@@ -215,3 +218,93 @@ try {
   assert.equal(friend.parseFriendTime('check with Tom tomorrow at 11am')?.remindAtIso, '2026-10-07T05:30:00.000Z')
 } finally { globalThis.Date = RealDate }
 console.log('Shopping and friend reminder production-order regressions passed')
+
+// Execute the actual exported WhatsApp POST. The older harness called PIM and
+// checked source order, so it could miss a handler earlier in the real webhook.
+const sent:string[]=[]
+const webhookErrors:unknown[]=[]
+const events=new Map<string,any>()
+let featureClaims=0
+const fixtureUser={id:'owner',telegramId:42,whatsappId:'+919999999999',name:'Gogo',tier:'free'}
+const unrelated=(module:string)=>new Proxy({}, {get:(_target,key)=>{
+  const name=String(key)
+  if(/^(?:is|detect|parse)/.test(name))return ()=>null
+  if(/^(?:try|build|getLatestFollowupState)/.test(name))return ()=>null
+  if(/^(?:observe|capture|autoResolve|record)/.test(name))return async()=>null
+  throw Error(`Unmodelled webhook dependency: ${module}.${name}`)
+}})
+function executeModule(file:string,deps:Record<string,any>){
+  const result:any={}
+  runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+    exports:result,Date:FixedDate,Intl,URL,console:{...console,error:(...args:any[])=>webhookErrors.push(args)},process,Buffer,
+    require:(name:string)=>deps[name]||unrelated(name),
+  })
+  return result
+}
+const realFeature=executeModule('lib/feature-intents.ts',{
+  '@/lib/bot/input-normalizer':inputNormalizer,
+  '@/lib/feature-intents-legacy':{routeFeatureIntent:async()=>{featureClaims++;return 'Upstream web search claimed this request'}},
+})
+const webhook=executeModule('app/api/webhooks/whatsapp/route.ts',{
+  ...actual,
+  'next/server':{NextResponse:Response},
+  '@/lib/security/webhook-signature':signature,
+  '@/lib/feature-intents':realFeature,
+  '@/lib/services/whatsapp-preview-routing':previewRouting,
+  '@/lib/bot/process-message':{processIncomingMessage:exports.processIncomingMessage},
+  '@/lib/bot/compound-shopping-friend':compound,
+  '@/lib/bot/handlers/friend-reminders':{...actual['@/lib/bot/handlers/friend-reminders'],isFriendReminderFollowupCandidate:()=>false},
+  '@/lib/bot/resolve-user':{resolveUser:async()=>fixtureUser},
+  '@/lib/agent/actor':{resolveAgentActor:async()=>({userId:'owner',legacyTelegramId:42,whatsappId:fixtureUser.whatsappId,name:'Gogo'})},
+  '@/lib/bot/handlers/shared-memory':{handleBucketCommand:async()=>null},
+  '@/lib/channels/whatsapp':{sendWhatsAppMessage:async(_to:string,text:string)=>{sent.push(text)},sendWhatsAppTyping:async()=>{}},
+  '@/lib/agent/brain-runtime-guard':{
+    claimInboundEvent:async({eventKey}:any)=>{
+      const existing=events.get(eventKey)
+      if(existing)return {...existing,duplicate:true}
+      const claim={id:eventKey,ownerToken:'fixture',status:'claimed',duplicate:false};events.set(eventKey,claim);return claim
+    },
+    acquireBrainUserLease:async()=>({ownerToken:'fixture'}),releaseBrainUserLease:async()=>true,
+    completeInboundEvent:async({id}:any)=>{events.get(id).status='completed'},failInboundEvent:async({id}:any)=>{events.get(id).status='failed'},
+  },
+  '@/lib/agent/content-workflow-entry':{tryRunContentWorkflow:async()=>null},
+  '@/lib/bot/handlers/user-timezone':{inferTimezoneFromPhone:()=> 'Asia/Kolkata',isTimezoneCommand:()=>false},
+})
+const previousToken=process.env.TWILIO_AUTH_TOKEN
+process.env.TWILIO_AUTH_TOKEN='fixture-token'
+const postWebhook=(text:string,sid:string)=>{
+  const url='https://fixture.invalid/api/webhooks/whatsapp'
+  const params={From:'whatsapp:+919999999999',Body:text,NumMedia:'0',MessageSid:sid,ProfileName:'Gogo'}
+  const signed=signature.computeTwilioSignature('fixture-token',url,params)
+  return webhook.POST(new Request(url,{method:'POST',body:new URLSearchParams(params),headers:{'x-twilio-signature':signed}}))
+}
+try{
+  pending=null
+  contacts.clear()
+  now=RealDate.parse('2026-10-07T07:07:00Z')
+  for(const [index,message] of ["What's the price of iPhone 17 Pro 256GB on flipkart.com?",'Check the live price of Sony WH-1000XM5 on croma.com'].entries()){
+    const before=sent.length
+    assert.equal((await postWebhook(message,`SMretailer${index}`)).status,200)
+    assert.deepEqual(webhookErrors,[],'the webhook must not catch a fixture or routing failure')
+    assert.equal(sent.length,before+1)
+    assert.match(sent.at(-1)!,/Browser check queued/)
+    assert.equal(events.get(`SMretailer${index}`).status,'completed')
+  }
+  const before=sent.length
+  assert.equal((await postWebhook(combined,'SMcombined')).status,200)
+  assert.equal(sent.length,before+3)
+  assert.match(sent[before],/flipkart/i);assert.match(sent[before+1],/croma/i)
+  assert.match(sent[before+2],/Matthew.*WhatsApp number/i)
+  assert.equal(events.get('SMcombined').status,'completed')
+  const beforeDuplicate=browserClaims
+  await postWebhook(combined,'SMcombined')
+  assert.equal(sent.length,before+3,'redelivery of the same inbound event cannot send duplicate replies')
+  assert.equal(browserClaims,beforeDuplicate,'redelivery cannot start duplicate retailer tasks')
+  assert.equal(featureClaims,0,'the real webhook must claim retailer reads before exported feature routing')
+  assert.equal(webSearchClaims,0,'the real PIM must not dispatch retailer reads to web search')
+  assert.deepEqual(webhookErrors,[],'a caught webhook failure is not a successful routing test')
+}finally{
+  if(previousToken===undefined)delete process.env.TWILIO_AUTH_TOKEN
+  else process.env.TWILIO_AUTH_TOKEN=previousToken
+}
+console.log('Actual signed webhook POST → compound router/PIM → retailer claim; upstream search and duplicate dispatch checks passed')

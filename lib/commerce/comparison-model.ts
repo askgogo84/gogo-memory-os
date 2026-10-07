@@ -145,6 +145,62 @@ export function comparisonState(rows: ProviderObservation[]) {
   return rows.every(row => row.status === 'observed') ? 'completed' : 'paused'
 }
 
+/** A short quote must identify one item price, not the first money token in a page. */
+export function comparisonQuote(subject: string, row: ProviderObservation): {price: string; fee?: string; taxesIncluded: boolean} | null {
+  if (row.status !== 'observed' || !row.sourceUrl || !comparisonSource(row.provider, row.sourceUrl)) return null
+  const evidence = String(row.evidence || '')
+  const heading = evidence.split('\n')[0].trim()
+  const compact = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const requested = subject.replace(/(\d+)\s+(GB|TB)\b/gi, '$1$2').match(/[a-z0-9]+/gi) || []
+  let cursor = 0
+  const identity = compact(heading)
+  for (const token of requested) {
+    const position = identity.indexOf(compact(token), cursor)
+    if (position < 0) return null
+    cursor = position + compact(token).length
+  }
+  if (requested.length < 2 || heading.length > 220) return null
+  // A different phone tier is not the requested variant, even if all base words match.
+  if (/\biPhone\b/i.test(subject) && ['max', 'plus', 'mini'].some(tier => new RegExp('\\b'+tier+'\\b','i').test(heading) && !new RegExp('\\b'+tier+'\\b','i').test(subject))) return null
+  const text = evidence.replace(/\s+/g, ' ').trim()
+  const money = [...text.matchAll(/(?:₹\s*|\b(?:INR|Rs\.?)\s*)(\d[\d,]*(?:\.\d{1,2})?)/gi)]
+  const candidates = money.filter(match => {
+    const start = match.index!, end = start + match[0].length
+    const before = text.slice(Math.max(0, start-65), start)
+    const after = text.slice(end, end+65)
+    return Number(match[1].replace(/,/g,'')) > 0
+      && !/\b(?:MRP|M\.R\.P\.?|list price|was|save|savings|discount|cashback|off|EMI|from|starting at|buy at|offer price|with offers)\s*:?\s*$/i.test(before)
+      && !/\+\s*$/.test(before)
+      && !/\bor\s*$/i.test(before)
+      && !/\bAD\s*$/i.test(before)
+      && !/^\s*(?:or|\/)\s*(?:₹|INR\b|Rs\.?)/i.test(after)
+      && !/^\s*(?:AD\b|(?:Protect Promise |delivery |shipping )?Fee\b|off\b|cashback\b|\/\s*(?:month|mo)\b|per month\b)/i.test(after)
+  })
+  const values = (matches: typeof candidates) => [...new Set(matches.map(match => Number(match[1].replace(/,/g,''))))]
+  let choices = values(candidates)
+  let selected = candidates
+  if (choices.length > 1) {
+    // A repeated product heading can distinguish its own price from variant tiles
+    // and advertisements. Only the first amount close to that complete heading qualifies.
+    const local = candidates.filter(match => {
+      const before = text.slice(0, match.index!)
+      const position = before.lastIndexOf(heading.replace(/\s+/g,' '))
+      if (position < 0) return false
+      const gap = before.slice(position + heading.length)
+      return gap.length <= 90 && !/(?:₹|\bINR\b|\bRs\.?\s*\d|\bAD\b|offer|save|MRP|EMI)/i.test(gap)
+    })
+    selected = local
+    choices = values(local)
+  }
+  if (choices.length !== 1) return null
+  const chosen = selected.find(match => Number(match[1].replace(/,/g,'')) === choices[0])!
+  const amount = '₹' + new Intl.NumberFormat('en-IN', {maximumFractionDigits: 2}).format(choices[0])
+  const after = text.slice(chosen.index! + chosen[0].length, chosen.index! + chosen[0].length + 100)
+  const fee = after.match(/^\s*\+\s*(₹\s*\d[\d,]*(?:\.\d{1,2})?)\s+(Protect Promise Fee)\b/i)
+  return {price: amount, ...(fee ? {fee: fee[1].replace(/\s+/g,'')+' '+fee[2]} : {}),
+    taxesIncluded: /^\s*\(?\s*Incl\.?\s+(?:all\s+)?Taxes\b/i.test(after)}
+}
+
 export function comparisonSummary(task: PriceComparison) {
   const rows = task.metadata_json.providers
   const pending = rows.some(row => ['pending', 'checking'].includes(row.status))
@@ -171,17 +227,20 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
   const lines = task.metadata_json.providers.map(row => {
     const label = COMPARISON_PROVIDERS[row.provider].label
     if (row.status === 'observed' && row.sourceUrl && row.evidence) {
-      const excerpt = row.evidence.replace(/\s+/g, ' ').trim().slice(0, 420)
+      const quote = comparisonQuote(task.metadata_json.subject, row)
       const checked = row.checkedAt && Number.isFinite(Date.parse(row.checkedAt))
         ? new Intl.DateTimeFormat('en-IN', {timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true}).format(new Date(row.checkedAt)) + ' IST'
         : 'time unavailable'
-      return `*${label}* · checked ${checked}\n${excerpt}\nProduct page: ${row.sourceUrl}`
+      const price = quote ? `${quote.price}${quote.taxesIncluded ? ' including taxes' : ''}${quote.fee ? '\nAdditional fee shown: '+quote.fee : ''}`
+        : 'The page was read, but one exact item price could not be isolated. See the saved report.'
+      return `*${label}* · checked ${checked}\n${price}\nProduct page: ${row.sourceUrl}`
     }
     const reason = row.reason || (row.status === 'pending' || row.status === 'checking'
       ? 'Still checking the store.' : 'No product-page price was verified.')
     return `*${label}* · ${reason}`
   })
-  return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\nPrices are page observations, not confirmed delivered totals. Fees, location and conditional offers need checking unless shown above.`
+  const pending = task.metadata_json.providers.some(row => ['pending','checking'].includes(row.status))
+  return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'I’ll send the results when the remaining checks finish.\n' : ''}Delivery charges, location availability and conditional offers are unverified unless stated above.`
 }
 
 export function comparisonObjective(task: PriceComparison, provider: ComparisonProvider) {

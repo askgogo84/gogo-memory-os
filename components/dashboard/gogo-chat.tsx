@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
-import { summarizeActiveRunState } from '@/lib/dashboard/run-state'
+import { selectActiveRun, summarizeActiveRunState } from '@/lib/dashboard/run-state'
 
 type ChatMessage={
   role:'user'|'assistant'
@@ -136,7 +136,7 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
 
   const archived=useMemo(()=>messages.slice(0,Math.max(0,messages.length-12)),[messages])
   const visible=historyOpen?messages:messages.slice(-12)
-  const activeRun=snapshot.runs.find(r=>['running','queued','paused','waiting_approval'].includes(r.status))||null
+  const activeRun=selectActiveRun(snapshot.runs)
   // "Working" must mean Gogo is actively executing. A paused/blocked/approval run is
   // waiting on the user and must not read as working (blocked Blinkit run showed
   // "Working" despite a dead-end reply).
