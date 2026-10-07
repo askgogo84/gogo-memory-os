@@ -129,6 +129,25 @@ assert.equal(browser.normalizeBrowserFlightOption({...row,airline:'Other Air'},q
 assert.equal(browser.normalizeBrowserFlightOption({...row,evidence:quote.replace('₹4,999','$4999')},quote.replace('₹4,999','$4999')).fareInr,null)
 assert.equal(browser.normalizeBrowserFlightOption({...row,stops:null},quote).stops,null,'null is not zero stops')
 
+// The actual public Google results label preserves the complete row. Its
+// selected controls, not the query URL or page recommendations, ground context.
+const googleLabel='From 4423 Indian rupees. Nonstop flight with IndiGo. Leaves Kempegowda International Airport Bengaluru at 3:45 AM on Tuesday, October 20 and arrives at Chhatrapati Shivaji Maharaj International Airport Mumbai at 5:30 AM on Tuesday, October 20. Total duration 1 hr 45 min. Select flight'
+const selected=['Where from? Bengaluru BLR','Where to? Mumbai BOM','Change ticket type. One way','Change seating class. Economy','1 passenger, change number of passengers.','Track prices from Bengaluru to Mumbai departing 2026-10-20']
+const observedGoogle={url:'https://www.google.com/travel/flights/search',flightEvidence:{searchControls:selected,resultLabels:[googleLabel]}}
+const exactRows=browser.googleFlightOptionsFromEvidence(observedGoogle,context)
+assert.equal(exactRows.length,1);assert.equal(exactRows[0].fareInr,4423);assert.equal(exactRows[0].stops,0)
+assert.equal(exactRows[0].departure,'3:45 AM');assert.equal(exactRows[0].evidence,googleLabel)
+for(const replacement of [['2026-10-20','2026-10-21'],['Economy','Business'],['1 passenger','2 passengers'],['One way','Round trip'],['Where from? Bengaluru BLR','Where from? Mumbai BOM']]){
+  assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,flightEvidence:{...observedGoogle.flightEvidence,searchControls:selected.map(s=>s.replace(replacement[0],replacement[1]))}},context).length,0)
+}
+assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,url:'https://www.google.com.evil.example/travel/flights/search'},context).length,0)
+assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,flightEvidence:{searchControls:selected,resultLabels:[googleLabel.replace('October 20 and arrives','October 19 and arrives')]}},context).length,0,'a wrong departure day cannot become a requested row')
+const realObservedBrowser=load('lib/agent/travel-browser-task.ts',{
+  '@anthropic-ai/sdk':{default:class {messages={create:async()=>{throw Error('observed rows must not require generated extraction')}}}},
+  './secure-computer':{runSecureBrowser:async()=>({...observedGoogle,status:'completed',pageText:'ordinary page prose without control values'})},
+})
+assert.equal((await realObservedBrowser.runLiveFlightBrowserTask({actor,context,objective:text})).options[0].fareInr,4423,'the real task uses observed labels before a model-based prose extraction')
+
 // Execute the real web POST export. Upstream generic-search/PIM fallthrough fails.
 const nullModule=new Proxy({}, {get:()=>async()=>null})
 const webSource=readFileSync('app/api/dashboard/chat/route.ts','utf8')

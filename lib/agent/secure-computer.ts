@@ -55,6 +55,7 @@ type BrowserAction =
   | { kind:'submit'; selector:string }
 
 export type SecureBrowserResult = {
+  flightEvidence?:{searchControls:string[];resultLabels:string[]}
   status:'completed'|'prepared'|'blocked'|'failed'
   url:string
   sourceUrl?:string
@@ -295,8 +296,16 @@ async function model(page){
       selector=selectorFor(el);
       return {selector,name,type,label:label||clean(el.getAttribute('aria-label')||el.getAttribute('placeholder')||'')};
     };
+    const flightEvidence=/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(location.href)&&!activeDialog ? {
+      searchControls:allControls.filter(c=>/^where (?:from|to)\?|^change (?:ticket type|seating class)\.|^\d+ passengers?\b/i.test(c.label))
+        .map(c=>c.label).concat(Array.from(document.querySelectorAll('[role="switch"][aria-label]')).filter(visible)
+          .map(el=>clean(el.getAttribute('aria-label'))).filter(label=>/^Track prices from .+ to .+ departing \d{4}-\d{2}-\d{2}$/i.test(label))),
+      resultLabels:Array.from(document.querySelectorAll('[role="link"][aria-label]')).filter(visible)
+        .map(el=>clean(el.getAttribute('aria-label'))).filter(label=>/^From [\d,]+ Indian rupees\. .+ flight with .+\. Leaves .+ and arrives at .+\. Total duration /i.test(label)).slice(0,40)
+    }:undefined;
     return {
       url:location.href,title:document.title,
+      ...(flightEvidence?{flightEvidence}:{}),
       ...(activeDialog?{activeDialog:clean(activeDialog.getAttribute('aria-label')||activeDialog.getAttribute('aria-labelledby')||'Public flight picker')}:{}),
       text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       links:Array.from(document.querySelectorAll('a[href]')).filter(actionable).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).sort((a,b)=>relevance(b.text)-relevance(a.text)).slice(0,100),
@@ -1180,6 +1189,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
       status:prepared?'prepared':'completed',url:safeText(page.url||target,1200),sourceUrl:browserSourceUrl(page.url)||undefined,title:safeText(page.title,300),
       summary:params.mode==='read'?readAnswer!:prepared?'Gogo prepared the browser flow and stopped before submit.':executionEvidence!,
       pageText:safeText(page.text,9000),forms:Array.isArray(page.forms)?page.forms.slice(0,12).map((form:any)=>({...form,action:safeText(form?.action,1200)})):[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
+      ...(page.flightEvidence?{flightEvidence:page.flightEvidence}:{}),
     }
   } catch (error:any) {
     if(!params.keepAlive){await releaseManagedOnce();await activeSandbox?.stop().catch(()=>{})}
