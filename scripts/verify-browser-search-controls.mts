@@ -17,9 +17,9 @@ assert.ok(body,'test the emitted worker DOM extraction')
 
 // Simulated DOMs, not claims of live access to these providers. The Instamart
 // div and Blinkit location prompt reproduce the observed 2 Oct page shapes.
-function snapshot(label:string, tag='DIV', field=false, hidden=false, focusShell=false){
+function snapshot(label:string, tag='DIV', field=false, hidden=false, focusShell=false,url='https://fixture.example/',value=''){
   const root:any={tagName:'BODY',nodeType:1,children:[],parentElement:null,id:'',innerText:label}
-  const control:any={tagName:tag,nodeType:1,id:'',parentElement:root,children:[],innerText:field?'':label,textContent:field?'':label,
+  const control:any={tagName:tag,nodeType:1,id:'',parentElement:root,children:[],innerText:field?'':label,textContent:field?'':label,value,
     getAttribute:(name:string)=>name==='placeholder'&&field?label:focusShell&&name==='tabindex'?'-1':null,
     getBoundingClientRect:()=>({width:hidden?0:200,height:hidden?0:40}),
     matches:()=>field||tag==='BUTTON'||focusShell,querySelectorAll:()=>focusShell?[{}]:[]}
@@ -27,9 +27,15 @@ function snapshot(label:string, tag='DIV', field=false, hidden=false, focusShell
   root.querySelectorAll=()=>field?[control]:[]
   const document={title:'Simulated provider',body:root,forms:[],
     querySelectorAll:(selector:string)=>selector==='input,textarea,select'?(field?[control]:[]):selector==='a[href]'?[]:[control]}
-  return runInNewContext(`(()=>{${body}})()`,{document,location:{href:'https://fixture.example/'},
+  return runInNewContext(`(()=>{${body}})()`,{document,location:{href:url},
     CSS:{escape:(s:string)=>s},getComputedStyle:()=>({visibility:'visible',display:'block',cursor:'pointer'})})
 }
+for(const label of ['Where from?','Where to?','Where else?']){
+ const field=snapshot(label,'INPUT',true,false,false,'https://www.google.com/travel/flights','Mumbai').controls[0]
+ assert.equal(field.searchMode,'suggestions');assert.equal(field.value,'Mumbai','planner sees the filled airport and can choose its observed suggestion')
+}
+assert.equal(snapshot('Where to?','INPUT',true,false,false,'https://www.google.com.evil.example/travel/flights','private').controls[0].value,undefined)
+assert.equal(snapshot('Payment card','INPUT',true,false,false,'https://www.google.com/travel/flights','private').controls[0].value,undefined)
 for(const [provider,label,tag,field] of [
   ['Instamart','Search for milk','DIV',false],
   ['Amazon','Search Amazon.in','INPUT',true],
