@@ -1,6 +1,7 @@
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import { namesRetailerPriceRead } from '@/lib/commerce/comparison-model'
 import {detectFriendReminder, getPendingFriend, isFriendReminderFollowupCandidate} from '@/lib/bot/handlers/friend-reminders'
+import {runCompoundShoppingFriendRequests} from '@/lib/bot/compound-shopping-friend'
 import { tryMeetingShareFollowup, tryImageMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
 import { parseWebWatchCommand, isWatcherStatusQuery } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
@@ -873,6 +874,31 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
 
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, images and PDFs now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.`)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // A multiline WhatsApp bubble can contain separate retailer reads and a
+    // delegated reminder. Route each recognised line before whole-message intent
+    // handlers can collapse all of them into a single search or reminder.
+    const compoundReplies = await runCompoundShoppingFriendRequests(text, {
+      checkPrice: async stepText => {
+        const comparison = await tryPriceComparison({telegramId: resolvedUser.telegramId, text: stepText, surface: 'whatsapp'})
+        if (!comparison) throw new Error('compound_price_unhandled')
+        await saveConversation(resolvedUser.telegramId, 'user', stepText)
+        await saveConversation(resolvedUser.telegramId, 'assistant', comparison.text)
+        return comparison.text
+      },
+      prepareFriend: async (stepText, index) => {
+        const reminder = await processIncomingMessage({channel: 'whatsapp', externalUserId: from,
+          text: stepText, userName: profileName, messageType: 'text',
+          messageId: inboundMessageSid ? `${inboundMessageSid}:${index}` : null})
+        return reminder.text
+      },
+      onError: (error, kind, index) => console.error('WHATSAPP_COMPOUND_STEP_FAILED:',
+        {kind, index, error: error instanceof Error ? error.message : String(error)}),
+    })
+    if (compoundReplies) {
+      for (const reply of compoundReplies) await sendWhatsAppMessage(from, reply)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 

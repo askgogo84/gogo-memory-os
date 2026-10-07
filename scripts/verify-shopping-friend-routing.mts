@@ -55,6 +55,15 @@ runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/bot/handlers/fri
   throw new Error(name)
 }})
 
+const compound: any = {}
+runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/bot/compound-shopping-friend.ts', import.meta.url), 'utf8'),
+  {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText,
+{exports: compound, require(name: string) {
+  if (name === '@/lib/commerce/comparison-model') return {parsePriceComparison}
+  if (name === '@/lib/bot/handlers/friend-reminders') return {detectFriendReminder: friend.detectFriendReminder}
+  throw new Error(name)
+}})
+
 const conversations: any[] = []
 const contacts = new Map<string, string>()
 let created = 0
@@ -112,6 +121,19 @@ runInNewContext(compiled, {exports, Date: FixedDate, Intl, URL, console, process
 }})
 const run = (text: string) => exports.processIncomingMessage({channel: 'whatsapp', externalUserId: '+919999999999', text})
 const routeSource = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
+const combined = "What's the price of iPhone 17 Pro 256GB on flipkart.com?\n" +
+  'Check the live price of Sony WH-1000XM5 on croma.com\n' +
+  'remind Matthew to check with Tom about the Patek for Mukesh tomorrow at 11am. Urgent.'
+const combinedSteps = compound.splitCompoundShoppingFriendRequests(combined)
+assert.deepEqual(Array.from(combinedSteps || [], (step: any) => `${step.kind}:${step.text}`), [
+  "price:What's the price of iPhone 17 Pro 256GB on flipkart.com?",
+  'price:Check the live price of Sony WH-1000XM5 on croma.com',
+  'friend:remind Matthew to check with Tom about the Patek for Mukesh tomorrow at 11am. Urgent.',
+])
+assert.equal(compound.splitCompoundShoppingFriendRequests('What is the gold price?\nRemind me tomorrow'), null)
+assert.equal(compound.splitCompoundShoppingFriendRequests('What is the price of bitcoin?\nCheck Croma hours'), null)
+assert.ok(routeSource.indexOf('const compoundReplies = await runCompoundShoppingFriendRequests(text,') < routeSource.indexOf('const typedReply=await tryTypedTimeRouting'),
+  'WhatsApp must split independently recognised requests before whole-message routing')
 assert.ok(routeSource.indexOf('namesRetailerPriceRead(text)') > 0)
 assert.ok(routeSource.indexOf('namesRetailerPriceRead(text)') < routeSource.indexOf('const calendarReply=await routeFeatureIntent'),
   'WhatsApp must claim retailer reads before feature routing')
@@ -128,6 +150,30 @@ try {
   assert.equal(webSearchClaims, 0, 'an upstream web_search claim is a failure')
   for (const message of ["what's the gold price today", 'upgrade price', 'price of bitcoin', 'Find veg burger on Swiggy'])
     assert.equal(parsePriceComparison(message), null, message)
+
+  const compoundErrors: unknown[] = []
+  const combinedReplies = await compound.runCompoundShoppingFriendRequests(combined, {
+    checkPrice: async (step: string) => (await run(step)).text,
+    prepareFriend: async (step: string) => (await run(step)).text,
+    onError: (error: unknown) => {compoundErrors.push(error)},
+  })
+  assert.equal(combinedReplies?.length, 3, 'one bubble must produce three independently routed replies')
+  assert.match(combinedReplies[0], /flipkart/i)
+  assert.match(combinedReplies[1], /croma/i)
+  assert.match(combinedReplies[2], /Matthew.*WhatsApp number/i)
+  assert.equal(compoundErrors.length, 0)
+  assert.equal(browserClaims, 4)
+  assert.equal(webSearchClaims, 0)
+
+  const partial = await compound.runCompoundShoppingFriendRequests(combined, {
+    checkPrice: async (step: string) => {if (/flipkart/i.test(step)) throw new Error('store failed'); return 'Croma queued'},
+    prepareFriend: async () => 'Matthew needs a number',
+    onError: (error: unknown) => {compoundErrors.push(error)},
+  })
+  assert.match(partial[0], /resend that request separately/i)
+  assert.equal(partial[1], 'Croma queued')
+  assert.equal(partial[2], 'Matthew needs a number')
+  assert.equal(compoundErrors.length, 1)
 
   const past = await run('remind Matthew to check with Tom about the Patek for Mukesh today at 11am. Urgent.')
   assert.match(past.text, /already passed/i)
