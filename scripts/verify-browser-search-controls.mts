@@ -597,6 +597,8 @@ assert.equal(await sourceChecks.assessReadOutcome(exactObjective,{...resultPage,
 const productUrl='https://www.amazon.in/Sony-Headphones/dp/B0EXAMPLE1'
 // ASIN-shaped fixture only; it is not a real source or price assertion.
 assert.equal(sourceChecks.browserSourceUrl(productUrl+'?ref=tracking&session=private'),productUrl)
+assert.equal(sourceChecks.browserSourceUrl('https://www.google.com/travel/flights/search?tfs=opaque-filter&curr=INR#private-fragment'),'https://www.google.com/travel/flights/search','flight source link withholds all query and fragment data')
+assert.equal(sourceChecks.browserSourceUrl('https://www.google.com.evil.example/travel/flights/search?token=secret'),null)
 assert.equal(sourceChecks.browserSourceUrl('https://provider.example/account?token=secret'),null)
 assert.equal(sourceChecks.browserSourceUrl('https://user:password@provider.example/'),null)
 assert.equal(sourceChecks.browserSourceUrl('javascript:alert(1)'),null)

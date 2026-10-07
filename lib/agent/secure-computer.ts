@@ -885,6 +885,9 @@ function browserSourceUrl(raw:unknown):string|null{
         if(product)url.pathname='/dp/'+product[1]
       }
     }
+    // The observed Google result URL carries encoded filters. Return its public
+    // page path, withholding all query/hash data under the existing redactor.
+    if(url.protocol==='https:'&&['google.com','www.google.com'].includes(url.hostname)&&/^\/travel\/flights(?:\/|$)/.test(url.pathname)){url.search='';url.hash=''}
     const source=url.toString()
     return source.length<=1200&&safeText(source,1200)===source&&!/redacted|withheld/i.test(source)?source:null
   }catch{return null}

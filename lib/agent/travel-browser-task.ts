@@ -102,18 +102,26 @@ async function extractFlightOptions(pageText: string, context: BrowserFlightCont
   }
 }
 
+export function browserFlightControlsMatch(values:unknown,context:BrowserFlightContext){
+  if(!Array.isArray(values))return false
+  const labels=values.filter((value:any)=>typeof value==='string') as string[]
+  const from=labels.find(label=>/^Where from\?/i.test(label))
+  const to=labels.find(label=>/^Where to\?/i.test(label))
+  if(!from||!to||!context.origin?.code||!context.destination?.code)return false
+  if(!new RegExp(`\\b${context.origin.code}\\b`,'i').test(from)||!new RegExp(`\\b${context.destination.code}\\b`,'i').test(to))return false
+  if(!labels.some(label=>/Change ticket type\. One way/i.test(label)))return false
+  // Controls are sorted for planner relevance. Their array order is not route
+  // direction; use explicit observed field identities before prose validation.
+  return browserFlightContextVisible([from,to,...labels.filter(label=>label!==from&&label!==to)].join('\n'),context)
+}
+
 // Google renders each result as an accessible link containing the complete
 // observed row. These exact labels preserve fares/times that prose can reorder.
 export function googleFlightOptionsFromEvidence(result:any,context:BrowserFlightContext):BrowserFlightOption[]{
   try{const url=new URL(result.url);if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))return []}catch{return []}
   const evidence=result.flightEvidence
   if(!Array.isArray(evidence?.searchControls)||!Array.isArray(evidence?.resultLabels))return []
-  const controls=evidence.searchControls.filter((v:any)=>typeof v==='string').join('\n')
-  if(!/Change ticket type\. One way/i.test(controls)||!browserFlightContextVisible(controls,context))return []
-  for(const [prefix,place] of [['from',context.origin],['to',context.destination]] as const){
-    const label=evidence.searchControls.find((v:any)=>typeof v==='string'&&new RegExp(`^Where ${prefix}\\?`,'i').test(v))
-    if(!label||!place?.code||!new RegExp(`\\b${place.code}\\b`,'i').test(label))return []
-  }
+  if(!browserFlightControlsMatch(evidence.searchControls,context))return []
   const date=new Date(`${context.startDate}T00:00:00Z`)
   const month=new Intl.DateTimeFormat('en',{month:'long',timeZone:'UTC'}).format(date)
   const departureDay=new RegExp(`\\bon \\w+, ${month} ${date.getUTCDate()}\\b`,'i')
@@ -156,6 +164,8 @@ export async function runLiveFlightBrowserTask(params: {
   const observedOptions=googleFlightOptionsFromEvidence(result,context)
   const options = (observedOptions.length?observedOptions:await extractFlightOptions(result.pageText, context)).filter(option => !context.nonStop || option.stops === 0)
   console.log('TRAVEL_BROWSER_EVIDENCE:',JSON.stringify({status:result.status,observedRows:result.flightEvidence?.resultLabels?.length||0,
-    selectedControls:result.flightEvidence?.searchControls?.length||0,contextMatches:browserFlightContextVisible(result.flightEvidence?.searchControls?.join('\n')||result.pageText,context),verifiedRows:options.length}))
+    selectedControls:result.flightEvidence?.searchControls?.length||0,contextMatches:browserFlightControlsMatch(result.flightEvidence?.searchControls,context),
+    orderedTextContextMatches:browserFlightContextVisible(result.flightEvidence?.searchControls?.join('\n')||result.pageText,context),
+    dateMatches:result.flightEvidence?.searchControls?.some(label=>label.includes(context.startDate||'invalid-date'))===true,verifiedRows:options.length}))
   return { status:'completed' as const, options, browser:result, source:'google-flights-browser' as const }
 }
