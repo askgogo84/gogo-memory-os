@@ -136,6 +136,8 @@ const selected=['Where from? Bengaluru BLR','Where to? Mumbai BOM','Change ticke
 const observedGoogle={url:'https://www.google.com/travel/flights/search',flightEvidence:{searchControls:selected,resultLabels:[googleLabel]}}
 const exactRows=browser.googleFlightOptionsFromEvidence(observedGoogle,context)
 assert.equal(exactRows.length,1);assert.equal(exactRows[0].fareInr,4423);assert.equal(exactRows[0].stops,0)
+assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,flightEvidence:{...observedGoogle.flightEvidence,searchControls:[selected[1],selected[0],...selected.slice(2)]}},context).length,1,'relevance-sorted controls do not reverse explicit airport field identities')
+assert.equal(browser.browserFlightContextVisible([selected[1],selected[0],...selected.slice(2)].join('\n'),context),false,'unstructured prose keeps its direction boundary')
 assert.equal(exactRows[0].departure,'3:45 AM');assert.equal(exactRows[0].evidence,googleLabel)
 const formattedFlight=browser.formatBrowserFlightResult(context,exactRows,observedGoogle.url)
 assert.match(formattedFlight,/₹4,423/);assert.match(formattedFlight,/Open source: https:\/\/www.google.com\/travel\/flights\/search/)
