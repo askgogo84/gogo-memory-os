@@ -57,9 +57,13 @@ const db = {
   },
 }
 const actor = {userId:'fixture-owner',legacyTelegramId:42,whatsappId:'+15555550101',name:'Fixture',timezone:'Asia/Kolkata'}
+const diagnostics = load('lib/agent/browser-read-diagnostics.ts',{})
+const rejectedActions = [{phase:'plan',reason:'unsupported_field',proposed:3,accepted:0,token:'fixture-private-token',selector:'#private'},
+  {phase:'plan',reason:'not_allowlisted',proposed:3},{phase:'plan',reason:'plan_empty',accepted:0}]
 const browser = load('lib/agent/travel-browser-task.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[]})}}},
-  './secure-computer':{runSecureBrowser:async()=>{browserAttempts++;throw new Error('browser_objective_unverified')}},
+  './browser-read-diagnostics':diagnostics,
+  './secure-computer':{runSecureBrowser:async()=>{browserAttempts++;throw Object.assign(new Error('browser_objective_unverified'),{browserReadDiagnostics:rejectedActions})}},
 })
 let queue:any
 const travel = load('lib/agent/travel-research.ts',{
@@ -67,6 +71,7 @@ const travel = load('lib/agent/travel-research.ts',{
   '@/lib/web-search':{searchWebResults:async()=>{searches++;return [{title:'BLR to BOM fare ₹4,999',snippet:'Generic route page without a departure date',url:'https://example.com/flights'}]}},
   '@/lib/integrations/creditiq-travel':{searchCreditIQLiveFlights:async()=>null},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},'./travel-browser-task':browser,
+  './browser-read-diagnostics':diagnostics,
   './travel-research-queue':{enqueueTravelResearch:(params:any)=>queue.enqueueTravelResearch(params)},
 })
 const sanitizer = load('lib/agent/travel-research-sanitize.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./travel-research':travel})
@@ -150,6 +155,7 @@ assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,url:'htt
 assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,flightEvidence:{searchControls:selected,resultLabels:[googleLabel.replace('October 20 and arrives','October 19 and arrives')]}},context).length,0,'a wrong departure day cannot become a requested row')
 const realObservedBrowser=load('lib/agent/travel-browser-task.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>{throw Error('observed rows must not require generated extraction')}}}},
+  './browser-read-diagnostics':diagnostics,
   './secure-computer':{runSecureBrowser:async()=>({...observedGoogle,status:'completed',pageText:'ordinary page prose without control values'})},
 })
 assert.equal((await realObservedBrowser.runLiveFlightBrowserTask({actor,context,objective:text})).options[0].fareInr,4423,'the real task uses observed labels before a model-based prose extraction')
@@ -187,6 +193,13 @@ assert.equal(browserAttempts,1);assert.ok(searches>0);assert.equal(tables.agent_
 assert.equal(tables.agent_runs[0].metadata_json.notified,undefined,'failed publication stays eligible')
 assert.doesNotMatch(tables.agent_runs[0].metadata_json.result_text,/₹4,999/,'undated fallback fare is withheld')
 assert.match(tables.agent_runs[0].metadata_json.result_text,/could not|not completed live|could not find/i)
+const failedBrowserStep=tables.agent_steps.find(step=>step.run_id===reply.runId)
+assert.equal(JSON.stringify(failedBrowserStep.output_json.browserReadDiagnostics),JSON.stringify([
+  {phase:'plan',reason:'unsupported_field',proposed:3,accepted:0},{phase:'plan',reason:'plan_empty',accepted:0},
+]),'the real queued fallback must retain safe action-rejection reasons after the sandbox stops')
+assert.doesNotMatch(JSON.stringify(failedBrowserStep.output_json),/fixture-private-token|#private|not_allowlisted/,'diagnostics never persist arbitrary fields')
+assert.equal(JSON.stringify(tables.agent_activity.find(row=>row.run_id===reply.runId&&row.event_type==='browser_research_incomplete')?.metadata_json?.browserReadDiagnostics),
+  JSON.stringify(failedBrowserStep.output_json.browserReadDiagnostics),'activity and the durable result retain the same sanitized diagnostics')
 failPublish=false
 await worker.processTravelResearchQueue(Clock.now()+270000)
 await worker.processTravelResearchQueue(Clock.now()+270000)
