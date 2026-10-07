@@ -163,12 +163,15 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
   // A different phone tier is not the requested variant, even if all base words match.
   if (/\biPhone\b/i.test(subject) && ['max', 'plus', 'mini'].some(tier => new RegExp('\\b'+tier+'\\b','i').test(heading) && !new RegExp('\\b'+tier+'\\b','i').test(subject))) return null
   const text = evidence.replace(/\s+/g, ' ').trim()
+  const headingCapacity = compact(heading.match(/\b\d+\s*(?:GB|TB)\b/i)?.[0] || '')
   const money = [...text.matchAll(/(?:₹\s*|\b(?:INR|Rs\.?)\s*)(\d[\d,]*(?:\.\d{1,2})?)/gi)]
   const candidates = money.filter(match => {
     const start = match.index!, end = start + match[0].length
     const before = text.slice(Math.max(0, start-65), start)
     const after = text.slice(end, end+65)
+    const adjacentCapacity = compact(before.match(/\b\d+\s*(?:GB|TB)\s*$/i)?.[0] || '')
     return Number(match[1].replace(/,/g,'')) > 0
+      && !(headingCapacity && adjacentCapacity && headingCapacity !== adjacentCapacity)
       && !/\b(?:MRP|M\.R\.P\.?|list price|was|save|savings|discount|cashback|off|EMI|from|starting at|buy at|offer price|with offers)\s*:?\s*$/i.test(before)
       && !/\+\s*$/.test(before)
       && !/\bor\s*$/i.test(before)
@@ -179,16 +182,18 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
   const values = (matches: typeof candidates) => [...new Set(matches.map(match => Number(match[1].replace(/,/g,''))))]
   let choices = values(candidates)
   let selected = candidates
-  if (choices.length > 1) {
-    // A repeated product heading can distinguish its own price from variant tiles
-    // and advertisements. Only the first amount close to that complete heading qualifies.
-    const local = candidates.filter(match => {
-      const before = text.slice(0, match.index!)
-      const position = before.lastIndexOf(heading.replace(/\s+/g,' '))
-      if (position < 0) return false
-      const gap = before.slice(position + heading.length)
-      return gap.length <= 90 && !/(?:₹|\bINR\b|\bRs\.?\s*\d|\bAD\b|offer|save|MRP|EMI)/i.test(gap)
-    })
+  // A repeated product heading can distinguish its own price from variant tiles
+  // and advertisements. Only the first amount close to that complete heading qualifies.
+  const local = candidates.filter(match => {
+    const before = text.slice(0, match.index!)
+    const position = before.lastIndexOf(heading.replace(/\s+/g,' '))
+    if (position < 0) return false
+    const gap = before.slice(position + heading.length)
+    const capacities = gap.match(/\b\d+\s*(?:GB|TB)\b/gi) || []
+    return gap.length <= 90 && !capacities.some(capacity => headingCapacity && compact(capacity) !== headingCapacity)
+      && !/(?:₹|\bINR\b|\bRs\.?\s*\d|\bAD\b|offer|save|MRP|EMI)/i.test(gap)
+  })
+  if (local.length || choices.length > 1) {
     selected = local
     choices = values(local)
   }
