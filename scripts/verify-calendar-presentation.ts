@@ -65,6 +65,11 @@ assert.equal(detectReadOnlyScheduleRequest("Don't create, instead schedule a mee
 for(const verb of ['open','browse','navigate','go to','visit','inspect','monitor','watch','track'])
  assert.equal(detectReadOnlyScheduleRequest(`Show my calendar today and ${verb} https://example.com for changes`),null,'independent watcher command retains its own handler')
 
+for(const request of ['Show my calendar today and order pizza','Order pizza and show my calendar today','Show my calendar tomorrow; order pizza',"Don't change anything and order pizza and show my calendar today"])
+ assert.equal(detectReadOnlyScheduleRequest(request),null,'independent ordering remains outside the Calendar-only shortcut')
+assert.equal(detectReadOnlyScheduleRequest('Show my calendar today. Do not order anything.')?.scope,'calendar','prohibited order is not an action')
+assert.equal(detectReadOnlyScheduleRequest('Show my calendar today for the purchase order review')?.scope,'calendar','order in event subject remains a noun')
+
 async function main(){
  const original=supabaseAdmin.from,originalFetch=globalThis.fetch
  const typedContexts:any[]=[]
