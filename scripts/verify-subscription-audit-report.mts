@@ -163,3 +163,52 @@ assert.equal(rows.agent_approvals.length,1)
 assert.match(rows.agent_artifacts[0].content_json.sections[0].result.reply,/Gmail subscription audit/,'the readable artifact survives the later approval pause')
 assert.equal(rows.agent_steps.at(-1).status,'waiting_approval')
 console.log('PASS: actual same-brain and plan execution publish evidence and private report; all results retained; report owner/session/outage boundaries; artifact survives approval pause')
+// Production M22: search evidence -> report -> erroneous files save step.
+const researchMission='Research part-sun patio plants in San Diego within USD 150 and save the findings. Research only; do not buy or contact anyone.'
+const researchRaw={title:'Patio research',reason:'Research and save',steps:[
+ {tool:'web_search',title:'Plant research',instruction:'Research part-sun container plants in San Diego'},
+ {tool:'artifact',title:'Budget plan',instruction:'Compile a sourced plant shopping plan within USD 150',artifactTitle:'Patio plan'},
+ {tool:'files',title:'Save research findings',instruction:'Save the patio plant research findings, including web search results and pricing sources.'},
+]}
+mocks['./planner-provider'].completeAgentPlanPrompt=async(prompt:string)=>{
+ if(prompt.includes('SOURCE_EVIDENCE')){
+  assert.match(prompt,/https:\/\/nursery\.example\/plants/,'synthesis must receive actual retrieved sources')
+  assert.match(prompt,/USD 150/,'the requested budget must reach synthesis')
+  return 'Private planning estimate: two plants USD 30, two pots USD 40, soil USD 20 = USD 90. Prices, part-sun suitability and inventory require verification. Source: https://nursery.example/plants'
+ }
+ return JSON.stringify(researchRaw)
+}
+const researchPlan=await planner.planGeneralAgentRequest(researchMission)
+assert.deepEqual(Array.from(researchPlan.steps,(s:any)=>s.tool),['web_search','artifact'],'saving this run is a private artifact, not an unrelated Drive request')
+let genericResearchCalls=0
+mocks['./mission-tools']={executeVerifiedMissionWebSearch:async()=>({text:'Found 1 public web results.',output:{results:[{title:'Container plant guidance',url:'https://nursery.example/plants',snippet:'Part-sun container plant guidance; prices not published.'}]}})}
+mocks['./same-brain']={dispatchThroughSameBrain:async()=>{genericResearchCalls++;return {text:'Cannot access Drive',handledBy:'fallback'}}}
+const researchPlanner=load('lib/agent/general-planner.ts')
+const research=await researchPlanner.tryRunGeneralPlan({actor,surface:'web',text:researchMission,prepared:{...prepared,plan:researchPlan}})
+assert.equal(research.status,'completed')
+assert.equal(genericResearchCalls,0)
+assert.match(research.text,/USD 90/,'artifact instruction must produce the requested synthesis, not only counts')
+assert.match(research.text,/https:\/\/nursery\.example\/plants/,'public source evidence survives publication')
+assert.match(research.text,/Private report:/)
+const savedResearch=rows.agent_artifacts.find(r=>r.title==='Patio plan')
+assert.match(JSON.stringify(savedResearch.content_json),/Part-sun container plant guidance/,'raw evidence remains beside generated synthesis')
+const allReports=[...rows.agent_artifacts]
+rows.agent_artifacts=[savedResearch]
+assert.match(JSON.stringify(await page.default({params:Promise.resolve({id:reportId})})),/USD 90/,'the real private page renders the generated research answer')
+assert.match(JSON.stringify(await page.default({params:Promise.resolve({id:reportId})})),/https:\/\/nursery\.example\/plants/,'the real private page renders citations')
+rows.agent_artifacts=allReports
+for(const destination of ['Save research findings to Google Drive','Save research findings to Notion','Save research findings as report.pdf in my folder']){
+ researchRaw.steps=[{tool:'web_search',title:'Research',instruction:'Research plants'},{tool:'files',title:'Save',instruction:destination}]
+ const external=await researchPlanner.planGeneralAgentRequest(researchMission)
+ assert.equal(external.steps.at(-1).tool,'files','external/file destinations are not silently replaced: '+destination)
+}
+console.log('PASS: real public research planner preserves sources, synthesizes the requested report and saves privately without Drive fallback')
+
+const synthesisCompleter=mocks['./planner-provider'].completeAgentPlanPrompt
+mocks['./planner-provider'].completeAgentPlanPrompt=async()=>{throw Error('fixture model outage')}
+const fallback=await researchPlanner.tryRunGeneralPlan({actor,surface:'web',text:researchMission,prepared:{...prepared,plan:researchPlan}})
+assert.match(fallback.text,/could not finish the requested synthesis/)
+assert.match(fallback.text,/https:\/\/nursery\.example\/plants/,'source results are retained during model outage')
+assert.equal(genericResearchCalls,0)
+mocks['./planner-provider'].completeAgentPlanPrompt=synthesisCompleter
+console.log('PASS: actual report readback and synthesis outage preserve evidence and disclose incomplete synthesis')
