@@ -187,6 +187,9 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   }
 
   const duration=requestedDurationMinutes(text)
+  // Slots are not event objects. Clear the prior event list even when this
+  // availability read is incomplete, so a later pronoun cannot target it.
+  if(params.rememberSelection)await rememberTypedObjects(params.actor.legacyTelegramId,'calendar',[],null).catch(()=>{})
   if(!complete||unknownIntervals)throw Object.assign(new Error('calendar_availability_unverified'),{timezone,window})
   const slots:Array<{start:string;end:string;label:string}>=[]
   for(let date=window.startDate;date<=window.endDate&&slots.length<MAX_SLOTS;date=addDays(date,1)){

@@ -7,6 +7,7 @@ import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import {NextRequest,NextResponse} from 'next/server'
 import {parseLocalDateTime} from '../lib/timezone'
+import {rememberTypedObjects,selectedTypedObject} from '../lib/agent/typed-object-context'
 
 for(const text of ['What do I have on my calendar tomorrow?','Show my calendar tomorrow','What meetings do I have tomorrow?'])assert.equal(detectReadOnlyScheduleRequest(text)?.scope,'calendar',text)
 for(const text of ['Check what I have tomorrow and tell me what needs my attention. Do not change anything.','What do I have tomorrow?','What is my day tomorrow?','Plan my day tomorrow','Show my calendar and reminders tomorrow',"Tell me what's on tomorrow. Don't change my calendar."])assert.equal(detectReadOnlyScheduleRequest(text)?.scope,'agenda',text)
@@ -44,6 +45,7 @@ assert.equal(calendarReadWindow('today',new Date('2026-10-07T18:15:00Z'),'Asia/K
 
 async function main(){
  const original=supabaseAdmin.from,originalFetch=globalThis.fetch
+ const typedContexts:any[]=[]
  const tables:string[]=[],http:string[]=[];let failCalendar=false,empty=false,rangeFixture=false
  let providerItems:any[]|undefined,partial=false
  const reminderFilters:Array<{method:string;key:string;value:string}>=[]
@@ -52,6 +54,7 @@ async function main(){
  const exactRequest='Review my connected calendar for today and tomorrow in Asia/Kolkata. List meetings with their start and end times and flag overlapping events. Read only; do not create, edit or delete events, send emails or create reminders.'
  ;(supabaseAdmin as any).from=(table:string)=>{
   tables.push(table)
+  if(table==='agent_activity')return {insert:async(row:any)=>{typedContexts.push(row.metadata_json);return {error:null}}} as any
   if(table==='conversations')return {insert:async(rows:any[])=>{assert.ok(rows.every(row=>row.telegram_id===123),'history remains owned');return {error:null}}} as any
   assert.ok(['users','reminders'].includes(table),'no Attention or watcher reads')
   const result={error:null,data:table==='users'?{telegram_id:123,whatsapp_id:'+15555550123',timezone:'Asia/Kolkata',google_calendar_connected:true,google_refresh_token:'fixture-refresh'}:[{message:'Travel reminder fixture',remind_at:tomorrow+'T09:00:00+05:30',sent:false}]}
@@ -119,6 +122,10 @@ async function main(){
   const combined=await readTomorrowSchedule({actor,scope:'agenda',text:'Show my calendar and reminders today and tomorrow and flag overlapping events.'})
   assert.match(combined.text,/Overlap: Today meeting A.*Today meeting B/)
   assert.match(combined.text,/Travel reminder fixture/)
+  await rememberTypedObjects(123,'calendar',[{id:'old-event',title:'Earlier meeting'}],'old-event')
+  await readTomorrowSchedule({actor,scope:'calendar',text:'Show my calendar tomorrow and find free slots.'})
+  assert.deepEqual(typedContexts.at(-1).items,[],'availability clears earlier event selection before returning slots')
+  assert.equal(selectedTypedObject(typedContexts.at(-1),'move the first one'),null,'slot followups cannot bind an earlier event')
   const availability=await readTomorrowSchedule({actor,scope:'agenda',text:'Show my schedule tomorrow and find a free slot.'})
   assert.match(availability.text,/free slots|weekday slot/)
   assert.doesNotMatch(availability.text,/Calendar: clear|Nothing currently needs your attention/,'availability mode must not describe an unlisted busy calendar as empty')
@@ -148,6 +155,10 @@ async function main(){
   assert.equal((await readTomorrowSchedule({actor,scope:'calendar',text:exactRequest})).calendarReadVerified,false,'learning cannot mark an incomplete overlap review verified')
   await assert.rejects(()=>direct('Find free slots tomorrow'),/calendar_availability_unverified/,'unknown intervals must not complete a negative availability step')
   providerItems=[];partial=true
+  await rememberTypedObjects(123,'calendar',[{id:'old-event',title:'Earlier meeting'}],'old-event')
+  const incompleteSlots=await readTomorrowSchedule({actor,scope:'calendar',text:'Show my calendar tomorrow and find free slots.'})
+  assert.equal(incompleteSlots.calendarReadVerified,false)
+  assert.deepEqual(typedContexts.at(-1).items,[],'incomplete availability also clears stale event selection')
   const partialCalendar=await readTomorrowSchedule({actor,scope:'calendar',text:exactRequest})
   assert.equal(partialCalendar.calendarReadVerified,false);assert.match(partialCalendar.text,/Partial calendar page/)
   assert.doesNotMatch(partialCalendar.text,/No calendar events|No overlapping/,'an empty page with a next token is not an empty calendar')
