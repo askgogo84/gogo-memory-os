@@ -1,3 +1,5 @@
+import {runInNewContext} from 'node:vm'
+import ts from 'typescript'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { isAppointmentResearchRequest, appointmentBookableScore } from '../lib/agent/appointment-research'
@@ -104,3 +106,84 @@ assert.match(executeRoute, /finalizeApprovedAppointmentRun/)
 assert.ok(executeRoute.indexOf('executeApprovedBrowserCommand') < executeRoute.indexOf('finalizeApprovedAppointmentRun'), 'provider action must execute before appointment closure verification')
 
 console.log('✅ Appointment autonomy regression passed: city-locked provider selection → blocked-site fail-safe → live-slot evidence → exact-slot approval → verified Life Event')
+
+// Real continuation exports with isolated owned DB/browser boundaries. An option
+// from another conversation must never stage an old appointment approval.
+let lastAssistant:any={content:'Option 1: Nature walk. Option 2: Museum. Option 3: Home baking session.',created_at:new Date().toISOString()}
+let browserCalls=0
+const ownerFilters:any[]=[]
+const researchRow={id:'old-dentist',completed_at:new Date().toISOString(),metadata_json:{location:'Bengaluru',service:'dentist',options:[{index:3,url:'https://clinic.example/appointments',title:'Dentist'}]}}
+const fixtureDb={from(table:string){
+  const q:any={select(){return q},eq(key:string,value:any){ownerFilters.push([table,key,value]);return q},order(){return q},limit(){return q},in(){return q},gte(){return q},maybeSingle:async()=>({data:table==='conversations'?lastAssistant:researchRow,error:null}),then:(resolve:any)=>Promise.resolve({data:table==='conversations'?[lastAssistant]:[researchRow],error:null}).then(resolve)}
+  return q
+}}
+const exportsFixture:any={}
+const dependencies:any={
+  '@/lib/supabase-admin':{supabaseAdmin:fixtureDb},
+  './typed-object-context':{rememberTypedObjects:async()=>{}},
+  '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
+  '@/lib/timezone':{DEFAULT_TIMEZONE:'Asia/Kolkata'},
+  './calendar-read':{calendarAffirmativeText:(s:string)=>s.split(/\bdo not\b/i)[0]},
+  './browser-command':{tryRunBrowserCommand:async()=>{browserCalls++;return {status:'completed',text:'Fixture provider page'}}},
+  './life-event-engine':{},
+}
+runInNewContext(ts.transpileModule(followup,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:exportsFixture,require:(name:string)=>dependencies[name],console,Date,Intl,URL})
+const actor={legacyTelegramId:42} as any
+const privatePlan='Use option 3 from your last reply. Turn it into a 95-minute plan for the parent and two children, including preparation and cleanup. State any assumptions; do not claim you remember their ages or preferences. Keep this as a private written plan and do not create reminders or contact anyone.'
+assert.equal(await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:privatePlan}),null,'the actual follow-up must not hijack a private family activity plan')
+assert.equal(browserCalls,0)
+const recoveryFixture:any={}
+runInNewContext(ts.transpileModule(recovery,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:recoveryFixture,require:(name:string)=>name==='./appointment-followup'?exportsFixture:dependencies[name],console,Date,Intl,URL})
+assert.equal(await recoveryFixture.tryRecoverAppointmentOption({actor,surface:'whatsapp',text:privatePlan}),null,'WhatsApp/API recovery also rejects unrelated option context')
+lastAssistant={content:'Appointment options · dentist\n3. Dentist\nBooking/provider page: https://clinic.example/appointments',created_at:new Date().toISOString()}
+assert.ok(await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:'Use option 3'}),'genuine current appointment selection still routes')
+assert.equal(browserCalls,1)
+for(const created_at of ['invalid',new Date(Date.now()-3600_000).toISOString(),new Date(Date.now()+3600_000).toISOString()]){
+ lastAssistant={...lastAssistant,created_at}
+ assert.equal(await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:'Use option 3'}),null,'stale or invalid conversation must not rebind a numbered choice')
+}
+assert.ok(ownerFilters.some(([table,key,value])=>table==='conversations'&&key==='telegram_id'&&value===42),'context lookup must remain owner-scoped')
+console.log('Actual appointment follow-up and recovery context regression passed')
+
+// A different provider list must not be rebound to an older research row.
+lastAssistant={content:'Appointment options · dentist\n3. Other clinic\nBooking/provider page: https://other.example/appointments',created_at:new Date().toISOString()}
+assert.equal(await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:'Use option 3'}),null)
+const mismatchRecovery=await recoveryFixture.tryRecoverAppointmentOption({actor,surface:'whatsapp',text:'Use option 3'})
+assert.equal(mismatchRecovery.status,'paused')
+assert.equal(browserCalls,1,'no provider work for a mismatched saved list')
+
+// Execute the actual API POST: its early numbered-choice boundary must also
+// decline the unrelated activity request and allow the normal planner to run.
+lastAssistant={content:'Option 1: Nature walk. Option 2: Museum. Option 3: Home baking session.',created_at:new Date().toISOString()}
+const apiExports:any={}
+const noOpModule=new Proxy({}, {get:()=>()=>null})
+const apiDependencies:any={
+ 'node:crypto':{randomUUID:()=> 'fixture-id'},
+ 'next/server':{NextResponse:{json:(body:any,init:any)=>({body,status:init?.status||200})}},
+ '@/lib/supabase-admin':dependencies['@/lib/supabase-admin'],
+ '@/lib/agent/session':{requireAgentMutationOrigin:()=>null,requireAgentSession:async()=>({telegramId:42,surface:'web'}),isAgentSession:()=>true},
+ '@/lib/agent/actor':{resolveAgentActor:async()=>actor},
+ '@/lib/agent/appointment-followup':exportsFixture,
+ '@/lib/agent/appointment-followup-recovery':recoveryFixture,
+ '@/lib/agent/general-planner':{prepareGeneralPlanForActor:async()=>null,tryRunGeneralPlan:async()=>({text:'Private activity plan',status:'completed',handledBy:'fixture-general-plan'})},
+}
+runInNewContext(ts.transpileModule(agentRoute,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:apiExports,require:(name:string)=>apiDependencies[name]||noOpModule,console,Date})
+const apiReply=await apiExports.POST({json:async()=>({text:privatePlan})})
+assert.equal(apiReply.status,200)
+assert.equal(apiReply.body.handledBy,'fixture-general-plan','real API must not preempt the private plan as an appointment')
+assert.equal(browserCalls,1)
+console.log('Actual API POST declined stale appointment context')
+
+
+lastAssistant={content:'Appointment options · dentist\n3. Dentist\nBooking/provider page: https://clinic.example/appointments',created_at:new Date().toISOString()}
+const invalidChoice=await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:'Use option 9'})
+assert.equal(invalidChoice.status,'paused')
+lastAssistant={content:invalidChoice.text,created_at:new Date().toISOString()}
+assert.ok(await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:'Use option 3'}),'corrected option must keep the displayed appointment list after retry')
+console.log('Invalid option correction retains appointment context')
+
+lastAssistant={content:'Appointment options · dentist\n3. Dentist\nBooking/provider page: https://clinic.example/appointments',created_at:new Date().toISOString()}
+const invalidRecovery=await recoveryFixture.tryRecoverAppointmentOption({actor,surface:'whatsapp',text:'Use option 9'})
+assert.equal(invalidRecovery.status,'paused')
+lastAssistant={content:invalidRecovery.text,created_at:new Date().toISOString()}
+assert.ok(await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:'Use option 3'}),'recovery retry retains context across surfaces')

@@ -174,6 +174,32 @@ export function capturedSlotHints(originalText: string, timezone: string): { req
   return { requestedTime, requestedDate }
 }
 
+// Numbered choices belong to the current conversation, not the most recent
+// historical appointment run. Require a recent owned assistant handoff first.
+export async function currentAppointmentReply(tg: number): Promise<string | null> {
+  const { data, error } = await supabaseAdmin.from('conversations')
+    .select('content,created_at').eq('telegram_id', tg).eq('role', 'assistant')
+    .order('created_at', { ascending: false }).limit(1).maybeSingle()
+  if (error || !data) return null
+  const age = Date.now() - Date.parse(data.created_at || '')
+  if (!Number.isFinite(age) || age < 0 || age > 30 * 60_000) return null
+  const text = String(data.content || '')
+  const appointmentPrompt = /(?:^|\n)Appointment options\s*[\u00b7:]/i.test(text)
+    || /I inspected option \d+ without confirming anything/i.test(text)
+    || /I (?:kept|reused) option \d+[\s\S]*appointment/i.test(text)
+    || /I have the prepared provider flow, but I need the exact appointment date and time/i.test(text)
+    || /^Got it [\u2014-] .+\. (?:Which date|What time) should I book it for\?/i.test(text)
+    || /^That slot \(.+\) is already in the past\./i.test(text)
+  return appointmentPrompt ? text : null
+}
+
+export function appointmentReplySelects(reply: string, option: number, url: string): boolean {
+  // Bind the chosen number to its exact provider page in the displayed list.
+  const blocks = reply.split(/\n(?=\d+\.\s)/)
+  return blocks.some(block => new RegExp(`^${option}\\.\\s`).test(block)
+    && block.split(/\r?\n/).some(line => line.trim() === `Booking/provider page: ${url}`))
+}
+
 async function latestAppointmentResearch(tg: number) {
   const { data, error } = await supabaseAdmin.from('agent_runs')
     .select('id,metadata_json,completed_at,started_at')
@@ -387,6 +413,9 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
   // An explicitly addressed browser request starts its own task.
   if(/^\s*(?:open|browse|visit|navigate to|go to)\s+https?:\/\/\S+\s+(?:in|using)\s+(?:the\s+)?browser\b/i.test(params.text))return null
   const tg = params.actor.legacyTelegramId
+  if (!wantsFinalApproval(params.text) && !isSlotOnlyReply(params.text) && !(optionNumber(params.text) && wantsPrepare(params.text))) return null
+  const currentReply = await currentAppointmentReply(tg)
+  if (!currentReply) return null
 
   if (wantsFinalApproval(params.text)) {
     const prepared = await latestPreparedAppointment(tg)
@@ -406,7 +435,7 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
     // stops reopening a completed/executed run (which keeps scheduled_at) into a duplicate approval.
     if (prepared?.metadata_json?.appointment_prepared && sel.awaitingSlot === true && !sel.scheduled_at) {
       const done = Date.parse(prepared.completed_at || prepared.started_at || '')
-      if (!Number.isFinite(done) || Date.now() - done <= 24 * 3600_000) {
+      if (Number.isFinite(done) && Date.now() >= done && Date.now() - done <= 24 * 3600_000) {
         return createFinalApproval({ actor: params.actor, prepared, text: params.text })
       }
     }
@@ -421,10 +450,12 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
     return {
       runId: research?.id ? String(research.id) : '', status: 'paused' as const,
       capability: 'browser' as const, risk: 'low' as const,
-      text: research ? `I don't have option ${number} in the last appointment search. Choose one of the listed options.` : 'I need an appointment search first before I can prepare an option.',
+      text: research ? `I don't have option ${number} in the last appointment search. Choose one of the listed options.\n\n${currentReply.match(/(?:^|\n)(Appointment options[\s\S]*)/)?.[1] || ''}` : 'I need an appointment search first before I can prepare an option.',
       handledBy: 'appointment-followup' as const,
     }
   }
+
+  if (!appointmentReplySelects(currentReply, number, selected.url)) return null
 
   // Deliberately avoid booking/submit words in this constructed browser command so
   // the Secure Browser runs in DRAFT mode first. It may inspect live slots and fill

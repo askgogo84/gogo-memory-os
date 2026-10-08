@@ -25,7 +25,7 @@ import { tryRunTravelResearch, isTravelResearchDetailsReply } from '@/lib/agent/
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { shouldPreferSpecialistTravel } from '@/lib/agent/specialist-routing'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
-import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
+import { tryRunAppointmentFollowup, currentAppointmentReply } from '@/lib/agent/appointment-followup'
 import { appointmentPrepareOptionNumber, tryRecoverAppointmentOption } from '@/lib/agent/appointment-followup-recovery'
 import { tryRunRestaurantReservation } from '@/lib/agent/restaurant-reservation'
 import { attachRunToThread, resolveThreadForUser } from '@/lib/agent/thread-context'
@@ -57,6 +57,14 @@ export async function POST(request: Request) {
     const respond = async (result:any, status:number) => {
       await attachRunToThread(session.telegramId, result?.runId, thread?.id || null)
       return NextResponse.json(result, { status })
+    }
+    const respondAppointment = async (result:any, status:number) => {
+      const { error } = await supabaseAdmin.from('conversations').insert([
+        { telegram_id:actor.legacyTelegramId, role:'user', content:text },
+        { telegram_id:actor.legacyTelegramId, role:'assistant', content:result.text },
+      ])
+      if (error) throw new Error('appointment_conversation_save_failed')
+      return respond(result, status)
     }
     const respondTravel = async (result:any) => {
       const {error}=await supabaseAdmin.from('conversations').insert([
@@ -108,9 +116,9 @@ export async function POST(request: Request) {
       }, duplicate.status === 'waiting_approval' ? 202 : 200)
     }
 
-    if (appointmentPrepareOptionNumber(text)) {
+    if (appointmentPrepareOptionNumber(text) && await currentAppointmentReply(actor.legacyTelegramId)) {
       const recovered = await tryRecoverAppointmentOption({ actor, surface:session.surface, text })
-      if (recovered) return respond(recovered, recovered.status === 'waiting_approval' ? 202 : 200)
+      if (recovered) return respondAppointment(recovered, recovered.status === 'waiting_approval' ? 202 : 200)
       return respond({
         runId:'', status:'paused', capability:'browser', risk:'low',
         text:'I can tell this refers to a numbered appointment option, but I cannot recover that option safely. I will not start a new search in another location. Please rerun the provider search.',
@@ -122,7 +130,7 @@ export async function POST(request: Request) {
     if (restaurantReservation) return respond(restaurantReservation, restaurantReservation.status === 'waiting_approval' ? 202 : 200)
 
     const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:session.surface, text })
-    if (appointmentFollowup) return respond(appointmentFollowup, appointmentFollowup.status === 'waiting_approval' ? 202 : 200)
+    if (appointmentFollowup) return respondAppointment(appointmentFollowup, appointmentFollowup.status === 'waiting_approval' ? 202 : 200)
 
     // Pure travel research uses the specialist engine on every surface. This keeps
     // WhatsApp, dashboard and mobile app behavior identical and prevents a generic
@@ -160,7 +168,7 @@ export async function POST(request: Request) {
     if (workspaceDrive) return respond(workspaceDrive, 200)
 
     const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:session.surface, text })
-    if (appointmentResearch) return respond(appointmentResearch, 200)
+    if (appointmentResearch) return respondAppointment(appointmentResearch, 200)
 
     const prepared=await prepareGeneralPlanForActor(actor,text)
     const persistentPlan = await tryRunPersistentGeneralPlan({ actor, surface: session.surface, text, messageId: body?.messageId || null, prepared })

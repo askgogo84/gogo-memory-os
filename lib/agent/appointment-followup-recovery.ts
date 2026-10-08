@@ -3,7 +3,7 @@ import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { searchWebResults } from '@/lib/web-search'
 import { normalizeTimezone } from '@/lib/timezone'
 import { tryRunBrowserCommand } from './browser-command'
-import { capturedSlotHints } from './appointment-followup'
+import { capturedSlotHints, currentAppointmentReply, appointmentReplySelects } from './appointment-followup'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 
@@ -75,13 +75,13 @@ export function appointmentPrepareOptionNumber(text: string) {
   return prepareSignal ? value : null
 }
 
-async function bestPriorResearch(tg: number) {
+async function bestPriorResearch(tg: number, reply: string, option: number) {
   const { data, error } = await supabaseAdmin.from('agent_runs')
     .select('id,metadata_json,completed_at,started_at')
     .eq('telegram_id', String(tg)).eq('type', 'appointment_research').eq('status', 'completed')
     .order('completed_at', { ascending: false, nullsFirst: false }).limit(20)
   if (error) throw new Error(`appointment_followup_recovery_context_failed:${error.message}`)
-  const rows = data || []
+  const rows = (data || []).filter((row:any) => (row?.metadata_json?.options || []).some((item:any) => Number(item.index) === option && appointmentReplySelects(reply, option, item.url)))
   return rows.find((row:any) => {
     const meta = row?.metadata_json || {}
     return safe(meta.location,120) && Array.isArray(meta.options) && meta.options.length > 0
@@ -153,10 +153,12 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
   const option = appointmentPrepareOptionNumber(params.text)
   if (!option) return null
   const tg = params.actor.legacyTelegramId
-  const research = await bestPriorResearch(tg)
+  const currentReply = await currentAppointmentReply(tg)
+  if (!currentReply) return null
+  const research = await bestPriorResearch(tg, currentReply, option)
   if (!research) {
     return { runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
-      text:'I can tell this is a follow-up to a previous appointment search, but I cannot recover the numbered provider options safely. Please run the provider search again; I will not substitute a new location.',
+      text:`I could not match option ${option} safely. Choose one of the listed options, or run the provider search again. I will not substitute a new location.\n\n${currentReply.match(/(?:^|\n)(Appointment options[\s\S]*)/)?.[1] || ''}`,
       handledBy:'appointment-followup-recovery' as const }
   }
 
