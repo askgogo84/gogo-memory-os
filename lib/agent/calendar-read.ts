@@ -27,7 +27,9 @@ function explicitIsoDates(text:string){
 
 export function requestedCalendarDays(text:string){
   // Corrective references exclude a day rather than expanding the read window.
-  const requested=text.replace(/\b(?:not|except|excluding|rather than|instead of)\s+(?:on\s+)?(?:today|tomorrow)(?:\s*(?:or|and)\s+(?:today|tomorrow))?/gi,'')
+  const subject=text.match(/\b(?:for\s+the|about|titled|named|called)\s+/i)
+  const range=subject?.index!==undefined&&/\b(?:today|tomorrow)\b/i.test(text.slice(0,subject.index))?text.slice(0,subject.index):text
+  const requested=range.replace(/\b(?:not|except|excluding|rather than|instead of)\s+(?:on\s+)?(?:today|tomorrow)(?:\s*(?:or|and)\s+(?:today|tomorrow))?/gi,'')
   return {today:/\btoday\b/i.test(requested),tomorrow:/\btomorrow\b/i.test(requested)}
 }
 

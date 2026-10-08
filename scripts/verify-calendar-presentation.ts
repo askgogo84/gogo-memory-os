@@ -12,6 +12,7 @@ for(const text of ['What do I have on my calendar tomorrow?','Show my calendar t
 for(const text of ['Check what I have tomorrow and tell me what needs my attention. Do not change anything.','What do I have tomorrow?','What is my day tomorrow?','Plan my day tomorrow','Show my calendar and reminders tomorrow',"Tell me what's on tomorrow. Don't change my calendar."])assert.equal(detectReadOnlyScheduleRequest(text)?.scope,'agenda',text)
 for(const text of ['Remind me to check my calendar tomorrow','Create a calendar event tomorrow','Move my meeting tomorrow','Check the weather tomorrow','Tell me the flight prices tomorrow','Show my reminders tomorrow','Check sunrise tomorrow','Review the news tomorrow'])assert.equal(detectReadOnlyScheduleRequest(text),null,text)
 for(const text of ['Review my calendar today and create an event tomorrow','Show my calendar tomorrow; delete the 11am event','Show my calendar tomorrow and edit the 11am event','Review tomorrow. Do not delete anything, but create a meeting.'])assert.equal(detectReadOnlyScheduleRequest(text),null,'positive writes must not be swallowed: '+text)
+assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and reserve a table at Noma for 2'),null,'reservation commands retain their own executor')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and schedule dentist appointment Friday'),null,'named schedule commands retain their creation flow')
 assert.equal(detectReadOnlyScheduleRequest('List my meetings today')?.horizon,'today')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar today and tomorrow')?.horizon,'today-tomorrow')
@@ -25,6 +26,9 @@ for(const [request,day] of [['Show my calendar tomorrow, not today','tomorrow'],
  assert.equal(calendarReadWindow(request,new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata').label,day,'exclude negated relative days')
  assert.equal(detectReadOnlyScheduleRequest(request)?.horizon,day,'routing uses the same requested days')
 }
+assert.equal(calendarReadWindow('Show my calendar tomorrow for the Today Show meeting',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata').label,'tomorrow','event subject does not expand requested days')
+assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow for the Today Show meeting')?.horizon,'tomorrow')
+assert.equal(calendarReadWindow('Show my calendar for today and tomorrow',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata').label,'today and tomorrow','a for-day range is not an event-title filter')
 const midnight=calendarReadWindow('today and tomorrow',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata')
 assert.deepEqual(midnight,{startDate:'2026-10-08',endDate:'2026-10-09',label:'today and tomorrow'})
 assert.equal(calendarReadWindow('today',new Date('2026-10-07T18:15:00Z'),'Asia/Kolkata').endDate,'2026-10-07')
