@@ -819,7 +819,7 @@ flightAssessment=false
 // intentionally retains only 9k. Fare basis must survive that boundary.
 const lateFareBasis='Prices include required taxes + fees for 2 adults.'
 recoveryClicks=1;recoveryResultRows=true
-const lateBasisPage={...partyPage,text:'Public flight information. '.repeat(380)+lateFareBasis+' BLR to BOM 20 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000',controls:[],forms:[],links:[]}
+const lateBasisPage={...partyPage,text:'Public flight information. '.repeat(380)+'convenience'+lateFareBasis+' BLR to BOM 20 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000',controls:[],forms:[],links:[]}
 recoveryExports.testInspect(async()=>({page:lateBasisPage,releaseOwnerLock:async()=>{},sandbox:recoverySandbox,name:'fixture',managed:{allow:{},env:{},release:async()=>{}}}))
 const lateBasisResult=await recoveryExports.runSecureBrowser({userId:'fixture',url:lateBasisPage.url,objective:'Read flight rows',mode:'read'})
 assert.doesNotMatch(lateBasisResult.pageText,/Prices include required/,'the fixture actually exercises the 9k output truncation')

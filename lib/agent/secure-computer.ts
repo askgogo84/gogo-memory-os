@@ -1335,7 +1335,7 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     if(!params.keepAlive){await releaseManagedOnce();await first.sandbox.stop().catch(()=>{})}
     const prepared=params.mode==='draft'
     const fareBasisLabel=googleFlightReadProgress(page)
-      ?String(page.text||'').match(/\bPrices include required taxes\s*\+\s*fees for (?:one|[1-9]) adults?\b\.?/i)?.[0]:undefined
+      ?String(page.text||'').match(/Prices include required taxes\s*\+\s*fees for (?:one|[1-9]) adults?\b\.?/i)?.[0]:undefined
     return {
       status:prepared?'prepared':'completed',url:safeText(page.url||target,1200),sourceUrl:browserSourceUrl(page.url)||undefined,title:safeText(page.title,300),
       summary:params.mode==='read'?readAnswer!:prepared?'Gogo prepared the browser flow and stopped before submit.':executionEvidence!,
