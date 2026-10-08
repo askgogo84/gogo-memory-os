@@ -150,6 +150,11 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
     try{
       availability=await executeReadOnlyCalendarStep({actor,instruction:`Find free slots. ${text}`,missionText:text})
     }catch(err:any){
+      if(String(err?.message||'')==='calendar_time_unsupported'){
+        const summary='Please give one exact meeting time, such as 3 PM or 15:00, and its timezone. I have not substituted another time.'
+        await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
+        return {runId,status:'paused',capability:'calendar',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
+      }
       if(['calendar_date_ambiguous','calendar_date_unsupported'].includes(String(err?.message||''))){
         const summary='Please give the exact meeting date in YYYY-MM-DD format so I can check the right day and prepare the proposal.'
         await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
@@ -164,7 +169,7 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
     }
     const slots=availability?.output?.availableSlots||[]
     if(!slots.length){
-      const summary='I found the email and brief, but no free slot matched the requested window.'
+      const summary=`I found the email${briefFilename?' and brief':''}, but no free slot matched the requested window.`
       await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
       return {runId,status:'paused',capability:'calendar',risk:'low',text:`${summary}\n\n${availability?.text||''}`,handledBy:'workspace-meeting-prep'}
     }

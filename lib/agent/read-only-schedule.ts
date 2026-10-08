@@ -119,6 +119,10 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
     })).filter((event: any) => event.start)
     calendarReturnedCount=Number.isInteger(output.returnedEventCount)?output.returnedEventCount:calendarEvents.length
   } catch (error: any) {
+    if(error?.message==='calendar_time_unsupported')return {
+      text:'Please give one exact time, such as 3 PM or 15:00, and its timezone so I can check that slot.',
+      calendarEvents:[],reminders:[],timeZone:requestedTimeZone,tomorrowKey,calendarReadVerified:false,
+    }
     if(error?.message==='calendar_timezone_invalid')return {
       text:'The requested timezone is invalid. Send a valid timezone such as Asia/Kolkata or UTC so I can check the right dates.',
       calendarEvents:[],reminders:[],timeZone:requestedTimeZone,tomorrowKey,calendarReadVerified:false,

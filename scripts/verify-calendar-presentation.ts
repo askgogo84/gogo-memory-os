@@ -154,6 +154,8 @@ async function main(){
   const subjectResponse=await exported.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Show my calendar tomorrow for the book launch'})}))
   assert.equal((await subjectResponse.json()).handledBy,'read-only-schedule','noun subjects retain the actual production calendar path')
   const direct=(instruction=exactRequest)=>executeReadOnlyCalendarStep({actor,instruction,missionText:instruction})
+  const filteredTimezone=await direct('Show my calendar tomorrow for Alice in America/Los_Angeles')
+  assert.equal(filteredTimezone.output.timezone,'America/Los_Angeles','explicit timezone suffix survives an event or attendee filter')
   assert.ok('events' in (await direct('Show my calendar tomorrow for the Free Lunch event.')).output,'Free in an event subject must not switch the shared reader to availability mode')
   providerItems=[{id:'all-day',summary:'All-day event',start:{date:today},end:{date:tomorrow}},
     {id:'tomorrow-timed',summary:'Tomorrow after exclusive end',start:{dateTime:tomorrow+'T09:00:00+05:30'},end:{dateTime:tomorrow+'T10:00:00+05:30'}}]
@@ -229,6 +231,35 @@ async function main(){
   const wednesdayProposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
   assert.ok(wednesdayProposal,'named weekday request produces the actual private proposal')
   assert.equal(new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Kolkata',weekday:'long'}).format(new Date(wednesdayProposal.proposedInvite.start)),'Wednesday','actual meeting proposal must honor the requested named weekday')
+  meetingWrites.length=0;providerItems=[]
+  await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting tomorrow at 3pm.'})
+  const timedProposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
+  assert.ok(timedProposal)
+  assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(timedProposal.proposedInvite.start)),'15:00','actual proposed invite honors the requested 3pm')
+  for(const [requestedTime,expectedTime] of [['at 15:15','15:15'],['at noon','12:00'],['at 3:15 p.m.','15:15']]){
+    meetingWrites.length=0
+    await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed 1-hour meeting next Sunday ${requestedTime}.`})
+    const precise=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
+    assert.ok(precise,'an explicit weekend appointment is not replaced by a weekday')
+    assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(precise.start)),expectedTime)
+    assert.equal(new Date(precise.end).getTime()-new Date(precise.start).getTime(),60*60_000)
+    assert.equal(new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Kolkata',weekday:'long'}).format(new Date(precise.start)),'Sunday')
+  }
+  providerItems=[{id:'occupied',summary:'Already busy',start:{dateTime:tomorrow+'T14:45:00+05:30'},end:{dateTime:tomorrow+'T15:30:00+05:30'}}]
+  meetingWrites.length=0
+  const busyProposal=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting tomorrow at 3pm.'})
+  assert.equal(busyProposal.status,'paused');assert.match(busyProposal.text,/15:00/);assert.doesNotMatch(busyProposal.text,/and brief/)
+  assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'),'busy requested time never produces an arbitrary alternate invitation')
+  providerItems=[]
+  for(const constraint of ['at 3','at 3pm or 4pm','between 3 and 5pm','after 3pm','in the afternoon','at 25:00','at 11:50pm']){
+    meetingWrites.length=0;http.length=0
+    const result=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed meeting tomorrow ${constraint}.`})
+    assert.equal(result.status,'paused',constraint);assert.match(result.text,/one exact meeting time/)
+    assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'),constraint+' cannot fabricate a proposal')
+    assert.ok(!http.some(url=>url.includes('/calendar/v3/')),constraint+' does not query an arbitrary availability window')
+  }
+  const ambiguousSlot=await readTomorrowSchedule({actor,scope:'calendar',text:'Find free slots tomorrow at 3.'})
+  assert.equal(ambiguousSlot.calendarReadVerified,false);assert.match(ambiguousSlot.text,/one exact time/)
   meetingWrites.length=0;http.length=0
   const unsupportedMeeting=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting next month.'})
   assert.equal(unsupportedMeeting.status,'paused');assert.match(unsupportedMeeting.text,/exact meeting date/)

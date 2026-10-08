@@ -114,6 +114,31 @@ function requestedDurationMinutes(text:string){
   return 30
 }
 
+function requestedStartMinute(text:string):number|undefined{
+  // Unsupported windows require clarification; never substitute the first
+  // working-hours slot for a time the user actually specified.
+  if(/\b(?:before|after|between|from|until|around|by)\s+(?:\d|noon|midnight)|\b(?:morning|afternoon|evening|tonight)\b/i.test(text))throw new Error('calendar_time_unsupported')
+  const times=new Set<number>()
+  const pattern=/\b(?:at\s+)?(noon|midnight|\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?))(?=\s|[.,;!?]|$)|\bat\s+(\d{1,2})(?::(\d{2}))?\b/gi
+  for(const match of text.matchAll(pattern)){
+    const value=(match[1]||'').toLowerCase().replace(/[.\s]/g,'')
+    if(value==='noon'){times.add(720);continue}
+    if(value==='midnight'){times.add(0);continue}
+    if(value){
+      const parts=value.match(/^(\d{1,2})(?::(\d{2}))?([ap])m$/)!
+      const hour=Number(parts[1]),minute=Number(parts[2]||0)
+      if(hour<1||hour>12||minute>59)throw new Error('calendar_time_unsupported')
+      times.add((hour%12+(parts[3]==='p'?12:0))*60+minute)
+    }else{
+      const hour=Number(match[2]),minute=Number(match[3]||0)
+      if(match[3]===undefined||hour>23||minute>59)throw new Error('calendar_time_unsupported')
+      times.add(hour*60+minute)
+    }
+  }
+  if(times.size>1)throw new Error('calendar_time_unsupported')
+  return times.values().next().value
+}
+
 function eventInterval(event:any,tz:string){
   if(event?.start?.dateTime&&event?.end?.dateTime){
     const start=new Date(event.start.dateTime).getTime(),end=new Date(event.end.dateTime).getTime()
@@ -157,12 +182,14 @@ export function requestedCalendarTimezone(text:string){
   // are validated as candidates rather than silently replaced by account time.
   const cleanZone=(value:string)=>value.replace(/\.+$/,'')
   const labeledZone=text.match(/\b(?:time\s*zone|timezone)(?:\s*[:=]\s*|\s+(?:is\s+)?)([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/i)?.[1]
+  const explicitSuffixZone=[...text.matchAll(/\b(?:in|using)\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/gi)]
+    .map(match=>cleanZone(match[1])).find(value=>value.includes('/')||/^(?:UTC|GMT|CET|EET|WET|EST5EDT|CST6CDT|MST7MDT|PST8PDT)$/.test(value))
   const zoneContext=calendarRangeText(text).split(/\b(?:for\s+the|about|titled|named|called)\s+/i)[0]
   const localZone=[...zoneContext.matchAll(/\b(?:in|using)\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/gi)]
     .map(match=>cleanZone(match[1])).find(value=>value.includes('/')||isValidTimezone(value))
   const parenthesizedZone=[...text.matchAll(/\(([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})\)/g)]
     .map(match=>cleanZone(match[1])).find(isValidTimezone)
-  const requestedZone=cleanZone(labeledZone||localZone||parenthesizedZone||'')||undefined
+  const requestedZone=cleanZone(labeledZone||explicitSuffixZone||localZone||parenthesizedZone||'')||undefined
   if(requestedZone&&!isValidTimezone(requestedZone))throw new Error('calendar_timezone_invalid')
   return requestedZone
 }
@@ -173,6 +200,10 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const access=await calendarAccess(params.actor)
   const timezone=requestedZone?normalizeTimezone(requestedZone):access.timezone
   const window=calendarReadWindow(text,new Date(),timezone)
+  const wantsAvailability=calendarRequestsAvailability(text)
+  const duration=requestedDurationMinutes(text)
+  const requestedMinute=wantsAvailability?requestedStartMinute(text):undefined
+  if(requestedMinute!==undefined&&requestedMinute+duration>1440)throw new Error('calendar_time_unsupported')
   const start=parseLocalDateTime({date:window.startDate,time:'00:00',timezone}).dueAtUtc
   const end=parseLocalDateTime({date:addDays(window.endDate,1),time:'00:00',timezone}).dueAtUtc
   const page=await fetchPrimaryCalendarEventsPage(access.accessToken,start.toISOString(),end.toISOString(),'AGENT_CALENDAR_READ_FAILED',MAX_EVENTS)
@@ -181,7 +212,6 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const busyEvents=events.filter((event:any)=>event.transparency!=='transparent')
   const unknownIntervals=busyEvents.filter((event:any)=>!eventInterval(event,timezone)).length
 
-  const wantsAvailability=calendarRequestsAvailability(text)
   if(!wantsAvailability){
     const items=events.slice(0,12).map((event:any)=>({
       id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),start:String(event?.start?.dateTime||event?.start?.date||''),end:String(event?.end?.dateTime||event?.end?.date||''),
@@ -208,7 +238,6 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
     return {text:lines.join('\n'),output:{mode:'read',window,timezone,events:items,returnedEventCount:events.length,complete,unknownIntervals,conflicts,...(wantsConflicts?{conflictsVerified:complete&&unknownIntervals===0}:{}),verifiedStore:'google-calendar',mutated:false}}
   }
 
-  const duration=requestedDurationMinutes(text)
   // Slots are not event objects. Clear the prior event list even when this
   // availability read is incomplete, so a later pronoun cannot target it.
   if(params.rememberSelection)await rememberTypedObjects(params.actor.legacyTelegramId,'calendar',[],null).catch(()=>{})
@@ -216,8 +245,10 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const slots:Array<{start:string;end:string;label:string}>=[]
   for(let date=window.startDate;date<=window.endDate&&slots.length<MAX_SLOTS;date=addDays(date,1)){
     const weekday=dayOfWeek(date)
-    if(weekday===0||weekday===6)continue
-    for(let minute=9*60;minute+duration<=18*60&&slots.length<MAX_SLOTS;minute+=30){
+    if(requestedMinute===undefined&&(weekday===0||weekday===6))continue
+    const firstMinute=requestedMinute??9*60
+    const lastMinute=requestedMinute??18*60-duration
+    for(let minute=firstMinute;minute<=lastMinute&&slots.length<MAX_SLOTS;minute+=30){
       const localStart=parseLocalDateTime({date,time:clock(minute),timezone}).dueAtUtc
       const localEnd=new Date(localStart.getTime()+duration*60_000)
       if(localStart.getTime()<Date.now()+15*60_000)continue
@@ -228,6 +259,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
 
   const display=slots.length
     ? `I found these ${duration}-minute free slots in ${window.label}:\n${slots.map((s,i)=>`${i+1}. ${s.label}`).join('\n')}`
+    : requestedMinute!==undefined?`I couldn't verify an available ${duration}-minute slot at ${clock(requestedMinute)} (${timezone}) in ${window.label}.`
     : `I couldn't find a ${duration}-minute weekday slot between 9 AM and 6 PM in ${window.label}.`
   return {text:display,output:{mode:'availability',durationMinutes:duration,window,timezone,availableSlots:slots,complete,availabilityVerified:true,verifiedStore:'google-calendar',mutated:false}}
 }
