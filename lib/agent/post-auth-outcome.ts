@@ -55,11 +55,13 @@ export async function inspectPostAuthOutcome(metadata:any):Promise<SecureBrowser
     const left=Math.max(...['\n','.','!','?'].map(separator=>text.lastIndexOf(separator,idx-1)))
     const next=text.slice(idx+accountMatch[0].length).search(/[\n.!?]/)
     const line=text.slice(left+1,next<0?text.length:idx+accountMatch[0].length+next+1)
-    const prefix=text.slice(Math.max(0,idx-80),idx)
-    accountConfirmed=!/\b(?:if|when|once|after|before|until|unless|will|would|could|should|may|might|not|never|pending)\b/i.test(line)
-      && !/\b(?:if|when|once|after|before|until|unless)\b[^.!?]{0,80}$/i.test(prefix)
+    const prefix=text.slice(Math.max(0,idx-120),idx)
+    accountConfirmed=!/[?]/.test(line)
+      && !/\b(?:if|when|once|after|before|until|unless|will|would|could|should|may|might|not|never|pending|failed|unable|unsuccessful)\b/i.test(line)
+      && !/\b(?:if|when|once|after|before|until|unless|will|would|could|should|may|might)\b[^.!?]{0,120}$/i.test(prefix)
   }
-  const confirmed=genericConfirmed||accountConfirmed
+  const accountFlow=metadata.flow==='account_creation'
+  const confirmed=accountFlow?accountConfirmed:(genericConfirmed||accountConfirmed)
   const specialized=['flight_execute','restaurant'].includes(metadata.auth_resume?.kind)
   if(!specialized&&(failed||pending||!confirmed))return {...base,status:'blocked',blockReason:'provider_access_limited',
     summary:failed?'The provider reports an unsuccessful outcome. Gogo has not repeated the action. Inspect the provider result before deciding what to do next.':'The provider has not shown a confirmed outcome yet. Check again after the page finishes updating; Gogo will not repeat the action.',
