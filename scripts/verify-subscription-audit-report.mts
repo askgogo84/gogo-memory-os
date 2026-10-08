@@ -175,7 +175,7 @@ mocks['./planner-provider'].completeAgentPlanPrompt=async(prompt:string)=>{
  if(prompt.includes('SOURCE_EVIDENCE')){
   assert.match(prompt,/https:\/\/nursery\.example\/plants/,'synthesis must receive actual retrieved sources')
   assert.match(prompt,/USD 150/,'the requested budget must reach synthesis')
-  return 'Private planning estimate: two plants USD 30, two pots USD 40, soil USD 20 = USD 90. Prices, part-sun suitability and inventory require verification. Source: https://nursery.example/plants'
+  return 'Private planning estimate: two plants USD 30, two pots USD 40, soil USD 20 = USD 90. Verified retail price: USD 14.95 from a search excerpt. Source: https://nursery.example/plants'
  }
  return JSON.stringify(researchRaw)
 }
@@ -207,6 +207,7 @@ assert.match(research.text,/https:\/\/nursery\.example\/plants/,'public source e
 assert.match(research.text,/Private report:/)
 const savedResearch=rows.agent_artifacts.find(r=>r.title==='Patio plan')
 assert.match(JSON.stringify(savedResearch.content_json),/Part-sun container plant guidance/,'raw evidence remains beside generated synthesis')
+assert.match(JSON.stringify(savedResearch.content_json),/price appearing in a search excerpt \(not live-verified\)/,'persisted generated synthesis is downgraded before it is stored')
 const allReports=[...rows.agent_artifacts]
 rows.agent_artifacts=[savedResearch]
 assert.match(JSON.stringify(await page.default({params:Promise.resolve({id:reportId})})),/USD 90/,'the real private page renders the generated research answer')
@@ -243,6 +244,17 @@ console.log('PASS: private-save phrasing and real citation redaction boundaries'
 for(const unsafe of ['javascript:alert(1)','https://user:password@example.test/path','https://example.test/path?token=1234567890','https://example.test/path#secret'])
  assert.equal(realPresentation.publicResearchUrl(unsafe),'','authenticated or unsafe URLs are not citation exemptions')
 assert.ok(!realPresentation.researchReportText('https://example.test/path?token=1234567890',['https://example.test/path?token=1234567890']).includes('1234567890'))
+const excerptOnlyReport=realPresentation.researchReportText('## Verified Prices\nA verified price is $14.95.\n## Verified Nursery Locations',['https://nursery.example'],20000,true)
+assert.match(excerptOnlyReport,/prices appearing in search excerpts \(not live-verified\)/,'search-only synthesis must not label source snippets as verified current prices')
+assert.match(excerptOnlyReport,/price appearing in a search excerpt \(not live-verified\)/,'singular price claims are downgraded too')
+assert.match(excerptOnlyReport,/nursery locations appearing in search excerpts/,'search excerpts do not verify a nursery address')
+assert.match(realPresentation.researchReportText('Verified price: $14.95',['https://nursery.example']),/Verified price: \$14\.95/,'generic prose without search-only provenance is not rewritten')
+const provenanceSections=realPresentation.artifactSections({sections:[
+ {title:'Drive document',tool:'files',result:{text:'Verified price: $14.95 in the supplied invoice.'}},
+ {title:'Search synthesis',tool:'artifact',result:{text:'Verified price: $14.95.',synthesisStatus:'generated'}}
+]})
+assert.match(provenanceSections[0].text,/Verified price: \$14\.95/,'document-backed confidence is preserved')
+assert.match(provenanceSections[1].text,/price appearing in a search excerpt \(not live-verified\)/,'generated search report confidence is downgraded on readback')
 mocks['./artifact-presentation']=realPresentation
 mocks['./mission-tools'].executeVerifiedMissionWebSearch=async()=>({text:'Found 1 public web results.',output:{results:[{title:'Container plants',url:numericUrl,snippet:'Part-sun container guidance.'}]}})
 mocks['./planner-provider'].completeAgentPlanPrompt=async()=> 'Source: '+numericUrl+'\nPlanning estimate USD 90; no verified retail price.'
@@ -250,3 +262,4 @@ const numericPlanner=load('lib/agent/general-planner.ts')
 const numericReport=await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:researchMission,prepared:{...prepared,plan:researchPlan}})
 assert.ok(numericReport.text.includes(numericUrl),'real planner persistence and publication retain complete numeric citations')
 console.log('PASS: actual planner retains numeric public source URLs while credential-bearing URLs remain excluded')
+
