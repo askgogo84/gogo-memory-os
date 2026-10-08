@@ -146,6 +146,8 @@ async function main(){
   runInNewContext(ts.transpileModule(missionSource,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
     {exports:missionExports,console,URL,process:{env:{}},require:(name:string)=>missionMocks[name]})
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Find availability',instruction:'Find free slots tomorrow'},missionText:'Find free slots tomorrow',runId:'fixture-run'}),/calendar_availability_unverified/,'canonical mission wrapper propagates incomplete availability instead of completing')
+  await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Review overlaps',instruction:'Review calendar today and tomorrow and flag overlapping events.'},missionText:'Review calendar today and tomorrow and flag overlapping events.',runId:'fixture-run'}),/calendar_conflicts_unverified/,'actual mission caller must not complete an explicitly incomplete conflict review')
+  await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Review overlaps',instruction:exactRequest},missionText:exactRequest,runId:'fixture-run'}),/calendar_conflicts_unverified/,'explicit do-not-create clauses retain the real read path')
   const meetingWrites:any[]=[]
   const meetingDb={from(table:string){
     assert.ok(['agent_runs','agent_activity','agent_artifacts'].includes(table),'meeting preparation may persist only owned drafts/run metadata')

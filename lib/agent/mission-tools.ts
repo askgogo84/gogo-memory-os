@@ -409,12 +409,18 @@ function addDaysIso(iso:string,days:number){
 }
 
 function isCalendarWriteStep(step:MissionStep){
-  return /\b(add|create|change|move|schedule|write|modify|prepare|invite|cancel|delete|event\s+titled|spanning)\b/i.test(`${step.title} ${step.instruction}`)
+  const request=`${step.title} ${step.instruction}`.replace(/’/g,"'")
+    .replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/gi,'')
+  return /\b(add|create|change|move|schedule|write|modify|prepare|invite|cancel|delete|event\s+titled|spanning)\b/i.test(request)
 }
 
 export async function executeVerifiedMissionCalendar(params:{actor:AgentActor;step:MissionStep;missionText:string;runId:string}){
   if(!isCalendarWriteStep(params.step)){
-    return executeReadOnlyCalendarStep({actor:params.actor,instruction:params.step.instruction,missionText:params.missionText})
+    const result=await executeReadOnlyCalendarStep({actor:params.actor,instruction:params.step.instruction,missionText:params.missionText})
+    if('conflictsVerified' in result.output&&result.output.conflictsVerified===false){
+      throw new Error('calendar_conflicts_unverified')
+    }
+    return result
   }
 
   const year=Number(explicitDate(params.missionText)?.slice(0,4)||new Date().getUTCFullYear())
