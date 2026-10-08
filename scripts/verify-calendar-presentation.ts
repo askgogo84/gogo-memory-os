@@ -238,7 +238,10 @@ async function main(){
   // This schema is checked against the production columns, not a permissive insert mock.
   const runSchema=readFileSync('supabase/agent-os-v1.sql','utf8').split('create table if not exists agent_runs (')[1].split(');')[0]
   const runColumns=new Set([...runSchema.matchAll(/^\s+(\w+)\s/gm)].map(match=>match[1]))
+  const artifactSchema=readFileSync('supabase/agent-os-v1.sql','utf8').split('create table if not exists agent_artifacts (')[1].split(');')[0]
+  const artifactTypes=[...artifactSchema.match(/type in \(([^)]+)\)/)![1].matchAll(/'([^']+)'/g)].map(match=>match[1])
   const validateMeetingWrite=(table:string,value:any)=>{
+    if(table==='agent_artifacts')assert.ok(artifactTypes.includes(value.type),`agent_artifacts rejects type ${value.type}`)
     if(table==='agent_runs')for(const key of Object.keys(value))assert.ok(runColumns.has(key),`agent_runs has no ${key} column`)
   }
   const meetingDb={from(table:string){
