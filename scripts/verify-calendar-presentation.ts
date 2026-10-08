@@ -60,6 +60,9 @@ for(const request of ["Don't change anything! Show my calendar tomorrow", "Don't
  assert.equal(detectReadOnlyScheduleRequest(request)?.scope,'calendar','affirmative command after punctuation: '+request)
 assert.equal(detectReadOnlyScheduleRequest("Don't create, instead schedule a meeting tomorrow"),null,'explicit affirmative action remains outside the read shortcut')
 
+for(const verb of ['monitor','watch','track'])
+ assert.equal(detectReadOnlyScheduleRequest(`Show my calendar today and ${verb} https://example.com for changes`),null,'independent watcher command retains its own handler')
+
 async function main(){
  const original=supabaseAdmin.from,originalFetch=globalThis.fetch
  const typedContexts:any[]=[]
@@ -291,6 +294,16 @@ async function main(){
     assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(invite.start)),'09:00','default free slot remains independent of the email timestamp')
   }
   meetingWrites.length=0;http.length=0
+  for(const duration of ['4-hour','10-minute','0-minute','1 hour 30 minute','four-hour']){
+    meetingWrites.length=0;providerItems=[];http.length=0
+    const changedDuration=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed ${duration} meeting tomorrow.`})
+    assert.equal(changedDuration.status,'paused',duration+' cannot be silently changed')
+    assert.match(changedDuration.text,/15 to 180/)
+    assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'))
+    assert.ok(!http.some(url=>url.includes('/calendar/v3/')))
+  }
+  const badDuration=await readTomorrowSchedule({actor,scope:'calendar',text:'Find a 4-hour free slot tomorrow.'})
+  assert.equal(badDuration.calendarReadVerified,false);assert.match(badDuration.text,/15 to 180/)
   const unsupportedMeeting=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting next month.'})
   assert.equal(unsupportedMeeting.status,'paused');assert.match(unsupportedMeeting.text,/exact meeting date/)
   assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'),'unsupported dates do not create an arbitrary proposed meeting')

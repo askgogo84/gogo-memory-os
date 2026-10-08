@@ -46,7 +46,7 @@ export function detectReadOnlyScheduleRequest(raw: string) {
   const request = calendarAffirmativeText(text)
   // Command boundaries distinguish "and book a table" from "for the book
   // launch". Event subjects must not become unrelated booking/write intents.
-  if (/(?:^|[,.!?;\n]\s*|\b(?:and|then|also|but|instead|please|to|you)\s+)(?:please\s+)?(?:reserve|schedule|remind|create|add|invite|prepare|write|put|set|forward|save|remember|compose|archive|post|publish|renew|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|reorder|empty|increase|decrease|apply|redeem|block|unblock)\b|\bschedule\s+(?:a|an|the|my|new|meeting|event)\b/.test(request)) return null
+  if (/(?:^|[,.!?;\n]\s*|\b(?:and|then|also|but|instead|please|to|you)\s+)(?:please\s+)?(?:monitor|watch|track|reserve|schedule|remind|create|add|invite|prepare|write|put|set|forward|save|remember|compose|archive|post|publish|renew|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|reorder|empty|increase|decrease|apply|redeem|block|unblock)\b|\bschedule\s+(?:a|an|the|my|new|meeting|event)\b/.test(request)) return null
   // An additional discovery/read command belongs to its own handler or planner.
   for(const clause of request.split(/\b(?:and|then|also)\b/)){
     if(/^\s*(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read(?![- ]only)|review|show|list|tell\s+me)\b/.test(clause)&&
@@ -119,6 +119,10 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
     })).filter((event: any) => event.start)
     calendarReturnedCount=Number.isInteger(output.returnedEventCount)?output.returnedEventCount:calendarEvents.length
   } catch (error: any) {
+    if(error?.message==='calendar_duration_unsupported')return {
+      text:'Please give one meeting duration from 15 to 180 minutes. I have not shortened or changed the requested duration.',
+      calendarEvents:[],reminders:[],timeZone:requestedTimeZone,tomorrowKey,calendarReadVerified:false,
+    }
     if(error?.message==='calendar_time_unsupported')return {
       text:'Please give one exact time, such as 3 PM or 15:00, and its timezone so I can check that slot.',
       calendarEvents:[],reminders:[],timeZone:requestedTimeZone,tomorrowKey,calendarReadVerified:false,

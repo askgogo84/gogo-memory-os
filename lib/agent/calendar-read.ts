@@ -46,7 +46,7 @@ function calendarRangeText(text:string){
 }
 
 export function calendarRequestsAvailability(text:string){
-  const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|\d+[- ]minutes?)\s+)*(?:slots?|time|gaps?|availability)\b/i
+  const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)[- ](?:minutes?|mins?|hours?|hrs?))\s+)*(?:slots?|time|gaps?|availability)\b/i
   const availabilityQuestion=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
   return availabilityCommand.test(text)||availabilityQuestion.test(text)
 }
@@ -55,7 +55,7 @@ export function calendarAffirmativeText(text:string){
   return text.replace(/’/g,"'")
     .replace(/\b(?:do not|don't|dont)\s+forget\s+to\s+/gi,'')
     .replace(/\b(?:do not|don't|dont|without)\s+[^.;!?\n]*?(?=[.;!?\n]|\b(?:but|then)\b|$)/gi,clause=>{
-    const next=clause.match(/(?:,\s*(?:just|please|instead)\s+|,\s*(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief)\b)|,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|reorder|empty|increase|decrease|apply|redeem|block|unblock|reserve|remind|put|set|forward|save|remember|compose|archive|post|publish|renew|reschedule|resched|postpone|push|shift|update|make|remove|clear|book|send|pay|buy|purchase)\b))/i)
+    const next=clause.match(/(?:,\s*(?:just|please|instead)\s+|,\s*(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief)\b)|,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:monitor|watch|track|schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|reorder|empty|increase|decrease|apply|redeem|block|unblock|reserve|remind|put|set|forward|save|remember|compose|archive|post|publish|renew|reschedule|resched|postpone|push|shift|update|make|remove|clear|book|send|pay|buy|purchase)\b))/i)
     if(next?.index===undefined)return ''
     const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|without)\s+/i,'')
     // A coordinated bare verb list keeps the prohibition across an Oxford comma.
@@ -113,11 +113,14 @@ export function calendarReadWindow(text:string,now:Date,tz:string){
 }
 
 function requestedDurationMinutes(text:string){
-  const mins=String(text||'').match(/\b(\d{1,3})[\s-]*(?:min|mins|minute|minutes)\b/i)
-  if(mins)return Math.max(15,Math.min(180,Number(mins[1])))
-  const hours=String(text||'').match(/\b(\d(?:\.5)?)[\s-]*(?:hour|hours|hr|hrs)\b/i)
-  if(hours)return Math.max(30,Math.min(180,Math.round(Number(hours[1])*60)))
-  return 30
+  const durations=new Set<number>()
+  for(const match of text.matchAll(/(?<![\w.])(\d+(?:\.\d+)?|\.\d+)[\s-]*(minutes?|mins?|hours?|hrs?)\b/gi)){
+    const minutes=Number(match[1])*(/^h/i.test(match[2])?60:1)
+    if(!Number.isInteger(minutes)||minutes<15||minutes>180)throw new Error('calendar_duration_unsupported')
+    durations.add(minutes)
+  }
+  if(durations.size>1||(!durations.size&&/\b(?:minutes?|mins?|hours?|hrs?)\b/i.test(text)))throw new Error('calendar_duration_unsupported')
+  return durations.values().next().value??30
 }
 
 function requestedStartMinute(text:string):number|undefined{
@@ -211,7 +214,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const timezone=requestedZone?normalizeTimezone(requestedZone):access.timezone
   const window=calendarReadWindow(text,new Date(),timezone)
   const wantsAvailability=calendarRequestsAvailability(text)
-  const duration=requestedDurationMinutes(text)
+  const duration=wantsAvailability?requestedDurationMinutes(text):30
   const requestedMinute=wantsAvailability?requestedStartMinute(text):undefined
   if(requestedMinute!==undefined&&requestedMinute+duration>1440)throw new Error('calendar_time_unsupported')
   const start=parseLocalDateTime({date:window.startDate,time:'00:00',timezone}).dueAtUtc

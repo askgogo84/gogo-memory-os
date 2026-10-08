@@ -150,6 +150,11 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
     try{
       availability=await executeReadOnlyCalendarStep({actor,instruction:`Find free slots. ${text}`,missionText:text})
     }catch(err:any){
+      if(String(err?.message||'')==='calendar_duration_unsupported'){
+        const summary='I can currently prepare a single meeting lasting 15 to 180 minutes. Please give one duration in that range; I have not shortened or changed the requested meeting.'
+        await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
+        return {runId,status:'paused',capability:'calendar',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
+      }
       if(String(err?.message||'')==='calendar_time_unsupported'){
         const summary='Please give one exact meeting time, such as 3 PM or 15:00, and its timezone. I have not substituted another time.'
         await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
