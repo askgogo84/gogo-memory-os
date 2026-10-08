@@ -123,6 +123,10 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
       text:'Please give one meeting duration from 15 to 180 minutes. I have not shortened or changed the requested duration.',
       calendarEvents:[],reminders:[],timeZone:requestedTimeZone,tomorrowKey,calendarReadVerified:false,
     }
+    if(error?.message==='calendar_time_ambiguous')return {
+      text:'That local time occurs twice during a daylight-saving change. Please give the intended time in UTC or choose a time outside the repeated hour.',
+      calendarEvents:[],reminders:[],timeZone:requestedTimeZone,tomorrowKey,calendarReadVerified:false,
+    }
     if(error?.message==='calendar_time_unsupported')return {
       text:'Please give one exact time, such as 3 PM or 15:00, and its timezone so I can check that slot.',
       calendarEvents:[],reminders:[],timeZone:requestedTimeZone,tomorrowKey,calendarReadVerified:false,

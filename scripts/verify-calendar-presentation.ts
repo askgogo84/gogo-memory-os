@@ -366,6 +366,34 @@ async function main(){
     assert.match(relative.text,/exact meeting date/)
     assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'))
   }
+  for(const order of ['for one hour in America/New_York','in America/New_York for one hour','lasting one hour timezone America/New_York']){
+    meetingWrites.length=0;providerItems=[]
+    const result=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed meeting about the budget ${order} next Wednesday at 3 PM.`})
+    assert.equal(result.status,'completed',order)
+    const proposed=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
+    assert.equal(proposed.proposedInvite.timezone,'America/New_York');assert.match(proposed.draftReply,/60-minute/)
+    assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(proposed.proposedInvite.start)),'15:00')
+  }
+  for(const day of ['Saturday','Sunday']){
+    meetingWrites.length=0;providerItems=[]
+    const result=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed meeting next ${day}.`})
+    assert.equal(result.status,'completed')
+    const invite=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
+    assert.equal(new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Kolkata',weekday:'long'}).format(new Date(invite.start)),day)
+  }
+  const sundayDate=calendarReadWindow('next Sunday',new Date(),'Asia/Kolkata').startDate
+  providerItems=[{id:'busy-sunday',summary:'All-day busy',start:{dateTime:sundayDate+'T00:00:00+05:30'},end:{dateTime:sundayDate+'T23:59:00+05:30'}}]
+  const busyWeekend=await direct('Find free slots next Sunday')
+  assert.ok('availableSlots' in busyWeekend.output);assert.equal(busyWeekend.output.availableSlots.length,0)
+  assert.doesNotMatch(busyWeekend.text,/weekday/,'explicit weekend failure is not described as a weekday search')
+  for(const constraint of ['2027-11-07 at 1:30 AM America/New_York','2027-04-04 at 1:45 AM Australia/Lord_Howe']){
+    meetingWrites.length=0;providerItems=[]
+    const result=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed meeting on ${constraint}.`})
+    assert.equal(result.status,'paused');assert.match(result.text,/occurs twice/)
+    assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'))
+  }
+  const repeated=await readTomorrowSchedule({actor,scope:'calendar',text:'Find free slots on 2027-11-07 at 1:30 AM America/New_York.'})
+  assert.equal(repeated.calendarReadVerified,false);assert.match(repeated.text,/occurs twice/)
   const wordSlot=await readTomorrowSchedule({actor,scope:'calendar',text:'Find one-hour free slots next Wednesday.'})
   assert.equal(wordSlot.calendarReadVerified,true,'word duration survives the actual schedule caller')
   for(const [constraint,expectedTime,expectedZone] of [

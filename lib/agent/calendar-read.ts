@@ -38,7 +38,7 @@ function calendarActionText(text:string){
   // A launch time or outage duration in the meeting topic is not a scheduling
   // constraint. Preserve a following sentence containing explicit instructions.
   if(!/\b(?:meeting|appointment|slots?|availability)\b/i.test(action))return action
-  return action.replace(/\b(?:to discuss|discussing|about|regarding|concerning|titled|named|called)\s+[^;!?\n]*?(?=\.(?:\s|$)|[;!?\n]|\b(?:but|then)\b|\b(?:(?:on\s+)?(?:today|tomorrow)|(?:next|this|on)\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|week|weekend|month|year)|on\s+20\d{2}-\d{2}-\d{2}|(?:at|before|after|around)\s+(?:\d{1,2}(?::\d{2})?(?:\s*[ap]m)?|noon|midnight))\b|$)/gi,'')
+  return action.replace(/\b(?:to discuss|discussing|about|regarding|concerning|titled|named|called)\s+[^;!?\n]*?(?=\.(?:\s|$)|[;!?\n]|\b(?:but|then)\b|\b(?:(?:on\s+)?(?:today|tomorrow)|(?:next|this|on)\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|week|weekend|month|year)|on\s+20\d{2}-\d{2}-\d{2}|(?:at|before|after|around)\s+(?:\d{1,2}(?::\d{2})?(?:\s*[ap]m)?|noon|midnight)|(?:for|lasting)\s+(?:(?:\d+(?:\.\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten|and|half|quarter)[\s-]+)+(?:hours?|hrs?|minutes?|mins?)|(?:in|using)\s+(?:[A-Za-z_]+\/[A-Za-z0-9_+.\/-]+|UTC|GMT|IST|CET|EET|WET|EST5EDT|CST6CDT|MST7MDT|PST8PDT)|time\s*zone)\b|$)/gi,'')
 }
 
 function calendarRangeText(text:string){
@@ -187,6 +187,20 @@ function eventInterval(event:any,tz:string){
 }
 
 function dayOfWeek(iso:string){return new Date(`${iso}T00:00:00Z`).getUTCDay()}
+function ambiguousLocalTime(instant:Date,date:string,time:string,timezone:string){
+  const wallUtc=Date.parse(`${date}T${time}:00Z`)
+  const clockFormat=new Intl.DateTimeFormat('en-GB',{timeZone:timezone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'})
+  const candidates=new Set<number>()
+  // Probe the offsets on either side of a transition, including non-hour
+  // changes. Both matching instants are possible during a repeated wall time.
+  for(const days of [-2,-1,0,1,2]){
+    const probe=new Date(instant.getTime()+days*86_400_000)
+    const probeWall=Date.parse(`${localYmd(probe,timezone)}T${clockFormat.format(probe)}:00Z`)
+    const candidate=new Date(wallUtc-(probeWall-probe.getTime()))
+    if(localYmd(candidate,timezone)===date&&clockFormat.format(candidate)===time)candidates.add(candidate.getTime())
+  }
+  return candidates.size>1
+}
 function blocksCalendarTime(event:any){
   return event.transparency!=='transparent'&&!(Array.isArray(event.attendees)&&event.attendees.some((attendee:any)=>attendee.self===true&&attendee.responseStatus==='declined'))
 }
@@ -281,9 +295,11 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   if(params.rememberSelection)await rememberTypedObjects(params.actor.legacyTelegramId,'calendar',[],null).catch(()=>{})
   if(!complete||unknownIntervals)throw Object.assign(new Error('calendar_availability_unverified'),{timezone,window})
   const slots:Array<{start:string;end:string;label:string}>=[]
+  const explicitlyRequestedDays=!['next 7 days','this week','next week'].includes(window.label)
+  const weekdaysOnly=!explicitlyRequestedDays||/\bweekdays?\b/i.test(text)
   for(let date=window.startDate;date<=window.endDate&&slots.length<MAX_SLOTS;date=addDays(date,1)){
     const weekday=dayOfWeek(date)
-    if(requestedMinute===undefined&&(weekday===0||weekday===6))continue
+    if(requestedMinute===undefined&&(weekday===0||weekday===6)&&weekdaysOnly)continue
     const firstMinute=requestedMinute??9*60
     const lastMinute=requestedMinute??18*60-duration
     for(let minute=firstMinute;minute<=lastMinute&&slots.length<MAX_SLOTS;minute+=30){
@@ -293,6 +309,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
         if(requestedMinute!==undefined)throw new Error('calendar_time_unsupported')
         continue
       }
+      if(requestedMinute!==undefined&&ambiguousLocalTime(localStart,date,clock(minute),timezone))throw new Error('calendar_time_ambiguous')
       const localEnd=new Date(localStart.getTime()+duration*60_000)
       if(localStart.getTime()<Date.now()+15*60_000)continue
       if(overlaps(localStart.getTime(),localEnd.getTime(),events,timezone))continue
@@ -303,6 +320,6 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const display=slots.length
     ? `I found these ${duration}-minute free slots in ${window.label}:\n${slots.map((s,i)=>`${i+1}. ${s.label}`).join('\n')}`
     : requestedMinute!==undefined?`I couldn't verify an available ${duration}-minute slot at ${clock(requestedMinute)} (${timezone}) in ${window.label}.`
-    : `I couldn't find a ${duration}-minute weekday slot between 9 AM and 6 PM in ${window.label}.`
+    : `I couldn't find a ${duration}-minute ${weekdaysOnly?'weekday ':''}slot between 9 AM and 6 PM in ${window.label}.`
   return {text:display,output:{mode:'availability',durationMinutes:duration,window,timezone,availableSlots:slots,complete,availabilityVerified:true,verifiedStore:'google-calendar',mutated:false}}
 }

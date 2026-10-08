@@ -160,6 +160,11 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
         await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
         return {runId,status:'paused',capability:'calendar',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
       }
+      if(String(err?.message||'')==='calendar_time_ambiguous'){
+        const summary='That local time occurs twice during a daylight-saving change. Please give the intended time in UTC or choose a time outside the repeated hour. I have not chosen an occurrence.'
+        await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
+        return {runId,status:'paused',capability:'calendar',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
+      }
       if(String(err?.message||'')==='calendar_time_unsupported'){
         const summary='Please give one exact meeting time, such as 3 PM or 15:00, and its timezone. I have not substituted another time.'
         await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
