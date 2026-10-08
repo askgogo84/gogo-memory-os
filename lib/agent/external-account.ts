@@ -70,9 +70,8 @@ async function pendingStillBound(telegramId:number,originText:string){
     .eq('telegram_id',telegramId)
     .eq('role','user')
     .order('created_at',{ascending:false})
-    .limit(1)
-    .maybeSingle()
-  return norm(data?.content)===norm(originText)
+    .limit(12)
+  return (data||[]).some((row:any)=>norm(row?.content)===norm(originText))
 }
 
 function looksLikeSignupUrl(value:string){
