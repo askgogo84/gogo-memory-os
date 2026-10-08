@@ -33,7 +33,7 @@ function requestedPerson(text:string){
     /(?:email|mail)\s+from\s+([A-Z][A-Za-z.'-]{1,40})/i,
     /(?:with|for)\s+([A-Z][A-Za-z.'-]{1,40})\s+(?:about|regarding|meeting)/,
   ]
-  for(const pattern of patterns){const match=String(text||'').match(pattern);if(match?.[1])return safe(match[1],80)}
+  for(const pattern of patterns){const match=String(text||'').match(pattern);if(match?.[1]&&!/^(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|yesterday|tomorrow|last|this|next)$/i.test(match[1]))return safe(match[1],80)}
   return ''
 }
 

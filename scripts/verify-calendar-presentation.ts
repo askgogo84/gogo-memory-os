@@ -319,7 +319,7 @@ async function main(){
   meetingCandidates=[developerNotice,genuineMeeting];meetingWrites.length=0
   const selectedAttachment=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest meeting email and attached brief and prepare a proposed meeting tomorrow.'})
   assert.equal(selectedAttachment.status,'completed')
-  assert.deepEqual(attachmentInputs[0],['fixture-email'],'attachment lookup must only inspect the selected source email')
+  assert.deepEqual(Array.from(attachmentInputs[0]),['fixture-email'],'attachment lookup must only inspect the selected source email')
   meetingCandidates=[{...genuineMeeting,from:'Alice <alice@example.test>'}];meetingWrites.length=0
   await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:"Read Alice's latest email and prepare a proposed meeting tomorrow."})
   assert.equal(meetingQueries.at(-1).text,'find latest email from Alice')
