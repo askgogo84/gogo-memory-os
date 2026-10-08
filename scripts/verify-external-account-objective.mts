@@ -23,6 +23,7 @@ const hf=findVaultProviderInText('Hugging Face')
 assert.ok(hf,'Hugging Face must resolve through the trusted provider registry')
 assert.equal(hf!.domains[0],'huggingface.co')
 assert.equal(hf!.signupUrl,'https://huggingface.co/join','account creation must start on the signup form, not the homepage')
+assert.equal(findVaultProviderInText('Instagram')!.signupUrl,undefined,'recognized providers without verified signup URLs must not silently fall back to login')
 
 // Automatic consequential-domain discovery by fuzzy search must not exist.
 const external=fs.readFileSync('lib/agent/external-account.ts','utf8')
@@ -37,6 +38,8 @@ assert.equal(classified.capability,'browser')
 assert.equal(classified.mode,'execute')
 assert.equal(classified.risk,'high')
 assert.equal(classified.approvalAction,'submit_form')
+const conference=classifyAgentRequest('Register me for the conference')
+assert.notEqual(conference.capability==='browser'&&conference.approvalAction==='submit_form',true,'shared classifier must not turn event registration into account creation')
 
 const route=fs.readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
 const routeExternalPos=route.indexOf('parseExternalAccountRequest(text)')
@@ -54,5 +57,9 @@ assert.ok(externalPos>=0&&genericBrowserPos>=0&&externalPos<genericBrowserPos,'e
 const browser=fs.readFileSync('lib/agent/browser-command.ts','utf8')
 assert.match(browser,/export async function runBrowserCommand/,'constructed objective commands must use the same secure browser policy/run pipeline')
 assert.match(browser,/approvalAction/,'external account creation must retain approval binding')
+const secure=fs.readFileSync('lib/agent/secure-computer.ts','utf8')
+assert.match(secure,/account_creation/,'secure browser must have an explicit account-creation operation')
+assert.match(secure,/account\\s+.*created|created.*account/,'account creation must require grounded provider completion evidence')
+assert.match(external,/originText:String\(params\.text\)\.trim\(\)/,'accepted email turn must rebind the next URL-stage follow-up')
 
 console.log('✅ Core v1 external-account objective/Vault/browser routing regressions passed')

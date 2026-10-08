@@ -83,7 +83,9 @@ function trustedTarget(request:ExternalAccountRequest){
       const byDomain=findVaultProviderForDomain(host)
       if(!byDomain||byDomain.key!==byText.key)return null
     }
-    return {provider:byText,url:byText.signupUrl||byText.loginUrl}
+    if(byText.signupUrl)return {provider:byText,url:byText.signupUrl}
+    if(request.url)return {provider:byText,url:request.url}
+    return null
   }
   if(!request.url)return null
   const host=new URL(request.url).hostname.replace(/^www\./,'')
@@ -144,7 +146,7 @@ export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface
     }else if(payload.stage==='email'&&emailOnly(params.text)){
       await clearFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
       return prepareExternalAccount({
-        actor:params.actor,surface:params.surface,originText:String(payload.originText||''),
+        actor:params.actor,surface:params.surface,originText:String(params.text).trim(),
         request:{service:String(payload.service||''),email:String(params.text).trim(),url:payload.url?String(payload.url):null},
       })
     }else if(payload.stage==='url'&&urlOnly(params.text)){
