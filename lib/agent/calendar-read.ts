@@ -93,10 +93,11 @@ async function calendarAccess(actor:AgentActor){
 }
 
 export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instruction:string;missionText:string;rememberSelection?:boolean}){
-  const access=await calendarAccess(params.actor)
   const text=`${params.instruction} ${params.missionText}`
-  const requestedZone=text.match(/\b[A-Za-z_]+\/[A-Za-z_]+(?:\/[A-Za-z_]+)?\b/)?.[0]
+  // Preserve the complete identifier, including Port-au-Prince, GMT+5 and UTC.
+  const requestedZone=(text.match(/\b[A-Za-z_]+\/[A-Za-z0-9_+.-]+(?:\/[A-Za-z0-9_+.-]+)?/)?.[0]||text.match(/\b(?:UTC|GMT)\b/i)?.[0])?.replace(/\.+$/,'')
   if(requestedZone&&!isValidTimezone(requestedZone))throw new Error('calendar_timezone_invalid')
+  const access=await calendarAccess(params.actor)
   const timezone=requestedZone?normalizeTimezone(requestedZone):access.timezone
   const window=calendarReadWindow(text,new Date(),timezone)
   const start=parseLocalDateTime({date:window.startDate,time:'00:00',timezone}).dueAtUtc

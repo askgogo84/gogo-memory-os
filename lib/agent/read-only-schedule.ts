@@ -101,6 +101,10 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
       label: safe(event?.label || '', 240) || undefined,
     })).filter((event: any) => event.start)
   } catch (error: any) {
+    if(error?.message==='calendar_timezone_invalid')return {
+      text:'The requested timezone is invalid. Send a valid timezone such as Asia/Kolkata or UTC so I can check the right dates.',
+      calendarEvents:[],reminders:[],timeZone:requestedTimeZone,tomorrowKey,calendarReadVerified:false,
+    }
     console.error('READ_ONLY_SCHEDULE_CALENDAR_FAILED:', safe(error?.message || error, 160))
     calendarConnected = false
   }

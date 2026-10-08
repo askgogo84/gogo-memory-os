@@ -122,7 +122,20 @@ async function main(){
   const explicitZone=await direct('Show my calendar today in America/New_York')
   assert.equal(explicitZone.output.timezone,'America/New_York')
   assert.equal(explicitZone.output.window.startDate,new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()))
+  for(const zone of ['America/Port-au-Prince','Etc/GMT+5','UTC']){
+    const requested=await direct(`Show my calendar today in ${zone}.`)
+    assert.equal(requested.output.timezone,zone,'retain complete explicit timezone: '+zone)
+    assert.equal(requested.output.window.startDate,new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()))
+  }
+  http.length=0
   await assert.rejects(()=>direct('Show my calendar today in Asia/FakeZone'),/calendar_timezone_invalid/)
+  assert.equal(http.length,0,'invalid timezone is rejected before provider access')
+  const invalidResponse=await exported.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Show my calendar today in Asia/FakeZone.'})}))
+  assert.equal(invalidResponse.status,200)
+  const invalidReply=await invalidResponse.json()
+  assert.match(invalidReply.text,/timezone is invalid/i)
+  assert.doesNotMatch(invalidReply.text,/could not read|connected calendar just now/i,'production wrapper preserves invalid-input reason')
+  assert.equal(http.length,0)
   rangeFixture=false
   const agenda=await readTomorrowSchedule({actor,scope:'agenda'})
   assert.match(agenda.text,/Calendar event fixture/);assert.match(agenda.text,/Travel reminder fixture/)
