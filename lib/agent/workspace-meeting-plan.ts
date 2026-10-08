@@ -70,7 +70,7 @@ function replyDraft(params:{person:string;subject:string;briefText:string;slotLa
 async function createRun(actor:AgentActor,text:string){
   const now=new Date().toISOString()
   const {data,error}=await supabaseAdmin.from('agent_runs').insert({
-    telegram_id:String(actor.legacyTelegramId),type:'workspace_meeting_prep',capability:'email',risk_level:'low',status:'running',
+    telegram_id:String(actor.legacyTelegramId),type:'workspace_meeting_prep',capability:'email',status:'running',
     title:'Prepare meeting reply + invite',summary:'Gogo is gathering private Workspace context without sending or scheduling anything.',
     why:'User asked Gogo to prepare a cross-app meeting response.',source:'workspace',started_at:now,updated_at:now,
     metadata_json:{plan_type:'workspace_meeting_prep',input_text:String(text||'').slice(0,1800),mutationsAllowed:false},
@@ -96,7 +96,7 @@ async function finishRun(actor:AgentActor,runId:string,params:{status:'completed
 
 async function createArtifact(actor:AgentActor,runId:string,data:Record<string,unknown>){
   const {data:artifact,error}=await supabaseAdmin.from('agent_artifacts').insert({
-    telegram_id:String(actor.legacyTelegramId),type:'meeting_prep',title:'Meeting reply + proposed invite',
+    telegram_id:String(actor.legacyTelegramId),type:'meeting_brief',title:'Meeting reply + proposed invite',
     subtitle:'Prepared by Gogo · nothing sent or scheduled',schema_version:1,content_json:data,
     source_refs:[{type:'agent_run',id:runId}],
   }).select('id').single()

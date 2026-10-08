@@ -235,10 +235,19 @@ async function main(){
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Calendar request',instruction:'Do not create a placeholder, and write a calendar event tomorrow.'},missionText:'Do not create a placeholder, and write a calendar event tomorrow.',runId:'fixture-run'}),/mission_calendar_dates_missing/,'affirmative write after a negative clause retains write validation')
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Calendar request',instruction:'Do not create a placeholder and instead schedule the client meeting tomorrow.'},missionText:'Do not create a placeholder and instead schedule the client meeting tomorrow.',runId:'fixture-run'}),/mission_calendar_dates_missing/,'explicit instead conjunction retains affirmative scheduling')
   const meetingWrites:any[]=[],meetingQueries:any[]=[]
+  // This schema is checked against the production columns, not a permissive insert mock.
+  const runSchema=readFileSync('supabase/agent-os-v1.sql','utf8').split('create table if not exists agent_runs (')[1].split(');')[0]
+  const runColumns=new Set([...runSchema.matchAll(/^\s+(\w+)\s/gm)].map(match=>match[1]))
+  const artifactSchema=readFileSync('supabase/agent-os-v1.sql','utf8').split('create table if not exists agent_artifacts (')[1].split(');')[0]
+  const artifactTypes=[...artifactSchema.match(/type in \(([^)]+)\)/)![1].matchAll(/'([^']+)'/g)].map(match=>match[1])
+  const validateMeetingWrite=(table:string,value:any)=>{
+    if(table==='agent_artifacts')assert.ok(artifactTypes.includes(value.type),`agent_artifacts rejects type ${value.type}`)
+    if(table==='agent_runs')for(const key of Object.keys(value))assert.ok(runColumns.has(key),`agent_runs has no ${key} column`)
+  }
   const meetingDb={from(table:string){
     assert.ok(['agent_runs','agent_activity','agent_artifacts'].includes(table),'meeting preparation may persist only owned drafts/run metadata')
     let payload:any
-    const q:any={insert(value:any){payload=value;meetingWrites.push({table,operation:'insert',payload:value});return q},update(value:any){payload=value;meetingWrites.push({table,operation:'update',payload:value});return q},
+    const q:any={insert(value:any){validateMeetingWrite(table,value);payload=value;meetingWrites.push({table,operation:'insert',payload:value});return q},update(value:any){validateMeetingWrite(table,value);payload=value;meetingWrites.push({table,operation:'update',payload:value});return q},
       select(){return q},eq(){return q},single:async()=>({data:{id:`fixture-${table}-${meetingWrites.length}`},error:null}),then:(resolve:any,reject:any)=>Promise.resolve({data:payload,error:null}).then(resolve,reject)}
     return q
   }}
