@@ -97,12 +97,12 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   // Read complete identifiers. Valid slashless aliases (CET, EST5EDT, etc.)
   // are validated as candidates rather than silently replaced by account time.
   const cleanZone=(value:string)=>value.replace(/\.+$/,'')
-  const labeledZone=text.match(/\b(?:time\s*zone|timezone)\s*(?::|=|is)?\s+([A-Za-z][A-Za-z0-9_+.-]*)/i)?.[1]
-  const localZone=[...text.matchAll(/\b(?:in|using)\s+([A-Za-z][A-Za-z0-9_+.-]*)/gi)]
+  const labeledZone=text.match(/\b(?:time\s*zone|timezone)\s*(?::|=|is)?\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/i)?.[1]
+  const localZone=[...text.matchAll(/\b(?:in|using)\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/gi)]
+    .map(match=>cleanZone(match[1])).find(value=>value.includes('/')||isValidTimezone(value))
+  const parenthesizedZone=[...text.matchAll(/\(([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})\)/g)]
     .map(match=>cleanZone(match[1])).find(isValidTimezone)
-  const bareZone=[...text.matchAll(/\b([A-Z][A-Z0-9_+.-]{1,30})\b/g)]
-    .map(match=>cleanZone(match[1])).find(isValidTimezone)
-  const requestedZone=cleanZone(text.match(/\b[A-Za-z_]+\/[A-Za-z0-9_+.-]+(?:\/[A-Za-z0-9_+.-]+)?/)?.[0]||labeledZone||localZone||bareZone||'')||undefined
+  const requestedZone=cleanZone(labeledZone||localZone||parenthesizedZone||'')||undefined
   if(requestedZone&&!isValidTimezone(requestedZone))throw new Error('calendar_timezone_invalid')
   const access=await calendarAccess(params.actor)
   const timezone=requestedZone?normalizeTimezone(requestedZone):access.timezone

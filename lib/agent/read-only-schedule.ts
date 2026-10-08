@@ -46,7 +46,7 @@ export function detectReadOnlyScheduleRequest(raw: string) {
   const request = text.replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/g,'')
   // Command boundaries distinguish "and book a table" from "for the book
   // launch". Event subjects must not become unrelated booking/write intents.
-  if (/(?:^|[,.!?;\n]\s*|\b(?:and|then|also|but|instead|please|to|you)\s+)(?:please\s+)?(?:remind|create|add|move|edit|change|modify|cancel|delete|book|send|pay|buy|purchase)\b|\bschedule\s+(?:a|an|the|my|new|meeting|event)\b/.test(request)) return null
+  if (/(?:^|[,.!?;\n]\s*|\b(?:and|then|also|but|instead|please|to|you)\s+)(?:please\s+)?(?:remind|create|add|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|book|send|pay|buy|purchase)\b|\bschedule\s+(?:a|an|the|my|new|meeting|event)\b/.test(request)) return null
   const readVerb = /\b(check|tell me|show(?: me)?|list|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(text)
   const scheduleContext = /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(text) ||
     /\b(?:what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|what needs my attention tomorrow|(?:summari[sz]e|review|brief me(?: on)?) tomorrow)\b/.test(text)
@@ -81,6 +81,7 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   let calendarConnected = true
   let timeZone = requestedTimeZone
   let calendarComplete=true
+  let calendarAvailability=false
   let calendarText=''
   let calendarEvents: Array<{ id?: string; title: string; start: string; end?: string; label?: string }> = []
   try {
@@ -94,6 +95,7 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
     timeZone = safe(output.timezone || requestedTimeZone, 100)
     window=output.window||calendarReadWindow(originalRequest,now,timeZone)
     calendarComplete=output.complete!==false&&output.availabilityVerified!==false&&output.conflictsVerified!==false
+    calendarAvailability=output.mode==='availability'
     calendarText=calendar.text
     calendarEvents = (Array.isArray(output.events) ? output.events : []).map((event: any) => ({
       id: safe(event?.id || '', 160) || undefined,
@@ -141,12 +143,13 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
 
   const lines: string[] = [window.label==='tomorrow'?'Tomorrow:':`Schedule ${window.label}:`]
   if (calendarConnected) {
-    if (calendarEvents.length) {
+    if(calendarAvailability)lines.push(calendarText)
+    else if (calendarEvents.length) {
       lines.push(`Calendar: ${calendarEvents.length} event${calendarEvents.length === 1 ? '' : 's'}.`)
       for (const event of calendarEvents.slice(0, 6)) lines.push(`• ${event.label||localClock(event.start, timeZone)} — ${event.title}`)
     } else lines.push(calendarComplete?'Calendar: clear.':'Calendar: partial page, full schedule not verified.')
     if(!calendarComplete)lines.push('Calendar review is incomplete; more events or unverified intervals remain.')
-    for(const line of calendarText.split('\n'))if(/^(?:Overlap:|No overlapping|Overlap review|Showing \d+ of)/.test(line))lines.push(line)
+    if(!calendarAvailability)for(const line of calendarText.split('\n'))if(/^(?:Overlap:|No overlapping|Overlap review|Showing \d+ of)/.test(line))lines.push(line)
   } else lines.push('Calendar: I could not read your connected calendar just now.')
 
   if (reminders.length) {
@@ -158,7 +161,7 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   for (const event of calendarEvents.slice(0, 3)) attention.push(`${localClock(event.start, timeZone)} ${event.title}`)
   for (const reminder of reminders.slice(0, 3)) attention.push(`${localClock(reminder.remind_at, timeZone)} ${safe(reminder.message || 'Reminder', 120)}`)
   if (attention.length) lines.push(`Needs your attention: ${attention.join('; ')}.`)
-  else lines.push(calendarComplete?`Nothing currently needs your attention ${window.label}.`:'Calendar attention could not be fully checked.')
+  else if(!calendarAvailability)lines.push(calendarComplete?`Nothing currently needs your attention ${window.label}.`:'Calendar attention could not be fully checked.')
   lines.push('I did not change, create, move or delete anything.')
 
   return { text: lines.join('\n'), calendarEvents, reminders, timeZone, tomorrowKey: localTomorrowKey || tomorrowKey,window, calendarReadVerified: calendarConnected&&calendarComplete }
