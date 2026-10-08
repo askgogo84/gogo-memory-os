@@ -25,6 +25,18 @@ function explicitIsoDates(text:string){
   return out
 }
 
+function calendarRangeText(text:string){
+  for(const filter of text.matchAll(/\b(?:for|about|titled|named|called)\s+/gi)){
+    const prefix=text.slice(0,filter.index)
+    if(!/\b(?:today|tomorrow|(?:this|next) week)\b/i.test(prefix)&&!explicitIsoDates(prefix).length)continue
+    const value=text.slice(filter.index!+filter[0].length)
+    // "for tomorrow" and "for 2026-10-10" are range clauses, not titles.
+    if(/^(?:today|tomorrow|(?:this|next) week|20\d{2}-\d{2}-\d{2}|\d+(?:\.5)?[\s-]*(?:hours?|hrs?|minutes?|mins?))\b/i.test(value))continue
+    return prefix
+  }
+  return text
+}
+
 export function calendarRequestsAvailability(text:string){
   const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|\d+[- ]minutes?)\s+)*(?:slots?|time|gaps?|availability)\b/i
   const availabilityQuestion=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
@@ -44,13 +56,13 @@ export function calendarAffirmativeText(text:string){
 
 export function requestedCalendarDays(text:string){
   // Corrective references exclude a day rather than expanding the read window.
-  const subject=text.match(/\b(?:for\s+the|about|titled|named|called)\s+/i)
-  const range=subject?.index!==undefined&&/\b(?:today|tomorrow)\b/i.test(text.slice(0,subject.index))?text.slice(0,subject.index):text
+  const range=calendarRangeText(text)
   const requested=range.replace(/\b(?:not|except|excluding|rather than|instead of)\s+(?:on\s+)?(?:today|tomorrow)(?:\s*(?:or|and)\s+(?:today|tomorrow))?/gi,'')
   return {today:/\btoday\b/i.test(requested),tomorrow:/\btomorrow\b/i.test(requested)}
 }
 
 export function calendarReadWindow(text:string,now:Date,tz:string){
+  text=calendarRangeText(text)
   const explicit=explicitIsoDates(text)
   if(explicit.length)return {startDate:explicit[0],endDate:explicit[1]||explicit[0],label:explicit.length>1?'requested dates':'requested date'}
   const today=localYmd(now,tz)
@@ -123,7 +135,7 @@ export function requestedCalendarTimezone(text:string){
   // are validated as candidates rather than silently replaced by account time.
   const cleanZone=(value:string)=>value.replace(/\.+$/,'')
   const labeledZone=text.match(/\b(?:time\s*zone|timezone)(?:\s*[:=]\s*|\s+(?:is\s+)?)([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/i)?.[1]
-  const zoneContext=text.split(/\b(?:for\s+the|about|titled|named|called)\s+/i)[0]
+  const zoneContext=calendarRangeText(text).split(/\b(?:for\s+the|about|titled|named|called)\s+/i)[0]
   const localZone=[...zoneContext.matchAll(/\b(?:in|using)\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/gi)]
     .map(match=>cleanZone(match[1])).find(value=>value.includes('/')||isValidTimezone(value))
   const parenthesizedZone=[...text.matchAll(/\(([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})\)/g)]
