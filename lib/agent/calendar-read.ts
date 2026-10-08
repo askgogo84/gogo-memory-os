@@ -97,7 +97,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   // Read complete identifiers. Valid slashless aliases (CET, EST5EDT, etc.)
   // are validated as candidates rather than silently replaced by account time.
   const cleanZone=(value:string)=>value.replace(/\.+$/,'')
-  const labeledZone=text.match(/\b(?:time\s*zone|timezone)\s*(?::|=|is)?\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/i)?.[1]
+  const labeledZone=text.match(/\b(?:time\s*zone|timezone)(?:\s*[:=]\s*|\s+(?:is\s+)?)([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/i)?.[1]
   const localZone=[...text.matchAll(/\b(?:in|using)\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/gi)]
     .map(match=>cleanZone(match[1])).find(value=>value.includes('/')||isValidTimezone(value))
   const parenthesizedZone=[...text.matchAll(/\(([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})\)/g)]
@@ -115,7 +115,9 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const busyEvents=events.filter((event:any)=>event.transparency!=='transparent')
   const unknownIntervals=busyEvents.filter((event:any)=>!eventInterval(event,timezone)).length
 
-  const wantsAvailability=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:me|the|a|an|some|any|my|calendar|free|available|open|\d+[- ]minutes?)\s+)*(?:slots?|time|gaps?|availability)\b|\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b/i.test(text)
+  const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:me|the|a|an|some|any|my|calendar|free|available|open|\d+[- ]minutes?)\s+)*(?:slots?|time|gaps?|availability)\b/i
+  const availabilityQuestion=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
+  const wantsAvailability=availabilityCommand.test(text)||availabilityQuestion.test(text)
   if(!wantsAvailability){
     const items=events.slice(0,12).map((event:any)=>({
       id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),start:String(event?.start?.dateTime||event?.start?.date||''),end:String(event?.end?.dateTime||event?.end?.date||''),
