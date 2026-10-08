@@ -56,6 +56,10 @@ const midnight=calendarReadWindow('today and tomorrow',new Date('2026-10-07T18:4
 assert.deepEqual(midnight,{startDate:'2026-10-08',endDate:'2026-10-09',label:'today and tomorrow'})
 assert.equal(calendarReadWindow('today',new Date('2026-10-07T18:15:00Z'),'Asia/Kolkata').endDate,'2026-10-07')
 
+for(const request of ["Don't change anything! Show my calendar tomorrow", "Don't change anything, just show my calendar tomorrow", "Don't change anything, show my calendar tomorrow", "Don't change, please show my calendar tomorrow", "Don't modify anything? Show my calendar tomorrow"])
+ assert.equal(detectReadOnlyScheduleRequest(request)?.scope,'calendar','affirmative command after punctuation: '+request)
+assert.equal(detectReadOnlyScheduleRequest("Don't create, instead schedule a meeting tomorrow"),null,'explicit affirmative action remains outside the read shortcut')
+
 async function main(){
  const original=supabaseAdmin.from,originalFetch=globalThis.fetch
  const typedContexts:any[]=[]
