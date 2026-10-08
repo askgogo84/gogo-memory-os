@@ -115,7 +115,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const busyEvents=events.filter((event:any)=>event.transparency!=='transparent')
   const unknownIntervals=busyEvents.filter((event:any)=>!eventInterval(event,timezone)).length
 
-  const wantsAvailability=/\b(free|available|availability|slot|open time|gap)\b/i.test(text)
+  const wantsAvailability=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:me|the|a|an|some|any|my|calendar|free|available|open|\d+[- ]minutes?)\s+)*(?:slots?|time|gaps?|availability)\b|\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b/i.test(text)
   if(!wantsAvailability){
     const items=events.slice(0,12).map((event:any)=>({
       id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),start:String(event?.start?.dateTime||event?.start?.date||''),end:String(event?.end?.dateTime||event?.end?.date||''),
@@ -143,7 +143,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   }
 
   const duration=requestedDurationMinutes(text)
-  if(!complete||unknownIntervals)return {text:'I could not verify free slots: the calendar page is incomplete or event end times are missing.',output:{mode:'availability',durationMinutes:duration,window,timezone,availableSlots:[],complete,availabilityVerified:false,verifiedStore:'google-calendar',mutated:false}}
+  if(!complete||unknownIntervals)throw Object.assign(new Error('calendar_availability_unverified'),{timezone,window})
   const slots:Array<{start:string;end:string;label:string}>=[]
   for(let date=window.startDate;date<=window.endDate&&slots.length<MAX_SLOTS;date=addDays(date,1)){
     const weekday=dayOfWeek(date)

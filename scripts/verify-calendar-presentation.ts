@@ -16,7 +16,7 @@ assert.equal(detectReadOnlyScheduleRequest('Show my calendar today and tomorrow'
 assert.equal(detectReadOnlyScheduleRequest('What do I have today?'),null,'preserve Today/day route')
 for(const subject of ['book launch','change management meeting','purchase review'])
   assert.equal(detectReadOnlyScheduleRequest(`Show my calendar tomorrow for the ${subject}`)?.scope,'calendar','event subjects are not mutation commands')
-for(const command of ['book a table','change my meeting time','purchase a ticket','please delete the event','remind me at 11am','reschedule my 11am meeting','postpone my meeting','push my meeting to 2pm','shift my meeting to 2pm','update the event','make my meeting 2pm'])
+for(const command of ['book a table','change my meeting time','purchase a ticket','please delete the event','remind me at 11am','reschedule my 11am meeting','postpone my meeting','push my meeting to 2pm','shift my meeting to 2pm','update the event','make my meeting 2pm','remove the 11am event','clear my calendar'])
   assert.equal(detectReadOnlyScheduleRequest(`Show my calendar tomorrow and ${command}`),null,'compound positive commands retain their own flow')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow, create an event at 11am'),null,'comma-separated commands also retain their own flow')
 const midnight=calendarReadWindow('today and tomorrow',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata')
@@ -107,6 +107,7 @@ async function main(){
   const subjectResponse=await exported.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Show my calendar tomorrow for the book launch'})}))
   assert.equal((await subjectResponse.json()).handledBy,'read-only-schedule','noun subjects retain the actual production calendar path')
   const direct=(instruction=exactRequest)=>executeReadOnlyCalendarStep({actor,instruction,missionText:instruction})
+  assert.ok('events' in (await direct('Show my calendar tomorrow for the Free Lunch event.')).output,'Free in an event subject must not switch the shared reader to availability mode')
   providerItems=[{id:'all-day',summary:'All-day event',start:{date:today},end:{date:tomorrow}},
     {id:'tomorrow-timed',summary:'Tomorrow after exclusive end',start:{dateTime:tomorrow+'T09:00:00+05:30'},end:{dateTime:tomorrow+'T10:00:00+05:30'}}]
   const allDay=await direct()
@@ -117,16 +118,47 @@ async function main(){
   assert.ok('unknownIntervals' in invalid.output);assert.equal(invalid.output.unknownIntervals,2);assert.match(invalid.text,/end time not verified/)
   assert.match(invalid.text,/Overlap review is incomplete/);assert.doesNotMatch(invalid.text,/No overlapping/)
   assert.equal((await readTomorrowSchedule({actor,scope:'calendar',text:exactRequest})).calendarReadVerified,false,'learning cannot mark an incomplete overlap review verified')
-  assert.deepEqual((await direct('Find free slots tomorrow')).output.availableSlots,[],'unknown intervals cannot establish availability')
+  await assert.rejects(()=>direct('Find free slots tomorrow'),/calendar_availability_unverified/,'unknown intervals must not complete a negative availability step')
   providerItems=[];partial=true
   const partialCalendar=await readTomorrowSchedule({actor,scope:'calendar',text:exactRequest})
   assert.equal(partialCalendar.calendarReadVerified,false);assert.match(partialCalendar.text,/Partial calendar page/)
   assert.doesNotMatch(partialCalendar.text,/No calendar events|No overlapping/,'an empty page with a next token is not an empty calendar')
-  const partialSlots=await direct('Find free slots tomorrow')
-  assert.deepEqual(partialSlots.output.availableSlots,[]);assert.equal(partialSlots.output.availabilityVerified,false)
+  const missionSource=readFileSync('lib/agent/mission-tools.ts','utf8')
+  const missionMocks:any=Object.fromEntries([...missionSource.matchAll(/from ['"]([^'"]+)['"]/g)].map(m=>[m[1],nullModule]))
+  missionMocks['./calendar-read']={executeReadOnlyCalendarStep,calendarReadWindow}
+  const missionExports:any={}
+  runInNewContext(ts.transpileModule(missionSource,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
+    {exports:missionExports,console,URL,process:{env:{}},require:(name:string)=>missionMocks[name]})
+  await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Find availability',instruction:'Find free slots tomorrow'},missionText:'Find free slots tomorrow',runId:'fixture-run'}),/calendar_availability_unverified/,'canonical mission wrapper propagates incomplete availability instead of completing')
+  const meetingWrites:any[]=[]
+  const meetingDb={from(table:string){
+    assert.ok(['agent_runs','agent_activity','agent_artifacts'].includes(table),'meeting preparation may persist only owned drafts/run metadata')
+    let payload:any
+    const q:any={insert(value:any){payload=value;meetingWrites.push({table,operation:'insert',payload:value});return q},update(value:any){payload=value;meetingWrites.push({table,operation:'update',payload:value});return q},
+      select(){return q},eq(){return q},single:async()=>({data:{id:`fixture-${table}-${meetingWrites.length}`},error:null}),then:(resolve:any,reject:any)=>Promise.resolve({data:payload,error:null}).then(resolve,reject)}
+    return q
+  }}
+  const meetingSource=readFileSync('lib/agent/workspace-meeting-plan.ts','utf8')
+  const meetingMocks:any=Object.fromEntries([...meetingSource.matchAll(/from ['"]([^'"]+)['"]/g)].map(m=>[m[1],nullModule]))
+  Object.assign(meetingMocks,{'@/lib/supabase-admin':{supabaseAdmin:meetingDb},'@/lib/bot/memory-redaction':{redactSecretShapedText:(value:string)=>value},
+    './calendar-read':{executeReadOnlyCalendarStep},'./google-workspace-read':{searchWorkspaceEmails:async()=>({messages:[{id:'fixture-email',threadId:'fixture-thread',from:'Fixture sender <sender@example.test>',subject:'Meeting',snippet:'Fixture discussion'}]})}})
+  const meetingExports:any={}
+  runInNewContext(ts.transpileModule(meetingSource,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
+    {exports:meetingExports,console,URL,process:{env:{}},require:(name:string)=>meetingMocks[name]})
+  const meetingRequest={actor,surface:'web',text:'Read the latest email and prepare a proposed meeting tomorrow.'}
+  const incompleteMeeting=await meetingExports.tryPrepareWorkspaceMeetingPlan(meetingRequest)
+  assert.equal(incompleteMeeting.status,'failed');assert.doesNotMatch(incompleteMeeting.text,/no free slot matched/)
+  assert.ok(meetingWrites.some(write=>write.payload.error==='calendar_availability_unverified'),'actual meeting caller persists unverified availability as failed')
+  assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'),'no proposal fabricated from incomplete availability')
   const partialAgenda=await readTomorrowSchedule({actor,scope:'agenda',text:'Show my schedule tomorrow and find a free slot.'})
   assert.match(partialAgenda.text,/could not verify free slots/);assert.doesNotMatch(partialAgenda.text,/Calendar: clear|Nothing currently needs your attention/)
   partial=false
+  meetingWrites.length=0;providerItems=undefined
+  const preparedMeeting=await meetingExports.tryPrepareWorkspaceMeetingPlan(meetingRequest)
+  assert.equal(preparedMeeting.status,'completed','meeting preparation requests availability explicitly even without a free/slot keyword')
+  const proposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
+  assert.equal(proposal.sourceEmail.threadId,'fixture-thread');assert.equal(proposal.safety.emailSent,false);assert.equal(proposal.safety.calendarScheduled,false)
+  assert.equal(proposal.safety.approvalRequiredForExecution,true);assert.equal(proposal.proposedInvite.status,'proposed_not_scheduled')
   providerItems=Array.from({length:15},(_,i)=>({id:`bounded-${i}`,summary:`Meeting ${i}`,start:{dateTime:today+`T${String(8+i).padStart(2,'0')}:00:00+05:30`},end:{dateTime:today+`T${String(8+i).padStart(2,'0')}:30:00+05:30`}}))
   const bounded=await direct();assert.match(bounded.text,/Showing 12 of 15/);assert.ok('events' in bounded.output);assert.equal(bounded.output.events.length,12)
   providerItems=Array.from({length:41},(_,i)=>({...providerItems![0],id:`overflow-${i}`}))

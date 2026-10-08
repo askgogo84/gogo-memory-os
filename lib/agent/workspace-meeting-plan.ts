@@ -148,7 +148,7 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
 
     let availability:any
     try{
-      availability=await executeReadOnlyCalendarStep({actor,instruction:text,missionText:text})
+      availability=await executeReadOnlyCalendarStep({actor,instruction:`Find free slots. ${text}`,missionText:text})
     }catch(err:any){
       if(String(err?.message||'')==='calendar_not_connected'){
         const summary='I found the email and brief, but Calendar is not connected, so I cannot verify a free slot yet.'

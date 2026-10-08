@@ -46,7 +46,7 @@ export function detectReadOnlyScheduleRequest(raw: string) {
   const request = text.replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/g,'')
   // Command boundaries distinguish "and book a table" from "for the book
   // launch". Event subjects must not become unrelated booking/write intents.
-  if (/(?:^|[,.!?;\n]\s*|\b(?:and|then|also|but|instead|please|to|you)\s+)(?:please\s+)?(?:remind|create|add|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|book|send|pay|buy|purchase)\b|\bschedule\s+(?:a|an|the|my|new|meeting|event)\b/.test(request)) return null
+  if (/(?:^|[,.!?;\n]\s*|\b(?:and|then|also|but|instead|please|to|you)\s+)(?:please\s+)?(?:remind|create|add|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase)\b|\bschedule\s+(?:a|an|the|my|new|meeting|event)\b/.test(request)) return null
   const readVerb = /\b(check|tell me|show(?: me)?|list|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(text)
   const scheduleContext = /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(text) ||
     /\b(?:what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|what needs my attention tomorrow|(?:summari[sz]e|review|brief me(?: on)?) tomorrow)\b/.test(text)
@@ -109,8 +109,15 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
       text:'The requested timezone is invalid. Send a valid timezone such as Asia/Kolkata or UTC so I can check the right dates.',
       calendarEvents:[],reminders:[],timeZone:requestedTimeZone,tomorrowKey,calendarReadVerified:false,
     }
-    console.error('READ_ONLY_SCHEDULE_CALENDAR_FAILED:', safe(error?.message || error, 160))
-    calendarConnected = false
+    if(error?.message==='calendar_availability_unverified'){
+      timeZone=error.timezone||requestedTimeZone
+      window=error.window||calendarReadWindow(originalRequest,now,timeZone)
+      calendarComplete=false;calendarAvailability=true
+      calendarText='I could not verify free slots: the calendar page is incomplete or event end times are missing.'
+    }else{
+      console.error('READ_ONLY_SCHEDULE_CALENDAR_FAILED:', safe(error?.message || error, 160))
+      calendarConnected = false
+    }
   }
 
   const localTomorrowKey = nextLocalDateKey(now, timeZone)
