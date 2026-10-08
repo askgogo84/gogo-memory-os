@@ -21,6 +21,7 @@ export type BrowserCommand = {
   risk:'low'|'medium'|'high'
   approvalAction?:'submit_form'|'booking'|'purchase'
   vaultCredentialId?:string
+  flow?:'account_creation'
 }
 
 function safe(value:unknown,max=1800){return redactSecretShapedText(String(value??'').trim().slice(0,max))}
@@ -299,7 +300,7 @@ async function makeRun(params:{actor:AgentActor;surface:AgentSurface;command:Bro
     telegram_id:String(params.actor.legacyTelegramId),type:'secure_browser',capability:'browser',status:'queued',
     title:`Browser · ${host}`,summary:'Gogo is preparing an isolated browser session.',progress:0,
     why:'This work is isolated from the AskGogo server in a per-user secure computer.',source:params.surface,
-    metadata_json:{plan_type:'secure_browser',url:params.command.url,objective:params.command.objective,mode:params.command.mode,risk:params.command.risk,approval_action:params.command.approvalAction||null,vault_credential_id:params.command.vaultCredentialId||null},
+    metadata_json:{plan_type:'secure_browser',url:params.command.url,objective:params.command.objective,mode:params.command.mode,risk:params.command.risk,approval_action:params.command.approvalAction||null,vault_credential_id:params.command.vaultCredentialId||null,flow:params.command.flow||null},
     started_at:now,updated_at:now,
   }).select('id').single()
   if(error||!data?.id)throw new Error(`browser_run_create_failed:${error?.message||'unknown'}`)
@@ -344,8 +345,10 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   if(currentRunError||!currentRun)throw new Error('browser_handoff_run_unavailable')
   const runMetadata:any=currentRun.metadata_json||{}
   const persistentCommerce=Boolean(runMetadata.commerce_parent_id||runMetadata.comparison_parent_id)&&params.mode==='read'
-  const browserOwner=persistentCommerce?params.actor.userId+':commerce':params.actor.userId
-  const resumePage=persistentCommerce&&Boolean(runMetadata.handoff)
+  const accountCreation=params.command.flow==='account_creation'
+  const persistentAccountResume=accountCreation&&Boolean(runMetadata.handoff)
+  const browserOwner=persistentCommerce?params.actor.userId+':commerce':accountCreation?params.actor.userId+':account:'+params.runId:params.actor.userId
+  const resumePage=(persistentCommerce||persistentAccountResume)&&Boolean(runMetadata.handoff)
   const reconciledResult=runMetadata.browser_safe_to_retry===false
     ? await (await import('./post-auth-outcome')).inspectPostAuthRun(String(tg),params.runId,runMetadata):undefined
   if(reconciledResult===null)return {runId:params.runId,status:'outcome_unknown' as const,capability:'browser' as const,risk:params.command.risk,text:'The browser session is unavailable. Verify the outcome directly with the provider; Gogo will not repeat the action.',handledBy:'secure-browser' as const}
@@ -364,7 +367,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   let pendingHandoffReservation:string|undefined
   try{
-    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce?{keepAlive:true,sessionTaskId:params.runId,resumePage}:{})})
+    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountResume?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
     const at=new Date().toISOString()
 
@@ -566,7 +569,7 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',String(tg)).maybeSingle()
   if(error)throw new Error(`agent_run_read_failed:${error.message}`);if(!run)throw new Error('agent_run_not_found')
   const meta:any=run.metadata_json||{};if(meta.plan_type!=='secure_browser')throw new Error('not_secure_browser_run')
-  const command:BrowserCommand={url:String(meta.url||''),objective:safe(meta.objective,1800),mode:'execute',risk:'high',approvalAction:meta.approval_action||'submit_form',vaultCredentialId:String(meta.vault_credential_id||'').trim()||undefined}
+  const command:BrowserCommand={url:String(meta.url||''),objective:safe(meta.objective,1800),mode:'execute',risk:'high',approvalAction:meta.approval_action||'submit_form',vaultCredentialId:String(meta.vault_credential_id||'').trim()||undefined,flow:meta.flow==='account_creation'?'account_creation':undefined}
   const {data:approved}=await supabaseAdmin.from('agent_approvals').select('id,status,execution_payload,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!approved)throw new Error('approval_required')
   const approvedStepId=String((approved.execution_payload as any)?.stepId||'')
@@ -635,6 +638,7 @@ export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:stri
     risk:mode==='draft'?'medium':'low',
     approvalAction:meta.approval_action||undefined,
     vaultCredentialId:String(meta.vault_credential_id||'').trim()||undefined,
+    flow:meta.flow==='account_creation'?'account_creation':undefined,
   }
   if(!command.url)throw new Error('browser_resume_missing_url')
 

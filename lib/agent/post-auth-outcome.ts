@@ -46,7 +46,7 @@ export async function inspectPostAuthOutcome(metadata:any):Promise<SecureBrowser
   const text=`${page.title} ${page.text}`
   const failed=/\b(declined|failed|unsuccessful|cancelled|canceled|rejected|unable to (?:complete|process)|not (?:confirmed|completed|successful))\b/i.test(text)
   const pending=/\b(pending|processing|please wait|awaiting|in progress)\b/i.test(text)
-  const confirmed=/\b(?:reservation|booking|order|purchase|payment|submission|application|check[- ]?in)\s+(?:is\s+|was\s+)?(?:confirmed|successful|complete|completed)\b|\b(?:you are|you['’]re) checked in\b/i.test(text)
+  const confirmed=/\b(?:reservation|booking|order|purchase|payment|submission|application|check[- ]?in)\s+(?:is\s+|was\s+)?(?:confirmed|successful|complete|completed)\b|\b(?:you are|you['’]re) checked in\b|\baccount\s+(?:(?:has\s+been|was|is)\s+)?(?:created|registered|set\s*up)(?:\s+successfully)?\b|\b(?:successfully\s+)?(?:created|registered|set\s*up)\s+(?:your\s+|the\s+)?account\b/i.test(text)
   const specialized=['flight_execute','restaurant'].includes(metadata.auth_resume?.kind)
   if(!specialized&&(failed||pending||!confirmed))return {...base,status:'blocked',blockReason:'provider_access_limited',
     summary:failed?'The provider reports an unsuccessful outcome. Gogo has not repeated the action. Inspect the provider result before deciding what to do next.':'The provider has not shown a confirmed outcome yet. Check again after the page finishes updating; Gogo will not repeat the action.',

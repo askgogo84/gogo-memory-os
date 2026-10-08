@@ -334,10 +334,11 @@ const gratitude=pattern!=='cancellation'&&pattern!=='check[ -]?in'?new RegExp('\
 const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|processed|confirmed)\\s+(?:(?:your|the|this)\\s+)?'+pattern+'\\b','i');
 const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
 const cartState=/(?:cart|basket)/i.test(pattern)?/\b(?:added?\s+to\s+(?:cart|basket)|in\s+(?:cart|basket)|(?:cart|basket)\s*\(?\s*[1-9])/i:null;
+const accountState=/(?:account|registration)/i.test(pattern)?/\b(?:account\s+(?:(?:has\s+been|was|is)\s+)?(?:created|registered|set\s*up)(?:\s+successfully)?|(?:successfully\s+)?(?:created|registered|set\s*up)\s+(?:your\s+|the\s+)?account|registration\s+(?:(?:has\s+been|was|is)\s+)?(?:complete|completed|successful|succeeded))\b/i:null;
 const extract=(text)=>{
  const raw=String(text||'').normalize('NFKC');
 
- const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:'')+(cartState?'|'+cartState.source:''),'gi');
+ const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:'')+(cartState?'|'+cartState.source:'')+(accountState?'|'+accountState.source:''),'gi');
  const matches=[...raw.matchAll(matcher)].flatMap(match=>{
   const start=match.index||0,end=start+match[0].length;
   const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
@@ -550,10 +551,11 @@ const gratitude=pattern!=='cancellation'&&pattern!=='check[ -]?in'?new RegExp('\
 const reverse=new RegExp('\\bsuccessfully\\s+(?:placed|completed|submitted|processed|confirmed)\\s+(?:(?:your|the|this)\\s+)?'+pattern+'\\b','i');
 const verb=pattern==='cancellation'?/\b(?:booking|reservation|order|flight|ticket|appointment)\s+(?:(?:is|was|has\s+been)\s+)?cancel(?:led|ed)\b/i:pattern==='check[ -]?in'?/\b(?:you(?: are|'re| have been)\s+(?:now\s+|successfully\s+)?)?checked[ -]in(?:\s+successfully)?\b/i:null;
 const cartState=/(?:cart|basket)/i.test(pattern)?/\b(?:added?\s+to\s+(?:cart|basket)|in\s+(?:cart|basket)|(?:cart|basket)\s*\(?\s*[1-9])/i:null;
+const accountState=/(?:account|registration)/i.test(pattern)?/\b(?:account\s+(?:(?:has\s+been|was|is)\s+)?(?:created|registered|set\s*up)(?:\s+successfully)?|(?:successfully\s+)?(?:created|registered|set\s*up)\s+(?:your\s+|the\s+)?account|registration\s+(?:(?:has\s+been|was|is)\s+)?(?:complete|completed|successful|succeeded))\b/i:null;
 const extract=(text)=>{
  const raw=String(text||'').normalize('NFKC');
 
- const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:'')+(cartState?'|'+cartState.source:''),'gi');
+ const matcher=new RegExp(confirmation.source+'|'+reverse.source+(gratitude?'|'+gratitude.source:'')+(verb?'|'+verb.source:'')+(cartState?'|'+cartState.source:'')+(accountState?'|'+accountState.source:''),'gi');
  const matches=[...raw.matchAll(matcher)].flatMap(match=>{
   const start=match.index||0,end=start+match[0].length;
   const left=Math.max(...['\n','.','!','?'].map(separator=>raw.lastIndexOf(separator,start-1)));
@@ -1074,7 +1076,7 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
   let publicFlightRead=false
   try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
   const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
@@ -1090,8 +1092,8 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
   try {
     const target=new URL(params.url)
     if(!['http:','https:'].includes(target.protocol))throw new Error('browser_url_not_http')
-    if(params.keepAlive&&(!params.sessionTaskId||params.mode!=='read'))throw new Error('persistent_browser_read_task_required')
-    const first=await inspect(params.keepAlive?params.userId+':commerce':params.userId,target.toString(),params.keepAlive,params.sessionTaskId,params.resumePage,readDeadline)
+    if(params.keepAlive&&!params.sessionTaskId)throw new Error('persistent_browser_task_required')
+    const first=await inspect(params.keepAlive?(params.keepAliveOwner||params.userId+':commerce'):params.userId,target.toString(),params.keepAlive,params.sessionTaskId,params.resumePage,readDeadline)
     releaseOwnerLock=first.releaseOwnerLock
     activeSandbox=first.sandbox
     releaseManaged=first.managed?.release

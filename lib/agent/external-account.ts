@@ -75,6 +75,13 @@ async function pendingStillBound(telegramId:number,originText:string){
   return norm(data?.content)===norm(originText)
 }
 
+function looksLikeSignupUrl(value:string){
+  try{
+    const url=new URL(value)
+    return /\b(?:join|sign-?up|signup|register|registration|create[-_/]?(?:account|user)|new[-_/]?(?:account|user))\b/i.test(url.pathname)
+  }catch{return false}
+}
+
 function trustedTarget(request:ExternalAccountRequest){
   const byText=findVaultProviderInText(request.service)
   if(byText){
@@ -84,7 +91,7 @@ function trustedTarget(request:ExternalAccountRequest){
       if(!byDomain||byDomain.key!==byText.key)return null
     }
     if(byText.signupUrl)return {provider:byText,url:byText.signupUrl}
-    if(request.url)return {provider:byText,url:request.url}
+    if(request.url&&looksLikeSignupUrl(request.url))return {provider:byText,url:request.url}
     return null
   }
   if(!request.url)return null
@@ -93,7 +100,7 @@ function trustedTarget(request:ExternalAccountRequest){
   if(byDomain)return {provider:byDomain,url:byDomain.signupUrl||request.url}
   // Unknown providers are allowed only when the USER supplied the exact https URL.
   // We never auto-discover a consequential target from search/name similarity.
-  return {provider:null,url:request.url}
+  return looksLikeSignupUrl(request.url)?{provider:null,url:request.url}:null
 }
 
 async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurface;request:ExternalAccountRequest;originText:string}){
@@ -110,7 +117,7 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
     await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{
       service:params.request.service,email,stage:'url',originText:params.originText,
     })
-    return {text:`I have the account objective and email. Send me the official ${params.request.service} website URL so I can continue safely.`,status:'paused',handledBy:'external-account-objective'}
+    return {text:`I have the account objective and email. Send me the official ${params.request.service} signup-page URL so I can continue safely.`,status:'paused',handledBy:'external-account-objective'}
   }
 
   const url=target.url
@@ -120,6 +127,7 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
     mode:'execute',
     risk:'high',
     approvalAction:'submit_form',
+    flow:'account_creation',
     objective:[
       `Create an account on ${params.request.service} (${host}) using email ${email}.`,
       'Use a sensible username derived from the email local-part if the site requires one and it is available.',

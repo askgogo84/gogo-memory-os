@@ -24,6 +24,7 @@ assert.ok(hf,'Hugging Face must resolve through the trusted provider registry')
 assert.equal(hf!.domains[0],'huggingface.co')
 assert.equal(hf!.signupUrl,'https://huggingface.co/join','account creation must start on the signup form, not the homepage')
 assert.equal(findVaultProviderInText('Instagram')!.signupUrl,undefined,'recognized providers without verified signup URLs must not silently fall back to login')
+assert.match(external,/looksLikeSignupUrl/,'user-supplied URLs for account creation must be actual signup-form paths')
 
 // Automatic consequential-domain discovery by fuzzy search must not exist.
 const external=fs.readFileSync('lib/agent/external-account.ts','utf8')
@@ -59,6 +60,8 @@ assert.match(browser,/export async function runBrowserCommand/,'constructed obje
 assert.match(browser,/approvalAction/,'external account creation must retain approval binding')
 const secure=fs.readFileSync('lib/agent/secure-computer.ts','utf8')
 assert.match(secure,/account_creation/,'secure browser must have an explicit account-creation operation')
+assert.match(secure,/accountState/,'sandbox confirmation snapshots must retain account-created evidence')
+assert.match(secure,/keepAliveOwner/,'approved account handoffs must be able to resume the same retained browser owner/page')
 assert.match(secure,/account\\s+.*created|created.*account/,'account creation must require grounded provider completion evidence')
 assert.match(external,/originText:String\(params\.text\)\.trim\(\)/,'accepted email turn must rebind the next URL-stage follow-up')
 
