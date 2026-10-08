@@ -15,6 +15,7 @@ import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 import { tryPrepareTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { tryCreateWebWatchFromCommand } from '@/lib/agent/watch-command'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
+import { tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { prepareGeneralPlanForActor, tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { tryRunPersistentGeneralPlan } from '@/lib/agent/persistent-general-plan'
 import { tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
@@ -47,6 +48,15 @@ export async function POST(request: Request) {
 
   try {
     const actor = await resolveAgentActor(session)
+    // Core v1 objective-first account creation must use the same deterministic
+    // account flow on the Agent API surface as it does on WhatsApp. Never let a
+    // generic planner claim completion without the secure browser/provider evidence.
+    const externalAccount = await tryRunExternalAccountFlow({
+      actor, surface: session.surface, text, messageId: body?.messageId || null,
+    })
+    if (externalAccount) {
+      return NextResponse.json(externalAccount, { status: externalAccount.status === 'waiting_approval' ? 202 : 200 })
+    }
     const contentDraft = await tryRunContentWorkflow(actor, text, body?.messageId)
     if (contentDraft) return NextResponse.json({...contentDraft, status: 'completed', capability: 'memory', risk: 'low'})
     const typedReply=await tryTypedTimeRouting({actor,text,surface:session.surface,messageId:`agent-${randomUUID()}`})
