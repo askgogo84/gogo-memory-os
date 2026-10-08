@@ -14,7 +14,7 @@ import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from 
 import { tryRunExpiryReminderPlan } from './compound-planner'
 import { prepareGeneralPlanForActor, tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
 import { tryRunPersistentGeneralPlan } from './persistent-general-plan'
-import { tryRunTravelResearch } from './travel-research'
+import { tryRunTravelResearch, isTravelResearchDetailsReply } from './travel-research'
 import { hardenTravelResearchResult } from './travel-research-sanitize'
 import { shouldPreferSpecialistTravel } from './specialist-routing'
 import { tryResumeTrainHandoff, tryRunTrainResearch } from './train-research'
@@ -467,7 +467,7 @@ export async function tryRunWhatsAppAgent(params: {
     }
   }
 
-  if (shouldPreferSpecialistTravel(params.text)) {
+  if (shouldPreferSpecialistTravel(params.text) || isTravelResearchDetailsReply(params.text)) {
     const specialistTravel = await tryRunTravelResearch({ actor, surface:'whatsapp', text:params.text })
     if (specialistTravel) {
       const hardened = await hardenTravelResearchResult(specialistTravel, params.text)

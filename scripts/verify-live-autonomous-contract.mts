@@ -6,7 +6,7 @@ const appRun = fs.readFileSync('app/api/agent/run/route.ts','utf8')
 const specialist = fs.readFileSync('lib/agent/specialist-routing.ts','utf8')
 const liveRoute = fs.readFileSync('app/api/agent/live/route.ts','utf8')
 
-const waSpecialistMarker = 'if (shouldPreferSpecialistTravel(params.text))'
+const waSpecialistMarker = 'if (shouldPreferSpecialistTravel(params.text) || isTravelResearchDetailsReply(params.text))'
 const waPersistentMarker = 'const persistent = await tryRunPersistentGeneralPlan'
 const waGeneralMarker = 'const general = await tryRunGeneralPlan'
 
@@ -17,7 +17,7 @@ assert.ok(bridge.indexOf(waSpecialistMarker) < bridge.indexOf(waPersistentMarker
 assert.ok(bridge.indexOf(waPersistentMarker) < bridge.indexOf(waGeneralMarker), 'WhatsApp persistent runtime must beat the legacy general planner')
 assert.ok(bridge.includes("decision === 'approve' ? 'queued' : 'paused'"), 'WhatsApp approval resolution must preserve queued/paused run transition')
 
-const appSpecialistMarker = 'if (shouldPreferSpecialistTravel(text))'
+const appSpecialistMarker = 'if (shouldPreferSpecialistTravel(text) || isTravelResearchDetailsReply(text))'
 const appPersistentMarker = 'const persistentPlan = await tryRunPersistentGeneralPlan'
 const appGeneralMarker = 'const generalPlan = await tryRunGeneralPlan'
 assert.ok(appRun.includes(appSpecialistMarker), 'app/dashboard API must use the same specialist travel routing guard')

@@ -17,7 +17,7 @@ import { routeFeatureIntent } from '@/lib/feature-intents'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
-import { isPublicTravelResearchRequest, tryRunTravelResearch } from '@/lib/agent/travel-research'
+import { isPublicTravelResearchRequest, isTravelResearchDetailsReply, tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { resolveAgentActor } from '@/lib/agent/actor'
@@ -280,6 +280,15 @@ export async function POST(req: NextRequest) {
         runId: browserTask.runId,
         status: browserTask.status,
       })
+    }
+
+    if (isTravelResearchDetailsReply(text)) {
+      const resumed = await tryRunTravelResearch({actor,surface:'web',text})
+      if (resumed) {
+        await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:resumed.handledBy,actualCapability:'travel',status:resumed.status,runId:resumed.runId||null}).catch(()=>{})
+        await saveConversation(user.telegram_id,text,resumed.text)
+        return NextResponse.json(resumed)
+      }
     }
 
     const mission = await tryRunGeneralPlan({

@@ -1,9 +1,42 @@
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from './brain-runtime-guard'
-import {buildTravelResearchContext, executeTravelResearch, flightDateIssue, flightSearchPreferences, isPublicTravelResearchRequest} from './travel-research'
+import {buildTravelResearchContext, executeTravelResearch, flightDateIssue, flightSearchPreferences, isPublicTravelResearchRequest, isTravelResearchDetailsReply} from './travel-research'
 import {hardenTravelResearchResult} from './travel-research-sanitize'
 import type {AgentActor} from './actor'
 import type {AgentSurface} from './orchestrator'
+
+// Only the immediately preceding, recent, owner-bound clarification can supply
+// missing flight fields. A free-form model reply cannot acknowledge queued work.
+async function resumeFlightDetails(params:{actor:AgentActor;text:string}) {
+  if(!isTravelResearchDetailsReply(params.text))return null
+  const {data,error}=await supabaseAdmin.from('conversations').select('role,content,created_at')
+    .eq('telegram_id',Number(params.actor.legacyTelegramId)).order('created_at',{ascending:false}).limit(6)
+  if(error)throw new Error('travel_clarification_read_failed')
+  const rows=Array.isArray(data)?data:[]
+  const previousReply=rows.find(row=>row.role==='assistant')
+  if(!/^Please send the (?:departure city|destination|travel date)(?:, (?:departure city|destination|travel date))* together so I can compare the right flights\.$/.test(String(previousReply?.content||'')))return null
+  const at=Date.parse(String(previousReply?.created_at||'')), age=Date.now()-at
+  if(!Number.isFinite(age)||age<0||age>30*60_000)return null
+  if(rows.some(row=>row.role==='user'&&Date.parse(row.created_at)>at&&String(row.content)!==params.text))return null
+  const {data:pending,error:pendingError}=await supabaseAdmin.from('agent_activity').select('metadata_json')
+    .eq('telegram_id',String(params.actor.legacyTelegramId)).eq('event_type','travel_clarification')
+    .order('created_at',{ascending:false}).limit(1).maybeSingle()
+  if(pendingError)throw new Error('travel_clarification_state_read_failed')
+  const state=pending?.metadata_json, savedAt=Date.parse(String(state?.at||''))
+  if(!Number.isFinite(savedAt)||savedAt>at||Date.now()-savedAt>30*60_000||state?.reply!==previousReply.content)return null
+  const original=String(state?.request||'')
+  if(!isPublicTravelResearchRequest(original))return null
+  const before=buildTravelResearchContext(original,new Date(),params.actor.timezone)
+  if(before.kind!=='flight'||(before.origin&&before.destination&&before.startDate))return null
+  const next=buildTravelResearchContext(params.text,new Date(),params.actor.timezone)
+  if(flightDateIssue(params.text,next,new Date(),params.actor.timezone))return `Compare flights. ${params.text}\nPrevious request: ${original}`
+  const origin=next.origin||before.origin,destination=next.destination||before.destination,startDate=next.startDate||before.startDate
+  const previousPreferences=flightSearchPreferences(original),nextPreferences=flightSearchPreferences(params.text)
+  const adults=/\b(?:adults?|passengers?|people|persons?|travell?ers?)\b/i.test(params.text)?nextPreferences.adults:previousPreferences.adults
+  const cabin=/\b(?:economy|business|first)\b/i.test(params.text)?nextPreferences.cabin:previousPreferences.cabin
+  const nonStop=nextPreferences.nonStop||previousPreferences.nonStop
+  return `Compare ${nonStop?'non-stop ':''}flights${origin?` from ${origin.code||origin.label}`:''}${destination?` to ${destination.code||destination.label}`:''}${startDate?` on ${startDate}`:''} for ${adults} adults in ${cabin.replace(/_/g,' ')}. Research only; do not book or pay.\nOriginal criteria: ${original}\nAdditional details: ${params.text}`
+}
 
 export async function enqueueTravelResearch(params: {actor: AgentActor; surface: AgentSurface; text: string}) {
   let text = params.text.trim()
@@ -14,15 +47,24 @@ export async function enqueueTravelResearch(params: {actor: AgentActor; surface:
     if(error) throw new Error('travel_continuation_read_failed')
     text = String(data?.metadata_json?.input_text || '')
   }
-  if (!isPublicTravelResearchRequest(text)) return null
+  if (!isPublicTravelResearchRequest(text)) {
+    const resumed=await resumeFlightDetails({...params,text})
+    if(!resumed)return null
+    text=resumed
+  }
   const context = {...buildTravelResearchContext(text,new Date(),params.actor.timezone), ...flightSearchPreferences(text)}
   if (context.kind === 'flight') {
     const dateIssue = flightDateIssue(text,context,new Date(),params.actor.timezone)
     if(dateIssue) return {runId:undefined,status:'waiting_user' as const,capability:'travel' as const,risk:'low' as const,
       handledBy:'travel-details',text:dateIssue==='invalid'?'That is not a valid travel date. Please send the route with a valid departure date.':'That departure date is in the past. Please send the route with a future departure date.'}
     const missing = [!context.origin && 'departure city', !context.destination && 'destination', !context.startDate && 'travel date'].filter(Boolean)
-    if (missing.length) return {runId: undefined, status:'waiting_user' as const, capability:'travel' as const, risk:'low' as const,
-      handledBy:'travel-details', text:`Please send the ${missing.join(', ')} together so I can compare the right flights.`}
+    if (missing.length) {
+      const reply=`Please send the ${missing.join(', ')} together so I can compare the right flights.`
+      const {error}=await supabaseAdmin.from('agent_activity').insert({telegram_id:owner,event_type:'travel_clarification',
+        message:'Flight research is waiting for required details.',metadata_json:{request:text,reply,at:new Date().toISOString()}})
+      if(error)throw new Error('travel_clarification_state_write_failed')
+      return {runId:undefined,status:'waiting_user' as const,capability:'travel' as const,risk:'low' as const,handledBy:'travel-details',text:reply}
+    }
     if (/\b(?:children|child|infants?|round[- ]trip|return(?:ing)?(?:\s+on|\s+flight|\s+date)?)\b/i.test(text)
       || !Number.isInteger(context.adults) || context.adults < 1 || context.adults > 9)
       return {runId: undefined, status:'waiting_user' as const, capability:'travel' as const, risk:'low' as const,
