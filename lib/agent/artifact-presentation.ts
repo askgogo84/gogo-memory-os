@@ -15,6 +15,14 @@ export function publicResearchUrl(value:unknown):string {
 
 export function researchReportText(value:unknown,sourceUrls:unknown[],max=20000):string {
   let text=String(value??'')
+  // Research artifacts currently receive search excerpts, not a verified
+  // product-page/browser observation. A model can still overstate confidence
+  // in a heading even when the prompt says not to; keep the saved report honest.
+  text=text
+    .replace(/\bverified\s+(?:current\s+)?(?:retail\s+)?prices\b/gi,'prices appearing in search excerpts (not live-verified)')
+    .replace(/\bverified\s+(?:current\s+)?(?:retail\s+)?price\b/gi,'price appearing in a search excerpt (not live-verified)')
+    .replace(/\bverified\s+pricing\b/gi,'pricing from search excerpts (not live-verified)')
+    .replace(/\bverified\s+nursery\s+locations?\b/gi,'nursery locations appearing in search excerpts')
   const urls=[...new Set(sourceUrls.map(publicResearchUrl).filter(Boolean))].sort((a,b)=>b.length-a.length)
   const replacements:Record<string,string>={}
   for(const [i,url] of urls.entries()) {
@@ -43,3 +51,4 @@ export function artifactReply(artifact:{id:string;title:string;content:unknown})
   const preview=body.length>2800?`${body.slice(0,2700)}\n\nThe full findings are in the private report.`:body
   return `${artifact.title}\n\n${preview||'No completed source results were available.'}\n\nPrivate report: https://app.askgogo.in/dashboard/reports/${encodeURIComponent(artifact.id)}`
 }
+

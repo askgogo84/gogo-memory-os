@@ -243,6 +243,10 @@ console.log('PASS: private-save phrasing and real citation redaction boundaries'
 for(const unsafe of ['javascript:alert(1)','https://user:password@example.test/path','https://example.test/path?token=1234567890','https://example.test/path#secret'])
  assert.equal(realPresentation.publicResearchUrl(unsafe),'','authenticated or unsafe URLs are not citation exemptions')
 assert.ok(!realPresentation.researchReportText('https://example.test/path?token=1234567890',['https://example.test/path?token=1234567890']).includes('1234567890'))
+const excerptOnlyReport=realPresentation.researchReportText('## Verified Prices\nA verified price is $14.95.\n## Verified Nursery Locations',['https://nursery.example'])
+assert.match(excerptOnlyReport,/prices appearing in search excerpts \(not live-verified\)/,'search-only synthesis must not label source snippets as verified current prices')
+assert.match(excerptOnlyReport,/price appearing in a search excerpt \(not live-verified\)/,'singular price claims are downgraded too')
+assert.match(excerptOnlyReport,/nursery locations appearing in search excerpts/,'search excerpts do not verify a nursery address')
 mocks['./artifact-presentation']=realPresentation
 mocks['./mission-tools'].executeVerifiedMissionWebSearch=async()=>({text:'Found 1 public web results.',output:{results:[{title:'Container plants',url:numericUrl,snippet:'Part-sun container guidance.'}]}})
 mocks['./planner-provider'].completeAgentPlanPrompt=async()=> 'Source: '+numericUrl+'\nPlanning estimate USD 90; no verified retail price.'
@@ -250,3 +254,4 @@ const numericPlanner=load('lib/agent/general-planner.ts')
 const numericReport=await numericPlanner.tryRunGeneralPlan({actor,surface:'web',text:researchMission,prepared:{...prepared,plan:researchPlan}})
 assert.ok(numericReport.text.includes(numericUrl),'real planner persistence and publication retain complete numeric citations')
 console.log('PASS: actual planner retains numeric public source URLs while credential-bearing URLs remain excluded')
+
