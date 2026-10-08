@@ -25,6 +25,17 @@ function explicitIsoDates(text:string){
   return out
 }
 
+export function calendarAffirmativeText(text:string){
+  return text.replace(/’/g,"'").replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/gi,clause=>{
+    const next=clause.match(/,\s*and\s+(?:please\s+)?/i)
+    if(next?.index===undefined)return ''
+    const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|without)\s+/i,'')
+    // A coordinated bare verb list keeps the prohibition across an Oxford comma.
+    if(/^\w+(?:\s*(?:,|and|or)\s*\w+)*\s*$/i.test(prohibited))return ''
+    return clause.slice(next.index)
+  })
+}
+
 export function requestedCalendarDays(text:string){
   // Corrective references exclude a day rather than expanding the read window.
   const subject=text.match(/\b(?:for\s+the|about|titled|named|called)\s+/i)

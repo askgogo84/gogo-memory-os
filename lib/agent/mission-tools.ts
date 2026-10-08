@@ -6,7 +6,7 @@ import { addToListDetailed, getAllLists, getList, normalizeListName } from '@/li
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { dispatchThroughSameBrain } from './same-brain'
-import { executeReadOnlyCalendarStep, calendarReadWindow } from './calendar-read'
+import { executeReadOnlyCalendarStep, calendarReadWindow, calendarAffirmativeText } from './calendar-read'
 import { buildTravelResearchContext, curateTravelResults, isPublicTravelResearchRequest } from './travel-research'
 import type { AgentActor } from './actor'
 
@@ -409,8 +409,7 @@ function addDaysIso(iso:string,days:number){
 }
 
 function isCalendarWriteStep(step:MissionStep){
-  const request=`${step.title} ${step.instruction}`.replace(/’/g,"'")
-    .replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/gi,'')
+  const request=calendarAffirmativeText(`${step.title} ${step.instruction}`)
   return /\b(add|create|change|move|schedule|write|modify|prepare|invite|cancel|delete|event\s+titled|spanning)\b/i.test(request)
 }
 

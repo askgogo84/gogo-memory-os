@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule, nextLocalDateKey } from '../lib/agent/read-only-schedule'
 import { supabaseAdmin } from '../lib/supabase-admin'
-import {calendarReadWindow,executeReadOnlyCalendarStep} from '../lib/agent/calendar-read'
+import {calendarReadWindow,executeReadOnlyCalendarStep,calendarAffirmativeText} from '../lib/agent/calendar-read'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import {NextRequest,NextResponse} from 'next/server'
@@ -14,6 +14,8 @@ for(const text of ['Remind me to check my calendar tomorrow','Create a calendar 
 for(const text of ['Review my calendar today and create an event tomorrow','Show my calendar tomorrow; delete the 11am event','Show my calendar tomorrow and edit the 11am event','Review tomorrow. Do not delete anything, but create a meeting.'])assert.equal(detectReadOnlyScheduleRequest(text),null,'positive writes must not be swallowed: '+text)
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and reserve a table at Noma for 2'),null,'reservation commands retain their own executor')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and schedule dentist appointment Friday'),null,'named schedule commands retain their creation flow')
+assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow. Do not create, edit, and delete events.')?.scope,'calendar','coordinated prohibitions remain read-only')
+assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow. Do not create a placeholder, and schedule the client meeting Friday.'),null,'an affirmative command following the negative clause retains its flow')
 assert.equal(detectReadOnlyScheduleRequest('List my meetings today')?.horizon,'today')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar today and tomorrow')?.horizon,'today-tomorrow')
 assert.equal(detectReadOnlyScheduleRequest('What do I have today?'),null,'preserve Today/day route')
@@ -141,13 +143,15 @@ async function main(){
   assert.doesNotMatch(partialCalendar.text,/No calendar events|No overlapping/,'an empty page with a next token is not an empty calendar')
   const missionSource=readFileSync('lib/agent/mission-tools.ts','utf8')
   const missionMocks:any=Object.fromEntries([...missionSource.matchAll(/from ['"]([^'"]+)['"]/g)].map(m=>[m[1],nullModule]))
-  missionMocks['./calendar-read']={executeReadOnlyCalendarStep,calendarReadWindow}
+  missionMocks['./calendar-read']={executeReadOnlyCalendarStep,calendarReadWindow,calendarAffirmativeText}
   const missionExports:any={}
   runInNewContext(ts.transpileModule(missionSource,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
     {exports:missionExports,console,URL,process:{env:{}},require:(name:string)=>missionMocks[name]})
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Find availability',instruction:'Find free slots tomorrow'},missionText:'Find free slots tomorrow',runId:'fixture-run'}),/calendar_availability_unverified/,'canonical mission wrapper propagates incomplete availability instead of completing')
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Review overlaps',instruction:'Review calendar today and tomorrow and flag overlapping events.'},missionText:'Review calendar today and tomorrow and flag overlapping events.',runId:'fixture-run'}),/calendar_conflicts_unverified/,'actual mission caller must not complete an explicitly incomplete conflict review')
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Review overlaps',instruction:exactRequest},missionText:exactRequest,runId:'fixture-run'}),/calendar_conflicts_unverified/,'explicit do-not-create clauses retain the real read path')
+  await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Calendar request',instruction:'Do not create a placeholder, and schedule the client meeting tomorrow.'},missionText:'Do not create a placeholder, and schedule the client meeting tomorrow.',runId:'fixture-run'}),/mission_calendar_dates_missing/,'affirmative schedule after a negated action still enters the existing write validation; no provider write fixture')
+  await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Calendar request',instruction:'Do not create a placeholder, and write a calendar event tomorrow.'},missionText:'Do not create a placeholder, and write a calendar event tomorrow.',runId:'fixture-run'}),/mission_calendar_dates_missing/,'affirmative write after a negative clause retains write validation')
   const meetingWrites:any[]=[]
   const meetingDb={from(table:string){
     assert.ok(['agent_runs','agent_activity','agent_artifacts'].includes(table),'meeting preparation may persist only owned drafts/run metadata')

@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
-import { calendarReadWindow, executeReadOnlyCalendarStep, requestedCalendarTimezone, requestedCalendarDays } from './calendar-read'
+import { calendarReadWindow, executeReadOnlyCalendarStep, requestedCalendarTimezone, requestedCalendarDays, calendarAffirmativeText } from './calendar-read'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { rememberTypedObjects } from './typed-object-context'
 
@@ -43,7 +43,7 @@ export function detectReadOnlyScheduleRequest(raw: string) {
   const text = safe(raw, 2000).toLowerCase().replace(/[’]/g, "'")
   if (!text) return null
   const explicitNoMutation = /\b(do not|don't|dont|without)\s+(?:change|changing|modify|modifying|create|creating|add|adding|edit|editing|move|moving|schedule|scheduling|cancel|cancelling|canceling)\b/.test(text) || /\bread[- ]only\b/.test(text)
-  const request = text.replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/g,'')
+  const request = calendarAffirmativeText(text)
   // Command boundaries distinguish "and book a table" from "for the book
   // launch". Event subjects must not become unrelated booking/write intents.
   if (/(?:^|[,.!?;\n]\s*|\b(?:and|then|also|but|instead|please|to|you)\s+)(?:please\s+)?(?:reserve|schedule|remind|create|add|invite|prepare|write|put|set|forward|save|remember|compose|archive|post|publish|renew|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase)\b|\bschedule\s+(?:a|an|the|my|new|meeting|event)\b/.test(request)) return null
