@@ -243,10 +243,17 @@ console.log('PASS: private-save phrasing and real citation redaction boundaries'
 for(const unsafe of ['javascript:alert(1)','https://user:password@example.test/path','https://example.test/path?token=1234567890','https://example.test/path#secret'])
  assert.equal(realPresentation.publicResearchUrl(unsafe),'','authenticated or unsafe URLs are not citation exemptions')
 assert.ok(!realPresentation.researchReportText('https://example.test/path?token=1234567890',['https://example.test/path?token=1234567890']).includes('1234567890'))
-const excerptOnlyReport=realPresentation.researchReportText('## Verified Prices\nA verified price is $14.95.\n## Verified Nursery Locations',['https://nursery.example'])
+const excerptOnlyReport=realPresentation.researchReportText('## Verified Prices\nA verified price is $14.95.\n## Verified Nursery Locations',['https://nursery.example'],20000,true)
 assert.match(excerptOnlyReport,/prices appearing in search excerpts \(not live-verified\)/,'search-only synthesis must not label source snippets as verified current prices')
 assert.match(excerptOnlyReport,/price appearing in a search excerpt \(not live-verified\)/,'singular price claims are downgraded too')
 assert.match(excerptOnlyReport,/nursery locations appearing in search excerpts/,'search excerpts do not verify a nursery address')
+assert.match(realPresentation.researchReportText('Verified price: $14.95',['https://nursery.example']),/Verified price: \$14\.95/,'generic prose without search-only provenance is not rewritten')
+const provenanceSections=realPresentation.artifactSections({sections:[
+ {title:'Drive document',tool:'files',result:{text:'Verified price: $14.95 in the supplied invoice.'}},
+ {title:'Search synthesis',tool:'artifact',result:{text:'Verified price: $14.95.',synthesisStatus:'generated'}}
+]})
+assert.match(provenanceSections[0].text,/Verified price: \$14\.95/,'document-backed confidence is preserved')
+assert.match(provenanceSections[1].text,/price appearing in a search excerpt \(not live-verified\)/,'generated search report confidence is downgraded on readback')
 mocks['./artifact-presentation']=realPresentation
 mocks['./mission-tools'].executeVerifiedMissionWebSearch=async()=>({text:'Found 1 public web results.',output:{results:[{title:'Container plants',url:numericUrl,snippet:'Part-sun container guidance.'}]}})
 mocks['./planner-provider'].completeAgentPlanPrompt=async()=> 'Source: '+numericUrl+'\nPlanning estimate USD 90; no verified retail price.'

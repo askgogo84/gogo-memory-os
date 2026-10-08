@@ -13,12 +13,12 @@ export function publicResearchUrl(value:unknown):string {
   }catch{return ''}
 }
 
-export function researchReportText(value:unknown,sourceUrls:unknown[],max=20000):string {
+export function researchReportText(value:unknown,sourceUrls:unknown[],max=20000,searchExcerptOnly=false):string {
   let text=String(value??'')
   // Research artifacts currently receive search excerpts, not a verified
   // product-page/browser observation. A model can still overstate confidence
   // in a heading even when the prompt says not to; keep the saved report honest.
-  text=text
+  if(searchExcerptOnly)text=text
     .replace(/\bverified\s+(?:current\s+)?(?:retail\s+)?prices\b/gi,'prices appearing in search excerpts (not live-verified)')
     .replace(/\bverified\s+(?:current\s+)?(?:retail\s+)?price\b/gi,'price appearing in a search excerpt (not live-verified)')
     .replace(/\bverified\s+pricing\b/gi,'pricing from search excerpts (not live-verified)')
@@ -41,7 +41,7 @@ export function artifactSections(content:unknown):{title:string;tool:string;text
     // Display known prose only; internal IDs, tokens and arbitrary result JSON are not a report.
     const text=typeof result.reply==='string'?result.reply:typeof result.text==='string'?result.text:''
     const sanitize=(s:unknown,max:number)=>String(s??'').split('\n').map(line=>redactSecretShapedText(formatEmailSnippet(line,max))).join('\n').slice(0,max)
-    return {title:sanitize(section.title||'Result',180),tool:sanitize(section.tool,40),text:researchReportText(text||'This step has no readable summary saved.',Array.isArray(result.sourceUrls)?result.sourceUrls:[],20000)}
+    return {title:sanitize(section.title||'Result',180),tool:sanitize(section.tool,40),text:researchReportText(text||'This step has no readable summary saved.',Array.isArray(result.sourceUrls)?result.sourceUrls:[],20000,section.tool==='artifact'&&result.synthesisStatus==='generated')}
   })
 }
 
