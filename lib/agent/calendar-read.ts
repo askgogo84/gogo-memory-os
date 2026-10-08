@@ -25,6 +25,12 @@ function explicitIsoDates(text:string){
   return out
 }
 
+export function requestedCalendarDays(text:string){
+  // Corrective references exclude a day rather than expanding the read window.
+  const requested=text.replace(/\b(?:not|except|excluding|rather than|instead of)\s+(?:on\s+)?(?:today|tomorrow)(?:\s*(?:or|and)\s+(?:today|tomorrow))?/gi,'')
+  return {today:/\btoday\b/i.test(requested),tomorrow:/\btomorrow\b/i.test(requested)}
+}
+
 export function calendarReadWindow(text:string,now:Date,tz:string){
   const explicit=explicitIsoDates(text)
   if(explicit.length)return {startDate:explicit[0],endDate:explicit[1]||explicit[0],label:explicit.length>1?'requested dates':'requested date'}
@@ -40,9 +46,10 @@ export function calendarReadWindow(text:string,now:Date,tz:string){
     const daysToSunday=(7-day)%7
     return {startDate:today,endDate:addDays(today,daysToSunday),label:'this week'}
   }
-  if(/\btoday\b/i.test(text)&&/\btomorrow\b/i.test(text))return {startDate:today,endDate:addDays(today,1),label:'today and tomorrow'}
-  if(/\btomorrow\b/i.test(text)){const d=addDays(today,1);return {startDate:d,endDate:d,label:'tomorrow'}}
-  if(/\btoday\b/i.test(text))return {startDate:today,endDate:today,label:'today'}
+  const requestedDays=requestedCalendarDays(text)
+  if(requestedDays.today&&requestedDays.tomorrow)return {startDate:today,endDate:addDays(today,1),label:'today and tomorrow'}
+  if(requestedDays.tomorrow){const d=addDays(today,1);return {startDate:d,endDate:d,label:'tomorrow'}}
+  if(requestedDays.today)return {startDate:today,endDate:today,label:'today'}
   return {startDate:today,endDate:addDays(today,6),label:'next 7 days'}
 }
 
@@ -120,7 +127,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const busyEvents=events.filter((event:any)=>event.transparency!=='transparent')
   const unknownIntervals=busyEvents.filter((event:any)=>!eventInterval(event,timezone)).length
 
-  const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:me|the|a|an|some|any|my|calendar|free|available|open|\d+[- ]minutes?)\s+)*(?:slots?|time|gaps?|availability)\b/i
+  const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|\d+[- ]minutes?)\s+)*(?:slots?|time|gaps?|availability)\b/i
   const availabilityQuestion=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
   const wantsAvailability=availabilityCommand.test(text)||availabilityQuestion.test(text)
   if(!wantsAvailability){

@@ -12,6 +12,7 @@ for(const text of ['What do I have on my calendar tomorrow?','Show my calendar t
 for(const text of ['Check what I have tomorrow and tell me what needs my attention. Do not change anything.','What do I have tomorrow?','What is my day tomorrow?','Plan my day tomorrow','Show my calendar and reminders tomorrow',"Tell me what's on tomorrow. Don't change my calendar."])assert.equal(detectReadOnlyScheduleRequest(text)?.scope,'agenda',text)
 for(const text of ['Remind me to check my calendar tomorrow','Create a calendar event tomorrow','Move my meeting tomorrow','Check the weather tomorrow','Tell me the flight prices tomorrow','Show my reminders tomorrow','Check sunrise tomorrow','Review the news tomorrow'])assert.equal(detectReadOnlyScheduleRequest(text),null,text)
 for(const text of ['Review my calendar today and create an event tomorrow','Show my calendar tomorrow; delete the 11am event','Show my calendar tomorrow and edit the 11am event','Review tomorrow. Do not delete anything, but create a meeting.'])assert.equal(detectReadOnlyScheduleRequest(text),null,'positive writes must not be swallowed: '+text)
+assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and schedule dentist appointment Friday'),null,'named schedule commands retain their creation flow')
 assert.equal(detectReadOnlyScheduleRequest('List my meetings today')?.horizon,'today')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar today and tomorrow')?.horizon,'today-tomorrow')
 assert.equal(detectReadOnlyScheduleRequest('What do I have today?'),null,'preserve Today/day route')
@@ -20,6 +21,10 @@ for(const subject of ['book launch','change management meeting','purchase review
 for(const command of ['book a table','change my meeting time','purchase a ticket','please delete the event','remind me at 11am','reschedule my 11am meeting','postpone my meeting','push my meeting to 2pm','shift my meeting to 2pm','update the event','make my meeting 2pm','remove the 11am event','clear my calendar','invite Alice to the 11am meeting','prepare an invite','write a calendar event','put the meeting in my calendar','set up a meeting','forward the agenda email','save the agenda'])
   assert.equal(detectReadOnlyScheduleRequest(`Show my calendar tomorrow and ${command}`),null,'compound positive commands retain their own flow')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow, create an event at 11am'),null,'comma-separated commands also retain their own flow')
+for(const [request,day] of [['Show my calendar tomorrow, not today','tomorrow'],['Show my calendar today, not tomorrow','today'],['Show my calendar tomorrow instead of today','tomorrow']]){
+ assert.equal(calendarReadWindow(request,new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata').label,day,'exclude negated relative days')
+ assert.equal(detectReadOnlyScheduleRequest(request)?.horizon,day,'routing uses the same requested days')
+}
 const midnight=calendarReadWindow('today and tomorrow',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata')
 assert.deepEqual(midnight,{startDate:'2026-10-08',endDate:'2026-10-09',label:'today and tomorrow'})
 assert.equal(calendarReadWindow('today',new Date('2026-10-07T18:15:00Z'),'Asia/Kolkata').endDate,'2026-10-07')
@@ -104,6 +109,8 @@ async function main(){
   for(const question of ['Show my schedule tomorrow and tell me if I have any free time.','Show my schedule tomorrow. Is there a free slot?'])
     assert.match((await readTomorrowSchedule({actor,scope:'agenda',text:question})).text,/free slots|weekday slot/,'declarative availability questions retain the requested answer')
   const availabilityResponse=await exported.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Show my schedule tomorrow and find a free slot.'})}))
+  const checkForResponse=await exported.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Show my schedule tomorrow and check for free time.'})}))
+  assert.match((await checkForResponse.json()).text,/free slots|weekday slot/,'actual route calculates check-for availability')
   const availabilityReply=await availabilityResponse.json()
   assert.equal(availabilityReply.handledBy,'read-only-schedule');assert.match(availabilityReply.text,/free slots|weekday slot/)
   tables.length=0
