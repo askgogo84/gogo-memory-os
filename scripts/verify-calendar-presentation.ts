@@ -60,7 +60,7 @@ for(const request of ["Don't change anything and show my calendar tomorrow", "Do
  assert.equal(detectReadOnlyScheduleRequest(request)?.scope,'calendar','affirmative command after punctuation: '+request)
 assert.equal(detectReadOnlyScheduleRequest("Don't create, instead schedule a meeting tomorrow"),null,'explicit affirmative action remains outside the read shortcut')
 
-for(const verb of ['monitor','watch','track'])
+for(const verb of ['open','browse','navigate','go to','visit','inspect','monitor','watch','track'])
  assert.equal(detectReadOnlyScheduleRequest(`Show my calendar today and ${verb} https://example.com for changes`),null,'independent watcher command retains its own handler')
 
 async function main(){
@@ -303,7 +303,7 @@ async function main(){
     assert.equal(invite.timezone,'Asia/Kolkata','source email timezone is not the requested meeting timezone')
     assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(invite.start)),'09:00','default free slot remains independent of the email timestamp')
   }
-  for(const [duration,minutes] of [['one-hour',60],['an hour',60],['two-hour',120],['half an hour',30],['quarter-hour',15]] as const){
+  for(const [duration,minutes] of [['one-hour',60],['an hour',60],['two-hour',120],['half an hour',30],['quarter-hour',15],['one and a half hours',90],['an hour and a half',90],['two and a half hours',150],['one hour and a quarter',75]] as const){
     meetingWrites.length=0;providerItems=[]
     const result=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed ${duration} meeting next Wednesday.`})
     assert.equal(result.status,'completed',duration)

@@ -60,7 +60,7 @@ export function calendarAffirmativeText(text:string){
   return text.replace(/’/g,"'")
     .replace(/\b(?:do not|don't|dont)\s+forget\s+to\s+/gi,'')
     .replace(/\b(?:do not|don't|dont|without)\s+[^.;!?\n]*?(?=[.;!?\n]|\b(?:but|then)\b|$)/gi,clause=>{
-    const next=clause.match(/(?:,\s*(?:just|please|instead)\s+|,\s*(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief)\b)|,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief|monitor|watch|track|schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|reorder|empty|increase|decrease|apply|redeem|block|unblock|reserve|remind|put|set|forward|save|remember|compose|archive|post|publish|renew|reschedule|resched|postpone|push|shift|update|make|remove|clear|book|send|pay|buy|purchase)\b))/i)
+    const next=clause.match(/(?:,\s*(?:just|please|instead)\s+|,\s*(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief)\b)|,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief|open|browse|navigate|go to|visit|inspect|monitor|watch|track|schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|reorder|empty|increase|decrease|apply|redeem|block|unblock|reserve|remind|put|set|forward|save|remember|compose|archive|post|publish|renew|reschedule|resched|postpone|push|shift|update|make|remove|clear|book|send|pay|buy|purchase)\b))/i)
     if(next?.index===undefined)return ''
     const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|without)\s+/i,'')
     // A coordinated bare verb list keeps the prohibition across an Oxford comma.
@@ -120,6 +120,14 @@ export function calendarReadWindow(text:string,now:Date,tz:string){
 function requestedDurationMinutes(text:string){
   const durations=new Set<number>()
   const words:Record<string,number>={a:1,an:1,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,half:0.5,quarter:0.25}
+  const amountPattern='(?:\\d+(?:\\.\\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)'
+  const quantity=(amount:string)=>words[amount.toLowerCase()]??Number(amount)
+  const beforeUnit=new RegExp(`\\b(${amountPattern})\\s+and\\s+(?:a\\s+)?(half|quarter)\\s+(hours?|hrs?|minutes?|mins?)\\b`,'gi')
+  const afterUnit=new RegExp(`\\b(${amountPattern})[\\s-]+(hours?|hrs?|minutes?|mins?)\\s+and\\s+(?:a\\s+)?(half|quarter)\\b`,'gi')
+  text=text.replace(beforeUnit,(_,amount,fraction,unit)=>`${quantity(amount)+words[fraction.toLowerCase()]} ${unit}`)
+    .replace(afterUnit,(_,amount,unit,fraction)=>`${quantity(amount)+words[fraction.toLowerCase()]} ${unit}`)
+  // Unrecognized fractional grammar must not become a shorter appointment.
+  if(/\b(?:and\s+(?:an?\s+)?(?:half|quarter)|(?:half|quarter)\s+of)\b/i.test(text))throw new Error('calendar_duration_unsupported')
   for(const match of text.matchAll(/(?<![\w.-])(\d+(?:\.\d+)?|\.\d+|(?:half|quarter)(?:[ -]+an?)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)[\s-]*(minutes?|mins?|hours?|hrs?)\b/gi)){
     const amount=match[1].toLowerCase().split(/[ -]/)[0]
     const minutes=(words[amount]??Number(amount))*(/^h/i.test(match[2])?60:1)
