@@ -292,13 +292,15 @@ async function main(){
   assert.equal(busyProposal.status,'paused');assert.match(busyProposal.text,/15:00/);assert.doesNotMatch(busyProposal.text,/and brief/)
   assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'),'busy requested time never produces an arbitrary alternate invitation')
   providerItems=[]
-  for(const constraint of ['at 3','at 3pm or 4pm','between 3 and 5pm','after 3pm','in the afternoon','at 25:00','at 11:50pm']){
+  for(const constraint of ['about 3 PM','about 15:00','about noon','at 3','at 3pm or 4pm','between 3 and 5pm','after 3pm','in the afternoon','at 25:00','at 11:50pm']){
     meetingWrites.length=0;http.length=0
     const result=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed meeting tomorrow ${constraint}.`})
     assert.equal(result.status,'paused',constraint);assert.match(result.text,/one exact meeting time/)
     assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'),constraint+' cannot fabricate a proposal')
     assert.ok(!http.some(url=>url.includes('/calendar/v3/')),constraint+' does not query an arbitrary availability window')
   }
+  const approximateSlot=await readTomorrowSchedule({actor,scope:'calendar',text:'Find a free slot tomorrow about 3 PM.'})
+  assert.equal(approximateSlot.calendarReadVerified,false);assert.match(approximateSlot.text,/one exact time/)
   const ambiguousSlot=await readTomorrowSchedule({actor,scope:'calendar',text:'Find free slots tomorrow at 3.'})
   assert.equal(ambiguousSlot.calendarReadVerified,false);assert.match(ambiguousSlot.text,/one exact time/)
   for(const timeZone of ['UTC','America/Los_Angeles']){

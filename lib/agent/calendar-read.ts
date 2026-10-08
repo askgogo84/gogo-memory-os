@@ -33,8 +33,9 @@ function explicitIsoDates(text:string){
 
 function calendarActionText(text:string){
   // Email lookup dates, clocks, zones and durations belong to source context.
-  const action=calendarAffirmativeText(text.replace(/\b([ap])\.m\./gi,'$1m'))
+  let action=calendarAffirmativeText(text.replace(/\b([ap])\.m\./gi,'$1m'))
     .replace(/\b(?:read|review|find|search|check)\b[^.;\n]*?\bemail\b[^.;\n]*?(?=\s+and\s+(?:prepare|propose|schedule|arrange)\b)/gi,'')
+  action=action.replace(/\babout(?=\s+(?:\d{1,2}(?::\d{2})?\s*[ap]m|\d{1,2}:\d{2}|noon|midnight)\b)/gi,'around')
   // A launch time or outage duration in the meeting topic is not a scheduling
   // constraint. Preserve a following sentence containing explicit instructions.
   if(!/\b(?:meeting|appointment|slots?|availability)\b/i.test(action))return action
