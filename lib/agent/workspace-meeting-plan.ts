@@ -44,6 +44,21 @@ function addressFromHeader(header:string){
   return plain?.[0]?safe(plain[0],220):''
 }
 
+// Gmail keyword matches are candidates, not evidence of a person asking to meet.
+// Never propose an invitation to a notification service or an unrelated digest.
+function usableMeetingEmail(email:any,explicitSender:boolean){
+  const address=addressFromHeader(email?.from||'')
+  if(!address)return false
+  const sender=String(email?.from||'')
+  const subject=String(email?.subject||'')
+  const snippet=String(email?.snippet||'')
+  if(/(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|alerts?|newsletter|mailer[-_.]?daemon|\[bot\])/i.test(sender))return false
+  if(/\(PR #\d+\)|\bpull request\b|\bissue #\d+\b|\b(?:newsletter|digest|roundup|promotion|unsubscribe)\b/i.test(subject+' '+snippet))return false
+  if(explicitSender)return true
+  return /\b(?:meeting|invitation|invite|catch[- ]?up|availability|schedule|appointment)\b/i.test(subject)
+    || /\b(?:can|could|shall|should|let['’]?s|would you|are you)\b.{0,70}\b(?:meet|meeting|discuss|call|available)\b/i.test(snippet)
+}
+
 function firstUsefulBriefLine(text:string){
   const normalized=safe(text,1200)
   const sentence=normalized.split(/(?<=[.!?])\s+/).find(x=>x.length>=35&&x.length<=360)
@@ -136,7 +151,12 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
       await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
       return {runId,status:'paused',capability:'email',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
     }
-    const email=messages[0]
+    const email=messages.find((candidate:any)=>usableMeetingEmail(candidate,Boolean(person)))
+    if(!email){
+      const summary='I found email keyword matches, but could not identify a suitable meeting message in those results. Please specify the sender and subject, or forward the intended email. I have not drafted an invitation to a notification service or scheduled anything.'
+      await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false,reason:'meeting_source_unverified',candidatesChecked:messages.length}})
+      return {runId,status:'paused',capability:'email',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
+    }
 
     let briefText=''
     let briefFilename=''
