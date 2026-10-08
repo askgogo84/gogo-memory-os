@@ -391,7 +391,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       if(blockReason==='human_auth_required'||blockReason==='delivery_location_required'){
         if((result.handoffReservation||(result.authReason&&result.authReason!=='password'))&&!result.credentialSelectionRequired){
           const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
-          const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:continuationUrl,originalUrl:params.command.url,reservationToken:result.handoffReservation,sessionTaskId:params.runId,...(persistentCommerce?{keepAlive:true}:{})})
+          const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:continuationUrl,originalUrl:params.command.url,reservationToken:result.handoffReservation,sessionTaskId:params.runId,...((persistentCommerce||persistentAccountSession)?{keepAlive:true}:{})})
           const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff},completed_at:null}).eq('id',params.runId).eq('telegram_id',String(tg))
           if(error){
             await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{})
