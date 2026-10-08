@@ -63,7 +63,16 @@ const MONTHS: Record<string, number> = {
 }
 function esc(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
 function placeFrom(raw: string | undefined): Place | undefined { const cleaned=String(raw||'').trim().replace(/[,.!?]+$/g,'').toLowerCase(); if(!cleaned)return undefined; if(PLACES[cleaned])return PLACES[cleaned]; return {label:cleaned.replace(/\b\w/g,c=>c.toUpperCase()),aliases:[cleaned]} }
-function extractSegment(text:string,marker:'from'|'to'|'in'){const stop=marker==='from'?'(?=\\s+(?:to|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip)\\b|$)':marker==='to'?'(?=\\s+(?:from|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip)\\b|$)':'(?=\\s+(?:next|this|tomorrow|on|for|under|below|with|from|to)\\b|$)';return text.match(new RegExp(`\\b${marker}\\s+([a-zA-Z][a-zA-Z .'-]{1,42}?)${stop}`,'i'))?.[1]?.trim()}
+function extractSegment(text:string,marker:'from'|'to'|'in') {
+  const markers=marker==='from'?'to|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip'
+    :marker==='to'?'from|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip'
+    :'next|this|tomorrow|on|for|under|below|with|from|to'
+  // A separate safety instruction is not part of the city. Keep the full
+  // request available so route/date details after that clause still survive.
+  const safetyClause="(?:[.!?;,]\\s*|\\s+)(?=(?:research|read)[ -]+only\\b|do\\s+not\\b|don't\\b)"
+  const stop=`(?=\\s+(?:${markers})\\b|${safetyClause}|$)`
+  return text.match(new RegExp(`\\b${marker}\\s+([a-zA-Z][a-zA-Z .'-]{1,42}?)${stop}`,'i'))?.[1]?.trim()
+}
 function fmtDate(date:Date){return new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}).format(date)}
 function isoDay(date:Date){return date.toISOString().slice(0,10)}
 export function localTravelDate(now: Date, timezone = 'Asia/Kolkata') {

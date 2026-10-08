@@ -116,6 +116,17 @@ for(const input of ['Search flights from BLR to BOM on 2027-02-30','Search fligh
 assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:'Compare flights from BLR to BOM on 1 October 2026'})).text,/past/)
 assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:'Compare flights to Mumbai'})).text,/departure city.*travel date/)
 assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:text.replace('1 adult','2 adults and 1 child')})).text,/child\/infant/)
+const missingWithScope='Compare flights to Mumbai. Research only; do not book or pay.'
+assert.equal(travel.buildTravelResearchContext(missingWithScope,fixedNow).destination?.code,'BOM','an independent read-only clause must not erase the supplied destination')
+assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:missingWithScope})).text,/departure city, travel date together/)
+for(const suffix of ['. Research only; do not book or pay.','; read-only.','! Do not book or pay.','\nResearch only.']) {
+  const scoped=travel.buildTravelResearchContext('Compare flights from St. Louis to Mumbai'+suffix,fixedNow)
+  assert.equal(scoped.origin?.label,'St. Louis','city abbreviations must survive sentence boundary handling')
+  assert.equal(scoped.destination?.code,'BOM')
+}
+const laterOrigin=travel.buildTravelResearchContext('Compare flights to Mumbai. Research only. From Bengaluru on 20 October 2026',fixedNow)
+assert.equal(laterOrigin.origin?.code,'BLR','a safety clause must not erase route details later in the request')
+assert.equal(laterOrigin.destination?.code,'BOM')
 assert.equal(tables.agent_runs.length,0,'invalid/incomplete requests create no provider work')
 
 const context={...travel.buildTravelResearchContext(text,fixedNow),...travel.flightSearchPreferences(text)}
