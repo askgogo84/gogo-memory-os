@@ -30,7 +30,7 @@ export function isWorkspaceDriveContextRequest(text:string){
   const outsideTitle=t.replace(/[\"\u201c][^\"\u201d]*[\"\u201d]/g,'')
   // Leave independent actions with the compound planner, including positive
   // writes. Prohibitions have already been removed from the affirmative scope.
-  if (/\b(send|email|schedule|create|delete|edit|rename|move|share|invite|remind|book|pay|buy)\b/i.test(outsideTitle)
+  if (/\b(send|forward|compose|email|create|add|save|remember|update|set|schedule|remind|cancel|delete|archive|modify|change|write|prepare|edit|rename|move|share|invite|buy|pay|book|post|publish|renew)\b/i.test(outsideTitle)
     || /\b(?:show|check|review|list|read)\s+(?:my\s+)?(?:calendar|reminders|inbox|flights)\b/i.test(outsideTitle)) return false
   const drive=/\bgoogle drive\b/i.test(t) || /\bdrive\b/i.test(t) && /\b(doc|document|file|sheet|spreadsheet|proposal|deck|brief|notes|report)s?\b/i.test(t)
   const document=/\b(doc|docs|document|documents|file|files|sheet|spreadsheet|proposal|deck|brief|notes|report)\b/i.test(t)

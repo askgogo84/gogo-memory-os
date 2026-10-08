@@ -73,7 +73,9 @@ const actor={legacyTelegramId:42}
 const routeSource=readFileSync('app/api/dashboard/chat/route.ts','utf8')
 const nullModule=new Proxy({}, {get:(_target,name)=>/^(?:is|detect|names)/.test(String(name))?()=>false:async()=>null})
 const routeDb={from(table:string){if(table==='users'){const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{telegram_id:42,whatsapp_id:'+15555550100',name:'Fixture'},error:null})};return q}if(table==='conversations')return {insert:async()=>({error:null})};return db.from(table)}}
+const shadowOutcomes:any[]=[]
 const routeDeps:any={
+ '@/lib/agent/shadow-router-outcome':{recordShadowRouterOutcome:async(value:any)=>{shadowOutcomes.push(value)}},
  'next/server':{NextRequest,NextResponse},crypto:{randomUUID:()=> 'fixture-drive-turn'},
  '@/lib/dashboard/session':{getSession:async()=>({telegramId:'42'})},
  '@/lib/supabase-admin':{supabaseAdmin:routeDb},
@@ -87,6 +89,7 @@ runInNewContext(ts.transpileModule(routeSource,{compilerOptions:{module:ts.Modul
 const webResult=await routeApi.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Read my Google Drive document named "Fixture brief". Do not modify any files or send anything.'})}))
 assert.equal(webResult.status,200)
 assert.equal((await webResult.json()).handledBy,'workspace-drive-context','real web route must reach the same Drive executor before generic planning')
+assert.ok(shadowOutcomes.some(x=>x.actualHandler==='workspace-drive-context'&&x.actualCapability==='files'&&x.runId),'real Drive route records its observed outcome')
 console.log('Actual Drive executor, schema, report presenter and web route passed')
 
 for(const negative of ['Do not read my Google Drive document','Find a place to drive this weekend','Read my Google Drive brief and send it to Alice','Read my Google Drive brief and show my calendar tomorrow','Read my Google Drive brief and create a reminder'])
@@ -115,3 +118,10 @@ const unsupported=await api.tryRunWorkspaceDriveContext({actor,surface:'web',tex
 assert.equal(unsupported.status,'paused');assert.match(unsupported.text,/did not pretend to read/)
 assert.equal(writes.some(w=>w.table==='agent_artifacts'),false)
 console.log('Actual WhatsApp Drive bridge, ambiguity and unsupported-document boundaries passed')
+
+for(const action of ['add its deadlines to my calendar','update my project list','save its deadline as a reminder','post its summary','forward it to Alice','archive the source','set a reminder','publish the summary','renew the subscription']){
+ const request='Read my Google Drive brief and '+action
+ assert.equal(api.isWorkspaceDriveContextRequest(request),false,'independent action must not disappear: '+action)
+ const response=await routeApi.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:request})}))
+ assert.equal((await response.json()).handledBy,'unexpected-generic','actual route preserves the compound planner: '+action)
+}

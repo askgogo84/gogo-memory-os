@@ -220,6 +220,7 @@ export async function POST(req: NextRequest) {
 
     const driveContext = await tryRunWorkspaceDriveContext({actor,surface:'web',text})
     if (driveContext) {
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:driveContext.handledBy,actualCapability:'files',status:driveContext.status,runId:driveContext.runId}).catch(()=>{})
       await saveConversation(user.telegram_id,text,driveContext.text)
       return NextResponse.json(driveContext)
     }
