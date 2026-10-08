@@ -50,7 +50,7 @@ for(const [text,expected] of [['next Wednesday','2026-10-14'],['Friday','2026-10
  const window=calendarReadWindow(`Find free slots ${text}`,weekdayClock,'Asia/Kolkata')
  assert.equal(window.startDate,expected,text);assert.equal(window.endDate,expected,text+' is a single requested day')
 }
-for(const text of ['next month','next month on Wednesday','last Friday','last week','in 2 weeks','20 October','October 20','Monday or Wednesday'])
+for(const text of ['next month','next month on Wednesday','last Friday','last week','in 2 weeks','in two days','in a week','two days from now','day after tomorrow','20 October','October 20','Monday or Wednesday'])
  assert.throws(()=>calendarReadWindow(`Find free slots ${text}`,weekdayClock,'Asia/Kolkata'),/calendar_date_(?:unsupported|ambiguous)/,'unsupported/ambiguous dates cannot silently use the default week')
 assert.equal(calendarReadWindow('Show my calendar on 2028-02-29',weekdayClock,'Asia/Kolkata').startDate,'2028-02-29','valid leap day retained')
 for(const dates of ['2027-03-20 to 2027-03-10','2027-03-01 and 2027-03-03 and 2027-03-05'])assert.throws(()=>calendarReadWindow('Show my calendar on '+dates,weekdayClock,'Asia/Kolkata'),/calendar_date_ambiguous/)
@@ -332,6 +332,22 @@ async function main(){
   const validDst=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
   assert.ok(validDst)
   assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(validDst.start)),'03:30')
+  for(const phrasing of ['if I am free',"if I'm free",'whether we are available',"if we're free"]){
+    providerItems=[]
+    const indirect=await executeReadOnlyCalendarStep({actor,instruction:`Check my calendar to see ${phrasing} tomorrow at 3 PM.`,missionText:''})
+    assert.equal(indirect.output.mode,'availability')
+    if('availableSlots' in indirect.output){
+      assert.equal(indirect.output.availableSlots.length,1)
+      assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(indirect.output.availableSlots[0].start)),'15:00')
+    }
+  }
+  for(const datePhrase of ['in two days','in a week','two days from now','day after tomorrow']){
+    meetingWrites.length=0;providerItems=[]
+    const relative=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed meeting ${datePhrase}.`})
+    assert.equal(relative.status,'paused',datePhrase)
+    assert.match(relative.text,/exact meeting date/)
+    assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'))
+  }
   const wordSlot=await readTomorrowSchedule({actor,scope:'calendar',text:'Find one-hour free slots next Wednesday.'})
   assert.equal(wordSlot.calendarReadVerified,true,'word duration survives the actual schedule caller')
   for(const [constraint,expectedTime,expectedZone] of [

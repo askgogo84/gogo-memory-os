@@ -57,7 +57,7 @@ function calendarRangeText(text:string){
 export function calendarRequestsAvailability(text:string){
   const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)[- ](?:minutes?|mins?|hours?|hrs?))\s+)*(?:slots?|time|gaps?|availability)\b/i
   const availabilityQuestion=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
-  return availabilityCommand.test(text)||availabilityQuestion.test(text)
+  return availabilityCommand.test(text)||availabilityQuestion.test(text)||/\b(?:if|whether)\s+(?:i\s+am|i'm|we\s+are|we're|my\s+calendar\s+is)\s+(?:free|available)\b/i.test(text)
 }
 
 export function calendarAffirmativeText(text:string){
@@ -90,7 +90,8 @@ export function calendarReadWindow(text:string,now:Date,tz:string){
   const day=anchor.getUTCDay()
   // A date-like request we cannot resolve must not become an arbitrary slot
   // within the default week. The caller can ask for an exact calendar date.
-  if(/\b(?:(?:next|this|last)\s+(?:weekend|month|year)|last\s+(?:week|sunday|monday|tuesday|wednesday|thursday|friday|saturday)|in\s+\d+\s+(?:days?|weeks?|months?))\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i.test(text))throw new Error('calendar_date_unsupported')
+  if(/\b(?:(?:next|this|last)\s+(?:weekend|month|year)|last\s+(?:week|sunday|monday|tuesday|wednesday|thursday|friday|saturday)|in\s+(?:\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten|a few|a couple of|several)\s+(?:days?|weeks?|months?))\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i.test(text))throw new Error('calendar_date_unsupported')
+  if(/\b(?:day after tomorrow|(?:\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:days?|weeks?|months?)\s+(?:from|after)\s+(?:now|today))\b/i.test(text))throw new Error('calendar_date_unsupported')
   const weekdayRequests=[...text.matchAll(WEEKDAY_PATTERN)]
   if(weekdayRequests.length){
     const namedDays=new Set(weekdayRequests.map(match=>match[2].toLowerCase()))
