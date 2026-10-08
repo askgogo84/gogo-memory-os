@@ -317,9 +317,9 @@ async function main(){
     const invite=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
     assert.equal(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(invite.start)),tomorrow)
   }
-  for(const sourceTime of ['from 3 PM','at 3 PM UTC']){
+  for(const sourceWord of ['email','gmail','mail','inbox'])for(const join of [' and ', ' then ', '; ', '. '])for(const sourceTime of ['from 3 PM','at 3 PM UTC']){
     meetingWrites.length=0;providerItems=[]
-    const sourceClock=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the email ${sourceTime} and prepare a proposed meeting next Wednesday.`})
+    const sourceClock=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Review the ${sourceWord} ${sourceTime}${join}prepare a proposed meeting next Wednesday.`})
     assert.equal(sourceClock.status,'completed','source email time does not impose a meeting time window')
     const invite=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
     assert.equal(invite.timezone,'Asia/Kolkata','source email timezone is not the requested meeting timezone')
