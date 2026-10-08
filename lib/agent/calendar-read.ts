@@ -150,6 +150,7 @@ function requestedStartMinute(text:string):number|undefined{
 }
 
 function eventInterval(event:any,tz:string){
+  if(event?.endTimeUnspecified===true)return null
   if(event?.start?.dateTime&&event?.end?.dateTime){
     const start=new Date(event.start.dateTime).getTime(),end=new Date(event.end.dateTime).getTime()
     if(Number.isFinite(start)&&Number.isFinite(end)&&end>start)return {start,end,allDay:false}
@@ -227,7 +228,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
 
   if(!wantsAvailability){
     const items=events.slice(0,12).map((event:any)=>({
-      id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),start:String(event?.start?.dateTime||event?.start?.date||''),end:String(event?.end?.dateTime||event?.end?.date||''),
+      id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),start:String(event?.start?.dateTime||event?.start?.date||''),end:event?.endTimeUnspecified===true?'':String(event?.end?.dateTime||event?.end?.date||''),
       label:eventInterval(event,timezone)?.allDay?`All day · ${event.start.date} (end ${event.end.date} exclusive)`:
         eventInterval(event,timezone)?slotLabel(event.start.dateTime,event.end.dateTime,timezone):`${event.start?.dateTime||event.start?.date||'Start not verified'} · end time not verified`,
     }))
@@ -237,7 +238,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
     if(events.length>items.length)lines.push(`Showing ${items.length} of ${events.length} returned events.`)
     if(!complete)lines.push('Partial calendar page; more events are available. This is not the full schedule.')
     const conflicts:Array<{first:string;second:string}>=[]
-    const wantsConflicts=/\b(overlap|overlapping|conflicts?|clash|double[- ]booked)\b/i.test(text)
+    const wantsConflicts=/\b(overlaps?|overlapping|conflicts?|clash(?:es)?|double[- ]booked)\b/i.test(text)
     if(wantsConflicts){
       for(let i=0;i<busyEvents.length;i++)for(let j=i+1;j<busyEvents.length;j++){
         const a=eventInterval(busyEvents[i],timezone),b=eventInterval(busyEvents[j],timezone)

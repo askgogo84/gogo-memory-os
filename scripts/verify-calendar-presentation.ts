@@ -179,6 +179,16 @@ async function main(){
   assert.match(invalid.text,/Overlap review is incomplete/);assert.doesNotMatch(invalid.text,/No overlapping/)
   assert.equal((await readTomorrowSchedule({actor,scope:'calendar',text:exactRequest})).calendarReadVerified,false,'learning cannot mark an incomplete overlap review verified')
   await assert.rejects(()=>direct('Find free slots tomorrow'),/calendar_availability_unverified/,'unknown intervals must not complete a negative availability step')
+  providerItems=[{id:'unspecified-end',summary:'End unknown',start:{dateTime:tomorrow+'T09:00:00+05:30'},end:{dateTime:tomorrow+'T10:00:00+05:30'},endTimeUnspecified:true}]
+  const unspecified=await direct('Show my calendar tomorrow and flag overlapping events')
+  assert.ok('conflictsVerified' in unspecified.output)
+  assert.equal(unspecified.output.conflictsVerified,false,'provider compatibility end is not a verified end')
+  assert.ok('events' in unspecified.output);assert.equal(unspecified.output.events[0].end,'','synthetic end is not exposed as an actual end')
+  assert.match(unspecified.text,/end time not verified/)
+  const pluralOverlap=await direct('Show my calendar tomorrow and flag overlaps')
+  assert.ok('conflictsVerified' in pluralOverlap.output)
+  assert.equal(pluralOverlap.output.conflictsVerified,false,'plural overlaps also requests a verified conflict review')
+  await assert.rejects(()=>direct('Find free slots tomorrow'),/calendar_availability_unverified/,'unspecified event end cannot certify availability')
   providerItems=[];partial=true
   await rememberTypedObjects(123,'calendar',[{id:'old-event',title:'Earlier meeting'}],'old-event')
   const incompleteSlots=await readTomorrowSchedule({actor,scope:'calendar',text:'Show my calendar tomorrow and find free slots.'})
@@ -304,6 +314,12 @@ async function main(){
   }
   const badDuration=await readTomorrowSchedule({actor,scope:'calendar',text:'Find a 4-hour free slot tomorrow.'})
   assert.equal(badDuration.calendarReadVerified,false);assert.match(badDuration.text,/15 to 180/)
+  meetingWrites.length=0;providerItems=[];http.length=0
+  const badMeetingZone=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting tomorrow at 3 PM timezone Asia/FakeZone.'})
+  assert.equal(badMeetingZone.status,'paused','invalid requested timezone is correctable input')
+  assert.match(badMeetingZone.text,/valid timezone/)
+  assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'))
+  assert.ok(!http.some(url=>url.includes('/calendar/v3/')))
   const unsupportedMeeting=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting next month.'})
   assert.equal(unsupportedMeeting.status,'paused');assert.match(unsupportedMeeting.text,/exact meeting date/)
   assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'),'unsupported dates do not create an arbitrary proposed meeting')
