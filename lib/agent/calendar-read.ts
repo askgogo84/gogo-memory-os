@@ -187,8 +187,11 @@ function eventInterval(event:any,tz:string){
 }
 
 function dayOfWeek(iso:string){return new Date(`${iso}T00:00:00Z`).getUTCDay()}
+function blocksCalendarTime(event:any){
+  return event.transparency!=='transparent'&&!(Array.isArray(event.attendees)&&event.attendees.some((attendee:any)=>attendee.self===true&&attendee.responseStatus==='declined'))
+}
 function overlaps(start:number,end:number,events:any[],tz:string){
-    return events.some(event=>{if(event.transparency==='transparent')return false;const span=eventInterval(event,tz);return span?start<span.end&&end>span.start:false})
+    return events.some(event=>{if(!blocksCalendarTime(event))return false;const span=eventInterval(event,tz);return span?start<span.end&&end>span.start:false})
 }
 function clock(minutes:number){return `${pad(Math.floor(minutes/60))}:${pad(minutes%60)}`}
 
@@ -244,7 +247,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const page=await fetchPrimaryCalendarEventsPage(access.accessToken,start.toISOString(),end.toISOString(),'AGENT_CALENDAR_READ_FAILED',MAX_EVENTS)
   const events=page.events.filter((event:any)=>event.status!=='cancelled')
   const complete=!page.hasMore
-  const busyEvents=events.filter((event:any)=>event.transparency!=='transparent')
+  const busyEvents=events.filter(blocksCalendarTime)
   const unknownIntervals=busyEvents.filter((event:any)=>!eventInterval(event,timezone)).length
 
   if(!wantsAvailability){

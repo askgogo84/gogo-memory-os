@@ -191,6 +191,24 @@ async function main(){
   assert.ok('conflictsVerified' in pluralOverlap.output)
   assert.equal(pluralOverlap.output.conflictsVerified,false,'plural overlaps also requests a verified conflict review')
   await assert.rejects(()=>direct('Find free slots tomorrow'),/calendar_availability_unverified/,'unspecified event end cannot certify availability')
+  providerItems=[
+    {id:'accepted',summary:'Accepted meeting',start:{dateTime:tomorrow+'T14:00:00+05:30'},end:{dateTime:tomorrow+'T15:00:00+05:30'}},
+    {id:'declined',summary:'Declined invitation',attendees:[{self:true,responseStatus:'declined'}],start:{dateTime:tomorrow+'T14:30:00+05:30'},end:{dateTime:tomorrow+'T16:00:00+05:30'}},
+    {id:'declined-unknown',summary:'Declined without end',attendees:[{self:true,responseStatus:'declined'}],start:{dateTime:tomorrow+'T15:00:00+05:30'}},
+  ]
+  const rsvpRead=await direct('Show my calendar tomorrow and flag overlaps')
+  assert.ok('conflicts' in rsvpRead.output);assert.equal(rsvpRead.output.conflicts.length,0,'self-declined invitation does not conflict')
+  assert.equal(rsvpRead.output.unknownIntervals,0,'self-declined unknown end does not prevent verification')
+  const rsvpSlots=await direct('Find free slots tomorrow at 3 PM')
+  assert.ok('availableSlots' in rsvpSlots.output);assert.equal(rsvpSlots.output.availableSlots.length,1,'declined invitation does not block availability')
+  providerItems=providerItems.slice(0,2)
+  for(const attendee of [{self:false,responseStatus:'declined'},{self:true,responseStatus:'tentative'},{self:true,responseStatus:'needsAction'}]){
+    providerItems[1].attendees=[attendee]
+    const stillBusy=await direct('Show my calendar tomorrow and flag overlaps')
+    assert.ok('conflicts' in stillBusy.output);assert.equal(stillBusy.output.conflicts.length,1,'only the owner declining removes busy time')
+    const busySlot=await direct('Find free slots tomorrow at 3 PM')
+    assert.ok('availableSlots' in busySlot.output);assert.equal(busySlot.output.availableSlots.length,0)
+  }
   providerItems=[];partial=true
   await rememberTypedObjects(123,'calendar',[{id:'old-event',title:'Earlier meeting'}],'old-event')
   const incompleteSlots=await readTomorrowSchedule({actor,scope:'calendar',text:'Show my calendar tomorrow and find free slots.'})
