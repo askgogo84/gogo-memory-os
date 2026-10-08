@@ -56,7 +56,7 @@ const midnight=calendarReadWindow('today and tomorrow',new Date('2026-10-07T18:4
 assert.deepEqual(midnight,{startDate:'2026-10-08',endDate:'2026-10-09',label:'today and tomorrow'})
 assert.equal(calendarReadWindow('today',new Date('2026-10-07T18:15:00Z'),'Asia/Kolkata').endDate,'2026-10-07')
 
-for(const request of ["Don't change anything! Show my calendar tomorrow", "Don't change anything, just show my calendar tomorrow", "Don't change anything, show my calendar tomorrow", "Don't change, please show my calendar tomorrow", "Don't modify anything? Show my calendar tomorrow"])
+for(const request of ["Don't change anything and show my calendar tomorrow", "Don't modify events and list my meetings tomorrow", "Don't change anything! Show my calendar tomorrow", "Don't change anything, just show my calendar tomorrow", "Don't change anything, show my calendar tomorrow", "Don't change, please show my calendar tomorrow", "Don't modify anything? Show my calendar tomorrow"])
  assert.equal(detectReadOnlyScheduleRequest(request)?.scope,'calendar','affirmative command after punctuation: '+request)
 assert.equal(detectReadOnlyScheduleRequest("Don't create, instead schedule a meeting tomorrow"),null,'explicit affirmative action remains outside the read shortcut')
 
@@ -311,9 +311,18 @@ async function main(){
     assert.equal(new Date(content.proposedInvite.end).getTime()-new Date(content.proposedInvite.start).getTime(),minutes*60_000)
     assert.match(content.draftReply,new RegExp(`${minutes}-minute`))
   }
+  meetingWrites.length=0;providerItems=[]
+  const topicFirst=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting about the budget next Wednesday at 3 PM.'})
+  assert.equal(topicFirst.status,'completed')
+  const topicFirstInvite=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
+  assert.equal(new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Kolkata',weekday:'long'}).format(new Date(topicFirstInvite.start)),'Wednesday')
+  assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(topicFirstInvite.start)),'15:00')
   const wordSlot=await readTomorrowSchedule({actor,scope:'calendar',text:'Find one-hour free slots next Wednesday.'})
   assert.equal(wordSlot.calendarReadVerified,true,'word duration survives the actual schedule caller')
   for(const [constraint,expectedTime,expectedZone] of [
+    ['about the budget next Wednesday at 3 PM.','15:00','Asia/Kolkata'],
+    ['about the budget at 3 PM.','15:00','Asia/Kolkata'],
+    ['about the budget at 3pm.','15:00','Asia/Kolkata'],
     ['to discuss the 3 PM launch.','09:00','Asia/Kolkata'],
     ['to discuss the 3 PM UTC launch.','09:00','Asia/Kolkata'],
     ['about the 4-hour outage.','09:00','Asia/Kolkata'],

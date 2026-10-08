@@ -34,7 +34,7 @@ function calendarActionText(text:string){
   // A launch time or outage duration in the meeting topic is not a scheduling
   // constraint. Preserve a following sentence containing explicit instructions.
   if(!/\b(?:meeting|appointment|slots?|availability)\b/i.test(action))return action
-  return action.replace(/\b(?:to discuss|discussing|about|regarding|concerning|titled|named|called)\s+[^;!?\n]*?(?=\.(?:\s|$)|[;!?\n]|\b(?:but|then)\b|$)/gi,'')
+  return action.replace(/\b(?:to discuss|discussing|about|regarding|concerning|titled|named|called)\s+[^;!?\n]*?(?=\.(?:\s|$)|[;!?\n]|\b(?:but|then)\b|\b(?:(?:on\s+)?(?:today|tomorrow)|(?:next|this|on)\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|week|weekend|month|year)|on\s+20\d{2}-\d{2}-\d{2}|(?:at|before|after|around)\s+(?:\d{1,2}(?::\d{2})?(?:\s*[ap]m)?|noon|midnight))\b|$)/gi,'')
 }
 
 function calendarRangeText(text:string){
@@ -60,7 +60,7 @@ export function calendarAffirmativeText(text:string){
   return text.replace(/’/g,"'")
     .replace(/\b(?:do not|don't|dont)\s+forget\s+to\s+/gi,'')
     .replace(/\b(?:do not|don't|dont|without)\s+[^.;!?\n]*?(?=[.;!?\n]|\b(?:but|then)\b|$)/gi,clause=>{
-    const next=clause.match(/(?:,\s*(?:just|please|instead)\s+|,\s*(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief)\b)|,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:monitor|watch|track|schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|reorder|empty|increase|decrease|apply|redeem|block|unblock|reserve|remind|put|set|forward|save|remember|compose|archive|post|publish|renew|reschedule|resched|postpone|push|shift|update|make|remove|clear|book|send|pay|buy|purchase)\b))/i)
+    const next=clause.match(/(?:,\s*(?:just|please|instead)\s+|,\s*(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief)\b)|,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief|monitor|watch|track|schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|reorder|empty|increase|decrease|apply|redeem|block|unblock|reserve|remind|put|set|forward|save|remember|compose|archive|post|publish|renew|reschedule|resched|postpone|push|shift|update|make|remove|clear|book|send|pay|buy|purchase)\b))/i)
     if(next?.index===undefined)return ''
     const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|without)\s+/i,'')
     // A coordinated bare verb list keeps the prohibition across an Oxford comma.
