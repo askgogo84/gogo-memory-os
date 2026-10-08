@@ -30,6 +30,8 @@ function load(file:string,extra:any={}){
   return exports
 }
 const reader=load('lib/agent/google-workspace-read.ts')
+assert.deepEqual(Array.from(reader.workspaceSearchTerms('find latest email about meeting')),[],
+  'the existing generic tokenizer alone erases the meeting topic; preparation needs an explicit topic')
 assert.ok(!reader.formatEmailSnippet('Verification code: &#49;&#50;&#51;&#52;&#53;&#54;').includes('123456'),'decode HTML entities before authentication redaction')
 const result=await reader.searchWorkspaceEmails(actor,instruction,{missionText:mission})
 const request=new URL(urls[0])
@@ -52,6 +54,9 @@ assert.equal(urls.length,before)
 console.log('PASS: real Gmail audit query, original window, fifteen-message bound, body evidence, redaction, pagination and failed/disabled reads')
 
 consent=true
+await reader.searchWorkspaceEmails(actor,'find latest email about meeting',{topic:'meeting'})
+assert.equal(new URL(urls.filter(u=>new URL(u).pathname.endsWith('/messages')).at(-1)!).searchParams.get('q'),'meeting newer_than:2y',
+  'the real meeting provider read must not select the newest unrelated message from the entire inbox')
 auditNoise=true
 const filtered=await reader.searchWorkspaceEmails(actor,instruction,{missionText:mission})
 assert.equal(filtered.messages.length,13,'development notifications and payment marketing are not billing evidence; explicit expiry without an amount remains evidence')
