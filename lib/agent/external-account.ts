@@ -49,7 +49,8 @@ export function parseExternalAccountRequest(text:string):ExternalAccountRequest|
   const byLogin=raw.match(/\b(?:log\s*in|login|go)\s+to\s+(.+?)(?=\s+(?:and|then)\s+(?:create|open|make|sign\s*up|register)\b|[.!?;,]|$)/i)
   const bySignup=raw.match(/\b(?:sign\s*up|register)\s+(?:me\s+)?(?:on|at|with|for)\s+(.+?)(?=\s+(?:using|with|and|then|please)\b|[.!?;,]|$)/i)
   const explicitUrl=extractUrl(raw)
-  let service=cleanService(byCreate?.[1]||byLogin?.[1]||bySignup?.[1]||'')
+  let service=cleanService(byLogin?.[1]||bySignup?.[1]||byCreate?.[1]||'')
+  if(/^me$/i.test(service))service=''
   if(!service&&explicitUrl){
     try{service=new URL(explicitUrl).hostname.replace(/^www\./,'')}catch{}
   }
