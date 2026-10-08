@@ -29,7 +29,12 @@ function explicitIsoDates(text:string){
 
 function calendarActionText(text:string){
   // Email lookup dates, clocks, zones and durations belong to source context.
-  return calendarAffirmativeText(text).replace(/\b(?:read|review|find|search|check)\b[^.;\n]*?\bemail\b[^.;\n]*?(?=\s+and\s+(?:prepare|propose|schedule|arrange)\b)/gi,'')
+  const action=calendarAffirmativeText(text.replace(/\b([ap])\.m\./gi,'$1m'))
+    .replace(/\b(?:read|review|find|search|check)\b[^.;\n]*?\bemail\b[^.;\n]*?(?=\s+and\s+(?:prepare|propose|schedule|arrange)\b)/gi,'')
+  // A launch time or outage duration in the meeting topic is not a scheduling
+  // constraint. Preserve a following sentence containing explicit instructions.
+  if(!/\b(?:meeting|appointment|slots?|availability)\b/i.test(action))return action
+  return action.replace(/\b(?:to discuss|discussing|about|regarding|concerning|titled|named|called)\s+[^;!?\n]*?(?=\.(?:\s|$)|[;!?\n]|\b(?:but|then)\b|$)/gi,'')
 }
 
 function calendarRangeText(text:string){
@@ -114,8 +119,10 @@ export function calendarReadWindow(text:string,now:Date,tz:string){
 
 function requestedDurationMinutes(text:string){
   const durations=new Set<number>()
-  for(const match of text.matchAll(/(?<![\w.])(\d+(?:\.\d+)?|\.\d+)[\s-]*(minutes?|mins?|hours?|hrs?)\b/gi)){
-    const minutes=Number(match[1])*(/^h/i.test(match[2])?60:1)
+  const words:Record<string,number>={a:1,an:1,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,half:0.5,quarter:0.25}
+  for(const match of text.matchAll(/(?<![\w.-])(\d+(?:\.\d+)?|\.\d+|(?:half|quarter)(?:[ -]+an?)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)[\s-]*(minutes?|mins?|hours?|hrs?)\b/gi)){
+    const amount=match[1].toLowerCase().split(/[ -]/)[0]
+    const minutes=(words[amount]??Number(amount))*(/^h/i.test(match[2])?60:1)
     if(!Number.isInteger(minutes)||minutes<15||minutes>180)throw new Error('calendar_duration_unsupported')
     durations.add(minutes)
   }

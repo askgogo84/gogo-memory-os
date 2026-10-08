@@ -303,6 +303,32 @@ async function main(){
     assert.equal(invite.timezone,'Asia/Kolkata','source email timezone is not the requested meeting timezone')
     assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(invite.start)),'09:00','default free slot remains independent of the email timestamp')
   }
+  for(const [duration,minutes] of [['one-hour',60],['an hour',60],['two-hour',120],['half an hour',30],['quarter-hour',15]] as const){
+    meetingWrites.length=0;providerItems=[]
+    const result=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed ${duration} meeting next Wednesday.`})
+    assert.equal(result.status,'completed',duration)
+    const content=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
+    assert.equal(new Date(content.proposedInvite.end).getTime()-new Date(content.proposedInvite.start).getTime(),minutes*60_000)
+    assert.match(content.draftReply,new RegExp(`${minutes}-minute`))
+  }
+  const wordSlot=await readTomorrowSchedule({actor,scope:'calendar',text:'Find one-hour free slots next Wednesday.'})
+  assert.equal(wordSlot.calendarReadVerified,true,'word duration survives the actual schedule caller')
+  for(const [constraint,expectedTime,expectedZone] of [
+    ['to discuss the 3 PM launch.','09:00','Asia/Kolkata'],
+    ['to discuss the 3 PM UTC launch.','09:00','Asia/Kolkata'],
+    ['about the 4-hour outage.','09:00','Asia/Kolkata'],
+    ['at 3 PM to discuss the 5 PM launch.','15:00','Asia/Kolkata'],
+    ['to discuss the 3 PM launch. Start at 4 PM UTC.','16:00','UTC'],
+    ['to discuss the 3 p.m. launch. Start at 4 p.m. UTC.','16:00','UTC'],
+  ]){
+    meetingWrites.length=0;providerItems=[]
+    const result=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed meeting next Wednesday ${constraint}`})
+    assert.equal(result.status,'completed',constraint)
+    const invite=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
+    assert.equal(invite.timezone,expectedZone,'topic timezone is not the meeting timezone')
+    assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:expectedZone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(invite.start)),expectedTime,constraint)
+    assert.equal(new Date(invite.end).getTime()-new Date(invite.start).getTime(),30*60_000,'topic duration is not the meeting duration')
+  }
   meetingWrites.length=0;http.length=0
   for(const duration of ['4-hour','10-minute','0-minute','1 hour 30 minute','four-hour']){
     meetingWrites.length=0;providerItems=[];http.length=0
