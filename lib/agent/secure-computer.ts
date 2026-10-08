@@ -1025,7 +1025,7 @@ function localExecutionConfirmation(approvedOperation:ApprovedBrowserOperation|n
       const left=Math.max(...['\n','.','!','?'].map(separator=>rawAfter.lastIndexOf(separator,idx-1)))
       const next=rawAfter.slice(idx+match[0].length).search(/[\n.!?]/)
       const line=rawAfter.slice(left+1,next<0?rawAfter.length:idx+match[0].length+next+1).trim().replace(/[.!]+$/,'')
-      if(/[?]/.test(line)||/\b(?:not|failed|unable|unsuccessful|pending|if|when|once|will|would|could|should)\b/i.test(line))continue
+      if(/[?]/.test(line)||/\b(?:not|failed|unable|unsuccessful|pending|if|when|once|after|before|until|unless|will|would|could|should|may|might)\b/i.test(line)||/\b(?:if|when|once|after|before|until|unless)\b[^.!?]{0,120}\b(?:account|registration)\b/i.test(line))continue
       return line
     }
     return null
