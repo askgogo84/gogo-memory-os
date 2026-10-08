@@ -1,3 +1,4 @@
+import { tryRunWorkspaceDriveContext } from '@/lib/agent/workspace-drive-context'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {runCompoundShoppingFriendRequests} from '@/lib/bot/compound-shopping-friend'
 import {detectFriendReminder, getPendingFriend, isFriendReminderFollowupCandidate} from '@/lib/bot/handlers/friend-reminders'
@@ -215,6 +216,13 @@ export async function POST(req: NextRequest) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'dashboard-day'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, dayReply)
       return NextResponse.json({ text: dayReply, handledBy: 'dashboard-day' })
+    }
+
+    const driveContext = await tryRunWorkspaceDriveContext({actor,surface:'web',text})
+    if (driveContext) {
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:driveContext.handledBy,actualCapability:'files',status:driveContext.status,runId:driveContext.runId}).catch(()=>{})
+      await saveConversation(user.telegram_id,text,driveContext.text)
+      return NextResponse.json(driveContext)
     }
 
     const restaurantReservation = await tryRunRestaurantReservation({ actor, surface:'web', text })
