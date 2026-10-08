@@ -52,6 +52,8 @@ for(const [text,expected] of [['next Wednesday','2026-10-14'],['Friday','2026-10
 }
 for(const text of ['next month','next month on Wednesday','last Friday','last week','in 2 weeks','20 October','October 20','Monday or Wednesday'])
  assert.throws(()=>calendarReadWindow(`Find free slots ${text}`,weekdayClock,'Asia/Kolkata'),/calendar_date_(?:unsupported|ambiguous)/,'unsupported/ambiguous dates cannot silently use the default week')
+assert.equal(calendarReadWindow('Show my calendar on 2028-02-29',weekdayClock,'Asia/Kolkata').startDate,'2028-02-29','valid leap day retained')
+for(const dates of ['2027-03-20 to 2027-03-10','2027-03-01 and 2027-03-03 and 2027-03-05'])assert.throws(()=>calendarReadWindow('Show my calendar on '+dates,weekdayClock,'Asia/Kolkata'),/calendar_date_ambiguous/)
 const midnight=calendarReadWindow('today and tomorrow',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata')
 assert.deepEqual(midnight,{startDate:'2026-10-08',endDate:'2026-10-09',label:'today and tomorrow'})
 assert.equal(calendarReadWindow('today',new Date('2026-10-07T18:15:00Z'),'Asia/Kolkata').endDate,'2026-10-07')
@@ -317,6 +319,19 @@ async function main(){
   const topicFirstInvite=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
   assert.equal(new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Kolkata',weekday:'long'}).format(new Date(topicFirstInvite.start)),'Wednesday')
   assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(topicFirstInvite.start)),'15:00')
+  for(const constraint of ['on 2027-02-30','on 2027-02-29','on 2027-13-01','on 2027-00-10','on 2027-03-14 at 2:30 AM America/New_York']){
+    meetingWrites.length=0;providerItems=[]
+    const invalid=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed meeting ${constraint}.`})
+    assert.equal(invalid.status,'paused',constraint+' cannot normalize to a different appointment')
+    assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'))
+  }
+  const invalidRead=await readTomorrowSchedule({actor,scope:'calendar',text:'Show my calendar on 2027-02-30.'})
+  assert.equal(invalidRead.calendarReadVerified,false);assert.match(invalidRead.text,/exact calendar date/)
+  meetingWrites.length=0;providerItems=[]
+  await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting on 2027-03-14 at 3:30 AM America/New_York.'})
+  const validDst=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
+  assert.ok(validDst)
+  assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(validDst.start)),'03:30')
   const wordSlot=await readTomorrowSchedule({actor,scope:'calendar',text:'Find one-hour free slots next Wednesday.'})
   assert.equal(wordSlot.calendarReadVerified,true,'word duration survives the actual schedule caller')
   for(const [constraint,expectedTime,expectedZone] of [

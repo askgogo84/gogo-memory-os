@@ -22,7 +22,11 @@ function localYmd(now:Date,tz:string){
 
 function explicitIsoDates(text:string){
   const out:string[]=[]
-  const push=(iso:string)=>{if(/^20\d{2}-\d{2}-\d{2}$/.test(iso)&&!out.includes(iso))out.push(iso)}
+  const push=(iso:string)=>{
+    const [year,month,day]=iso.split('-').map(Number)
+    if(new Date(Date.UTC(year,month-1,day)).toISOString().slice(0,10)!==iso)throw new Error('calendar_date_unsupported')
+    if(!out.includes(iso))out.push(iso)
+  }
   for(const m of String(text||'').matchAll(/\b(20\d{2})-(\d{2})-(\d{2})\b/g))push(`${m[1]}-${m[2]}-${m[3]}`)
   return out
 }
@@ -79,6 +83,7 @@ export function requestedCalendarDays(text:string){
 export function calendarReadWindow(text:string,now:Date,tz:string){
   text=calendarRangeText(text)
   const explicit=explicitIsoDates(text)
+  if(explicit.length>2||(explicit.length===2&&explicit[1]<explicit[0]))throw new Error('calendar_date_ambiguous')
   if(explicit.length)return {startDate:explicit[0],endDate:explicit[1]||explicit[0],label:explicit.length>1?'requested dates':'requested date'}
   const today=localYmd(now,tz)
   const anchor=new Date(`${today}T00:00:00Z`)
@@ -279,6 +284,11 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
     const lastMinute=requestedMinute??18*60-duration
     for(let minute=firstMinute;minute<=lastMinute&&slots.length<MAX_SLOTS;minute+=30){
       const localStart=parseLocalDateTime({date,time:clock(minute),timezone}).dueAtUtc
+      const observedClock=new Intl.DateTimeFormat('en-GB',{timeZone:timezone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(localStart)
+      if(localYmd(localStart,timezone)!==date||observedClock!==clock(minute)){
+        if(requestedMinute!==undefined)throw new Error('calendar_time_unsupported')
+        continue
+      }
       const localEnd=new Date(localStart.getTime()+duration*60_000)
       if(localStart.getTime()<Date.now()+15*60_000)continue
       if(overlaps(localStart.getTime(),localEnd.getTime(),events,timezone))continue
