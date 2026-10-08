@@ -52,10 +52,10 @@ export function detectReadOnlyScheduleRequest(raw: string) {
     if(/^\s*(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read(?![- ]only)|review|show|list|tell\s+me)\b/.test(clause)&&
       !calendarRequestsAvailability(clause)&&! /\b(calendar|schedule|meetings?|events?|reminders?|my appointments?|needs? my attention|what (?:do )?i have|what(?:'s| is) on|what needs my attention|(?:review|brief me|summari[sz]e) tomorrow)\b/.test(clause))return null
   }
-  const readVerb = /\b(check|tell me|show(?: me)?|list|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(text)
-  const scheduleContext = /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(text) ||
-    /\b(?:what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|what needs my attention tomorrow|(?:summari[sz]e|review|brief me(?: on)?) tomorrow)\b/.test(text)
-  const {today,tomorrow}=requestedCalendarDays(text)
+  const readVerb = /\b(check|tell me|show(?: me)?|list|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(request)
+  const scheduleContext = /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(request) ||
+    /\b(?:what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|what needs my attention tomorrow|(?:summari[sz]e|review|brief me(?: on)?) tomorrow)\b/.test(request)
+  const {today,tomorrow}=requestedCalendarDays(request)
   if ((explicitNoMutation || readVerb) && scheduleContext && (tomorrow || today)) {
     const combined = /\b(?:reminders?|agenda|plan my day|what is my day|what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|my day|my schedule)\b/.test(request)
     const calendarOnly = /\b(?:calendar|meetings?|appointments?|events?)\b/.test(request) && !combined

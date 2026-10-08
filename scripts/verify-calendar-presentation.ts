@@ -15,6 +15,10 @@ for(const text of ['Remind me to check my calendar tomorrow','Create a calendar 
 for(const text of ['Review my calendar today and create an event tomorrow','Show my calendar tomorrow; delete the 11am event','Show my calendar tomorrow and edit the 11am event','Review tomorrow. Do not delete anything, but create a meeting.'])assert.equal(detectReadOnlyScheduleRequest(text),null,'positive writes must not be swallowed: '+text)
 for(const idiom of ["don't forget to",'do not forget to',"don’t forget to"])
  assert.equal(detectReadOnlyScheduleRequest(`Show my calendar today and ${idiom} schedule the dentist Friday`),null,'affirmative negative idioms retain the action')
+for(const day of ['today','tomorrow','today or tomorrow'])
+ assert.equal(detectReadOnlyScheduleRequest(`Don't show my calendar ${day}`),null,'fully negated reads must not route: '+day)
+assert.equal(detectReadOnlyScheduleRequest("Don't show my calendar today, but show my calendar tomorrow")?.horizon,'tomorrow')
+assert.equal(calendarReadWindow("Don't show my calendar today, but show my calendar tomorrow",new Date('2026-10-08T04:00:00Z'),'Asia/Kolkata').startDate,'2026-10-09')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and reserve a table at Noma for 2'),null,'reservation commands retain their own executor')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and schedule dentist appointment Friday'),null,'named schedule commands retain their creation flow')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow. Do not create, edit, and delete events.')?.scope,'calendar','coordinated prohibitions remain read-only')
@@ -273,6 +277,14 @@ async function main(){
     assert.equal(contextual.status,'completed','source/topic weekday does not replace the explicit meeting day')
     const invite=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
     assert.equal(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(invite.start)),tomorrow)
+  }
+  for(const sourceTime of ['from 3 PM','at 3 PM UTC']){
+    meetingWrites.length=0;providerItems=[]
+    const sourceClock=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the email ${sourceTime} and prepare a proposed meeting next Wednesday.`})
+    assert.equal(sourceClock.status,'completed','source email time does not impose a meeting time window')
+    const invite=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
+    assert.equal(invite.timezone,'Asia/Kolkata','source email timezone is not the requested meeting timezone')
+    assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(invite.start)),'09:00','default free slot remains independent of the email timestamp')
   }
   meetingWrites.length=0;http.length=0
   const unsupportedMeeting=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting next month.'})

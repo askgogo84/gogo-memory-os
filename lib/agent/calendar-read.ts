@@ -27,9 +27,13 @@ function explicitIsoDates(text:string){
   return out
 }
 
+function calendarActionText(text:string){
+  // Email lookup dates, clocks, zones and durations belong to source context.
+  return calendarAffirmativeText(text).replace(/\b(?:read|review|find|search|check)\b[^.;\n]*?\bemail\b[^.;\n]*?(?=\s+and\s+(?:prepare|propose|schedule|arrange)\b)/gi,'')
+}
+
 function calendarRangeText(text:string){
-  // Email lookup dates belong to the source context, not the proposed invite.
-  text=text.replace(/\b(?:read|review|find|search|check)\b[^.;\n]*?\bemail\b[^.;\n]*?(?=\s+and\s+(?:prepare|propose|schedule|arrange)\b)/gi,'')
+  text=calendarActionText(text)
   for(const filter of text.matchAll(/\b(?:for|about|titled|named|called|to discuss|discussing)\s+/gi)){
     const prefix=text.slice(0,filter.index)
     if(!/\b(?:today|tomorrow|(?:this|next) week|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i.test(prefix)&&!explicitIsoDates(prefix).length)continue
@@ -181,6 +185,7 @@ async function calendarAccess(actor:AgentActor){
 }
 
 export function requestedCalendarTimezone(text:string){
+  text=calendarActionText(text)
   // Read complete identifiers. Valid slashless aliases (CET, EST5EDT, etc.)
   // are validated as candidates rather than silently replaced by account time.
   const cleanZone=(value:string)=>value.replace(/\.+$/,'')
@@ -200,7 +205,7 @@ export function requestedCalendarTimezone(text:string){
 }
 
 export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instruction:string;missionText:string;rememberSelection?:boolean}){
-  const text=`${params.instruction} ${params.missionText}`
+  const text=calendarActionText(`${params.instruction} ${params.missionText}`)
   const requestedZone=requestedCalendarTimezone(text)
   const access=await calendarAccess(params.actor)
   const timezone=requestedZone?normalizeTimezone(requestedZone):access.timezone
