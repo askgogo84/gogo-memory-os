@@ -45,7 +45,7 @@ export function calendarRequestsAvailability(text:string){
 
 export function calendarAffirmativeText(text:string){
   return text.replace(/’/g,"'").replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/gi,clause=>{
-    const next=clause.match(/(?:,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write)\b))/i)
+    const next=clause.match(/(?:,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|reorder|empty|increase|decrease|apply|redeem|block|unblock|reserve|remind|put|set|forward|save|remember|compose|archive|post|publish|renew|reschedule|resched|postpone|push|shift|update|make|remove|clear|book|send|pay|buy|purchase)\b))/i)
     if(next?.index===undefined)return ''
     const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|without)\s+/i,'')
     // A coordinated bare verb list keeps the prohibition across an Oxford comma.

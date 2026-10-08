@@ -18,6 +18,8 @@ assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow. Do not cr
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow. Do not create a placeholder, and schedule the client meeting Friday.'),null,'an affirmative command following the negative clause retains its flow')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar today and find a dentist appointment'),null,'independent appointment discovery must not be swallowed')
 assert.equal(detectReadOnlyScheduleRequest('Find a dentist appointment and show my calendar today'),null,'the reverse compound order retains discovery too')
+for(const command of ["reply to Alice's email saying yes",'respond to the email','email Alice the agenda','draft a reply','call the provider','submit the form','checkout the cart','subscribe to the newsletter','share the report','follow the account'])
+ assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and '+command),null,'independent native commands retain their planner/approval flow: '+command)
 assert.equal(detectReadOnlyScheduleRequest('List my meetings today')?.horizon,'today')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar today and tomorrow')?.horizon,'today-tomorrow')
 assert.equal(detectReadOnlyScheduleRequest('What do I have today?'),null,'preserve Today/day route')
