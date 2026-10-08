@@ -120,6 +120,11 @@ const dashScope=travel.buildTravelResearchContext('On 20 October 2026, compare f
 const negativeRoute=travel.buildTravelResearchContext('On 20 October 2026, compare flights to Mumbai. Do not book from any site.',fixedNow)
 assert.equal(negativeRoute.origin,undefined,'route markers inside a negated safety clause are not departure cities')
 assert.equal(dashScope.destination?.code,'BOM','a separated dash introduces a safety clause, not part of the city')
+for(const separator of [', just ', ' but ', '; ']) {
+ const affirmative=travel.buildTravelResearchContext(`Do not book${separator}compare flights from BLR to BOM on 20 October 2026`,fixedNow)
+ assert.equal(affirmative.origin?.code,'BLR','the safety clause must retain a following affirmative research command')
+ assert.equal(affirmative.destination?.code,'BOM')
+}
 const missingWithScope='Compare flights to Mumbai. Research only; do not book or pay.'
 assert.equal(travel.buildTravelResearchContext(missingWithScope,fixedNow).destination?.code,'BOM','an independent read-only clause must not erase the supplied destination')
 assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:missingWithScope})).text,/departure city, travel date together/)
