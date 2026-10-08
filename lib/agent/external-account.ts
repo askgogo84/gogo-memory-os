@@ -1,5 +1,6 @@
 import { clearFollowupState, getLatestFollowupState, isFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
-import { searchWeb } from '@/lib/services/web-search'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { findVaultProviderForDomain, findVaultProviderInText } from '@/lib/vault/providers'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { runBrowserCommand, type BrowserCommand } from './browser-command'
@@ -32,7 +33,7 @@ function extractUrl(text:string){
   if(!match)return null
   try{
     const url=new URL(match[0])
-    if(!['https:','http:'].includes(url.protocol)||url.username||url.password)return null
+    if(url.protocol!=='https:'||url.username||url.password)return null
     return url.toString()
   }catch{return null}
 }
@@ -41,13 +42,14 @@ export function parseExternalAccountRequest(text:string):ExternalAccountRequest|
   const raw=String(text||'').replace(/\s+/g,' ').trim()
   if(!raw)return null
   const lower=raw.toLowerCase()
-  const wantsCreate=/\b(?:create|open|make)\s+(?:me\s+)?(?:an?\s+)?account\b/i.test(raw)||/\b(?:sign\s*up|register)\b/i.test(raw)
-  if(!wantsCreate)return null
+  const createAccount=/\b(?:create|open|make)\s+(?:me\s+)?(?:an?\s+)?account\b/i.test(raw)
+  const signupAccount=/\b(?:sign\s*up|register)\b/i.test(raw)&&/\baccount\b/i.test(raw)
+  if(!createAccount&&!signupAccount)return null
   if(/\b(?:buy|purchase|checkout|pay|payment|subscribe\s+to\s+(?:a\s+)?paid)\b/i.test(lower))return null
 
   const byCreate=raw.match(/\b(?:create|open|make)\s+(?:me\s+)?(?:an?\s+)?account\s+(?:on|at|with|for)\s+(.+?)(?=\s+(?:using|with|and|then|please|for\s+me)\b|[.!?;,]|$)/i)
   const byLogin=raw.match(/\b(?:log\s*in|login|go)\s+to\s+(.+?)(?=\s+(?:and|then)\s+(?:create|open|make|sign\s*up|register)\b|[.!?;,]|$)/i)
-  const bySignup=raw.match(/\b(?:sign\s*up|register)\s+(?:me\s+)?(?:on|at|with|for)\s+(.+?)(?=\s+(?:using|with|and|then|please)\b|[.!?;,]|$)/i)
+  const bySignup=raw.match(/\b(?:sign\s*up|register)\s+(?:me\s+)?(?:for\s+an?\s+account\s+)?(?:on|at|with|for)\s+(.+?)(?=\s+(?:using|with|and|then|please)\b|[.!?;,]|$)/i)
   const explicitUrl=extractUrl(raw)
   let service=cleanService(byLogin?.[1]||bySignup?.[1]||byCreate?.[1]||'')
   if(/^me$/i.test(service))service=''
@@ -58,52 +60,58 @@ export function parseExternalAccountRequest(text:string):ExternalAccountRequest|
   return {service,email:extractEmail(raw),url:explicitUrl}
 }
 
-function compact(value:string){return value.toLowerCase().replace(/[^a-z0-9]/g,'')}
-function serviceTokens(service:string){return service.toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>=3)}
-const DENY_HOSTS=['google.com','bing.com','duckduckgo.com','wikipedia.org','reddit.com','facebook.com','instagram.com','linkedin.com','x.com','twitter.com']
+function emailOnly(text:string){return EMAIL.test(String(text||'').trim())}
+function urlOnly(text:string){return /^https:\/\/\S+$/i.test(String(text||'').trim())}
+function norm(value:unknown){return String(value||'').replace(/\s+/g,' ').trim()}
 
-export function resolveOfficialCandidateFromSearchText(service:string,searchText:string):string|null{
-  const serviceCompact=compact(service)
-  const tokens=serviceTokens(service)
-  const sources=[...String(searchText||'').matchAll(/Source:\s*(https?:\/\/[^\s]+)/gi)].map(match=>match[1])
-  const candidates=sources.map(value=>{
-    try{
-      const url=new URL(value)
-      if(url.protocol!=='https:'||url.username||url.password)return null
-      const host=url.hostname.toLowerCase().replace(/^www\./,'')
-      if(DENY_HOSTS.some(blocked=>host===blocked||host.endsWith('.'+blocked)))return null
-      const hostCompact=compact(host)
-      let score=0
-      if(serviceCompact.length>=5&&hostCompact.includes(serviceCompact))score+=10
-      for(const token of tokens)if(hostCompact.includes(token))score+=2
-      if(url.pathname==='/'||url.pathname==='')score+=1
-      return score>0?{url:url.toString(),score}:null
-    }catch{return null}
-  }).filter(Boolean) as Array<{url:string;score:number}>
-  candidates.sort((a,b)=>b.score-a.score)
-  return candidates[0]?.url||null
+async function pendingStillBound(telegramId:number,originText:string){
+  const {data}=await supabaseAdmin.from('conversations')
+    .select('content')
+    .eq('telegram_id',telegramId)
+    .eq('role','user')
+    .order('created_at',{ascending:false})
+    .limit(1)
+    .maybeSingle()
+  return norm(data?.content)===norm(originText)
 }
 
-function emailOnly(text:string){return EMAIL.test(String(text||'').trim())}
-function urlOnly(text:string){return /^https?:\/\/\S+$/i.test(String(text||'').trim())}
+function trustedTarget(request:ExternalAccountRequest){
+  const byText=findVaultProviderInText(request.service)
+  if(byText){
+    if(request.url){
+      const host=new URL(request.url).hostname.replace(/^www\./,'')
+      const byDomain=findVaultProviderForDomain(host)
+      if(!byDomain||byDomain.key!==byText.key)return null
+    }
+    return {provider:byText,url:byText.signupUrl||byText.loginUrl}
+  }
+  if(!request.url)return null
+  const host=new URL(request.url).hostname.replace(/^www\./,'')
+  const byDomain=findVaultProviderForDomain(host)
+  if(byDomain)return {provider:byDomain,url:byDomain.signupUrl||request.url}
+  // Unknown providers are allowed only when the USER supplied the exact https URL.
+  // We never auto-discover a consequential target from search/name similarity.
+  return {provider:null,url:request.url}
+}
 
-async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurface;request:ExternalAccountRequest}){
+async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurface;request:ExternalAccountRequest;originText:string}){
   const email=params.request.email
   if(!email){
-    await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{service:params.request.service,url:params.request.url,stage:'email'})
+    await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{
+      service:params.request.service,url:params.request.url,stage:'email',originText:params.originText,
+    })
     return {text:`Which email should I use for the ${params.request.service} account?`,status:'paused',handledBy:'external-account-objective'}
   }
 
-  let url=params.request.url
-  if(!url){
-    const search=await searchWeb(`${params.request.service} official website sign up`)
-    url=resolveOfficialCandidateFromSearchText(params.request.service,search)
-  }
-  if(!url){
-    await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{service:params.request.service,email,stage:'url'})
+  const target=trustedTarget(params.request)
+  if(!target){
+    await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{
+      service:params.request.service,email,stage:'url',originText:params.originText,
+    })
     return {text:`I have the account objective and email. Send me the official ${params.request.service} website URL so I can continue safely.`,status:'paused',handledBy:'external-account-objective'}
   }
 
+  const url=target.url
   const host=new URL(url).hostname.replace(/^www\./,'')
   const command:BrowserCommand={
     url,
@@ -126,21 +134,31 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
   return result?{...result,handledBy:'external-account-objective'}:null
 }
 
-export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface:AgentSurface;text:string}){
+export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface:AgentSurface;text:string;messageId?:string|number|null}){
   const pending=await getLatestFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
   if(pending&&isFreshFollowupState(pending,30)){
     const payload=pending.payload||{}
-    if(payload.stage==='email'&&emailOnly(params.text)){
+    const bound=await pendingStillBound(params.actor.legacyTelegramId,String(payload.originText||''))
+    if(!bound){
       await clearFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
-      return prepareExternalAccount({actor:params.actor,surface:params.surface,request:{service:String(payload.service||''),email:String(params.text).trim(),url:payload.url?String(payload.url):null}})
-    }
-    if(payload.stage==='url'&&urlOnly(params.text)){
+    }else if(payload.stage==='email'&&emailOnly(params.text)){
       await clearFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
-      return prepareExternalAccount({actor:params.actor,surface:params.surface,request:{service:String(payload.service||''),email:String(payload.email||''),url:String(params.text).trim()}})
+      return prepareExternalAccount({
+        actor:params.actor,surface:params.surface,originText:String(payload.originText||''),
+        request:{service:String(payload.service||''),email:String(params.text).trim(),url:payload.url?String(payload.url):null},
+      })
+    }else if(payload.stage==='url'&&urlOnly(params.text)){
+      await clearFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
+      return prepareExternalAccount({
+        actor:params.actor,surface:params.surface,originText:String(payload.originText||''),
+        request:{service:String(payload.service||''),email:String(payload.email||''),url:String(params.text).trim()},
+      })
+    }else if(!parseExternalAccountRequest(params.text)){
+      await clearFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
     }
   }
 
   const request=parseExternalAccountRequest(params.text)
   if(!request)return null
-  return prepareExternalAccount({actor:params.actor,surface:params.surface,request})
+  return prepareExternalAccount({actor:params.actor,surface:params.surface,request,originText:params.text})
 }

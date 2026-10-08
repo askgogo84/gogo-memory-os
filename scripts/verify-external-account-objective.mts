@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { classifyAgentRequest } from '../lib/agent/classifier.ts'
-import { parseExternalAccountRequest, resolveOfficialCandidateFromSearchText } from '../lib/agent/external-account.ts'
+import { parseExternalAccountRequest } from '../lib/agent/external-account.ts'
+import { findVaultProviderInText } from '../lib/vault/providers.ts'
 
 const exact=parseExternalAccountRequest('Login to huggingface and create a account for me..')
 assert.ok(exact,'Hugging Face screenshot request must be claimed as an external-account objective')
@@ -15,14 +16,21 @@ assert.equal(withEmail!.email,'goverdhan.md@example.com')
 
 assert.equal(parseExternalAccountRequest('Show me my Hugging Face account'),null,'read-only account questions must not become account creation')
 assert.equal(parseExternalAccountRequest('Buy a paid Hugging Face subscription for me'),null,'paid actions stay outside account-creation flow')
+assert.equal(parseExternalAccountRequest('Register me for the conference'),null,'event registration must not be stolen by account creation')
+assert.equal(parseExternalAccountRequest('Sign up for the yoga class'),null,'class signup must not be stolen by account creation')
 
-const official=resolveOfficialCandidateFromSearchText('Hugging Face',`
-1. Hugging Face – The AI community building the future.
-Source: https://huggingface.co/
-2. Wikipedia
-Source: https://en.wikipedia.org/wiki/Hugging_Face
-`)
-assert.equal(official,'https://huggingface.co/','official-domain discovery must reject aggregator/wiki result')
+const hf=findVaultProviderInText('Hugging Face')
+assert.ok(hf,'Hugging Face must resolve through the trusted provider registry')
+assert.equal(hf!.domains[0],'huggingface.co')
+assert.equal(hf!.signupUrl,'https://huggingface.co/join','account creation must start on the signup form, not the homepage')
+
+// Automatic consequential-domain discovery by fuzzy search must not exist.
+const external=fs.readFileSync('lib/agent/external-account.ts','utf8')
+assert.doesNotMatch(external,/searchWeb\(/,'consequential target discovery must not depend on fuzzy web search')
+assert.doesNotMatch(external,/resolveOfficialCandidateFromSearchText/,'name-similarity domain selection is forbidden')
+assert.match(external,/findVaultProviderInText/,'known providers must use trusted registry metadata')
+assert.match(external,/pendingStillBound/,'follow-up email/url must stay bound to the prompting turn')
+assert.match(external,/clearFollowupState/,'unrelated turns must invalidate stale account follow-up state')
 
 const classified=classifyAgentRequest('Create an account on Hugging Face')
 assert.equal(classified.capability,'browser')
@@ -30,11 +38,18 @@ assert.equal(classified.mode,'execute')
 assert.equal(classified.risk,'high')
 assert.equal(classified.approvalAction,'submit_form')
 
+const route=fs.readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
+const routeExternalPos=route.indexOf('parseExternalAccountRequest(text)')
+const featurePos=route.indexOf('const featureReply =')
+const processPos=route.indexOf('processIncomingMessage({ channel:')
+assert.ok(routeExternalPos>=0&&featurePos>=0&&routeExternalPos<featurePos,'external-account objective must beat legacy feature routing')
+assert.ok(routeExternalPos>=0&&processPos>=0&&routeExternalPos<processPos,'external-account objective must beat free-form process-message')
+assert.match(route,/Runtime capability, not model prose/)
+
 const bridge=fs.readFileSync('lib/agent/whatsapp-bridge.ts','utf8')
 const externalPos=bridge.indexOf('tryRunExternalAccountFlow({ actor')
 const genericBrowserPos=bridge.indexOf('tryRunBrowserCommand({ actor')
 assert.ok(externalPos>=0&&genericBrowserPos>=0&&externalPos<genericBrowserPos,'external-account objective must run before generic browser routing')
-assert.match(bridge,/model cannot invent "no browser access"/)
 
 const browser=fs.readFileSync('lib/agent/browser-command.ts','utf8')
 assert.match(browser,/export async function runBrowserCommand/,'constructed objective commands must use the same secure browser policy/run pipeline')

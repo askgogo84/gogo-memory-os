@@ -490,7 +490,7 @@ export async function tryRunWhatsAppAgent(params: {
   // generic browser/freeform routing so the model cannot invent "no browser access".
   // Missing non-secret slots are collected first; execution stays behind approval,
   // Vault and human-auth boundaries.
-  const externalAccount = await tryRunExternalAccountFlow({ actor, surface:'whatsapp', text:params.text })
+  const externalAccount = await tryRunExternalAccountFlow({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (externalAccount) return { ...(externalAccount as any), handledBy:String((externalAccount as any).handledBy || 'external-account-objective') }
 
   const browser = await withWhatsAppBrowserBudget(actor, tryRunBrowserCommand({ actor, surface:'whatsapp', text:params.text }))

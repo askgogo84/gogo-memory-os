@@ -55,6 +55,7 @@ import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } 
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
+import { parseExternalAccountRequest, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { jevClarificationReply, promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
@@ -1261,6 +1262,39 @@ _"${originalText}"_
         await saveConversation(resolvedUser.telegramId,'user',text)
         await saveConversation(resolvedUser.telegramId,'assistant',accountAgent.text)
         await sendWhatsAppMessage(from,accountAgent.text)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
+    // Core v1 objective-first external account creation must beat Jev, legacy feature
+    // routing and free-form model replies. Runtime capability, not model prose, decides
+    // whether AskGogo can use browser/Vault/Take Control.
+    if (parseExternalAccountRequest(text) || /^\s*(?:https:\/\/\S+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\s*$/i.test(text)) {
+      const externalActor = await resolveAgentActor({
+        surface:'whatsapp',
+        telegramId:String(resolvedUser.telegramId),
+        userId:resolvedUser.id ? String(resolvedUser.id) : undefined,
+        whatsappId:String(resolvedUser.whatsappId || from),
+      })
+      const externalAccount = await tryRunExternalAccountFlow({
+        actor:externalActor,
+        surface:'whatsapp',
+        text,
+        messageId:inboundMessageSid || null,
+      })
+      if (externalAccount) {
+        await recordShadowRouterOutcome({
+          telegramId:resolvedUser.telegramId,
+          surface:'whatsapp',
+          eventId:inboundMessageSid,
+          actualHandler:externalAccount.handledBy || 'external-account-objective',
+          actualCapability:'browser',
+          status:externalAccount.status || null,
+          runId:externalAccount.runId || null,
+        }).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',externalAccount.text)
+        await sendWhatsAppMessage(from,externalAccount.text)
         return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
       }
     }
