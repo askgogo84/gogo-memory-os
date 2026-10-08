@@ -27,7 +27,9 @@ export async function processTravelResearchQueue(deadline: number) {
   if(queueError) throw new Error('travel_worker_queue_failed')
   let claimed = 0
   for(const run of queued || []) {
-    if(Date.now()+180_000 >= deadline) break
+    // 225s public flight read + 30s extraction/fallback/persistence/publication.
+    // The browser also receives this absolute deadline after provider setup.
+    if(Date.now()+255_000 >= deadline) break
     const {data:claim,error} = await supabaseAdmin.from('agent_runs').update({status:'running',updated_at:new Date().toISOString()})
       .eq('id',run.id).eq('telegram_id',run.telegram_id).eq('type','travel_research').eq('status','queued').select('id').maybeSingle()
     if(error) throw new Error('travel_worker_claim_failed')
@@ -35,7 +37,7 @@ export async function processTravelResearchQueue(deadline: number) {
     claimed++
     try {
       const actor = await resolveAgentActor({telegramId:String(run.telegram_id),surface:'web'})
-      await runQueuedTravelResearch(actor,String(run.id))
+      await runQueuedTravelResearch(actor,String(run.id),deadline)
     } catch(error) {
       console.error('TRAVEL_WORKER_FAILED:',error instanceof Error ? error.message : 'unknown')
       // If the process dies rather than throwing, the stale sweep above recovers.

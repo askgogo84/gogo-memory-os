@@ -96,7 +96,7 @@ async function extractFlightOptions(pageText: string, context: BrowserFlightCont
     const res = await anthropic.messages.create({
       model:'claude-haiku-4-5', max_tokens:2200, temperature:0,
       messages:[{role:'user',content:prompt}],
-    })
+    },{timeout:10_000,maxRetries:0})
     const text = res.content[0]?.type === 'text' ? res.content[0].text : ''
     return parseJsonArray(text).filter(value => String(value?.route || '').replace(/\s+/g,' ').trim() === context.routeLabel)
       .map(value => normalizeBrowserFlightOption(value, pageText)).filter(Boolean) as BrowserFlightOption[]
@@ -149,6 +149,7 @@ export async function runLiveFlightBrowserTask(params: {
   actor: AgentActor
   context: BrowserFlightContext
   objective: string
+  deadline?: number
 }) {
   const { context } = params
   if (!context.origin?.code || !context.destination?.code || !context.startDate) return null
@@ -161,6 +162,7 @@ export async function runLiveFlightBrowserTask(params: {
     url,
     objective:`Read actual flight rows for ${query}. Before Search, explicitly set ${context.adults||1} adult${context.adults===1?'':'s'}, one-way and ${(context.cabin||'economy').replace(/_/g,' ')} using the observed controls; query URL prose does not set them. User research criteria: ${params.objective}. Verify the selected route, departure date, passengers and cabin using visible search controls. For the party total, read the visible "Prices include required taxes + fees for ... adults" statement; do not multiply a per-person or unknown fare. Report airline, departure, arrival and INR fare evidence. Do not book, purchase, sign in or submit passenger/payment information.`,
     mode:'read',recoverFlightSearch:true,
+    readDeadline:Number.isFinite(params.deadline)?params.deadline!-30_000:undefined,
   }) } catch (error: any) {
     // Browser verification/timeouts are expected provider failures. The travel
     // orchestrator must still deliver its clearly labelled public-source fallback.

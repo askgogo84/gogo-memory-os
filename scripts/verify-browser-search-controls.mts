@@ -657,15 +657,17 @@ assert.equal(recoveryClicks,1,'an unchanged search may be recovered once, never 
 
 // Flight widgets need separate observations to open/fill/select two airports and dates.
 // Fixtures verify the actual loop, not live fares or provider access.
-async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight-late'|'google-flight-skipped'|'blocked-control'|'never-complete',guardContext?:number) {
+async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight-late'|'google-flight-timed'|'google-flight-skipped'|'blocked-control'|'never-complete',guardContext?:number,clockConfig?:{deadline?:number;startup?:number;fails?:boolean}) {
   const exported:any={};let steps=0,plans=0,assessments=0
-  const required=scenario==='google-flight-late'?14:scenario==='flight'||scenario==='google-flight'?8:2
+  const timed=scenario==='google-flight-timed';let elapsed=0
+  class Clock extends Date {static now(){return elapsed}}
+  const required=scenario==='google-flight-late'||timed?14:scenario==='flight'||scenario==='google-flight'?8:2
   const makePage=()=>({url:scenario.startsWith('google-flight')?'https://www.google.com/travel/flights':'https://fixture.example/flights',title:'Flight search',
     text:scenario!=='never-complete'&&steps>=required?'BLR to BOM 12 October 2026 1 adult Economy 03:45 to 05:30 Fare ₹5000':(scenario==='never-complete'?'Choose route and date':'Choose route and date step '+steps),
     forms:[],links:[],controls:[{selector:'#commit',tag:'button',label:'Book now'},{selector:'#safe',tag:'button',label:scenario==='google-flight-skipped'?'1 passenger, change number of passengers.':'Search flights'}],
     actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:scenario==='google-flight-skipped'||steps===1&&scenario==='blocked-control'?'skipped':'done',failure:scenario==='google-flight-skipped'?{reason:guardContext===undefined?'control_unavailable':'consequential_control',guardContext,guardNameShape:guardContext===undefined?undefined:'bare_passenger',matches:0,rendered:0,token:'private',selector:'#private'}:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
   runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
-    exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+    exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,Date:timed?Clock:Date,require:(id:string)=>{
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
       if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
       if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
@@ -674,7 +676,7 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight
       if(id==='./browser-location-gate')return {needsBrowserDeliveryLocation}
       if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
       if(id==='./planner-provider')return {completeAgentPlanPrompt:async(prompt:string,_u:any,system?:string)=>{
-        if(system?.startsWith('Evaluate whether')){assessments++;return JSON.stringify({complete:scenario!=='never-complete'&&steps>=required,evidence:[makePage().text]})}
+        if(system?.startsWith('Evaluate whether')){assessments++;if(timed)elapsed+=5000;return JSON.stringify({complete:scenario!=='never-complete'&&steps>=required,evidence:[makePage().text]})}
         plans++
         if(scenario==='google-flight-skipped'&&plans>1)return JSON.stringify({actions:[]})
         if(scenario==='blocked-control'&&plans===2){
@@ -686,9 +688,17 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight
       return {}
     }
   })
-  const sandbox={updateNetworkPolicy:async()=>{},stop:async()=>{},runCommand:async()=>{steps++;return {exitCode:0,stdout:async()=>JSON.stringify(makePage())}}}
-  exported.testInspect(async()=>({page:makePage(),releaseOwnerLock:async()=>{},sandbox,name:'fixture',managed:{allow:{},env:{},release:async()=>{}}}))
-  const execute=()=>exported.runSecureBrowser({userId:'fixture',url:'https://fixture.example/flights',objective:'Find BLR to BOM for 12 October 2026, 1 adult economy and displayed fare',mode:'read'})
+  const sandbox={updateNetworkPolicy:async()=>{},stop:async()=>{},runCommand:async(command:any)=>{
+    if(timed){
+      const deadline=JSON.parse(Buffer.from(command.args.at(-1),'base64').toString()).readDeadline
+      if(elapsed+10000>=deadline){elapsed=deadline;return {exitCode:124,stdout:async()=>''}}
+      elapsed+=10000
+    }
+    steps++;return {exitCode:0,stdout:async()=>JSON.stringify(makePage())}
+  }}
+  exported.testInspect(async()=>{if(timed)elapsed+=clockConfig?.startup??44000;return {page:makePage(),releaseOwnerLock:async()=>{},sandbox,name:'fixture',managed:{allow:{},env:{},release:async()=>{}}}})
+  const execute=()=>exported.runSecureBrowser({userId:'fixture',url:timed?'https://www.google.com/travel/flights':'https://fixture.example/flights',objective:'Find BLR to BOM for 12 October 2026, 1 adult economy and displayed fare',mode:'read',recoverFlightSearch:timed,readDeadline:clockConfig?.deadline})
+  if(timed&&clockConfig?.fails){await assert.rejects(execute,/browser_read_deadline/);assert.ok(steps<required,'an absolute deadline stops unfinished research');return}
   if(scenario==='google-flight-skipped'){
     await assert.rejects(execute,(error:any)=>{
       const action=error.browserReadDiagnostics?.find((d:any)=>d.phase==='execution')
@@ -709,11 +719,39 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight
 await multiStepFixture('flight')
 await multiStepFixture('google-flight')
 await multiStepFixture('google-flight-late')
+await multiStepFixture('google-flight-timed')
+await multiStepFixture('google-flight-timed',undefined,{deadline:180000,fails:true})
+await multiStepFixture('google-flight-timed',undefined,{startup:100000,fails:true})
 await multiStepFixture('google-flight-skipped')
 await multiStepFixture('google-flight-skipped',503)
 await multiStepFixture('blocked-control')
 await multiStepFixture('never-complete')
 console.log('PASS: multi-step flight research can complete, blocked commit stays blocked while another read control is tried, and unfinished research remains bounded')
+
+// Check the actual exported entry point, including callers that request an
+// excessive absolute deadline. Only the exact public flight adapter gets 225s.
+for(const [url,recoverFlightSearch,mode,allowance] of [
+  ['https://www.google.com/travel/flights',true,'read',225000],
+  ['https://google.com/travel/flights/search',true,'read',225000],
+  ['https://www.google.com/travel/flights',false,'read',180000],
+  ['http://www.google.com/travel/flights',true,'read',180000],
+  ['https://evil.example/travel/flights',true,'read',180000],
+  ['https://www.google.com/travel/flights-other',true,'read',180000],
+  ['https://www.flipkart.com/product',true,'read',180000],
+  ['https://www.google.com/travel/flights',true,'execute',undefined],
+] as const){
+  let observed:number|undefined
+  exports.testInspect(async(...args:any[])=>{observed=args[5];throw new Error('budget_fixture_stop')})
+  const started=Date.now()
+  await assert.rejects(()=>exports.runSecureBrowser({userId:'fixture',url,objective:'Fixture',mode,recoverFlightSearch,readDeadline:started+900000}),/budget_fixture_stop/)
+  if(allowance===undefined)assert.equal(observed,undefined)
+  else assert.ok(observed!>=started+allowance&&observed!<=Date.now()+allowance,'budget is scoped and capped')
+}
+let capped:number|undefined
+exports.testInspect(async(...args:any[])=>{capped=args[5];throw new Error('budget_fixture_stop')})
+const callerDeadline=Date.now()+120000
+await assert.rejects(()=>exports.runSecureBrowser({userId:'fixture',url:'https://www.google.com/travel/flights',objective:'Fixture',mode:'read',recoverFlightSearch:true,readDeadline:callerDeadline}),/budget_fixture_stop/)
+assert.equal(capped,callerDeadline,'caller completion reserve wins over the larger flight allowance')
 
 // Reproduce the live Amazon search-page false completion. Prices are fixtures.
 const sourceChecks:any={}
