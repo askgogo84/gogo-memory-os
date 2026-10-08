@@ -21,7 +21,7 @@ import { tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-pl
 import { attachWorkspaceMeetingApproval } from '@/lib/agent/workspace-meeting-approval'
 import { tryRunWorkspaceDriveContext } from '@/lib/agent/workspace-drive-context'
 import { tryRunCreditIQHotelResearch } from '@/lib/agent/creditiq-hotel-research'
-import { tryRunTravelResearch } from '@/lib/agent/travel-research'
+import { tryRunTravelResearch, isTravelResearchDetailsReply } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { shouldPreferSpecialistTravel } from '@/lib/agent/specialist-routing'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
@@ -57,6 +57,14 @@ export async function POST(request: Request) {
     const respond = async (result:any, status:number) => {
       await attachRunToThread(session.telegramId, result?.runId, thread?.id || null)
       return NextResponse.json(result, { status })
+    }
+    const respondTravel = async (result:any) => {
+      const {error}=await supabaseAdmin.from('conversations').insert([
+        {telegram_id:actor.legacyTelegramId,role:'user',content:text},
+        {telegram_id:actor.legacyTelegramId,role:'assistant',content:result.text},
+      ])
+      if(error)throw new Error('travel_conversation_save_failed')
+      return respond(result,200)
     }
     const food=(/\bcompar(?:e|ison|isons)\b/i.test(text)||namesRetailerPriceRead(text) ? await tryPriceComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface}) : null) || await tryFoodComparison({telegramId:actor.legacyTelegramId,text,surface:session.surface})
     if(food){
@@ -119,14 +127,14 @@ export async function POST(request: Request) {
     // Pure travel research uses the specialist engine on every surface. This keeps
     // WhatsApp, dashboard and mobile app behavior identical and prevents a generic
     // planner artifact from replacing the real flight/hotel result.
-    if (shouldPreferSpecialistTravel(text)) {
+    if (shouldPreferSpecialistTravel(text) || isTravelResearchDetailsReply(text)) {
       const liveHotels = await tryRunCreditIQHotelResearch({ actor, surface:session.surface, text })
       if (liveHotels) return respond(liveHotels, 200)
 
       const travelResearch = await tryRunTravelResearch({ actor, surface:session.surface, text })
       if (travelResearch) {
         const hardened = await hardenTravelResearchResult(travelResearch, text)
-        return respond(hardened, 200)
+        return respondTravel(hardened)
       }
     }
 
@@ -167,7 +175,7 @@ export async function POST(request: Request) {
     const travelResearch = await tryRunTravelResearch({ actor, surface:session.surface, text })
     if (travelResearch) {
       const hardened = await hardenTravelResearchResult(travelResearch, text)
-      return respond(hardened, 200)
+      return respondTravel(hardened)
     }
 
     const result = await runAgentCommand({

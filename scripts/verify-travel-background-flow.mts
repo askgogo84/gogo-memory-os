@@ -23,13 +23,17 @@ let failPublish = false
 const db = {
   from(table: string) {
     const filters: Array<(row:any)=>boolean> = []
-    let mode = 'read', payload:any, maximum = Infinity, cached:any
+    let mode = 'read', payload:any, maximum = Infinity, cached:any, orderKey:string|undefined, orderAscending=true
     const field = (row:any,key:string)=>key.includes('->>') ? String(row[key.split('->>')[0]]?.[key.split('->>')[1]]) : row[key]
     const execute = () => {
       if(cached)return cached
-      const rows = tables[table].filter(row=>filters.every(f=>f(row))).slice(0,maximum)
+      const rows = tables[table].filter(row=>filters.every(f=>f(row))).sort((a,b)=>{
+        if(!orderKey)return 0
+        const comparison=String(field(a,orderKey)||'').localeCompare(String(field(b,orderKey)||'')) || tables[table].indexOf(a)-tables[table].indexOf(b)
+        return orderAscending?comparison:-comparison
+      }).slice(0,maximum)
       let data = rows
-      if(mode==='insert'){data=(Array.isArray(payload)?payload:[payload]).map(row=>({...row,id:row.id||`fixture-${++seq}`}));tables[table].push(...data)}
+      if(mode==='insert'){data=(Array.isArray(payload)?payload:[payload]).map(row=>({...row,created_at:row.created_at||new Clock().toISOString(),id:row.id||`fixture-${++seq}`}));tables[table].push(...data)}
       if(mode==='update')rows.forEach(row=>{
         if(table==='agent_runs' && row.metadata_json?.background_travel && payload.status==='completed')
           assert.ok(payload.metadata_json?.result_text,'completion and the full result must be saved together before publication is eligible')
@@ -40,7 +44,8 @@ const db = {
     const q:any = {select(){return q},eq(key:string,value:any){filters.push(row=>field(row,key)===value);return q},
       in(key:string,values:any[]){filters.push(row=>values.includes(field(row,key)));return q},
       is(key:string,value:any){filters.push(row=>value===null ? field(row,key)==null||field(row,key)==='undefined' : field(row,key)===value);return q},
-      lte(key:string,value:any){filters.push(row=>field(row,key)<=value);return q},order(){return q},limit(n:number){maximum=n;return q},
+      gte(key:string,value:any){filters.push(row=>field(row,key)>=value);return q},
+      lte(key:string,value:any){filters.push(row=>field(row,key)<=value);return q},order(key:string,options:any={}){orderKey=key;orderAscending=options.ascending!==false;return q},limit(n:number){maximum=n;return q},
       insert(row:any){mode='insert';payload=row;return q},update(row:any){mode='update';payload=row;return q},
       async maybeSingle(){const r=execute();return {...r,data:r.data[0]||null}},async single(){return q.maybeSingle()},
       then(resolve:any,reject:any){return Promise.resolve(execute()).then(resolve,reject)}}
@@ -223,6 +228,73 @@ Object.assign(webMocks,{'next/server':{NextRequest,NextResponse},'crypto':{rando
   '@/lib/bot/process-message':{processIncomingMessage:async()=>{throw new Error('Flight wrongly reached generic PIM')}},
 })
 const web=load('app/api/dashboard/chat/route.ts',webMocks)
+const initialDetails=await web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:'Compare flights to Mumbai. Research only; do not book or pay.'})}))
+assert.equal(initialDetails.status,200)
+assert.equal((await initialDetails.json()).handledBy,'travel-details')
+const detailsText='From Bengaluru on 20 October 2026, for 1 adult in economy, non-stop. Research only; do not book or pay.'
+assert.equal(travel.isTravelResearchDetailsReply('Forget that search.'),false,'prefix matching must not consume an unrelated instruction')
+const resumedDetails=await web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:detailsText})}))
+assert.equal(resumedDetails.status,200,'a flight details reply must not fall through to generic PIM')
+const resumedReply=await resumedDetails.json()
+assert.equal(resumedReply.handledBy,'travel-research-queued','the acknowledgment must come from a real saved travel task')
+assert.ok(resumedReply.runId)
+assert.equal(tables.agent_runs[0]?.metadata_json.context.destination.code,'BOM')
+assert.equal(tables.agent_runs[0]?.metadata_json.context.origin.code,'BLR')
+assert.equal(tables.agent_runs[0]?.metadata_json.context.startDate,'2026-10-20')
+// Resumption must be owned, fresh and still the active clarification.
+const savedConversations=tables.conversations.map(row=>({...row}))
+const pendingPair=savedConversations.slice(0,2)
+const setPending=(rows:any[])=>{tables.conversations.splice(0,tables.conversations.length,...rows.map(row=>({...row})))}
+setPending(pendingPair)
+assert.equal(await queue.enqueueTravelResearch({actor:{...actor,legacyTelegramId:43},surface:'web',text:detailsText}),null,'another owner cannot reuse the pending route')
+for(const timestamp of ['bad-date',new Date(fixedNow.getTime()-31*60_000).toISOString(),new Date(fixedNow.getTime()+60000).toISOString()]) {
+ setPending(pendingPair.map(row=>({...row,created_at:timestamp})))
+ assert.equal(await queue.enqueueTravelResearch({actor,surface:'web',text:detailsText}),null,'stale/future/invalid history cannot resume a flight')
+}
+setPending(pendingPair.map(row=>row.role==='assistant'?{...row,content:'Your calendar is clear.'}:row))
+assert.equal(await queue.enqueueTravelResearch({actor,surface:'web',text:detailsText}),null,'a different assistant reply ends the clarification')
+setPending(pendingPair)
+assert.equal(await queue.enqueueTravelResearch({actor,surface:'web',text:'From Bengaluru, remind me tomorrow at 9 AM'}),null,'an unrelated action cannot be swallowed as flight details')
+assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:detailsText.replace('20 October 2026','30 February 2027')})).text,/not a valid travel date/)
+const resumedOnWhatsApp=await queue.enqueueTravelResearch({actor,surface:'whatsapp',text:detailsText})
+assert.equal(resumedOnWhatsApp.runId,resumedReply.runId,'shared queue uses the same owned context and dedupes an active resumed request')
+assert.equal(tables.agent_runs.length,1,'failed context checks cannot enqueue browser work')
+tables.agent_runs.length=0;tables.conversations.length=0
+const postDetails=(value:string)=>web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:value})}))
+assert.equal((await postDetails('Compare non-stop flights to Mumbai for 2 adults in premium economy. Research only; do not book or pay.')).status,200)
+const partialDetails=await postDetails('From Bengaluru.')
+assert.equal(partialDetails.status,200)
+assert.match((await partialDetails.json()).text,/travel date together/)
+assert.equal(tables.agent_runs.length,0,'partially supplied details stay pending without browser work')
+const finalDetails=await postDetails('On 20 October 2026.')
+assert.equal(finalDetails.status,200)
+assert.equal((await finalDetails.json()).handledBy,'travel-research-queued')
+const retained=tables.agent_runs[0].metadata_json.context
+assert.equal(retained.origin.code,'BLR');assert.equal(retained.destination.code,'BOM')
+assert.equal(retained.adults,2);assert.equal(retained.cabin,'premium_economy');assert.equal(retained.nonStop,true)
+assert.equal(retained.startDate,'2026-10-20','multiple clarifications retain the original constraints')
+// The mobile/agent API must persist its clarification too: follow-up requests
+// and cross-surface replies share the same owned conversation boundary.
+tables.agent_runs.length=0;tables.conversations.length=0
+const apiSource=readFileSync('app/api/agent/run/route.ts','utf8')
+const apiMocks=Object.fromEntries([...apiSource.matchAll(/from ['"]([^'"]+)['"]/g)].map(m=>[m[1],nullModule]))
+Object.assign(apiMocks,webMocks,{
+  'node:crypto':{randomUUID:()=> 'fixture-api-turn'},
+  '@/lib/agent/session':{requireAgentMutationOrigin:()=>null,requireAgentSession:async()=>({telegramId:'42',surface:'web'}),isAgentSession:()=>true},
+  '@/lib/agent/specialist-routing':{shouldPreferSpecialistTravel:travel.isPublicTravelResearchRequest},
+  '@/lib/agent/appointment-followup-recovery':{appointmentPrepareOptionNumber:()=>null},
+  '@/lib/agent/orchestrator':{runAgentCommand:async()=>{throw Error('Flight details reached generic agent')}}
+})
+const api=load('app/api/agent/run/route.ts',apiMocks)
+const postApi=(value:string)=>api.POST(new Request('https://fixture.invalid/api/agent/run',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:value})}))
+assert.equal((await postApi(missingWithScope)).status,200)
+assert.match(tables.conversations.find(row=>row.role==='assistant')?.content||'',/departure city, travel date together/,'API clarification must be saved before returning')
+const apiResumed=await postApi(detailsText)
+assert.equal(apiResumed.status,200)
+assert.equal((await apiResumed.json()).handledBy,'travel-research-queued')
+assert.equal(tables.agent_runs.length,1)
+assert.equal(tables.agent_runs[0].metadata_json.context.destination.code,'BOM')
+tables.agent_runs.length=0;tables.conversations.length=0
 const response=await web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text})}))
 assert.equal(response.status,200);const reply=await response.json()
 assert.equal(reply.handledBy,'travel-research-queued');assert.match(reply.text,/background/)
