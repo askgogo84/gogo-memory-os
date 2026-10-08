@@ -407,6 +407,18 @@ assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Find Beng
 const searchPage={...flightPage,controls:[{selector:'#q',tag:'input',role:'searchbox',label:'Search'},{selector:'#go',tag:'button',role:'button',label:'Search'}],forms:[{inputs:[{selector:'#q',type:'search',label:'Search'}]}]}
 plannerReply=JSON.stringify({actions:[{kind:'fill',selector:'#q',value:'Sony WH-1000XM5'},{kind:'click',selector:'#go'},{kind:'click',selector:'#from-panel'}]})
 assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Find Sony',searchPage,'read','USER_INSTRUCTION')).actions)),[{kind:'fill',selector:'#q',value:'Sony WH-1000XM5'},{kind:'click',selector:'#go'}],'ordinary observed search input plus button remains one wave')
+// Production run2c2683f8 filled Departure then clicked the old Search in the
+// same wave, leaving the newly opened calendar unfinished until its deadline.
+const dateTransitionPage={...searchPage,url:'https://www.google.com/travel/flights',controls:[{selector:'#departure',tag:'input',label:'Departure',publicFilter:'flight-date',value:''},{selector:'#go',tag:'button',role:'button',label:'Search'}],forms:[{inputs:[{selector:'#departure',type:'text',label:'Departure'}]}]}
+plannerReply=JSON.stringify({actions:[{kind:'fill',selector:'#departure',value:'20 October 2026'},{kind:'click',selector:'#go'}]})
+assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Compare flights on20 October2026 for2 adults',dateTransitionPage,'read','USER_INSTRUCTION')).actions)),[{kind:'fill',selector:'#departure',value:'20 October 2026'}],'a public flight date fill must re-observe its calendar before an earlier Search selector executes')
+assert.equal((await exports.planActions('Prepare a draft',dateTransitionPage,'draft','USER_INSTRUCTION')).actions.length,2,'draft handling retains its existing action sequence')
+const datePickerPage={...dateTransitionPage,activeDialog:'Choose dates',controls:[{selector:'#calendar-done',tag:'button',role:'button',label:'Done'},{selector:'#go',tag:'button',role:'button',label:'Search'}],forms:[]}
+plannerReply=JSON.stringify({actions:[{kind:'click',selector:'#calendar-done'},{kind:'click',selector:'#go'}]})
+assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Finish the observed public calendar before searching',datePickerPage,'read','USER_INSTRUCTION')).actions)),[{kind:'click',selector:'#calendar-done'}],'calendar completion also requires fresh observation before Search')
+plannerReply=JSON.stringify({actions:[{kind:'click',selector:'#go'}]})
+assert.deepEqual(JSON.parse(JSON.stringify((await exports.planActions('Search the selected public flight filters',{...dateTransitionPage,activeDialog:null},'read','USER_INSTRUCTION')).actions)),[{kind:'click',selector:'#go'}],'Search is still available after a fresh closed-calendar observation')
+plannerReply=JSON.stringify({actions:[{kind:'fill',selector:'#q',value:'Sony WH-1000XM5'},{kind:'click',selector:'#go'},{kind:'click',selector:'#from-panel'}]})
 assert.equal((await exports.planActions('Draft',flightPage,'draft','USER_INSTRUCTION')).actions.length,3,'draft execution remains unchanged')
 // 3 Oct live Zomato run483ad29c spent three waves reloading its homepage.
 // Preserve the observed next step when a plan redundantly starts at this URL.
