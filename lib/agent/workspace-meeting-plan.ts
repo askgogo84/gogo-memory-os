@@ -70,7 +70,7 @@ function replyDraft(params:{person:string;subject:string;briefText:string;slotLa
 async function createRun(actor:AgentActor,text:string){
   const now=new Date().toISOString()
   const {data,error}=await supabaseAdmin.from('agent_runs').insert({
-    telegram_id:String(actor.legacyTelegramId),type:'workspace_meeting_prep',capability:'email',risk_level:'low',status:'running',
+    telegram_id:String(actor.legacyTelegramId),type:'workspace_meeting_prep',capability:'email',status:'running',
     title:'Prepare meeting reply + invite',summary:'Gogo is gathering private Workspace context without sending or scheduling anything.',
     why:'User asked Gogo to prepare a cross-app meeting response.',source:'workspace',started_at:now,updated_at:now,
     metadata_json:{plan_type:'workspace_meeting_prep',input_text:String(text||'').slice(0,1800),mutationsAllowed:false},
