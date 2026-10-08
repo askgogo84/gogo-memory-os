@@ -236,7 +236,7 @@ async function main(){
   const timedProposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
   assert.ok(timedProposal)
   assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(timedProposal.proposedInvite.start)),'15:00','actual proposed invite honors the requested 3pm')
-  for(const [requestedTime,expectedTime] of [['at 15:15','15:15'],['at noon','12:00'],['at 3:15 p.m.','15:15']]){
+  for(const [requestedTime,expectedTime] of [['at 15:15','15:15'],['15:15','15:15'],['at noon','12:00'],['at 3:15 p.m.','15:15']]){
     meetingWrites.length=0
     await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed 1-hour meeting next Sunday ${requestedTime}.`})
     const precise=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
@@ -260,6 +260,20 @@ async function main(){
   }
   const ambiguousSlot=await readTomorrowSchedule({actor,scope:'calendar',text:'Find free slots tomorrow at 3.'})
   assert.equal(ambiguousSlot.calendarReadVerified,false);assert.match(ambiguousSlot.text,/one exact time/)
+  for(const timeZone of ['UTC','America/Los_Angeles']){
+    meetingWrites.length=0;providerItems=[]
+    await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:`Read the latest email and prepare a proposed meeting tomorrow at 3 PM ${timeZone}.`})
+    const zoned=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
+    assert.equal(zoned?.timezone,timeZone,'clock-attached timezone remains explicit')
+    assert.equal(new Intl.DateTimeFormat('en-GB',{timeZone,hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(zoned.start)),'15:00')
+  }
+  for(const text of ['Read the email from Friday and prepare a proposed meeting tomorrow at 3pm.','Read the latest email and prepare a proposed meeting tomorrow at 3pm to discuss the Friday launch.']){
+    meetingWrites.length=0;providerItems=[]
+    const contextual=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text})
+    assert.equal(contextual.status,'completed','source/topic weekday does not replace the explicit meeting day')
+    const invite=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite
+    assert.equal(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(invite.start)),tomorrow)
+  }
   meetingWrites.length=0;http.length=0
   const unsupportedMeeting=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting next month.'})
   assert.equal(unsupportedMeeting.status,'paused');assert.match(unsupportedMeeting.text,/exact meeting date/)

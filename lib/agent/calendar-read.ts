@@ -28,7 +28,9 @@ function explicitIsoDates(text:string){
 }
 
 function calendarRangeText(text:string){
-  for(const filter of text.matchAll(/\b(?:for|about|titled|named|called)\s+/gi)){
+  // Email lookup dates belong to the source context, not the proposed invite.
+  text=text.replace(/\b(?:read|review|find|search|check)\b[^.;\n]*?\bemail\b[^.;\n]*?(?=\s+and\s+(?:prepare|propose|schedule|arrange)\b)/gi,'')
+  for(const filter of text.matchAll(/\b(?:for|about|titled|named|called|to discuss|discussing)\s+/gi)){
     const prefix=text.slice(0,filter.index)
     if(!/\b(?:today|tomorrow|(?:this|next) week|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i.test(prefix)&&!explicitIsoDates(prefix).length)continue
     const value=text.slice(filter.index!+filter[0].length)
@@ -119,7 +121,7 @@ function requestedStartMinute(text:string):number|undefined{
   // working-hours slot for a time the user actually specified.
   if(/\b(?:before|after|between|from|until|around|by)\s+(?:\d|noon|midnight)|\b(?:morning|afternoon|evening|tonight)\b/i.test(text))throw new Error('calendar_time_unsupported')
   const times=new Set<number>()
-  const pattern=/\b(?:at\s+)?(noon|midnight|\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?))(?=\s|[.,;!?]|$)|\bat\s+(\d{1,2})(?::(\d{2}))?\b/gi
+  const pattern=/\b(?:at\s+)?(noon|midnight|\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?))(?=\s|[.,;!?]|$)|\b(?:at\s+)?(\d{1,2}):(\d{2})\b|\bat\s+(\d{1,2})\b/gi
   for(const match of text.matchAll(pattern)){
     const value=(match[1]||'').toLowerCase().replace(/[.\s]/g,'')
     if(value==='noon'){times.add(720);continue}
@@ -130,6 +132,7 @@ function requestedStartMinute(text:string):number|undefined{
       if(hour<1||hour>12||minute>59)throw new Error('calendar_time_unsupported')
       times.add((hour%12+(parts[3]==='p'?12:0))*60+minute)
     }else{
+      if(match[4]!==undefined)throw new Error('calendar_time_unsupported')
       const hour=Number(match[2]),minute=Number(match[3]||0)
       if(match[3]===undefined||hour>23||minute>59)throw new Error('calendar_time_unsupported')
       times.add(hour*60+minute)
@@ -182,6 +185,8 @@ export function requestedCalendarTimezone(text:string){
   // are validated as candidates rather than silently replaced by account time.
   const cleanZone=(value:string)=>value.replace(/\.+$/,'')
   const labeledZone=text.match(/\b(?:time\s*zone|timezone)(?:\s*[:=]\s*|\s+(?:is\s+)?)([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/i)?.[1]
+  const clockZone=[...text.matchAll(/\b(?:\d{1,2}:\d{2}(?:\s*[ap]\.?m\.?)?|\d{1,2}\s*[ap]\.?m\.?|noon|midnight)\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/gi)]
+    .map(match=>cleanZone(match[1])).find(value=>value.includes('/')||isValidTimezone(value))
   const explicitSuffixZone=[...text.matchAll(/\b(?:in|using)\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/gi)]
     .map(match=>cleanZone(match[1])).find(value=>value.includes('/')||/^(?:UTC|GMT|CET|EET|WET|EST5EDT|CST6CDT|MST7MDT|PST8PDT)$/.test(value))
   const zoneContext=calendarRangeText(text).split(/\b(?:for\s+the|about|titled|named|called)\s+/i)[0]
@@ -189,7 +194,7 @@ export function requestedCalendarTimezone(text:string){
     .map(match=>cleanZone(match[1])).find(value=>value.includes('/')||isValidTimezone(value))
   const parenthesizedZone=[...text.matchAll(/\(([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})\)/g)]
     .map(match=>cleanZone(match[1])).find(isValidTimezone)
-  const requestedZone=cleanZone(labeledZone||explicitSuffixZone||localZone||parenthesizedZone||'')||undefined
+  const requestedZone=cleanZone(labeledZone||clockZone||explicitSuffixZone||localZone||parenthesizedZone||'')||undefined
   if(requestedZone&&!isValidTimezone(requestedZone))throw new Error('calendar_timezone_invalid')
   return requestedZone
 }
