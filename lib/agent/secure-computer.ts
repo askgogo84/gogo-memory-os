@@ -812,10 +812,10 @@ function observedReadActions(actions:BrowserAction[],page:any,reject:(reason:Bro
       if(action.kind==='select'&&control?.tag!=='select'&&field?.type!=='select'){reject('nonselect_control');break}
     }
     out.push(action)
-    // Click/navigation can expose an entirely different form. Autocomplete input
+    // Click/navigation and a public flight-date fill can expose another form. Autocomplete input
     // changes its options too; never execute guessed future controls in this wave.
     if(action.kind==='click'||action.kind==='search_enter'||action.kind==='goto'||action.kind==='wait')break
-    if(action.kind==='fill'&&(controls.get(action.selector)?.role==='combobox'||controls.get(action.selector)?.searchMode==='suggestions'))break
+    if(action.kind==='fill'&&(controls.get(action.selector)?.role==='combobox'||controls.get(action.selector)?.searchMode==='suggestions'||controls.get(action.selector)?.publicFilter==='flight-date'))break
   }
   return out
 }
