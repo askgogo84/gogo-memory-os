@@ -21,15 +21,19 @@ import { canAuthorizeConsequentialAction, type TrustClass } from './trust'
 
 const MAX_ACTIONS = 12
 // Airport autocomplete and date selection need several observed steps.
-// The existing 180-second deadline still bounds the entire read.
+// Every read remains bounded, including startup and final verification.
 const MAX_RESEARCH_WAVES = 12
 // The observed Google form needed all 12 waves just to press Search. Leave
-// room to observe loaded results; the same hard read deadline still applies.
+// room to observe loaded results; the hard read deadline still applies.
 const MAX_FLIGHT_RESEARCH_WAVES = 16
 // 3 Oct: the IndiGo read exceeded the 300s route limit and left RUNNING in DB.
 // Reserve 120s for teardown, caller persistence and response. This is a read
 // budget, not permission to retry an interrupted consequential operation.
 const READ_BUDGET_MS = 180_000
+// The queued public Google flight adapter needs observed passenger, airport and
+// date transitions. Measured startup + fourteen steps exceeds 180s. Only this
+// adapter gets 225s, capped by its caller's reserved completion deadline.
+const FLIGHT_READ_BUDGET_MS = 225_000
 async function withinReadBudget<T>(deadline:number|undefined,work:()=>Promise<T>):Promise<T>{
   if(deadline===undefined)return work()
   const remaining=deadline-Date.now()
@@ -1050,8 +1054,10 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean}):Promise<SecureBrowserResult>{
-  const readDeadline=params.mode==='read'?Date.now()+READ_BUDGET_MS:undefined
+export async function runSecureBrowser(params:{userId:string;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
+  let publicFlightRead=false
+  try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
+  const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
   const readDiagnostics:BrowserReadDiagnostic[]=[]
   const diagnose=(event:BrowserReadDiagnostic)=>{readDiagnostics.splice(0,readDiagnostics.length,...sanitizeBrowserReadDiagnostics([...readDiagnostics,event]))}
   let releaseOwnerLock:BrowserOwnerRelease|undefined

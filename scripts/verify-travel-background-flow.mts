@@ -16,6 +16,7 @@ function load(file: string, mocks: Record<string,any>, globals: Record<string,an
   return module.exports
 }
 let seq = 0, searches = 0, browserAttempts = 0, sent = 0, rejectSend = false
+let browserDeadline:number|undefined
 const tables: Record<string,any[]> = {agent_runs:[],agent_steps:[],agent_activity:[],conversations:[],users:[{telegram_id:42,whatsapp_id:'+15555550101',name:'Fixture'}]}
 const notifications = new Map<string,string>()
 let failPublish = false
@@ -65,12 +66,12 @@ const rejectedActions = [{phase:'plan',reason:'unsupported_field',proposed:3,acc
 const browser = load('lib/agent/travel-browser-task.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[]})}}},
   './browser-read-diagnostics':diagnostics,
-  './secure-computer':{runSecureBrowser:async()=>{browserAttempts++;throw Object.assign(new Error('browser_objective_unverified'),{browserReadDiagnostics:rejectedActions})}},
+  './secure-computer':{runSecureBrowser:async(params:any)=>{browserAttempts++;browserDeadline=params.readDeadline;throw Object.assign(new Error('browser_objective_unverified'),{browserReadDiagnostics:rejectedActions})}},
 })
 let queue:any
 const travel = load('lib/agent/travel-research.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:db},'./typed-object-context':{rememberTypedObjects:async()=>{}},
-  '@/lib/web-search':{searchWebResults:async()=>{searches++;return [{title:'BLR to BOM fare ₹4,999',snippet:'Generic route page without a departure date',url:'https://example.com/flights'}]}},
+  '@/lib/web-search':{searchWebResults:async(_query:string,options:any)=>{assert.equal(options.timeoutMs,15000,'fallback is bounded inside the completion reserve');searches++;return [{title:'BLR to BOM fare ₹4,999',snippet:'Generic route page without a departure date',url:'https://example.com/flights'}]}},
   '@/lib/integrations/creditiq-travel':{searchCreditIQLiveFlights:async()=>null},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},'./travel-browser-task':browser,
   './browser-read-diagnostics':diagnostics,
@@ -200,9 +201,14 @@ const unauthWeb=load('app/api/dashboard/chat/route.ts',{...webMocks,'@/lib/dashb
 assert.equal((await unauthWeb.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text})}))).status,401)
 
 // Concurrent ticks claim once. Browser failure becomes labelled fallback, not HTTP 500.
+const shortTick=await worker.processTravelResearchQueue(Clock.now()+250000)
+assert.equal(shortTick.claimed,0,'leave the job queued without the full flight allowance and publication reserve')
+assert.equal(tables.agent_runs[0].status,'queued')
+assert.equal(browserAttempts,0)
 failPublish=true
 await Promise.all([worker.processTravelResearchQueue(Clock.now()+270000),worker.processTravelResearchQueue(Clock.now()+270000)])
 assert.equal(browserAttempts,1);assert.ok(searches>0);assert.equal(tables.agent_runs[0].status,'completed')
+assert.equal(browserDeadline,Clock.now()+240000,'real worker → queue → research → adapter retains 30s for completion')
 assert.equal(tables.agent_runs[0].metadata_json.notified,undefined,'failed publication stays eligible')
 assert.doesNotMatch(tables.agent_runs[0].metadata_json.result_text,/₹4,999/,'undated fallback fare is withheld')
 assert.match(tables.agent_runs[0].metadata_json.result_text,/could not|not completed live|could not find/i)

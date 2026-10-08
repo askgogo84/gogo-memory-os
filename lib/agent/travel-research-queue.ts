@@ -54,7 +54,7 @@ export async function enqueueTravelResearch(params: {actor: AgentActor; surface:
 }
 
 /** Called only after a worker has claimed this owned queued row. */
-export async function runQueuedTravelResearch(actor: AgentActor, runId: string) {
+export async function runQueuedTravelResearch(actor: AgentActor, runId: string, deadline?: number) {
   const owner = String(actor.legacyTelegramId)
   const {data:run,error} = await supabaseAdmin.from('agent_runs').select('id,status,source,metadata_json')
     .eq('id',runId).eq('telegram_id',owner).eq('type','travel_research').eq('status','running').maybeSingle()
@@ -62,7 +62,7 @@ export async function runQueuedTravelResearch(actor: AgentActor, runId: string) 
   let resultText: string
   let status: 'completed' | 'failed' = 'completed'
   try {
-    const result = await executeTravelResearch({actor, surface:run.source, text:run.metadata_json.input_text, existingRunId:runId,context:run.metadata_json.context})
+    const result = await executeTravelResearch({actor, surface:run.source, text:run.metadata_json.input_text, existingRunId:runId,context:run.metadata_json.context,deadline})
     if(!result) throw new Error('travel_input_unavailable')
     const hardened = await hardenTravelResearchResult(result,run.metadata_json.input_text)
     resultText = hardened.text
