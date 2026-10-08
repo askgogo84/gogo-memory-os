@@ -1290,7 +1290,7 @@ _"${originalText}"_
           actualHandler:externalAccount.handledBy || 'external-account-objective',
           actualCapability:'browser',
           status:externalAccount.status || null,
-          runId:externalAccount.runId || null,
+          runId:(externalAccount as any).runId || null,
         }).catch(()=>{})
         await saveConversation(resolvedUser.telegramId,'user',text)
         await saveConversation(resolvedUser.telegramId,'assistant',externalAccount.text)
