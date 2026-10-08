@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { buildCalendarConnectUrl } from '@/lib/google-calendar'
 import { buildGmailConnectUrl } from '@/lib/google-gmail'
-import { executeReadOnlyCalendarStep } from './calendar-read'
+import { calendarAffirmativeText, executeReadOnlyCalendarStep } from './calendar-read'
 import { readWorkspaceEmailBrief, searchWorkspaceContacts, searchWorkspaceEmails } from './google-workspace-read'
 import type { AgentActor } from './actor'
 
@@ -16,9 +16,20 @@ export function isWorkspaceMeetingPrep(text:string){
   return email&&meeting&&prep
 }
 
+/** Give a self-contained private preparation request first refusal. Independent
+ * errands and execution commands still need the multi-step/approval planner. */
+export function isStandaloneWorkspaceMeetingPrep(text:string){
+  const action=calendarAffirmativeText(String(text||''))
+  if(!isWorkspaceMeetingPrep(action))return false
+  const clauses=action.split(/(?:[.;!?\n]|\b(?:and|then|also)\b)\s*/i).map(part=>part.trim()).filter(Boolean)
+  return clauses.every(clause=>/^(?:please\s+)?(?:read|review|find|check|search|use|prepare|draft|write)\b/i.test(clause)
+    && /\b(?:email|gmail|mail|inbox|meeting|calendar|reply|invite|availability|slot)\b/i.test(clause)
+    && !/,\s*(?:please\s+)?(?:send|create|delete|cancel|buy|book|pay|order|remind|compare|call|post|submit)\b/i.test(clause))
+}
+
 function requestedPerson(text:string){
   const patterns=[
-    /(?:find|show|read|check)\s+([A-Z][A-Za-z.'-]{1,40})(?:['’]s)\s+(?:latest\s+|recent\s+)?(?:email|mail)/,
+    /(?:find|show|read|check)\s+([A-Z][A-Za-z.'-]{1,40})(?:['’]s)\s+(?:latest\s+|recent\s+)?(?:email|mail)/i,
     /(?:email|mail)\s+from\s+([A-Z][A-Za-z.'-]{1,40})/i,
     /(?:with|for)\s+([A-Z][A-Za-z.'-]{1,40})\s+(?:about|regarding|meeting)/,
   ]
@@ -110,7 +121,7 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
     const person=requestedPerson(text)
     const emailQuery=person?`find latest email from ${person}`:`find latest email about meeting`
     let emailSearch:any
-    try{emailSearch=await searchWorkspaceEmails(actor,emailQuery)}catch(err:any){
+    try{emailSearch=await searchWorkspaceEmails(actor,emailQuery,{topic:person?undefined:'meeting'})}catch(err:any){
       const code=String(err?.message||'')
       if(['workspace_not_connected','workspace_reconnect_required','workspace_scope_required'].includes(code)){
         const summary='Google Workspace needs to be connected or refreshed before Gogo can prepare this meeting response.'

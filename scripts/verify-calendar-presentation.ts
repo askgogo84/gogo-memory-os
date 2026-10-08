@@ -234,7 +234,7 @@ async function main(){
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Calendar request',instruction:'Do not create a placeholder, and schedule the client meeting tomorrow.'},missionText:'Do not create a placeholder, and schedule the client meeting tomorrow.',runId:'fixture-run'}),/mission_calendar_dates_missing/,'affirmative schedule after a negated action still enters the existing write validation; no provider write fixture')
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Calendar request',instruction:'Do not create a placeholder, and write a calendar event tomorrow.'},missionText:'Do not create a placeholder, and write a calendar event tomorrow.',runId:'fixture-run'}),/mission_calendar_dates_missing/,'affirmative write after a negative clause retains write validation')
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Calendar request',instruction:'Do not create a placeholder and instead schedule the client meeting tomorrow.'},missionText:'Do not create a placeholder and instead schedule the client meeting tomorrow.',runId:'fixture-run'}),/mission_calendar_dates_missing/,'explicit instead conjunction retains affirmative scheduling')
-  const meetingWrites:any[]=[]
+  const meetingWrites:any[]=[],meetingQueries:any[]=[]
   const meetingDb={from(table:string){
     assert.ok(['agent_runs','agent_activity','agent_artifacts'].includes(table),'meeting preparation may persist only owned drafts/run metadata')
     let payload:any
@@ -245,7 +245,7 @@ async function main(){
   const meetingSource=readFileSync('lib/agent/workspace-meeting-plan.ts','utf8')
   const meetingMocks:any=Object.fromEntries([...meetingSource.matchAll(/from ['"]([^'"]+)['"]/g)].map(m=>[m[1],nullModule]))
   Object.assign(meetingMocks,{'@/lib/supabase-admin':{supabaseAdmin:meetingDb},'@/lib/bot/memory-redaction':{redactSecretShapedText:(value:string)=>value},
-    './calendar-read':{executeReadOnlyCalendarStep},'./google-workspace-read':{searchWorkspaceEmails:async()=>({messages:[{id:'fixture-email',threadId:'fixture-thread',from:'Fixture sender <sender@example.test>',subject:'Meeting',snippet:'Fixture discussion'}]})}})
+    './calendar-read':{calendarAffirmativeText,executeReadOnlyCalendarStep},'./google-workspace-read':{searchWorkspaceEmails:async(_actor:any,text:string,options:any)=>{meetingQueries.push({text,options});return {messages:[{id:'fixture-email',threadId:'fixture-thread',from:'Fixture sender <sender@example.test>',subject:'Meeting',snippet:'Fixture discussion'}]}}}})
   const meetingExports:any={}
   runInNewContext(ts.transpileModule(meetingSource,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
     {exports:meetingExports,console,URL,process:{env:{}},require:(name:string)=>meetingMocks[name]})
@@ -263,6 +263,32 @@ async function main(){
   const proposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
   assert.equal(proposal.sourceEmail.threadId,'fixture-thread');assert.equal(proposal.safety.emailSent,false);assert.equal(proposal.safety.calendarScheduled,false)
   assert.equal(proposal.safety.approvalRequiredForExecution,true);assert.equal(proposal.proposedInvite.status,'proposed_not_scheduled')
+  // The web entry must reach this real preparer before a generic email/artifact
+  // plan can claim success without calendar verification or a proposed slot.
+  const webMeetingMocks={...mocks,
+    '@/lib/dashboard/day-chat':{detectDashboardDayIntent:()=>null},
+    '@/lib/agent/workspace-meeting-plan':meetingExports,
+    '@/lib/agent/general-planner':{tryRunGeneralPlan:async()=>{throw Error('Meeting preparation reached generic planner')}}}
+  const meetingWeb:any={}
+  runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
+    {exports:meetingWeb,console,URL,process:{env:{}},require:(name:string)=>webMeetingMocks[name]})
+  meetingWrites.length=0
+  const meetingWebReply=await meetingWeb.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Read my latest meeting email and prepare a private proposed 30-minute meeting next Wednesday at 3 PM Asia/Kolkata. Do not send email, create calendar events, contact anyone or make any booking.'})}))
+  assert.equal(meetingWebReply.status,200,'real web routing must preserve the specialized private proposal path')
+  assert.equal((await meetingWebReply.json()).handledBy,'workspace-meeting-prep')
+  const webProposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
+  assert.ok(webProposal)
+  assert.equal(webProposal.sourceEmail.messageId,'fixture-email')
+  assert.equal(meetingQueries.at(-1).options.topic,'meeting','the generic meeting email request retains its topic')
+  assert.equal(webProposal.safety.emailSent,false);assert.equal(webProposal.safety.calendarScheduled,false)
+  assert.equal(webProposal.safety.approvalRequiredForExecution,true)
+  assert.equal(webProposal.proposedInvite.start,parseLocalDateTime({date:calendarReadWindow('next Wednesday',new Date(),'Asia/Kolkata').startDate,time:'15:00',timezone:'Asia/Kolkata'}).dueAtUtc.toISOString())
+  for(const extra of [' and show my reminders',' and compare flights to Mumbai',', send the reply',' and order groceries',' and create the event'])
+    assert.equal(meetingExports.isStandaloneWorkspaceMeetingPrep('Read the latest meeting email and prepare a proposed meeting tomorrow'+extra),false,'independent actions must remain in the multi-step planner')
+  assert.equal(meetingExports.isStandaloneWorkspaceMeetingPrep('Do not read the email or prepare a meeting.'),false)
+  await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:"Read Alice's latest email and prepare a proposed meeting tomorrow."})
+  assert.equal(meetingQueries.at(-1).text,'find latest email from Alice')
+  assert.equal(meetingQueries.at(-1).options.topic,undefined,'an explicit sender email must not require an unrequested meeting keyword')
   meetingWrites.length=0
   await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed 1 hour meeting tomorrow.'})
   const hourProposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json

@@ -244,7 +244,7 @@ export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:nu
   return `Gmail subscription audit · last ${days} days · up to ${limit} messages\nBilling/renewal email evidence (subject search; not a verified active-subscription inventory).${scope}\n\n${lines.length?lines.join('\n\n'):'No billing or renewal evidence found among the checked candidates.'}\n\n${hasMore?'More matching messages exist; this is a bounded audit, not a complete inbox inventory.':'Only matching messages returned by this bounded search were checked.'} Sender names and email text are evidence; subscription status, usage and future charges are not inferred. No email, cancellation, reminder or calendar change was made.`
 }
 
-export async function searchWorkspaceEmails(actor:AgentActor, input:string, options:{missionText?:string}={}) {
+export async function searchWorkspaceEmails(actor:AgentActor, input:string, options:{missionText?:string;topic?:'meeting'}={}) {
   const stepAudit=workspaceEmailAuditScope(input)
   const audit=stepAudit?(workspaceEmailAuditScope(options.missionText||'')||stepAudit):null
   const exactSubject=String(input||'').match(/subject\s+["“]([^"”]{2,240})["”]/i)?.[1]?.trim()
@@ -254,6 +254,7 @@ export async function searchWorkspaceEmails(actor:AgentActor, input:string, opti
   if(rooms.length>1)throw new Error('workspace_email_meeting_link_ambiguous')
   const meetingLink=rooms.length?`meet.google.com/${rooms[0]}`:null
   const terms=meetingLink?[meetingLink]:workspaceSearchTerms(input)
+  if(options.topic==='meeting'&&!terms.includes('meeting'))terms.unshift('meeting')
   const subjectQuery=exactSubject?`subject:"${exactSubject.replace(/"/g,'')}"`:''
   const q=audit?audit.query:meetingLink
     ? [subjectQuery,`"${meetingLink}"`,'-in:spam','-in:trash'].filter(Boolean).join(' ')

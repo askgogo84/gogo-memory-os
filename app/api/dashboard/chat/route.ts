@@ -20,6 +20,7 @@ import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/
 import { isPublicTravelResearchRequest, isTravelResearchDetailsReply, tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
+import { isStandaloneWorkspaceMeetingPrep, tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
@@ -288,6 +289,15 @@ export async function POST(req: NextRequest) {
         await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:resumed.handledBy,actualCapability:'travel',status:resumed.status,runId:resumed.runId||null}).catch(()=>{})
         await saveConversation(user.telegram_id,text,resumed.text)
         return NextResponse.json(resumed)
+      }
+    }
+
+    if (isStandaloneWorkspaceMeetingPrep(text)) {
+      const meeting = await tryPrepareWorkspaceMeetingPlan({actor,surface:'web',text})
+      if (meeting) {
+        await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:meeting.handledBy,actualCapability:meeting.capability,status:meeting.status,runId:meeting.runId}).catch(()=>{})
+        await saveConversation(user.telegram_id,text,meeting.text)
+        return NextResponse.json(meeting)
       }
     }
 
