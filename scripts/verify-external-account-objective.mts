@@ -24,10 +24,10 @@ assert.ok(hf,'Hugging Face must resolve through the trusted provider registry')
 assert.equal(hf!.domains[0],'huggingface.co')
 assert.equal(hf!.signupUrl,'https://huggingface.co/join','account creation must start on the signup form, not the homepage')
 assert.equal(findVaultProviderInText('Instagram')!.signupUrl,undefined,'recognized providers without verified signup URLs must not silently fall back to login')
-assert.match(external,/looksLikeSignupUrl/,'user-supplied URLs for account creation must be actual signup-form paths')
 
 // Automatic consequential-domain discovery by fuzzy search must not exist.
 const external=fs.readFileSync('lib/agent/external-account.ts','utf8')
+assert.match(external,/looksLikeSignupUrl/,'user-supplied URLs for account creation must be actual signup-form paths')
 assert.doesNotMatch(external,/searchWeb\(/,'consequential target discovery must not depend on fuzzy web search')
 assert.doesNotMatch(external,/resolveOfficialCandidateFromSearchText/,'name-similarity domain selection is forbidden')
 assert.match(external,/findVaultProviderInText/,'known providers must use trusted registry metadata')
