@@ -16,6 +16,8 @@ assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and reserv
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and schedule dentist appointment Friday'),null,'named schedule commands retain their creation flow')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow. Do not create, edit, and delete events.')?.scope,'calendar','coordinated prohibitions remain read-only')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow. Do not create a placeholder, and schedule the client meeting Friday.'),null,'an affirmative command following the negative clause retains its flow')
+assert.equal(detectReadOnlyScheduleRequest('Show my calendar today and find a dentist appointment'),null,'independent appointment discovery must not be swallowed')
+assert.equal(detectReadOnlyScheduleRequest('Find a dentist appointment and show my calendar today'),null,'the reverse compound order retains discovery too')
 assert.equal(detectReadOnlyScheduleRequest('List my meetings today')?.horizon,'today')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar today and tomorrow')?.horizon,'today-tomorrow')
 assert.equal(detectReadOnlyScheduleRequest('What do I have today?'),null,'preserve Today/day route')
@@ -152,6 +154,7 @@ async function main(){
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Review overlaps',instruction:exactRequest},missionText:exactRequest,runId:'fixture-run'}),/calendar_conflicts_unverified/,'explicit do-not-create clauses retain the real read path')
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Calendar request',instruction:'Do not create a placeholder, and schedule the client meeting tomorrow.'},missionText:'Do not create a placeholder, and schedule the client meeting tomorrow.',runId:'fixture-run'}),/mission_calendar_dates_missing/,'affirmative schedule after a negated action still enters the existing write validation; no provider write fixture')
   await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Calendar request',instruction:'Do not create a placeholder, and write a calendar event tomorrow.'},missionText:'Do not create a placeholder, and write a calendar event tomorrow.',runId:'fixture-run'}),/mission_calendar_dates_missing/,'affirmative write after a negative clause retains write validation')
+  await assert.rejects(()=>missionExports.executeVerifiedMissionCalendar({actor,step:{tool:'calendar',title:'Calendar request',instruction:'Do not create a placeholder and instead schedule the client meeting tomorrow.'},missionText:'Do not create a placeholder and instead schedule the client meeting tomorrow.',runId:'fixture-run'}),/mission_calendar_dates_missing/,'explicit instead conjunction retains affirmative scheduling')
   const meetingWrites:any[]=[]
   const meetingDb={from(table:string){
     assert.ok(['agent_runs','agent_activity','agent_artifacts'].includes(table),'meeting preparation may persist only owned drafts/run metadata')
@@ -181,6 +184,15 @@ async function main(){
   const proposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
   assert.equal(proposal.sourceEmail.threadId,'fixture-thread');assert.equal(proposal.safety.emailSent,false);assert.equal(proposal.safety.calendarScheduled,false)
   assert.equal(proposal.safety.approvalRequiredForExecution,true);assert.equal(proposal.proposedInvite.status,'proposed_not_scheduled')
+  meetingWrites.length=0
+  await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed 1 hour meeting tomorrow.'})
+  const hourProposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
+  assert.doesNotMatch(hourProposal.draftReply,/attached brief/,'no attachment is claimed when the actual proposal used only email context')
+  assert.match(hourProposal.draftReply,/60-minute/,'actual prepared reply agrees with the requested duration')
+  assert.equal(new Date(hourProposal.proposedInvite.end).getTime()-new Date(hourProposal.proposedInvite.start).getTime(),60*60_000)
+  meetingWrites.length=0
+  await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed 1-hour meeting tomorrow.'})
+  assert.match(meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.draftReply,/60-minute/,'hyphenated requested duration is retained')
   providerItems=Array.from({length:15},(_,i)=>({id:`bounded-${i}`,summary:`Meeting ${i}`,start:{dateTime:today+`T${String(8+i).padStart(2,'0')}:00:00+05:30`},end:{dateTime:today+`T${String(8+i).padStart(2,'0')}:30:00+05:30`}}))
   const bounded=await direct();assert.match(bounded.text,/Showing 12 of 15/);assert.ok('events' in bounded.output);assert.equal(bounded.output.events.length,12)
   const boundedAgenda=await readTomorrowSchedule({actor,scope:'agenda',text:exactRequest})

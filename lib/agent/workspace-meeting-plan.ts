@@ -39,7 +39,7 @@ function firstUsefulBriefLine(text:string){
   return safe(sentence||normalized.slice(0,300),320)
 }
 
-function replyDraft(params:{person:string;subject:string;briefText:string;slotLabel:string;userName:string}){
+function replyDraft(params:{person:string;subject:string;briefText:string;slotLabel:string;userName:string;durationMinutes:number;usedBrief:boolean}){
   const firstName=params.person||'there'
   const briefLine=firstUsefulBriefLine(params.briefText)
   return [
@@ -47,9 +47,9 @@ function replyDraft(params:{person:string;subject:string;briefText:string;slotLa
     '',
     `Hi ${firstName},`,
     '',
-    `Thanks for the note. I’ve reviewed the attached brief and the meeting context.${briefLine?` One point I noted from the brief is: ${briefLine}`:''}`,
+    `Thanks for the note. I’ve reviewed ${params.usedBrief?'the attached brief and the meeting context':'the meeting context'}.${briefLine?` One point I noted from ${params.usedBrief?'the brief':'the email'} is: ${briefLine}`:''}`,
     '',
-    `Would ${params.slotLabel} work for a 30-minute discussion? If that works for you, I’ll confirm the invite.`,
+    `Would ${params.slotLabel} work for a ${params.durationMinutes}-minute discussion? If that works for you, I’ll confirm the invite.`,
     '',
     'Best,',
     safe(params.userName||'Gogo',100),
@@ -151,7 +151,7 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
       availability=await executeReadOnlyCalendarStep({actor,instruction:`Find free slots. ${text}`,missionText:text})
     }catch(err:any){
       if(String(err?.message||'')==='calendar_not_connected'){
-        const summary='I found the email and brief, but Calendar is not connected, so I cannot verify a free slot yet.'
+        const summary=`I found the email${briefFilename?' and brief':''}, but Calendar is not connected, so I cannot verify a free slot yet.`
         await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
         return {runId,status:'paused',capability:'calendar',risk:'low',text:`${summary}\n\n${calendarConnect(actor)}`,handledBy:'workspace-meeting-prep'}
       }
@@ -171,7 +171,7 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
     }
     const recipient=addressFromHeader(email.from)||(contact?.emails?.[0]||'')
     const displayPerson=person||safe(String(email.from||'').replace(/<[^>]+>/g,'').replace(/["']/g,'').trim(),80)||'there'
-    const draft=replyDraft({person:displayPerson,subject:email.subject,briefText:briefText||email.snippet||'',slotLabel:slot.label,userName:actor.name})
+    const draft=replyDraft({person:displayPerson,subject:email.subject,briefText:briefText||email.snippet||'',slotLabel:slot.label,userName:actor.name,durationMinutes:availability.output.durationMinutes||30,usedBrief:Boolean(briefFilename)})
     const proposedInvite={
       title:safe(String(email.subject||'Meeting').replace(/^re:\s*/i,''),180),
       start:slot.start,end:slot.end,timezone:availability.output.timezone,

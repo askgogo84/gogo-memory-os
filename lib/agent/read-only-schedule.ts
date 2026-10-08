@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
-import { calendarReadWindow, executeReadOnlyCalendarStep, requestedCalendarTimezone, requestedCalendarDays, calendarAffirmativeText } from './calendar-read'
+import { calendarReadWindow, executeReadOnlyCalendarStep, requestedCalendarTimezone, requestedCalendarDays, calendarAffirmativeText, calendarRequestsAvailability } from './calendar-read'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { rememberTypedObjects } from './typed-object-context'
 
@@ -47,6 +47,11 @@ export function detectReadOnlyScheduleRequest(raw: string) {
   // Command boundaries distinguish "and book a table" from "for the book
   // launch". Event subjects must not become unrelated booking/write intents.
   if (/(?:^|[,.!?;\n]\s*|\b(?:and|then|also|but|instead|please|to|you)\s+)(?:please\s+)?(?:reserve|schedule|remind|create|add|invite|prepare|write|put|set|forward|save|remember|compose|archive|post|publish|renew|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase)\b|\bschedule\s+(?:a|an|the|my|new|meeting|event)\b/.test(request)) return null
+  // An additional discovery/read command belongs to its own handler or planner.
+  for(const clause of request.split(/\b(?:and|then|also)\b/)){
+    if(/^\s*(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read(?![- ]only)|review|show|list|tell\s+me)\b/.test(clause)&&
+      !calendarRequestsAvailability(clause)&&! /\b(calendar|schedule|meetings?|events?|reminders?|my appointments?|needs? my attention|what (?:do )?i have|what(?:'s| is) on|what needs my attention|(?:review|brief me|summari[sz]e) tomorrow)\b/.test(clause))return null
+  }
   const readVerb = /\b(check|tell me|show(?: me)?|list|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(text)
   const scheduleContext = /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(text) ||
     /\b(?:what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|what needs my attention tomorrow|(?:summari[sz]e|review|brief me(?: on)?) tomorrow)\b/.test(text)

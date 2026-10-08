@@ -25,9 +25,15 @@ function explicitIsoDates(text:string){
   return out
 }
 
+export function calendarRequestsAvailability(text:string){
+  const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|\d+[- ]minutes?)\s+)*(?:slots?|time|gaps?|availability)\b/i
+  const availabilityQuestion=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
+  return availabilityCommand.test(text)||availabilityQuestion.test(text)
+}
+
 export function calendarAffirmativeText(text:string){
   return text.replace(/’/g,"'").replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/gi,clause=>{
-    const next=clause.match(/,\s*and\s+(?:please\s+)?/i)
+    const next=clause.match(/(?:,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write)\b))/i)
     if(next?.index===undefined)return ''
     const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|without)\s+/i,'')
     // A coordinated bare verb list keeps the prohibition across an Oxford comma.
@@ -67,9 +73,9 @@ export function calendarReadWindow(text:string,now:Date,tz:string){
 }
 
 function requestedDurationMinutes(text:string){
-  const mins=String(text||'').match(/\b(\d{1,3})\s*(?:min|mins|minute|minutes)\b/i)
+  const mins=String(text||'').match(/\b(\d{1,3})[\s-]*(?:min|mins|minute|minutes)\b/i)
   if(mins)return Math.max(15,Math.min(180,Number(mins[1])))
-  const hours=String(text||'').match(/\b(\d(?:\.5)?)\s*(?:hour|hours|hr|hrs)\b/i)
+  const hours=String(text||'').match(/\b(\d(?:\.5)?)[\s-]*(?:hour|hours|hr|hrs)\b/i)
   if(hours)return Math.max(30,Math.min(180,Math.round(Number(hours[1])*60)))
   return 30
 }
@@ -141,9 +147,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const busyEvents=events.filter((event:any)=>event.transparency!=='transparent')
   const unknownIntervals=busyEvents.filter((event:any)=>!eventInterval(event,timezone)).length
 
-  const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|\d+[- ]minutes?)\s+)*(?:slots?|time|gaps?|availability)\b/i
-  const availabilityQuestion=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
-  const wantsAvailability=availabilityCommand.test(text)||availabilityQuestion.test(text)
+  const wantsAvailability=calendarRequestsAvailability(text)
   if(!wantsAvailability){
     const items=events.slice(0,12).map((event:any)=>({
       id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),start:String(event?.start?.dateTime||event?.start?.date||''),end:String(event?.end?.dateTime||event?.end?.date||''),
