@@ -56,7 +56,7 @@ function usableMeetingEmail(email:any,explicitSender:boolean){
   if(/\(PR #\d+\)|\bpull request\b|\bissue #\d+\b|\b(?:newsletter|digest|roundup|promotion|unsubscribe)\b/i.test(subject+' '+snippet))return false
   if(explicitSender)return true
   return /\b(?:meeting|invitation|invite|catch[- ]?up|availability|schedule|appointment)\b/i.test(subject)
-    || /\b(?:can|could|shall|should|let['’]?s|would you|are you)\b.{0,70}\b(?:meet|meeting|discuss|call|available)\b/i.test(snippet)
+    || /\b(?:can|could|shall|should|let['\u2019]?s|would you|are you)\b.{0,70}\b(?:meet|meeting|discuss|call|available)\b/i.test(snippet)
 }
 
 function firstUsefulBriefLine(text:string){
