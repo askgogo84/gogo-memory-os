@@ -200,8 +200,8 @@ export async function POST(req: NextRequest) {
     }
 
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
-    if (readOnlySchedule?.horizon === 'tomorrow') {
-      const summary = await readTomorrowSchedule({ actor, scope: readOnlySchedule.scope })
+    if (readOnlySchedule) {
+      const summary = await readTomorrowSchedule({ actor, scope: readOnlySchedule.scope, text })
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'read-only-schedule',actualCapability:'calendar',status:'completed'}).catch(()=>{})
       await recordDecisionLearning({ actor, text, domain:'calendar', handler:'read-only-schedule', decisionId:shadowEventId, outcome:summary.calendarReadVerified?'verified_success':'unknown', verified:summary.calendarReadVerified }).catch(()=>{})
       await saveConversation(user.telegram_id, text, summary.text)

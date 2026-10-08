@@ -170,12 +170,24 @@ export async function fetchPrimaryCalendarEvents(
   timeMax: string,
   label = 'GCAL_EVENTS_FETCH_FAILED',
 ): Promise<any[]> {
+  return (await readPrimaryCalendarEventsPage(accessToken,timeMin,timeMax,label)).events
+}
+
+/** A bounded page retains completeness evidence for read/availability claims. */
+export async function fetchPrimaryCalendarEventsPage(accessToken:string,timeMin:string,timeMax:string,label='GCAL_EVENTS_FETCH_FAILED',limit=40) {
+  const maximum=Math.max(1,Math.min(100,Math.floor(limit)))
+  const page=await readPrimaryCalendarEventsPage(accessToken,timeMin,timeMax,label,maximum)
+  return {events:page.events.slice(0,maximum),hasMore:page.hasMore||page.events.length>maximum}
+}
+
+async function readPrimaryCalendarEventsPage(accessToken:string,timeMin:string,timeMax:string,label:string,limit?:number) {
   const params = new URLSearchParams({
     timeMin,
     timeMax,
     singleEvents: 'true',
     orderBy: 'startTime',
   })
+  if(limit)params.set('maxResults',String(limit))
 
   const response = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
@@ -190,7 +202,7 @@ export async function fetchPrimaryCalendarEvents(
     throw new Error(`Google Calendar events fetch failed: ${response.status}`)
   }
   const data = await response.json()
-  return data.items || []
+  return {events:Array.isArray(data.items)?data.items:[],hasMore:typeof data.nextPageToken==='string'&&data.nextPageToken.length>0}
 }
 
 export async function getTodayEvents(accessToken: string): Promise<any[]> {

@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
-import { executeReadOnlyCalendarStep } from './calendar-read'
-import { normalizeTimezone } from '@/lib/timezone'
+import { calendarReadWindow, executeReadOnlyCalendarStep } from './calendar-read'
+import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { rememberTypedObjects } from './typed-object-context'
 
 function safe(value: unknown, max = 500) {
@@ -43,21 +43,23 @@ export function detectReadOnlyScheduleRequest(raw: string) {
   const text = safe(raw, 2000).toLowerCase().replace(/[’]/g, "'")
   if (!text) return null
   const explicitNoMutation = /\b(do not|don't|dont|without)\s+(?:change|changing|modify|modifying|create|creating|add|adding|edit|editing|move|moving|schedule|scheduling|cancel|cancelling|canceling)\b/.test(text) || /\bread[- ]only\b/.test(text)
-  if (/^(?:please\s+)?(?:remind|create|add|move|cancel|delete|book)\b/.test(text)) return null
-  const readVerb = /\b(check|tell me|show(?: me)?|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(text)
+  const request = text.replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/g,'')
+  if (/\b(?:remind|create|add|move|edit|change|modify|cancel|delete|book|send|pay|buy|purchase)\b|\bschedule\s+(?:a|an|the|my|new|meeting|event)\b/.test(request)) return null
+  const readVerb = /\b(check|tell me|show(?: me)?|list|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(text)
   const scheduleContext = /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(text) ||
     /\b(?:what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|what needs my attention tomorrow|(?:summari[sz]e|review|brief me(?: on)?) tomorrow)\b/.test(text)
   const tomorrow = /\btomorrow\b/.test(text)
-  if ((explicitNoMutation || readVerb) && scheduleContext && tomorrow) {
-    const request = text.replace(/(?:do not|don't|dont|without)\s+(?:change|changing|modify|modifying|create|creating|add|adding|edit|editing|move|moving|cancel|cancelling|canceling).*$/, '')
+  const today = /\btoday\b/.test(text)
+  if ((explicitNoMutation || readVerb) && scheduleContext && (tomorrow || today)) {
     const combined = /\b(?:reminders?|agenda|plan my day|what is my day|what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|my day|my schedule)\b/.test(request)
     const calendarOnly = /\b(?:calendar|meetings?|appointments?|events?)\b/.test(request) && !combined
-    return { horizon: 'tomorrow' as const, scope: calendarOnly ? 'calendar' as const : 'agenda' as const }
+    if(today&&!calendarOnly&&!tomorrow)return null // Preserve the existing Today/day route.
+    return { horizon: today ? tomorrow ? 'today-tomorrow' as const : 'today' as const : 'tomorrow' as const, scope: calendarOnly ? 'calendar' as const : 'agenda' as const }
   }
   return null
 }
 
-export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 'calendar' | 'agenda' }) {
+export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 'calendar' | 'agenda'; text?: string }) {
   const telegramId = Number(params.actor.legacyTelegramId)
   const { data: user, error: userError } = await supabaseAdmin.from('users')
     .select('timezone')
@@ -68,27 +70,35 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   const requestedTimeZone = normalizeTimezone(user?.timezone)
   const now = new Date()
   const tomorrowKey = nextLocalDateKey(now, requestedTimeZone)
+  const originalRequest=params.text||'Show my calendar tomorrow'
+  let window=calendarReadWindow(originalRequest,now,requestedTimeZone)
 
   // Use the exact same canonical Google Calendar reader as autonomous mission steps.
   // This prevents Agent/Talk-to-Gogo read-only summaries from drifting from the
   // calendar reality used by the planner, verifier and availability engine.
   let calendarConnected = true
   let timeZone = requestedTimeZone
-  let calendarEvents: Array<{ id?: string; title: string; start: string; end?: string }> = []
+  let calendarComplete=true
+  let calendarText=''
+  let calendarEvents: Array<{ id?: string; title: string; start: string; end?: string; label?: string }> = []
   try {
     const calendar = await executeReadOnlyCalendarStep({
       actor: params.actor,
-      instruction: 'Show my calendar tomorrow',
-      missionText: 'Read tomorrow schedule without changing anything.',
+      instruction: originalRequest,
+      missionText: originalRequest,
       rememberSelection: true,
     })
     const output: any = calendar.output || {}
     timeZone = safe(output.timezone || requestedTimeZone, 100)
+    window=output.window||calendarReadWindow(originalRequest,now,timeZone)
+    calendarComplete=output.complete!==false&&output.availabilityVerified!==false&&output.conflictsVerified!==false
+    calendarText=calendar.text
     calendarEvents = (Array.isArray(output.events) ? output.events : []).map((event: any) => ({
       id: safe(event?.id || '', 160) || undefined,
       title: safe(event?.summary || event?.title || 'Untitled event', 180),
       start: safe(event?.start || '', 120),
       end: safe(event?.end || '', 120) || undefined,
+      label: safe(event?.label || '', 240) || undefined,
     })).filter((event: any) => event.start)
   } catch (error: any) {
     console.error('READ_ONLY_SCHEDULE_CALENDAR_FAILED:', safe(error?.message || error, 160))
@@ -98,14 +108,15 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   const localTomorrowKey = nextLocalDateKey(now, timeZone)
   // Calendar-only requests never read reminders, Attention or background monitors.
   if (params.scope === 'calendar') {
-    const lines = ['Calendar tomorrow:']
+    const lines = [`Calendar ${window.label} (${timeZone}):`]
     if (!calendarConnected) lines.push('I could not read your connected calendar just now.')
-    else if (!calendarEvents.length) lines.push('No calendar events found.')
-    else for (const event of calendarEvents) lines.push(`• ${localClock(event.start, timeZone)} — ${event.title}`)
-    return { text: lines.join('\n'), calendarEvents, reminders: [], timeZone, tomorrowKey: localTomorrowKey, calendarReadVerified: calendarConnected }
+    else if(calendarText)return {text:calendarText,calendarEvents,reminders:[],timeZone,tomorrowKey:localTomorrowKey,window,calendarReadVerified:calendarConnected&&calendarComplete}
+    else lines.push('The calendar reader returned no verifiable schedule.')
+    return { text: lines.join('\n'), calendarEvents, reminders: [], timeZone, tomorrowKey: localTomorrowKey,window, calendarReadVerified: calendarConnected&&calendarComplete }
   }
-  const tomorrowStart = new Date(now.getTime() - 2 * 60 * 60 * 1000)
-  const tomorrowEnd = new Date(now.getTime() + 60 * 60 * 60 * 1000)
+  const tomorrowStart = parseLocalDateTime({date:window.startDate,time:'00:00',timezone:timeZone}).dueAtUtc
+  const [year,month,day]=window.endDate.split('-').map(Number)
+  const tomorrowEnd = parseLocalDateTime({date:new Date(Date.UTC(year,month-1,day+1)).toISOString().slice(0,10),time:'00:00',timezone:timeZone}).dueAtUtc
   const { data: reminderRows, error: reminderError } = await supabaseAdmin.from('reminders')
     .select('id,message,remind_at,sent')
     .eq('telegram_id', telegramId)
@@ -115,18 +126,21 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   if (reminderError) throw new Error(`read_only_schedule_reminders_failed:${reminderError.message}`)
   const reminders = (reminderRows || []).filter((row: any) => {
     const due = new Date(row.remind_at)
-    return !row.sent && Number.isFinite(due.getTime()) && localDateKey(due, timeZone) === localTomorrowKey
+    const key=Number.isFinite(due.getTime())?localDateKey(due,timeZone):''
+    return !row.sent && key>=window.startDate && key<=window.endDate
   })
   // A mixed agenda is not a single typed selection. A later bare pronoun must
   // clarify rather than inherit the Calendar reader's intermediate selection.
   await rememberTypedObjects(telegramId,'calendar',[],null).catch(()=>{})
 
-  const lines: string[] = ['Tomorrow:']
+  const lines: string[] = [window.label==='tomorrow'?'Tomorrow:':`Schedule ${window.label}:`]
   if (calendarConnected) {
     if (calendarEvents.length) {
       lines.push(`Calendar: ${calendarEvents.length} event${calendarEvents.length === 1 ? '' : 's'}.`)
-      for (const event of calendarEvents.slice(0, 6)) lines.push(`• ${localClock(event.start, timeZone)} — ${event.title}`)
-    } else lines.push('Calendar: clear.')
+      for (const event of calendarEvents.slice(0, 6)) lines.push(`• ${event.label||localClock(event.start, timeZone)} — ${event.title}`)
+    } else lines.push(calendarComplete?'Calendar: clear.':'Calendar: partial page, full schedule not verified.')
+    if(!calendarComplete)lines.push('Calendar review is incomplete; more events or unverified intervals remain.')
+    for(const line of calendarText.split('\n'))if(/^(?:Overlap:|No overlapping|Overlap review|Showing \d+ of)/.test(line))lines.push(line)
   } else lines.push('Calendar: I could not read your connected calendar just now.')
 
   if (reminders.length) {
@@ -138,8 +152,8 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   for (const event of calendarEvents.slice(0, 3)) attention.push(`${localClock(event.start, timeZone)} ${event.title}`)
   for (const reminder of reminders.slice(0, 3)) attention.push(`${localClock(reminder.remind_at, timeZone)} ${safe(reminder.message || 'Reminder', 120)}`)
   if (attention.length) lines.push(`Needs your attention: ${attention.join('; ')}.`)
-  else lines.push('Nothing currently needs your attention tomorrow.')
+  else lines.push(calendarComplete?`Nothing currently needs your attention ${window.label}.`:'Calendar attention could not be fully checked.')
   lines.push('I did not change, create, move or delete anything.')
 
-  return { text: lines.join('\n'), calendarEvents, reminders, timeZone, tomorrowKey: localTomorrowKey || tomorrowKey, calendarReadVerified: calendarConnected }
+  return { text: lines.join('\n'), calendarEvents, reminders, timeZone, tomorrowKey: localTomorrowKey || tomorrowKey,window, calendarReadVerified: calendarConnected&&calendarComplete }
 }
