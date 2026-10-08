@@ -937,7 +937,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     const scheduleRequest = detectReadOnlyScheduleRequest(text)
     if (scheduleRequest) {
       const actor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })
-      const summary = await readTomorrowSchedule({ actor, scope: scheduleRequest.scope })
+      const summary = await readTomorrowSchedule({ actor, scope: scheduleRequest.scope, text })
       await recordDecisionLearning({ actor, text, domain: 'calendar', handler: 'read-only-schedule', decisionId: inboundMessageSid || null, outcome: summary.calendarReadVerified ? 'verified_success' : 'unknown', verified: summary.calendarReadVerified }).catch(() => {})
       await saveConversation(resolvedUser.telegramId, 'user', text)
       await saveConversation(resolvedUser.telegramId, 'assistant', summary.text)

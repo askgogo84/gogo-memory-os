@@ -71,8 +71,8 @@ export async function POST(request: Request) {
     }
 
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
-    if (readOnlySchedule?.horizon === 'tomorrow') {
-      const summary = await readTomorrowSchedule({ actor, scope: readOnlySchedule.scope })
+    if (readOnlySchedule) {
+      const summary = await readTomorrowSchedule({ actor, scope: readOnlySchedule.scope, text })
       await recordDecisionLearning({ actor, text, domain:'calendar', handler:'read-only-schedule', decisionId:`agent-${randomUUID()}`, outcome:summary.calendarReadVerified?'verified_success':'unknown', verified:summary.calendarReadVerified }).catch(()=>{})
       return NextResponse.json({
         status: 'completed', capability: 'calendar', risk: 'low', text: summary.text,

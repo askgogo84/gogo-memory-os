@@ -39,7 +39,7 @@ function firstUsefulBriefLine(text:string){
   return safe(sentence||normalized.slice(0,300),320)
 }
 
-function replyDraft(params:{person:string;subject:string;briefText:string;slotLabel:string;userName:string}){
+function replyDraft(params:{person:string;subject:string;briefText:string;slotLabel:string;userName:string;durationMinutes:number;usedBrief:boolean}){
   const firstName=params.person||'there'
   const briefLine=firstUsefulBriefLine(params.briefText)
   return [
@@ -47,9 +47,9 @@ function replyDraft(params:{person:string;subject:string;briefText:string;slotLa
     '',
     `Hi ${firstName},`,
     '',
-    `Thanks for the note. I’ve reviewed the attached brief and the meeting context.${briefLine?` One point I noted from the brief is: ${briefLine}`:''}`,
+    `Thanks for the note. I’ve reviewed ${params.usedBrief?'the attached brief and the meeting context':'the meeting context'}.${briefLine?` One point I noted from ${params.usedBrief?'the brief':'the email'} is: ${briefLine}`:''}`,
     '',
-    `Would ${params.slotLabel} work for a 30-minute discussion? If that works for you, I’ll confirm the invite.`,
+    `Would ${params.slotLabel} work for a ${params.durationMinutes}-minute discussion? If that works for you, I’ll confirm the invite.`,
     '',
     'Best,',
     safe(params.userName||'Gogo',100),
@@ -148,10 +148,35 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
 
     let availability:any
     try{
-      availability=await executeReadOnlyCalendarStep({actor,instruction:text,missionText:text})
+      availability=await executeReadOnlyCalendarStep({actor,instruction:`Find free slots. ${text}`,missionText:text})
     }catch(err:any){
+      if(String(err?.message||'')==='calendar_timezone_invalid'){
+        const summary='Please give a valid timezone, such as Asia/Kolkata or UTC, so I can check the requested meeting time.'
+        await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
+        return {runId,status:'paused',capability:'calendar',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
+      }
+      if(String(err?.message||'')==='calendar_duration_unsupported'){
+        const summary='I can currently prepare a single meeting lasting 15 to 180 minutes. Please give one duration in that range; I have not shortened or changed the requested meeting.'
+        await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
+        return {runId,status:'paused',capability:'calendar',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
+      }
+      if(String(err?.message||'')==='calendar_time_ambiguous'){
+        const summary='That local time occurs twice during a daylight-saving change. Please give the intended time in UTC or choose a time outside the repeated hour. I have not chosen an occurrence.'
+        await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
+        return {runId,status:'paused',capability:'calendar',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
+      }
+      if(String(err?.message||'')==='calendar_time_unsupported'){
+        const summary='Please give one exact meeting time, such as 3 PM or 15:00, and its timezone. I have not substituted another time.'
+        await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
+        return {runId,status:'paused',capability:'calendar',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
+      }
+      if(['calendar_date_ambiguous','calendar_date_unsupported'].includes(String(err?.message||''))){
+        const summary='Please give the exact meeting date in YYYY-MM-DD format so I can check the right day and prepare the proposal.'
+        await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
+        return {runId,status:'paused',capability:'calendar',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
+      }
       if(String(err?.message||'')==='calendar_not_connected'){
-        const summary='I found the email and brief, but Calendar is not connected, so I cannot verify a free slot yet.'
+        const summary=`I found the email${briefFilename?' and brief':''}, but Calendar is not connected, so I cannot verify a free slot yet.`
         await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
         return {runId,status:'paused',capability:'calendar',risk:'low',text:`${summary}\n\n${calendarConnect(actor)}`,handledBy:'workspace-meeting-prep'}
       }
@@ -159,7 +184,7 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
     }
     const slots=availability?.output?.availableSlots||[]
     if(!slots.length){
-      const summary='I found the email and brief, but no free slot matched the requested window.'
+      const summary=`I found the email${briefFilename?' and brief':''}, but no free slot matched the requested window.`
       await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
       return {runId,status:'paused',capability:'calendar',risk:'low',text:`${summary}\n\n${availability?.text||''}`,handledBy:'workspace-meeting-prep'}
     }
@@ -171,7 +196,7 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
     }
     const recipient=addressFromHeader(email.from)||(contact?.emails?.[0]||'')
     const displayPerson=person||safe(String(email.from||'').replace(/<[^>]+>/g,'').replace(/["']/g,'').trim(),80)||'there'
-    const draft=replyDraft({person:displayPerson,subject:email.subject,briefText:briefText||email.snippet||'',slotLabel:slot.label,userName:actor.name})
+    const draft=replyDraft({person:displayPerson,subject:email.subject,briefText:briefText||email.snippet||'',slotLabel:slot.label,userName:actor.name,durationMinutes:availability.output.durationMinutes||30,usedBrief:Boolean(briefFilename)})
     const proposedInvite={
       title:safe(String(email.subject||'Meeting').replace(/^re:\s*/i,''),180),
       start:slot.start,end:slot.end,timezone:availability.output.timezone,
