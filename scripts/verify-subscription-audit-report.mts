@@ -175,7 +175,7 @@ mocks['./planner-provider'].completeAgentPlanPrompt=async(prompt:string)=>{
  if(prompt.includes('SOURCE_EVIDENCE')){
   assert.match(prompt,/https:\/\/nursery\.example\/plants/,'synthesis must receive actual retrieved sources')
   assert.match(prompt,/USD 150/,'the requested budget must reach synthesis')
-  return 'Private planning estimate: two plants USD 30, two pots USD 40, soil USD 20 = USD 90. Prices, part-sun suitability and inventory require verification. Source: https://nursery.example/plants'
+  return 'Private planning estimate: two plants USD 30, two pots USD 40, soil USD 20 = USD 90. Verified retail price: USD 14.95 from a search excerpt. Source: https://nursery.example/plants'
  }
  return JSON.stringify(researchRaw)
 }
@@ -207,6 +207,7 @@ assert.match(research.text,/https:\/\/nursery\.example\/plants/,'public source e
 assert.match(research.text,/Private report:/)
 const savedResearch=rows.agent_artifacts.find(r=>r.title==='Patio plan')
 assert.match(JSON.stringify(savedResearch.content_json),/Part-sun container plant guidance/,'raw evidence remains beside generated synthesis')
+assert.match(JSON.stringify(savedResearch.content_json),/price appearing in a search excerpt \(not live-verified\)/,'persisted generated synthesis is downgraded before it is stored')
 const allReports=[...rows.agent_artifacts]
 rows.agent_artifacts=[savedResearch]
 assert.match(JSON.stringify(await page.default({params:Promise.resolve({id:reportId})})),/USD 90/,'the real private page renders the generated research answer')
