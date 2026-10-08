@@ -77,7 +77,11 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   const now = new Date()
   const tomorrowKey = nextLocalDateKey(now, requestedTimeZone)
   const originalRequest=params.text||'Show my calendar tomorrow'
-  let window=calendarReadWindow(originalRequest,now,requestedTimeZone)
+  let window:ReturnType<typeof calendarReadWindow>
+  try{window=calendarReadWindow(originalRequest,now,requestedTimeZone)}catch(error:any){
+    if(!['calendar_date_ambiguous','calendar_date_unsupported'].includes(String(error?.message||'')))throw error
+    return {text:'Please give the exact calendar date or date range in YYYY-MM-DD format so I can check the right days.',calendarEvents:[],reminders:[],timeZone:requestedTimeZone,tomorrowKey,calendarReadVerified:false}
+  }
 
   // Use the exact same canonical Google Calendar reader as autonomous mission steps.
   // This prevents Agent/Talk-to-Gogo read-only summaries from drifting from the

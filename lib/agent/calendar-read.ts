@@ -7,6 +7,8 @@ import type { AgentActor } from './actor'
 
 const MAX_EVENTS = 40
 const MAX_SLOTS = 6
+const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
+const WEEKDAY_PATTERN = /\b(?:(next|this)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/gi
 
 function pad(n:number){return String(n).padStart(2,'0')}
 function safe(v:unknown,max=300){return redactSecretShapedText(String(v??'').replace(/\s+/g,' ').trim().slice(0,max))}
@@ -28,10 +30,10 @@ function explicitIsoDates(text:string){
 function calendarRangeText(text:string){
   for(const filter of text.matchAll(/\b(?:for|about|titled|named|called)\s+/gi)){
     const prefix=text.slice(0,filter.index)
-    if(!/\b(?:today|tomorrow|(?:this|next) week)\b/i.test(prefix)&&!explicitIsoDates(prefix).length)continue
+    if(!/\b(?:today|tomorrow|(?:this|next) week|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i.test(prefix)&&!explicitIsoDates(prefix).length)continue
     const value=text.slice(filter.index!+filter[0].length)
     // "for tomorrow" and "for 2026-10-10" are range clauses, not titles.
-    if(/^(?:today|tomorrow|(?:this|next) week|20\d{2}-\d{2}-\d{2}|\d+(?:\.5)?[\s-]*(?:hours?|hrs?|minutes?|mins?))\b/i.test(value))continue
+    if(/^(?:today|tomorrow|(?:this|next) week|(?:(?:this|next)\s+)?(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)|20\d{2}-\d{2}-\d{2}|\d+(?:\.5)?[\s-]*(?:hours?|hrs?|minutes?|mins?))\b/i.test(value))continue
     return prefix
   }
   return text
@@ -44,7 +46,9 @@ export function calendarRequestsAvailability(text:string){
 }
 
 export function calendarAffirmativeText(text:string){
-  return text.replace(/’/g,"'").replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/gi,clause=>{
+  return text.replace(/’/g,"'")
+    .replace(/\b(?:do not|don't|dont)\s+forget\s+to\s+/gi,'')
+    .replace(/\b(?:do not|don't|dont|without)\s+[^.;\n]*?(?=[.;\n]|\b(?:but|then)\b|$)/gi,clause=>{
     const next=clause.match(/(?:,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|reorder|empty|increase|decrease|apply|redeem|block|unblock|reserve|remind|put|set|forward|save|remember|compose|archive|post|publish|renew|reschedule|resched|postpone|push|shift|update|make|remove|clear|book|send|pay|buy|purchase)\b))/i)
     if(next?.index===undefined)return ''
     const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|without)\s+/i,'')
@@ -68,6 +72,24 @@ export function calendarReadWindow(text:string,now:Date,tz:string){
   const today=localYmd(now,tz)
   const anchor=new Date(`${today}T00:00:00Z`)
   const day=anchor.getUTCDay()
+  // A date-like request we cannot resolve must not become an arbitrary slot
+  // within the default week. The caller can ask for an exact calendar date.
+  if(/\b(?:(?:next|this|last)\s+(?:weekend|month|year)|last\s+(?:week|sunday|monday|tuesday|wednesday|thursday|friday|saturday)|in\s+\d+\s+(?:days?|weeks?|months?))\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i.test(text))throw new Error('calendar_date_unsupported')
+  const weekdayRequests=[...text.matchAll(WEEKDAY_PATTERN)]
+  if(weekdayRequests.length){
+    const namedDays=new Set(weekdayRequests.map(match=>match[2].toLowerCase()))
+    const relative=requestedCalendarDays(text)
+    if(namedDays.size!==1||relative.today||relative.tomorrow)throw new Error('calendar_date_ambiguous')
+    const weekday=WEEKDAYS.indexOf(weekdayRequests[0][2].toLowerCase())
+    const qualifiers=new Set(weekdayRequests.map(match=>(match[1]||'').toLowerCase()))
+    if(qualifiers.size>1)throw new Error('calendar_date_ambiguous')
+    let offset=(weekday-day+7)%7
+    if(/\bnext week\b/i.test(text))offset=(((8-day)%7)||7)+(weekday+6)%7
+    else if(qualifiers.has('this')||/\bthis week\b/i.test(text))offset=(weekday+6)%7-(day+6)%7
+    else if(qualifiers.has('next')&&offset===0)offset=7
+    const requested=addDays(today,offset)
+    return {startDate:requested,endDate:requested,label:`${weekdayRequests[0][2]} ${requested}`}
+  }
   if(/\bnext week\b/i.test(text)){
     const daysToMonday=((8-day)%7)||7
     const start=addDays(today,daysToMonday)

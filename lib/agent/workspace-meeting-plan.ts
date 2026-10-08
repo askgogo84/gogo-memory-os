@@ -150,6 +150,11 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
     try{
       availability=await executeReadOnlyCalendarStep({actor,instruction:`Find free slots. ${text}`,missionText:text})
     }catch(err:any){
+      if(['calendar_date_ambiguous','calendar_date_unsupported'].includes(String(err?.message||''))){
+        const summary='Please give the exact meeting date in YYYY-MM-DD format so I can check the right day and prepare the proposal.'
+        await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
+        return {runId,status:'paused',capability:'calendar',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
+      }
       if(String(err?.message||'')==='calendar_not_connected'){
         const summary=`I found the email${briefFilename?' and brief':''}, but Calendar is not connected, so I cannot verify a free slot yet.`
         await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})

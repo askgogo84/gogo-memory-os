@@ -13,6 +13,8 @@ for(const text of ['What do I have on my calendar tomorrow?','Show my calendar t
 for(const text of ['Check what I have tomorrow and tell me what needs my attention. Do not change anything.','What do I have tomorrow?','What is my day tomorrow?','Plan my day tomorrow','Show my calendar and reminders tomorrow',"Tell me what's on tomorrow. Don't change my calendar."])assert.equal(detectReadOnlyScheduleRequest(text)?.scope,'agenda',text)
 for(const text of ['Remind me to check my calendar tomorrow','Create a calendar event tomorrow','Move my meeting tomorrow','Check the weather tomorrow','Tell me the flight prices tomorrow','Show my reminders tomorrow','Check sunrise tomorrow','Review the news tomorrow'])assert.equal(detectReadOnlyScheduleRequest(text),null,text)
 for(const text of ['Review my calendar today and create an event tomorrow','Show my calendar tomorrow; delete the 11am event','Show my calendar tomorrow and edit the 11am event','Review tomorrow. Do not delete anything, but create a meeting.'])assert.equal(detectReadOnlyScheduleRequest(text),null,'positive writes must not be swallowed: '+text)
+for(const idiom of ["don't forget to",'do not forget to',"don’t forget to"])
+ assert.equal(detectReadOnlyScheduleRequest(`Show my calendar today and ${idiom} schedule the dentist Friday`),null,'affirmative negative idioms retain the action')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and reserve a table at Noma for 2'),null,'reservation commands retain their own executor')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow and schedule dentist appointment Friday'),null,'named schedule commands retain their creation flow')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow. Do not create, edit, and delete events.')?.scope,'calendar','coordinated prohibitions remain read-only')
@@ -39,6 +41,13 @@ assert.equal(calendarReadWindow('Show my calendar for today and tomorrow',new Da
 assert.equal(calendarReadWindow('Show my calendar tomorrow for Project 2026-10-10',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata').label,'tomorrow','ISO-looking event title must not replace the requested range')
 assert.equal(calendarReadWindow('Show my calendar for 2026-10-10',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata').startDate,'2026-10-10','explicit range date stays authoritative')
 assert.equal(calendarReadWindow('Show my calendar on 2026-10-11 for Project 2026-10-10',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata').startDate,'2026-10-11','explicit requested range excludes title date')
+const weekdayClock=new Date('2026-10-08T04:00:00Z')
+for(const [text,expected] of [['next Wednesday','2026-10-14'],['Friday','2026-10-09'],['next Thursday','2026-10-15'],['this Friday','2026-10-09'],['Wednesday next week','2026-10-14'],['next week Wednesday','2026-10-14'],['next Wednesday for Project 2026-10-10','2026-10-14']]){
+ const window=calendarReadWindow(`Find free slots ${text}`,weekdayClock,'Asia/Kolkata')
+ assert.equal(window.startDate,expected,text);assert.equal(window.endDate,expected,text+' is a single requested day')
+}
+for(const text of ['next month','next month on Wednesday','last Friday','last week','in 2 weeks','20 October','October 20','Monday or Wednesday'])
+ assert.throws(()=>calendarReadWindow(`Find free slots ${text}`,weekdayClock,'Asia/Kolkata'),/calendar_date_(?:unsupported|ambiguous)/,'unsupported/ambiguous dates cannot silently use the default week')
 const midnight=calendarReadWindow('today and tomorrow',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata')
 assert.deepEqual(midnight,{startDate:'2026-10-08',endDate:'2026-10-09',label:'today and tomorrow'})
 assert.equal(calendarReadWindow('today',new Date('2026-10-07T18:15:00Z'),'Asia/Kolkata').endDate,'2026-10-07')
@@ -104,6 +113,9 @@ async function main(){
   const exported:any={}
   runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
     {exports:exported,console,URL,process:{env:{}},require:(name:string)=>mocks[name]})
+  const unclearDateResponse=await exported.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Show my calendar today and next month.'})}))
+  assert.equal(unclearDateResponse.status,200,'unsupported ranges return a clarification through the actual route')
+  assert.match((await unclearDateResponse.json()).text,/exact calendar date/)
   rangeFixture=true;tables.length=0;http.length=0
   const response=await exported.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:exactRequest})}))
   assert.equal(response.status,200)
@@ -212,6 +224,16 @@ async function main(){
   meetingWrites.length=0
   await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed 1-hour meeting tomorrow.'})
   assert.match(meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.draftReply,/60-minute/,'hyphenated requested duration is retained')
+  meetingWrites.length=0;providerItems=[]
+  await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting next Wednesday.'})
+  const wednesdayProposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json
+  assert.ok(wednesdayProposal,'named weekday request produces the actual private proposal')
+  assert.equal(new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Kolkata',weekday:'long'}).format(new Date(wednesdayProposal.proposedInvite.start)),'Wednesday','actual meeting proposal must honor the requested named weekday')
+  meetingWrites.length=0;http.length=0
+  const unsupportedMeeting=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed meeting next month.'})
+  assert.equal(unsupportedMeeting.status,'paused');assert.match(unsupportedMeeting.text,/exact meeting date/)
+  assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'),'unsupported dates do not create an arbitrary proposed meeting')
+  assert.ok(!http.some(url=>url.includes('/calendar/v3/')),'unsupported date does not query an arbitrary calendar range')
   providerItems=Array.from({length:15},(_,i)=>({id:`bounded-${i}`,summary:`Meeting ${i}`,start:{dateTime:today+`T${String(8+i).padStart(2,'0')}:00:00+05:30`},end:{dateTime:today+`T${String(8+i).padStart(2,'0')}:30:00+05:30`}}))
   const bounded=await direct();assert.match(bounded.text,/Showing 12 of 15/);assert.ok('events' in bounded.output);assert.equal(bounded.output.events.length,12)
   const boundedAgenda=await readTomorrowSchedule({actor,scope:'agenda',text:exactRequest})
