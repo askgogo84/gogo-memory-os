@@ -205,8 +205,9 @@ async function main(){
     assert.equal((await direct(`Show my calendar today ${label}.`)).output.timezone,zone,'compact timezone label retains the explicit window')
   const cetResponse=await exported.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Show my calendar today in CET.'})}))
   assert.match((await cetResponse.json()).text,/CET/,'slashless timezone survives the real route and wrapper')
-  for(const instruction of ['Show my calendar today for Design/Review.','Show my calendar today for https://example.com/calendar/review.'])
+  for(const instruction of ['Show my calendar today for Design/Review.','Show my calendar today for https://example.com/calendar/review.','Show my calendar tomorrow for the Made in Japan review.'])
     assert.equal((await direct(instruction)).output.timezone,'Asia/Kolkata','event subjects and URLs are not timezone directives')
+  assert.equal((await direct('Show my calendar tomorrow for the Made in Japan review; timezone CET.')).output.timezone,'CET','explicit timezone labels remain authoritative after an event filter')
   http.length=0
   await assert.rejects(()=>direct('Show my calendar today in Asia/FakeZone'),/calendar_timezone_invalid/)
   assert.equal(http.length,0,'invalid timezone is rejected before provider access')

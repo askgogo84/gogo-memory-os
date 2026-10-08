@@ -117,7 +117,8 @@ export function requestedCalendarTimezone(text:string){
   // are validated as candidates rather than silently replaced by account time.
   const cleanZone=(value:string)=>value.replace(/\.+$/,'')
   const labeledZone=text.match(/\b(?:time\s*zone|timezone)(?:\s*[:=]\s*|\s+(?:is\s+)?)([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/i)?.[1]
-  const localZone=[...text.matchAll(/\b(?:in|using)\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/gi)]
+  const zoneContext=text.split(/\b(?:for\s+the|about|titled|named|called)\s+/i)[0]
+  const localZone=[...zoneContext.matchAll(/\b(?:in|using)\s+([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})/gi)]
     .map(match=>cleanZone(match[1])).find(value=>value.includes('/')||isValidTimezone(value))
   const parenthesizedZone=[...text.matchAll(/\(([A-Za-z_][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+){0,2})\)/g)]
     .map(match=>cleanZone(match[1])).find(isValidTimezone)
