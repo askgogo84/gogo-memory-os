@@ -1,4 +1,5 @@
 import { rememberTypedObjects } from './typed-object-context'
+import { calendarAffirmativeText } from './calendar-read'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
@@ -25,8 +26,13 @@ function safe(value:unknown,max=1200){
 }
 
 export function isWorkspaceDriveContextRequest(text:string){
-  const t=String(text||'')
-  const drive=/\b(drive|google drive)\b/i.test(t)
+  const t=calendarAffirmativeText(String(text||''))
+  const outsideTitle=t.replace(/[\"\u201c][^\"\u201d]*[\"\u201d]/g,'')
+  // Leave independent actions with the compound planner, including positive
+  // writes. Prohibitions have already been removed from the affirmative scope.
+  if (/\b(send|email|schedule|create|delete|edit|rename|move|share|invite|remind|book|pay|buy)\b/i.test(outsideTitle)
+    || /\b(?:show|check|review|list|read)\s+(?:my\s+)?(?:calendar|reminders|inbox|flights)\b/i.test(outsideTitle)) return false
+  const drive=/\bgoogle drive\b/i.test(t) || /\bdrive\b/i.test(t) && /\b(doc|document|file|sheet|spreadsheet|proposal|deck|brief|notes|report)s?\b/i.test(t)
   const document=/\b(doc|docs|document|documents|file|files|sheet|spreadsheet|proposal|deck|brief|notes|report)\b/i.test(t)
   const action=/\b(find|search|read|show|summari[sz]e|review|use|check|look at|tell me|extract)\b/i.test(t)
   return action && (drive || (/\bgoogle\b/i.test(t)&&document))
@@ -61,7 +67,7 @@ async function createRun(actor:AgentActor,text:string){
   const now=new Date().toISOString()
   const {data,error}=await supabaseAdmin.from('agent_runs').insert({
     telegram_id:String(actor.legacyTelegramId),
-    type:'workspace_drive_context',capability:'files',risk_level:'low',status:'running',
+    type:'workspace_drive_context',capability:'files',status:'running',
     title:'Read Google Drive context',
     summary:'Gogo is reading only the Drive context you asked for.',
     why:'User asked Gogo to find or use a document from their connected Google Drive.',
@@ -91,6 +97,10 @@ async function finishRun(actor:AgentActor,runId:string,params:{status:'completed
 async function createArtifact(actor:AgentActor,runId:string,file:DriveFile,answer:string,extraction?:string){
   const content={
     answer:safe(answer,MAX_ANSWER),
+    sections:[
+      {title:'Document summary',tool:'files',result:{text:safe(answer,MAX_ANSWER)}},
+      {title:'Source',tool:'files',result:{text:`${safe(file.name,240)}${file.webViewLink ? `\n${file.webViewLink}` : ''}\nRead-only Google Drive context; no source file was changed.`}},
+    ],
     source:{
       provider:'google-drive',id:String(file.id),name:safe(file.name,240),mimeType:String(file.mimeType||''),
       modifiedTime:String(file.modifiedTime||''),webViewLink:String(file.webViewLink||''),
@@ -99,7 +109,7 @@ async function createArtifact(actor:AgentActor,runId:string,file:DriveFile,answe
     safety:{readOnly:true,mutationsAllowed:false,credentialsStored:false},
   }
   const {data,error}=await supabaseAdmin.from('agent_artifacts').insert({
-    telegram_id:String(actor.legacyTelegramId),type:'drive_context',
+    telegram_id:String(actor.legacyTelegramId),type:'research_brief',
     title:`Drive context · ${safe(file.name,160)}`,subtitle:'Read-only Google Drive context',
     schema_version:1,content_json:content,
     source_refs:[{type:'google_drive_file',id:String(file.id),name:safe(file.name,180)}],
@@ -183,7 +193,7 @@ export async function tryRunWorkspaceDriveContext(params:{actor:AgentActor;surfa
     await finishRun(actor,runId,{status:'completed',summary,metadata})
     return {
       runId,status:'completed',capability:'files',risk:'low',handledBy:'workspace-drive-context',artifactId,
-      text:`${answer}\n\nSource: ${safe(file.name,180)}${file.webViewLink?`\n${file.webViewLink}`:''}\n\nGogo used read-only Drive access. Nothing in Drive was changed.`,
+      text:`${answer}\n\nSource: ${safe(file.name,180)}${file.webViewLink?`\n${file.webViewLink}`:''}\n\nGogo used read-only Drive access. Nothing in Drive was changed.\n\nPrivate report: https://app.askgogo.in/dashboard/reports/${encodeURIComponent(artifactId)}`,
     }
   }catch(err:any){
     const summary='Gogo could not safely finish the Drive document request. No Drive file was changed.'

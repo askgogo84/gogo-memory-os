@@ -1,3 +1,4 @@
+import { tryRunWorkspaceDriveContext } from './workspace-drive-context'
 import { tryTypedTimeRouting } from './typed-time-routing'
 import { executeApprovedCalendarUpdate } from './calendar-update'
 import { executeApprovedReminderUpdate } from './reminder-update'
@@ -380,6 +381,9 @@ export async function tryRunWhatsAppAgent(params: {
 
     const gmailSend=await tryRunGmailSendCommand({actor,text:params.text})
   if(gmailSend)return await learnedReturn(actor,params.text,gmailSend,'gmail-send',params.messageId)
+
+  const driveContext=await tryRunWorkspaceDriveContext({actor,surface:'whatsapp',text:params.text})
+  if(driveContext)return driveContext
 
   const autonomyControl=await tryRunAdaptiveAutonomyCommand({actor,text:params.text})
   if(autonomyControl)return {...autonomyControl,handledBy:String(autonomyControl.handledBy||'adaptive-autonomy')}
