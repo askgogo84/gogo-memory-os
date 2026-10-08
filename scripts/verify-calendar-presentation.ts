@@ -310,9 +310,22 @@ async function main(){
   for(const extra of [' and show my reminders',' and compare flights to Mumbai',', send the reply',' and order groceries',' and create the event'])
     assert.equal(meetingExports.isStandaloneWorkspaceMeetingPrep('Read the latest meeting email and prepare a proposed meeting tomorrow'+extra),false,'independent actions must remain in the multi-step planner')
   assert.equal(meetingExports.isStandaloneWorkspaceMeetingPrep('Do not read the email or prepare a meeting.'),false)
+  meetingCandidates=[developerNotice,{...genuineMeeting,from:'Bob <bob@example.test>',snippet:'Alice asked me about a meeting'}];meetingWrites.length=0
+  const wrongPerson=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:"Read Alice's latest email and prepare a proposed meeting tomorrow."})
+  assert.equal(wrongPerson.status,'paused','mentioning Alice in the body must not turn Bob into the selected sender')
+  assert.ok(!meetingWrites.some(write=>write.table==='agent_artifacts'))
+  const attachmentInputs:any[]=[]
+  meetingMocks['./google-workspace-read'].readWorkspaceEmailBrief=async(_actor:any,emails:any[])=>{attachmentInputs.push(emails.map(email=>email.id));return {status:'found',filename:'meeting-brief.txt',text:'The genuine meeting brief contains the private discussion agenda.'}}
+  meetingCandidates=[developerNotice,genuineMeeting];meetingWrites.length=0
+  const selectedAttachment=await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest meeting email and attached brief and prepare a proposed meeting tomorrow.'})
+  assert.equal(selectedAttachment.status,'completed')
+  assert.deepEqual(attachmentInputs[0],['fixture-email'],'attachment lookup must only inspect the selected source email')
+  meetingCandidates=[{...genuineMeeting,from:'Alice <alice@example.test>'}];meetingWrites.length=0
   await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:"Read Alice's latest email and prepare a proposed meeting tomorrow."})
   assert.equal(meetingQueries.at(-1).text,'find latest email from Alice')
   assert.equal(meetingQueries.at(-1).options.topic,undefined,'an explicit sender email must not require an unrequested meeting keyword')
+  assert.equal(meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json.proposedInvite.attendee,'alice@example.test')
+  meetingCandidates=[genuineMeeting]
   meetingWrites.length=0
   await meetingExports.tryPrepareWorkspaceMeetingPlan({...meetingRequest,text:'Read the latest email and prepare a proposed 1 hour meeting tomorrow.'})
   const hourProposal=meetingWrites.find(write=>write.table==='agent_artifacts')?.payload.content_json

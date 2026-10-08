@@ -46,7 +46,7 @@ function addressFromHeader(header:string){
 
 // Gmail keyword matches are candidates, not evidence of a person asking to meet.
 // Never propose an invitation to a notification service or an unrelated digest.
-function usableMeetingEmail(email:any,explicitSender:boolean){
+function usableMeetingEmail(email:any,requestedSender:string){
   const address=addressFromHeader(email?.from||'')
   if(!address)return false
   const sender=String(email?.from||'')
@@ -54,7 +54,13 @@ function usableMeetingEmail(email:any,explicitSender:boolean){
   const snippet=String(email?.snippet||'')
   if(/(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|alerts?|newsletter|mailer[-_.]?daemon|\[bot\])/i.test(sender))return false
   if(/\(PR #\d+\)|\bpull request\b|\bissue #\d+\b|\b(?:newsletter|digest|roundup|promotion|unsubscribe)\b/i.test(subject+' '+snippet))return false
-  if(explicitSender)return true
+  if(requestedSender){
+    const display=sender.replace(/<[^>]+>/g,'').replace(/["']/g,'').trim()
+    const identity=display&&!display.includes('@')?display:address.split('@')[0]
+    const words=identity.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+    const requested=requestedSender.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+    return requested.length>0&&requested.every(word=>words.includes(word))
+  }
   return /\b(?:meeting|invitation|invite|catch[- ]?up|availability|schedule|appointment)\b/i.test(subject)
     || /\b(?:can|could|shall|should|let['\u2019]?s|would you|are you)\b.{0,70}\b(?:meet|meeting|discuss|call|available)\b/i.test(snippet)
 }
@@ -151,7 +157,7 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
       await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false}})
       return {runId,status:'paused',capability:'email',risk:'low',text:summary,handledBy:'workspace-meeting-prep'}
     }
-    const email=messages.find((candidate:any)=>usableMeetingEmail(candidate,Boolean(person)))
+    const email=messages.find((candidate:any)=>usableMeetingEmail(candidate,person))
     if(!email){
       const summary='I found email keyword matches, but could not identify a suitable meeting message in those results. Please specify the sender and subject, or forward the intended email. I have not drafted an invitation to a notification service or scheduled anything.'
       await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_meeting_prep',input_text:text,mutationsAllowed:false,reason:'meeting_source_unverified',candidatesChecked:messages.length}})
@@ -161,7 +167,7 @@ export async function tryPrepareWorkspaceMeetingPlan(params:{actor:AgentActor;su
     let briefText=''
     let briefFilename=''
     if(/\b(attached|attachment|brief|document|deck|proposal|pdf)\b/i.test(text)){
-      const brief=await readWorkspaceEmailBrief(actor,messages,text)
+      const brief=await readWorkspaceEmailBrief(actor,[email],text)
       if(brief.status==='ambiguous'){
         const choices=brief.attachments.map((a:any,i:number)=>`${i+1}. ${a.filename} — ${a.subject}`).join('\n')
         const summary='I found more than one equally plausible attachment, so I stopped instead of choosing the wrong brief.'
