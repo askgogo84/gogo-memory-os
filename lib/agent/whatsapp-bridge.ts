@@ -11,6 +11,7 @@ import { observedOutcome, learningDecisionId } from './decision-evidence'
 import { isGmailVerificationQuery } from './gmail-verification'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand, tryUpdateWebWatchFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
+import { tryRunExternalAccountFlow } from './external-account'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
 import { prepareGeneralPlanForActor, tryRunGeneralPlan, resumeApprovedGeneralPlan } from './general-planner'
@@ -484,6 +485,13 @@ export async function tryRunWhatsAppAgent(params: {
 
   const webWatch = await tryCreateWebWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (webWatch) return await learnedReturn(actor,params.text,webWatch,'background-web-watch',params.messageId)
+
+  // Core v1 objective-first external-account flow. Claim account creation before
+  // generic browser/freeform routing so the model cannot invent "no browser access".
+  // Missing non-secret slots are collected first; execution stays behind approval,
+  // Vault and human-auth boundaries.
+  const externalAccount = await tryRunExternalAccountFlow({ actor, surface:'whatsapp', text:params.text })
+  if (externalAccount) return { ...(externalAccount as any), handledBy:String((externalAccount as any).handledBy || 'external-account-objective') }
 
   const browser = await withWhatsAppBrowserBudget(actor, tryRunBrowserCommand({ actor, surface:'whatsapp', text:params.text }))
   if (browser) return { ...(browser as any), text:`${(browser as any).text || ''}${(browser as any).status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String((browser as any).handledBy || 'secure-browser') }

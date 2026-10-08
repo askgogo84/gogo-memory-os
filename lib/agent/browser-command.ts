@@ -529,8 +529,8 @@ async function findActiveBrowserRead(owner:string,command:BrowserCommand){
   return data
 }
 
-export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:AgentSurface;text:string}){
-  const command=parseConnectedProviderCartAction(params.text)||parseBrowserCommand(params.text)||parseConnectedProviderReadCommand(params.text);if(!command)return null
+export async function runBrowserCommand(params:{actor:AgentActor;surface:AgentSurface;command:BrowserCommand}){
+  const command=params.command
   const sentinel=evaluateAgentSentinel({capability:'browser',mode:command.mode,risk:command.risk,irreversible:command.mode==='execute',approved:false,instruction:command.objective,url:command.url,actionCount:12})
   if(!sentinel.allowed && sentinel.reason!=='approval_missing'){
     return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Sentinel blocked this browser request: ${sentinel.reason}`,handledBy:'secure-browser' as const}
@@ -553,6 +553,12 @@ export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:Agen
     return {runId,status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Safe Mode blocked the browser action: ${policy.reason}`,handledBy:'secure-browser' as const}
   }
   return executeBrowser({actor:params.actor,runId,stepId,command,mode:command.mode,approved:false})
+}
+
+export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:AgentSurface;text:string}){
+  const command=parseConnectedProviderCartAction(params.text)||parseBrowserCommand(params.text)||parseConnectedProviderReadCommand(params.text)
+  if(!command)return null
+  return runBrowserCommand({actor:params.actor,surface:params.surface,command})
 }
 
 export async function executeApprovedBrowserCommand(params:{actor:AgentActor;runId:string}){
