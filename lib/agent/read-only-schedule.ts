@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
-import { calendarReadWindow, executeReadOnlyCalendarStep } from './calendar-read'
+import { calendarReadWindow, executeReadOnlyCalendarStep, requestedCalendarTimezone } from './calendar-read'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { rememberTypedObjects } from './typed-object-context'
 
@@ -84,7 +84,12 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   let calendarAvailability=false
   let calendarText=''
   let calendarEvents: Array<{ id?: string; title: string; start: string; end?: string; label?: string }> = []
+  let calendarReturnedCount=0
   try {
+    // Independent reminders keep the same requested window even if Calendar
+    // fails before producing its result (connection, refresh or provider).
+    timeZone=requestedCalendarTimezone(originalRequest)||requestedTimeZone
+    window=calendarReadWindow(originalRequest,now,timeZone)
     const calendar = await executeReadOnlyCalendarStep({
       actor: params.actor,
       instruction: originalRequest,
@@ -104,6 +109,7 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
       end: safe(event?.end || '', 120) || undefined,
       label: safe(event?.label || '', 240) || undefined,
     })).filter((event: any) => event.start)
+    calendarReturnedCount=Number.isInteger(output.returnedEventCount)?output.returnedEventCount:calendarEvents.length
   } catch (error: any) {
     if(error?.message==='calendar_timezone_invalid')return {
       text:'The requested timezone is invalid. Send a valid timezone such as Asia/Kolkata or UTC so I can check the right dates.',
@@ -152,11 +158,11 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   if (calendarConnected) {
     if(calendarAvailability)lines.push(calendarText)
     else if (calendarEvents.length) {
-      lines.push(`Calendar: ${calendarEvents.length} event${calendarEvents.length === 1 ? '' : 's'}.`)
+      lines.push(`Calendar: ${calendarReturnedCount} returned event${calendarReturnedCount === 1 ? '' : 's'}${calendarReturnedCount>6?' (showing 6)':''}.`)
       for (const event of calendarEvents.slice(0, 6)) lines.push(`• ${event.label||localClock(event.start, timeZone)} — ${event.title}`)
     } else lines.push(calendarComplete?'Calendar: clear.':'Calendar: partial page, full schedule not verified.')
     if(!calendarComplete)lines.push('Calendar review is incomplete; more events or unverified intervals remain.')
-    if(!calendarAvailability)for(const line of calendarText.split('\n'))if(/^(?:Overlap:|No overlapping|Overlap review|Showing \d+ of)/.test(line))lines.push(line)
+    if(!calendarAvailability)for(const line of calendarText.split('\n'))if(/^(?:Overlap:|No overlapping|Overlap review)/.test(line))lines.push(line)
   } else lines.push('Calendar: I could not read your connected calendar just now.')
 
   if (reminders.length) {

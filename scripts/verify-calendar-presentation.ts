@@ -6,6 +6,7 @@ import {calendarReadWindow,executeReadOnlyCalendarStep} from '../lib/agent/calen
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import {NextRequest,NextResponse} from 'next/server'
+import {parseLocalDateTime} from '../lib/timezone'
 
 for(const text of ['What do I have on my calendar tomorrow?','Show my calendar tomorrow','What meetings do I have tomorrow?'])assert.equal(detectReadOnlyScheduleRequest(text)?.scope,'calendar',text)
 for(const text of ['Check what I have tomorrow and tell me what needs my attention. Do not change anything.','What do I have tomorrow?','What is my day tomorrow?','Plan my day tomorrow','Show my calendar and reminders tomorrow',"Tell me what's on tomorrow. Don't change my calendar."])assert.equal(detectReadOnlyScheduleRequest(text)?.scope,'agenda',text)
@@ -27,6 +28,7 @@ async function main(){
  const original=supabaseAdmin.from,originalFetch=globalThis.fetch
  const tables:string[]=[],http:string[]=[];let failCalendar=false,empty=false,rangeFixture=false
  let providerItems:any[]|undefined,partial=false
+ const reminderFilters:Array<{method:string;key:string;value:string}>=[]
  const tomorrow=nextLocalDateKey(new Date(),'Asia/Kolkata')
  const today=calendarReadWindow('',new Date(),'Asia/Kolkata').startDate
  const exactRequest='Review my connected calendar for today and tomorrow in Asia/Kolkata. List meetings with their start and end times and flag overlapping events. Read only; do not create, edit or delete events, send emails or create reminders.'
@@ -40,6 +42,7 @@ async function main(){
   const q:any={then:(r:any)=>Promise.resolve(owned()).then(r),maybeSingle:async()=>owned()}
   for(const method of ['select','eq','gte','lt','order'])q[method]=()=>q
   q.eq=(key:string,value:any)=>{if(key==='telegram_id'&&value!==123)wrongOwner=true;return q}
+  for(const method of ['gte','lt'])q[method]=(key:string,value:string)=>{if(table==='reminders')reminderFilters.push({method,key,value});return q}
   return q // No insert/update/delete method: any mutation fails the test.
  }
  globalThis.fetch=(async(url:any,opts:any)=>{
@@ -163,6 +166,9 @@ async function main(){
   assert.equal(proposal.safety.approvalRequiredForExecution,true);assert.equal(proposal.proposedInvite.status,'proposed_not_scheduled')
   providerItems=Array.from({length:15},(_,i)=>({id:`bounded-${i}`,summary:`Meeting ${i}`,start:{dateTime:today+`T${String(8+i).padStart(2,'0')}:00:00+05:30`},end:{dateTime:today+`T${String(8+i).padStart(2,'0')}:30:00+05:30`}}))
   const bounded=await direct();assert.match(bounded.text,/Showing 12 of 15/);assert.ok('events' in bounded.output);assert.equal(bounded.output.events.length,12)
+  const boundedAgenda=await readTomorrowSchedule({actor,scope:'agenda',text:exactRequest})
+  assert.match(boundedAgenda.text,/Calendar: 15 returned events \(showing 6\)/,'agenda distinguishes returned count from its display bound')
+  assert.doesNotMatch(boundedAgenda.text,/Showing 12 of/,'agenda does not copy the canonical reader display count when it shows only six')
   providerItems=Array.from({length:41},(_,i)=>({...providerItems![0],id:`overflow-${i}`}))
   assert.equal((await direct()).output.complete,false,'over-limit provider responses retain incompleteness')
   providerItems=undefined;http.length=0
@@ -203,6 +209,11 @@ async function main(){
   assert.match(failed.text,/could not read/);assert.equal(failed.calendarReadVerified,false)
   assert.doesNotMatch(failed.text,/clear|No calendar events|Travel reminder/)
   assert.ok(!tables.includes('reminders'))
+  reminderFilters.length=0
+  const failedZone=await readTomorrowSchedule({actor,scope:'agenda',text:'Show my schedule tomorrow in America/Los_Angeles.'})
+  assert.equal(failedZone.timeZone,'America/Los_Angeles','provider failure must not replace the explicit timezone used by independent reminders')
+  assert.equal(failedZone.window.startDate,calendarReadWindow('tomorrow',new Date(),'America/Los_Angeles').startDate)
+  assert.equal(reminderFilters.find(filter=>filter.method==='gte')?.value,parseLocalDateTime({date:failedZone.window.startDate,time:'00:00',timezone:'America/Los_Angeles'}).dueAtUtc.toISOString(),'actual reminder query preserves requested local midnight on provider failure')
  }finally{supabaseAdmin.from=original;globalThis.fetch=originalFetch}
  for(const path of ['app/api/dashboard/chat/route.ts','app/api/agent/run/route.ts','app/api/webhooks/whatsapp/route.ts']){
   const source=readFileSync(path,'utf8')

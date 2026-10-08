@@ -92,8 +92,7 @@ async function calendarAccess(actor:AgentActor){
   return {accessToken,timezone}
 }
 
-export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instruction:string;missionText:string;rememberSelection?:boolean}){
-  const text=`${params.instruction} ${params.missionText}`
+export function requestedCalendarTimezone(text:string){
   // Read complete identifiers. Valid slashless aliases (CET, EST5EDT, etc.)
   // are validated as candidates rather than silently replaced by account time.
   const cleanZone=(value:string)=>value.replace(/\.+$/,'')
@@ -104,6 +103,12 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
     .map(match=>cleanZone(match[1])).find(isValidTimezone)
   const requestedZone=cleanZone(labeledZone||localZone||parenthesizedZone||'')||undefined
   if(requestedZone&&!isValidTimezone(requestedZone))throw new Error('calendar_timezone_invalid')
+  return requestedZone
+}
+
+export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instruction:string;missionText:string;rememberSelection?:boolean}){
+  const text=`${params.instruction} ${params.missionText}`
+  const requestedZone=requestedCalendarTimezone(text)
   const access=await calendarAccess(params.actor)
   const timezone=requestedZone?normalizeTimezone(requestedZone):access.timezone
   const window=calendarReadWindow(text,new Date(),timezone)
@@ -141,7 +146,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
       if(!complete||unknownIntervals)lines.push('Overlap review is incomplete: more events or unverified event end times remain.')
       else if(!conflicts.length)lines.push('No overlapping events found in this calendar window.')
     }
-    return {text:lines.join('\n'),output:{mode:'read',window,timezone,events:items,complete,unknownIntervals,conflicts,...(wantsConflicts?{conflictsVerified:complete&&unknownIntervals===0}:{}),verifiedStore:'google-calendar',mutated:false}}
+    return {text:lines.join('\n'),output:{mode:'read',window,timezone,events:items,returnedEventCount:events.length,complete,unknownIntervals,conflicts,...(wantsConflicts?{conflictsVerified:complete&&unknownIntervals===0}:{}),verifiedStore:'google-calendar',mutated:false}}
   }
 
   const duration=requestedDurationMinutes(text)
