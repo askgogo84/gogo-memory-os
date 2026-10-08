@@ -94,8 +94,15 @@ async function calendarAccess(actor:AgentActor){
 
 export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instruction:string;missionText:string;rememberSelection?:boolean}){
   const text=`${params.instruction} ${params.missionText}`
-  // Preserve the complete identifier, including Port-au-Prince, GMT+5 and UTC.
-  const requestedZone=(text.match(/\b[A-Za-z_]+\/[A-Za-z0-9_+.-]+(?:\/[A-Za-z0-9_+.-]+)?/)?.[0]||text.match(/\b(?:UTC|GMT)\b/i)?.[0])?.replace(/\.+$/,'')
+  // Read complete identifiers. Valid slashless aliases (CET, EST5EDT, etc.)
+  // are validated as candidates rather than silently replaced by account time.
+  const cleanZone=(value:string)=>value.replace(/\.+$/,'')
+  const labeledZone=text.match(/\b(?:time\s*zone|timezone)\s*(?::|=|is)?\s+([A-Za-z][A-Za-z0-9_+.-]*)/i)?.[1]
+  const localZone=[...text.matchAll(/\b(?:in|using)\s+([A-Za-z][A-Za-z0-9_+.-]*)/gi)]
+    .map(match=>cleanZone(match[1])).find(isValidTimezone)
+  const bareZone=[...text.matchAll(/\b([A-Z][A-Z0-9_+.-]{1,30})\b/g)]
+    .map(match=>cleanZone(match[1])).find(isValidTimezone)
+  const requestedZone=cleanZone(text.match(/\b[A-Za-z_]+\/[A-Za-z0-9_+.-]+(?:\/[A-Za-z0-9_+.-]+)?/)?.[0]||labeledZone||localZone||bareZone||'')||undefined
   if(requestedZone&&!isValidTimezone(requestedZone))throw new Error('calendar_timezone_invalid')
   const access=await calendarAccess(params.actor)
   const timezone=requestedZone?normalizeTimezone(requestedZone):access.timezone

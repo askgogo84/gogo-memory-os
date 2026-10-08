@@ -14,6 +14,11 @@ for(const text of ['Review my calendar today and create an event tomorrow','Show
 assert.equal(detectReadOnlyScheduleRequest('List my meetings today')?.horizon,'today')
 assert.equal(detectReadOnlyScheduleRequest('Show my calendar today and tomorrow')?.horizon,'today-tomorrow')
 assert.equal(detectReadOnlyScheduleRequest('What do I have today?'),null,'preserve Today/day route')
+for(const subject of ['book launch','change management meeting','purchase review'])
+  assert.equal(detectReadOnlyScheduleRequest(`Show my calendar tomorrow for the ${subject}`)?.scope,'calendar','event subjects are not mutation commands')
+for(const command of ['book a table','change my meeting time','purchase a ticket','please delete the event','remind me at 11am'])
+  assert.equal(detectReadOnlyScheduleRequest(`Show my calendar tomorrow and ${command}`),null,'compound positive commands retain their own flow')
+assert.equal(detectReadOnlyScheduleRequest('Show my calendar tomorrow, create an event at 11am'),null,'comma-separated commands also retain their own flow')
 const midnight=calendarReadWindow('today and tomorrow',new Date('2026-10-07T18:45:00Z'),'Asia/Kolkata')
 assert.deepEqual(midnight,{startDate:'2026-10-08',endDate:'2026-10-09',label:'today and tomorrow'})
 assert.equal(calendarReadWindow('today',new Date('2026-10-07T18:15:00Z'),'Asia/Kolkata').endDate,'2026-10-07')
@@ -93,6 +98,8 @@ async function main(){
   tables.length=0
   assert.doesNotMatch(range.text,/overlap[^\n]*Adjacent meeting/i,'touching intervals do not overlap')
   assert.equal(range.mutated,false);assert.ok(!tables.includes('reminders'))
+  const subjectResponse=await exported.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Show my calendar tomorrow for the book launch'})}))
+  assert.equal((await subjectResponse.json()).handledBy,'read-only-schedule','noun subjects retain the actual production calendar path')
   const direct=(instruction=exactRequest)=>executeReadOnlyCalendarStep({actor,instruction,missionText:instruction})
   providerItems=[{id:'all-day',summary:'All-day event',start:{date:today},end:{date:tomorrow}},
     {id:'tomorrow-timed',summary:'Tomorrow after exclusive end',start:{dateTime:tomorrow+'T09:00:00+05:30'},end:{dateTime:tomorrow+'T10:00:00+05:30'}}]
@@ -122,11 +129,15 @@ async function main(){
   const explicitZone=await direct('Show my calendar today in America/New_York')
   assert.equal(explicitZone.output.timezone,'America/New_York')
   assert.equal(explicitZone.output.window.startDate,new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()))
-  for(const zone of ['America/Port-au-Prince','Etc/GMT+5','UTC']){
+  for(const zone of ['America/Port-au-Prince','Etc/GMT+5','UTC','CET','EET','EST5EDT']){
     const requested=await direct(`Show my calendar today in ${zone}.`)
     assert.equal(requested.output.timezone,zone,'retain complete explicit timezone: '+zone)
     assert.equal(requested.output.window.startDate,new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()))
   }
+  for(const instruction of ['Show my calendar today, timezone CET.','Show my calendar today (EST5EDT).','Show my calendar today UTC.'])
+    assert.equal((await direct(instruction)).output.timezone,instruction.includes('CET')?'CET':instruction.includes('EST5EDT')?'EST5EDT':'UTC')
+  const cetResponse=await exported.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid'},body:JSON.stringify({text:'Show my calendar today in CET.'})}))
+  assert.match((await cetResponse.json()).text,/CET/,'slashless timezone survives the real route and wrapper')
   http.length=0
   await assert.rejects(()=>direct('Show my calendar today in Asia/FakeZone'),/calendar_timezone_invalid/)
   assert.equal(http.length,0,'invalid timezone is rejected before provider access')
