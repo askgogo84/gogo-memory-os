@@ -158,7 +158,7 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
   const research = await bestPriorResearch(tg, currentReply, option)
   if (!research) {
     return { runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
-      text:'I can tell this is a follow-up to a previous appointment search, but I cannot recover the numbered provider options safely. Please run the provider search again; I will not substitute a new location.',
+      text:`I could not match option ${option} safely. Choose one of the listed options, or run the provider search again. I will not substitute a new location.\n\n${currentReply.match(/(?:^|\n)(Appointment options[\s\S]*)/)?.[1] || ''}`,
       handledBy:'appointment-followup-recovery' as const }
   }
 

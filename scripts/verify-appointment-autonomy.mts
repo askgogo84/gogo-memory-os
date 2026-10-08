@@ -174,3 +174,16 @@ assert.equal(apiReply.body.handledBy,'fixture-general-plan','real API must not p
 assert.equal(browserCalls,1)
 console.log('Actual API POST declined stale appointment context')
 
+
+lastAssistant={content:'Appointment options · dentist\n3. Dentist\nBooking/provider page: https://clinic.example/appointments',created_at:new Date().toISOString()}
+const invalidChoice=await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:'Use option 9'})
+assert.equal(invalidChoice.status,'paused')
+lastAssistant={content:invalidChoice.text,created_at:new Date().toISOString()}
+assert.ok(await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:'Use option 3'}),'corrected option must keep the displayed appointment list after retry')
+console.log('Invalid option correction retains appointment context')
+
+lastAssistant={content:'Appointment options · dentist\n3. Dentist\nBooking/provider page: https://clinic.example/appointments',created_at:new Date().toISOString()}
+const invalidRecovery=await recoveryFixture.tryRecoverAppointmentOption({actor,surface:'whatsapp',text:'Use option 9'})
+assert.equal(invalidRecovery.status,'paused')
+lastAssistant={content:invalidRecovery.text,created_at:new Date().toISOString()}
+assert.ok(await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:'Use option 3'}),'recovery retry retains context across surfaces')

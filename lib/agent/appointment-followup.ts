@@ -450,7 +450,7 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
     return {
       runId: research?.id ? String(research.id) : '', status: 'paused' as const,
       capability: 'browser' as const, risk: 'low' as const,
-      text: research ? `I don't have option ${number} in the last appointment search. Choose one of the listed options.` : 'I need an appointment search first before I can prepare an option.',
+      text: research ? `I don't have option ${number} in the last appointment search. Choose one of the listed options.\n\n${currentReply.match(/(?:^|\n)(Appointment options[\s\S]*)/)?.[1] || ''}` : 'I need an appointment search first before I can prepare an option.',
       handledBy: 'appointment-followup' as const,
     }
   }
