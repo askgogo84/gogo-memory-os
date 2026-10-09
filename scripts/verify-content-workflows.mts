@@ -6,6 +6,8 @@ import ts from 'typescript'
 import * as workflows from '../lib/agent/content-workflows'
 import {formatOutgoingText} from '../lib/bot/format-response'
 import {handleInboxReplyRead} from '../lib/agent/open-loops'
+import * as vaultProviders from '../lib/vault/providers'
+import * as accountIntent from '../lib/agent/external-account-intent'
 
 const request = 'Write a LinkedIn post about what I learned today building AskGogo. Mention tomorrow as a goal.'
 for (const [text, id] of [[request, 'linkedin-post'], ['/linkedin-post My lesson', 'linkedin-post'],
@@ -123,11 +125,30 @@ const common = {'next/server': {NextResponse: {json: (body: any, options: any) =
 const dashboard = load('app/api/dashboard/chat/route.ts', {...common, '@/lib/dashboard/session': {getSession: async () => ({telegramId: '42'})}})
 const dashboardReply = await dashboard.POST({headers: new Headers({origin: 'https://fixture.invalid'}), nextUrl: {host: 'fixture.invalid'}, json: async () => ({text: request})})
 assert.equal(dashboardReply.status, 200); assert.equal(dashboardReply.body.handledBy, 'content-workflow')
-const agentRoute = load('app/api/agent/run/route.ts', {...common, '@/lib/agent/session': {
+// The Agent API runs the REAL objective-first account flow before content workflows. A
+// content request must pass through it untouched: reads return nothing, every write throws.
+const accountWrites: string[] = []
+const accountDb = {from(table: string) {
+  const refuse = () => {accountWrites.push(table); throw new Error(`a content request must not write ${table} from the account flow`)}
+  const q: any = {select: () => q, eq: () => q, order: () => q, limit: () => q, insert: refuse, update: refuse, delete: refuse,
+    then: (ok: any, bad: any) => Promise.resolve({data: [], error: null}).then(ok, bad)}
+  return q
+}}
+const externalAccount = load('lib/agent/external-account.ts', {
+  '@/lib/supabase-admin': {supabaseAdmin: accountDb},
+  '@/lib/bot/handlers/followup-state': {
+    clearFollowupState: async () => {accountWrites.push('clear_followup')},
+    saveFollowupState: async () => {accountWrites.push('save_followup'); throw new Error('a content request must not save an account follow-up')},
+  },
+  '@/lib/vault/providers': vaultProviders, './external-account-intent': accountIntent,
+  './browser-command': {runBrowserCommand: async () => {throw new Error('a content request must not start an account browser run')}},
+})
+const agentRoute = load('app/api/agent/run/route.ts', {...common, '@/lib/agent/external-account': externalAccount, '@/lib/agent/session': {
   requireAgentMutationOrigin: () => null, requireAgentSession: async () => ({telegramId: '42', surface: 'web'}), isAgentSession: () => true,
 }})
 const agentReply = await agentRoute.POST({json: async () => ({text: request})})
 assert.equal(agentReply.status, 200); assert.equal(agentReply.body.draftOnly, true)
+assert.deepEqual(accountWrites, [], 'the account flow must not write anything for a content request')
 // The webhook's authenticated media/transcription setup is covered separately;
 // verify its real call order uses this same exported entry before noun handlers.
 const whatsapp = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')

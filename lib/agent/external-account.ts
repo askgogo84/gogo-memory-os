@@ -1,68 +1,64 @@
-import { clearFollowupState, getLatestFollowupState, isFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
+import { clearFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { findVaultProviderForDomain, findVaultProviderInText } from '@/lib/vault/providers'
+import { VAULT_PROVIDERS, findVaultProviderForDomain, findVaultProviderInText, type VaultProvider } from '@/lib/vault/providers'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { runBrowserCommand, type BrowserCommand } from './browser-command'
+import { parseExternalAccountRequest, type ExternalAccountRequest } from './external-account-intent'
+
+// Intent detection is pure and shared with the classifier; re-exported so existing
+// importers (WhatsApp route, regression scripts) keep a single entry point.
+export { parseExternalAccountRequest, type ExternalAccountRequest }
 
 const FOLLOWUP_KIND='external_account_create'
+const FOLLOWUP_MAX_MINUTES=30
 const EMAIL=/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i
-
-export type ExternalAccountRequest={
-  service:string
-  email:string|null
-  url:string|null
-}
-
-function cleanService(value:string){
-  return String(value||'')
-    .replace(/\b(?:website|site|app)\b/gi,' ')
-    .replace(/\s+/g,' ')
-    .trim()
-    .replace(/[.,!?;:]+$/,'')
-    .slice(0,80)
-}
-
-function extractEmail(text:string){
-  const match=String(text||'').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
-  return match?match[0]:null
-}
-
-function extractUrl(text:string){
-  const match=String(text||'').match(/https?:\/\/[^\s<>)\]}]+/i)
-  if(!match)return null
-  try{
-    const url=new URL(match[0])
-    if(url.protocol!=='https:'||url.username||url.password)return null
-    return url.toString()
-  }catch{return null}
-}
-
-export function parseExternalAccountRequest(text:string):ExternalAccountRequest|null{
-  const raw=String(text||'').replace(/\s+/g,' ').trim()
-  if(!raw)return null
-  const lower=raw.toLowerCase()
-  const createAccount=/\b(?:create|open|make)\s+(?:me\s+)?(?:an?\s+)?account\b/i.test(raw)
-  const signupAccount=/\b(?:sign\s*up|register)\b/i.test(raw)&&/\baccount\b/i.test(raw)
-  if(!createAccount&&!signupAccount)return null
-  if(/\b(?:buy|purchase|checkout|pay|payment|subscribe\s+to\s+(?:a\s+)?paid)\b/i.test(lower))return null
-
-  const byCreate=raw.match(/\b(?:create|open|make)\s+(?:me\s+)?(?:an?\s+)?account\s+(?:on|at|with|for)\s+(.+?)(?=\s+(?:using|with|and|then|please|for\s+me)\b|[.!?;,]|$)/i)
-  const byLogin=raw.match(/\b(?:log\s*in|login|go)\s+to\s+(.+?)(?=\s+(?:and|then)\s+(?:create|open|make|sign\s*up|register)\b|[.!?;,]|$)/i)
-  const bySignup=raw.match(/\b(?:sign\s*up|register)\s+(?:me\s+)?(?:for\s+an?\s+account\s+)?(?:on|at|with|for)\s+(.+?)(?=\s+(?:using|with|and|then|please)\b|[.!?;,]|$)/i)
-  const explicitUrl=extractUrl(raw)
-  let service=cleanService(byLogin?.[1]||bySignup?.[1]||byCreate?.[1]||'')
-  if(/^me$/i.test(service))service=''
-  if(!service&&explicitUrl){
-    try{service=new URL(explicitUrl).hostname.replace(/^www\./,'')}catch{}
-  }
-  if(!service)return null
-  return {service,email:extractEmail(raw),url:explicitUrl}
-}
 
 function emailOnly(text:string){return EMAIL.test(String(text||'').trim())}
 function urlOnly(text:string){return /^https:\/\/\S+$/i.test(String(text||'').trim())}
 function norm(value:unknown){return String(value||'').replace(/\s+/g,' ').trim()}
+function errorText(error:unknown){return String((error as {message?:unknown})?.message||error).slice(0,200)}
+
+type PendingFollowup={type?:unknown;kind?:unknown;created_at?:string;payload?:Record<string,unknown>}
+
+/**
+ * True when this message could start or continue an external-account objective: an
+ * explicit account request, or a bare email/https URL that may answer a pending one.
+ * The WhatsApp route applies the same predicate inline before resolving the actor.
+ */
+export function isExternalAccountCandidate(text:string){
+  return Boolean(parseExternalAccountRequest(text))||emailOnly(text)||urlOnly(text)
+}
+
+// One read returns both our pending objective and the kind of the user's most recent
+// pending question of ANY kind. A bare email/URL may only answer the latest question.
+async function readPendingAccountFollowup(telegramId:number){
+  const {data}=await supabaseAdmin
+    .from('memories')
+    .select('content, created_at')
+    .eq('telegram_id',telegramId)
+    .order('created_at',{ascending:false})
+    .limit(20)
+  let pending:PendingFollowup|null=null
+  let latestKind:string|null=null
+  for(const row of data||[]){
+    let item:PendingFollowup
+    try{item=JSON.parse(String((row as {content?:unknown})?.content||''))}catch{continue}
+    if(item?.type!=='followup_state')continue
+    if(latestKind===null)latestKind=String(item.kind||'')
+    if(!pending&&item.kind===FOLLOWUP_KIND)pending=item
+  }
+  return {pending,latestKind}
+}
+
+// Fail closed: a pending objective without a valid timestamp is treated as expired,
+// so it can never be resurrected by a stray email days later.
+function pendingIsFresh(pending:PendingFollowup){
+  const raw=pending?.created_at||(pending?.payload?.created_at as string|undefined)
+  const createdAt=raw?new Date(raw).getTime():NaN
+  if(!Number.isFinite(createdAt))return false
+  return Date.now()-createdAt<=FOLLOWUP_MAX_MINUTES*60*1000
+}
 
 async function pendingStillBound(telegramId:number,originText:string){
   const {data}=await supabaseAdmin.from('conversations')
@@ -71,7 +67,7 @@ async function pendingStillBound(telegramId:number,originText:string){
     .eq('role','user')
     .order('created_at',{ascending:false})
     .limit(12)
-  return (data||[]).some((row:any)=>norm(row?.content)===norm(originText))
+  return (data||[]).some((row:{content?:unknown})=>norm(row?.content)===norm(originText))
 }
 
 function looksLikeSignupUrl(value:string){
@@ -81,42 +77,113 @@ function looksLikeSignupUrl(value:string){
   }catch{return false}
 }
 
-function trustedTarget(request:ExternalAccountRequest){
+// ---- Look-alike domain detection -------------------------------------------------
+// The sandbox network allowlist already confines a run to the target host, and Vault
+// credentials are matched to the current page host. What remains is the target itself:
+// a user-supplied link that imitates a known provider (hugginface.co, hugging-face.co,
+// huggingface.co.example.net) must never receive the user's details.
+const MULTI_PART_SUFFIX=new Set(['co.in','org.in','net.in','gov.in','ac.in','edu.in','co.uk','org.uk','ac.uk','com.au','net.au','co.jp','co.nz','com.sg','com.br'])
+function registrableDomain(host:string){
+  const labels=host.split('.').filter(Boolean)
+  if(labels.length<=2)return labels.join('.')
+  const lastTwo=labels.slice(-2).join('.')
+  return MULTI_PART_SUFFIX.has(lastTwo)?labels.slice(-3).join('.'):lastTwo
+}
+function deconfuse(value:string){
+  return String(value||'').toLowerCase().replace(/rn/g,'m').replace(/vv/g,'w').replace(/0/g,'o').replace(/[1|]/g,'l').replace(/5/g,'s').replace(/[^a-z0-9]/g,'')
+}
+function editDistance(a:string,b:string){
+  const d:number[][]=Array.from({length:a.length+1},(_,i)=>Array.from({length:b.length+1},(_,j)=>i===0?j:j===0?i:0))
+  for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++){
+    const cost=a[i-1]===b[j-1]?0:1
+    d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+cost)
+    if(i>1&&j>1&&a[i-1]===b[j-2]&&a[i-2]===b[j-1])d[i][j]=Math.min(d[i][j],d[i-2][j-2]+cost)
+  }
+  return d[a.length][b.length]
+}
+
+/** Returns the known provider a host imitates, or null if it is genuine or unrelated. */
+export function lookalikeProviderForHost(hostname:string):VaultProvider|null{
+  const host=String(hostname||'').toLowerCase().replace(/^www\./,'')
+  if(!host||findVaultProviderForDomain(host))return null
+  const reg=registrableDomain(host)
+  const regLabel=reg.split('.')[0]||''
+  const subLabels=host.slice(0,Math.max(0,host.length-reg.length)).split('.').filter(Boolean)
+  for(const provider of Object.values(VAULT_PROVIDERS)){
+    for(const domain of provider.domains){
+      const brand=registrableDomain(domain).split('.')[0]||''
+      if(brand.length<4)continue
+      const b=deconfuse(brand),r=deconfuse(regLabel)
+      // Brand used as a subdomain of someone else's site: huggingface.co.example.net
+      if(subLabels.some(label=>deconfuse(label)===b))return provider
+      // Homoglyph or hyphen variant: hugging-face.co, instagrarn.com
+      if(r===b&&regLabel!==brand)return provider
+      // Typosquat: hugginface.co. Short brands tolerate one edit, longer ones two.
+      if(r!==b&&Math.min(r.length,b.length)>=5&&editDistance(r,b)<=(b.length>=8?2:1))return provider
+      // Brand padded with words: huggingface-login.com
+      if(r!==b&&regLabel.includes('-')&&r.includes(b))return provider
+    }
+  }
+  return null
+}
+
+type TargetResolution=
+  |{kind:'trusted';provider:VaultProvider|null;url:string}
+  |{kind:'lookalike';provider:VaultProvider;host:string}
+  |{kind:'mismatch';provider:VaultProvider;host:string}
+  |{kind:'need_url'}
+
+function resolveTarget(request:ExternalAccountRequest):TargetResolution{
   const byText=findVaultProviderInText(request.service)
+  const host=request.url?new URL(request.url).hostname.replace(/^www\./,''):''
   if(byText){
     if(request.url){
-      const host=new URL(request.url).hostname.replace(/^www\./,'')
       const byDomain=findVaultProviderForDomain(host)
-      if(!byDomain||byDomain.key!==byText.key)return null
+      if(!byDomain||byDomain.key!==byText.key)return {kind:'mismatch',provider:byText,host}
     }
-    if(byText.signupUrl)return {provider:byText,url:byText.signupUrl}
-    if(request.url&&looksLikeSignupUrl(request.url))return {provider:byText,url:request.url}
-    return null
+    if(byText.signupUrl)return {kind:'trusted',provider:byText,url:byText.signupUrl}
+    if(request.url&&looksLikeSignupUrl(request.url))return {kind:'trusted',provider:byText,url:request.url}
+    return {kind:'need_url'}
   }
-  if(!request.url)return null
-  const host=new URL(request.url).hostname.replace(/^www\./,'')
+  if(!request.url)return {kind:'need_url'}
   const byDomain=findVaultProviderForDomain(host)
-  if(byDomain)return {provider:byDomain,url:byDomain.signupUrl||request.url}
+  if(byDomain)return {kind:'trusted',provider:byDomain,url:byDomain.signupUrl||request.url}
+  const imitated=lookalikeProviderForHost(host)
+  if(imitated)return {kind:'lookalike',provider:imitated,host}
   // Unknown providers are allowed only when the USER supplied the exact https URL.
   // We never auto-discover a consequential target from search/name similarity.
-  return looksLikeSignupUrl(request.url)?{provider:null,url:request.url}:null
+  return looksLikeSignupUrl(request.url)?{kind:'trusted',provider:null,url:request.url}:{kind:'need_url'}
+}
+
+/** Human-readable service name: the registry label when known, else what the user said. */
+function displayService(request:ExternalAccountRequest){
+  const known=findVaultProviderInText(request.service)
+    ||(request.url?findVaultProviderForDomain(new URL(request.url).hostname):null)
+  return known?.label||request.service
 }
 
 async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurface;request:ExternalAccountRequest;originText:string}){
+  const service=displayService(params.request)
   const email=params.request.email
   if(!email){
     await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{
       service:params.request.service,url:params.request.url,stage:'email',originText:params.originText,
     })
-    return {text:`Which email should I use for the ${params.request.service} account?`,status:'paused',handledBy:'external-account-objective'}
+    return {text:`Which email should I use for the ${service} account?`,status:'paused',handledBy:'external-account-objective'}
   }
 
-  const target=trustedTarget(params.request)
-  if(!target){
+  const target=resolveTarget(params.request)
+  if(target.kind!=='trusted'){
     await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{
       service:params.request.service,email,stage:'url',originText:params.originText,
     })
-    return {text:`I have the account objective and email. Send me the official ${params.request.service} signup-page URL so I can continue safely.`,status:'paused',handledBy:'external-account-objective'}
+    const official=target.kind==='lookalike'||target.kind==='mismatch'?target.provider.domains[0]:''
+    const text=target.kind==='lookalike'
+      ?`That link (${target.host}) imitates ${target.provider.label} but is not its official site (${official}), so I will not enter your details there. Send the official ${target.provider.label} signup link if that is what you meant.`
+      :target.kind==='mismatch'
+        ?`That link (${target.host}) is not on ${target.provider.label}'s official site (${official}), so I will not use it. Send the official ${target.provider.label} signup link to continue.`
+        :`I have the account objective and email. Send me the official ${service} signup-page URL so I can continue safely.`
+    return {text,status:'paused',handledBy:'external-account-objective'}
   }
 
   const url=target.url
@@ -128,7 +195,7 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
     approvalAction:'submit_form',
     flow:'account_creation',
     objective:[
-      `Create an account on ${params.request.service} (${host}) using email ${email}.`,
+      `Create an account on ${service} (${host}) using email ${email}.`,
       'Use a sensible username derived from the email local-part if the site requires one and it is available.',
       'Do not spend money, start a paid subscription, or bypass any CAPTCHA, OTP, passkey, email-verification, or other human-auth step.',
       'If credentials are required, use the owner-bound Vault path; never expose secrets in chat.',
@@ -138,36 +205,84 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
   }
   const result=await runBrowserCommand({actor:params.actor,surface:params.surface,command})
   if(result?.status==='waiting_approval'){
-    return {...result,text:`Ready to create the ${params.request.service} account on ${host} using ${email}. Creating it may accept the site's terms/code of conduct and submit your details. Reply *APPROVE* to continue or *REJECT* to stop.`,handledBy:'external-account-objective'}
+    return {...result,text:`Ready to create the ${service} account on ${host} using ${email}. Creating it may accept the site's terms/code of conduct and submit your details. Reply *APPROVE* to continue or *REJECT* to stop.`,handledBy:'external-account-objective'}
   }
   return result?{...result,handledBy:'external-account-objective'}:null
 }
 
+// A genuine account objective that fails must stay claimed by this flow and report an
+// honest state. Falling through would let a generic planner answer it, and a raw error
+// would surface as a generic failure with no explanation.
+async function prepareSafely(params:{actor:AgentActor;surface:AgentSurface;request:ExternalAccountRequest;originText:string}){
+  try{
+    return await prepareExternalAccount(params)
+  }catch(error){
+    console.error('EXTERNAL_ACCOUNT_FLOW_FAILED:',errorText(error))
+    return {
+      text:`I could not start the ${displayService(params.request)} account setup just now. Nothing was submitted. Please try again in a moment.`,
+      status:'blocked',
+      handledBy:'external-account-objective',
+    }
+  }
+}
+
 export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface:AgentSurface;text:string;messageId?:string|number|null}){
-  const pending=await getLatestFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
-  if(pending&&isFreshFollowupState(pending,30)){
-    const payload=pending.payload||{}
-    const bound=await pendingStillBound(params.actor.legacyTelegramId,String(payload.originText||''))
-    if(!bound){
-      await clearFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
-    }else if(payload.stage==='email'&&emailOnly(params.text)){
-      await clearFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
-      return prepareExternalAccount({
-        actor:params.actor,surface:params.surface,originText:String(params.text).trim(),
-        request:{service:String(payload.service||''),email:String(params.text).trim(),url:payload.url?String(payload.url):null},
-      })
-    }else if(payload.stage==='url'&&urlOnly(params.text)){
-      await clearFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
-      return prepareExternalAccount({
-        actor:params.actor,surface:params.surface,originText:String(payload.originText||''),
-        request:{service:String(payload.service||''),email:String(payload.email||''),url:String(params.text).trim()},
-      })
-    }else if(!parseExternalAccountRequest(params.text)){
-      await clearFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND)
+  const telegramId=params.actor.legacyTelegramId
+  const candidate=isExternalAccountCandidate(params.text)
+
+  let pendingState:{pending:PendingFollowup|null;latestKind:string|null}={pending:null,latestKind:null}
+  try{
+    pendingState=await readPendingAccountFollowup(telegramId)
+  }catch(error){
+    // Account bookkeeping must never break an unrelated message on any surface. A fresh
+    // account request can still proceed without the pending read.
+    console.error('EXTERNAL_ACCOUNT_PENDING_READ_FAILED:',errorText(error))
+    if(!candidate)return null
+  }
+
+  const pending=pendingState.pending
+  if(pending){
+    // An unrelated turn invalidates the pending question, exactly as before; but the
+    // clear is best-effort and can never fail this message.
+    if(!candidate){
+      await clearFollowupState(telegramId,FOLLOWUP_KIND).catch(()=>{})
+      return null
+    }
+    try{
+      const payload=pending.payload||{}
+      const answersPending=emailOnly(params.text)||urlOnly(params.text)
+      if(!pendingIsFresh(pending)){
+        await clearFollowupState(telegramId,FOLLOWUP_KIND)
+      }else if(answersPending&&pendingState.latestKind!==FOLLOWUP_KIND){
+        // Another flow asked a newer question; a bare email/URL answers that one, not us.
+        await clearFollowupState(telegramId,FOLLOWUP_KIND)
+        return null
+      }else{
+        const bound=await pendingStillBound(telegramId,String(payload.originText||''))
+        if(!bound){
+          await clearFollowupState(telegramId,FOLLOWUP_KIND)
+        }else if(payload.stage==='email'&&emailOnly(params.text)){
+          await clearFollowupState(telegramId,FOLLOWUP_KIND)
+          return prepareSafely({
+            actor:params.actor,surface:params.surface,originText:String(params.text).trim(),
+            request:{service:String(payload.service||''),email:String(params.text).trim(),url:payload.url?String(payload.url):null},
+          })
+        }else if(payload.stage==='url'&&urlOnly(params.text)){
+          await clearFollowupState(telegramId,FOLLOWUP_KIND)
+          return prepareSafely({
+            actor:params.actor,surface:params.surface,originText:String(payload.originText||''),
+            request:{service:String(payload.service||''),email:String(payload.email||''),url:String(params.text).trim()},
+          })
+        }else if(!parseExternalAccountRequest(params.text)){
+          await clearFollowupState(telegramId,FOLLOWUP_KIND)
+        }
+      }
+    }catch(error){
+      console.error('EXTERNAL_ACCOUNT_FOLLOWUP_FAILED:',errorText(error))
     }
   }
 
   const request=parseExternalAccountRequest(params.text)
   if(!request)return null
-  return prepareExternalAccount({actor:params.actor,surface:params.surface,request,originText:params.text})
+  return prepareSafely({actor:params.actor,surface:params.surface,request,originText:params.text})
 }

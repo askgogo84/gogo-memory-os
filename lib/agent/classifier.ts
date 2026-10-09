@@ -1,4 +1,5 @@
 import type { AgentActionMode, AgentCapability, AgentRiskLevel } from './policy'
+import { mentionsExternalAccountCreation } from './external-account-intent'
 
 export type AgentApprovalAction = 'send_email' | 'submit_form' | 'calendar_change' | 'booking' | 'purchase' | 'share'
 
@@ -42,7 +43,9 @@ export function classifyAgentRequest(rawText: string): ClassifiedAgentRequest {
       : { capability: 'email', mode: 'read', risk: 'low', irreversible: false, title, why: 'This only reads or summarizes connected email.' }
   }
 
-  if (/\b(?:create|open|make)\s+(?:me\s+)?(?:an?\s+)?account\b/.test(t) || (/\b(?:sign\s*up|register)\b/.test(t) && /\baccount\b/.test(t))) {
+  // Shared with the deterministic account flow so a how-to question, a bank account or
+  // an event signup is never labelled a high-risk external-account form submission.
+  if (mentionsExternalAccountCreation(t)) {
     return { capability: 'browser', mode: 'execute', risk: 'high', irreversible: true, approvalAction: 'submit_form', title, why: 'This may create an external account and accept provider terms.' }
   }
 

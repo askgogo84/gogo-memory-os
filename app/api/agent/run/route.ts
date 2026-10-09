@@ -55,6 +55,16 @@ export async function POST(request: Request) {
       actor, surface: session.surface, text, messageId: body?.messageId || null,
     })
     if (externalAccount) {
+      // Persist the turn exactly as WhatsApp does. The follow-up binding checks that the
+      // prompting request is in recent conversation, so without this an email reply on
+      // the web/API surface could never resume the pending objective. A failed history
+      // write is logged, not thrown: a run awaiting approval may already exist, and
+      // hiding its prompt would invite a duplicate retry.
+      const { error: turnError } = await supabaseAdmin.from('conversations').insert([
+        { telegram_id: actor.legacyTelegramId, role: 'user', content: text },
+        { telegram_id: actor.legacyTelegramId, role: 'assistant', content: externalAccount.text },
+      ])
+      if (turnError) console.error('EXTERNAL_ACCOUNT_TURN_SAVE_FAILED:', String(turnError.message || turnError).slice(0, 200))
       return NextResponse.json(externalAccount, { status: externalAccount.status === 'waiting_approval' ? 202 : 200 })
     }
     const contentDraft = await tryRunContentWorkflow(actor, text, body?.messageId)
