@@ -53,7 +53,7 @@ import {
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
-import { tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
+import { approvalIntent, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { mentionsExternalAccountCreation, parseExternalAccountRequest, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
@@ -1179,6 +1179,21 @@ _"${originalText}"_
         await saveConversation(resolvedUser.telegramId,'assistant',attentionAgent.text)
         await sendWhatsAppMessage(from,attentionAgent.text)
         return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
+    // Approve / Reject replies resolve the pending approval deterministically, before any
+    // free-form routing. Previously "Approve" fell through to general chat, which replied
+    // as if the action had started. If no approval is pending, this returns null and routing
+    // continues unchanged.
+    if (approvalIntent(text)) {
+      const approvalAgent = await tryRunWhatsAppAgent({ user: resolvedUser, text, messageId: inboundMessageSid || null })
+      if (approvalAgent) {
+        await recordShadowRouterOutcome({ telegramId: resolvedUser.telegramId, surface: 'whatsapp', eventId: inboundMessageSid, actualHandler: approvalAgent.handledBy || 'whatsapp-agent-approval', actualCapability: 'browser', status: approvalAgent.status || null, runId: approvalAgent.runId || null }).catch(() => {})
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', approvalAgent.text)
+        await sendWhatsAppMessage(from, approvalAgent.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
 

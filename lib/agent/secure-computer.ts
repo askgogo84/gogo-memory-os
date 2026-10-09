@@ -74,7 +74,7 @@ export type SecureBrowserResult = {
   forms:Array<{action:string;method:string;inputs:Array<{selector:string;name:string;type:string;label:string}>}>
   actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed';consequential?:boolean}>
   sandboxName:string
-  blockReason?: 'human_auth_required'|'provider_access_limited'|'delivery_location_required'
+  blockReason?: 'human_auth_required'|'provider_access_limited'|'delivery_location_required'|'account_already_exists'
   authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
   credentialSelectionRequired?: boolean
 }
@@ -1003,6 +1003,7 @@ export async function assessReadOutcome(objective:string,page:any,diagnose:(even
   }catch{diagnose({phase:'assessment',reason:'invalid_assessment_json'});return null}
 }
 
+const ACCOUNT_EXISTS_PREFIX='ACCOUNT_EXISTS:'
 function localExecutionConfirmation(approvedOperation:ApprovedBrowserOperation|null,before:string,after:string,actions:any[]):string|null{
   if(!actions.some(a=>a.status==='done'&&a.kind==='submit')||!approvedOperation)return null
   const pattern=operationPatterns[approvedOperation]
@@ -1013,6 +1014,11 @@ function localExecutionConfirmation(approvedOperation:ApprovedBrowserOperation|n
   if(approvedOperation==='account_creation'){
     const rawAfter=String(after||'').normalize('NFKC')
     const rawBefore=String(before||'').normalize('NFKC')
+    // The provider already has an account for this email (for example one created earlier by
+    // another tool). The signup page then says so instead of confirming a new account. That is
+    // NOT a success: report it, so no "created" message is ever sent for an existing account.
+    const duplicateAccount=/\b(?:e-?mail|email address|address)\b[^.!?\n]{0,60}\b(?:already (?:in use|taken|registered|exists?|associated)|is taken|in use)\b|\b(?:account|user)\b[^.!?\n]{0,40}\balready exists\b|\balready (?:have|has) an account\b/i
+    if(duplicateAccount.test(rawAfter)&&!duplicateAccount.test(rawBefore))return ACCOUNT_EXISTS_PREFIX+'A Hugging Face account for this email already exists, so Gogo did not create another one. Log in with that account, or reset its password, instead.'
     const patterns=[
       /\baccount\s+(?:(?:has\s+been|was|is)\s+)?(?:created|registered|set\s*up)(?:\s+successfully)?\b/i,
       /\b(?:successfully\s+)?(?:created|registered|set\s*up)\s+(?:your\s+|the\s+)?account\b/i,
@@ -1353,14 +1359,17 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
     if(params.mode!=='read'&&(missingActionEvidence||actionLog.some(a=>a.status==='failed'||(params.mode==='execute'&&a.status!=='done'))))throw new Error('browser_objective_unverified')
     const executionEvidence=params.mode==='execute'&&typeof page.executionBeforeText==='string'&&typeof page.executionAfterText==='string'?localExecutionConfirmation(approvedOperation,page.executionBeforeText,page.executionAfterText,actionLog):null
     if(params.mode==='execute'&&!executionEvidence)throw new Error('browser_objective_unverified')
+    const accountExists=typeof executionEvidence==='string'&&executionEvidence.startsWith(ACCOUNT_EXISTS_PREFIX)
+    const executionSummary=accountExists?executionEvidence!.slice(ACCOUNT_EXISTS_PREFIX.length):executionEvidence!
     if(params.mode==='draft'&&(!draftReady||page.draftVerified!==true||draftObjectiveCovered(params.objective,page,draftActions)===false))throw new Error('browser_objective_unverified')
     if(!params.keepAlive){await releaseManagedOnce();await first.sandbox.stop().catch(()=>{})}
     const prepared=params.mode==='draft'
     const fareBasisLabel=googleFlightReadProgress(page)
       ?String(page.text||'').match(/Prices include required taxes\s*\+\s*fees for (?:one|[1-9]) adults?\b\.?/i)?.[0]:undefined
     return {
-      status:prepared?'prepared':'completed',url:safeText(page.url||target,1200),sourceUrl:browserSourceUrl(page.url)||undefined,title:safeText(page.title,300),
-      summary:params.mode==='read'?readAnswer!:prepared?'Gogo prepared the browser flow and stopped before submit.':executionEvidence!,
+      status:prepared?'prepared':accountExists?'blocked':'completed',url:safeText(page.url||target,1200),sourceUrl:browserSourceUrl(page.url)||undefined,title:safeText(page.title,300),
+      ...(accountExists?{blockReason:'account_already_exists'}:{}),
+      summary:params.mode==='read'?readAnswer!:prepared?'Gogo prepared the browser flow and stopped before submit.':executionSummary,
       pageText:safeText(page.text,9000),forms:Array.isArray(page.forms)?page.forms.slice(0,12).map((form:any)=>({...form,action:safeText(form?.action,1200)})):[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
       ...(page.flightEvidence?{flightEvidence:{...page.flightEvidence,...(fareBasisLabel?{fareBasisLabel:safeText(fareBasisLabel,120)}:{})}}:{}),
     }

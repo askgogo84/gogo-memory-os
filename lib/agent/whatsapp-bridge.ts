@@ -11,6 +11,7 @@ import { observedOutcome, learningDecisionId } from './decision-evidence'
 import { isGmailVerificationQuery } from './gmail-verification'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand, tryUpdateWebWatchFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
+import { triggerApprovedBrowserRun } from './approved-browser-worker'
 import { tryRunExternalAccountFlow } from './external-account'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
 import { tryRunExpiryReminderPlan } from './compound-planner'
@@ -57,7 +58,7 @@ function actorFromResolvedUser(user: ResolvedUser): AgentActor | null {
   }
 }
 
-function approvalIntent(text: string): 'approve' | 'reject' | null {
+export function approvalIntent(text: string): 'approve' | 'reject' | null {
   const t = String(text || '').trim().toLowerCase()
   if (/^(approve|approved|yes[ ,]+approve|approve it|go ahead with it|proceed with it)$/i.test(t)) return 'approve'
   if (/^(reject|rejected|deny|decline|reject it|do not proceed|don't proceed|cancel that action)$/i.test(t)) return 'reject'
@@ -159,10 +160,11 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
   if (runError) throw new Error(`whatsapp_agent_run_read_failed:${runError.message}`)
   if (!run) throw new Error('whatsapp_agent_run_not_found')
   const planType = String((run.metadata_json as any)?.plan_type || '')
-  // Secure-browser submits can outlive the webhook budget (60s on Vercel; WhatsApp replies are
-  // due in about 42s). Approval only queues the run. The autonomous-runs worker claims it,
-  // executes it with a 300s budget and sends the outcome back on WhatsApp.
+  // Secure-browser submits can outlive the webhook budget (60s on Vercel). The approval queues
+  // the run and hands it to the internal approved-browser route, which runs it with a 300s
+  // budget and sends the outcome back on WhatsApp. The webhook never runs the browser itself.
   if (planType === 'secure_browser') {
+    triggerApprovedBrowserRun(String(data.run_id))
     return { text:'Approved. Gogo is running it in the secure browser now and will message you the result here.', runId:String(data.run_id), status:'running', handledBy:'whatsapp-agent-approval' }
   }
   const result = planType === 'calendar_update'
