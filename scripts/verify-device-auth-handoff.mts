@@ -646,15 +646,20 @@ console.log('Production browser rejects empty shells, model errors, and unsuppor
 // 2 Oct cloud reproduction: a WAF interstitial can have NO body text. Never ask
 // the model to invent a storefront result or mislabel this as account sign-in.
 const beforeBlockedPlanCalls=primaryAttempts+fallbackAttempts
-for(const [state,httpStatus,expected] of [
-  ['security_check',202,/security check/],['http_error',403,/refused.*403/],
-  ['http_error',429,/limited.*429/],['empty',200,/didn[’']t load/],
+// A WAF human-verification check pauses for the user through the takeover (human_auth_required,
+// captcha, with a handoff reservation). It is never planned by the model and never labelled a
+// password sign-in. Refusals, rate limits and empty shells stay provider_access_limited.
+for(const [state,httpStatus,expected,blockReason,authReason] of [
+  ['security_check',202,/human verification check/,'human_auth_required','captcha'],
+  ['http_error',403,/refused.*403/,'provider_access_limited',undefined],
+  ['http_error',429,/limited.*429/,'provider_access_limited',undefined],
+  ['empty',200,/didn[’']t load/,'provider_access_limited',undefined],
 ] as const){
   evidencePage={url:'https://www.zepto.com/',title:'',text:'',forms:[],pageLoad:{state,httpStatus}}
   const result=await evidenceComputer.runSecureBrowser({...readParams,url:evidencePage.url})
   assert.equal(result.status,'blocked')
-  assert.equal(result.blockReason,'provider_access_limited')
-  assert.equal(result.authReason,undefined)
+  assert.equal(result.blockReason,blockReason)
+  assert.equal(result.authReason,authReason)
   assert.match(result.summary,expected)
 }
 assert.equal(primaryAttempts+fallbackAttempts,beforeBlockedPlanCalls,'unrendered/provider-blocked pages never enter the model planner')

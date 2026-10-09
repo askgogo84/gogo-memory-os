@@ -78,4 +78,12 @@ for(const text of [
 ]) assert.ok(!duplicatePattern.test(text),`normal signup wording is not treated as a duplicate: ${text}`)
 assert.match(secure,/accountExists\?'blocked':'completed'/,'an existing account is returned as blocked, not completed')
 
+// 8. A provider human check (security_check) pauses for the user through the existing takeover.
+// Gogo never solves it, and it is never handed off after a submit or other consequential action.
+assert.match(secure,/function humanVerificationCheck\(page:any,actionLog:any\[\]\)/,'the provider human check has its own recogniser')
+assert.match(secure,/if\(actionLog\.some\(action=>\(action\.kind==='submit'\|\|action\.consequential===true\)&&action\.status!=='skipped'\)\)return null/,'a check after a submit or consequential action is never handed off')
+assert.match(secure,/blockReason:'human_auth_required',authReason:'captcha'/,'a provider human check pauses as human_auth_required, so the takeover link is issued')
+assert.match(secure,/handoffReservation:await releaseOwnerLock\.reserveHandoff\(\)/,'the takeover is reserved before the run pauses')
+assert.doesNotMatch(secure,/capsolver|2captcha|anticaptcha|solveCaptcha/i,'no CAPTCHA-solving service is wired in')
+
 console.log('Browser approval execution: approval routing, handoff, single claim, failure containment checks passed (structural)')

@@ -747,6 +747,15 @@ async function inspect(userId:string,url:string,keepAlive=false,taskId='',reuseP
   }catch(error){if(!keepAlive){await managed?.release().catch(()=>{});await sandbox.stop().catch(()=>{})}await releaseOwnerLock();throw error}
 }
 
+// A provider's bot check that appears before any consequential action is handed to the
+// user: they complete it in the takeover browser, then select Resume. Gogo never solves,
+// bypasses or spoofs the check, and never continues past it on its own.
+function humanVerificationCheck(page:any,actionLog:any[]){
+  if(page?.pageLoad?.state!=='security_check')return null
+  if(actionLog.some(action=>(action.kind==='submit'||action.consequential===true)&&action.status!=='skipped'))return null
+  return 'The provider is showing a human verification check. Gogo cannot pass it and does not try to. Complete it yourself in the takeover browser.'
+}
+
 function detectProviderAccessBlock(page:any){
   if(page?.pageLoad?.state==='security_check')return 'The provider security check has not finished in the cloud browser. Availability and prices remain unverified; this is not an account sign-in request.'
   if(page?.pageLoad?.httpStatus===403)return 'The provider refused access from the cloud browser (HTTP 403). Availability and prices remain unverified.'
@@ -1131,6 +1140,8 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         // this same sandbox and starts the takeover server on BROWSER_PORTS.
         // Stopping here killed the port binding, so the takeover URL returned
         // 502 SANDBOX_NOT_LISTENING. The sandbox expires on its own timeout.
+        const humanCheck=humanVerificationCheck(page,actionLog)
+        if(humanCheck&&params.reserveHumanHandoff===true&&!credentialSelectionRequired)return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation:await releaseOwnerLock.reserveHandoff(),title:safeText(page.title,300),summary:humanCheck,pageText:'Gogo paused at a human verification check. Nothing was submitted.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:'captcha',credentialSelectionRequired}
         return {status:'blocked',url:safeText(page.url||target,1200),title:safeText(page.title,300),summary:providerBlock,pageText:safeText(page.text,1200),forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
       }
 
@@ -1335,6 +1346,8 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
         forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:finalAuthGate.reason||'password'}
     }
     const finalProviderBlock=detectProviderAccessBlock(page)
+    const finalHumanCheck=humanVerificationCheck(page,actionLog)
+    if(finalHumanCheck&&finalProviderBlock&&params.reserveHumanHandoff===true)return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation:await releaseOwnerLock.reserveHandoff(),title:safeText(page.title,300),summary:finalHumanCheck,pageText:'Gogo paused at a human verification check. Nothing was submitted.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:'captcha'}
     if(finalProviderBlock)return {status:'blocked',url:safeText(page.url||target,1200),title:safeText(page.title,300),summary:finalProviderBlock,pageText:'',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
     if(params.mode==='read'&&needsBrowserDeliveryLocation(page)){
       const handoffReservation=params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
