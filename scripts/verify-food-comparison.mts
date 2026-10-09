@@ -7,6 +7,8 @@ import {detectIntent} from '../lib/bot/detect-intent'
 import {retiredRunReason} from '../lib/agent/task-lifecycle'
 import * as contentWorkflows from '../lib/agent/content-workflows'
 import * as comparisonModel from '../lib/commerce/comparison-model'
+import * as vaultProviders from '../lib/vault/providers'
+import * as accountIntent from '../lib/agent/external-account-intent'
 
 const incident='Find me a veg burger nearest my house.. best and the cheapest one compare with all good delivery apps'
 assert.equal(detectIntent(incident).type,'food_comparison')
@@ -126,8 +128,37 @@ runInNewContext(ts.transpileModule(readFileSync('lib/agent/content-workflow-entr
   },
 })
 const api:any={}
+// The Agent API runs the objective-first account flow before every other route. Load the
+// REAL module, not a stub, against an isolated store where reads return nothing and every
+// write throws: a food request must pass straight through it without touching anything.
+// Unknown dependencies throw instead of returning {}; a silent {} for this module is what
+// once turned it into "tryRunExternalAccountFlow is not a function" and broke this test.
+const accountWrites:string[]=[]
+const accountDb={from(table:string){
+  const refuse=()=>{accountWrites.push(table);throw new Error(`a food request must not write ${table} from the account flow`)}
+  const q:any={select(){return q},eq(){return q},order(){return q},limit(){return q},insert:refuse,update:refuse,delete:refuse,
+    then(ok:any,bad:any){return Promise.resolve({data:[],error:null}).then(ok,bad)}}
+  return q
+}}
+const externalAccount:any={}
+runInNewContext(ts.transpileModule(readFileSync('lib/agent/external-account.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
+  exports:externalAccount,console,URL,Date,require(name:string){
+    if(name==='@/lib/supabase-admin')return {supabaseAdmin:accountDb}
+    if(name==='@/lib/bot/handlers/followup-state')return {
+      clearFollowupState:async()=>{accountWrites.push('clear_followup')},
+      saveFollowupState:async()=>{accountWrites.push('save_followup');throw new Error('a food request must not save an account follow-up')},
+    }
+    if(name==='@/lib/vault/providers')return vaultProviders
+    if(name==='./external-account-intent')return accountIntent
+    if(name==='./browser-command')return {runBrowserCommand:async()=>{throw new Error('a food request must not start an account browser run')}}
+    throw new Error('unexpected external-account dependency in test sandbox: '+name)
+  },
+})
+assert.equal(typeof externalAccount.tryRunExternalAccountFlow,'function','the real account flow must load in the route sandbox')
+
 runInNewContext(ts.transpileModule(readFileSync('app/api/agent/run/route.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports:api,console,process:{env:{}},require(name:string){
+    if(name==='@/lib/agent/external-account')return externalAccount
     if(name==='@/lib/commerce/price-comparison')return {tryPriceComparison:async()=>null}
     if(name==='@/lib/commerce/comparison-model')return comparisonModel
     if(name==='@/lib/agent/content-workflow-entry')return contentEntry
@@ -144,7 +175,13 @@ runInNewContext(ts.transpileModule(readFileSync('app/api/agent/run/route.ts','ut
   },
 })
 const apiQuestion=await api.POST({json:async()=>({text:incident})})
+// Assert on the API response itself. `assistant` can still hold an earlier reply, which
+// is how a failed route call once passed this check while returning no task at all.
+assert.ok(apiQuestion?.runId,'agent API food question must create a task; a failed route returns no runId')
+assert.match(String(apiQuestion?.text||''),/delivery PIN code/,'agent API must itself ask for the delivery PIN')
 assert.match(assistant,/delivery PIN code/)
 const crossSurface=await run('560086',42,'whatsapp')
 assert.equal(crossSurface.runId,apiQuestion.runId,'agent API question resumes on WhatsApp without a new task')
+assert.equal(await externalAccount.tryRunExternalAccountFlow({actor:{legacyTelegramId:42},surface:'whatsapp',text:'560086'}),null,'a delivery PIN reply is never an account follow-up')
+assert.deepEqual(accountWrites,[],'the account flow must not write anything for a food request or its PIN reply')
 console.log('PASS: food location-first routing, same-task resume, owner isolation, expiry, provider links, honest incomplete state and write failure')

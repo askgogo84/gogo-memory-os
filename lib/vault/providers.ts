@@ -4,6 +4,7 @@ export type VaultProvider = {
   aliases?:string[]
   domains:string[]
   loginUrl:string
+  signupUrl?:string
   usernameLabel:string
   secretLabel:string
   note:string
@@ -45,6 +46,13 @@ export const VAULT_PROVIDERS:Record<string,VaultProvider>={
     loginUrl:'https://www.irctc.co.in/nget/train-search',
     usernameLabel:'IRCTC user ID',secretLabel:'Password',
     note:'IRCTC may still require CAPTCHA/OTP or may block cloud browsers. Gogo will hand control to you when needed.',
+  },
+  huggingface:{
+    key:'huggingface',label:'Hugging Face',aliases:['huggingface','hugging face'],domains:['huggingface.co'],
+    loginUrl:'https://huggingface.co/login',
+    signupUrl:'https://huggingface.co/join',
+    usernameLabel:'Username or email',secretLabel:'Password',
+    note:'Used only on huggingface.co through Gogo’s secure browser.',
   },
   booking:{
     key:'booking',label:'Booking.com',aliases:['booking.com'],domains:['booking.com'],

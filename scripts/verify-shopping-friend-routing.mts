@@ -9,6 +9,7 @@ import * as signature from '../lib/security/webhook-signature'
 import * as inputNormalizer from '../lib/bot/input-normalizer'
 import * as previewRouting from '../lib/services/whatsapp-preview-routing'
 import {handleInboxReplyRead} from '../lib/agent/open-loops'
+import * as accountIntent from '../lib/agent/external-account-intent'
 
 // Fixed phone incident: Wed 7 Oct 2026, 12:37 IST.
 const RealDate = Date
@@ -315,6 +316,9 @@ const webhook=executeModule('app/api/webhooks/whatsapp/route.ts',{
     completeInboundEvent:async({id}:any)=>{events.get(id).status='completed'},failInboundEvent:async({id}:any)=>{events.get(id).status='failed'},
   },
   '@/lib/agent/content-workflow-entry':{tryRunContentWorkflow:async()=>null},
+  // Real pure intent predicates (same rules as production); the stateful account flow is
+  // out of scope here and is covered by verify-external-account-acceptance.mts.
+  '@/lib/agent/external-account':{...accountIntent,tryRunExternalAccountFlow:async()=>null},
   '@/lib/bot/handlers/user-timezone':{inferTimezoneFromPhone:()=> 'Asia/Kolkata',isTimezoneCommand:()=>false},
 })
 const previousToken=process.env.TWILIO_AUTH_TOKEN

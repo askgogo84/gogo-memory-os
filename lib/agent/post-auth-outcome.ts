@@ -46,7 +46,22 @@ export async function inspectPostAuthOutcome(metadata:any):Promise<SecureBrowser
   const text=`${page.title} ${page.text}`
   const failed=/\b(declined|failed|unsuccessful|cancelled|canceled|rejected|unable to (?:complete|process)|not (?:confirmed|completed|successful))\b/i.test(text)
   const pending=/\b(pending|processing|please wait|awaiting|in progress)\b/i.test(text)
-  const confirmed=/\b(?:reservation|booking|order|purchase|payment|submission|application|check[- ]?in)\s+(?:is\s+|was\s+)?(?:confirmed|successful|complete|completed)\b|\b(?:you are|you['’]re) checked in\b/i.test(text)
+  const genericConfirmed=/\b(?:reservation|booking|order|purchase|payment|submission|application|check[- ]?in)\s+(?:is\s+|was\s+)?(?:confirmed|successful|complete|completed)\b|\b(?:you are|you['’]re) checked in\b/i.test(text)
+  const accountPattern=/\baccount\s+(?:(?:has\s+been|was|is)\s+)?(?:created|registered|set\s*up)(?:\s+successfully)?\b|\b(?:successfully\s+)?(?:created|registered|set\s*up)\s+(?:your\s+|the\s+)?account\b/i
+  const accountMatch=text.match(accountPattern)
+  let accountConfirmed=false
+  if(accountMatch){
+    const idx=accountMatch.index||0
+    const left=Math.max(...['\n','.','!','?'].map(separator=>text.lastIndexOf(separator,idx-1)))
+    const next=text.slice(idx+accountMatch[0].length).search(/[\n.!?]/)
+    const line=text.slice(left+1,next<0?text.length:idx+accountMatch[0].length+next+1)
+    const prefix=text.slice(Math.max(0,idx-120),idx)
+    accountConfirmed=!/[?]/.test(line)
+      && !/\b(?:if|when|once|after|before|until|unless|will|would|could|should|may|might|not|never|pending|failed|unable|unsuccessful)\b/i.test(line)
+      && !/\b(?:if|when|once|after|before|until|unless|will|would|could|should|may|might)\b[^.!?]{0,120}$/i.test(prefix)
+  }
+  const accountFlow=metadata.flow==='account_creation'
+  const confirmed=accountFlow?accountConfirmed:(genericConfirmed||accountConfirmed)
   const specialized=['flight_execute','restaurant'].includes(metadata.auth_resume?.kind)
   if(!specialized&&(failed||pending||!confirmed))return {...base,status:'blocked',blockReason:'provider_access_limited',
     summary:failed?'The provider reports an unsuccessful outcome. Gogo has not repeated the action. Inspect the provider result before deciding what to do next.':'The provider has not shown a confirmed outcome yet. Check again after the page finishes updating; Gogo will not repeat the action.',
