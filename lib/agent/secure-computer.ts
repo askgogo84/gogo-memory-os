@@ -138,6 +138,16 @@ async function firstVisible(page, selectors){
   }
   return null;
 }
+// Every visible match for one selector. Filling the first of several candidates can put the
+// login into the wrong field (for example a sign-up form beside a sign-in form), so callers
+// refuse to fill when more than one candidate is visible.
+async function visibleFields(page, selector){
+  const all=page.locator(selector);
+  const count=await all.count().catch(()=>0);
+  const found=[];
+  for(let i=0;i<Math.min(count,20);i++){ const loc=all.nth(i); if(await visible(loc)) found.push(loc); }
+  return found;
+}
 async function model(page){
   return await page.evaluate(() => {
     const clean = s => String(s||'').replace(/\s+/g,' ').trim();
@@ -167,24 +177,27 @@ async function model(page){
   const context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
   const page=context.pages()[0]||await context.newPage();
   let usernameFilled=false,passwordFilled=false,submitted=false;
+  const ambiguous=[];
   try{
     await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
     await page.waitForTimeout(800);
-    const user=await firstVisible(page,[
-      'input[autocomplete="username"]','input[type="email"]','input[name*="user" i]',
-      'input[name*="email" i]','input[name*="login" i]','input[type="tel"]'
-    ]);
-    if(user){ await user.fill(username,{timeout:10000}); usernameFilled=true; }
-    let pass=await firstVisible(page,['input[autocomplete="current-password"]','input[type="password"]']);
-    if(!pass && usernameFilled){
+    const USER_FIELDS='input[autocomplete="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"]';
+    const PASS_FIELDS='input[type="password"]';
+    const userFields=await visibleFields(page,USER_FIELDS);
+    if(userFields.length>1) ambiguous.push('username_fields');
+    if(userFields.length===1){ await userFields[0].fill(username,{timeout:10000}); usernameFilled=true; }
+    let passFields=await visibleFields(page,PASS_FIELDS);
+    if(!passFields.length && usernameFilled){
       const next=await firstVisible(page,[
         'button:has-text("Continue")','button:has-text("Next")','button:has-text("Sign in")',
         'button:has-text("Log in")','button[type="submit"]','input[type="submit"]'
       ]);
       if(next){ await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200); }
-      pass=await firstVisible(page,['input[autocomplete="current-password"]','input[type="password"]']);
+      passFields=await visibleFields(page,PASS_FIELDS);
     }
-    if(pass){
+    if(passFields.length>1) ambiguous.push('password_fields');
+    if(passFields.length===1){
+      const pass=passFields[0];
       await pass.fill(secret,{timeout:10000}); passwordFilled=true;
       const submit=await firstVisible(page,[
         'button:has-text("Log in")','button:has-text("Sign in")','button:has-text("Login")',
@@ -193,7 +206,7 @@ async function model(page){
       if(submit){ await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800); }
     }
     const out=await model(page);
-    out.vaultLogin={usernameFilled,passwordFilled,submitted};
+    out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous};
     console.log(JSON.stringify(out));
   } finally { if(attached)await attached.close();else await context.close(); }
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
@@ -1179,7 +1192,13 @@ export async function runSecureBrowser(params:{userId:string;url:string;objectiv
               keepAlive:params.keepAlive,
               managedEnv:first.managed?.env,
             })
-            actionLog.push({kind:'vault_login',detail:`Saved ${credential.provider} login`,status:'done'})
+            const vaultFill=page?.vaultLogin||{}
+            const vaultFilled=Boolean(vaultFill.usernameFilled&&vaultFill.passwordFilled)
+            actionLog.push(vaultFilled
+              ?{kind:'vault_login',detail:`Used the saved ${credential.provider} login`,status:'done'}
+              :{kind:'vault_login',detail:Array.isArray(vaultFill.ambiguous)&&vaultFill.ambiguous.length
+                  ?`Did not fill the ${credential.provider} login: the page shows more than one ${vaultFill.ambiguous.join(' and ')}. Gogo will not guess which one to use.`
+                  :`Did not fill the ${credential.provider} login: the username or password field was not found.`,status:'failed'})
             authGate=detectHumanAuthGate(page)
             const stillLogin=pageLooksLikeLogin(page)
             const loginText=`${page?.title||''} ${page?.text||''}`.toLowerCase()
