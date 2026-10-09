@@ -33,10 +33,12 @@ const CROMA_PAGE_DEPENDENCIES = ['assets.croma.com','media-ik.croma.com','api.cr
 // Grant only the observed hosts for Google Flights, never wildcard Google egress.
 const GOOGLE_FLIGHTS_PAGE_DEPENDENCIES = ['www.gstatic.com','fonts.googleapis.com','fonts.gstatic.com']
 // 9 Oct Hugging Face takeover: the sign-up page answered 202 with the provider's AWS WAF
-// interstitial, and this exact token host was blocked by the sandbox, so the visible human
-// check rendered as a blank frame. Only its own script host is granted so the person can see
-// and complete the check; Gogo does not solve it or fabricate a token.
-const HUGGING_FACE_PAGE_DEPENDENCIES = ['de5282c3ca0c.ebabadd3.ap-southeast-1.token.awswaf.com']
+// interstitial, and its token script host was blocked by the sandbox, so the visible human
+// check rendered as a blank frame. The token host differs per run (a different region and
+// id prefix each time), so an exact host cannot match. Grant only AWS's WAF token domain,
+// and only for Hugging Face pages, so the person can see and complete the check. Gogo does
+// not solve it or fabricate a token.
+const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.token.awswaf.com']
 
 export function browserPageAllowlist(url:string):Record<string,string[]>{
   const target=new URL(url)
