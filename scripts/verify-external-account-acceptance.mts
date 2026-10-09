@@ -339,8 +339,15 @@ for(const [text,service] of [
   ['Create an account on Udemy for my course','Udemy'],
   ['Make me an account on Instagram','Instagram'],
   ['Can you sign me up on Substack?','Substack'],
+  ['Create a Hugging Face account with goverdhan@tipplr.in','Hugging Face'],
+  ['Create a Hugging Face account for me','Hugging Face'],
 ] as const){
   assert.equal(accountIntent.parseExternalAccountRequest(text)?.service,service,`service for: ${text}`)
+}
+
+// A capitalised service before 'account' is a creation request; ordinary phrases are not.
+for(const text of ['Make a note of my account balance','Open a savings account with HDFC bank statements','Create a list of my accounts']){
+  assert.equal(accountIntent.mentionsExternalAccountCreation(text),false,`not an external-account objective: ${text}`)
 }
 
 // ---------------------------------------------------------------- Test 4: conditional / negated success claims

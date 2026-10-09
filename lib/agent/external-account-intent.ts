@@ -11,6 +11,9 @@ export type ExternalAccountRequest={
 }
 
 const LOOSE_CREATE=/\b(?:create|open|make)\s+(?:me\s+)?(?:an?\s+)?(?:new\s+)?account\b/i
+// A named service between the verb and 'account' (\"Create a Hugging Face account\"). The service words must be capitalised, so ordinary phrases such as "make a note of my account" do not match.
+const NAMED_CREATE=/\b(?:[Cc]reate|[Oo]pen|[Mm]ake)\s+(?:[Mm]e\s+|[Uu]s\s+)?(?:[Aa]n?\s+)?(?:[A-Z][A-Za-z0-9&.-]*\s+){1,4}[Aa]ccount\b/
+const LOOSE_CREATE_ANY=(text:string)=>LOOSE_CREATE.test(text)||NAMED_CREATE.test(text)
 const LOOSE_SIGNUP=/\b(?:sign\s*up|register)\b/i
 // "Sign me up on Substack" names a destination; "sign me up for the newsletter" does not, so only on/at/with count.
 const SIGN_ME_UP_ON=/\bsign\s*me\s*up\s+(?:on|at|with)\s+\S/i
@@ -48,7 +51,7 @@ export function externalAccountIntentExcluded(text:string){
  */
 export function mentionsExternalAccountCreation(text:string){
   const raw=String(text||'').replace(/\s+/g,' ').trim()
-  const phrased=LOOSE_CREATE.test(raw)||(LOOSE_SIGNUP.test(raw)&&/\baccount\b/i.test(raw))||SIGN_ME_UP_ON.test(raw)
+  const phrased=LOOSE_CREATE_ANY(raw)||(LOOSE_SIGNUP.test(raw)&&/\baccount\b/i.test(raw))||SIGN_ME_UP_ON.test(raw)
   if(!phrased||externalAccountIntentExcluded(raw))return false
   const {named,service}=accountTarget(raw,extractAccountUrl(raw))
   return !named||Boolean(service)
@@ -102,7 +105,9 @@ function accountTarget(raw:string,explicitUrl:string|null){
   const byCreate=raw.match(new RegExp('\\b(?:create|open|make)\\s+(?:me\\s+)?(?:an?\\s+)?(?:new\\s+)?account\\s+(?:for\\s+me\\s+)?(?:on|at|with|for|in)\\s+(.+?)'+TERM,'i'))
   const bySignup=raw.match(new RegExp('\\b(?:sign\\s*up|register)\\s+(?:me\\s+)?(?:for\\s+an?\\s+account\\s+)?(?:on|at|with|for)\\s+(.+?)'+TERM,'i'))
   const bySignMeUp=raw.match(new RegExp('\\bsign\\s*me\\s*up\\s+(?:on|at|with)\\s+(.+?)'+TERM,'i'))
-  const targets=([byLogin?.[1],byCreate?.[1],bySignup?.[1],bySignMeUp?.[1]].filter(Boolean) as string[]).map(value=>classifyTarget(value,explicitUrl))
+  // "Create a Hugging Face account with <email>": the service is named before 'account'.
+  const byNamed=raw.match(/\b(?:[Cc]reate|[Oo]pen|[Mm]ake)\s+(?:[Mm]e\s+|[Uu]s\s+)?(?:[Aa]n?\s+)?((?:[A-Z][A-Za-z0-9&.-]*\s+){1,4})[Aa]ccount\b/)
+  const targets=([byNamed?.[1],byLogin?.[1],byCreate?.[1],bySignup?.[1],bySignMeUp?.[1]].filter(Boolean) as string[]).map(value=>classifyTarget(value.trim(),explicitUrl))
   const usable=targets.find(target=>target.kind==='service')
   if(usable)return {named:true,service:usable.service}
   return {named:targets.some(target=>target.kind==='excluded'),service:''}
@@ -112,7 +117,7 @@ export function parseExternalAccountRequest(text:string):ExternalAccountRequest|
   const raw=String(text||'').replace(/\s+/g,' ').trim()
   if(!raw)return null
   const lower=raw.toLowerCase()
-  const createAccount=LOOSE_CREATE.test(raw)
+  const createAccount=LOOSE_CREATE_ANY(raw)
   const signupAccount=LOOSE_SIGNUP.test(raw)&&/\baccount\b/i.test(raw)
   const signMeUp=SIGN_ME_UP_ON.test(raw)
   if(!createAccount&&!signupAccount&&!signMeUp)return null
