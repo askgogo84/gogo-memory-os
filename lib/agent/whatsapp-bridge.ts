@@ -164,7 +164,8 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
   // the run and hands it to the internal approved-browser route, which runs it with a 300s
   // budget and sends the outcome back on WhatsApp. The webhook never runs the browser itself.
   if (planType === 'secure_browser') {
-    triggerApprovedBrowserRun(String(data.run_id))
+    const trigger = await triggerApprovedBrowserRun(String(data.run_id))
+    if (trigger !== 'dispatched') console.error('APPROVED_BROWSER_HANDOFF_NOT_DISPATCHED:', data.run_id, trigger)
     return { text:'Approved. Gogo is running it in the secure browser now and will message you the result here.', runId:String(data.run_id), status:'running', handledBy:'whatsapp-agent-approval' }
   }
   const result = planType === 'calendar_update'
