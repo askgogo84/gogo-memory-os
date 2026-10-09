@@ -107,8 +107,10 @@ assert.match(handoffServer,/takeover_route_failed/,'a failed takeover route retu
 // loads its AWS WAF script from one exact host; that host is granted to Hugging Face pages only.
 const {browserPageAllowlist}=await import('../lib/agent/browser-page-network')
 const hfAllow=browserPageAllowlist('https://huggingface.co/join')
-assert.ok(hfAllow['de5282c3ca0c.ebabadd3.ap-southeast-1.token.awswaf.com'],'the Hugging Face WAF script host is allowed for its own pages')
+// The WAF token host changes per run (seen as ebabadd3.ap-southeast-1 and 6eb72a66.ap-south-1),
+// so the grant is the AWS WAF token domain, for Hugging Face pages only.
+assert.ok(hfAllow['*.token.awswaf.com'],'the AWS WAF token domain is allowed for Hugging Face pages')
 assert.ok(hfAllow['huggingface.co'] && hfAllow['*.huggingface.co'],'the Hugging Face page host is still allowed')
-assert.equal(browserPageAllowlist('https://example.com/join')['de5282c3ca0c.ebabadd3.ap-southeast-1.token.awswaf.com'],undefined,'the Hugging Face WAF host is not granted to other sites')
+assert.equal(browserPageAllowlist('https://example.com/join')['*.token.awswaf.com'],undefined,'the AWS WAF token domain is not granted to other sites')
 
 console.log('Browser approval execution: approval routing, handoff, single claim, failure containment, human-check visibility checks passed (structural)')
