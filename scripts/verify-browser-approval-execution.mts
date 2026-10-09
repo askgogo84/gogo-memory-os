@@ -30,7 +30,9 @@ assert.doesNotMatch(branchBody,/executeApprovedBrowserCommand/,'the webhook neve
 assert.match(branchBody,/status:'running'/,'the approval is acknowledged as running')
 
 // 3. The trigger never awaits the browser and falls back to the sweeper if it cannot send.
-assert.match(worker,/after\(async \(\) =>/,'the trigger runs after the response is sent')
+assert.match(worker,/export async function triggerApprovedBrowserRun/,'the hand-off is a single awaited call')
+assert.match(worker,/APPROVED_BROWSER_TRIGGERED/,'a successful hand-off is logged')
+assert.match(bridge,/const trigger = await triggerApprovedBrowserRun/,'the approval awaits the hand-off and logs a failed one')
 assert.match(worker,/authorization: `Bearer \$\{secret\}`/,'the internal route is protected by CRON_SECRET')
 assert.match(worker,/cron sweeper will run/,'a missing secret falls back to the cron sweeper')
 

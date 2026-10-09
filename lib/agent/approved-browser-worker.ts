@@ -1,4 +1,3 @@
-import { after } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp } from '@/lib/whatsapp'
 import type { AgentActor } from './actor'
@@ -99,29 +98,31 @@ function appBaseUrl() {
 }
 
 /**
- * Called from the WhatsApp webhook after an approval. Hands the run to the internal route
- * (which responds 202 at once and runs the browser in its own 300s budget). If the trigger
- * cannot be sent, the cron sweeper picks the run up within a minute.
+ * Called from the WhatsApp webhook after an approval. It hands the run to the internal route,
+ * which answers 202 at once and runs the browser in its own 300s budget. Awaiting this costs
+ * well under a second, so the webhook never runs the browser. Every outcome is logged, so a
+ * failed hand-off is visible in the logs. If the hand-off fails, the cron sweeper is the fallback.
  */
-export function triggerApprovedBrowserRun(runId: string) {
-  after(async () => {
-    // Never dispatch without the durable approval record: the trigger only hands off a run
-    // the user has approved (the same approved-row check the worker repeats before running).
-    const { data: approvedRow } = await supabaseAdmin.from('agent_approvals')
-      .select('id').eq('run_id', runId).eq('status', 'approved').limit(1).maybeSingle()
-    if (!approvedRow?.id) { console.error('APPROVED_BROWSER_TRIGGER_NOT_APPROVED', runId); return }
-    const secret = process.env.CRON_SECRET
-    if (!secret) { console.error('APPROVED_BROWSER_TRIGGER_NO_SECRET; cron sweeper will run', runId); return }
-    try {
-      const res = await fetch(`${appBaseUrl()}/api/agent/approved-browser`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
-        body: JSON.stringify({ runId }),
-        signal: AbortSignal.timeout(20_000),
-      })
-      if (!res.ok) console.error('APPROVED_BROWSER_TRIGGER_REJECTED:', res.status, runId)
-    } catch (err: any) {
-      console.error('APPROVED_BROWSER_TRIGGER_FAILED:', runId, err?.message || err)
-    }
-  })
+export async function triggerApprovedBrowserRun(runId: string): Promise<'dispatched' | 'not_approved' | 'failed'> {
+  const { data: approvedRow, error: approvedError } = await supabaseAdmin.from('agent_approvals')
+    .select('id').eq('run_id', runId).eq('status', 'approved').limit(1).maybeSingle()
+  if (approvedError) { console.error('APPROVED_BROWSER_TRIGGER_READ_FAILED:', runId, approvedError.message); return 'failed' }
+  if (!approvedRow?.id) { console.error('APPROVED_BROWSER_TRIGGER_NOT_APPROVED:', runId); return 'not_approved' }
+  const secret = process.env.CRON_SECRET
+  if (!secret) { console.error('APPROVED_BROWSER_TRIGGER_NO_SECRET; cron sweeper will run:', runId); return 'failed' }
+  const url = `${appBaseUrl()}/api/agent/approved-browser`
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ runId }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) { console.error('APPROVED_BROWSER_TRIGGER_REJECTED:', res.status, runId); return 'failed' }
+    console.log('APPROVED_BROWSER_TRIGGERED:', runId, res.status)
+    return 'dispatched'
+  } catch (err: any) {
+    console.error('APPROVED_BROWSER_TRIGGER_FAILED:', runId, url, err?.message || err)
+    return 'failed'
+  }
 }
