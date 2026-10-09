@@ -59,7 +59,13 @@ function actorFromResolvedUser(user: ResolvedUser): AgentActor | null {
 }
 
 export function approvalIntent(text: string): 'approve' | 'reject' | null {
-  const t = String(text || '').trim().toLowerCase()
+  // WhatsApp keeps the quotes a user copies from a test message, often as curly quotes (“Approve”),
+  // and phone keyboards add a trailing full stop. Strip both so the same word always resolves.
+  const t = String(text || '')
+    .trim()
+    .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`.!]+$/g, '')
+    .replace(/[‘’]/g, "'")
+    .toLowerCase()
   if (/^(approve|approved|yes[ ,]+approve|approve it|go ahead with it|proceed with it)$/i.test(t)) return 'approve'
   if (/^(reject|rejected|deny|decline|reject it|do not proceed|don't proceed|cancel that action)$/i.test(t)) return 'reject'
   return null

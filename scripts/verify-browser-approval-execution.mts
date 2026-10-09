@@ -19,6 +19,16 @@ const watcherRoute=webhook.indexOf('// Watcher commands create/read persistent s
 assert.ok(approvalRoute>0,'the webhook resolves approve/reject replies')
 assert.ok(approvalRoute<watcherRoute,'approval replies are resolved before watcher and later routing')
 assert.match(bridge,/export function approvalIntent\(/,'the approval intent check is shared with the webhook')
+// WhatsApp delivers the quotes copied from a test message as curly quotes; those must still approve.
+{
+  const start=bridge.indexOf('export function approvalIntent(')
+  const end=bridge.indexOf('\n}\n',start)+3
+  const src=bridge.slice(start,end).replace("export function approvalIntent(text: string): 'approve' | 'reject' | null {",'function approvalIntent(text) {')
+  const approvalIntentUnderTest=new Function(`${src}; return approvalIntent`)() as (t:string)=>string|null
+  for(const text of ['Approve','“Approve”','"Approve"','‘approve’','Approve.','  approved  ']) assert.equal(approvalIntentUnderTest(text),'approve',`approval wording resolves: ${text}`)
+  for(const text of ['“Reject”','reject.']) assert.equal(approvalIntentUnderTest(text),'reject',`rejection wording resolves: ${text}`)
+  for(const text of ['“Create a Hugging Face account for goverdhan@tipplr.in”','approve the Hugging Face account for me please','']) assert.equal(approvalIntentUnderTest(text),null,`non-approval text is not an approval: ${text}`)
+}
 
 // 2. The approval acknowledges the run and triggers execution; the webhook never runs the browser.
 const browserBranch=bridge.indexOf("if (planType === 'secure_browser') {")
