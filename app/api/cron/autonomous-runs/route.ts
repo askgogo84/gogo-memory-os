@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { resumePersistentGeneralPlan } from '@/lib/agent/persistent-general-plan'
 import type { AgentActor } from '@/lib/agent/actor'
 import { runQueuedTrainResearch } from '@/lib/agent/train-research'
-import { resumePausedBrowserRun } from '@/lib/agent/browser-command'
+import { resumePausedBrowserRun, executeApprovedBrowserCommand } from '@/lib/agent/browser-command'
 import { sendWhatsApp } from '@/lib/whatsapp'
 import { runQueuedRestaurantReservationResearch } from '@/lib/agent/restaurant-reservation'
 
@@ -233,6 +233,73 @@ export async function GET(request:Request){
       }
     }
 
+    // ---- approved secure_browser execution ----
+    // Approving on WhatsApp only queues the run (the webhook cannot wait for a browser).
+    // This worker executes it with the 300s budget. The queued->running claim is
+    // optimistic, so each approved run executes once. A run that ends failed or paused is
+    // never picked up again, and the approval stays 'approved' until the browser reports
+    // completion, so a failure cannot silently re-submit.
+    let approvedBrowserClaimed=0,approvedBrowserDone=0,approvedBrowserFailed=0
+    const {data:queuedBrowserRuns,error:queuedBrowserError}=await supabaseAdmin.from('agent_runs')
+      .select('id,telegram_id,metadata_json')
+      .eq('type','secure_browser')
+      .eq('status','queued')
+      .order('updated_at',{ascending:true})
+      .limit(5)
+    if(queuedBrowserError)console.error('APPROVED_BROWSER_QUEUE_READ_FAILED:',queuedBrowserError.message)
+    for(const run of (queuedBrowserRuns||[]) as any[]){
+      const meta:any=run.metadata_json||{}
+      if(meta.plan_type!=='secure_browser'||meta.mode!=='execute')continue
+      const {data:approvedRow}=await supabaseAdmin.from('agent_approvals')
+        .select('id')
+        .eq('run_id',run.id)
+        .eq('telegram_id',String(run.telegram_id))
+        .eq('status','approved')
+        .limit(1)
+        .maybeSingle()
+      if(!approvedRow?.id)continue
+      const {data:claimed}=await supabaseAdmin.from('agent_runs')
+        .update({status:'running',updated_at:new Date().toISOString()})
+        .eq('id',run.id)
+        .eq('telegram_id',String(run.telegram_id))
+        .eq('status','queued')
+        .select('id')
+        .maybeSingle()
+      if(!claimed?.id)continue
+      approvedBrowserClaimed++
+      const actor=await actorFor(String(run.telegram_id))
+      if(!actor){
+        approvedBrowserFailed++
+        const at=new Date().toISOString()
+        await supabaseAdmin.from('agent_runs').update({
+          status:'failed',error:'approved_browser_actor_missing',
+          summary:'Gogo could not run this approved browser task because the user identity is unavailable.',
+          completed_at:at,updated_at:at,
+        }).eq('id',run.id).eq('telegram_id',String(run.telegram_id)).eq('status','running')
+        continue
+      }
+      try{
+        const result=await executeApprovedBrowserCommand({actor,runId:String(run.id)})
+        if(result?.status==='completed')approvedBrowserDone++
+        if(actor.whatsappId&&result?.text){
+          await sendWhatsApp(actor.whatsappId,
+            result.status==='completed'
+              ? `✅ Done. ${result.text}`
+              : `Gogo could not finish this approved browser task safely.\n\n${result.text}`
+          )
+        }
+      }catch(err:any){
+        approvedBrowserFailed++
+        console.error('APPROVED_BROWSER_EXECUTION_FAILED:',run.id,err?.message||err)
+        const at=new Date().toISOString()
+        await supabaseAdmin.from('agent_runs').update({
+          status:'failed',error:String(err?.message||'approved_browser_execution_failed').slice(0,500),
+          summary:'Gogo could not finish the approved browser task.',completed_at:at,updated_at:at,
+        }).eq('id',run.id).eq('telegram_id',String(run.telegram_id)).eq('status','running')
+        if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'Gogo could not finish the approved browser task. Nothing was repeated. Check the activity page before retrying.').catch(()=>{})
+      }
+    }
+
     // ---- train_research: background execution ----
     // The WhatsApp webhook only ENQUEUES train runs (42s budget, function killed after
     // reply). This worker claims them with an optimistic lock, runs the browser with the
@@ -276,7 +343,7 @@ export async function GET(request:Request){
         try{if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not complete the train search. I did not invent timings or availability. Try again shortly, or check IRCTC directly.')}catch{}
       }
     }
-    return NextResponse.json({ok:true,checked,resumed,completed,failed,skipped,reservationResearchClaimed,reservationResearchDone,reservationResearchFailed,reservationResearchRequeued,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
+    return NextResponse.json({ok:true,approvedBrowserClaimed,approvedBrowserDone,approvedBrowserFailed,checked,resumed,completed,failed,skipped,reservationResearchClaimed,reservationResearchDone,reservationResearchFailed,reservationResearchRequeued,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
   }catch(err:any){
     console.error('AUTONOMOUS_CRON_FAILED:',err?.message||err)
     return NextResponse.json({ok:false,error:'autonomous_worker_failed'},{status:500})

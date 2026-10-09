@@ -159,6 +159,12 @@ async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'r
   if (runError) throw new Error(`whatsapp_agent_run_read_failed:${runError.message}`)
   if (!run) throw new Error('whatsapp_agent_run_not_found')
   const planType = String((run.metadata_json as any)?.plan_type || '')
+  // Secure-browser submits can outlive the webhook budget (60s on Vercel; WhatsApp replies are
+  // due in about 42s). Approval only queues the run. The autonomous-runs worker claims it,
+  // executes it with a 300s budget and sends the outcome back on WhatsApp.
+  if (planType === 'secure_browser') {
+    return { text:'Approved. Gogo is running it in the secure browser now and will message you the result here.', runId:String(data.run_id), status:'running', handledBy:'whatsapp-agent-approval' }
+  }
   const result = planType === 'calendar_update'
     ? await executeApprovedCalendarUpdate({actor,runId:String(data.run_id)})
     : planType === 'reminder_update'
