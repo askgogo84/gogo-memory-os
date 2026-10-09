@@ -184,6 +184,50 @@ function makeWorld(){
   assert.doesNotMatch(other.text,/Hugging Face/)
 }
 
+// ---------------------------------------------------------------- Codex P2 (b0e8f9ce): email then URL for an unregistered provider
+{
+  const w=makeWorld()
+  const askEmail=await w.send(42,'Create an account on Example Notes')
+  assert.match(askEmail.text,/Which email should I use for the Example Notes account\?/)
+  const askUrl=await w.send(42,'gogo@example.com')
+  assert.match(askUrl.text,/official Example Notes signup-page URL/,'with no email or URL, the email answer moves the objective to the URL stage')
+  const run=await w.send(42,'https://notes.example.org/signup')
+  assert.equal(run.status,'waiting_approval','the URL binds to the URL question that the email turn produced')
+  assert.equal(w.commands.length,1)
+  assert.equal(w.commands[0].command.url,'https://notes.example.org/signup')
+}
+
+// ---------------------------------------------------------------- Codex P2 (b0e8f9ce): a turn handled before the account router
+{
+  const w=makeWorld()
+  await w.send(42,'Create an account on Hugging Face')
+  // WhatsApp can answer an unrelated command before the account router runs, so the account
+  // flow never sees it; that handler still persists the turn.
+  w.conversations.push({telegram_id:42,role:'user',content:'remind me to call mom at 6',created_at:'2099-01-01T00:00:00.000Z'})
+  w.conversations.push({telegram_id:42,role:'assistant',content:'Okay, I will remind you at 6 PM.',created_at:'2099-01-01T00:00:01.000Z'})
+  assert.equal(await w.send(42,'colleague@example.com'),null,'an email after an intervening handled turn never attaches to the older objective')
+  assert.equal(w.commands.length,0)
+}
+{
+  const w=makeWorld()
+  // A pending state saved before prompts were recorded cannot prove its binding: re-ask.
+  w.memories.push({telegram_id:42,content:JSON.stringify({type:'followup_state',kind:'external_account_create',payload:{service:'Hugging Face',url:null,stage:'email',originText:'Create an account on Hugging Face'},created_at:new Date().toISOString()}),created_at:'2099-01-01T00:00:00.000Z'})
+  w.conversations.push({telegram_id:42,role:'user',content:'Create an account on Hugging Face',created_at:'2099-01-01T00:00:00.000Z'})
+  assert.equal(await w.send(42,'gogo@example.com'),null,'legacy pending state without a recorded prompt does not bind')
+  assert.equal(w.commands.length,0)
+}
+
+// ---------------------------------------------------------------- Codex P1 (b0e8f9ce): vague requests never reach a generic planner
+for(const text of ['Create an account for me','Can you make me a new account','Make a new account for my mom']){
+  const w=makeWorld()
+  const r=await w.send(42,text)
+  assert.ok(r,`a vague account request is claimed by the objective flow: ${text}`)
+  assert.equal(r.handledBy,'external-account-objective')
+  assert.equal(r.status,'paused','it asks which site instead of completing anything')
+  assert.match(r.text,/Which website or app should I create the account on\?/)
+  assert.equal(w.commands.length,0,'nothing executes for a vague request')
+}
+
 // ---------------------------------------------------------------- P1: official site / look-alike domains
 {
   const look=(host:string)=>(accountLookalike(host)?.key)||null
@@ -203,6 +247,10 @@ function makeWorld(){
   assert.equal(w.commands.length,0,'a look-alike signup link never receives the user details')
   assert.match(refused.text,/imitates Hugging Face/)
   assert.match(refused.text,/huggingface\.co/,'the official domain is named so the user can correct it')
+  const corrected=await w.send(42,'https://huggingface.co/join')
+  assert.equal(corrected?.status,'waiting_approval','after a refused look-alike, the corrected official link binds and continues')
+  assert.equal(w.commands.length,1)
+  assert.equal(w.commands[0].command.url,'https://huggingface.co/join')
 
   const w2=makeWorld()
   const mismatch=await w2.send(42,'Create an account on Hugging Face using gogo@example.com https://huggingface-login.com/join')

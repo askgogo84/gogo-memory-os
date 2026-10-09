@@ -74,17 +74,21 @@ export function extractAccountUrl(text:string){
   }catch{return null}
 }
 
-function usableService(value:string,explicitUrl:string|null){
+// A captured target is a usable service, a beneficiary ("me", "my mom": who the account
+// is for, not where), or an excluded destination (an event or class). Beneficiaries do
+// not name a destination, so "create an account for me" is still a vague request.
+function classifyTarget(value:string,explicitUrl:string|null):{kind:'service'|'beneficiary'|'excluded';service:string}{
   let service=cleanService(value)
   // A captured URL is not a service name. Use its host so replies read "huggingface.co",
   // never a fragment such as "https://huggingface".
   if(/:\/\//.test(service)){
-    if(!explicitUrl)return ''
-    try{service=new URL(explicitUrl).hostname.replace(/^www\./,'')}catch{return ''}
+    if(!explicitUrl)return {kind:'excluded',service:''}
+    try{service=new URL(explicitUrl).hostname.replace(/^www\./,'')}catch{return {kind:'excluded',service:''}}
   }
-  if(!service||PRONOUN_ONLY.test(service))return ''
-  if(ACTIVITY.test(service))return ''
-  return service
+  if(!service||PRONOUN_ONLY.test(service))return {kind:'beneficiary',service:''}
+  if(/^(?:my|our|his|her|their|your)\b/i.test(service))return {kind:'beneficiary',service:''}
+  if(ACTIVITY.test(service))return {kind:'excluded',service:''}
+  return {kind:'service',service}
 }
 
 // Every clause that names a target, in preference order. "Sign up for the newsletter and
@@ -93,12 +97,10 @@ function accountTarget(raw:string,explicitUrl:string|null){
   const byLogin=raw.match(new RegExp('\\b(?:log\\s*in|login|go)\\s+to\\s+(.+?)(?=\\s+(?:and|then)\\s+(?:create|open|make|sign\\s*up|register)\\b|[!?;,]|\\.(?=\\s|$)|$)','i'))
   const byCreate=raw.match(new RegExp('\\b(?:create|open|make)\\s+(?:me\\s+)?(?:an?\\s+)?(?:new\\s+)?account\\s+(?:for\\s+me\\s+)?(?:on|at|with|for|in)\\s+(.+?)'+TERM,'i'))
   const bySignup=raw.match(new RegExp('\\b(?:sign\\s*up|register)\\s+(?:me\\s+)?(?:for\\s+an?\\s+account\\s+)?(?:on|at|with|for)\\s+(.+?)'+TERM,'i'))
-  const candidates=[byLogin?.[1],byCreate?.[1],bySignup?.[1]].filter(Boolean) as string[]
-  for(const candidate of candidates){
-    const service=usableService(candidate,explicitUrl)
-    if(service)return {named:true,service}
-  }
-  return {named:candidates.length>0,service:''}
+  const targets=([byLogin?.[1],byCreate?.[1],bySignup?.[1]].filter(Boolean) as string[]).map(value=>classifyTarget(value,explicitUrl))
+  const usable=targets.find(target=>target.kind==='service')
+  if(usable)return {named:true,service:usable.service}
+  return {named:targets.some(target=>target.kind==='excluded'),service:''}
 }
 
 export function parseExternalAccountRequest(text:string):ExternalAccountRequest|null{

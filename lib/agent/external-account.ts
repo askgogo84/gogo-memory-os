@@ -4,11 +4,11 @@ import { VAULT_PROVIDERS, findVaultProviderForDomain, findVaultProviderInText, t
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { runBrowserCommand, type BrowserCommand } from './browser-command'
-import { parseExternalAccountRequest, type ExternalAccountRequest } from './external-account-intent'
+import { mentionsExternalAccountCreation, parseExternalAccountRequest, type ExternalAccountRequest } from './external-account-intent'
 
 // Intent detection is pure and shared with the classifier; re-exported so existing
 // importers (WhatsApp route, regression scripts) keep a single entry point.
-export { parseExternalAccountRequest, type ExternalAccountRequest }
+export { mentionsExternalAccountCreation, parseExternalAccountRequest, type ExternalAccountRequest }
 
 const FOLLOWUP_KIND='external_account_create'
 const FOLLOWUP_MAX_MINUTES=30
@@ -23,12 +23,14 @@ type PendingFollowup={type?:unknown;kind?:unknown;created_at?:string;payload?:Re
 
 /**
  * True when this message could start or continue an external-account objective: an
- * explicit account request, or a bare email/https URL that may answer a pending one.
- * The WhatsApp route applies the same predicate inline before resolving the actor.
+ * account request (named or vague), or a bare email/https URL that may answer a pending
+ * one. The WhatsApp route applies the same checks inline before resolving the actor.
  */
 export function isExternalAccountCandidate(text:string){
-  return Boolean(parseExternalAccountRequest(text))||emailOnly(text)||urlOnly(text)
+  return Boolean(parseExternalAccountRequest(text))||mentionsExternalAccountCreation(text)||emailOnly(text)||urlOnly(text)
 }
+
+const VAGUE_PROMPT='Which website or app should I create the account on? Reply with its name, for example: create an account on Hugging Face.'
 
 // One read returns both our pending objective and the kind of the user's most recent
 // pending question of ANY kind. A bare email/URL may only answer the latest question.
@@ -60,14 +62,28 @@ function pendingIsFresh(pending:PendingFollowup){
   return Date.now()-createdAt<=FOLLOWUP_MAX_MINUTES*60*1000
 }
 
-async function pendingStillBound(telegramId:number,originText:string){
+// A bare email/URL binds only when nothing has happened since this flow asked for it:
+// the newest saved turns must be the prompting request and this flow's own question.
+// Any other turn in between that the surface persisted breaks the binding, so a stray
+// email cannot be consumed by an older objective. Limitation: a WhatsApp handler that
+// saves neither the user turn nor its reply is invisible here; the 30-minute expiry and
+// newest-question check still apply. Rows from one insert can share a timestamp, so the
+// pair is matched in either order. Older pending states without a stored prompt never
+// bind and are simply asked again.
+async function pendingStillBound(telegramId:number,originText:string,promptText:string,currentText:string){
+  if(!norm(originText)||!norm(promptText))return false
   const {data}=await supabaseAdmin.from('conversations')
-    .select('content')
+    .select('role, content')
     .eq('telegram_id',telegramId)
-    .eq('role','user')
     .order('created_at',{ascending:false})
-    .limit(12)
-  return (data||[]).some((row:{content?:unknown})=>norm(row?.content)===norm(originText))
+    .limit(4)
+  const rows=(data||[]).map((row:{role?:unknown;content?:unknown})=>({role:String(row?.role||''),content:norm(row?.content)}))
+  // The current message may already be persisted by the surface; skip it.
+  if(rows[0]&&rows[0].role==='user'&&rows[0].content===norm(currentText))rows.shift()
+  const head=rows.slice(0,2)
+  const prompt=norm(promptText)
+  return head.some(row=>row.role==='assistant'&&row.content.includes(prompt))
+    &&head.some(row=>row.role==='user'&&row.content===norm(originText))
 }
 
 function looksLikeSignupUrl(value:string){
@@ -166,23 +182,24 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
   const service=displayService(params.request)
   const email=params.request.email
   if(!email){
+    const text=`Which email should I use for the ${service} account?`
     await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{
-      service:params.request.service,url:params.request.url,stage:'email',originText:params.originText,
+      service:params.request.service,url:params.request.url,stage:'email',originText:params.originText,promptText:text,
     })
-    return {text:`Which email should I use for the ${service} account?`,status:'paused',handledBy:'external-account-objective'}
+    return {text,status:'paused',handledBy:'external-account-objective'}
   }
 
   const target=resolveTarget(params.request)
   if(target.kind!=='trusted'){
-    await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{
-      service:params.request.service,email,stage:'url',originText:params.originText,
-    })
     const official=target.kind==='lookalike'||target.kind==='mismatch'?target.provider.domains[0]:''
     const text=target.kind==='lookalike'
       ?`That link (${target.host}) imitates ${target.provider.label} but is not its official site (${official}), so I will not enter your details there. Send the official ${target.provider.label} signup link if that is what you meant.`
       :target.kind==='mismatch'
         ?`That link (${target.host}) is not on ${target.provider.label}'s official site (${official}), so I will not use it. Send the official ${target.provider.label} signup link to continue.`
         :`I have the account objective and email. Send me the official ${service} signup-page URL so I can continue safely.`
+    await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{
+      service:params.request.service,email,stage:'url',originText:params.originText,promptText:text,
+    })
     return {text,status:'paused',handledBy:'external-account-objective'}
   }
 
@@ -258,7 +275,7 @@ export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface
         await clearFollowupState(telegramId,FOLLOWUP_KIND)
         return null
       }else{
-        const bound=await pendingStillBound(telegramId,String(payload.originText||''))
+        const bound=await pendingStillBound(telegramId,String(payload.originText||''),String(payload.promptText||''),params.text)
         if(!bound){
           await clearFollowupState(telegramId,FOLLOWUP_KIND)
         }else if(payload.stage==='email'&&emailOnly(params.text)){
@@ -269,8 +286,10 @@ export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface
           })
         }else if(payload.stage==='url'&&urlOnly(params.text)){
           await clearFollowupState(telegramId,FOLLOWUP_KIND)
+          // Rebind any re-prompt (e.g. a refused look-alike link) to this URL turn, so the
+          // user's corrected link binds to the question it answers.
           return prepareSafely({
-            actor:params.actor,surface:params.surface,originText:String(payload.originText||''),
+            actor:params.actor,surface:params.surface,originText:String(params.text).trim(),
             request:{service:String(payload.service||''),email:String(payload.email||''),url:String(params.text).trim()},
           })
         }else if(!parseExternalAccountRequest(params.text)){
@@ -283,6 +302,12 @@ export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface
   }
 
   const request=parseExternalAccountRequest(params.text)
-  if(!request)return null
+  if(!request){
+    // "Create an account for me" with no site named is still an account objective. Claim
+    // it and ask for the site, so a generic planner can never answer it or mark prose as
+    // an executed account creation.
+    if(mentionsExternalAccountCreation(params.text))return {text:VAGUE_PROMPT,status:'paused',handledBy:'external-account-objective'}
+    return null
+  }
   return prepareSafely({actor:params.actor,surface:params.surface,request,originText:params.text})
 }
