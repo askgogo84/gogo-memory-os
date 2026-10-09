@@ -113,4 +113,13 @@ assert.ok(hfAllow['*.token.awswaf.com'],'the AWS WAF token domain is allowed for
 assert.ok(hfAllow['huggingface.co'] && hfAllow['*.huggingface.co'],'the Hugging Face page host is still allowed')
 assert.equal(browserPageAllowlist('https://example.com/join')['*.token.awswaf.com'],undefined,'the AWS WAF token domain is not granted to other sites')
 
+// 11. Typing and taps in the takeover are never silently dropped. The page keeps the typed text unless
+// the server confirms the action, shows a failed or slow send, and the server logs and answers each failure.
+assert.match(handoffServer,/AbortController/,'a takeover action that never answers is cut off by the page')
+assert.match(handoffServer,/if\(!r\.ok\)/,'the takeover page checks the reply of each action')
+assert.match(handoffServer,/if\(ok\)el\.value=""/,'the typed text is cleared only after the action is confirmed')
+assert.match(handoffServer,/withTimeout\(page\.keyboard\.type/,'typing cannot hold the takeover request open forever')
+assert.match(handoffServer,/HANDOFF_ACTION_FAILED/,'a failed takeover action is logged')
+assert.match(handoffServer,/action_failed/,'a failed takeover action returns a readable error to the page')
+
 console.log('Browser approval execution: approval routing, handoff, single claim, failure containment, human-check visibility checks passed (structural)')
