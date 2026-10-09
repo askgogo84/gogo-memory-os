@@ -86,4 +86,11 @@ assert.match(secure,/blockReason:'human_auth_required',authReason:'captcha'/,'a 
 assert.match(secure,/handoffReservation:await releaseOwnerLock\.reserveHandoff\(\)/,'the takeover is reserved before the run pauses')
 assert.doesNotMatch(secure,/capsolver|2captcha|anticaptcha|solveCaptcha/i,'no CAPTCHA-solving service is wired in')
 
+// 9. The takeover server answers every route, even when a page call fails. A thrown route used to
+// crash the server, leaving the takeover URL with 502 SANDBOX_NOT_LISTENING.
+const handoffServer=readFileSync('lib/agent/browser-handoff.ts','utf8')
+assert.match(handoffServer,/routeRequest\(req,res\)\.catch\(function\(e\)/,'each takeover route failure is caught and answered')
+assert.match(handoffServer,/process\.on\('unhandledRejection'/,'an unhandled rejection is logged, not fatal to the takeover server')
+assert.match(handoffServer,/takeover_route_failed/,'a failed takeover route returns a safe retryable error')
+
 console.log('Browser approval execution: approval routing, handoff, single claim, failure containment checks passed (structural)')
