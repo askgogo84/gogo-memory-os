@@ -103,4 +103,12 @@ assert.match(handoffServer,/routeRequest\(req,res\)\.catch\(function\(e\)/,'each
 assert.match(handoffServer,/process\.on\('unhandledRejection'/,'an unhandled rejection is logged, not fatal to the takeover server')
 assert.match(handoffServer,/takeover_route_failed/,'a failed takeover route returns a safe retryable error')
 
-console.log('Browser approval execution: approval routing, handoff, single claim, failure containment checks passed (structural)')
+// 10. A provider human check must be visible in the takeover. The Hugging Face sign-up interstitial
+// loads its AWS WAF script from one exact host; that host is granted to Hugging Face pages only.
+const {browserPageAllowlist}=await import('../lib/agent/browser-page-network')
+const hfAllow=browserPageAllowlist('https://huggingface.co/join')
+assert.ok(hfAllow['de5282c3ca0c.ebabadd3.ap-southeast-1.token.awswaf.com'],'the Hugging Face WAF script host is allowed for its own pages')
+assert.ok(hfAllow['huggingface.co'] && hfAllow['*.huggingface.co'],'the Hugging Face page host is still allowed')
+assert.equal(browserPageAllowlist('https://example.com/join')['de5282c3ca0c.ebabadd3.ap-southeast-1.token.awswaf.com'],undefined,'the Hugging Face WAF host is not granted to other sites')
+
+console.log('Browser approval execution: approval routing, handoff, single claim, failure containment, human-check visibility checks passed (structural)')

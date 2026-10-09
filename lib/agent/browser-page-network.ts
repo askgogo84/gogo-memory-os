@@ -32,6 +32,11 @@ const CROMA_PAGE_DEPENDENCIES = ['assets.croma.com','media-ik.croma.com','api.cr
 // 7 Oct live flight read: the broker aborted these script/font hosts 12 times.
 // Grant only the observed hosts for Google Flights, never wildcard Google egress.
 const GOOGLE_FLIGHTS_PAGE_DEPENDENCIES = ['www.gstatic.com','fonts.googleapis.com','fonts.gstatic.com']
+// 9 Oct Hugging Face takeover: the sign-up page answered 202 with the provider's AWS WAF
+// interstitial, and this exact token host was blocked by the sandbox, so the visible human
+// check rendered as a blank frame. Only its own script host is granted so the person can see
+// and complete the check; Gogo does not solve it or fabricate a token.
+const HUGGING_FACE_PAGE_DEPENDENCIES = ['de5282c3ca0c.ebabadd3.ap-southeast-1.token.awswaf.com']
 
 export function browserPageAllowlist(url:string):Record<string,string[]>{
   const target=new URL(url)
@@ -52,5 +57,6 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
   if(host==='www.zepto.com'||host==='zepto.com')hosts.push(...ZEPTO_PAGE_DEPENDENCIES)
   if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights(?:\/|$)/.test(target.pathname))
     hosts.push(...GOOGLE_FLIGHTS_PAGE_DEPENDENCIES)
+  if(host==='huggingface.co'||host==='www.huggingface.co')hosts.push(...HUGGING_FACE_PAGE_DEPENDENCIES)
   return Object.fromEntries(hosts.map(name=>[name,[]]))
 }
