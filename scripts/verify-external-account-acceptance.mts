@@ -258,6 +258,36 @@ for(const text of ['Create an account for me','Can you make me a new account','M
   assert.match(mismatch.text,/not on Hugging Face's official site \(huggingface\.co\)/)
 }
 
+// ---------------------------------------------------------------- P1: homoglyph (IDN) hosts fail closed
+{
+  // Cyrillic small a (U+0430) in "huggingface" becomes punycode, which no ASCII look-alike rule sees.
+  const idnUrl='https://huggingf\u0430ce.co/join'
+  assert.match(new URL(idnUrl).hostname,/^xn--/,'the homoglyph really is punycode on the wire')
+  // Unregistered provider, so the flow waits for a URL (a registry provider would not ask).
+  const w=makeWorld()
+  const ask=await w.send(42,'Create an account on Example Shop using gogo@example.com')
+  assert.equal(ask?.status,'paused')
+  const refused=await w.send(42,idnUrl)
+  assert.equal(w.commands.length,0,'a punycode/homoglyph host never receives the user details or starts a browser run')
+  assert.match(refused.text,/cannot verify safely/)
+  const corrected=await w.send(42,'https://example-shop.com/join')
+  assert.equal(corrected?.status,'waiting_approval','the ASCII link still binds after an IDN refusal')
+  assert.equal(w.commands[0]?.command.url,'https://example-shop.com/join')
+}
+
+// ---------------------------------------------------------------- P2: unregistered provider approval warns the user
+{
+  const w=makeWorld()
+  const reply=await w.send(42,'Create an account on Example Shop using gogo@example.com https://example-shop.com/join')
+  assert.equal(w.commands.length,1,'an unregistered provider reaches the approval gate once (nothing runs before approval)')
+  assert.equal(w.commands[0].command.url,'https://example-shop.com/join')
+  assert.equal(reply?.status,'waiting_approval')
+  assert.match(reply.text,/not a provider I have verified/,'the approval text tells the user to check an unverified address')
+  assert.match(reply.text,/APPROVE/)
+  const official=await makeWorld().send(42,'Create an account on Hugging Face using gogo@example.com')
+  assert.doesNotMatch(official.text,/not a provider I have verified/,'registry providers do not get the unverified warning')
+}
+
 // ---------------------------------------------------------------- Failure containment
 {
   const w=makeWorld()
@@ -292,6 +322,10 @@ for(const text of [
   'Book an appointment with the dentist and register me',
   'Register me for the conference',
   'Sign up for the yoga class',
+  'I need to create an account later.',
+  'Create an account on Zerodha tomorrow',
+  'Sign me up for the newsletter',
+  'Sign me up on the waitlist',
 ]){
   assert.equal(accountIntent.parseExternalAccountRequest(text),null,`not an external-account objective: ${text}`)
   const c=classifyAgentRequest(text)
@@ -304,6 +338,7 @@ for(const [text,service] of [
   ['create an account at https://huggingface.co/join','huggingface.co'],
   ['Create an account on Udemy for my course','Udemy'],
   ['Make me an account on Instagram','Instagram'],
+  ['Can you sign me up on Substack?','Substack'],
 ] as const){
   assert.equal(accountIntent.parseExternalAccountRequest(text)?.service,service,`service for: ${text}`)
 }

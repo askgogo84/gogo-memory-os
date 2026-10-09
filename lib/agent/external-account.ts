@@ -147,11 +147,18 @@ type TargetResolution=
   |{kind:'trusted';provider:VaultProvider|null;url:string}
   |{kind:'lookalike';provider:VaultProvider;host:string}
   |{kind:'mismatch';provider:VaultProvider;host:string}
+  |{kind:'unverifiable';host:string}
   |{kind:'need_url'}
+
+// Internationalised hosts reach us as punycode (xn--). Confusable letters such as a Cyrillic
+// "а" in "huggingfаce.co" produce a host that no ASCII look-alike rule can see, so we fail
+// closed rather than guess. Genuine non-English brands can use the ASCII link instead.
+function isPunycodeHost(host:string){return /(?:^|\.)xn--/i.test(host)}
 
 function resolveTarget(request:ExternalAccountRequest):TargetResolution{
   const byText=findVaultProviderInText(request.service)
   const host=request.url?new URL(request.url).hostname.replace(/^www\./,''):''
+  if(host&&isPunycodeHost(host))return {kind:'unverifiable',host}
   if(byText){
     if(request.url){
       const byDomain=findVaultProviderForDomain(host)
@@ -196,7 +203,9 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
       ?`That link (${target.host}) imitates ${target.provider.label} but is not its official site (${official}), so I will not enter your details there. Send the official ${target.provider.label} signup link if that is what you meant.`
       :target.kind==='mismatch'
         ?`That link (${target.host}) is not on ${target.provider.label}'s official site (${official}), so I will not use it. Send the official ${target.provider.label} signup link to continue.`
-        :`I have the account objective and email. Send me the official ${service} signup-page URL so I can continue safely.`
+        :target.kind==='unverifiable'
+          ?`That link (${target.host}) uses characters I cannot verify safely, so I will not enter your details there. Send the site's plain ASCII signup link instead.`
+          :`I have the account objective and email. Send me the official ${service} signup-page URL so I can continue safely.`
     await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{
       service:params.request.service,email,stage:'url',originText:params.originText,promptText:text,
     })
@@ -222,7 +231,13 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
   }
   const result=await runBrowserCommand({actor:params.actor,surface:params.surface,command})
   if(result?.status==='waiting_approval'){
-    return {...result,text:`Ready to create the ${service} account on ${host} using ${email}. Creating it may accept the site's terms/code of conduct and submit your details. Reply *APPROVE* to continue or *REJECT* to stop.`,handledBy:'external-account-objective'}
+    // Nothing is opened before this approval (runBrowserCommand returns waiting_approval
+    // ahead of the browser). For a provider we do not have in the registry, the user must
+    // also check the address itself, because we have not verified the site's identity.
+    const verifyNote=target.provider
+      ?''
+      :`${host} is not a provider I have verified, so check the address carefully. `
+    return {...result,text:`Ready to create the ${service} account on ${host} using ${email}. ${verifyNote}Creating it may accept the site's terms/code of conduct and submit your details. Reply *APPROVE* to continue or *REJECT* to stop.`,handledBy:'external-account-objective'}
   }
   return result?{...result,handledBy:'external-account-objective'}:null
 }
