@@ -41,7 +41,9 @@ async function isConsequential(selector){try{return await page.locator(selector)
  let changedTask=false;
  if(runtimeOptions.taskId){let active='';try{active=fs.readFileSync('${SANDBOX_WORKDIR}/commerce-active-task','utf8')}catch{}changedTask=active!==runtimeOptions.taskId;fs.writeFileSync('${SANDBOX_WORKDIR}/commerce-active-task',runtimeOptions.taskId);}
  if(initialUrl&&(changedTask||!page.url().startsWith('http')||page.url()==='about:blank'))await page.goto(initialUrl,{waitUntil:'domcontentloaded',timeout:45000}).catch(()=>pageReadiness.navigationFailed());
- const server=http.createServer(async(req,res)=>{
+ process.on('unhandledRejection',function(e){console.error('HANDOFF_UNHANDLED_REJECTION',String(e&&e.message||e).slice(0,300))});
+ process.on('uncaughtException',function(e){console.error('HANDOFF_UNCAUGHT_EXCEPTION',String(e&&e.message||e).slice(0,300))});
+ const routeRequest=async(req,res)=>{
   if(!auth(req))return ok(res,403).end(JSON.stringify({error:'forbidden'}));
   const u=new URL(req.url,'http://x');
   if(req.method==='GET'&&u.pathname==='/health'){ok(res).end(JSON.stringify({ready:true}));return}
@@ -78,6 +80,12 @@ async function isConsequential(selector){try{return await page.locator(selector)
    ok(res,200,'text/html; charset=utf-8').end(html+'<script>'+healthScript+'</script>');return
   }
   ok(res,404).end(JSON.stringify({error:'not_found'}));
+ };
+ const server=http.createServer(function(req,res){
+  return routeRequest(req,res).catch(function(e){
+   console.error('HANDOFF_ROUTE_FAILED',String(e&&e.message||e).slice(0,300));
+   try{if(!res.headersSent){res.writeHead(503,{'content-type':'application/json','cache-control':'no-store'})}res.end(JSON.stringify({error:'takeover_route_failed',retry:true}))}catch(_){}
+  });
  });
  server.listen(port,'0.0.0.0');
 })().catch(e=>{console.error(e&&e.stack||e);process.exit(1)});

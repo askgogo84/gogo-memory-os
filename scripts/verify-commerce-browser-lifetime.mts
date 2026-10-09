@@ -65,7 +65,7 @@ let handler:any
 const fs={readFileSync:()=>activeTask,writeFileSync:(_path:string,value:string)=>{activeTask=value}}
 const globals=(argv:string[])=>({
   Buffer,URL,console:{log:()=>{},error:()=>{}},setTimeout:()=>0,
-  process:{argv,env:managedEndpoint?{GOGO_BROWSER_CDP_URL:managedEndpoint}:{},exit:(code:number)=>{if(code)throw Error('program_exit_'+code)}},
+  process:{argv,env:managedEndpoint?{GOGO_BROWSER_CDP_URL:managedEndpoint}:{},on:()=>{},exit:(code:number)=>{if(code)throw Error('program_exit_'+code)}},
   require:(name:string)=>name==='playwright'?{chromium}:name==='fs'?fs:name==='url'?{URL}:name==='http'?{createServer:(h:any)=>{handler=h;return {listen:()=>{}}}}:{},
 })
 const run=(payload:any)=>runInNewContext(worker,globals(['node','worker',Buffer.from(JSON.stringify(payload)).toString('base64')]))
