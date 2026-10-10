@@ -127,6 +127,24 @@ export async function releaseManagedSessionById(sessionId:string,env:Env=process
   }catch{return false}
 }
 
+// Browserbase's own interactive live view of a session: the real browser, which the owner can
+// click, type and scroll in. Used for the human step instead of our screenshot relay. Returns
+// null when unavailable; the caller falls back to the relay. The URL is a bearer link to the
+// session, so it is stored on the owner's run and only served through the authenticated
+// dashboard route, never sent in chat.
+export async function managedLiveViewUrl(sessionId:string,env:Env=process.env,fetcher:typeof fetch=fetch):Promise<string|null>{
+  const key=env.BROWSERBASE_API_KEY
+  if(!key||!/^[a-zA-Z0-9-]{8,80}$/.test(String(sessionId||'')))return null
+  try{
+    const response=await fetcher(`https://api.browserbase.com/v1/sessions/${sessionId}/debug`,{headers:{'X-BB-API-Key':key},redirect:'error',signal:AbortSignal.timeout(15000)})
+    if(!response.ok)return null
+    const data:any=await response.json()
+    const url=new URL(String(data?.debuggerFullscreenUrl||''))
+    if(url.protocol!=='https:'||!(url.hostname==='browserbase.com'||url.hostname.endsWith('.browserbase.com')))return null
+    return url.toString()
+  }catch{return null}
+}
+
 // List this project's RUNNING sessions with their start time, for the orphan sweep.
 export async function listRunningManagedSessions(env:Env=process.env,fetcher:typeof fetch=fetch):Promise<Array<{id:string;startedAt:string|null;app:string;env:string}>>{
   const key=env.BROWSERBASE_API_KEY,project=env.BROWSERBASE_PROJECT_ID

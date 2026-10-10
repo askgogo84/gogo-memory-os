@@ -19,6 +19,13 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
   if(!['paused','waiting_approval'].includes(String(data.status)))return NextResponse.json({error:'handoff_unavailable'},{status:409})
 
   const handoff:any=(data.metadata_json as any)?.handoff||{}
+  // Prefer the provider's interactive live view (the real browser); the relay is the fallback.
+  if(handoff?.mode!=='device'&&typeof handoff?.liveViewUrl==='string'){
+    try{
+      const live=new URL(handoff.liveViewUrl)
+      if(live.protocol==='https:'&&(live.hostname==='browserbase.com'||live.hostname.endsWith('.browserbase.com')))return NextResponse.redirect(live)
+    }catch{}
+  }
   const target=handoff?.mode==='device'?handoff?.providerUrl:handoff?.takeoverUrl
   if(!target)return NextResponse.json({error:'handoff_unavailable'},{status:404})
   let url:URL

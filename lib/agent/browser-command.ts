@@ -369,6 +369,8 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   try{
     const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
+    // Why a run stopped, without page text, selectors or values: answers "why was it blocked?".
+    try{console.log('BROWSER_RUN_RESULT:',JSON.stringify({runId:params.runId,status:result.status,blockReason:(result as any).blockReason||null,authReason:(result as any).authReason||null,host:(()=>{try{return new URL(String(result.url||'')).hostname}catch{return null}})(),title:String(result.title||'').slice(0,80),steps:(result.actions||[]).slice(0,20).map((a:any)=>`${a.kind}:${a.status}`),signupVault:(result as any).signupVault||null}))}catch{}
     const at=new Date().toISOString()
 
     if(result.status==='blocked'){
