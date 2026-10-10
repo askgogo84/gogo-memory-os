@@ -352,7 +352,10 @@ export function parseCalendarCreate(text: string) {
     /\b(?:meeting|appointments?|appts?|call|event)\b/.test(lower) ||
     CALENDAR_POSSESSIVE_RE.test(lower) ||  // "in/on/to my|the|your calendar" (+ misspellings)
     CALENDAR_EVENT_RE.test(lower)          // "calendar event" (+ misspellings)
-  const isCreate = hasCreateVerb && hasCalendarSignal
+  // "Which courts are free this Saturday? … then book it and add it to my calendar" asks to find
+  // options first; it is not a calendar create (Muse case 02, 11 Oct).
+  const discoveryQuestion = /^\s*(?:which|what|where|are\s+there|is\s+there|find|search|show\s+me|look\s+for)\b/i.test(lower)
+  const isCreate = hasCreateVerb && hasCalendarSignal && !discoveryQuestion
 
   // Preparation help ("help me prepare for a dentist appointment") or an explicitly NEGATED action
   // ("do not book it yet") must NOT create a calendar event/approval — the create verb can appear

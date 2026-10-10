@@ -100,6 +100,7 @@ RULES:
 
 4. WEB SEARCH: If user asks about current events, news, prices, weather, sports scores, or anything requiring up-to-date information, output on FIRST LINE:
    SEARCH: [search query]
+   MOVIES (India): showtimes and tickets live on BookMyShow and District. Example: "evening shows for the latest Kannada release at PVR Orion Mall tomorrow" -> SEARCH: latest Kannada movie showtimes PVR Orion Mall Bengaluru tomorrow BookMyShow District. Never claim seats were held or booked.
    SHOPPING (India): when the user wants products to buy, search for product listings on the store they name (Myntra, Ajio, Nykaa, Amazon.in, Flipkart, Tata Cliq), or on Myntra/Ajio/Amazon.in when none is named, with the budget in rupees. Example: "smart-casual outfit under ₹6,000 on Myntra or Ajio" -> SEARCH: men smart casual blazer shirt chinos under 6000 myntra ajio buy
    Examples:
    "What is the weather in Bengaluru?" -> SEARCH: weather Bengaluru today
