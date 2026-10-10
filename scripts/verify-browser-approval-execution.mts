@@ -148,4 +148,15 @@ assert.match(handoffServer,/action_failed/,'a failed takeover action returns a r
   assert.doesNotMatch(command.slice(command.indexOf('BROWSER_RUN_RESULT:'),command.indexOf('BROWSER_RUN_RESULT:')+600),/pageText|selector|detail|value/,'the run log carries no page text, selectors or values')
 }
 
+// 13. Hybrid takeover: the relay page shows the real browser (live view) and keeps its own Type box,
+// because the provider's live view does not support phone keyboards.
+{
+  const route=readFileSync('app/api/dashboard/agent/runs/[runId]/handoff/route.ts','utf8')
+  assert.match(route,/relay\.searchParams\.set\('live',liveView\.toString\(\)\)/,'the relay page receives the live view')
+  assert.match(route,/browserHandoffIsLive\(handoff\.takeoverUrl\)/,'the relay is used only when it is alive')
+  assert.match(handoffServer,/liveOk=lu\.protocol==="https:"&&\(lu\.hostname==="browserbase\.com"\|\|lu\.hostname\.endsWith\("\.browserbase\.com"\)\)/,'the page embeds only an https browserbase.com live view')
+  assert.match(handoffServer,/function refresh\(\)\{if\(liveOk\)return;/,'screenshots stop when the live view is shown')
+  assert.match(handoffServer,/id="t" placeholder="Type into the focused field"/,'the Type box stays for phone keyboards')
+}
+
 console.log('Browser approval execution: approval routing, handoff, single claim, failure containment, human-check visibility checks passed (structural)')

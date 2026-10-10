@@ -77,6 +77,12 @@ assert.match(command, /runId:params\.runId,accountCreation,/, 'the account-creat
   assert.match(acct, /looksLikeSignupUrl\(request\.url\)\|\|isHomepageUrl\(request\.url\)/, "the user's own homepage link is accepted for an unregistered site")
 }
 
+// 10 Oct live run a2ae7e03: the sign-up page's password field was read as a sign-in wall and the
+// run stopped with no steps. While creating an account, a password field never pauses the run.
+assert.match(src, /const signupPasswordField=params\.accountCreation===true&&\(!authGate\.required\|\|authGate\.reason==='password'\)/, 'a sign-up password field is not a sign-in wall')
+assert.match(src, /if\(!signupPasswordField&&\(authGate\.required\|\|pageLooksLikeLogin\(page\)\)\)\{/, 'the in-run gate skips only the sign-up password case')
+assert.match(src, /if\(!finalSignupPasswordField&&\(finalAuthGate\.required\|\|pageLooksLikeLogin\(page\)\)\)\{/, 'the final gate skips only the sign-up password case')
+
 // Username and name are collected in chat before approval (Instinct-style), never invented.
 const { parseAccountProfile } = await import('../lib/agent/external-account-intent.ts')
 assert.deepEqual(parseAccountProfile('username goverdhan-md, name Goverdhan M D'), { username: 'goverdhan-md', fullName: 'Goverdhan M D' })

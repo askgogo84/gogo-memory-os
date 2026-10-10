@@ -73,7 +73,9 @@ export async function runApprovedBrowserRun(runId: string): Promise<ApprovedBrow
       await sendWhatsApp(actor.whatsappId,
         result.status === 'completed'
           ? `✅ Done. ${result.text}`
-          : `Gogo could not finish this approved browser task safely.\n\n${result.text}`
+          : result.status === 'paused'
+            ? result.text
+            : `Gogo could not finish this task.\n\n${result.text}`
       )
     }
     return result?.status === 'completed' ? 'completed' : 'blocked'

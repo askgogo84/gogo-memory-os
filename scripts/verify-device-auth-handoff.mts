@@ -650,7 +650,7 @@ const beforeBlockedPlanCalls=primaryAttempts+fallbackAttempts
 // captcha, with a handoff reservation). It is never planned by the model and never labelled a
 // password sign-in. Refusals, rate limits and empty shells stay provider_access_limited.
 for(const [state,httpStatus,expected,blockReason,authReason] of [
-  ['security_check',202,/human verification check/,'human_auth_required','captcha'],
+  ['security_check',202,/check only a person can complete/,'human_auth_required','captcha'],
   ['http_error',403,/refused.*403/,'provider_access_limited',undefined],
   ['http_error',429,/limited.*429/,'provider_access_limited',undefined],
   ['empty',200,/didn[’']t load/,'provider_access_limited',undefined],

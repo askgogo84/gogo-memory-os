@@ -794,7 +794,7 @@ async function inspect(userId:string,url:string,keepAlive=false,taskId='',reuseP
 function humanVerificationCheck(page:any,actionLog:any[]){
   if(page?.pageLoad?.state!=='security_check')return null
   if(actionLog.some(action=>(action.kind==='submit'||action.consequential===true)&&action.status!=='skipped'))return null
-  return 'The provider is showing a human verification check. Gogo cannot pass it and does not try to. Complete it yourself in the takeover browser.'
+  return 'The site is showing a check only a person can complete (for example a CAPTCHA). Gogo does not try to pass it.'
 }
 
 function detectProviderAccessBlock(page:any){
@@ -1283,7 +1283,11 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
 
       authGate=detectHumanAuthGate(page)
-      if(authGate.required||pageLooksLikeLogin(page)){
+      // 10 Oct live run: the Hugging Face sign-up form (email + password) was read as a sign-in
+      // wall and the run stopped before filling anything. While creating an account, a password
+      // field is expected; only non-password human steps (OTP, passkey, device approval) pause here.
+      const signupPasswordField=params.accountCreation===true&&(!authGate.required||authGate.reason==='password')
+      if(!signupPasswordField&&(authGate.required||pageLooksLikeLogin(page))){
         // Human-only challenges stay in the provider browser. If multiple Vault
         // accounts match, pause safely and let the user choose which opaque
         // credential reference to use before retrying.
@@ -1410,7 +1414,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     // The final action wave can itself open MFA. Non-read flows have only one
     // wave, so this page must be checked before completion or sandbox teardown.
     const finalAuthGate=detectHumanAuthGate(page)
-    if(finalAuthGate.required||pageLooksLikeLogin(page)){
+    const finalSignupPasswordField=params.accountCreation===true&&(!finalAuthGate.required||finalAuthGate.reason==='password')
+    if(!finalSignupPasswordField&&(finalAuthGate.required||pageLooksLikeLogin(page))){
       const handoffReservation=(finalAuthGate.reason&&finalAuthGate.reason!=='password'||params.reservePasswordHandoff===true)&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
       return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),
         summary:finalAuthGate.message||'This site needs a secure sign-in before Gogo can continue.',

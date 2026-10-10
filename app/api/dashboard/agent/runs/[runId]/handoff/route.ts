@@ -20,12 +20,23 @@ export async function GET(_request:Request,{params}:{params:Promise<{runId:strin
 
   const handoff:any=(data.metadata_json as any)?.handoff||{}
   // Prefer the provider's interactive live view (the real browser); the relay is the fallback.
+  // With the relay alive, open the relay page with the live view inside it: taps go to the real
+  // browser and our Type box types into the tapped field (phone keyboards are not supported by the
+  // provider's live view). Without the relay, open the live view directly.
+  let liveView:URL|null=null
   if(handoff?.mode!=='device'&&typeof handoff?.liveViewUrl==='string'){
     try{
       const live=new URL(handoff.liveViewUrl)
-      if(live.protocol==='https:'&&(live.hostname==='browserbase.com'||live.hostname.endsWith('.browserbase.com')))return NextResponse.redirect(live)
+      if(live.protocol==='https:'&&(live.hostname==='browserbase.com'||live.hostname.endsWith('.browserbase.com')))liveView=live
     }catch{}
   }
+  if(liveView&&typeof handoff?.takeoverUrl==='string'&&await browserHandoffIsLive(handoff.takeoverUrl)){
+    try{
+      const relay=new URL(handoff.takeoverUrl)
+      if(['https:','http:'].includes(relay.protocol)){relay.searchParams.set('live',liveView.toString());return NextResponse.redirect(relay)}
+    }catch{}
+  }
+  if(liveView)return NextResponse.redirect(liveView)
   const target=handoff?.mode==='device'?handoff?.providerUrl:handoff?.takeoverUrl
   if(!target)return NextResponse.json({error:'handoff_unavailable'},{status:404})
   let url:URL
