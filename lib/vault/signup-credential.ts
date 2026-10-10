@@ -13,11 +13,12 @@ import { generateCredentialSecret } from './generated-credential'
 import {
   createPendingSignupCredential,
   discardPendingSignupCredential,
+  findCommittedSignupForRun,
   findPendingSignupForRun,
   markPendingSignupCommitted,
   readPendingSignupForCommit,
 } from './pending-credentials'
-import { ownerTelegramId, saveVaultCredential } from './credential-store'
+import { findVaultCredentialIdByLabel, ownerTelegramId, resolveVaultCredentialForDomain, saveVaultCredential } from './credential-store'
 import { normalizeVaultDomain } from './domain-policy'
 import { findVaultProviderForDomain } from './providers'
 
@@ -36,6 +37,14 @@ export type BegunSignup = {
   domain: string
   username: string
   secret: string
+  /** Already saved to the Vault (handed back earlier in this run); nothing left to commit. */
+  committed?: boolean
+}
+
+/** The Vault label for a generated sign-up password, e.g. "Hugging Face – you@example.com". */
+export function signupVaultLabel(domain: string, username: string): string {
+  const provider = findVaultProviderForDomain(domain)
+  return `${provider?.label || domain} – ${String(username || '').trim().toLowerCase()}`.slice(0, 120)
 }
 
 export async function beginSignupCredential(params: {
@@ -64,15 +73,28 @@ export async function resumeSignupCredential(params: { ownerId: string; runId: s
   if (!params.runId) return null
   const telegramId = params.telegramId || await ownerTelegramId(params.ownerId)
   const pendingId = await findPendingSignupForRun({ telegramId, runId: params.runId })
-  if (!pendingId) return null
+  if (!pendingId) {
+    // Handed back earlier: the password is already in the Vault. Reuse it so the form, the Vault
+    // and anything the person typed all hold the same value.
+    const committed = await findCommittedSignupForRun({ telegramId, runId: params.runId })
+    if (!committed) return null
+    const saved = await resolveVaultCredentialForDomain({ telegramId, credentialId: committed.credentialId, domain: committed.domain }).catch(() => null)
+    if (!saved?.secret || !saved.username) return null
+    return { pendingId: committed.pendingId, telegramId, domain: committed.domain, username: saved.username, secret: saved.secret, committed: true }
+  }
   const stored = await readPendingSignupForCommit({ telegramId, pendingId })
   return { pendingId, telegramId, domain: stored.domain, username: stored.username, secret: stored.secret }
 }
 
-export type SignupOutcome = 'created' | 'rejected' | 'unknown'
+// created:  the site confirmed the account; save the password.
+// handback: Gogo could not finish (a CAPTCHA, an unclear result). Save the password anyway
+//           so the person can finish the sign-up or sign in with it themselves.
+// rejected: the site clearly refused (for example the account already exists); discard it.
+export type SignupOutcome = 'created' | 'handback' | 'rejected' | 'unknown'
 export type SignupVaultResult = 'saved' | 'discarded' | 'pending'
 
-export async function resolveSignupCredential(begun: Pick<BegunSignup, 'pendingId' | 'telegramId'>, outcome: SignupOutcome): Promise<SignupVaultResult> {
+export async function resolveSignupCredential(begun: Pick<BegunSignup, 'pendingId' | 'telegramId' | 'committed'>, outcome: SignupOutcome): Promise<SignupVaultResult> {
+  if (begun.committed) return 'saved'
   if (outcome === 'unknown') return 'pending'
   if (outcome === 'rejected') {
     await discardPendingSignupCredential({ telegramId: begun.telegramId, pendingId: begun.pendingId }).catch((error) => {
@@ -83,14 +105,20 @@ export async function resolveSignupCredential(begun: Pick<BegunSignup, 'pendingI
   try {
     const stored = await readPendingSignupForCommit({ telegramId: begun.telegramId, pendingId: begun.pendingId })
     const provider = findVaultProviderForDomain(stored.domain)
+    const providerKey = provider?.key || stored.domain
+    const accountLabel = signupVaultLabel(stored.domain, stored.username)
+    // A second attempt for the same email replaces that entry: the newest password is the one the
+    // site's form holds now.
+    const existingId = await findVaultCredentialIdByLabel(begun.telegramId, providerKey, accountLabel)
     const credential = await saveVaultCredential({
       telegramId: begun.telegramId,
-      provider: provider?.key || stored.domain,
-      accountLabel: provider?.label || stored.domain,
+      credentialId: existingId,
+      provider: providerKey,
+      accountLabel,
       username: stored.username,
       secret: stored.secret,
       allowedDomains: provider?.domains?.length ? provider.domains : [stored.domain],
-      metadata: { source: 'secure_browser_signup' },
+      metadata: { source: 'secure_browser_signup', outcome, ...(provider?.loginUrl ? { login_url: provider.loginUrl } : {}) },
     })
     await markPendingSignupCommitted({ telegramId: begun.telegramId, pendingId: begun.pendingId, credentialId: credential.id })
     return 'saved'

@@ -11,6 +11,7 @@ import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
 import { VAULT_PROVIDERS } from '@/lib/vault/providers'
+import { buildSignupHandback, type SignupHandbackReason } from './signup-handback'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { hasLeadingReportMutation } from '@/lib/services/reporting-directive'
 
@@ -333,6 +334,30 @@ async function approval(params:{actor:AgentActor;runId:string;stepId:string;comm
   return String(data.id)
 }
 
+// Gogo could not finish an account creation: save its generated password to the Vault (so the
+// person can finish or sign in themselves) and report what to use. Never throws.
+async function handBackSignupPassword(ownerId:string,runId:string){
+  try{
+    const {resumeSignupCredential,resolveSignupCredential,signupVaultLabel}=await import('@/lib/vault/signup-credential')
+    const begun=await resumeSignupCredential({ownerId,runId})
+    if(!begun)return {vault:null,label:null}
+    const vault=await resolveSignupCredential(begun,'handback')
+    console.log('SIGNUP_HANDBACK_VAULT:',JSON.stringify({runId,vault}))
+    return {vault,label:signupVaultLabel(begun.domain,begun.username)}
+  }catch(error:any){
+    console.error('SIGNUP_HANDBACK_VAULT_FAILED:',String(error?.message||error).slice(0,120))
+    return {vault:null,label:null}
+  }
+}
+
+function appBaseUrl(){return String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')}
+
+async function signupHandbackText(params:{ownerId:string;runId:string;command:BrowserCommand;reason:SignupHandbackReason;submitted:boolean;takeoverUrl?:string|null}){
+  const saved=await handBackSignupPassword(params.ownerId,params.runId)
+  return buildSignupHandback({signupUrl:params.command.url,objective:params.command.objective,reason:params.reason,submitted:params.submitted,
+    vault:saved.vault,vaultLabel:saved.label,vaultUrl:`${appBaseUrl()}/dashboard/you/vault`,takeoverUrl:params.takeoverUrl||null})
+}
+
 async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:string;command:BrowserCommand;mode:BrowserMode;approved?:boolean}){
   const tg=params.actor.legacyTelegramId
   const sentinel=evaluateAgentSentinel({
@@ -386,6 +411,12 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       let continuationUrl=params.command.url
       try{const observed=new URL(result.url);if(['https:','http:'].includes(observed.protocol)&&!observed.username&&!observed.password&&!/redacted|withheld/i.test(result.url))continuationUrl=observed.href}catch{}
       await activity(tg,params.runId,blockReason,blockReason==='delivery_location_required'?'Gogo needs a delivery location before looking up availability.':blockReason==='human_auth_required'?'Gogo paused at a human authentication boundary.':'Gogo paused because the provider limited automated access.',{host:new URL(continuationUrl).hostname,auth_reason:result.authReason||null})
+      if(accountCreation&&blockReason==='provider_access_limited'){
+        const submitted=result.actions.some(a=>a.kind==='submit'&&a.status==='done')
+        const text=await signupHandbackText({ownerId:params.actor.userId,runId:params.runId,command:params.command,reason:'blocked',submitted})
+        await supabaseAdmin.from('agent_runs').update({status:'failed',summary:safe(text,1600),updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
+        return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text,handledBy:'secure-browser' as const}
+      }
       if(blockReason==='provider_access_limited'&&runMetadata.browser_safe_to_retry===false){
         const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
         return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}
@@ -401,6 +432,11 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
           }
           const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
           const resumeUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+          if(accountCreation&&result.authReason==='captcha'){
+            const submitted=result.actions.some(a=>a.kind==='submit'&&a.status==='done')
+            const text=await signupHandbackText({ownerId:params.actor.userId,runId:params.runId,command:params.command,reason:'captcha',submitted,takeoverUrl:resumeUrl})
+            return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text,blockedReason:blockReason,handledBy:'secure-browser' as const}
+          }
           return {
             runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
             text:`${result.summary}\n\nOpen this link, tap Take control, finish that step, then tap Resume this task:\n${resumeUrl}\n\nNever send passwords or codes in chat.`,
@@ -449,6 +485,18 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   }catch(err:any){
     if(pendingHandoffReservation)await (await import('./provider-browser-handoff')).cancelBrowserHandoffReservation(browserOwner,pendingHandoffReservation).catch(()=>{})
     if(err?.browserExecutionStarted===true)runMetadata.browser_safe_to_retry=false
+    if(accountCreation&&params.mode==='execute'){
+      // Hand the sign-up back instead of a vague "outcome could not be verified".
+      const message=String(err?.message||'secure_browser_failed');const at=new Date().toISOString()
+      const submitted=err?.browserSubmitted===true
+      const reason:SignupHandbackReason=/captcha|human_verification/i.test(message)?'captcha':message==='browser_objective_unverified'?'unverified':'error'
+      const text=await signupHandbackText({ownerId:params.actor.userId,runId:params.runId,command:params.command,reason,submitted})
+      await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),completed_at:at}).eq('id',params.stepId)).catch(()=>{})
+      await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:safe(text,1600),error:safe(message,500),
+        metadata_json:{...runMetadata,signup_handback:{reason,submitted}},completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
+      await activity(tg,params.runId,'run_failed','Gogo handed the sign-up back to you.',{error:safe(message,250),submitted})
+      return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text,handledBy:'secure-browser' as const}
+    }
     if(runMetadata.browser_safe_to_retry===false){
       const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
       return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}

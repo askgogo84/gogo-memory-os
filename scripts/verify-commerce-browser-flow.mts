@@ -32,7 +32,7 @@ const command=load('lib/agent/browser-command.ts',{
   'node:crypto':{},'@/lib/supabase-admin':{supabaseAdmin:db},'./typed-object-context':{rememberTypedObjects:async()=>{}},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},'./policy':{evaluateAgentExecutionPolicy:()=>({allowed:permissionAllowed,reason:'disabled'})},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},'./secure-computer':{runSecureBrowser:async(p:any)=>{assert.equal(p.mode,'read');assert.equal(p.keepAlive,true);assert.equal(p.userId,'user-42');assert.ok(p.sessionTaskId);browserParams.push(p);assert.match(p.objective,/Do not add, remove or change cart/);browserCalls++;return structuredClone(browserResult)}},
-  '@/lib/vault/connect-link':{},'@/lib/vault/providers':{},'./approval-binding':{},'@/lib/services/reporting-directive':{},'@/lib/commerce/task':tasks,
+  '@/lib/vault/connect-link':{},'./signup-handback':{buildSignupHandback:()=>'handback'},'@/lib/vault/providers':{},'./approval-binding':{},'@/lib/services/reporting-directive':{},'@/lib/commerce/task':tasks,
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>({takeoverUrl:'https://private.example/?token=secret',releaseUrl:'https://private.example/release?token=secret'}),cancelBrowserHandoffReservation:async()=>{}},
   './browser-handoff':{releaseBrowserHandoff:async()=>{releaseCalls++}},
   './browser-handoff-health':{browserHandoffIsLive:async()=>false},
