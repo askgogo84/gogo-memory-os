@@ -159,4 +159,12 @@ assert.match(handoffServer,/action_failed/,'a failed takeover action returns a r
   assert.match(handoffServer,/id="t" placeholder="Type into the focused field"/,'the Type box stays for phone keyboards')
 }
 
+// 14. 10 Oct run 2c73711f: the sign-up's hCaptcha script was aborted ("Unknown h-captcha error"), so
+// the person could not solve it. It loads on Hugging Face pages only; Gogo never solves it.
+{
+  const hf=browserPageAllowlist('https://huggingface.co/join')
+  for(const host of ['hcaptcha.com','*.hcaptcha.com','api.pwnedpasswords.com'])assert.ok(hf[host],`${host} loads on Hugging Face pages`)
+  assert.equal(browserPageAllowlist('https://example.com/join')['*.hcaptcha.com'],undefined,'other sites do not get hCaptcha hosts')
+}
+
 console.log('Browser approval execution: approval routing, handoff, single claim, failure containment, human-check visibility checks passed (structural)')

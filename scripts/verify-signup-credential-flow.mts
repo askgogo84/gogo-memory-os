@@ -83,6 +83,19 @@ assert.match(src, /const signupPasswordField=params\.accountCreation===true&&\(!
 assert.match(src, /if\(!signupPasswordField&&\(authGate\.required\|\|pageLooksLikeLogin\(page\)\)\)\{/, 'the in-run gate skips only the sign-up password case')
 assert.match(src, /if\(!finalSignupPasswordField&&\(finalAuthGate\.required\|\|pageLooksLikeLogin\(page\)\)\)\{/, 'the final gate skips only the sign-up password case')
 
+// Resume after the person completes a human check: the same run reuses its pending password, and a
+// page that already shows the account (or asks to confirm the email) commits it to the Vault.
+assert.match(flow, /const existing = await resumeSignupCredential\(/, 'a resumed run reuses its pending password')
+assert.match(src, /resumedSignupCreated=params\.mode==='execute'&&params\.accountCreation===true&&params\.resumePage===true/, 'only a resumed account creation can use the page as evidence')
+assert.match(src, /!actionLog\.some\(a=>a\.kind==='submit'&&a\.status==='done'\)&&RESUMED_SIGNUP_CREATED\.test/, 'the page counts only when nothing was submitted in this resume')
+{
+  const m = src.match(/const RESUMED_SIGNUP_CREATED=(\/.+\/i)\n/)
+  assert.ok(m, 'the resumed-success pattern exists')
+  const re = new Function(`return ${m![1]}`)() as RegExp
+  for (const t of ['Your account has been created', 'Please confirm your email address', 'Check your email to activate', "We've sent you a confirmation email"]) assert.ok(re.test(t), t)
+  for (const t of ['Complete your profile', 'Create Account', 'Unknown h-captcha error.', 'Join Hugging Face']) assert.ok(!re.test(t), t)
+}
+
 // Username and name are collected in chat before approval (Instinct-style), never invented.
 const { parseAccountProfile } = await import('../lib/agent/external-account-intent.ts')
 assert.deepEqual(parseAccountProfile('username goverdhan-md, name Goverdhan M D'), { username: 'goverdhan-md', fullName: 'Goverdhan M D' })
