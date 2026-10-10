@@ -140,7 +140,7 @@ const externalAccount = load('lib/agent/external-account.ts', {
     clearFollowupState: async () => {accountWrites.push('clear_followup')},
     saveFollowupState: async () => {accountWrites.push('save_followup'); throw new Error('a content request must not save an account follow-up')},
   },
-  '@/lib/vault/providers': vaultProviders, './external-account-intent': accountIntent,
+  '@/lib/vault/providers': vaultProviders, './external-account-intent': accountIntent, './account-intent-model': {readAccountRequestWithModel: async () => null},
   './browser-command': {runBrowserCommand: async () => {throw new Error('a content request must not start an account browser run')}},
 })
 const agentRoute = load('app/api/agent/run/route.ts', {...common, '@/lib/agent/external-account': externalAccount, '@/lib/agent/session': {

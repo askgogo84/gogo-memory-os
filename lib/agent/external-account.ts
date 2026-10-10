@@ -4,11 +4,12 @@ import { VAULT_PROVIDERS, findVaultProviderForDomain, findVaultProviderInText, t
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { runBrowserCommand, type BrowserCommand } from './browser-command'
-import { mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, type ExternalAccountRequest } from './external-account-intent'
+import { readAccountRequestWithModel } from './account-intent-model'
+import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, type ExternalAccountRequest } from './external-account-intent'
 
 // Intent detection is pure and shared with the classifier; re-exported so existing
 // importers (WhatsApp route, regression scripts) keep a single entry point.
-export { mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, type ExternalAccountRequest }
+export { mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, mayBeAccountRequest, type ExternalAccountRequest }
 
 const FOLLOWUP_KIND='external_account_create'
 const FOLLOWUP_MAX_MINUTES=30
@@ -344,7 +345,8 @@ export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface
     }
   }
 
-  const request=parseExternalAccountRequest(params.text)
+  // Rules first (instant); otherwise the model reads phrasings the rules do not know.
+  const request=parseExternalAccountRequest(params.text)||(mayBeAccountRequest(params.text)?await readAccountRequestWithModel(params.text):null)
   if(!request){
     // "Create an account for me" with no site named is still an account objective. Claim
     // it and ask for the site, so a generic planner can never answer it or mark prose as
