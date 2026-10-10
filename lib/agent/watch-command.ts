@@ -571,6 +571,12 @@ export function parseWebWatchCommand(text: string) {
     /^(?:please\s+)?keep\s+(?:searching|looking)\s+(?:the\s+web\s+)?for\s+(.+)$/i,
     /^(?:please\s+)?(?:watch|monitor|track)\s+(?:the\s+)?(?:web|internet|online)\s+(?:for\s+)?(.+)$/i,
     /^(?:please\s+)?watch\s+(.+?)\s+(?:online|on\s+the\s+web)(?:\s+.*)?$/i,
+    // Muse parity case 01 (10 Oct live run): "Watch the news on humanoid robots and Indian AI
+    // startups. Tell me when something big happens" was answered once as a web search, no watch.
+    /^(?:please\s+)?(?:watch|monitor|track|follow)\s+(?:the\s+)?(?:latest\s+)?news\s+(?:on|about|for|around)\s+(.+)$/i,
+    /^(?:please\s+)?(?:watch|monitor|track|follow)\s+(.+?)\s+news\b(.*)$/i,
+    /^(?:please\s+)?(?:set\s+up\s+|create\s+)?(?:a\s+)?news\s+alerts?\s+(?:on|about|for)\s+(.+)$/i,
+    /^(?:please\s+)?keep\s+me\s+(?:updated|posted)\s+(?:on|about)\s+(?:the\s+)?(?:news\s+(?:on|about)\s+)?(.+)$/i,
   ]
   let query = ''
   for (const re of patterns) {
@@ -579,7 +585,9 @@ export function parseWebWatchCommand(text: string) {
   }
   if (!query) return null
 
+  const news = /\bnews\b|\bkeep\s+me\s+(?:updated|posted)\b/i.test(raw)
   query = query
+    .replace(/[.!?]\s+[\s\S]*$/, '')
     .replace(/\s+(?:and\s+)?(?:tell|notify|alert|let)\s+me\s+(?:know\s+)?(?:when|if)\b.*$/i, '')
     .replace(/\s+and\s+message\s+me\b.*$/i, '')
     .trim()
@@ -590,12 +598,15 @@ export function parseWebWatchCommand(text: string) {
     ? keywordMatch[1].split(/,|\bor\b/i).map(x => x.trim()).filter(x => x.length >= 2).slice(0, 8)
     : []
 
+  query = query.replace(/[.!?,;:\s]+$/, '').trim()
+  if (query.length < 3) return null
   return normalizeWebSearchWatcher({
-    title: `Watch: ${query.slice(0, 120)}`,
-    query,
+    title: `${news ? 'News' : 'Watch'}: ${query.slice(0, 120)}`,
+    query: news && !/\bnews\b/i.test(query) ? `${query} news` : query,
     triggerKeywords,
     delivery: 'both',
-    cadenceMinutes: 15,
+    // News changes over hours, not minutes; a 15-minute search cadence would only add cost.
+    cadenceMinutes: news ? 180 : 15,
     originalRequest:raw,
     notifyOnFirstMatch:true,
   })

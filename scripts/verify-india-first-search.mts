@@ -41,3 +41,13 @@ console.log('India-first search: place resolution, filters and restaurant/salon 
   assert.equal(parseRestaurantReservationIntent('Book a table for 4 this Friday')?.restaurant, '', 'no name: Gogo asks which restaurant')
   console.log('Restaurant names parsed')
 }
+// Muse case 01: a news watch request sets up a standing watch (every 3 hours), not a one-off search.
+{
+  const { parseWebWatchCommand } = await import('../lib/agent/watch-command.ts')
+  const w: any = parseWebWatchCommand('Watch the news on humanoid robots and Indian AI startups. Tell me when something big happens, with sources.')
+  assert.equal(w?.query, 'humanoid robots and Indian AI startups news')
+  assert.equal(w?.cadenceMinutes, 180)
+  for (const t of ['Track Tata Motors news', 'Keep me updated on the RBI repo rate', 'news alerts on UPI credit lines']) assert.ok(parseWebWatchCommand(t), t)
+  assert.equal((parseWebWatchCommand('watch the web for Kannada film releases') as any)?.cadenceMinutes, 15, 'other web watches keep their cadence')
+  console.log('News watch requests create a standing watch')
+}
