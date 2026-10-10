@@ -1145,6 +1145,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
   // Generated sign-up password for this run, held as a pending Vault record until resolved.
   let signup:BegunSignup|null=null
   let signupVault:SignupVaultResult|undefined
+  let signupHandoffAfterWave=false
   let activeSandbox:{stop:()=>Promise<unknown>}|undefined
   let releaseManaged:(()=>Promise<void>)|undefined
   let managedReleased=false
@@ -1338,7 +1339,16 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // Allowed only for an approved account creation, never on the last allowed page.
       const signupEarlierPage=params.mode==='execute'&&params.accountCreation===true&&plan.operation==='account_creation'
         &&submitCount===0&&wave<MAX_SIGNUP_PAGES-1&&actions[actions.length-1]?.kind==='click'
-      if(params.mode==='execute'&&(!plan.operation||(submitCount!==1&&!signupEarlierPage)))throw new Error('browser_objective_unverified')
+      // The last sign-up page when the final button cannot be pressed by Gogo (live run d27946ab: the
+      // planner filled username, name and terms but left "Create Account" for the CAPTCHA). Fill it,
+      // then hand the final step to the person; resume commits the password once the account exists.
+      const signupFillThenHandoff=params.mode==='execute'&&params.accountCreation===true&&plan.operation==='account_creation'
+        &&submitCount===0&&actions.length>0&&actions.every(a=>['fill','fill_secret','select','check'].includes(a.kind))
+      if(params.mode==='execute'&&(!plan.operation||(submitCount!==1&&!signupEarlierPage&&!signupFillThenHandoff))){
+        console.warn('BROWSER_EXECUTE_PLAN_REJECTED:',JSON.stringify({runId:params.runId||null,wave,operation:plan.operation||null,kinds:actions.map(a=>a.kind)}))
+        throw new Error('browser_objective_unverified')
+      }
+      if(signupFillThenHandoff)signupHandoffAfterWave=true
       approvedOperation=plan.operation
       draftReady=plan.draftReady
       draftActions=actions
@@ -1405,6 +1415,16 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(doneCount===0&&!(params.mode==='read'&&(page.actions||[]).some((a:any)=>a.status==='skipped')))break
       // The final submit ends an execution; nothing is planned after it.
       if(params.mode==='execute'&&actions.some(a=>a.kind==='submit'))break
+      // Gogo filled the last sign-up page; the person completes the human check and presses the
+      // final button. Nothing was submitted by Gogo, so the pending password stays pending.
+      if(signupHandoffAfterWave&&(page.actions||[]).every((a:any)=>a.status==='done')){
+        return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,
+          handoffReservation:params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined,
+          title:safeText(page.title,300),
+          summary:'Gogo filled in the whole sign-up form. The last step needs you: complete the check on the page (for example a CAPTCHA) and press the final button, such as Create Account.',
+          pageText:'Gogo filled the sign-up form and paused before the final step.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
+          blockReason:'human_auth_required',authReason:'captcha'}
+      }
       // A failed step on an earlier sign-up page stops before the next page is planned.
       if(params.mode==='execute'&&(page.actions||[]).some((a:any)=>a.status!=='done'))break
     }
