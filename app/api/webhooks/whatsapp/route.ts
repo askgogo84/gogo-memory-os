@@ -1,3 +1,4 @@
+import { subscriptionReviewText } from '@/lib/agent/general-planner'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
 import { namesRetailerPriceRead } from '@/lib/commerce/comparison-model'
@@ -1329,6 +1330,7 @@ _"${originalText}"_
     // be downgraded to Gmail read and a Send-status query cannot hallucinate scopes.
     const isDeterministicGmailCommand =
       isGmailVerificationQuery(text) ||
+      Boolean(subscriptionReviewText(text)) ||
       /^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\b/i.test(text.trim()) ||
       /^(?:send\s+it|send\s+this\s+reply)$/i.test(text.trim()) ||
       /^(?:is\s+gmail\s+send\b|can\s+you\s+actually\s+send\s+gmail\b|check\s+my\s+gmail\s+send\s+connection)/i.test(text.trim())

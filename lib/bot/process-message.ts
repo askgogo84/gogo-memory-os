@@ -365,6 +365,13 @@ async function replyForCrossListSetDone(telegramId: number, itemText: string, do
   return `I could not find "${r.itemText}" on any of your lists.`
 }
 
+// Muse case 16: "Check Tata Motors every 6 hours and tell me if it moved more than 2%".
+export function isStockMoveAlertRequest(text: string) {
+  const t = String(text || '').toLowerCase()
+  return /\b(?:moved?|moves|rises?|falls?|drops?|jumps?|changes?|up|down)\b[^.?!]{0,30}\b\d+(?:\.\d+)?\s*%/.test(t)
+    && /\b(?:check|track|watch|monitor|alert|tell|notify)\b/.test(t)
+}
+
 export function isUsageCommand(text: string) {
   const lower = (text || '').toLowerCase().trim()
   if (lower === 'usage' || lower === 'my usage' || lower === 'usage status' || lower === 'plan usage' || lower === 'limits' || lower === 'my limits') return true
@@ -660,6 +667,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       }
     }
     // No fresh pending, or the answer didn't resolve to a time → fall through to normal routing.
+  }
+
+  if (isStockMoveAlertRequest(incomingText)) {
+    const reply = "I can't track share-price moves yet, so I haven't set anything up. I can watch the news about it instead: reply *track <company> news* and I'll message you when something significant is reported."
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (isUsageCommand(incomingText)) {
@@ -1070,6 +1083,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     let reply=''
     try{
       reply=await buildGmailReadReply(resolvedUser.telegramId,mode,5)
+      if(/\bdraft\b/i.test(incomingText))reply+=`\n\nI can draft one reply at a time for you to approve. Say *draft a reply to <sender>*. Nothing was drafted or sent yet.`
     }catch(err:any){
       console.error('GMAIL_READ_HANDLER_FAILED:',err?.message||err)
       reply=`I couldn't read Gmail right now. I did not invent any inbox results. Please try again shortly.`
