@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { mentionsExternalAccountCreation, parseExternalAccountRequest } from '@/lib/agent/external-account-intent'
 import { indexMemory, unindexMemory } from '@/lib/services/memory-index'
 import { embedText } from '@/lib/services/embeddings'
 import { isSecretShapedMemory, redactSecretShapedText } from '@/lib/bot/memory-redaction'
@@ -118,6 +119,8 @@ function indexContent(row:any){
 }
 export function isLinkVaultSaveRequest(text:string){
   const url=extractLinkUrl(text);if(!url)return false
+  // "Login to <link> and create the account" is an account request, not a link to save.
+  if(parseExternalAccountRequest(text)||mentionsExternalAccountCreation(text))return false
   const stripped=String(text||'').replace(url,' ').trim()
   if(/\b(save|remember|keep|store|bookmark|file)\b/i.test(stripped))return true
   if(/\b(book|reserve|buy|purchase|checkout|apply|submit|monitor|watch|compare|translate|summari[sz]e|check availability)\b/i.test(stripped))return false

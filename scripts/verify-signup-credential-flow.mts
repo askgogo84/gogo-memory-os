@@ -55,13 +55,27 @@ assert.match(command, /runSecureBrowser\(\{[^)]*runId:params\.runId/, 'the run i
 // Multi-page sign-up (email and password, then Next, then username and terms): an approved
 // account creation may fill up to MAX_SIGNUP_PAGES pages; earlier pages end with a Next click and
 // no submit; the final page carries the single submit; a failed step stops before the next page.
-assert.match(src, /const MAX_SIGNUP_PAGES=3/, 'a sign-up may span at most three pages')
+assert.match(src, /const MAX_SIGNUP_PAGES=4/, 'a sign-up may span at most four pages (homepage step plus three)')
 assert.match(src, /params\.mode==='execute'&&params\.accountCreation===true\?MAX_SIGNUP_PAGES:1/, 'only an approved account creation gets more than one page')
 assert.match(src, /submitCount===0&&wave<MAX_SIGNUP_PAGES-1&&actions\[actions\.length-1\]\?\.kind==='click'/, 'an earlier page ends with a Next click and no submit, never on the last allowed page')
 assert.match(src, /if\(params\.mode==='execute'&&actions\.some\(a=>a\.kind==='submit'\)\)break/, 'nothing is planned after the final submit')
 assert.match(src, /if\(params\.mode==='execute'&&\(page\.actions\|\|\[\]\)\.some\(\(a:any\)=>a\.status!=='done'\)\)break/, 'a failed step stops before the next page')
 assert.match(src, /params\.accountCreation!==true && \(authGate\.reason==='password'/, 'a saved login is never tried while creating an account')
 assert.match(command, /runId:params\.runId,accountCreation,/, 'the account-creation flag reaches the browser')
+
+// 10 Oct live miss: "Login to https://manus.im/ and create the account.. <email>" was saved to the
+// Link Vault instead of starting an account sign-up.
+{
+  const { parseExternalAccountRequest } = await import('../lib/agent/external-account-intent.ts')
+  const manus = parseExternalAccountRequest('Login to https://manus.im/ and create the account.. goverdhan.md@gmail.com')
+  assert.equal(manus?.service, 'manus.im', 'create the account on a linked site is an account request')
+  assert.equal(manus?.email, 'goverdhan.md@gmail.com')
+  assert.equal(manus?.url, 'https://manus.im/')
+  const vault = readFileSync('lib/services/link-vault.ts', 'utf8')
+  assert.match(vault, /if\(parseExternalAccountRequest\(text\)\|\|mentionsExternalAccountCreation\(text\)\)return false/, 'an account request is never saved as a link')
+  const acct = readFileSync('lib/agent/external-account.ts', 'utf8')
+  assert.match(acct, /looksLikeSignupUrl\(request\.url\)\|\|isHomepageUrl\(request\.url\)/, "the user's own homepage link is accepted for an unregistered site")
+}
 
 // Username and name are collected in chat before approval (Instinct-style), never invented.
 const { parseAccountProfile } = await import('../lib/agent/external-account-intent.ts')
