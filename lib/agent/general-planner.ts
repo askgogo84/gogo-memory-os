@@ -179,7 +179,23 @@ function domainCount(text: string) {
 }
 
 /** Only invoke the expensive planner for genuinely cross-feature/outcome requests. */
+// Muse case 37 (11 Oct): "Review my subscriptions, list amounts and renewal dates, and ask me which
+// ones to cancel" went to chat ("I don't have access"). A request to review/list/find the person's
+// subscriptions is the read-only Gmail audit (default 90 days). Asking which to cancel is a
+// question back to the person, not a cancellation.
+export function subscriptionReviewText(text:string){
+  const t=String(text||'')
+  // The original audit phrasing keeps its own scope checks; never rewrite a compound request.
+  if(/^\s*(?:(?:can|could) you\s+)?(?:please\s+)?audit\b/i.test(t))return null
+  if(/\b(?:and|then|also|plus)\s+(?:please\s+)?(?:show|check|find|read|compare|audit|research|search|add|create|send|book)\b/i.test(t))return null
+  if(!/\b(?:review|audit|find|list|check|show|go\s+through|track\s+down)\b[^.?!]{0,30}\b(?:my\s+)?(?:subscriptions?|recurring\s+(?:payments?|charges?))\b/i.test(t))return null
+  if(/\b(?:cancel|unsubscribe)\s+(?:my\s+|the\s+)?(?!.*\bwhich\b)[a-z]/i.test(t.replace(/\bask\s+me\s+which\s+(?:ones?\s+)?to\s+cancel\b/gi,'')))return null
+  const days=Number(t.match(/\b(?:last|past)\s+(\d+)\s+days?\b/i)?.[1]||90)
+  return `Audit my Gmail subscription receipts and renewal notices from the last ${Math.min(Math.max(days,1),366)} days`
+}
+
 export function readOnlySubscriptionAuditPlan(text:string):GeneralPlan|null {
+  text=subscriptionReviewText(text)||text
   if(!/^\s*(?:(?:can|could) you\s+)?(?:please\s+)?audit\b/i.test(text)||!/\b(?:last|past)\s+\d+\s+days?\b/i.test(text))return null
   // Stop a negative clause at a contrast: "do not send, but create" contains
   // an independent affirmative action which must retain the approval pipeline.

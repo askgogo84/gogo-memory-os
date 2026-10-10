@@ -11,6 +11,10 @@ const FAKE_ACTION_CLAIMS: RegExp[] = [
   /\bgogo\s+is\s+(?:now\s+)?(?:running|working\s+on|creating|booking|submitting|signing\s+you\s+up)\b/i,
   /\b(?:i(?:'ve| have)|gogo\s+has|i)\s+(?:successfully\s+)?(?:created\s+(?:the|your)\s+[\w .-]{0,40}account|signed\s+you\s+up|submitted\s+(?:the|your)\s+(?:form|application|request)|placed\s+(?:the|your)\s+order|booked\s+(?:the|your|a)\b|purchased\b|cancell?ed\s+(?:the|your)\s+(?:subscription|booking|order))/i,
   /\bwill\s+message\s+you\s+the\s+result\b/i,
+  // Muse case 16 (11 Oct): chat replied "I'll check Tata Motors every 6 hours starting 7:05 am"
+  // and no watch existed. Chat cannot schedule anything, so it may not promise ongoing work.
+  /\b(?:i(?:'ll| will)|gogo\s+will)\s+(?:keep\s+(?:checking|an\s+eye|watching|tracking)|check|monitor|watch|track|ping|alert|notify|remind)\b[^.?!\n]{0,80}\b(?:every|each|daily|hourly|weekly|when(?:ever)?|if|as\s+soon\s+as|starting)\b/i,
+  /\bi(?:'ve| have)\s+(?:set\s+(?:up\s+)?(?:a|an|the)\s+(?:watch|alert|monitor|tracker|reminder)|started\s+(?:watching|monitoring|tracking))\b/i,
 ]
 
 export const NO_ACTION_REPLY =
