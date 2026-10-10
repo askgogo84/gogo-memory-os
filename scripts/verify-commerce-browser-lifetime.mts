@@ -56,7 +56,7 @@ const page:any={
   locator:()=>({first:()=>({fill:async(value:string)=>{field=value}})}),
   evaluate:async(fn:any)=>String(fn).includes('location.protocol')?false:String(fn).includes('hasContent')?{hasContent:true,challenge:false}:{url:currentUrl,title:'Fixture',text:field,forms:[],links:[]},
 }
-const context={pages:()=>[page],close:async()=>{contextClosed++}}
+const context={pages:()=>[page],on:()=>{},close:async()=>{contextClosed++}}
 const chromium={
   connectOverCDP:async(url:string)=>{assert.equal(url,managedEndpoint||'http://127.0.0.1:9222');return {contexts:()=>[context],close:async()=>{disconnects++}}},
   launchPersistentContext:async()=>{launches++;return context},
@@ -87,7 +87,12 @@ assert.deepEqual(JSON.parse(responseBody),{ready:true},'readiness must not retur
 await handler({url:'/page-health',method:'GET',headers:{}},response)
 assert.equal(responseCode,403,'page load diagnostics also require the current token')
 await handler({url:'/page-health',method:'GET',headers:{'x-gogo-handoff-token':'token'}},response)
-assert.deepEqual(JSON.parse(responseBody),{state:'ready',httpStatus:null},'page diagnostics contain no provider data or secrets')
+{
+  const health=JSON.parse(responseBody)
+  assert.deepEqual({state:health.state,httpStatus:health.httpStatus},{state:'ready',httpStatus:null},'page diagnostics contain no provider data or secrets')
+  assert.deepEqual(Object.keys(health).sort(),['failedHosts','httpStatus','state'],'page diagnostics carry only state, status and failed hostnames')
+  assert.ok(Array.isArray(health.failedHosts)&&health.failedHosts.every((h:string)=>/^[a-z0-9.-]+$/i.test(h)),'failed hosts are bare hostnames, never URLs')
+}
 await handler({url:'/?token=token',method:'GET',headers:{}},response)
 assert.match(responseBody,/provider page is blank/,'takeover must explain blank pages instead of falsely asking for sign-in')
 await handler({url:'/agent-action?token=token',method:'POST',headers:{}},response)

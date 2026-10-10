@@ -38,7 +38,10 @@ const GOOGLE_FLIGHTS_PAGE_DEPENDENCIES = ['www.gstatic.com','fonts.googleapis.co
 // id prefix each time), so an exact host cannot match. Grant only AWS's WAF token domain,
 // and only for Hugging Face pages, so the person can see and complete the check. Gogo does
 // not solve it or fabricate a token.
-const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.token.awswaf.com']
+// 10 Oct: the takeover frame stayed blank again with only the token domain allowed. A visible AWS
+// WAF CAPTCHA loads from other awswaf.com hosts (CAPTCHA SDK and puzzle). Grant AWS's WAF domain,
+// still only for Hugging Face pages, so the person can see and solve it themselves.
+const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.awswaf.com']
 
 export function browserPageAllowlist(url:string):Record<string,string[]>{
   const target=new URL(url)

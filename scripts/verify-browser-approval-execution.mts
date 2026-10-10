@@ -109,9 +109,13 @@ const {browserPageAllowlist}=await import('../lib/agent/browser-page-network')
 const hfAllow=browserPageAllowlist('https://huggingface.co/join')
 // The WAF token host changes per run (seen as ebabadd3.ap-southeast-1 and 6eb72a66.ap-south-1),
 // so the grant is the AWS WAF token domain, for Hugging Face pages only.
-assert.ok(hfAllow['*.token.awswaf.com'],'the AWS WAF token domain is allowed for Hugging Face pages')
+assert.ok(hfAllow['*.awswaf.com'],'the AWS WAF domain (token, CAPTCHA SDK, puzzle) is allowed for Hugging Face pages')
 assert.ok(hfAllow['huggingface.co'] && hfAllow['*.huggingface.co'],'the Hugging Face page host is still allowed')
-assert.equal(browserPageAllowlist('https://example.com/join')['*.token.awswaf.com'],undefined,'the AWS WAF token domain is not granted to other sites')
+assert.equal(browserPageAllowlist('https://example.com/join')['*.awswaf.com'],undefined,'the AWS WAF domain is not granted to other sites')
+// A blank takeover names the failed hosts (hostnames only) instead of showing a white frame.
+assert.match(handoffServer,/context\.on\('requestfailed'/,'the takeover records failed request hosts')
+assert.match(handoffServer,/failedHosts:Object\.keys\(failedHosts\)\.slice\(0,8\)/,'page health reports at most eight failed hostnames')
+assert.match(handoffServer,/" Blocked: "\+p\.failedHosts\.join/,'the takeover status line shows blocked hosts')
 
 // 11. Typing and taps in the takeover are never silently dropped. The page keeps the typed text unless
 // the server confirms the action, shows a failed or slow send, and the server logs and answers each failure.
