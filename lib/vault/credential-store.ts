@@ -164,7 +164,7 @@ export async function resolveVaultCredentialForDomain(params:{telegramId:string;
   return {credentialId:String(data.id),provider:String(data.provider||''),accountLabel:String(data.account_label||''),username,secret,domain}
 }
 
-async function ownerTelegramId(ownerId:string){
+export async function ownerTelegramId(ownerId:string){
   const raw=String(ownerId||'').trim()
   if(!raw)throw new Error('vault_owner_missing')
   if(/^-?\d+$/.test(raw))return raw

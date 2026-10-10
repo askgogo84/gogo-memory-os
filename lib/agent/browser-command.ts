@@ -367,7 +367,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   let pendingHandoffReservation:string|undefined
   try{
-    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
+    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
     const at=new Date().toISOString()
 
