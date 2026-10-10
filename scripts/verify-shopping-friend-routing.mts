@@ -293,6 +293,7 @@ const webhook=executeModule('app/api/webhooks/whatsapp/route.ts',{
   '@/lib/feature-intents':realFeature,
   '@/lib/services/whatsapp-preview-routing':previewRouting,
   '@/lib/bot/process-message':{processIncomingMessage:exports.processIncomingMessage},
+  '@/lib/bot/unsupported-capabilities':{unsupportedCapability:()=>null},
   '@/lib/bot/compound-shopping-friend':compound,
   '@/lib/agent/whatsapp-bridge':bridge,
   '@/lib/commerce/price-comparison':{tryPriceComparison:async(params:any)=>{
@@ -422,6 +423,7 @@ const web=executeModule('app/api/dashboard/chat/route.ts',{
     return {text:`Browser check queued: ${parsed.subject} on ${parsed.providers.join(', ')}`,handledBy:'price-comparison'}
   }},
   '@/lib/bot/process-message':{processIncomingMessage:exports.processIncomingMessage},
+  '@/lib/bot/unsupported-capabilities':{unsupportedCapability:()=>null},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},
   '@/lib/feature-intents':realFeature,
 })

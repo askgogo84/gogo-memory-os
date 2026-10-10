@@ -381,7 +381,10 @@ export function parseCalendarCreate(text: string) {
   // Route to preparation ONLY when there is no affirmative create verb — an explicit create that
   // merely uses a prep word as its title ("schedule a prep meeting") or contains a negated
   // secondary action still proceeds as a real create.
-  if (!hasAffirmativeCreate && (isPreparation || bookingNegated)) {
+  // Muse case 32 (11 Oct): "...prepare the request for my review" about a delayed flight matched
+  // the preparation branch with no appointment in sight. Preparation help is only about an
+  // appointment or calendar item.
+  if (!hasAffirmativeCreate && ((isPreparation && hasCalendarSignal) || bookingNegated)) {
     return { preparation: true, time: parseTime(text) || null, title: conciseAppointmentTitle(text) }
   }
 

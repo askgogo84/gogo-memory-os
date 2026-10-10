@@ -1,3 +1,4 @@
+import { unsupportedCapability } from './unsupported-capabilities'
 import { guardChatActionClaims } from './action-claim-guard'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {selectContentWorkflow, contentWorkflowInputQuestion} from '@/lib/agent/content-workflows'
@@ -669,6 +670,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     // No fresh pending, or the answer didn't resolve to a time → fall through to normal routing.
   }
 
+  {
+    const unsupported = unsupportedCapability(incomingText)
+    if (unsupported) {
+      await saveConversation(resolvedUser.telegramId, 'assistant', unsupported.reply)
+      return { text: formatOutgoingText(params.channel, unsupported.reply), resolvedUser }
+    }
+  }
   if (isStockMoveAlertRequest(incomingText)) {
     const reply = "I can't track share-price moves yet, so I haven't set anything up. I can watch the news about it instead: reply *track <company> news* and I'll message you when something significant is reported."
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)

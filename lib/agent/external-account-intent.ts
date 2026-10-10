@@ -42,6 +42,8 @@ const TERM='(?=\\s+(?:using|with\\s+(?:my|the|this|email)|and|then|please|so|bec
 /** True when the text explicitly asks for an external account and is not excluded. */
 export function externalAccountIntentExcluded(text:string){
   const raw=String(text||'')
+  // Muse case 38: "register for DND and report spam numbers" is a TRAI request, not a sign-up.
+  if(/\b(?:dnd|do\s+not\s+disturb|trai|1909|spam\s+(?:calls?|numbers?)|chakshu|sanchar\s+saathi)\b/i.test(raw))return true
   return HOW_TO.test(raw)||NEED_TO.test(raw)||FINANCE.test(raw)||DEFERRED.test(raw)
 }
 
@@ -164,6 +166,7 @@ const SIGNAL = /\b(?:accounts?|sign\s*-?\s*(?:up|me\s+up)|signup|register|join|e
 export function mayBeAccountRequest(text:string) {
   const raw = String(text || '').trim()
   if (!raw || raw.length > 600) return false
+  if (externalAccountIntentExcluded(raw)) return false
   return SIGNAL.test(raw) || /https:\/\/\S+/i.test(raw)
 }
 

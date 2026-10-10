@@ -190,7 +190,7 @@ export function detectIntent(text: string): DetectedIntent {
   // Muse case 26 (10 Oct): "From my saved notes, prep a 30-minute plan for Sunday's cricket
   // coaching session" became a reminder only because it named a weekday. A request that starts
   // with another task verb is that task unless it explicitly asks for a reminder.
-  const otherTaskFirst = /^(?:(?:please|can you|could you)\s+)?(?:from\s+my\s+[^,]{1,40},\s*)?(?:prep|prepare|plan|make|create|write|draft|research|find|search|compare|summari[sz]e|build|show|give|tell|explain|analy[sz]e|list|suggest|recommend|book|order|buy|watch|track|monitor|check)\b/i.test(lower)
+  const otherTaskFirst = /^(?:(?:please|can you|could you)\s+)?(?:from\s+my\s+[^,]{1,40},\s*)?(?:prep|prepare|plan|make|create|write|draft|research|find|search|compare|summari[sz]e|build|show|give|tell|explain|analy[sz]e|list|suggest|recommend|book|order|buy|watch|track|monitor|check|which|what|when|where|who|how|every\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+(?:draft|reply|post|write|check|send))\b/i.test(lower)
   const asksReminder = /\bremind|\breminder|\balert me\b|\bping me\b|\bnudge me\b/i.test(lower)
   if (!(otherTaskFirst && !asksReminder) && (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ') || lower.includes('set a reminder') || lower.includes('set reminder') || lower.includes('reminder for') || /\b(on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower) || /\b(tomorrow|tmrw|tmr)\b/i.test(lower) || /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(lower) || /\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(lower))) return { type: 'set_reminder', confidence: 'high' }
 
