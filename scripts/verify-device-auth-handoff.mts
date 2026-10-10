@@ -81,7 +81,7 @@ const command=load('browser-command.ts',{
   './secure-computer':{runSecureBrowser:async()=>{browserExecutions++;if(commandExecutionFailure)throw commandExecutionFailure;return browserCompleted
     ? {status:'completed',url:completedUrl,sourceUrl:completedSource,title:'Account',summary:'Read account',forms:[],actions:[]}
     : {status:'blocked',blockReason:browserBlockReason,authReason:'device_approval',url:blockedUrl,summary:'Approve sign-in',actions:browserActions}}},
-  '@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
+  './signup-handback':{buildSignupHandback:()=>'handback'},'@/lib/vault/connect-link':{buildVaultAddLink:async()=>{vaultCalls++;return null}},
   './provider-browser-handoff':{startProviderBrowserHandoff:async(value:any)=>{handoffUrl=value.url;return handoff},cancelProviderBrowserHandoff:async()=>{directCancelled++}},
   './browser-handoff':{releaseBrowserHandoff:async(_url:string,options:any)=>{assert.equal(options.allowExpired,true);released++;return {ok:false,expired:true}}},
 },'\nexport { executeBrowser }')

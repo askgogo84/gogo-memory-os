@@ -1146,6 +1146,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
   let signup:BegunSignup|null=null
   let signupVault:SignupVaultResult|undefined
   let signupHandoffAfterWave=false
+  // Shared with the catch block: what ran, and the last page seen (for an account-creation handback).
+  let runActionLog:any[]=[]
+  let lastPageMeta:{title:string;path:string}|null=null
   let activeSandbox:{stop:()=>Promise<unknown>}|undefined
   let releaseManaged:(()=>Promise<void>)|undefined
   let managedReleased=false
@@ -1167,6 +1170,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let draftReady=false
     let draftActions:BrowserAction[]=[]
     let actionLog:any[]=[]
+    runActionLog=actionLog
     const completedSearches:CompletedReadSearch[]=[]
     let missingActionEvidence=false
     let vaultAttempted=false
@@ -1379,6 +1383,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       const previousPage=page
       page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]));mergeBlocked(page)
+      try{lastPageMeta={title:safeText(page.title,80),path:new URL(String(page.url||currentUrl)).pathname.slice(0,80)}}catch{}
       if(params.mode==='read'&&googleFlightReadProgress(previousPage)){
         // Keep only fixed public control categories and worker reason/counts.
         // The fresh two-adult failure retained skipped reasons but lost which
@@ -1502,7 +1507,10 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     if(!params.keepAlive){await releaseManagedOnce();await activeSandbox?.stop().catch(()=>{})}
     const safeError=safeText(error?.message||error,1000)
     console.error('SECURE_BROWSER_FAILED:',safeError)
-    throw Object.assign(new Error(safeError||'secure_browser_failed'),{browserExecutionStarted:executionStarted,...(params.mode==='read'?{browserReadDiagnostics:sanitizeBrowserReadDiagnostics(readDiagnostics)}:{})})
+    const browserSubmitted=runActionLog.some(a=>a?.kind==='submit'&&a?.status==='done')
+    // Why an account creation stopped, without values or selectors: kinds, statuses, last page.
+    if(params.accountCreation)try{console.warn('BROWSER_SIGNUP_STOPPED:',JSON.stringify({runId:params.runId||null,error:safeError.slice(0,80),submitted:browserSubmitted,steps:runActionLog.slice(0,24).map(a=>`${a?.kind}:${a?.status}`),page:lastPageMeta}))}catch{}
+    throw Object.assign(new Error(safeError||'secure_browser_failed'),{browserExecutionStarted:executionStarted,browserSubmitted,...(params.mode==='read'?{browserReadDiagnostics:sanitizeBrowserReadDiagnostics(readDiagnostics)}:{})})
   }finally{
     // Guaranteed release on EVERY non-keepAlive exit — including the blocked/auth/
     // delivery early returns that skip the success and catch branches. keepAlive

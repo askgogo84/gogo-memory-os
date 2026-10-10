@@ -4,6 +4,7 @@ import { getSession } from '@/lib/dashboard/session'
 import { listVaultCredentials } from '@/lib/vault/credential-store'
 import { VAULT_PROVIDERS } from '@/lib/vault/providers'
 import { VaultRemoveButton } from '@/components/dashboard/vault-remove-button'
+import { VaultRevealButton } from '@/components/dashboard/vault-reveal-button'
 
 export const dynamic='force-dynamic'
 
@@ -26,7 +27,7 @@ export default async function VaultPage(){
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[.14em] text-gogo-ink-3">Secure infrastructure</p>
           <h1 className="mt-1 font-serif text-[34px] font-semibold tracking-[-.02em] text-gogo-ink">Vault</h1>
-          <p className="mt-2 max-w-2xl text-[13px] leading-5 text-gogo-ink-3">Saved website logins Gogo can use only through the secure browser on explicitly allowed domains. Passwords are never shown again after saving.</p>
+          <p className="mt-2 max-w-2xl text-[13px] leading-5 text-gogo-ink-3">Saved website logins Gogo can use only through the secure browser on explicitly allowed domains. Passwords you type are never shown again. Passwords Gogo created for you while making an account can be shown here, so you can sign in yourself.</p>
         </div>
         <a href="#vault-providers" className="inline-flex h-11 items-center justify-center rounded-[12px] bg-gogo-ink px-4 text-[13px] font-semibold text-white">Add login</a>
       </div>
@@ -60,6 +61,7 @@ export default async function VaultPage(){
                 Allowed: {item.allowedDomains.join(', ')||'—'}<br/>
                 Last used: {fmt(item.lastUsedAt)}
               </div>
+              {item.generated?<VaultRevealButton id={item.id}/>:null}
               <div className="mt-4 flex items-center justify-between gap-2">
                 <Link href={`/dashboard/you/vault/add/${encodeURIComponent(item.provider)}?id=${encodeURIComponent(item.id)}&label=${encodeURIComponent(item.accountLabel)}`} className="rounded-full border border-gogo-ink/12 px-3 py-1.5 text-[11px] font-semibold text-gogo-ink-2">Update</Link>
                 <VaultRemoveButton id={item.id}/>

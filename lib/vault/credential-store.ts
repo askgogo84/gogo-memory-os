@@ -11,6 +11,8 @@ export type VaultCredentialMetadata={
   status:'active'|'needs_reauth'|'revoked'
   lastUsedAt:string|null
   updatedAt:string|null
+  /** Gogo generated this password while creating the account; the owner may view it. */
+  generated?:boolean
 }
 
 function clean(value:unknown,max=200){
@@ -32,7 +34,7 @@ async function audit(params:{telegramId:string;credentialId?:string|null;provide
 
 export async function listVaultCredentials(telegramId:string):Promise<VaultCredentialMetadata[]>{
   const {data,error}=await supabaseAdmin.from('vault_credentials')
-    .select('id,provider,account_label,username_hint,allowed_domains,status,last_used_at,updated_at')
+    .select('id,provider,account_label,username_hint,allowed_domains,status,last_used_at,updated_at,metadata_json')
     .eq('telegram_id',String(telegramId))
     .neq('status','revoked')
     .order('updated_at',{ascending:false})
@@ -41,7 +43,40 @@ export async function listVaultCredentials(telegramId:string):Promise<VaultCrede
     id:String(row.id),provider:String(row.provider||''),accountLabel:String(row.account_label||''),
     usernameHint:String(row.username_hint||''),allowedDomains:Array.isArray(row.allowed_domains)?row.allowed_domains:[],
     status:row.status,lastUsedAt:row.last_used_at||null,updatedAt:row.updated_at||null,
+    generated:row.metadata_json?.source==='secure_browser_signup',
   }))
+}
+
+/** Id of the owner's live credential with exactly this provider and label, if any. */
+export async function findVaultCredentialIdByLabel(telegramId:string,provider:string,accountLabel:string):Promise<string|null>{
+  const {data,error}=await supabaseAdmin.from('vault_credentials')
+    .select('id')
+    .eq('telegram_id',String(telegramId))
+    .eq('provider',clean(provider,80).toLowerCase())
+    .eq('account_label',clean(accountLabel,120))
+    .neq('status','revoked')
+    .maybeSingle()
+  if(error)throw new Error(`vault_label_lookup_failed:${error.message}`)
+  return data?.id?String(data.id):null
+}
+
+// Owner-only, dashboard-only: shows a password Gogo generated during an account sign-up, so the
+// person can finish or sign in themselves. Passwords the person typed are never shown again.
+// Every reveal is audited. Never call this from chat, model or browser-planner code.
+export async function revealGeneratedVaultSecret(telegramId:string,credentialId:string){
+  const tg=String(telegramId)
+  const {data,error}=await supabaseAdmin.from('vault_credentials')
+    .select('id,provider,allowed_domains,secret_ciphertext,status,metadata_json')
+    .eq('telegram_id',tg).eq('id',String(credentialId)).maybeSingle()
+  if(error)throw new Error(`vault_read_failed:${error.message}`)
+  if(!data||data.status==='revoked')throw new Error('vault_credential_unavailable')
+  if(data.metadata_json?.source!=='secure_browser_signup'){
+    await audit({telegramId:tg,credentialId:String(data.id),provider:String(data.provider||''),domain:(data.allowed_domains||[])[0]||'',eventType:'credential_reveal_denied',outcome:'denied'})
+    throw new Error('vault_reveal_not_allowed')
+  }
+  const secret=decryptVaultValue(data.secret_ciphertext)
+  await audit({telegramId:tg,credentialId:String(data.id),provider:String(data.provider||''),domain:(data.allowed_domains||[])[0]||'',eventType:'credential_revealed'})
+  return secret
 }
 
 export async function saveVaultCredential(params:{

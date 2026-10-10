@@ -126,6 +126,23 @@ export async function findPendingSignupForRun(params: { telegramId: string; runI
   return data?.id ? String(data.id) : null
 }
 
+// The Vault credential a run's sign-up password was already saved to (handed back to the person),
+// so a later resume of the same run reuses that password instead of generating another one.
+export async function findCommittedSignupForRun(params: { telegramId: string; runId: string }): Promise<{ pendingId: string; credentialId: string; domain: string } | null> {
+  const { data, error } = await supabaseAdmin
+    .from('vault_pending_credentials')
+    .select('id,domain,committed_credential_id')
+    .eq('telegram_id', String(params.telegramId))
+    .eq('run_id', params.runId)
+    .eq('status', 'committed')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error('pending_credential_lookup_failed')
+  if (!data?.id || !data.committed_credential_id) return null
+  return { pendingId: String(data.id), credentialId: String(data.committed_credential_id), domain: String(data.domain) }
+}
+
 // Secret-free list for recovery.
 export async function listPendingSignupCredentials(telegramId: string): Promise<PendingSignupMeta[]> {
   const { data, error } = await supabaseAdmin
