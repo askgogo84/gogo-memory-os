@@ -1834,7 +1834,11 @@ _Reminder cancelled._`
     }).catch(()=>{})
     const finalReply = incoming.wasVoice && incoming.voiceTranscript ? addVoicePrefix(result.text, originalText) : result.text
     // Send visual card if process-message returned a mediaUrl
-    if ((result as any).mediaUrl) {
+    if ((result as any).mediaUrl && String((result as any).mediaType || '').startsWith('audio/')) {
+      // WhatsApp does not show a caption on audio: send the text, then the voice note.
+      await sendWhatsAppMessage(from, finalReply)
+      try { await sendWhatsAppMediaMessage(from, ' ', (result as any).mediaUrl) } catch (mediaError: any) { console.error('WHATSAPP_AUDIO_SEND_FAILED:', mediaError?.message || mediaError) }
+    } else if ((result as any).mediaUrl) {
       const caption = finalReply || '📊 Your nutrition card'
       await sendWhatsAppMediaMessage(from, caption, (result as any).mediaUrl)
     } else {
