@@ -8,6 +8,9 @@ export type ExternalAccountRequest={
   service:string
   email:string|null
   url:string|null
+  // Collected in chat before approval, so the browser never invents them.
+  username?:string|null
+  fullName?:string|null
 }
 
 const LOOSE_CREATE=/\b(?:create|open|make)\s+(?:me\s+)?(?:an?\s+)?(?:new\s+)?account\b/i
@@ -113,6 +116,19 @@ function accountTarget(raw:string,explicitUrl:string|null){
   return {named:targets.some(target=>target.kind==='excluded'),service:''}
 }
 
+const PROFILE_USERNAME=/\buser\s*name\s*(?:is\s*)?[:=-]?\s*@?([A-Za-z0-9][A-Za-z0-9._-]{1,38})(?![A-Za-z0-9._-])/i
+const PROFILE_NAME=/(?<![A-Za-z])(?<!user\s?)(?:full\s*name|name)\s*(?:is\s*)?[:=-]?\s*([A-Za-z][A-Za-z .'-]{0,58}[A-Za-z.])/i
+
+/** Username and full name from a short reply such as "username goverdhan-md, name Goverdhan M D". */
+export function parseAccountProfile(text:string):{username:string;fullName:string|null}|null{
+  const raw=String(text||'').replace(/\s+/g,' ').trim()
+  if(!raw||raw.length>240)return null
+  const username=raw.match(PROFILE_USERNAME)?.[1]?.replace(/[._-]+$/,'')
+  if(!username||username.length<2)return null
+  const name=raw.replace(PROFILE_USERNAME,' ').match(PROFILE_NAME)?.[1]?.trim()
+  return {username,fullName:name&&!/\buser\s*name\b/i.test(name)?name:null}
+}
+
 export function parseExternalAccountRequest(text:string):ExternalAccountRequest|null{
   const raw=String(text||'').replace(/\s+/g,' ').trim()
   if(!raw)return null
@@ -130,5 +146,6 @@ export function parseExternalAccountRequest(text:string):ExternalAccountRequest|
     try{service=new URL(explicitUrl).hostname.replace(/^www\./,'')}catch{}
   }
   if(!service)return null
-  return {service,email:extractAccountEmail(raw),url:explicitUrl}
+  const profile=parseAccountProfile(raw)
+  return {service,email:extractAccountEmail(raw),url:explicitUrl,username:profile?.username||null,fullName:profile?.fullName||null}
 }

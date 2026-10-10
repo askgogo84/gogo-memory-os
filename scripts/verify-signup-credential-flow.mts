@@ -52,4 +52,26 @@ assert.equal('Create a Hugging Face account for Goverdhan@Tipplr.in'.match(EMAIL
 assert.match(src, /\$\{mode==='execute'\?'Only for approvedOperation account_creation: [^']*fill_secret/, 'the planner learns fill_secret only in execute mode')
 assert.match(command, /runSecureBrowser\(\{[^)]*runId:params\.runId/, 'the run id is passed so the pending record is tied to the run')
 
+// Multi-page sign-up (email and password, then Next, then username and terms): an approved
+// account creation may fill up to MAX_SIGNUP_PAGES pages; earlier pages end with a Next click and
+// no submit; the final page carries the single submit; a failed step stops before the next page.
+assert.match(src, /const MAX_SIGNUP_PAGES=3/, 'a sign-up may span at most three pages')
+assert.match(src, /params\.mode==='execute'&&params\.accountCreation===true\?MAX_SIGNUP_PAGES:1/, 'only an approved account creation gets more than one page')
+assert.match(src, /submitCount===0&&wave<MAX_SIGNUP_PAGES-1&&actions\[actions\.length-1\]\?\.kind==='click'/, 'an earlier page ends with a Next click and no submit, never on the last allowed page')
+assert.match(src, /if\(params\.mode==='execute'&&actions\.some\(a=>a\.kind==='submit'\)\)break/, 'nothing is planned after the final submit')
+assert.match(src, /if\(params\.mode==='execute'&&\(page\.actions\|\|\[\]\)\.some\(\(a:any\)=>a\.status!=='done'\)\)break/, 'a failed step stops before the next page')
+assert.match(src, /params\.accountCreation!==true && \(authGate\.reason==='password'/, 'a saved login is never tried while creating an account')
+assert.match(command, /runId:params\.runId,accountCreation,/, 'the account-creation flag reaches the browser')
+
+// Username and name are collected in chat before approval (Instinct-style), never invented.
+const { parseAccountProfile } = await import('../lib/agent/external-account-intent.ts')
+assert.deepEqual(parseAccountProfile('username goverdhan-md, name Goverdhan M D'), { username: 'goverdhan-md', fullName: 'Goverdhan M D' })
+assert.deepEqual(parseAccountProfile('Username: gogo84 Name: Goverdhan M D'), { username: 'gogo84', fullName: 'Goverdhan M D' })
+assert.deepEqual(parseAccountProfile('username is goverdhan_md'), { username: 'goverdhan_md', fullName: null })
+assert.equal(parseAccountProfile('name Goverdhan'), null, 'a name alone is not a profile answer')
+assert.equal(parseAccountProfile('what is the weather in Bengaluru'), null)
+const account = readFileSync('lib/agent/external-account.ts', 'utf8')
+assert.match(account, /stage:'profile'/, 'the flow asks for the username and name before approval')
+assert.match(account, /never pick another one/, 'a taken username is reported, never replaced')
+
 console.log('Sign-up credential flow: fill_secret gating, pending-before-submit, resolution and no-leak checks passed (structural)')
