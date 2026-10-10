@@ -14,7 +14,7 @@ import { detectHumanAuthGate } from './browser-auth-gate'
 import { needsBrowserDeliveryLocation } from './browser-location-gate'
 import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
-import { beginSignupCredential, resolveSignupCredential, type BegunSignup, type SignupVaultResult } from '@/lib/vault/signup-credential'
+import { beginSignupCredential, resolveSignupCredential, resumeSignupCredential, type BegunSignup, type SignupVaultResult } from '@/lib/vault/signup-credential'
 import { upsertVaultSession } from '@/lib/vault/session-store'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_GENERATION, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
@@ -24,6 +24,8 @@ import { canAuthorizeConsequentialAction, type TrustClass } from './trust'
 // One approved account creation may fill up to this many pages (a homepage step plus up to three
 // sign-up pages); only the final page is submitted.
 const MAX_SIGNUP_PAGES=4
+// On a resumed sign-up, the page the site shows once the account exists.
+const RESUMED_SIGNUP_CREATED=/\baccount\s+(?:(?:has\s+been|was|is)\s+)?(?:created|registered)\b|\bregistration\s+(?:is\s+)?complete\b|\b(?:confirm|verify)\s+your\s+(?:e-?mail|email\s+address)\b|\bcheck\s+your\s+(?:e-?mail|inbox)\b|\bwe(?:'ve|\s+have)?\s+sent\s+(?:you\s+)?(?:a|an)\s+(?:confirmation|verification)\s+(?:e-?mail|link)\b/i
 const MAX_ACTIONS = 12
 // Airport autocomplete and date selection need several observed steps.
 // Every read remains bounded, including startup and final verification.
@@ -1445,9 +1447,16 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }))
       throw new Error('browser_objective_unverified')
     }
-    if(params.mode!=='read'&&!actionLog.some(a=>a.status==='done'&&['fill','select','check','click','submit'].includes(a.kind)))throw new Error('browser_objective_unverified')
+    // Resumed sign-up: the person completed the human check and the site already created the
+    // account (or asks to confirm the email). Nothing is left to submit; the page itself is the
+    // evidence. Only for an approved account creation that is resuming its own run.
+    const resumedSignupCreated=params.mode==='execute'&&params.accountCreation===true&&params.resumePage===true
+      &&!actionLog.some(a=>a.kind==='submit'&&a.status==='done')&&RESUMED_SIGNUP_CREATED.test(String(page.text||''))
+    if(resumedSignupCreated&&!signup)signup=await resumeSignupCredential({ownerId:params.userId,runId:String(params.runId||params.sessionTaskId||'')}).catch(()=>null)
+    if(params.mode!=='read'&&!resumedSignupCreated&&!actionLog.some(a=>a.status==='done'&&['fill','select','check','click','submit'].includes(a.kind)))throw new Error('browser_objective_unverified')
     if(params.mode!=='read'&&(missingActionEvidence||actionLog.some(a=>a.status==='failed'||(params.mode==='execute'&&a.status!=='done'))))throw new Error('browser_objective_unverified')
-    const executionEvidence=params.mode==='execute'&&typeof page.executionBeforeText==='string'&&typeof page.executionAfterText==='string'?localExecutionConfirmation(approvedOperation,page.executionBeforeText,page.executionAfterText,actionLog):null
+    const executionEvidence=resumedSignupCreated?'The account was created after you completed the check. Confirm it from the email the site sent you.'
+      :params.mode==='execute'&&typeof page.executionBeforeText==='string'&&typeof page.executionAfterText==='string'?localExecutionConfirmation(approvedOperation,page.executionBeforeText,page.executionAfterText,actionLog):null
     if(params.mode==='execute'&&!executionEvidence)throw new Error('browser_objective_unverified')
     const accountExists=typeof executionEvidence==='string'&&executionEvidence.startsWith(ACCOUNT_EXISTS_PREFIX)
     // Verified creation commits the generated password to the Vault; an existing account is a

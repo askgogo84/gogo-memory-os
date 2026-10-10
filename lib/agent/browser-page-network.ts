@@ -41,7 +41,9 @@ const GOOGLE_FLIGHTS_PAGE_DEPENDENCIES = ['www.gstatic.com','fonts.googleapis.co
 // 10 Oct: the takeover frame stayed blank again with only the token domain allowed. A visible AWS
 // WAF CAPTCHA loads from other awswaf.com hosts (CAPTCHA SDK and puzzle). Grant AWS's WAF domain,
 // still only for Hugging Face pages, so the person can see and solve it themselves.
-const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.awswaf.com']
+// 10 Oct run 2c73711f: after submit, Hugging Face showed an hCaptcha whose script (js.hcaptcha.com)
+// the allowlist aborted, so the person could not see it. Its password-breach check also failed.
+const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.awswaf.com', 'hcaptcha.com', '*.hcaptcha.com', 'api.pwnedpasswords.com']
 
 export function browserPageAllowlist(url:string):Record<string,string[]>{
   const target=new URL(url)

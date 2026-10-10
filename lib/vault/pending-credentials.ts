@@ -112,6 +112,20 @@ export async function discardPendingSignupCredential(params: { telegramId: strin
   return Boolean(data?.length)
 }
 
+// The live pending row of one run, if any (secret-free id), so a resumed run reuses its password.
+export async function findPendingSignupForRun(params: { telegramId: string; runId: string }): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from('vault_pending_credentials')
+    .select('id')
+    .eq('telegram_id', String(params.telegramId))
+    .eq('run_id', params.runId)
+    .eq('status', 'pending')
+    .gt('expires_at', new Date().toISOString())
+    .maybeSingle()
+  if (error) throw new Error('pending_credential_lookup_failed')
+  return data?.id ? String(data.id) : null
+}
+
 // Secret-free list for recovery.
 export async function listPendingSignupCredentials(telegramId: string): Promise<PendingSignupMeta[]> {
   const { data, error } = await supabaseAdmin

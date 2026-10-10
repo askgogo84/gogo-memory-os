@@ -13,6 +13,7 @@ import { generateCredentialSecret } from './generated-credential'
 import {
   createPendingSignupCredential,
   discardPendingSignupCredential,
+  findPendingSignupForRun,
   markPendingSignupCommitted,
   readPendingSignupForCommit,
 } from './pending-credentials'
@@ -49,9 +50,23 @@ export async function beginSignupCredential(params: {
   if (!domain) throw new Error('signup_domain_invalid')
   if (!params.runId) throw new Error('signup_run_missing')
   const telegramId = await ownerTelegramId(params.ownerId)
+  // A resumed run (after the person completed a human check) reuses the password it already
+  // generated, so the form and the Vault always hold the same value.
+  const existing = await resumeSignupCredential({ ownerId: params.ownerId, runId: params.runId, telegramId })
+  if (existing) return existing
   const secret = generateCredentialSecret()
   const pending = await createPendingSignupCredential({ telegramId, runId: params.runId, domain, username, secret })
   return { pendingId: pending.id, telegramId, domain, username, secret }
+}
+
+/** The pending sign-up password of this run, if one exists (host-only; contains the secret). */
+export async function resumeSignupCredential(params: { ownerId: string; runId: string; telegramId?: string }): Promise<BegunSignup | null> {
+  if (!params.runId) return null
+  const telegramId = params.telegramId || await ownerTelegramId(params.ownerId)
+  const pendingId = await findPendingSignupForRun({ telegramId, runId: params.runId })
+  if (!pendingId) return null
+  const stored = await readPendingSignupForCommit({ telegramId, pendingId })
+  return { pendingId, telegramId, domain: stored.domain, username: stored.username, secret: stored.secret }
 }
 
 export type SignupOutcome = 'created' | 'rejected' | 'unknown'
