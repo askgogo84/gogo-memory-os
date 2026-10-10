@@ -86,6 +86,10 @@ async function pendingStillBound(telegramId:number,originText:string,promptText:
     &&head.some(row=>row.role==='user'&&row.content===norm(originText))
 }
 
+function isHomepageUrl(value:string){
+  try{const url=new URL(value);return url.protocol==='https:'&&(url.pathname===''||url.pathname==='/')&&!url.search}catch{return false}
+}
+
 function looksLikeSignupUrl(value:string){
   try{
     const url=new URL(value)
@@ -175,7 +179,9 @@ function resolveTarget(request:ExternalAccountRequest):TargetResolution{
   if(imitated)return {kind:'lookalike',provider:imitated,host}
   // Unknown providers are allowed only when the USER supplied the exact https URL.
   // We never auto-discover a consequential target from search/name similarity.
-  return looksLikeSignupUrl(request.url)?{kind:'trusted',provider:null,url:request.url}:{kind:'need_url'}
+  // The user's own link to the site's homepage is also accepted: the run stays on that host and
+  // opens the site's own sign-up link from there, as a person would.
+  return looksLikeSignupUrl(request.url)||isHomepageUrl(request.url)?{kind:'trusted',provider:null,url:request.url}:{kind:'need_url'}
 }
 
 /** Human-readable service name: the registry label when known, else what the user said. */
@@ -235,6 +241,7 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
     objective:[
       `Create an account on ${service} (${host}) using email ${email}, username ${username}${fullName?` and full name ${fullName}`:''}.`,
       'Enter exactly these values. If the site rejects the username (for example it is taken), stop and report it; never pick another one.',
+      ...(looksLikeSignupUrl(url)?[]:['This is the site\'s homepage: first click its own Sign up / Create account link on this same site, then fill the sign-up pages.']),
       'For new-password fields use fill_secret; Gogo generates the password and saves it in the Vault after the account is created.',
       'Do not spend money, start a paid subscription, or bypass any CAPTCHA, OTP, passkey, email-verification, or other human-auth step.',
       'If credentials are required, use the owner-bound Vault path; never expose secrets in chat.',

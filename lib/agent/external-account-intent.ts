@@ -13,7 +13,8 @@ export type ExternalAccountRequest={
   fullName?:string|null
 }
 
-const LOOSE_CREATE=/\b(?:create|open|make)\s+(?:me\s+)?(?:an?\s+)?(?:new\s+)?account\b/i
+// "create the account" counts too ("Login to https://manus.im and create the account").
+const LOOSE_CREATE=/\b(?:create|open|make)\s+(?:me\s+)?(?:an?\s+|the\s+)?(?:new\s+)?account\b/i
 // A named service between the verb and 'account' (\"Create a Hugging Face account\"). The service words must be capitalised, so ordinary phrases such as "make a note of my account" do not match.
 const NAMED_CREATE=/\b(?:[Cc]reate|[Oo]pen|[Mm]ake)\s+(?:[Mm]e\s+|[Uu]s\s+)?(?:[Aa]n?\s+)?(?:[A-Z][A-Za-z0-9&.-]*\s+){1,4}[Aa]ccount\b/
 const LOOSE_CREATE_ANY=(text:string)=>LOOSE_CREATE.test(text)||NAMED_CREATE.test(text)

@@ -21,8 +21,9 @@ import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_GENE
 import { canAuthorizeConsequentialAction, type TrustClass } from './trust'
 
 // A sign-up can span pages (for example email and password, then Next, then username and terms).
-// One approved account creation may fill up to this many pages; only the final page is submitted.
-const MAX_SIGNUP_PAGES=3
+// One approved account creation may fill up to this many pages (a homepage step plus up to three
+// sign-up pages); only the final page is submitted.
+const MAX_SIGNUP_PAGES=4
 const MAX_ACTIONS = 12
 // Airport autocomplete and date selection need several observed steps.
 // Every read remains bounded, including startup and final verification.
