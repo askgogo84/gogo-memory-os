@@ -65,3 +65,19 @@ assert.match(store, /eventType:'credential_revealed'/, 'every reveal is audited'
 assert.doesNotMatch(store.slice(store.indexOf('export async function revealGeneratedVaultSecret')), /console\.[a-z]+\([^\n]*secret\b/, 'the password is never logged')
 
 console.log('Sign-up handback: reason, submit state, details, link and Vault entry checks passed')
+
+// Live run 3f811cb9: after Next, Gogo observed the page 650 ms later, still saw page 1, and re-filled
+// fields that were gone. On a real run a click waits until the visible form changes (max 8 s).
+{
+  const sc = readFileSync('lib/agent/secure-computer.ts', 'utf8')
+  const at = sc.indexOf('10 Oct live run 3f811cb9')
+  assert.ok(at > 0, 'the post-click wait exists')
+  const seg = sc.slice(at, at + 1400)
+  assert.match(seg, /const before=await formShape\(\);\s*await page\.locator\(a\.selector\)\.first\(\)\.click\(\{timeout:10000\}\);/)
+  assert.match(seg, /const until=Date\.now\(\)\+8000;/)
+  assert.match(seg, /if\(now&&now!==before\)break;/)
+  assert.ok(!seg.includes('`') && !seg.includes('${'), 'nothing breaks the String.raw worker template')
+  const worker = readFileSync('lib/agent/approved-browser-worker.ts', 'utf8')
+  assert.match(worker, /\/ account not created: \/\.test\(/, 'a handback is sent without the generic "could not finish" line')
+}
+console.log('Sign-up: post-click wait and handback wording checks passed')

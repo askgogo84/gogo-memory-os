@@ -570,6 +570,19 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
           const readLink=payload.mode==='read'?await page.locator(a.selector).first().evaluate(el=>
             el.tagName==='A'&&/^https?:/.test(el.href||'')&&!el.hasAttribute?.('download')?el.href:null).catch(()=>null):null;
           if(readLink)await page.goto(readLink,{waitUntil:'domcontentloaded',timeout:navTimeout});
+          else if(payload.mode==='execute'){
+            // 10 Oct live run 3f811cb9: Hugging Face checks the email and password after Next before
+            // it shows the next step. Observing 650 ms later still saw page 1, so the planner filled
+            // page 1 again into fields that were gone. Wait until the visible form actually changes.
+            const formShape=()=>page.evaluate(()=>location.href+'|'+Array.from(document.querySelectorAll('input,textarea,select,button'))
+              .filter(el=>{const r=el.getBoundingClientRect();const cs=getComputedStyle(el);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'})
+              .map(el=>el.tagName+':'+(el.getAttribute('name')||el.getAttribute('type')||el.textContent||'').trim().slice(0,24)).join(',')).catch(()=>'');
+            const before=await formShape();
+            await page.locator(a.selector).first().click({timeout:10000});
+            const until=Date.now()+8000;
+            while(Date.now()<until){await page.waitForTimeout(300);const now=await formShape();if(now&&now!==before)break;}
+            await page.waitForTimeout(500);
+          }
           else await page.locator(a.selector).first().click({timeout:10000});
         } else if(a.kind==='submit'){
           if(payload.mode!=='execute'){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
