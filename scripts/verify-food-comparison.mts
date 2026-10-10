@@ -151,6 +151,8 @@ runInNewContext(ts.transpileModule(readFileSync('lib/agent/external-account.ts',
     if(name==='@/lib/vault/providers')return vaultProviders
     if(name==='./external-account-intent')return accountIntent
     if(name==='./browser-command')return {runBrowserCommand:async()=>{throw new Error('a food request must not start an account browser run')}}
+    // The model reader never turns a food request into an account request.
+    if(name==='./account-intent-model')return {mayBeAccountRequest:()=>false,readAccountRequestWithModel:async()=>null}
     throw new Error('unexpected external-account dependency in test sandbox: '+name)
   },
 })

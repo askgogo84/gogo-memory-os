@@ -22,7 +22,7 @@ function makeWorld(){
   let clock=Date.parse('2026-10-09T06:00:00.000Z')
   let seq=0
   const stamp=()=>new Date(clock+(seq++)).toISOString()
-  const state={failReads:false,browserThrows:false}
+  const state:{failReads:boolean;browserThrows:boolean;modelRequest:any}={failReads:false,browserThrows:false,modelRequest:null}
   class FakeDate extends Date{
     constructor(...args:any[]){if(args.length)super(args[0]);else super(clock)}
     static now(){return clock}
@@ -69,6 +69,8 @@ function makeWorld(){
         commands.push(params)
         return {runId:`run-${commands.length}`,status:'waiting_approval',capability:'browser',risk:'high',text:'secure-browser approval prompt',approvalId:`ap-${commands.length}`,approvalRequired:true,handledBy:'secure-browser'}
       }}
+      // The model reader is scripted per test: by default it finds no account request.
+      if(name==='./account-intent-model')return {mayBeAccountRequest:()=>true,readAccountRequestWithModel:async()=>state.modelRequest}
       throw new Error('unexpected external-account dependency: '+name)
     },
   })
@@ -302,6 +304,21 @@ for(const text of ['Create an account for me','Can you make me a new account','M
   assert.match(reply.text,/APPROVE/)
   const official=await makeWorld().send(42,'Create an account on Hugging Face using gogo@example.com')
   assert.doesNotMatch(official.text,/not a provider I have verified/,'registry providers do not get the unverified warning')
+}
+
+// ---------------------------------------------------------------- Phrasings the rules miss are read by the model
+{
+  const w=makeWorld()
+  w.state.modelRequest={service:'manus.im',email:'goverdhan.md@gmail.com',url:'https://manus.im/',username:null,fullName:null}
+  const ask=await w.send(42,'pls get me onto https://manus.im/ with goverdhan.md@gmail.com')
+  assert.equal(ask?.status,'paused','a model-read request enters the same flow and asks for the missing details')
+  assert.match(ask.text,/username and your full name/)
+  assert.equal(w.commands.length,0,'nothing runs before the details and approval')
+  w.state.modelRequest=null
+  const ready=await w.send(42,'username goverdhan-md, name Goverdhan M D')
+  assert.equal(ready?.status,'waiting_approval','the model-read request still requires APPROVE')
+  assert.equal(w.commands[0].command.url,'https://manus.im/')
+  assert.match(w.commands[0].command.objective,/goverdhan\.md@gmail\.com/)
 }
 
 // ---------------------------------------------------------------- Failure containment

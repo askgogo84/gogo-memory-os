@@ -130,6 +130,16 @@ export function parseAccountProfile(text:string):{username:string;fullName:strin
   return {username,fullName:name&&!/\buser\s*name\b/i.test(name)?name:null}
 }
 
+// Words that signal an account; a bare "create" ("create a reminder") is not one.
+const SIGNAL = /\b(?:accounts?|sign\s*-?\s*(?:up|me\s+up)|signup|register|join|enrol+|enroll|onboard|log\s*-?\s*in|login|get\s+me\s+(?:on|onto|into))\b/i
+
+/** Cheap prefilter: only these messages are worth a model read. */
+export function mayBeAccountRequest(text:string) {
+  const raw = String(text || '').trim()
+  if (!raw || raw.length > 600) return false
+  return SIGNAL.test(raw) || /https:\/\/\S+/i.test(raw)
+}
+
 export function parseExternalAccountRequest(text:string):ExternalAccountRequest|null{
   const raw=String(text||'').replace(/\s+/g,' ').trim()
   if(!raw)return null
