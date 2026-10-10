@@ -30,6 +30,8 @@ function serviceHint(text: string) {
   const raw = String(text || '')
   const withProvider = raw.match(/\b(?:appointment|consultation|session)\s+(?:with|at)\s+(?:an?\s+)?([A-Za-z][A-Za-z &.'-]{2,50}?)(?=\s+(?:in|near|around|next|this|tomorrow|today|on|for|at|after|before|and|but)\b|[,.!?]|$)/i)?.[1]
   if (withProvider) return safe(withProvider, 80)
+  const sport = raw.match(SPORT)?.[1]
+  if (sport) return safe(`${sport.toLowerCase()} court`.replace(/(turf|nets|pool) court$/,'$1'), 80)
   const category = raw.match(/\b(dentist|dental|doctor|physician|dermatologist|cardiologist|ophthalmologist|optometrist|physiotherapist|therapist|psychologist|psychiatrist|clinic|hospital|salon|spa|visa|passport)\b/i)?.[1]
   return safe(category || 'appointment provider', 80)
 }
@@ -39,10 +41,22 @@ function timingHint(text: string) {
   return safe(match?.[1] || '', 80)
 }
 
+// Muse case 02 (11 Oct): "Which badminton courts near Indiranagar are free this Saturday 7-9 am?"
+// was caught by the calendar and reminder routes. Sports venues are found like salons: India-first,
+// on Playo/Hudle and venue pages, read-only; booking stays a separate, approved step.
+const SPORT = /\b(badminton|tennis|squash|pickleball|table\s+tennis|turf|futsal|football|cricket\s+nets?|box\s+cricket|swimming|basketball|volleyball)\b/i
+export function isSportsVenueRequest(raw: string) {
+  const text = String(raw || '')
+  return SPORT.test(text) && /\b(courts?|turfs?|nets|venues?|grounds?|pools?|slots?|arena)\b/i.test(text)
+    && /\b(find|which|where|any|free|available|availability|open|book|booking|slots?)\b/i.test(text)
+    && !/\bremind|\breminder\b/i.test(text)
+}
+
 export function isAppointmentResearchRequest(raw: string) {
   const text = String(raw || '').trim().toLowerCase()
   if (!text) return false
   const appointment = /\b(appointment|consultation|doctor|dentist|dental|clinic|dermatologist|physiotherapist|therapist|salon|spa)\b/.test(text)
+  if (isSportsVenueRequest(raw)) return true
   const discovery = /\b(find|look for|search|show|compare|available|availability|options?|slot|slots|book|booking|schedule)\b/.test(text)
   const directCalendarMutation = /\b(create|add|move|change)\s+(?:a\s+|an\s+|my\s+)?(?:calendar\s+)?(?:event|appointment)\b/.test(text)
   return appointment && discovery && !directCalendarMutation
@@ -105,10 +119,15 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
   const timing = timingHint(params.text)
   // Beauty and wellness are booked on salon pages and Indian listings, not clinic sites.
   const beauty = /\b(salon|spa|haircut|hair|beauty|parlou?r|barber|nails?|massage|facial)\b/i.test(params.text)
-  const query = beauty
+  const sports = isSportsVenueRequest(params.text)
+  const query = sports
+    ? [service, 'booking', profile.querySuffix, 'Playo Hudle'].filter(Boolean).join(' ')
+    : beauty
     ? [service === 'appointment provider' ? 'salon' : service, 'near', profile.querySuffix, 'book appointment online'].filter(Boolean).join(' ')
     : [service, 'appointment booking availability', profile.querySuffix, timing, 'official clinic hospital provider'].filter(Boolean).join(' ')
-  const fallbackQuery = beauty
+  const fallbackQuery = sports
+    ? [service, profile.querySuffix, 'book slot online'].filter(Boolean).join(' ')
+    : beauty
     ? [service === 'appointment provider' ? 'salon' : service, profile.querySuffix, 'Justdial Fresha Google reviews book'].filter(Boolean).join(' ')
     : [service, profile.querySuffix, 'Practo book appointment online'].filter(Boolean).join(' ')
   const tg = params.actor.legacyTelegramId

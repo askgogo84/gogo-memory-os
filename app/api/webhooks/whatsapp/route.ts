@@ -1,3 +1,4 @@
+import { isSportsVenueRequest } from '@/lib/agent/appointment-research'
 import { unsupportedCapability } from '@/lib/bot/unsupported-capabilities'
 import { subscriptionReviewText } from '@/lib/agent/general-planner'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
@@ -1232,6 +1233,16 @@ _"${originalText}"_
     // Restaurant reservations are durable provider workflows, not generic
     // appointments/reminders. Give them deterministic first refusal before
     // legacy feature routing can collapse "next available" into a reminder.
+    if (isSportsVenueRequest(text)) {
+      const venueAgent = await tryRunWhatsAppAgent({ user: resolvedUser, text, messageId: inboundMessageSid || null })
+      if (venueAgent) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', venueAgent.text)
+        await sendWhatsAppMessage(from, venueAgent.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
     if (isRestaurantReservationRequest(text)) {
       const reservationAgent = await tryRunWhatsAppAgent({
         user: resolvedUser,

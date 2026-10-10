@@ -51,3 +51,21 @@ console.log('India-first search: place resolution, filters and restaurant/salon 
   assert.equal((parseWebWatchCommand('watch the web for Kannada film releases') as any)?.cadenceMinutes, 15, 'other web watches keep their cadence')
   console.log('News watch requests create a standing watch')
 }
+// Muse case 02 (11 Oct): sports courts are found India-first like salons, before calendar/reminders.
+{
+  const { isSportsVenueRequest, isAppointmentResearchRequest } = await import('../lib/agent/appointment-research.ts')
+  const c02 = "Which badminton courts near Indiranagar are free this Saturday 7-9 am? I'll pick one, then book it and add it to my calendar."
+  assert.equal(isSportsVenueRequest(c02), true)
+  assert.equal(isAppointmentResearchRequest(c02), true)
+  for (const t of ['book a turf in HSR Layout for Sunday 7 am', 'any tennis courts open near Koramangala tonight', 'find a swimming pool slot in Whitefield']) assert.equal(isSportsVenueRequest(t), true, t)
+  for (const t of ['remind me to book the badminton court on Friday', 'who won the badminton final', 'Book a table for 4 at Toit']) assert.equal(isSportsVenueRequest(t), false, t)
+  const { parseCalendarCreate } = await import('../lib/bot/handlers/calendar-actions.ts')
+  assert.equal(parseCalendarCreate(c02), null, 'a discovery question is not a calendar create')
+  assert.ok(parseCalendarCreate('Add a meeting with Srini tomorrow at 4 pm'), 'creates still work')
+  const ar = readFileSync('lib/agent/appointment-research.ts', 'utf8')
+  assert.match(ar, /'Playo Hudle'/)
+  const route = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
+  assert.ok(route.indexOf('if (isSportsVenueRequest(text)) {') > 0 && route.indexOf('if (isSportsVenueRequest(text)) {') < route.indexOf('if (isRestaurantReservationRequest(text)) {'))
+  assert.match(readFileSync('lib/services/claude.ts', 'utf8'), /MOVIES \(India\)/, '03: showtimes on BookMyShow/District')
+  console.log('Sports venues and showtimes route India-first')
+}
