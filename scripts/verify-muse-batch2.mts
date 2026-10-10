@@ -25,3 +25,10 @@ assert.equal(subscriptionReviewText('Cancel my Netflix subscription'), null, 'a 
 assert.match(readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8'), /Boolean\(subscriptionReviewText\(text\)\) \|\|/)
 
 console.log('Muse batch 2 fixes: no promised monitoring from chat, stock alerts honest, email drafts to Gmail, subscriptions audit')
+{
+  const prompt = readFileSync('lib/services/claude.ts', 'utf8')
+  assert.match(prompt, /NEVER reply with only questions/, '20: draft first, then invite changes')
+  assert.match(prompt, /SHOPPING \(India\)/, '36: product searches target Indian stores')
+  assert.match(prompt, /Never answer with only videos, reels or style articles/, '36: answers list real products')
+  console.log('Draft-first and shopping prompts in place')
+}
