@@ -199,7 +199,10 @@ async function discoverProvider(intent:RestaurantReservationIntent){
     .map(r=>({r,score:candidateScore(r,intent.restaurant)}))
     .sort((a,b)=>b.score-a.score)
   const top=ranked[0]
-  return top?.score>0?{url:String(top.r.url),title:safe(top.r.title||intent.restaurant,220),source:'web_search',location:null}:null
+  // A listing's reviews/menu/photos page is not where a table is booked (10 Oct retest opened
+  // eazydiner.com/.../toit-indiranagar-330151/reviews). Use the restaurant's main listing page.
+  const bookingUrl=(url:string)=>{try{const u=new URL(url);if(INDIA_BOOKING_HOSTS.test(u.hostname.replace(/^www\./,''))){u.pathname=u.pathname.replace(/\/(?:reviews?|menu|photos?|gallery|info|order-online|overview)\/?$/i,'');u.search=''}return u.toString()}catch{return url}}
+  return top?.score>0?{url:bookingUrl(String(top.r.url)),title:safe(top.r.title||intent.restaurant,220),source:'web_search',location:null}:null
 }
 
 export type ReservationRelease={
@@ -449,10 +452,10 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
       objective:`Read only the live reservation state and booking-release rules for ${intent.restaurant}. Determine whether bookings are open, sold out, or scheduled to open later. Capture any explicit next-open date and recurring release weekday/time. Do not sign in, fill personal details, reserve, submit, pay, or change anything.`,
     })
   }catch(error:any){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I found ${intent.restaurant}'s reservation page, but I could not inspect it reliably right now. I did not invent a release time or create an arbitrary reminder. Provider: ${provider.url}`}
+    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I found ${intent.restaurant} here: ${provider.url}\n\nI couldn't open its booking page to check tables right now, so nothing was booked. You can book there directly, or reply *try again* in a few minutes.`}
   }
   if(inspected.status==='blocked'){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I found ${intent.restaurant}'s reservation page, but the provider blocked read-only inspection before I could verify the release rules. I did not invent a booking time or create a reminder. Provider: ${provider.url}`}
+    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I found ${intent.restaurant} here: ${provider.url}\n\nI couldn't open its booking page to check tables right now, so nothing was booked. You can book there directly, or reply *try again* in a few minutes.`}
   }
   let release=extractReservationRelease(inspected.pageText,timezone)
   let ruleEvidenceUrl:string|null=null

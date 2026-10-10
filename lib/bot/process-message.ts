@@ -365,9 +365,13 @@ async function replyForCrossListSetDone(telegramId: number, itemText: string, do
   return `I could not find "${r.itemText}" on any of your lists.`
 }
 
-function isUsageCommand(text: string) {
+export function isUsageCommand(text: string) {
   const lower = (text || '').toLowerCase().trim()
-  return lower === 'usage' || lower === 'my usage' || lower === 'usage status' || lower === 'plan usage' || lower === 'limits' || lower === 'my limits'
+  if (lower === 'usage' || lower === 'my usage' || lower === 'usage status' || lower === 'plan usage' || lower === 'limits' || lower === 'my limits') return true
+  // Muse case 29 (10 Oct): "How much of my plan have I used this month?" went to chat, which said
+  // it could not see usage. Plain questions about usage or what is left answer from the meter.
+  return /\b(?:how\s+(?:much|many)|what(?:'s|\s+is)|show|check)\b[^?]{0,40}\b(?:my\s+)?(?:plan|usage|limits?|quota|allowance|credits?)\b[^?]{0,40}\b(?:used|left|remaining|usage|limit|this\s+month)\b/.test(lower)
+    || /^(?:what(?:'s|\s+is)\s+)?my\s+(?:usage|quota|allowance)(?:\s+this\s+month)?\??$/.test(lower)
 }
 
 export async function processIncomingMessage(params: ProcessIncomingParams): Promise<ProcessIncomingResult> {

@@ -173,6 +173,7 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     'stale_run_recovered',
     'background_browser_actor_missing',
   ])
+  const seenRunTitles=new Set<string>()
   for(const r of runs||[]){
     if(retiredRunReason(r))continue
     if(String(r.status)==='waiting_approval')continue
@@ -181,12 +182,18 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     const ageHours=(Date.now()-Date.parse(String(r.updated_at||0)))/3600_000
     if(String(r.status)==='failed'&&ageHours>6)continue
     if(String(r.status)==='paused'&&ageHours>24)continue
+    // 10 Oct: three identical "huggingface.co needs verification" lines from superseded sign-up
+    // attempts. One line per task title, and unverified outcomes stop repeating after two days.
+    if(String(r.status)==='outcome_unknown'&&ageHours>48)continue
     const blocker=browserBlocker(r)
     if(blocker){
       if(seenBrowserNotices.has(blocker.key))continue
       items.push({key:blocker.key,score:86,line:`*${clean(r.title,150)}*: ${blocker.summary}\nTask details: https://app.askgogo.in/dashboard/activity/${encodeURIComponent(String(r.id))}`,kind:'browser_blocker'})
       continue
     }
+    const titleKey=clean(r.title,150).toLowerCase()
+    if(seenRunTitles.has(titleKey))continue
+    seenRunTitles.add(titleKey)
     const score=String(r.status)==='outcome_unknown'?92:String(r.status)==='failed'?86:80
     const label=String(r.status)==='outcome_unknown'?'needs verification':String(r.status)==='failed'?'hit a blocker':'is paused'
     items.push({key:`run:${r.id}:${r.status}`,score,line:`🧠 *${clean(r.title,150)}* ${label}. ${clean(r.summary,190)}`,kind:'run'})
