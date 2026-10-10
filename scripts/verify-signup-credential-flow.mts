@@ -96,6 +96,14 @@ assert.match(src, /!actionLog\.some\(a=>a\.kind==='submit'&&a\.status==='done'\)
   for (const t of ['Complete your profile', 'Create Account', 'Unknown h-captcha error.', 'Join Hugging Face']) assert.ok(!re.test(t), t)
 }
 
+// Live run d27946ab: the last page's plan filled username, name and terms but left the final button
+// for the CAPTCHA, and the run was thrown away as unverified. Now the fills run and the final step is
+// handed to the person; nothing is submitted by Gogo, so the password stays pending until resume.
+assert.match(src, /const signupFillThenHandoff=params\.mode==='execute'&&params\.accountCreation===true&&plan\.operation==='account_creation'\s*&&submitCount===0&&actions\.length>0&&actions\.every\(a=>\['fill','fill_secret','select','check'\]\.includes\(a\.kind\)\)/, 'a fill-only last page is allowed only for an approved account creation')
+assert.match(src, /if\(signupHandoffAfterWave&&\(page\.actions\|\|\[\]\)\.every\(\(a:any\)=>a\.status==='done'\)\)\{/, 'the handoff happens only after every fill succeeded')
+assert.match(src, /Gogo filled in the whole sign-up form\. The last step needs you/, 'the person is told exactly what is left')
+assert.match(src, /BROWSER_EXECUTE_PLAN_REJECTED:/, 'a rejected execute plan is logged with its action kinds')
+
 // Username and name are collected in chat before approval (Instinct-style), never invented.
 const { parseAccountProfile } = await import('../lib/agent/external-account-intent.ts')
 assert.deepEqual(parseAccountProfile('username goverdhan-md, name Goverdhan M D'), { username: 'goverdhan-md', fullName: 'Goverdhan M D' })
