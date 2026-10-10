@@ -126,4 +126,26 @@ assert.match(handoffServer,/withTimeout\(page\.keyboard\.type/,'typing cannot ho
 assert.match(handoffServer,/HANDOFF_ACTION_FAILED/,'a failed takeover action is logged')
 assert.match(handoffServer,/action_failed/,'a failed takeover action returns a readable error to the page')
 
+// 12. The human step opens Browserbase's own live view (the real browser), with our relay as the
+// fallback. Only an https browserbase.com link is accepted, and only through the owner's route.
+{
+  const {managedLiveViewUrl}=await import('../lib/agent/managed-browser')
+  const env={BROWSERBASE_API_KEY:'k'} as any
+  const reply=(body:unknown,ok=true)=>(async()=>({ok,json:async()=>body})) as any
+  assert.equal(await managedLiveViewUrl('abcd1234-ef56',env,reply({debuggerFullscreenUrl:'https://www.browserbase.com/devtools-fullscreen/inspector.html?wss=connect.browserbase.com/debug/x'})),'https://www.browserbase.com/devtools-fullscreen/inspector.html?wss=connect.browserbase.com/debug/x')
+  assert.equal(await managedLiveViewUrl('abcd1234-ef56',env,reply({debuggerFullscreenUrl:'https://evil.example/live'})),null,'a non-Browserbase link is refused')
+  assert.equal(await managedLiveViewUrl('abcd1234-ef56',env,reply({debuggerFullscreenUrl:'http://www.browserbase.com/x'})),null,'plain http is refused')
+  assert.equal(await managedLiveViewUrl('abcd1234-ef56',env,reply({},false)),null,'a failed lookup falls back to the relay')
+  assert.equal(await managedLiveViewUrl('../sessions',env,reply({debuggerFullscreenUrl:'https://www.browserbase.com/x'})),null,'only a session id is accepted in the path')
+  assert.equal(await managedLiveViewUrl('abcd1234-ef56',{} as any,reply({debuggerFullscreenUrl:'https://www.browserbase.com/x'})),null,'no API key, no live view')
+  const route=readFileSync('app/api/dashboard/agent/runs/[runId]/handoff/route.ts','utf8')
+  assert.match(route,/const session=await getSession\(\)[\s\S]*liveViewUrl/,'the live view is served only after the owner session check')
+  assert.match(route,/live\.hostname==='browserbase\.com'\|\|live\.hostname\.endsWith\('\.browserbase\.com'\)/,'the route re-checks the live view host')
+  const handoffSrc=readFileSync('lib/agent/provider-browser-handoff.ts','utf8')
+  assert.match(handoffSrc,/return \{sandboxName:name,token,liveViewUrl,/,'the live view is stored with the run handoff')
+  const command=readFileSync('lib/agent/browser-command.ts','utf8')
+  assert.match(command,/BROWSER_RUN_RESULT:/,'every run logs why it stopped')
+  assert.doesNotMatch(command.slice(command.indexOf('BROWSER_RUN_RESULT:'),command.indexOf('BROWSER_RUN_RESULT:')+600),/pageText|selector|detail|value/,'the run log carries no page text, selectors or values')
+}
+
 console.log('Browser approval execution: approval routing, handoff, single claim, failure containment, human-check visibility checks passed (structural)')

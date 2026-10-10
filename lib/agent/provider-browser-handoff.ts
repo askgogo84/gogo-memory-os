@@ -4,7 +4,7 @@ import { ensureBrowserRuntime, SANDBOX_WORKDIR } from './secure-browser-bootstra
 import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
 import { browserPageAllowlist } from './browser-page-network'
 import {ensurePersistentCommerceBrowser} from './persistent-commerce-browser'
-import {ensureManagedBrowser,managedBrowserEnabled,releaseManagedSessionById} from './managed-browser'
+import {ensureManagedBrowser,managedBrowserEnabled,managedLiveViewUrl,releaseManagedSessionById} from './managed-browser'
 
 export async function cancelBrowserHandoffReservation(userId:string,token:string){
   const {sandbox}=await getPersistentBrowserSandbox(userId,{bootstrap:false})
@@ -92,7 +92,10 @@ while(Date.now()<deadline){try{const r=await fetch('http://127.0.0.1:${BROWSER_H
   if(!domain)throw new Error('browser_handoff_domain_unavailable')
   const base=String(domain).startsWith('http')?String(domain):`https://${domain}`
   const q=encodeURIComponent(token)
-  return {sandboxName:name,token,managedSessionId:managed?.env?.GOGO_BROWSER_SESSION_ID||null,takeoverUrl:`${base}/?token=${q}`,stateUrl:`${base}/state?token=${q}`,agentActionUrl:`${base}/agent-action?token=${q}`,releaseUrl:`${base}/release?token=${q}`}
+  // The real browser for the human step, when the provider offers it (best effort).
+  const liveViewUrl=managed?.env?.GOGO_BROWSER_SESSION_ID?await managedLiveViewUrl(managed.env.GOGO_BROWSER_SESSION_ID):null
+  if(managed)console.log('BROWSER_HANDOFF_LIVE_VIEW:',JSON.stringify({available:Boolean(liveViewUrl)}))
+  return {sandboxName:name,token,liveViewUrl,managedSessionId:managed?.env?.GOGO_BROWSER_SESSION_ID||null,takeoverUrl:`${base}/?token=${q}`,stateUrl:`${base}/state?token=${q}`,agentActionUrl:`${base}/agent-action?token=${q}`,releaseUrl:`${base}/release?token=${q}`}
   }catch(error){
     // Guaranteed release: a managed session created for this takeover must not be
     // orphaned if provisioning fails after it was created.
