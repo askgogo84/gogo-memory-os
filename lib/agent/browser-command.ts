@@ -403,7 +403,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
           const resumeUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
           return {
             runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
-            text:`${result.summary}\n\nOpen this task to Take control, complete the human-only step, then select Resume this task:\n${resumeUrl}\n\nDo not paste passwords or one-time codes into chat. Gogo keeps this same task and rechecks permissions before continuing.`,
+            text:`${result.summary}\n\nOpen this link, tap Take control, finish that step, then tap Resume this task:\n${resumeUrl}\n\nNever send passwords or codes in chat.`,
             blockedReason:blockReason,handledBy:'secure-browser' as const,
           }
         }
