@@ -498,6 +498,7 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
       await activity(tg,params.runId,'step_completed',`${step.title} completed.`,{ordinal,tool:step.tool})
     } catch (err:any) {
       const message=String(err?.message||'step_failed')
+      console.error('GENERAL_PLAN_STEP_FAILED:',JSON.stringify({runId:params.runId,ordinal,tool:step.tool,title:safeLog(step.title,80),error:safeLog(message,160)}))
       await updateStep(stepId,'failed',{},message).catch(()=>{})
       await supabaseAdmin.from('agent_runs').update({status:'failed',progress:100,summary:`Failed at: ${step.title}`,error:safeLog(message,500),completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
       await activity(tg,params.runId,'run_failed',`Failed at: ${step.title}`,{ordinal,tool:step.tool,error:safeLog(message,250)})

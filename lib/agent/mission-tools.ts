@@ -199,6 +199,35 @@ export function reminderStepIntent(step:{title:string;instruction:string}):'read
   return intents.size>1?'mixed':intents.has('read')?'read':intents.has('write')?'write':'unknown'
 }
 
+// Muse case 35 (10 Oct): "I'm moving on 25 Oct … make a daily packing plan in 30-minute sessions
+// with reminders" failed: one plan step asked for daily reminders, which the single-instant writer
+// refuses. A daily request now becomes one reminder per day from today up to the day before the
+// deadline (at most 21), at the stated time or 7 pm when none is given.
+async function dailyMissionReminders(params:{actor:AgentActor;step:MissionStep;missionText:string}){
+  const text=`${params.step.title} ${params.step.instruction}`
+  if(!/\b(?:daily|every\s+day|each\s+day)\b/i.test(text))return null
+  const timezone=normalizeTimezone(await actorTimezone(params.actor))
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
+  const v:Record<string,string>={};for(const p of parts)v[p.type]=p.value
+  const today=`${v.year}-${v.month}-${v.day}`
+  const deadlines=[...explicitDates(params.step.instruction,Number(v.year),today),...explicitDates(params.missionText,Number(v.year),today)].filter(d=>d>today).sort()
+  if(!deadlines.length)return null
+  const end=deadlines[deadlines.length-1]
+  const clock=explicitMissionClock(params.step.instruction)||explicitMissionClock(params.missionText)||'19:00'
+  const message=reminderMessage(params.step,params.missionText)
+  const created:string[]=[]
+  for(let day=new Date(`${today}T00:00:00Z`);created.length<21;day.setUTCDate(day.getUTCDate()+1)){
+    const date=day.toISOString().slice(0,10)
+    if(date>=end)break
+    try{await persistMissionReminder({actor:params.actor,date,time:clock,timezone,message});created.push(date)}
+    catch(error:any){if(String(error?.message||'')!=='mission_reminder_time_in_past')throw error}
+  }
+  if(!created.length)return null
+  const fmt=(d:string)=>new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(`${d}T00:00:00Z`))
+  return {text:`Set ${created.length} daily reminders at ${clock} (${fmt(created[0])} to ${fmt(created[created.length-1])}): ${message}`,
+    output:{reminderDates:created,clock,timezone,verifiedStore:'reminders',daily:true}}
+}
+
 export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
   const {actor,step,missionText}=params
   const stepIntent=reminderStepIntent(step)
@@ -249,6 +278,8 @@ export async function executeVerifiedMissionReminder(params:{actor:AgentActor;st
       +(truncated?'\nThe review reached its 1,000-reminder limit; later reminders were not checked.':''),
       output:{reminders,readOnly:true,scope:'requested_reminders',scopeTerms,truncated,verifiedStore:'reminders'}}
   }
+  const daily=await dailyMissionReminders({actor,step,missionText})
+  if(daily)return daily
   const writeDates=explicitDates(step.instruction)
   const writeClocks=[...new Set([...step.instruction.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter(Boolean))]
   if(writeDates.length>1||writeClocks.length>1)throw new Error('mission_reminder_multiple_instants_require_separate_steps')

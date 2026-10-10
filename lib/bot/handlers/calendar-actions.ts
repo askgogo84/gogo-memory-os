@@ -321,6 +321,17 @@ async function findRecentNoteEvent(telegramId: number) {
   }
 }
 export function parseCalendarCreate(text: string) {
+  // Muse case 07 (10 Oct): "Add a meeting with Srini tomorrow at 4 pm, then move it to 5 pm" was
+  // added at 4 pm titled "A meeting with Srini, then move it to". A trailing "then move/change it
+  // to <time>" is the final time: apply it and drop the clause.
+  const thenMove = text.match(/[,;]?\s*(?:and\s+)?then\s+(?:move|change|shift|reschedule|push|make)\s+it\s+(?:to\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))\s*[.!]?\s*$/i)
+  if (thenMove && thenMove.index !== undefined) {
+    const head = text.slice(0, thenMove.index)
+    const moved = /\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b(?![\s\S]*\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b)/i.test(head)
+      ? head.replace(/\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b(?![\s\S]*\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b)/i, `at ${thenMove[1]}`)
+      : `${head} at ${thenMove[1]}`
+    text = moved
+  }
   const lower = text.toLowerCase()
 
   // Structural detection. The old test matched exact contiguous bigrams ("add meeting",
