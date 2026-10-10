@@ -58,7 +58,7 @@ const db = {
 }
 
 const noMatch = new Set([
-  'handleLinkVaultText', 'unsupportedCapability', 'podcastRequest', 'wantsVoiceReply', 'tryTypedTimeRouting', 'normalizePhoneNumber',
+  'handleLinkVaultText', 'imageRequest', 'unsupportedCapability', 'podcastRequest', 'wantsVoiceReply', 'tryTypedTimeRouting', 'normalizePhoneNumber',
   'detectFriendReminder', 'getPendingFriend', 'isFriendReminderFollowupCandidate', 'getLatestFollowupState', 'isAmPmChoice',
   'isCalendarConflictMoveCommand', 'parsePlanSelection', 'isPlanMyDayIntent',
   'isTranslationRequest', 'isFollowupReminderText', 'namesRetailerPriceRead',

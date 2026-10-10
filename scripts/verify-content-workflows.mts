@@ -89,6 +89,9 @@ const db = {from(table: string) {
 }}
 let draftResearchCalls = 0
 const pim = load('lib/bot/process-message.ts', {
+  './unsupported-capabilities': {unsupportedCapability: () => null},
+  '@/lib/services/voice-reply': {podcastRequest: () => null, wantsVoiceReply: () => false},
+  '@/lib/services/image-reply': {imageRequest: () => null},
   '@/lib/supabase-admin': {supabaseAdmin: db}, './resolve-user': {resolveUser: async () => ({...actor, telegramId: 42, id: actor.userId})},
   '@/lib/agent/content-workflows': workflows,
   '@/lib/agent/content-workflow-research': {researchRedditDiscussions: async () => {draftResearchCalls++; return evidence}},
