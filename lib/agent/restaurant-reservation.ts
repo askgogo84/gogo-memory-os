@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { resolveIndiaPlace, resultInPlace } from './india-locality'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { runSecureBrowser } from './secure-computer'
@@ -34,12 +35,19 @@ function explicitClock(raw:string){
   return simple?normalizeClock(Number(simple[1]),0,simple[2]):''
 }
 
+// Words that end a restaurant name: party size, time, date and day words.
+const NAME_STOP='(?=\\s+(?:for\\s+(?:a\\s+)?(?:party\\s+of\\s+)?\\d{1,2}|between\\s+\\d|at\\s+\\d|on\\s+|this\\s+|next\\s+|coming\\s+|today|tomorrow|tonight|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\\b|[,.!?]|$)'
+const GENERIC_NAME=/^(?:a\s+|an\s+|the\s+)?(?:table|reservation|booking|seat|seats|dinner|lunch|brunch)$/i
+
 function restaurantName(text:string){
   const raw=String(text||'').replace(/https?:\/\/\S+/gi,' ').replace(/\s+/g,' ').trim()
-  const direct=raw.match(/\b(?:book|reserve)\s+(.+?)(?=\s+(?:for\s+\d{1,2}|for\s+(?:a\s+)?party\s+of\s+\d{1,2}|between\s+\d|at\s+\d|on\s+\d|next\s+available|today|tomorrow)\b|[,.!?]|$)/i)?.[1]
-  if(direct)return safe(direct.replace(/^(?:a|an)\s+(?:table\s+at\s+)?/i,'').replace(/^table\s+at\s+/i,''),160)
-  const at=raw.match(/\b(?:table|reservation)\s+(?:at|for)\s+(.+?)(?=\s+(?:for\s+\d{1,2}|between\s+\d|at\s+\d|on\s+\d|next\s+available)\b|[,.!?]|$)/i)?.[1]
-  return safe(at||'',160)
+  // "Book a table for 4 at Toit Indiranagar this Friday" -> "Toit Indiranagar" (live run 10 Oct read "table").
+  const atName=raw.match(new RegExp('\\b(?:table|reservation|booking|seats?)\\b(?:\\s+for\\s+(?:a\\s+party\\s+of\\s+)?\\d{1,2}(?:\\s+(?:people|persons?|guests?|pax))?)?\\s+(?:at|in)\\s+(.+?)'+NAME_STOP,'i'))?.[1]
+  if(atName&&!GENERIC_NAME.test(atName.trim()))return safe(atName,160)
+  const direct=raw.match(new RegExp('\\b(?:book|reserve)\\s+(.+?)'+NAME_STOP,'i'))?.[1]
+  const cleaned=direct?direct.replace(/^(?:a|an)\s+(?:table\s+at\s+)?/i,'').replace(/^table\s+at\s+/i,'').trim():''
+  if(cleaned&&!GENERIC_NAME.test(cleaned))return safe(cleaned,160)
+  return ''
 }
 
 function partySize(text:string){
@@ -119,19 +127,27 @@ export function parseRestaurantReservationIntent(raw:string):RestaurantReservati
 
 function host(url:string){try{return new URL(url).hostname.replace(/^www\./,'')}catch{return''}}
 
+const GENERIC_RESTAURANT_TOKENS=new Set(['restaurant','restaurants','cafe','café','bistro','bar','noodle','noodles','kitchen','eatery','the','table','indiranagar','koramangala','bengaluru','bangalore'])
+// India-first: District (Dineout), EazyDiner, Zomato and the restaurant's own site are where tables
+// are booked. A result must name the restaurant; a page that only says "table" is not a match
+// (live run 10 Oct ranked a Lithuanian software company first).
+const INDIA_BOOKING_HOSTS=/(?:^|\.)(?:district\.in|eazydiner\.com|zomato\.com|dineout\.co\.in|swiggy\.com|magicpin\.in)$/
 function candidateScore(result:WebSearchResult,restaurant:string){
   const title=String(result.title||'').toLowerCase()
   const snippet=String(result.snippet||'').toLowerCase()
   const url=String(result.url||'').toLowerCase()
-  const tokens=restaurant.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x.length>2)
-  let score=tokens.filter(t=>title.includes(t)||snippet.includes(t)||url.includes(t)).length*3
-  if(/book|booking|reserv|table|order/.test(url))score+=8
-  if(/book|booking|reserv|table/.test(title+' '+snippet))score+=5
-  if(/instagram|facebook|zomato|swiggy|tripadvisor/.test(url))score-=4
+  const tokens=restaurant.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x.length>2&&!GENERIC_RESTAURANT_TOKENS.has(x))
+  const hits=tokens.filter(t=>title.includes(t)||snippet.includes(t)||url.includes(t)).length
+  if(!tokens.length||hits===0)return -100
+  if(!resultInPlace(`${title} ${snippet} ${url}`,resolveIndiaPlace(restaurant)))return -100
+  let score=hits*4
+  if(INDIA_BOOKING_HOSTS.test(host(url)))score+=10
+  if(/book|booking|reserv|table/.test(url))score+=6
+  if(/book a table|reserv|table booking/.test(title+' '+snippet))score+=5
+  if(/instagram|facebook|tripadvisor|rocketreach|linkedin|crunchbase/.test(url))score-=20
   return score
 }
 
-const GENERIC_RESTAURANT_TOKENS=new Set(['restaurant','restaurants','cafe','café','bistro','bar','noodle','noodles','kitchen','eatery','the'])
 
 function firstPartyRuleScore(result:WebSearchResult,restaurant:string){
   const url=String(result.url||'')
@@ -175,7 +191,8 @@ async function discoverProvider(intent:RestaurantReservationIntent){
   if(!intent.restaurant)return null
   const known=KNOWN_RESERVATION_PROVIDERS[intent.restaurant.toLowerCase().replace(/\s+/g,' ').trim()]
   if(known)return{url:known.url,title:intent.restaurant,source:'known_provider_page',location:known.location||null}
-  const query=`${intent.restaurant} reservation booking official`
+  const place=resolveIndiaPlace(intent.restaurant)
+  const query=`${intent.restaurant} ${place.city&&!intent.restaurant.toLowerCase().includes(place.city.toLowerCase())?place.city+' ':''}India book a table District EazyDiner`
   const results=await searchWebResults(query)
   const ranked=(results||[])
     .filter(r=>/^https?:\/\//i.test(String(r.url||'')))
@@ -318,7 +335,7 @@ export async function queueRestaurantReservationResearch(params:{
     return{
       runId:String(existing.id),status:String(existing.status||'queued') as any,
       capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation-background' as const,
-      text:`I’m still checking ${intent.restaurant}'s live booking provider and first-party reservation rules in Background Gogo. I’ll message you when I have verified evidence. Nothing will be booked or paid before the normal approval step.`,
+      text:`Still looking up ${intent.restaurant}'s booking page. I'll message you here with what I find. Nothing will be booked or paid until you approve.`,
     }
   }
 
@@ -362,7 +379,7 @@ export async function queueRestaurantReservationResearch(params:{
   return{
     runId:String(run.id),status:'queued' as const,capability:'browser' as const,risk:'low' as const,
     handledBy:'restaurant-reservation-background' as const,
-    text:`I’m checking ${intent.restaurant}'s live booking provider and first-party reservation rules in Background Gogo. I’ll message you as soon as I have verified release evidence. No booking, payment or approval has been created yet.`,
+    text:`Looking up ${intent.restaurant}'s booking page now. I'll message you here with the options. Nothing will be booked or paid until you approve.`,
   }
 }
 

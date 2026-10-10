@@ -61,7 +61,7 @@ assert.ok(whatsappBridge.indexOf('const restaurantReservation = await queueResta
 assert.match(reservation,/restaurant_reservation_research/)
 assert.match(reservation,/queueRestaurantReservationResearch/)
 assert.match(reservation,/runQueuedRestaurantReservationResearch/)
-assert.match(reservation,/Nothing will be booked or paid before the normal approval step/)
+assert.match(reservation,/Nothing will be booked or paid until you approve/)
 assert.match(autonomousCron,/runQueuedRestaurantReservationResearch/)
 assert.match(autonomousCron,/restaurant_reservation_research/)
 assert.match(autonomousCron,/reservationResearchClaimed/)

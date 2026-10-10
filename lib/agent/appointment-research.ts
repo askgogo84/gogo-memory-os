@@ -3,6 +3,7 @@ import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { tryResumeAppointmentAfterHumanAuth } from './appointment-auth-resume'
 import type { AgentActor } from './actor'
+import { resolveIndiaPlace, resultInPlace } from './india-locality'
 import type { AgentSurface } from './orchestrator'
 
 function safe(value: unknown, max = 1200) {
@@ -18,13 +19,11 @@ function locationHint(text: string) {
   return safe(match?.[1] || '', 80)
 }
 
+// India-first: a locality resolves to its Indian city ("HSR Layout" -> Bengaluru) and every
+// search stays in India.
 function locationProfile(location: string) {
-  const l = String(location || '').trim().toLowerCase()
-  if (!l) return { canonical:'', aliases:[] as string[], querySuffix:'' }
-  if (/\b(bangalore|bengaluru|blr)\b/.test(l)) {
-    return { canonical:'Bengaluru', aliases:['bengaluru','bangalore','blr','karnataka','india'], querySuffix:'Bengaluru Bangalore Karnataka India' }
-  }
-  return { canonical:location, aliases:[l], querySuffix:location }
+  const place = resolveIndiaPlace(location)
+  return { canonical: [place.locality && place.locality.toLowerCase() !== place.city.toLowerCase() ? place.locality : '', place.city].filter(Boolean).join(', ') || location, place, querySuffix: place.querySuffix }
 }
 
 function serviceHint(text: string) {
@@ -51,14 +50,8 @@ export function isAppointmentResearchRequest(raw: string) {
 
 type AppointmentOption = { title: string; snippet: string; url: string; provider: string; bookableScore: number }
 
-const WRONG_GEO = /\b(dubai|sharjah|abu dhabi|fujairah|uae|united arab emirates|qatar|doha|singapore|london|new york|california|texas)\b/i
-
 function locationMatch(result: WebSearchResult, location: string) {
-  const profile = locationProfile(location)
-  if (!profile.aliases.length) return true
-  const haystack = `${result.title || ''} ${result.snippet || ''} ${result.url || ''}`.toLowerCase()
-  if (WRONG_GEO.test(haystack) && !profile.aliases.some(alias => haystack.includes(alias))) return false
-  return profile.aliases.some(alias => haystack.includes(alias))
+  return resultInPlace(`${result.title || ''} ${result.snippet || ''} ${result.url || ''}`, resolveIndiaPlace(location))
 }
 
 export function appointmentBookableScore(result: Pick<WebSearchResult,'title'|'snippet'|'url'>) {
@@ -110,8 +103,14 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
   const profile = locationProfile(locationRaw)
   const location = profile.canonical || locationRaw
   const timing = timingHint(params.text)
-  const query = [service, 'appointment booking availability', profile.querySuffix || location, timing, 'official clinic hospital provider'].filter(Boolean).join(' ')
-  const fallbackQuery = [service, profile.querySuffix || location, 'book appointment online official'].filter(Boolean).join(' ')
+  // Beauty and wellness are booked on salon pages and Indian listings, not clinic sites.
+  const beauty = /\b(salon|spa|haircut|hair|beauty|parlou?r|barber|nails?|massage|facial)\b/i.test(params.text)
+  const query = beauty
+    ? [service === 'appointment provider' ? 'salon' : service, 'near', profile.querySuffix, 'book appointment online'].filter(Boolean).join(' ')
+    : [service, 'appointment booking availability', profile.querySuffix, timing, 'official clinic hospital provider'].filter(Boolean).join(' ')
+  const fallbackQuery = beauty
+    ? [service === 'appointment provider' ? 'salon' : service, profile.querySuffix, 'Justdial Fresha Google reviews book'].filter(Boolean).join(' ')
+    : [service, profile.querySuffix, 'Practo book appointment online'].filter(Boolean).join(' ')
   const tg = params.actor.legacyTelegramId
   const now = new Date().toISOString()
 
