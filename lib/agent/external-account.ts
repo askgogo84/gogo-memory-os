@@ -4,11 +4,11 @@ import { VAULT_PROVIDERS, findVaultProviderForDomain, findVaultProviderInText, t
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { runBrowserCommand, type BrowserCommand } from './browser-command'
-import { mentionsExternalAccountCreation, parseExternalAccountRequest, type ExternalAccountRequest } from './external-account-intent'
+import { mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, type ExternalAccountRequest } from './external-account-intent'
 
 // Intent detection is pure and shared with the classifier; re-exported so existing
 // importers (WhatsApp route, regression scripts) keep a single entry point.
-export { mentionsExternalAccountCreation, parseExternalAccountRequest, type ExternalAccountRequest }
+export { mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, type ExternalAccountRequest }
 
 const FOLLOWUP_KIND='external_account_create'
 const FOLLOWUP_MAX_MINUTES=30
@@ -27,7 +27,7 @@ type PendingFollowup={type?:unknown;kind?:unknown;created_at?:string;payload?:Re
  * one. The WhatsApp route applies the same checks inline before resolving the actor.
  */
 export function isExternalAccountCandidate(text:string){
-  return Boolean(parseExternalAccountRequest(text))||mentionsExternalAccountCreation(text)||emailOnly(text)||urlOnly(text)
+  return Boolean(parseExternalAccountRequest(text))||mentionsExternalAccountCreation(text)||emailOnly(text)||urlOnly(text)||Boolean(parseAccountProfile(text))
 }
 
 const VAGUE_PROMPT='Which website or app should I create the account on? Reply with its name, for example: create an account on Hugging Face.'
@@ -214,6 +214,18 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
 
   const url=target.url
   const host=new URL(url).hostname.replace(/^www\./,'')
+  // Like a person filling the form: ask for the username and name now, so Gogo enters every
+  // field itself and never invents one. The password is generated and saved to the Vault.
+  const username=norm(params.request.username)
+  const fullName=norm(params.request.fullName)
+  if(!username){
+    const suggestion=String(email.split('@')[0]||'yourname').toLowerCase().replace(/[^a-z0-9._-]+/g,'-').slice(0,30)||'yourname'
+    const text=`For the ${service} account I also need a username and your full name. Reply like: username ${suggestion}, name Your Full Name. Gogo will create a strong password and save it in your Vault.`
+    await saveFollowupState(params.actor.legacyTelegramId,FOLLOWUP_KIND,{
+      service:params.request.service,email,url:params.request.url,stage:'profile',originText:params.originText,promptText:text,
+    })
+    return {text,status:'paused',handledBy:'external-account-objective'}
+  }
   const command:BrowserCommand={
     url,
     mode:'execute',
@@ -221,8 +233,9 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
     approvalAction:'submit_form',
     flow:'account_creation',
     objective:[
-      `Create an account on ${service} (${host}) using email ${email}.`,
-      'Use a sensible username derived from the email local-part if the site requires one and it is available.',
+      `Create an account on ${service} (${host}) using email ${email}, username ${username}${fullName?` and full name ${fullName}`:''}.`,
+      'Enter exactly these values. If the site rejects the username (for example it is taken), stop and report it; never pick another one.',
+      'For new-password fields use fill_secret; Gogo generates the password and saves it in the Vault after the account is created.',
       'Do not spend money, start a paid subscription, or bypass any CAPTCHA, OTP, passkey, email-verification, or other human-auth step.',
       'If credentials are required, use the owner-bound Vault path; never expose secrets in chat.',
       'Pause for Take Control at human-only verification boundaries and resume this same run afterward.',
@@ -237,7 +250,8 @@ async function prepareExternalAccount(params:{actor:AgentActor;surface:AgentSurf
     const verifyNote=target.provider
       ?''
       :`${host} is not a provider I have verified, so check the address carefully. `
-    return {...result,text:`Ready to create the ${service} account on ${host} using ${email}. ${verifyNote}Creating it may accept the site's terms/code of conduct and submit your details. Reply *APPROVE* to continue or *REJECT* to stop.`,handledBy:'external-account-objective'}
+    const details=[`email ${email}`,`username ${username}`,...(fullName?[`name ${fullName}`]:[])].join(', ')
+    return {...result,text:`Ready to create the ${service} account on ${host} with ${details}. Gogo will create a strong password and save it in your Vault. ${verifyNote}Creating it may accept the site's terms/code of conduct and submit your details. Reply *APPROVE* to continue or *REJECT* to stop.`,handledBy:'external-account-objective'}
   }
   return result?{...result,handledBy:'external-account-objective'}:null
 }
@@ -282,7 +296,8 @@ export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface
     }
     try{
       const payload=pending.payload||{}
-      const answersPending=emailOnly(params.text)||urlOnly(params.text)
+      const profile=parseAccountProfile(params.text)
+      const answersPending=emailOnly(params.text)||urlOnly(params.text)||Boolean(profile)
       if(!pendingIsFresh(pending)){
         await clearFollowupState(telegramId,FOLLOWUP_KIND)
       }else if(answersPending&&pendingState.latestKind!==FOLLOWUP_KIND){
@@ -299,13 +314,19 @@ export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface
             actor:params.actor,surface:params.surface,originText:String(params.text).trim(),
             request:{service:String(payload.service||''),email:String(params.text).trim(),url:payload.url?String(payload.url):null},
           })
+        }else if(payload.stage==='profile'&&profile){
+          await clearFollowupState(telegramId,FOLLOWUP_KIND)
+          return prepareSafely({
+            actor:params.actor,surface:params.surface,originText:String(params.text).trim(),
+            request:{service:String(payload.service||''),email:String(payload.email||''),url:payload.url?String(payload.url):null,username:profile.username,fullName:profile.fullName},
+          })
         }else if(payload.stage==='url'&&urlOnly(params.text)){
           await clearFollowupState(telegramId,FOLLOWUP_KIND)
           // Rebind any re-prompt (e.g. a refused look-alike link) to this URL turn, so the
           // user's corrected link binds to the question it answers.
           return prepareSafely({
             actor:params.actor,surface:params.surface,originText:String(params.text).trim(),
-            request:{service:String(payload.service||''),email:String(payload.email||''),url:String(params.text).trim()},
+            request:{service:String(payload.service||''),email:String(payload.email||''),url:String(params.text).trim(),username:payload.username?String(payload.username):null,fullName:payload.fullName?String(payload.fullName):null},
           })
         }else if(!parseExternalAccountRequest(params.text)){
           await clearFollowupState(telegramId,FOLLOWUP_KIND)

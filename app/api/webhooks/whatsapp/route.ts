@@ -55,7 +55,7 @@ import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } 
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { approvalIntent, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
-import { mentionsExternalAccountCreation, parseExternalAccountRequest, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
+import { mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { jevClarificationReply, promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
@@ -1284,7 +1284,7 @@ _"${originalText}"_
     // Core v1 objective-first external account creation must beat Jev, legacy feature
     // routing and free-form model replies. Runtime capability, not model prose, decides
     // whether AskGogo can use browser/Vault/Take Control.
-    if (parseExternalAccountRequest(text) || mentionsExternalAccountCreation(text) || /^\s*(?:https:\/\/\S+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\s*$/i.test(text)) {
+    if (parseExternalAccountRequest(text) || mentionsExternalAccountCreation(text) || parseAccountProfile(text) || /^\s*(?:https:\/\/\S+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\s*$/i.test(text)) {
       const externalActor = await resolveAgentActor({
         surface:'whatsapp',
         telegramId:String(resolvedUser.telegramId),
