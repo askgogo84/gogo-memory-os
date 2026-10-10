@@ -1,3 +1,4 @@
+import { createPodcast, createVoiceNote, podcastRequest, wantsVoiceReply } from '@/lib/services/voice-reply'
 import { unsupportedCapability } from './unsupported-capabilities'
 import { guardChatActionClaims } from './action-claim-guard'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
@@ -675,6 +676,22 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (unsupported) {
       await saveConversation(resolvedUser.telegramId, 'assistant', unsupported.reply)
       return { text: formatOutgoingText(params.channel, unsupported.reply), resolvedUser }
+    }
+  }
+  {
+    const podcast = podcastRequest(incomingText)
+    if (podcast) {
+      const made = await createPodcast(resolvedUser.telegramId, podcast.topic, podcast.minutes).catch((error: any) => {
+        console.error('PODCAST_FAILED:', String(error?.message || error).slice(0, 160)); return { script: [] as Array<{ speaker: string; text: string }>, url: null as string | null }
+      })
+      const preview = made.script.slice(0, 6).map((l) => `*${l.speaker === 'A' ? 'Host A' : 'Host B'}:* ${l.text}`).join('\n\n')
+      const reply = made.url
+        ? `🎙 Podcast: ${podcast.topic} (about ${podcast.minutes} min, two voices). The audio is below; here is how it opens:\n\n${preview}`
+        : made.script.length
+          ? `I wrote the podcast script but couldn't create the audio this time, so here is the script:\n\n${made.script.map((l) => `*${l.speaker === 'A' ? 'Host A' : 'Host B'}:* ${l.text}`).join('\n\n')}`
+          : "I couldn't make that podcast right now. Nothing was created; please try again in a few minutes."
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser, ...(made.url ? { mediaUrl: made.url, mediaType: 'audio/mpeg' } : {}) }
     }
   }
   if (isStockMoveAlertRequest(incomingText)) {
@@ -1467,9 +1484,16 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
+  // Muse case 12: "reply as a voice note" gets a real voice note, not a "transcript" in text.
+  let voiceUrl: string | null = null
+  if (wantsVoiceReply(incomingText) && (parsed.type === 'none' || parsed.type === 'search' || finalReply === rawClaude)) {
+    voiceUrl = await createVoiceNote(resolvedUser.telegramId, finalReply)
+    if (!voiceUrl) finalReply += `\n\n(I couldn't create the voice note this time, so here it is as text.)`
+  }
+
   const formatted = formatOutgoingText(params.channel, finalReply)
   await saveConversation(resolvedUser.telegramId, 'assistant', formatted)
-  return { text: formatted, resolvedUser }
+  return { text: formatted, resolvedUser, ...(voiceUrl ? { mediaUrl: voiceUrl, mediaType: 'audio/mpeg' } : {}) }
 }
 
 
