@@ -1,3 +1,4 @@
+import { guardChatActionClaims } from './action-claim-guard'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {selectContentWorkflow, contentWorkflowInputQuestion} from '@/lib/agent/content-workflows'
 import {researchRedditDiscussions} from '@/lib/agent/content-workflow-research'
@@ -1428,6 +1429,15 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       try { finalReply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } catch { finalReply = buildDirectWebAnswer(incomingText, searchContext) }
       if (!finalReply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(finalReply)) finalReply = buildDirectWebAnswer(incomingText, searchContext)
       finalReply += await recordWebSearch(resolvedUser, params.channel, inboundMessageId, guard.usage)
+    }
+  }
+
+  // Plain chat replies (no structured action) may never claim an action was taken.
+  if (finalReply === rawClaude) {
+    const guarded = guardChatActionClaims(finalReply)
+    if (guarded.blocked) {
+      console.warn('CHAT_ACTION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, parsedType: parsed.type || null }))
+      finalReply = guarded.text
     }
   }
 

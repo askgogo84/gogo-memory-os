@@ -5,11 +5,11 @@ import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { runBrowserCommand, type BrowserCommand } from './browser-command'
 import { readAccountRequestWithModel } from './account-intent-model'
-import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, type ExternalAccountRequest } from './external-account-intent'
+import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, type ExternalAccountRequest } from './external-account-intent'
 
 // Intent detection is pure and shared with the classifier; re-exported so existing
 // importers (WhatsApp route, regression scripts) keep a single entry point.
-export { mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, mayBeAccountRequest, type ExternalAccountRequest }
+export { mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, mayBeAccountRequest, type ExternalAccountRequest }
 
 const FOLLOWUP_KIND='external_account_create'
 const FOLLOWUP_MAX_MINUTES=30
@@ -28,7 +28,7 @@ type PendingFollowup={type?:unknown;kind?:unknown;created_at?:string;payload?:Re
  * one. The WhatsApp route applies the same checks inline before resolving the actor.
  */
 export function isExternalAccountCandidate(text:string){
-  return Boolean(parseExternalAccountRequest(text))||mentionsExternalAccountCreation(text)||emailOnly(text)||urlOnly(text)||Boolean(parseAccountProfile(text))
+  return Boolean(parseExternalAccountRequest(text))||mentionsExternalAccountCreation(text)||emailOnly(text)||urlOnly(text)||Boolean(parseAccountProfile(text))||Boolean(parseLooseAccountProfile(text))
 }
 
 const VAGUE_PROMPT='Which website or app should I create the account on? Reply with its name, for example: create an account on Hugging Face.'
@@ -304,7 +304,10 @@ export async function tryRunExternalAccountFlow(params:{actor:AgentActor;surface
     }
     try{
       const payload=pending.payload||{}
-      const profile=parseAccountProfile(params.text)
+      // 10 Oct live run: "Goverdhan\nGogo" answered the username/name question but was not
+      // recognised, fell into general chat, and no task was created. While that question is
+      // pending, an unlabelled short answer counts; the approval message shows the reading.
+      const profile=parseAccountProfile(params.text)||(payload.stage==='profile'?parseLooseAccountProfile(params.text):null)
       const answersPending=emailOnly(params.text)||urlOnly(params.text)||Boolean(profile)
       if(!pendingIsFresh(pending)){
         await clearFollowupState(telegramId,FOLLOWUP_KIND)
