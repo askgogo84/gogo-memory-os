@@ -130,6 +130,33 @@ export function parseAccountProfile(text:string):{username:string;fullName:strin
   return {username,fullName:name&&!/\buser\s*name\b/i.test(name)?name:null}
 }
 
+const PROFILE_FILLER=new Set(['hi','hello','hey','ok','okay','yes','yeah','no','nope','thanks','thank','thx','cancel','stop','approve','approved','reject','done','sure','fine','good','great','cool','what','why','how','help','menu','later','wait','remind','create','book','show','set','add','find','search','call','send','me','my','the','at','to','for','and','list','tell','please'])
+
+/**
+ * An unlabelled answer to "I also need a username and your full name", e.g. "Goverdhan Gogo"
+ * or "goverdhan-md" on one line and "Goverdhan M D" on the next. Only used while that question
+ * is pending; the approval message then shows the reading, so the person can correct it.
+ * Two or more lines: the first line is the username, the rest is the name. One line: the
+ * first word, lowercased, is the username and the whole line is the name.
+ */
+export function parseLooseAccountProfile(text:string):{username:string;fullName:string|null}|null{
+  const lines=String(text||'').split(/\n+/).map(line=>line.replace(/\s+/g,' ').trim()).filter(Boolean)
+  if(!lines.length||lines.length>3)return null
+  const words=lines.join(' ').split(' ')
+  if(words.length>6||words.some(word=>!/^[A-Za-z0-9][A-Za-z0-9._'-]{0,38}$/.test(word)))return null
+  if(words.every(word=>PROFILE_FILLER.has(word.toLowerCase())))return null
+  if(words.some(word=>PROFILE_FILLER.has(word.toLowerCase())))return null
+  const multiLine=lines.length>1&&!lines[0].includes(' ')
+  const usernameRaw=multiLine?lines[0]:words[0]
+  const username=usernameRaw.replace(/^@/,'').replace(/[._'-]+$/,'')
+  if(username.length<2)return null
+  const nameText=(multiLine?lines.slice(1).join(' '):lines.join(' ')).trim()
+  // A name is letters only (initials and hyphens allowed); anything else is not this answer.
+  if(nameText&&nameText!==usernameRaw&&!/^[A-Za-z][A-Za-z .'-]*$/.test(nameText))return null
+  const fullName=nameText&&nameText.split(' ').length>=(multiLine?1:2)?nameText:null
+  return {username:multiLine?username:username.toLowerCase(),fullName}
+}
+
 // Words that signal an account; a bare "create" ("create a reminder") is not one.
 const SIGNAL = /\b(?:accounts?|sign\s*-?\s*(?:up|me\s+up)|signup|register|join|enrol+|enroll|onboard|log\s*-?\s*in|login|get\s+me\s+(?:on|onto|into))\b/i
 
