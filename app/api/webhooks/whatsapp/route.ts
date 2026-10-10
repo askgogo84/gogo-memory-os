@@ -1,3 +1,4 @@
+import { unsupportedCapability } from '@/lib/bot/unsupported-capabilities'
 import { subscriptionReviewText } from '@/lib/agent/general-planner'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
@@ -1196,6 +1197,17 @@ _"${originalText}"_
         await sendWhatsAppMessage(from, approvalAgent.text)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
+    }
+
+    // Capabilities AskGogo does not have yet get one honest answer and an alternative, before any
+    // handler or model can improvise (Muse parity tests 10-11 Oct).
+    const unsupported=unsupportedCapability(text)
+    if(unsupported){
+      console.log('UNSUPPORTED_CAPABILITY:',unsupported.id)
+      await saveConversation(resolvedUser.telegramId,'user',text)
+      await saveConversation(resolvedUser.telegramId,'assistant',unsupported.reply)
+      await sendWhatsAppMessage(from,unsupported.reply)
+      return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
     }
 
     // Watcher commands create/read persistent state; never downgrade them to one-shot search.
