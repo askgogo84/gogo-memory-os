@@ -116,7 +116,7 @@ const db = {from(table: string) {
     return Promise.resolve({error: null})
   }}
 }}
-const noMatch = new Set(['handleLinkVaultText', 'tryTypedTimeRouting', 'tryFoodComparison', 'getLatestFollowupState', 'isAmPmChoice'])
+const noMatch = new Set(['unsupportedCapability', 'podcastRequest', 'imageRequest', 'wantsVoiceReply', 'handleLinkVaultText', 'tryTypedTimeRouting', 'tryFoodComparison', 'getLatestFollowupState', 'isAmPmChoice'])
 const actual: Record<string, any> = {
   '@/lib/agent/content-workflows': contentWorkflows,
   '@/lib/supabase-admin': {supabaseAdmin: db},

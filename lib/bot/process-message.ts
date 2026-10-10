@@ -1,3 +1,4 @@
+import { createImage, imageRequest, imageRequestRefusal } from '@/lib/services/image-reply'
 import { createPodcast, createVoiceNote, podcastRequest, wantsVoiceReply } from '@/lib/services/voice-reply'
 import { unsupportedCapability } from './unsupported-capabilities'
 import { guardChatActionClaims } from './action-claim-guard'
@@ -394,6 +395,44 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const incomingText = (params.text || '').trim()
   // Draft material can mention tomorrow, price or "remind me" without being
   // permission to execute those actions. Claim explicit workflows before routing.
+  // Capabilities answered before any workflow can claim the turn (Muse parity, 11 Oct).
+  {
+    const unsupported = unsupportedCapability(incomingText)
+    if (unsupported) {
+      await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      await saveConversation(resolvedUser.telegramId, 'assistant', unsupported.reply)
+      return { text: formatOutgoingText(params.channel, unsupported.reply), resolvedUser }
+    }
+  }
+  {
+    const podcast = podcastRequest(incomingText)
+    if (podcast) {
+      await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      const made = await createPodcast(resolvedUser.telegramId, podcast.topic, podcast.minutes).catch((error: any) => {
+        console.error('PODCAST_FAILED:', String(error?.message || error).slice(0, 160)); return { script: [] as Array<{ speaker: string; text: string }>, url: null as string | null }
+      })
+      const preview = made.script.slice(0, 6).map((l) => `*${l.speaker === 'A' ? 'Host A' : 'Host B'}:* ${l.text}`).join('\n\n')
+      const reply = made.url
+        ? `🎙 Podcast: ${podcast.topic} (about ${podcast.minutes} min, two voices). The audio is below; here is how it opens:\n\n${preview}`
+        : made.script.length
+          ? `I wrote the podcast script but couldn't create the audio this time, so here is the script:\n\n${made.script.map((l) => `*${l.speaker === 'A' ? 'Host A' : 'Host B'}:* ${l.text}`).join('\n\n')}`
+          : "I couldn't make that podcast right now. Nothing was created; please try again in a few minutes."
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser, ...(made.url ? { mediaUrl: made.url, mediaType: 'audio/mpeg' } : {}) }
+    }
+  }
+  {
+    // Muse case 24: invites, posters and cards are made as real images.
+    const imageText = imageRequest(incomingText)
+    if (imageText) {
+      await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      const refusal = imageRequestRefusal(imageText)
+      const url = refusal ? null : await createImage(resolvedUser.telegramId, imageText)
+      const reply = refusal || (url ? '🎨 Here is your image. Tell me what to change (colours, wording, style) and I will make a new version.' : "I couldn't create the image right now. Nothing was made; please try again in a few minutes.")
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser, ...(url ? { mediaUrl: url, mediaType: 'image/png' } : {}) }
+    }
+  }
   const contentWorkflow = selectContentWorkflow(incomingText)
   if (contentWorkflow) {
     const inputQuestion = contentWorkflowInputQuestion(incomingText, contentWorkflow)
@@ -671,29 +710,6 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     // No fresh pending, or the answer didn't resolve to a time → fall through to normal routing.
   }
 
-  {
-    const unsupported = unsupportedCapability(incomingText)
-    if (unsupported) {
-      await saveConversation(resolvedUser.telegramId, 'assistant', unsupported.reply)
-      return { text: formatOutgoingText(params.channel, unsupported.reply), resolvedUser }
-    }
-  }
-  {
-    const podcast = podcastRequest(incomingText)
-    if (podcast) {
-      const made = await createPodcast(resolvedUser.telegramId, podcast.topic, podcast.minutes).catch((error: any) => {
-        console.error('PODCAST_FAILED:', String(error?.message || error).slice(0, 160)); return { script: [] as Array<{ speaker: string; text: string }>, url: null as string | null }
-      })
-      const preview = made.script.slice(0, 6).map((l) => `*${l.speaker === 'A' ? 'Host A' : 'Host B'}:* ${l.text}`).join('\n\n')
-      const reply = made.url
-        ? `🎙 Podcast: ${podcast.topic} (about ${podcast.minutes} min, two voices). The audio is below; here is how it opens:\n\n${preview}`
-        : made.script.length
-          ? `I wrote the podcast script but couldn't create the audio this time, so here is the script:\n\n${made.script.map((l) => `*${l.speaker === 'A' ? 'Host A' : 'Host B'}:* ${l.text}`).join('\n\n')}`
-          : "I couldn't make that podcast right now. Nothing was created; please try again in a few minutes."
-      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-      return { text: formatOutgoingText(params.channel, reply), resolvedUser, ...(made.url ? { mediaUrl: made.url, mediaType: 'audio/mpeg' } : {}) }
-    }
-  }
   if (isStockMoveAlertRequest(incomingText)) {
     const reply = "I can't track share-price moves yet, so I haven't set anything up. I can watch the news about it instead: reply *track <company> news* and I'll message you when something significant is reported."
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
