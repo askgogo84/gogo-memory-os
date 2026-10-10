@@ -75,7 +75,7 @@ export async function runApprovedBrowserRun(runId: string): Promise<ApprovedBrow
           ? `✅ Done. ${result.text}`
           : result.status === 'paused'
             ? result.text
-            : `Gogo could not finish this task.\n\n${result.text}`
+            : / account not created: /.test(String(result.text||"").split("\n")[0]) ? String(result.text) : `Gogo could not finish this task.\n\n${result.text}`
       )
     }
     return result?.status === 'completed' ? 'completed' : 'blocked'
