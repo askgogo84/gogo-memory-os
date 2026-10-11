@@ -53,13 +53,17 @@ assert.match(venue.url, /booking\.html$/)
 // 3. Sport, date, time and court through pointer-only listboxes and a div calendar, then Add To Cart.
 const booking = wave(page('booking.html'), [
   { kind: 'click', selector: '#sport-btn' }, { kind: 'click_text', text: 'Badminton' },
-  { kind: 'click', selector: '#date-btn' }, { kind: 'click_text', text: '17' },
+  { kind: 'click', selector: '#date-btn' }, { kind: 'click_text', text: '2026-10-17' },
   { kind: 'click', selector: '#time-btn' }, { kind: 'click_text', text: '07:00 AM' },
   { kind: 'click', selector: '#court-btn' }, { kind: 'click_text', text: 'Premium Synthetic Court 1' },
   { kind: 'click_text', text: 'Add To Cart' },
 ])
 assert.deepEqual(steps(booking), Array(9).fill(0).map((_, i) => (i % 2 === 0 && i < 8 ? 'click:done' : 'click_text:done')))
 assert.match(decodeURIComponent(booking.url), /cart\.html\?d=2026-10-17&t=07:00 AM$/)
+
+// 3b. A failed step ends the booking wave so the planner observes the page again.
+const failed = wave(page('booking.html'), [{ kind: 'click_text', text: 'Shuttle Court 9' }, { kind: 'click', selector: '#sport-btn' }])
+assert.deepEqual(steps(failed), ['click_text:failed:action_error'])
 
 // 4. The pay control is never pressed, by text or by selector.
 const cart = wave(booking.url, [{ kind: 'click_text', text: 'Proceed to Pay INR 375' }, { kind: 'click', selector: '#pay' }])

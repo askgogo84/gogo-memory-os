@@ -129,6 +129,7 @@ let script: any[] = []
 const commands: Array<{ payload: any; env: Record<string, string> }> = []
 const prompts: string[] = []
 let plans: any[] = []
+let outcomes: any[] = []
 const computer = load('secure-computer.ts', {
   './planner-provider': { completeAgentPlanPrompt: async (prompt: string) => { prompts.push(prompt); return JSON.stringify(plans.shift() || { approvedOperation: 'booking', actions: [] }) } },
   '@vercel/sandbox': { Sandbox: { getOrCreate: async () => ({ expiresAt: new Date(Date.now() + 1200000), extendTimeout: async () => {}, writeFiles: async () => {}, updateNetworkPolicy: async () => {}, stop: async () => {},
@@ -136,7 +137,8 @@ const computer = load('secure-computer.ts', {
       const payload = JSON.parse(Buffer.from(String(cmd.args[3]), 'base64').toString('utf8'))
       commands.push({ payload, env: cmd.env || {} })
       const next = script.shift()
-      const actions = (payload.actions || []).map((a: any) => ({ kind: a.kind, detail: a.selector || a.url || '', status: 'done' }))
+      const forced = outcomes.shift()
+      const actions = forced || (payload.actions || []).map((a: any) => ({ kind: a.kind, detail: a.selector || a.url || '', status: 'done' }))
       return { exitCode: 0, stdout: async () => JSON.stringify({ ...next, actions }) }
     } }) } },
   './secure-browser-redaction': { redactBrowserSensitiveText: (text: string) => text },
@@ -316,3 +318,31 @@ assert.match(srcEarly, /if\(payload\.rehearsal&&\/\\badd\\s\+to\\s\+cart\\b\/i\.
 assert.match(srcEarly, /if\(payload\.rehearsal&&\/\\badd\\s\+to\\s\+cart\\b\/i\.test\(controlText\)\)/)
 
 console.log('Provider booking: slot → number → WhatsApp OTP → payment handover, with the number and code kept out of payloads, prompts and logs')
+
+// 11 Oct 14:20 rehearsal: the date click failed, the time list was stale, and the run ended at the
+// first failed step. A booking replans from a fresh observation after a failed step; two waves in a
+// row with nothing done end it, and a failed number or code fill ends it at once.
+{
+  const page0 = { ...venue, url: 'https://playo.co/booking?venueId=x' }
+  commands.length = 0; prompts.length = 0
+  script = [page0, page0, page0, page0]
+  outcomes = [null, [{ kind: 'click_text', detail: '', status: 'failed', failure: { reason: 'action_error' } }], [{ kind: 'click_text', detail: '', status: 'done' }]]
+  plans = [
+    { approvedOperation: 'booking', actions: [{ kind: 'click_text', text: '2026-10-17' }, { kind: 'click_text', text: '07:00 AM' }] },
+    { approvedOperation: 'booking', actions: [{ kind: 'click_text', text: '2026-10-17' }] },
+  ]
+  const replanned = await computer.runSecureBrowser({ ...base, bookingPhone: null, bookingOtp: null })
+  assert.ok(prompts.length >= 2, 'a failed booking step is planned again from the new observation')
+  assert.equal(replanned.bookingStage, 'review')
+  const idle = commands.length
+  assert.ok(idle <= 6, 'idle waves end the run')
+  commands.length = 0; prompts.length = 0
+  script = [page0, page0, page0]
+  outcomes = [null, [{ kind: 'fill_phone', detail: '#mobile', status: 'failed', failure: { reason: 'timeout' } }]]
+  plans = [{ approvedOperation: 'booking', actions: [{ kind: 'fill_phone', selector: '#mobile' }] }, { approvedOperation: 'booking', actions: [{ kind: 'click', selector: '#get-otp' }] }]
+  await computer.runSecureBrowser({ ...base, bookingPhone: '9876543210', bookingOtp: null })
+  assert.equal(prompts.length, 1, 'a failed number fill is never followed by another plan')
+  assert.match(readFileSync('lib/agent/secure-computer.ts', 'utf8'), /click_text the requested date as YYYY-MM-DD/)
+  outcomes = []
+}
+console.log('Provider booking: failed steps are replanned; failed number/code fills stop the run')
