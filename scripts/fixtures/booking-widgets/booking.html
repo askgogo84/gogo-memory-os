@@ -1,0 +1,39 @@
+<!doctype html><html><head><title>Check Real-Time Slots Availability at Machaxi Milan Sports Centre</title><meta charset="utf-8">
+<style>.lb{position:absolute;background:#fff;border:1px solid #ccc;list-style:none;margin:0;padding:4px;z-index:10}.lb[hidden]{display:none}.field{position:relative;margin:12px 0;width:300px}.day{display:inline-block;width:28px;cursor:pointer}</style></head><body>
+<h1>Machaxi Milan Sports Centre</h1>
+<!-- Like Playo's Headless UI listboxes: an option is chosen by a real pointer press, not el.click(). -->
+<div class="field">Sports<button type="button" id="sport-btn" aria-haspopup="listbox" aria-expanded="false"><span id="sport">Swimming</span></button>
+<ul role="listbox" class="lb" id="sport-lb" hidden><li role="option">Swimming</li><li role="option">Table Tennis</li><li role="option">Badminton</li></ul></div>
+<div class="field">Date<button type="button" id="date-btn"><span id="date">2026-10-11</span></button><div id="cal" class="lb" hidden></div></div>
+<div class="field">Start Time<button type="button" id="time-btn" aria-haspopup="listbox" aria-expanded="false"><span id="time">07:00 PM</span></button>
+<ul role="listbox" class="lb" id="time-lb" hidden><li role="option">06:00 AM</li><li role="option">06:30 AM</li><li role="option">07:00 AM</li><li role="option">07:30 AM</li><li role="option">07:00 PM</li></ul></div>
+<div class="field">Court<button type="button" id="court-btn" aria-haspopup="listbox" aria-expanded="false"><span id="court">--Select Court--</span></button>
+<ul role="listbox" class="lb" id="court-lb" hidden><li role="option">Premium Synthetic Court 1 INR 375</li><li role="option">Premium Synthetic Court 2 INR 375</li></ul></div>
+<button type="button" id="add">Add To Cart</button>
+<div id="cart">Cart Is Empty</div>
+<script>
+const st={pressed:null};
+// Keep choices across page loads (the worker opens the page again on each step).
+const saved=JSON.parse(localStorage.getItem('booking')||'{}');
+function save(){localStorage.setItem('booking',JSON.stringify({sport:document.getElementById('sport').textContent,date:document.getElementById('date').textContent,time:document.getElementById('time').textContent,court:document.getElementById('court').textContent}))}
+for(const k of ['sport','date','time','court'])if(saved[k])document.getElementById(k).textContent=saved[k];
+function listbox(btnId,lbId,valId,after){
+  const b=document.getElementById(btnId),lb=document.getElementById(lbId),v=document.getElementById(valId);
+  b.addEventListener('click',()=>{const open=lb.hidden;document.querySelectorAll('.lb').forEach(x=>x.hidden=true);lb.hidden=!open;b.setAttribute('aria-expanded',String(open))});
+  lb.querySelectorAll('[role=option]').forEach(o=>{
+    o.addEventListener('pointerdown',()=>{st.pressed=o});
+    o.addEventListener('pointerup',()=>{if(st.pressed!==o)return;v.textContent=o.textContent;lb.hidden=true;b.setAttribute('aria-expanded','false');save();after&&after()});
+  });
+}
+listbox('sport-btn','sport-lb','sport');
+listbox('time-btn','time-lb','time');
+listbox('court-btn','court-lb','court');
+const cal=document.getElementById('cal');
+for(let d=1;d<=31;d++){const e=document.createElement('div');e.className='day';e.textContent=String(d);e.addEventListener('click',()=>{document.getElementById('date').textContent='2026-10-'+String(d).padStart(2,'0');cal.hidden=true;save()});cal.appendChild(e)}
+document.getElementById('date-btn').addEventListener('click',()=>{document.querySelectorAll('.lb').forEach(x=>x.hidden=true);cal.hidden=false});
+document.getElementById('add').addEventListener('click',()=>{
+  const ok=document.getElementById('sport').textContent==='Badminton'&&document.getElementById('court').textContent.startsWith('Premium');
+  if(!ok){document.getElementById('cart').textContent='Choose a sport and court';return}
+  location.href='cart.html?d='+encodeURIComponent(document.getElementById('date').textContent)+'&t='+encodeURIComponent(document.getElementById('time').textContent);
+});
+</script></body></html>
