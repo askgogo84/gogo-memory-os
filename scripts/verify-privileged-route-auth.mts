@@ -13,7 +13,7 @@ import {
 //
 // These routes use the Supabase service-role key. Before this fix they had NO
 // authentication: /api/admin/stats dumped user PII, and the bot-action routes
-// (todos, contacts, expenses, news, skin-reminder, briefing, reminders/create,
+// (todos, contacts, expenses, news, briefing, reminders/create,
 // referral) read/wrote ANY user's data keyed by a caller-supplied `phone`.
 //
 // This test drives the ACTUAL route handlers (transpiled + run with mocked
@@ -178,19 +178,6 @@ const resolveUserMock = { '@/lib/bot/resolve-user': { resolveUser: async () => (
   spy.calls.length = 0
   res = await r.POST(fakeReq({ auth: GOOD, body: { phone: '+15551234567', text: 'spent 200 on lunch' } }))
   check('expenses POST: authorized → resolves owner via users lookup', spy.calls.includes('users'))
-}
-
-// skin-reminder
-{
-  const spy = makeSpy()
-  const r = loadRoute('app/api/skin-reminder/route.ts', resolveUserMock, spy)
-  spy.calls.length = 0
-  let res: Res = await r.POST(fakeReq({ body: { phone: '+victim' } }))
-  check('skin-reminder: no-auth → 401', res.status === 401)
-  check('skin-reminder: no-auth → zero DB calls (no reminder insert)', spy.calls.length === 0)
-  spy.calls.length = 0
-  res = await r.POST(fakeReq({ auth: GOOD, body: { phone: '+15551234567' } }))
-  check('skin-reminder: authorized → reminders insert reached', spy.calls.includes('reminders'))
 }
 
 // reminders/create (dead route, gated fail-closed)

@@ -16,7 +16,7 @@ assert.match(legacy, /CONTACT MEMORY/)
 assert.match(legacy, /\/api\/todos/)
 assert.match(legacy, /addToListDetailed/)
 assert.match(legacy, /buildNaturalAssetRetrievalReply/)
-assert.match(legacy, /skin-reminder/)
+assert.doesNotMatch(legacy, /skin-reminder/, 'skin features were removed on 11 Oct')
 assert.match(legacy, /DAILY BRIEFING/)
 
 assert.match(sameBrain, /routeLegacyFeatureIntent/)

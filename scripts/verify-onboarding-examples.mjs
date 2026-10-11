@@ -123,10 +123,6 @@ function normalizeListName(raw) {
 function routeFeatureIntent(text) {
   const t = text.toLowerCase().trim()
 
-  // SKIN CHECK FOLLOW-UP
-  if (/\bremind\b/i.test(t) && /\bskin\s*check\b/i.test(t) &&
-      (/\b2\s*weeks?\b/i.test(t) || /\btwo\s*weeks?\b/i.test(t) || /\b14\s*days?\b/i.test(t))) return 'skin_reminder'
-
   // DAILY BRIEFING
   if (/^(morning|good morning|daily briefing|my briefing|briefing|morning briefing|today briefing|today summary|plan my day|help me plan my day|today)$/i.test(t)) return 'briefing'
 

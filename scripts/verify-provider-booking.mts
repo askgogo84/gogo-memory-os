@@ -229,4 +229,9 @@ const research = readFileSync('lib/agent/appointment-research.ts', 'utf8')
 assert.match(research, /!SOCIAL_HOST\.test\(host\(result\.url\)\)/, 'social posts are never offered as places to book')
 assert.match(booking.bookingObjective({ date: '2026-10-17', time: '7:00 AM', timezone: 'Asia/Kolkata', location: 'HSR Layout, Bengaluru', confirmation: 'x' }), /open one in HSR Layout, Bengaluru that has this slot free/)
 
+// 11 Oct live run: a bare "1" after the places list got a skin-care reply. Skin features are gone,
+// and a bare digit is taken by the nutrition menu only when that menu was the last reply.
+assert.doesNotMatch(route, /\bskin/i, 'no skin routing is left in the WhatsApp webhook')
+assert.match(route, /if \(isNutritionContext\) \{[\s\S]{0,400}return new NextResponse/, 'a nutrition digit ends routing; any other digit carries on')
+
 console.log('Provider booking: slot → number → WhatsApp OTP → payment handover, with the number and code kept out of payloads, prompts and logs')
