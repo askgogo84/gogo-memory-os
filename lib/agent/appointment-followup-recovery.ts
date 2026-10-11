@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { searchWebResults } from '@/lib/web-search'
 import { normalizeTimezone } from '@/lib/timezone'
-import { tryRunBrowserCommand } from './browser-command'
+import { tryRunBrowserCommand, queueBrowserRead } from './browser-command'
 import { capturedSlotHints, currentAppointmentReply, appointmentReplySelects, bareOptionReply, bookingNextStepHint } from './appointment-followup'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
@@ -180,6 +180,28 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
   // Opening an option is a read: list the free dates and slots. Nothing is selected or booked
   // until the person names a slot and approves.
   const objective = `Read-only. Open ${target.url} and list the dates and time slots shown as available for ${safe(meta.service || 'the requested service',120)}${meta.location ? ` in ${safe(meta.location,100)}` : ''}${meta.timing ? ` around ${safe(meta.timing,100)}` : ''}, with prices if shown. Keep the provider AND city locked to option ${option}; do not go to a page for another city. You may open this provider's schedule page and click public date or sport tabs to reveal slots. Do not log in.`
+  // On WhatsApp the page is opened in the background (the webhook has under a minute, and a slow
+  // provider page left a run holding the browser on 11 Oct). The slots arrive as a new message.
+  if (params.surface === 'whatsapp') {
+    // The selection is written with the run itself, so the background read can never race it.
+    const { data: userRow } = await supabaseAdmin.from('users').select('timezone').eq('telegram_id', tg).maybeSingle()
+    const timezone = normalizeTimezone(String(userRow?.timezone || 'Asia/Kolkata'))
+    const { requestedTime, requestedDate } = capturedSlotHints(String(meta.input_text || ''), timezone)
+    const appointment_selection = {
+      option,researchRunId:String(research.id),title:safe(selected.title || '',220),provider:safe(selected.provider || '',160),
+      url:target.url,originalUrl:selected.url,bookablePathResolved:target.resolved,availabilityVerified:false,staleApprovalsRetired,
+      service:safe(meta.service || '',120),location:safe(meta.location || '',120),timing:safe(meta.timing || '',120),recoveredContext:true,
+      providerLocked:true,locationLocked:true,requestedTime,requestedDate,
+    }
+    const queued = await queueBrowserRead({ actor:params.actor, surface:params.surface, text:objective, notifySuffix:bookingNextStepHint(option), metadata:{ appointment_selection, appointment_prepared:true } })
+    if (queued?.runId) {
+      return {
+        runId:queued.runId, status:'running' as const, capability:'browser' as const, risk:'low' as const,
+        text:`I'm opening option ${option} (${queued.host}) in my browser now. I'll message you here with the free slots in a minute or two. Nothing is booked.`,
+        handledBy:'appointment-followup-recovery' as const, availabilityVerified:false,
+      }
+    }
+  }
   const result = await tryRunBrowserCommand({ actor:params.actor,surface:params.surface,text:objective })
   if (!result) throw new Error('appointment_followup_recovery_browser_not_routed')
 

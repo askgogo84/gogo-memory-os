@@ -213,4 +213,20 @@ assert.match(fillHandler, /process\.env\.GOGO_BOOKING_OTP:process\.env\.GOGO_BOO
 assert.doesNotMatch(fillHandler, /log\.push\([^)]*bookingValue/, 'the value is never logged')
 assert.match(src, /if\(payload\.bookingFlow\)\{[\s\S]{0,400}place order\|buy now[\s\S]{0,200}reason:'payment_control'/, 'the worker never presses Pay in a booking')
 
+// ── Opening an option on WhatsApp runs in the background (11 Oct live run: the 42s webhook
+// window expired and the abandoned run kept the browser locked) ────────────────
+const recoverySrc = readFileSync('lib/agent/appointment-followup-recovery.ts', 'utf8')
+assert.ok(recoverySrc.indexOf("if (params.surface === 'whatsapp')") < recoverySrc.indexOf('const result = await tryRunBrowserCommand('), 'WhatsApp queues before any inline browser run')
+assert.match(recoverySrc, /metadata:\{ appointment_selection, appointment_prepared:true \}/, 'the selection is written with the run, never after it')
+assert.match(recoverySrc, /I'm opening option \$\{option\} \(\$\{queued\.host\}\)/)
+const followSrc = readFileSync('lib/agent/appointment-followup.ts', 'utf8')
+assert.match(followSrc, /\^I'm opening option \\d\+ \\\(/, 'the confirm step recognises the opening reply')
+assert.match(command, /export async function queueBrowserRead[\s\S]{0,600}command\.mode!=='read'/, 'only reads are queued this way')
+assert.match(command, /error:'whatsapp_browser_response_timeout'[\s\S]{0,120}\.eq\('error','background_read_queued'\)/, 'a failed dispatch falls back to the background sweeper')
+assert.match(worker, /\.eq\('status', 'paused'\)\.eq\('error', 'background_read_queued'\)/, 'a queued read runs once')
+assert.match(internal, /if \(body\?\.read === true\)/)
+const research = readFileSync('lib/agent/appointment-research.ts', 'utf8')
+assert.match(research, /!SOCIAL_HOST\.test\(host\(result\.url\)\)/, 'social posts are never offered as places to book')
+assert.match(booking.bookingObjective({ date: '2026-10-17', time: '7:00 AM', timezone: 'Asia/Kolkata', location: 'HSR Layout, Bengaluru', confirmation: 'x' }), /open one in HSR Layout, Bengaluru that has this slot free/)
+
 console.log('Provider booking: slot → number → WhatsApp OTP → payment handover, with the number and code kept out of payloads, prompts and logs')

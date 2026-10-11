@@ -63,10 +63,10 @@ export function bookingPaymentControlText(text: string): boolean {
   return /\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(String(text || ''))
 }
 
-export function bookingObjective(params: { date: string; time: string; timezone: string; service?: string; title?: string; name?: string; email?: string; confirmation: string }) {
+export function bookingObjective(params: { date: string; time: string; timezone: string; service?: string; title?: string; location?: string; name?: string; email?: string; confirmation: string }) {
   const what = [params.service, params.title ? `at ${params.title}` : ''].filter(Boolean).join(' ')
   const who = [params.name ? `full name ${params.name}` : '', params.email ? `email ${params.email}` : ''].filter(Boolean).join(' and ')
-  return `Provider booking up to payment${what ? ` for ${what}` : ''}: on this provider page choose exactly ${params.date} at ${params.time} (${params.timezone}), select that slot, and continue (Book, Proceed, Continue or Add to cart) until the booking summary or cart is shown. If the site asks to log in or register, use fill_phone for the mobile number field and press the control that sends the OTP${who ? `; if it asks for more details use ${who}` : ''}. Stop on the payment step: never pay, never enter card, UPI or bank details. The person's confirmation: ${params.confirmation}`
+  return `Provider booking up to payment${what ? ` for ${what}` : ''}: on this provider page${params.location ? ` (if it lists several venues, open one in ${params.location} that has this slot free)` : ''} choose exactly ${params.date} at ${params.time} (${params.timezone}), select that slot, and continue (Book, Proceed, Continue or Add to cart) until the booking summary or cart is shown. If the site asks to log in or register, use fill_phone for the mobile number field and press the control that sends the OTP${who ? `; if it asks for more details use ${who}` : ''}. Stop on the payment step: never pay, never enter card, UPI or bank details. The person's confirmation: ${params.confirmation}`
 }
 
 export function bookingOtpMessage(params: { host: string; mobile: string | null; takeoverUrl: string; rejected?: boolean }) {
