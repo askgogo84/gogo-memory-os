@@ -242,4 +242,9 @@ assert.match(followSrc, /\.in\('status', \['completed', 'paused', 'failed', 'run
 assert.match(src, /async function clickPastOverlay\(page,selector\)\{[\s\S]{0,500}keyboard\.press\('Escape'\)[\s\S]{0,300}evaluate\(el=>el\.click\(\)\)/)
 assert.doesNotMatch(src.slice(src.indexOf("} else if(a.kind==='submit'){"), src.indexOf("} else if(a.kind==='submit'){") + 400), /clickPastOverlay/, 'submit never uses the popup fallback')
 
+// 11 Oct 14:22: the hint after a background read arrived as "ask you for the OTP [sensitive detail
+// withheld]" because Gogo's own text went through the secret redactor. It is our text, not user data.
+assert.match(command, /notify_suffix:String\(params\.notifySuffix\|\|''\)\.slice\(0,900\)/)
+assert.match(redactSecretShapedText(bookingNextStepHint(1)), /withheld/, 'why: the secret redactor mangles this hint, so it must not be applied to it')
+
 console.log('Provider booking: slot → number → WhatsApp OTP → payment handover, with the number and code kept out of payloads, prompts and logs')
