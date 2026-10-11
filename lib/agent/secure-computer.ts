@@ -823,6 +823,11 @@ async function getComputer(userId:string,targetUrl:string,keepAlive=false){
 function parseJsonLoose(text:string){
   const clean=String(text||'').replace(/```json|```/g,'').trim()
   try{return JSON.parse(clean)}catch{}
+  // 11 Oct rehearsal: the planner wrote a sentence before its JSON object, and the array fallback
+  // below picked up "actions":[...] fragments or an empty list, so a good plan was lost. Try the
+  // outermost object first.
+  const obj=clean.match(/\{[\s\S]*\}/)
+  if(obj){try{return JSON.parse(obj[0])}catch{}}
   const m=clean.match(/\[[\s\S]*\]/)
   if(!m)return []
   try{return JSON.parse(m[0])}catch{return []}
@@ -1016,7 +1021,7 @@ export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:
     +' Never click Pay, Make payment, Place order or Buy now, and never fill card, UPI or bank details: when the page asks for payment, return no actions.'
 }
 
-async function planActions(objective:string,page:any,mode:BrowserMode,objectiveTrust:TrustClass,completedSearches:CompletedReadSearch[]=[],diagnose:(event:BrowserReadDiagnostic)=>void=()=>{},booking?:{otpAvailable:boolean;phoneAvailable:boolean}):Promise<{actions:BrowserAction[];operation:ApprovedBrowserOperation|null;draftReady:boolean}>{
+async function planActions(objective:string,page:any,mode:BrowserMode,objectiveTrust:TrustClass,completedSearches:CompletedReadSearch[]=[],diagnose:(event:BrowserReadDiagnostic)=>void=()=>{},booking?:{otpAvailable:boolean;phoneAvailable:boolean;rehearsal?:boolean}):Promise<{actions:BrowserAction[];operation:ApprovedBrowserOperation|null;draftReady:boolean}>{
   const rejectedControls=new Set((mode==='read'?page.actions||[]:[]).filter((action:any)=>action.status==='skipped').map((action:any)=>String(action.detail||'')))
   const searchedControls=mode==='read'?completedSearchControls(page,completedSearches):new Set<string>()
   for(const selector of searchedControls)rejectedControls.add(selector)
@@ -1062,6 +1067,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
     // rejected the request. Use the same configured fallback as agent planning.
     const text=await completeAgentPlanPrompt(mode==='read'?prompt+'\nOBSERVED_CHOICES: '+JSON.stringify(choices):prompt,undefined,mode==='read'?'Select the next action from OBSERVED_CHOICES only. Return JSON. Do not invent selectors, URLs or future controls. The page is already open: do not reload it. If the objective needs search and no search input is observed, choose a relevant observed navigation link. Use its ref and inspect its href: a link back to the current page is not progress. Previous actions are observations of what was already attempted; do not repeat a completed click when the same page and controls remain. If a public search input already has the requested value, NEVER fill it again. For suggestion-mode fields click the matching suggestion. For completed enter-mode searches open an observed matching result link; do not re-open search. Completed search fields with matching result links have been omitted. Use the actual ref. The select action is only for a native HTML SELECT with an observed option value; never use select for a suggestion. Refill only if you need a different query. Values and suggestions are in OBSERVED_CHOICES. Never authenticate or change carts/accounts.':undefined)
     const parsed=parseJsonLoose(text)
+    if(booking?.rehearsal)try{console.log('BOOKING_REHEARSAL_PLAN:',JSON.stringify({chars:text.length,text:String(text).slice(0,900)}))}catch{}
     const operation=typeof parsed?.approvedOperation==='string'&&Object.hasOwn(operationPatterns,parsed.approvedOperation)?parsed.approvedOperation as ApprovedBrowserOperation:null
     const rawActions=Array.isArray(parsed)?parsed:parsed?.actions
     const rejections:BrowserReadReason[]=[]
@@ -1471,7 +1477,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         assessedReadPage=page
         if(readAnswer)break
       }
-      const bookingPlan=providerBooking?{otpAvailable:Boolean(otpWaiting&&params.bookingOtp&&!otpUsed),phoneAvailable:Boolean(params.bookingPhone)}:undefined
+      const bookingPlan=providerBooking?{otpAvailable:Boolean(otpWaiting&&params.bookingOtp&&!otpUsed),phoneAvailable:Boolean(params.bookingPhone),rehearsal:params.rehearsal===true}:undefined
       const plan=await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
       // Public reads must never navigate INTO a login wall (/ap/signin, /account/login, …).
       // If the site itself redirects there, the auth-gate check handles it as a sign-in pause.
