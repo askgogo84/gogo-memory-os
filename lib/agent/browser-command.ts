@@ -833,3 +833,15 @@ export async function queueBrowserRead(params:{actor:AgentActor;surface:AgentSur
   if(!dispatched)await supabaseAdmin.from('agent_runs').update({error:'whatsapp_browser_response_timeout',updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg)).eq('error','background_read_queued')
   return {runId,status:'running' as const,capability:'browser' as const,risk:'low' as const,host:new URL(command.url).hostname.replace(/^www\./,''),handledBy:'secure-browser' as const}
 }
+
+/**
+ * A new secure-browser run that waits for approval, separate from the read that opened the page.
+ * 11 Oct live run: the approval reused an older read run, so Gogo booked from the wrong page, and
+ * reusing a read that is still running would let it overwrite the approval state.
+ */
+export async function createApprovalBrowserRun(params:{actor:AgentActor;surface:AgentSurface;command:BrowserCommand;metadata:Record<string,unknown>}){
+  const {runId,stepId}=await makeRun({actor:params.actor,surface:params.surface,command:params.command})
+  const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:params.metadata,updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(params.actor.legacyTelegramId))
+  if(error)throw new Error(`browser_approval_run_failed:${error.message}`)
+  return {runId,stepId}
+}

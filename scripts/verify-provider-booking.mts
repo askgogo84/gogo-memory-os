@@ -234,4 +234,12 @@ assert.match(booking.bookingObjective({ date: '2026-10-17', time: '7:00 AM', tim
 assert.doesNotMatch(route, /\bskin/i, 'no skin routing is left in the WhatsApp webhook')
 assert.match(route, /if \(isNutritionContext\) \{[\s\S]{0,400}return new NextResponse/, 'a nutrition digit ends routing; any other digit carries on')
 
+// 11 Oct 13:55 live run: APPROVE booked from an older read of a different Playo page, and a popup
+// made the slot click fail. The approval now gets its own run; clicks get past a covering popup.
+assert.match(followSrc, /const booking = await createApprovalBrowserRun\(/, 'the approval runs on a new run, not a reused read')
+assert.match(followSrc, /run_id: booking\.runId, action_type: 'booking'/)
+assert.match(followSrc, /\.in\('status', \['completed', 'paused', 'failed', 'running', 'queued'\]\)\s*\.order\('started_at', \{ ascending: false \}\)/, 'the newest opened option wins, even while it is still being read')
+assert.match(src, /async function clickPastOverlay\(page,selector\)\{[\s\S]{0,500}keyboard\.press\('Escape'\)[\s\S]{0,300}evaluate\(el=>el\.click\(\)\)/)
+assert.doesNotMatch(src.slice(src.indexOf("} else if(a.kind==='submit'){"), src.indexOf("} else if(a.kind==='submit'){") + 400), /clickPastOverlay/, 'submit never uses the popup fallback')
+
 console.log('Provider booking: slot → number → WhatsApp OTP → payment handover, with the number and code kept out of payloads, prompts and logs')

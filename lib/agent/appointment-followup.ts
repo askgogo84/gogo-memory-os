@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rememberTypedObjects } from './typed-object-context'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { DEFAULT_TIMEZONE, normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
-import { tryRunBrowserCommand, browserApprovalBinding } from './browser-command'
+import { tryRunBrowserCommand, browserApprovalBinding, createApprovalBrowserRun } from './browser-command'
 import { bookingObjective, indianMobileFromWhatsApp, maskMobile } from './provider-booking'
 import { registerLifeEvent } from './life-event-engine'
 import type { AgentActor } from './actor'
@@ -254,8 +254,8 @@ async function latestPreparedAppointment(tg: number) {
     .eq('type', 'secure_browser')
     // The open step is a read; it may finish, stop at a sign-in wall or fail. Any of them still
     // identifies the provider page the person chose.
-    .in('status', ['completed', 'paused', 'failed'])
-    .order('updated_at', { ascending: false })
+    .in('status', ['completed', 'paused', 'failed', 'running', 'queued'])
+    .order('started_at', { ascending: false })
     .limit(12)
   if (error) throw new Error(`appointment_prepare_context_failed:${error.message}`)
   return (data || []).find((row: any) => row?.metadata_json?.appointment_selection?.url) || null
@@ -282,7 +282,7 @@ async function bookingProfile(actor: AgentActor): Promise<{ name: string; email:
   }
 }
 
-async function createFinalApproval(params: { actor: AgentActor; prepared: any; text: string }) {
+async function createFinalApproval(params: { actor: AgentActor; prepared: any; text: string; surface?: AgentSurface }) {
   const tg = params.actor.legacyTelegramId
   const runId = String(params.prepared.id)
   const meta: any = params.prepared.metadata_json || {}
@@ -336,8 +336,9 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
   }
 
   const { data: existing } = await supabaseAdmin.from('agent_approvals')
-    .select('id,status').eq('telegram_id', String(tg)).eq('run_id', runId).eq('action_type', 'booking')
-    .in('status', ['pending','approved']).order('created_at', { ascending: false }).limit(1).maybeSingle()
+    .select('id,status').eq('telegram_id', String(tg)).eq('action_type', 'booking').eq('status', 'pending')
+    .gte('requested_at', new Date(Date.now() - 15 * 60_000).toISOString())
+    .order('requested_at', { ascending: false }).limit(1).maybeSingle()
   if (existing?.id) {
     return {
       runId, status: 'waiting_approval' as const, capability: 'browser' as const, risk: 'high' as const,
@@ -345,10 +346,6 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
       approvalId: String(existing.id), approvalRequired: true, handledBy: 'appointment-followup' as const,
     }
   }
-
-  const { data: step, error: stepError } = await supabaseAdmin.from('agent_steps')
-    .select('id').eq('run_id', runId).eq('telegram_id', String(tg)).eq('tool_name', 'secure_browser').limit(1).maybeSingle()
-  if (stepError || !step?.id) throw new Error('appointment_prepare_step_missing')
 
   // 11 Oct: the person wants Gogo to pick the slot, log in with their number, ask for the OTP on
   // WhatsApp and stop at payment with a link to that same browser. That is the provider_booking
@@ -359,7 +356,7 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
     service: safe(selection.service || '', 80), title: safe(selection.title || '', 120), location: safe(selection.location || '', 80),
     name: profile.name, email: profile.email, confirmation: safe(params.text, 400),
   }), 1700)
-  const { handoff: _handoff, booking_otp: _otp, booking_stage: _stage, browser_safe_to_retry: _retry, auth_action_log: _log, auth_original_url: _orig, ...cleanMeta } = meta
+  const { handoff: _handoff, booking_otp: _otp, booking_stage: _stage, browser_safe_to_retry: _retry, auth_action_log: _log, auth_original_url: _orig, notify_suffix: _notify, ...cleanMeta } = meta
   const nextMeta = {
     ...cleanMeta,
     url,
@@ -379,8 +376,11 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
     },
   }
 
+  const command = { url, objective, mode: 'execute' as const, risk: 'high' as const, approvalAction: 'booking' as const, flow: 'provider_booking' as const }
+  const booking = await createApprovalBrowserRun({ actor: params.actor, surface: params.surface || 'whatsapp', command, metadata: { ...nextMeta, plan_type: 'secure_browser', prepared_run_id: runId } })
+
   const { data: approval, error } = await supabaseAdmin.from('agent_approvals').insert({
-    telegram_id: String(tg), run_id: runId, action_type: 'booking',
+    telegram_id: String(tg), run_id: booking.runId, action_type: 'booking',
     title: `Approve booking up to payment${selection.title ? ` · ${safe(selection.title, 120)}` : ''}`,
     description: `Gogo will pick this slot, log in with your mobile number ${maskMobile(profile.mobile)} if the site asks, ask you for the OTP on WhatsApp, and stop at payment with a link for you to pay. Gogo never pays.`,
     payload_preview: [
@@ -389,21 +389,21 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
       { label: 'Appointment', value: `${slot.date} ${slot.time} · ${slot.timezone}` },
       { label: 'Risk', value: 'high' },
     ],
-    execution_payload: { plan_type: 'secure_browser', stepId: String(step.id), url },
+    execution_payload: { plan_type: 'secure_browser', stepId: booking.stepId, url },
     risk_level: 'high', status: 'pending',
-    ...browserApprovalBinding(runId, String(step.id), { url, objective, mode: 'execute', risk: 'high', approvalAction: 'booking', flow: 'provider_booking' }),
+    ...browserApprovalBinding(booking.runId, booking.stepId, command),
   }).select('id').single()
   if (error || !approval?.id) throw new Error(`appointment_approval_failed:${error?.message || 'unknown'}`)
 
   const now = new Date().toISOString()
-  await supabaseAdmin.from('agent_steps').update({ status: 'waiting_approval' }).eq('id', String(step.id))
+  await supabaseAdmin.from('agent_steps').update({ status: 'waiting_approval' }).eq('id', booking.stepId)
   await supabaseAdmin.from('agent_runs').update({
-    status: 'waiting_approval', summary: 'Appointment prepared. Waiting for your approval before final provider confirmation.',
-    progress: 75, metadata_json: nextMeta, updated_at: now,
-  }).eq('id', runId).eq('telegram_id', String(tg))
+    status: 'waiting_approval', summary: 'Booking ready. Waiting for your approval before Gogo picks the slot.',
+    progress: 25, updated_at: now,
+  }).eq('id', booking.runId).eq('telegram_id', String(tg))
 
   return {
-    runId, status: 'waiting_approval' as const, capability: 'browser' as const, risk: 'high' as const,
+    runId: booking.runId, status: 'waiting_approval' as const, capability: 'browser' as const, risk: 'high' as const,
     text: `Ready to book ${selection.title ? `${safe(selection.title, 80)} ` : ''}for ${slot.date} at ${to12h(slot.time)}.\n\nAfter you approve, I'll pick that slot${profile.mobile ? `, log in with your number ${maskMobile(profile.mobile)} if asked, and ask you here for the OTP` : ''}. I'll stop at payment and send you a link to pay yourself. I never pay.`,
     approvalId: String(approval.id), approvalRequired: true, handledBy: 'appointment-followup' as const,
   }
@@ -482,7 +482,7 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
   if (wantsFinalApproval(params.text)) {
     const prepared = await latestPreparedAppointment(tg)
     if (!prepared) return null
-    return createFinalApproval({ actor: params.actor, prepared, text: params.text })
+    return createFinalApproval({ actor: params.actor, prepared, text: params.text, surface: params.surface })
   }
 
   // Continuation: a bare slot answer to our earlier "which date / what time?" prompt routes
@@ -498,7 +498,7 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
     if (prepared?.metadata_json?.appointment_prepared && sel.awaitingSlot === true && !sel.scheduled_at) {
       const done = Date.parse(prepared.completed_at || prepared.started_at || '')
       if (Number.isFinite(done) && Date.now() >= done && Date.now() - done <= 24 * 3600_000) {
-        return createFinalApproval({ actor: params.actor, prepared, text: params.text })
+        return createFinalApproval({ actor: params.actor, prepared, text: params.text, surface: params.surface })
       }
     }
   }

@@ -517,6 +517,20 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
     })();return {consequential,guardContext,guardNameShape};
   },undefined,/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(page.url?.()||'')?{timeout:2000}:undefined);if(onContext&&Number.isInteger(decision.guardContext))onContext(decision.guardContext,decision.guardNameShape);return decision.consequential;}catch{if(onUnavailable)onUnavailable();return true;}
 }
+// 11 Oct live Playo runs: a popup covered the next control and the click failed as "obscured".
+// Close it with Escape and click again; if it still covers the control, click the control itself.
+// Only for clicks that already passed the consequence check above (never for submit).
+async function clickPastOverlay(page,selector){
+  const target=page.locator(selector).first();
+  let covered;
+  try{await target.click({timeout:10000});return;}
+  catch(e){if(!/intercepts pointer events/i.test(String(e&&e.message||'')))throw e;covered=e;}
+  try{await page.keyboard.press('Escape');await page.waitForTimeout(300);}catch{}
+  try{await target.click({timeout:4000});return;}
+  catch(e){if(!/intercepts pointer events/i.test(String(e&&e.message||'')))throw e;}
+  // Still covered: press the control directly. If even that fails, report the original cause.
+  try{await target.evaluate(el=>el.click());}catch{throw covered;}
+}
 (async()=>{
   const __env=(process&&process.env)||{};
   const __proxyServer=(__env.GOGO_BROWSER_PROXY_URL||'').trim();
@@ -610,12 +624,12 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
               .filter(el=>{const r=el.getBoundingClientRect();const cs=getComputedStyle(el);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'})
               .map(el=>el.tagName+':'+(el.getAttribute('name')||el.getAttribute('type')||el.textContent||'').trim().slice(0,24)).join(',')).catch(()=>'');
             const before=await formShape();
-            await page.locator(a.selector).first().click({timeout:10000});
+            await clickPastOverlay(page,a.selector);
             const until=Date.now()+8000;
             while(Date.now()<until){await page.waitForTimeout(300);const now=await formShape();if(now&&now!==before)break;}
             await page.waitForTimeout(500);
           }
-          else await page.locator(a.selector).first().click({timeout:10000});
+          else await clickPastOverlay(page,a.selector);
         } else if(a.kind==='submit'){
           if(payload.mode!=='execute'){log.push({kind:a.kind,detail:a.selector,status:'skipped'});continue;}
           if(executionBeforeText!==null)throw new Error('multiple_submissions_forbidden');

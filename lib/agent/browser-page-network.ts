@@ -45,6 +45,11 @@ const GOOGLE_FLIGHTS_PAGE_DEPENDENCIES = ['www.gstatic.com','fonts.googleapis.co
 // the allowlist aborted, so the person could not see it. Its password-breach check also failed.
 const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.awswaf.com', 'hcaptcha.com', '*.hcaptcha.com', 'api.pwnedpasswords.com']
 
+// 11 Oct live Playo booking: the broker aborted Playo's own API (api.playo.io), which serves venue
+// and slot data, and its image CDN on gumlet, so slots did not load and the takeover showed no
+// photos. First-party Playo hosts and its observed image/font hosts only.
+const PLAYO_PAGE_DEPENDENCIES = ['api.playo.io','playo.gumlet.io','playo-website.gumlet.io','fonts.googleapis.com','fonts.gstatic.com']
+
 export function browserPageAllowlist(url:string):Record<string,string[]>{
   const target=new URL(url)
   const host=target.hostname.toLowerCase()
@@ -65,5 +70,6 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
   if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights(?:\/|$)/.test(target.pathname))
     hosts.push(...GOOGLE_FLIGHTS_PAGE_DEPENDENCIES)
   if(host==='huggingface.co'||host==='www.huggingface.co')hosts.push(...HUGGING_FACE_PAGE_DEPENDENCIES)
+  if(host==='playo.co'||host==='www.playo.co')hosts.push(...PLAYO_PAGE_DEPENDENCIES)
   return Object.fromEntries(hosts.map(name=>[name,[]]))
 }
