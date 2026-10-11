@@ -825,6 +825,10 @@ function normalizeActions(raw:any,initialUrl:string,allowSubmit:boolean):Browser
   return out
 }
 
+function sameSite(a:string,b:string){
+  try{const x=new URL(a).hostname.replace(/^www\./,''),y=new URL(b).hostname.replace(/^www\./,'');return x===y||x.endsWith('.'+y)||y.endsWith('.'+x)}catch{return false}
+}
+
 function pageLooksLikeLogin(page:any){
   return isLoginFormPage(page)
 }
@@ -971,7 +975,7 @@ function completedSearchControls(page:any,searches:CompletedReadSearch[]):Set<st
 
 // Provider booking: walk towards the booking summary with clicks, never submit, never pay.
 export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:boolean}){
-  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first.'
+  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step.'
     +(booking.phoneAvailable?' If a login or registration form asks for a mobile or phone number, use {"kind":"fill_phone","selector":"observed selector"} (Gogo fills the number itself; never put a number in any value), then click the observed control that sends the OTP (for example Get OTP, Send OTP or Continue).':' If the site asks for a mobile number, return no actions.')
     +(booking.otpAvailable?' The page is asking for the one-time code and Gogo has it: use {"kind":"fill_otp","selector":"observed selector of the code input (the first box if there are several)"}, then click the observed Verify/Continue/Login control.':' Never fill a one-time code; if the page asks for one, return no actions.')
     +' Never click Pay, Make payment, Place order or Buy now, and never fill card, UPI or bank details: when the page asks for payment, return no actions.'
@@ -1436,7 +1440,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // If the site itself redirects there, the auth-gate check handles it as a sign-in pause.
       // A booking never submits, and fills the number or OTP only when Gogo actually has it.
       const actions=params.mode==='read'?plan.actions.filter(a=>!(a.kind==='goto'&&isLoginUrl(a.url)))
-        :providerBooking?plan.actions.filter(a=>a.kind!=='submit'&&a.kind!=='fill_secret'&&(a.kind!=='fill_otp'||bookingPlan!.otpAvailable)&&(a.kind!=='fill_phone'||bookingPlan!.phoneAvailable))
+        :providerBooking?plan.actions.filter(a=>a.kind!=='submit'&&a.kind!=='fill_secret'&&(a.kind!=='fill_otp'||bookingPlan!.otpAvailable)&&(a.kind!=='fill_phone'||bookingPlan!.phoneAvailable)
+          // A booking navigates only to observed links on the same site, never to a URL the page suggests elsewhere.
+          &&(a.kind!=='goto'||(sameSite(a.url,String(page.url||params.url))&&(page.links||[]).some((l:any)=>String(l?.href||'')===a.url))))
         :plan.actions.filter(a=>a.kind!=='fill_phone'&&a.kind!=='fill_otp')
       // One bounded recovery for the actual travel adapter: use only an
       // observed public Search control after both airports/date are populated.

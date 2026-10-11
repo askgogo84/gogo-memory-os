@@ -205,6 +205,20 @@ await computer.runSecureBrowser({ userId: 'owner', url: 'https://playo.co/venues
 assert.equal(commands.some(c => (c.payload.actions || []).some((a: any) => a.kind === 'fill_phone')), false)
 assert.equal(commands.some(c => c.env.GOGO_BOOKING_PHONE !== undefined), false)
 
+// 11 Oct 17:22: clicking the venue card timed out twice. A booking opens the named venue with a
+// goto to its observed same-site link; a goto to another site or an unobserved URL is dropped.
+commands.length = 0
+const list = { ...venue, url: 'https://playo.co/venues/hsr-layout-bengaluru/sports/badminton', links: [{ text: 'Machaxi Milan Sports Centre', href: 'https://playo.co/venues/bengaluru/machaxi-milan' }] }
+script = [list, { ...login }, otpPage]
+plans = [
+  { approvedOperation: 'booking', actions: [{ kind: 'goto', url: 'https://evil.example/venue' }, { kind: 'goto', url: 'https://playo.co/venues/not-observed' }, { kind: 'goto', url: 'https://playo.co/venues/bengaluru/machaxi-milan' }] },
+  { approvedOperation: 'booking', actions: [{ kind: 'fill_phone', selector: '#mobile' }, { kind: 'click', selector: '#get-otp' }] },
+]
+const viaLink = await computer.runSecureBrowser({ ...base, bookingPhone: '9876543210', bookingOtp: null })
+assert.deepEqual(commands[1].payload.actions, [{ kind: 'goto', url: 'https://playo.co/venues/bengaluru/machaxi-milan' }], 'only the observed same-site venue link is followed')
+assert.equal(viaLink.bookingStage, 'otp')
+assert.match(prompts.at(-2) || prompts[0], /use \{"kind":"goto","url":"observed link href"\}/)
+
 // ── The worker script itself ────────────────────────────────────────────────
 const src = readFileSync('lib/agent/secure-computer.ts', 'utf8')
 const fillHandler = src.slice(src.indexOf("else if(a.kind==='fill_phone'||a.kind==='fill_otp'){"), src.indexOf("else if(a.kind==='search_enter'){"))
