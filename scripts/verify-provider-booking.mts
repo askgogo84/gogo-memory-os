@@ -298,4 +298,14 @@ assert.match(bookingNextStepHint(1), /book the 7 am slot at Machaxi Milan on Sat
 assert.match(src, /if\(!readLink&&payload\.mode==='execute'&&payload\.bookingFlow\)\{[\s\S]{0,400}closest\('a\[href\]'\)[\s\S]{0,400}there===here\|\|there\.endsWith\('\.'\+here\)/)
 assert.match(src, /console\.log\('BROWSER_BOOKING_STOP:'/)
 
+// 11 Oct 18:33: a badminton blog came first and was picked as option 1. A court search offers only
+// booking platforms when any were found, and the person's own area page first.
+const { curate } = await import('../lib/agent/appointment-research.ts')
+const courts = curate([
+  { title: 'Where to play badminton in Bengaluru', snippet: 'HSR Layout courts guide', url: 'https://www.doyouplaybadminton.com/where-to-play-badminton-in-bengaluru' },
+  { title: 'Badminton Courts in Bangalore: Book Near by', snippet: 'Bengaluru badminton', url: 'https://playo.co/venues/bangalore/sports/badminton' },
+  { title: 'Badminton Venues in Hsr-layout-bengaluru', snippet: 'HSR Layout Bengaluru', url: 'https://playo.co/venues/hsr-layout-bengaluru/sports/badminton' },
+] as any, 'HSR Layout, Bengaluru', true)
+assert.deepEqual(courts.map((o: any) => o.url), ['https://playo.co/venues/hsr-layout-bengaluru/sports/badminton', 'https://playo.co/venues/bangalore/sports/badminton'])
+
 console.log('Provider booking: slot → number → WhatsApp OTP → payment handover, with the number and code kept out of payloads, prompts and logs')

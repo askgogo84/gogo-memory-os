@@ -1,0 +1,10 @@
+<!doctype html><html><head><title>Badminton Venues in Hsr-layout-bengaluru</title><meta charset="utf-8"></head><body>
+<h1>Badminton Venues in Hsr-layout-bengaluru</h1>
+<!-- Like Playo (11 Oct): venue cards are plain divs with a click handler, no link. -->
+<div class="grid">
+  <div class="card" data-href="venue.html?v=dee"><div class="w-64">Dee Sports</div><div>Bommanahalli (~1.7 km)</div></div>
+  <div class="card" data-href="venue.html?v=machaxi"><div class="relative"><div class="w-64">Machaxi Milan Sports Centre</div></div><div>Begur (~1.0 km) 3.57 (126)</div></div>
+</div>
+<script>
+document.querySelectorAll('.card').forEach(c=>c.addEventListener('click',()=>{location.href=c.dataset.href}))
+</script></body></html>

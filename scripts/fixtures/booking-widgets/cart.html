@@ -1,0 +1,6 @@
+<!doctype html><html><head><title>Cart</title><meta charset="utf-8"></head><body>
+<h1>Booking summary</h1><div id="summary"></div>
+<button type="button" id="pay">Proceed to Pay INR 375</button>
+<script>const p=new URLSearchParams(location.search);document.getElementById('summary').textContent='Machaxi Milan Sports Centre, Badminton, '+p.get('d')+' '+p.get('t');
+document.getElementById('pay').addEventListener('click',()=>{document.body.dataset.paid='yes'})</script>
+</body></html>
