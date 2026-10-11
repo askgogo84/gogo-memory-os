@@ -9,7 +9,9 @@ import { bookingObjective } from './provider-booking'
 import { withPlannerModel } from './planner-provider'
 
 export const REHEARSAL_UNTIL = Date.parse('2026-10-11T19:30:00Z') // 1 am IST, 12 Oct
-export const REHEARSAL_MODELS = ['claude-haiku-4-5', 'claude-haiku-5-5'] as const
+// 11 Oct: Haiku 5.5 reached the booking form once in 8 rehearsals (it kept leaving for city-wide list
+// pages); Haiku 4.5 reached it every time. Rehearse with 4.5 only.
+export const REHEARSAL_MODELS = ['claude-haiku-4-5'] as const
 const START_URL = 'https://playo.co/venues/hsr-layout-bengaluru/sports/badminton'
 
 function nextSaturdayIst(now = new Date()) {
