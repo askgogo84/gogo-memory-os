@@ -184,7 +184,7 @@ export async function currentAppointmentReply(tg: number): Promise<string | null
   const age = Date.now() - Date.parse(data.created_at || '')
   if (!Number.isFinite(age) || age < 0 || age > 30 * 60_000) return null
   const text = String(data.content || '')
-  const appointmentPrompt = /(?:^|\n)Appointment options\s*[\u00b7:]/i.test(text)
+  const appointmentPrompt = /(?:^|\n)(?:Appointment options\s*[\u00b7:]|Places to book \S)/i.test(text)
     || /I inspected option \d+ without confirming anything/i.test(text)
     || /I (?:kept|reused) option \d+[\s\S]*appointment/i.test(text)
     || /I have the prepared provider flow, but I need the exact appointment date and time/i.test(text)
