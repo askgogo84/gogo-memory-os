@@ -1075,14 +1075,16 @@ function completedSearchControls(page:any,searches:CompletedReadSearch[]):Set<st
 }
 
 // Provider booking: walk towards the booking summary with clicks, never submit, never pay.
-export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:boolean}){
+export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:boolean;retry?:boolean}){
   return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step. When a venue card, button or option has no usable link or selector, use {"kind":"click_text","text":"its exact visible text"} (for example the venue name, Book Now, Badminton, a date or 07:00 AM). The field of a control is the name shown beside it (Sports, Date, Start Time, Court): open a picker by the control whose field matches, never a header menu such as Login, Account or Menu. For a dropdown whose option text you already know from the request (the sport, the date or the start time), click it and then click_text that option in the same step. When you do not know the option names yet (for example the court), click the dropdown and end the step, then click_text the first available observed option on the next step; never guess an option. In a calendar, open it and click_text the requested date as YYYY-MM-DD (Gogo finds the day cell). Set the selectors in page order (sport, then date, then start time, then court): the date changes which times are offered, so end the step after setting the date and pick the time from the next observation. If a step failed, plan it again from what is observed now; never press Add to cart or Continue before the date, time and court match the request.'
     +(booking.phoneAvailable?' If a login or registration form asks for a mobile or phone number, use {"kind":"fill_phone","selector":"observed selector"} (Gogo fills the number itself; never put a number in any value), then click the observed control that sends the OTP (for example Get OTP, Send OTP or Continue).':' If the site asks for a mobile number, return no actions.')
     +(booking.otpAvailable?' The page is asking for the one-time code and Gogo has it: use {"kind":"fill_otp","selector":"observed selector of the code input (the first box if there are several)"}, then click the observed Verify/Continue/Login control.':' Never fill a one-time code; if the page asks for one, return no actions.')
     +' Never click Pay, Make payment, Place order or Buy now, and never fill card, UPI or bank details: when the page asks for payment, return no actions.'
+    +' The times and courts shown are for the date currently selected: missing times or "no courts available" before the requested date is set mean set the date first, never a reason to stop.'
+    +(booking.retry?' You returned no actions on this booking page, but the date, time or court shown still differ from the request: plan the next step toward them now (the Date picker first if the date differs). Return no actions only if the page asks for payment, a code or a number Gogo does not have, or the requested slot is shown as unavailable on the requested date.':'')
 }
 
-async function planActions(objective:string,page:any,mode:BrowserMode,objectiveTrust:TrustClass,completedSearches:CompletedReadSearch[]=[],diagnose:(event:BrowserReadDiagnostic)=>void=()=>{},booking?:{otpAvailable:boolean;phoneAvailable:boolean;rehearsal?:boolean}):Promise<{actions:BrowserAction[];operation:ApprovedBrowserOperation|null;draftReady:boolean}>{
+async function planActions(objective:string,page:any,mode:BrowserMode,objectiveTrust:TrustClass,completedSearches:CompletedReadSearch[]=[],diagnose:(event:BrowserReadDiagnostic)=>void=()=>{},booking?:{otpAvailable:boolean;phoneAvailable:boolean;rehearsal?:boolean;retry?:boolean}):Promise<{actions:BrowserAction[];operation:ApprovedBrowserOperation|null;draftReady:boolean}>{
   const rejectedControls=new Set((mode==='read'?page.actions||[]:[]).filter((action:any)=>action.status==='skipped').map((action:any)=>String(action.detail||'')))
   const searchedControls=mode==='read'?completedSearchControls(page,completedSearches):new Set<string>()
   for(const selector of searchedControls)rejectedControls.add(selector)
@@ -1389,6 +1391,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       title:safeText(page.title,300),summary,pageText:'Gogo stopped before payment. Nothing was paid.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
       blockReason:'human_auth_required',authReason:stage==='otp'?'otp':stage==='payment'?'payment_auth':undefined,bookingStage:stage,...extra})
     let bookingIdleWaves=0
+    let bookingRetried=false
     for(let wave=0;wave<(params.mode==='read'?readWaves:params.mode==='execute'&&params.accountCreation===true?MAX_SIGNUP_PAGES:providerBooking?MAX_BOOKING_PAGES:1);wave++){
       const beforeReadSnapshot=readSnapshot(page)
       const providerBlock=detectProviderAccessBlock(page)
@@ -1542,7 +1545,13 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         if(readAnswer)break
       }
       const bookingPlan=providerBooking?{otpAvailable:Boolean(otpWaiting&&params.bookingOtp&&!otpUsed),phoneAvailable:Boolean(params.bookingPhone),rehearsal:params.rehearsal===true}:undefined
-      const plan=await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
+      let plan=await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
+      // 11 Oct 15:10 rehearsal: the planner saw today's times ("No courts available") and stopped
+      // without setting the requested date. A booking gets one second look per run.
+      if(providerBooking&&!plan.actions.length&&!bookingRetried&&!bookingAtPayment(page)&&!otpWaiting){
+        bookingRetried=true
+        plan=await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,{...bookingPlan!,retry:true}))
+      }
       // Public reads must never navigate INTO a login wall (/ap/signin, /account/login, …).
       // If the site itself redirects there, the auth-gate check handles it as a sign-in pause.
       // A booking never submits, and fills the number or OTP only when Gogo actually has it.
