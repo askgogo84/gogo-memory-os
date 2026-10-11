@@ -3,7 +3,7 @@ import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { searchWebResults } from '@/lib/web-search'
 import { normalizeTimezone } from '@/lib/timezone'
 import { tryRunBrowserCommand } from './browser-command'
-import { capturedSlotHints, currentAppointmentReply, appointmentReplySelects } from './appointment-followup'
+import { capturedSlotHints, currentAppointmentReply, appointmentReplySelects, bareOptionReply, bookingNextStepHint } from './appointment-followup'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 
@@ -66,6 +66,9 @@ function hasLiveSlotEvidence(text: string) {
 
 export function appointmentPrepareOptionNumber(text: string) {
   const raw = String(text || '')
+  // A bare "1" or "Option 1" answering the numbered list opens that option (11 Oct live run).
+  const bare = bareOptionReply(raw)
+  if (bare) return bare
   const match = raw.match(/\b(?:prepare|open|inspect|check|use|continue(?:\s+with)?|review)\s+(?:the\s+)?(?:option|choice)?\s*#?\s*(\d{1,2})\b/i)
     || raw.match(/\b(?:option|choice)\s*#?\s*(\d{1,2})\b/i)
   const value = Number(match?.[1])
@@ -174,7 +177,9 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
   const target = await resolveBookableTarget(selected,meta)
   const staleApprovalsRetired = await retireStaleBookingApprovals(tg,target.url)
 
-  const objective = `Open ${target.url} and inspect the provider appointment flow for ${safe(meta.service || 'the requested service',120)}${meta.location ? ` in ${safe(meta.location,100)}` : ''}${meta.timing ? ` around ${safe(meta.timing,100)}` : ''}. Keep the provider AND city locked to option ${option}; do not navigate to a branch or page for another city. Navigate within this provider website to its appointment or scheduling page if needed. Fill only safe non-sensitive search fields if needed to reveal available dates or times. Make no provider-side changes. Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step.`
+  // Opening an option is a read: list the free dates and slots. Nothing is selected or booked
+  // until the person names a slot and approves.
+  const objective = `Read-only. Open ${target.url} and list the dates and time slots shown as available for ${safe(meta.service || 'the requested service',120)}${meta.location ? ` in ${safe(meta.location,100)}` : ''}${meta.timing ? ` around ${safe(meta.timing,100)}` : ''}, with prices if shown. Keep the provider AND city locked to option ${option}; do not go to a page for another city. You may open this provider's schedule page and click public date or sport tabs to reveal slots. Do not log in.`
   const result = await tryRunBrowserCommand({ actor:params.actor,surface:params.surface,text:objective })
   if (!result) throw new Error('appointment_followup_recovery_browser_not_routed')
 
@@ -197,7 +202,7 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
   if (result.status === 'paused') {
     return {
       ...result,
-      text:`${result.text}\n\nI kept option ${option}, ${safe(selected.title || selected.provider || 'the selected provider',180)}, locked to ${safe(meta.location || 'the original city',100)}. I did not switch provider or city, and I did not book anything or create an approval.`,
+      text:`${result.text}\n\nI kept option ${option}, ${safe(selected.title || selected.provider || 'the selected provider',180)}, locked to ${safe(meta.location || 'the original city',100)}. I did not switch provider or city, and I did not book anything or create an approval.\n\n${bookingNextStepHint(option)}`,
       handledBy:'appointment-followup-recovery' as const,
       availabilityVerified:false,
     }
@@ -207,7 +212,7 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
     return {
       ...result,
       status:'paused' as const,
-      text:`${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous',100)} appointment search${target.resolved ? ' and switched only to the same provider\'s city-safe appointment path' : ''}, but I could not verify actual live appointment dates/times from the provider page. I did not book anything or create a new approval.`,
+      text:`${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous',100)} appointment search${target.resolved ? ' and switched only to the same provider\'s city-safe appointment path' : ''}, but I could not verify actual live appointment dates/times from the provider page. I did not book anything or create a new approval.\n\n${bookingNextStepHint(option)}`,
       handledBy:'appointment-followup-recovery' as const,
       availabilityVerified:false,
     }
@@ -216,8 +221,8 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
   return {
     ...result,
     text: result.status === 'completed'
-      ? `${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous',100)} appointment search${target.resolved ? ' and switched only to the same provider\'s city-safe appointment path' : ''}. I verified live slot evidence and made no provider-side changes.`
-      : result.text,
+      ? `${result.text}\n\nI reused option ${option} from your ${safe(meta.location || 'previous',100)} appointment search${target.resolved ? ' and switched only to the same provider\'s city-safe appointment path' : ''}. I verified live slot evidence and made no provider-side changes.\n\n${bookingNextStepHint(option)}`
+      : `${result.text}\n\n${bookingNextStepHint(option)}`,
     handledBy:'appointment-followup-recovery' as const,
     availabilityVerified,
   }

@@ -56,7 +56,8 @@ assert.match(command, /runSecureBrowser\(\{[^)]*runId:params\.runId/, 'the run i
 // account creation may fill up to MAX_SIGNUP_PAGES pages; earlier pages end with a Next click and
 // no submit; the final page carries the single submit; a failed step stops before the next page.
 assert.match(src, /const MAX_SIGNUP_PAGES=4/, 'a sign-up may span at most four pages (homepage step plus three)')
-assert.match(src, /params\.mode==='execute'&&params\.accountCreation===true\?MAX_SIGNUP_PAGES:1/, 'only an approved account creation gets more than one page')
+assert.match(src, /params\.mode==='execute'&&params\.accountCreation===true\?MAX_SIGNUP_PAGES:providerBooking\?MAX_BOOKING_PAGES:1/, 'only an approved account creation (or an approved provider booking) gets more than one page')
+assert.match(src, /const providerBooking=params\.providerBooking===true&&params\.mode==='execute'/, 'a provider booking is multi-page only in an approved execution')
 assert.match(src, /submitCount===0&&wave<MAX_SIGNUP_PAGES-1&&actions\[actions\.length-1\]\?\.kind==='click'/, 'an earlier page ends with a Next click and no submit, never on the last allowed page')
 assert.match(src, /if\(params\.mode==='execute'&&actions\.some\(a=>a\.kind==='submit'\)\)break/, 'nothing is planned after the final submit')
 assert.match(src, /if\(params\.mode==='execute'&&\(page\.actions\|\|\[\]\)\.some\(\(a:any\)=>a\.status!=='done'\)\)break/, 'a failed step stops before the next page')
@@ -80,7 +81,8 @@ assert.match(command, /runId:params\.runId,accountCreation,/, 'the account-creat
 // 10 Oct live run a2ae7e03: the sign-up page's password field was read as a sign-in wall and the
 // run stopped with no steps. While creating an account, a password field never pauses the run.
 assert.match(src, /const signupPasswordField=params\.accountCreation===true&&\(!authGate\.required\|\|authGate\.reason==='password'\)/, 'a sign-up password field is not a sign-in wall')
-assert.match(src, /if\(!signupPasswordField&&\(authGate\.required\|\|pageLooksLikeLogin\(page\)\)\)\{/, 'the in-run gate skips only the sign-up password case')
+assert.match(src, /if\(!signupPasswordField&&!bookingLoginStep&&\(authGate\.required\|\|pageLooksLikeLogin\(page\)\)\)\{/, 'the in-run gate skips only the sign-up password case and a booking\'s mobile-number login step')
+assert.match(src, /const bookingLoginStep=providerBooking&&\(!authGate\.required\|\|\(authGate\.reason==='otp'&&/, 'a booking passes only a password-free login step or an OTP step it can answer')
 assert.match(src, /if\(!finalSignupPasswordField&&\(finalAuthGate\.required\|\|pageLooksLikeLogin\(page\)\)\)\{/, 'the final gate skips only the sign-up password case')
 
 // Resume after the person completes a human check: the same run reuses its pending password, and a

@@ -1,5 +1,5 @@
 import { after, NextResponse } from 'next/server'
-import { runApprovedBrowserRun } from '@/lib/agent/approved-browser-worker'
+import { runApprovedBrowserRun, runBookingOtpResume } from '@/lib/agent/approved-browser-worker'
 
 // Internal trigger, called by the WhatsApp webhook right after the user approves a browser
 // action. It answers 202 immediately and runs the approved browser work in `after()`, so the
@@ -19,6 +19,20 @@ export async function POST(request: Request) {
   const body: any = await request.json().catch(() => null)
   const runId = String(body?.runId || '').trim()
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(runId)) return NextResponse.json({ error: 'invalid_run_id' }, { status: 400 })
+  // A booking OTP from WhatsApp: used for this one run and never stored or logged.
+  const otp = typeof body?.otp === 'string' ? body.otp : ''
+  if (otp) {
+    if (!/^\d{4,8}$/.test(otp)) return NextResponse.json({ error: 'invalid_code' }, { status: 400 })
+    after(async () => {
+      try {
+        const outcome = await runBookingOtpResume(runId, otp)
+        console.log('BOOKING_OTP_RESUME_DONE:', runId, outcome)
+      } catch (err: any) {
+        console.error('BOOKING_OTP_RESUME_CRASHED:', runId, String(err?.message || '').slice(0, 120))
+      }
+    })
+    return NextResponse.json({ accepted: true, runId }, { status: 202 })
+  }
   after(async () => {
     try {
       const outcome = await runApprovedBrowserRun(runId)

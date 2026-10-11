@@ -68,10 +68,10 @@ assert.match(recovery, /Superseded by a later explicit read-only appointment ava
 assert.match(recovery, /hasLiveSlotEvidence/)
 assert.match(recovery, /availabilityVerified/)
 assert.match(recovery, /could not verify actual live appointment dates\/times/i)
-assert.match(recovery, /const objective = `Open [\s\S]*Fill only safe non-sensitive search fields if needed to reveal available dates or times/)
-assert.match(recovery, /Navigate within this provider website/)
-assert.match(recovery, /Make no provider-side changes/)
-assert.match(recovery, /Stop before any final action, login, OTP, CAPTCHA, authentication challenge, or financial step/)
+// 11 Oct: opening an option is a read-only look at the free slots; booking is a separate approved step.
+assert.match(recovery, /const objective = `Read-only\. Open [\s\S]*list the dates and time slots shown as available/)
+assert.match(recovery, /You may open this provider's schedule page and click public date or sport tabs/)
+assert.match(recovery, /Do not log in\./)
 assert.match(recovery, /recoveredContext:\s*true/)
 assert.match(recovery, /bookablePathResolved/)
 assert.doesNotMatch(recovery, /I only inspected availability and made no provider-side changes/)
@@ -86,13 +86,14 @@ assert.match(browser, /status:'paused'/)
 
 assert.match(followup, /latestAppointmentResearch/)
 assert.match(followup, /appointment_selection/)
-assert.match(followup, /Prepare the appointment form flow/)
-assert.match(followup, /Stop before final confirmation, submission, authentication or payment/)
+assert.match(followup, /Read-only\. Open \$\{selected\.url\} and list the dates and time slots/)
+assert.match(followup, /Do not log in\./)
 assert.match(followup, /agent_approvals/)
 assert.match(followup, /action_type:\s*'booking'/)
 assert.match(followup, /risk_level:\s*'high'/)
 assert.match(followup, /appointment_prepared:\s*true/)
-assert.match(followup, /Do not purchase paid add-ons/)
+assert.match(followup, /flow: 'provider_booking'/)
+assert.match(followup, /browserApprovalBinding\(runId, String\(step\.id\)/)
 assert.match(followup, /approvalRequired:\s*true/)
 assert.match(followup, /need the exact appointment date and time/)
 assert.match(followup, /scheduled_at/)
@@ -125,7 +126,8 @@ const dependencies:any={
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
   '@/lib/timezone':{DEFAULT_TIMEZONE:'Asia/Kolkata'},
   './calendar-read':{calendarAffirmativeText:(s:string)=>s.split(/\bdo not\b/i)[0]},
-  './browser-command':{tryRunBrowserCommand:async()=>{browserCalls++;return {status:'completed',text:'Fixture provider page'}}},
+  './browser-command':{tryRunBrowserCommand:async()=>{browserCalls++;return {status:'completed',text:'Fixture provider page'}},browserApprovalBinding:()=>({})},
+  './provider-booking':await import('../lib/agent/provider-booking.ts'),
   './life-event-engine':{},
 }
 runInNewContext(ts.transpileModule(followup,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:exportsFixture,require:(name:string)=>dependencies[name],console,Date,Intl,URL})

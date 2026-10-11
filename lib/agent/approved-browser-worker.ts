@@ -95,6 +95,58 @@ export async function runApprovedBrowserRun(runId: string): Promise<ApprovedBrow
   }
 }
 
+/**
+ * Continue a provider booking with the OTP the person sent on WhatsApp. The webhook already
+ * claimed the run (paused->running). The code is passed straight to the browser run and is
+ * never stored or logged here.
+ */
+export async function runBookingOtpResume(runId: string, otp: string): Promise<ApprovedBrowserRunOutcome> {
+  if (!/^\d{4,8}$/.test(otp)) return 'skipped'
+  const { data: run } = await supabaseAdmin.from('agent_runs')
+    .select('id,telegram_id,type,status,metadata_json').eq('id', runId).maybeSingle()
+  const meta: any = run?.metadata_json || {}
+  if (!run || run.type !== 'secure_browser' || run.status !== 'running' || meta.flow !== 'provider_booking' || meta.mode !== 'execute') return 'skipped'
+  const actor = await actorForTelegramId(String(run.telegram_id))
+  if (!actor) return 'failed'
+  try {
+    const result = await executeApprovedBrowserCommand({ actor, runId: String(run.id), bookingOtp: otp })
+    if (actor.whatsappId && result?.text) await sendWhatsApp(actor.whatsappId, String(result.text))
+    return result?.status === 'completed' ? 'completed' : 'blocked'
+  } catch (err: any) {
+    console.error('BOOKING_OTP_RESUME_FAILED:', run.id, String(err?.message || 'failed').slice(0, 120))
+    const at = new Date().toISOString()
+    await supabaseAdmin.from('agent_runs').update({
+      status: 'failed', error: String(err?.message || 'booking_otp_resume_failed').slice(0, 500),
+      summary: 'Gogo could not continue the booking with the code.', completed_at: at, updated_at: at,
+    }).eq('id', run.id).eq('telegram_id', String(run.telegram_id)).eq('status', 'running')
+    if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, `I couldn't continue the booking with that code, so nothing is booked or paid. You can book directly here:\n${String(meta.url || '')}`).catch(() => {})
+    return 'failed'
+  }
+}
+
+/** Hand a booking OTP to the internal route (its own 300s budget). The code travels only in the request body. */
+export async function triggerBookingOtpResume(runId: string, otp: string): Promise<'dispatched' | 'failed'> {
+  // Only an approved booking may continue: the approval the person gave before Gogo started.
+  const { data: approvedRow, error: approvedError } = await supabaseAdmin.from('agent_approvals')
+    .select('id').eq('run_id', runId).eq('status', 'approved').limit(1).maybeSingle()
+  if (approvedError || !approvedRow?.id) { console.error('BOOKING_OTP_TRIGGER_NOT_APPROVED:', runId); return 'failed' }
+  const secret = process.env.CRON_SECRET
+  if (!secret) { console.error('BOOKING_OTP_TRIGGER_NO_SECRET:', runId); return 'failed' }
+  try {
+    const res = await fetch(`${appBaseUrl()}/api/agent/approved-browser`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ runId, otp }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) { console.error('BOOKING_OTP_TRIGGER_REJECTED:', res.status, runId); return 'failed' }
+    return 'dispatched'
+  } catch (err: any) {
+    console.error('BOOKING_OTP_TRIGGER_FAILED:', runId, String(err?.message || '').slice(0, 120))
+    return 'failed'
+  }
+}
+
 function appBaseUrl() {
   return String(process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://app.askgogo.in').replace(/\/$/, '')
 }

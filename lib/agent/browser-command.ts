@@ -14,6 +14,7 @@ import { VAULT_PROVIDERS } from '@/lib/vault/providers'
 import { buildSignupHandback, type SignupHandbackReason } from './signup-handback'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { hasLeadingReportMutation } from '@/lib/services/reporting-directive'
+import { bookingOtpMessage, bookingPaymentMessage, bookingReviewMessage, indianMobileFromWhatsApp } from './provider-booking'
 
 export type BrowserCommand = {
   url:string
@@ -22,7 +23,7 @@ export type BrowserCommand = {
   risk:'low'|'medium'|'high'
   approvalAction?:'submit_form'|'booking'|'purchase'
   vaultCredentialId?:string
-  flow?:'account_creation'
+  flow?:'account_creation'|'provider_booking'
 }
 
 function safe(value:unknown,max=1800){return redactSecretShapedText(String(value??'').trim().slice(0,max))}
@@ -41,6 +42,15 @@ function browserApprovalFingerprintInput(runId:string,stepId:string,command:Brow
       mode:'execute',
     },
   }
+}
+
+/** The approval binding for an approved secure-browser run (the same fingerprint execution checks). */
+export function browserApprovalBinding(runId:string,stepId:string,command:BrowserCommand){
+  return buildApprovalBinding(browserApprovalFingerprintInput(runId,stepId,command))
+}
+
+function commandFlow(value:unknown):BrowserCommand['flow']{
+  return value==='account_creation'||value==='provider_booking'?value:undefined
 }
 
 function extractUrl(text:string){
@@ -358,7 +368,7 @@ async function signupHandbackText(params:{ownerId:string;runId:string;command:Br
     vault:saved.vault,vaultLabel:saved.label,vaultUrl:`${appBaseUrl()}/dashboard/you/vault`,takeoverUrl:params.takeoverUrl||null})
 }
 
-async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:string;command:BrowserCommand;mode:BrowserMode;approved?:boolean}){
+async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:string;command:BrowserCommand;mode:BrowserMode;approved?:boolean;bookingOtp?:string|null}){
   const tg=params.actor.legacyTelegramId
   const sentinel=evaluateAgentSentinel({
     capability:'browser',mode:params.mode,risk:params.command.risk,irreversible:params.mode==='execute',
@@ -371,8 +381,9 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   const runMetadata:any=currentRun.metadata_json||{}
   const persistentCommerce=Boolean(runMetadata.commerce_parent_id||runMetadata.comparison_parent_id)&&params.mode==='read'
   const accountCreation=params.command.flow==='account_creation'
-  const persistentAccountSession=accountCreation
-  const browserOwner=persistentCommerce?params.actor.userId+':commerce':accountCreation?params.actor.userId+':account:'+params.runId:params.actor.userId
+  const providerBooking=params.command.flow==='provider_booking'&&params.mode==='execute'
+  const persistentAccountSession=accountCreation||providerBooking
+  const browserOwner=persistentCommerce?params.actor.userId+':commerce':accountCreation?params.actor.userId+':account:'+params.runId:providerBooking?params.actor.userId+':booking:'+params.runId:params.actor.userId
   const resumePage=(persistentCommerce||persistentAccountSession)&&Boolean(runMetadata.handoff)
   const reconciledResult=runMetadata.browser_safe_to_retry===false
     ? await (await import('./post-auth-outcome')).inspectPostAuthRun(String(tg),params.runId,runMetadata):undefined
@@ -392,7 +403,9 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   let pendingHandoffReservation:string|undefined
   try{
-    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
+    const bookingPhone=providerBooking?indianMobileFromWhatsApp(params.actor.whatsappId):null
+    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,
+      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
     // Why a run stopped, without page text, selectors or values: answers "why was it blocked?".
     try{console.log('BROWSER_RUN_RESULT:',JSON.stringify({runId:params.runId,status:result.status,blockReason:(result as any).blockReason||null,authReason:(result as any).authReason||null,host:(()=>{try{return new URL(String(result.url||'')).hostname}catch{return null}})(),title:String(result.title||'').slice(0,80),steps:(result.actions||[]).slice(0,20).map((a:any)=>`${a.kind}:${a.status}`),signupVault:(result as any).signupVault||null}))}catch{}
@@ -425,13 +438,26 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
         if((result.handoffReservation||(result.authReason&&result.authReason!=='password'))&&!result.credentialSelectionRequired){
           const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
           const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:continuationUrl,originalUrl:params.command.url,reservationToken:result.handoffReservation,sessionTaskId:params.runId,...((persistentCommerce||persistentAccountSession)?{keepAlive:true}:{})})
-          const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff},completed_at:null}).eq('id',params.runId).eq('telegram_id',String(tg))
+          // A booking waiting for its OTP accepts one WhatsApp reply with the code for 10 minutes.
+          const bookingOtp=providerBooking&&result.bookingStage==='otp'
+            ?{requested_at:new Date().toISOString(),attempts:Number(runMetadata.booking_otp?.attempts||0)+(result.otpRejected?1:0)}:null
+          const {error}=await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff,...(providerBooking?{booking_otp:bookingOtp,booking_stage:result.bookingStage||'review'}:{})},completed_at:null}).eq('id',params.runId).eq('telegram_id',String(tg))
           if(error){
             await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{})
             throw new Error('browser_handoff_save_failed')
           }
           const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
           const resumeUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+          if(providerBooking&&result.bookingStage){
+            const host=new URL(params.command.url).hostname.replace(/^www\./,'')
+            const tooMany=result.bookingStage==='otp'&&Number(bookingOtp?.attempts||0)>=3
+            const text=result.bookingStage==='payment'?bookingPaymentMessage({host,takeoverUrl:resumeUrl})
+              :result.bookingStage==='otp'&&!tooMany?bookingOtpMessage({host,mobile:bookingPhone,takeoverUrl:resumeUrl,rejected:result.otpRejected===true})
+              :bookingReviewMessage({host,takeoverUrl:resumeUrl})
+            if(tooMany)await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff,booking_otp:null,booking_stage:'review'}}).eq('id',params.runId).eq('telegram_id',String(tg))
+            await supabaseAdmin.from('agent_runs').update({summary:safe(text.split('\n')[0],600)}).eq('id',params.runId).eq('telegram_id',String(tg))
+            return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text,blockedReason:blockReason,bookingStage:result.bookingStage,handledBy:'secure-browser' as const}
+          }
           if(accountCreation&&result.authReason==='captcha'){
             const submitted=result.actions.some(a=>a.kind==='submit'&&a.status==='done')
             const text=await signupHandbackText({ownerId:params.actor.userId,runId:params.runId,command:params.command,reason:'captcha',submitted,takeoverUrl:resumeUrl})
@@ -495,6 +521,15 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:safe(text,1600),error:safe(message,500),
         metadata_json:{...runMetadata,signup_handback:{reason,submitted}},completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
       await activity(tg,params.runId,'run_failed','Gogo handed the sign-up back to you.',{error:safe(message,250),submitted})
+      return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text,handledBy:'secure-browser' as const}
+    }
+    if(providerBooking){
+      // Nothing is paid without the person. Say so plainly and give the provider page.
+      const message=String(err?.message||'secure_browser_failed');const at=new Date().toISOString()
+      const text=`I couldn't finish the booking steps on ${new URL(params.command.url).hostname.replace(/^www\./,'')}, so nothing is booked or paid. You can book directly here:\n${params.command.url}`
+      await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(message,500),completed_at:at}).eq('id',params.stepId)).catch(()=>{})
+      await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:'failed',summary:safe(text,1600),error:safe(message,500),metadata_json:{...runMetadata,booking_otp:null},completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))).catch(()=>{})
+      await activity(tg,params.runId,'run_failed','Gogo could not finish the booking steps.',{error:safe(message,250)})
       return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text,handledBy:'secure-browser' as const}
     }
     if(runMetadata.browser_safe_to_retry===false){
@@ -614,12 +649,12 @@ export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:Agen
   return runBrowserCommand({actor:params.actor,surface:params.surface,command})
 }
 
-export async function executeApprovedBrowserCommand(params:{actor:AgentActor;runId:string}){
+export async function executeApprovedBrowserCommand(params:{actor:AgentActor;runId:string;bookingOtp?:string|null}){
   const tg=params.actor.legacyTelegramId
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',String(tg)).maybeSingle()
   if(error)throw new Error(`agent_run_read_failed:${error.message}`);if(!run)throw new Error('agent_run_not_found')
   const meta:any=run.metadata_json||{};if(meta.plan_type!=='secure_browser')throw new Error('not_secure_browser_run')
-  const command:BrowserCommand={url:String(meta.url||''),objective:safe(meta.objective,1800),mode:'execute',risk:'high',approvalAction:meta.approval_action||'submit_form',vaultCredentialId:String(meta.vault_credential_id||'').trim()||undefined,flow:meta.flow==='account_creation'?'account_creation':undefined}
+  const command:BrowserCommand={url:String(meta.url||''),objective:safe(meta.objective,1800),mode:'execute',risk:'high',approvalAction:meta.approval_action||'submit_form',vaultCredentialId:String(meta.vault_credential_id||'').trim()||undefined,flow:commandFlow(meta.flow)}
   const {data:approved}=await supabaseAdmin.from('agent_approvals').select('id,status,execution_payload,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!approved)throw new Error('approval_required')
   const approvedStepId=String((approved.execution_payload as any)?.stepId||'')
@@ -632,7 +667,7 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
   if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
   const {data:step}=await supabaseAdmin.from('agent_steps').select('id').eq('run_id',params.runId).eq('telegram_id',String(tg)).eq('tool_name','secure_browser').limit(1).maybeSingle()
   if(!step?.id)throw new Error('browser_step_missing')
-  const result=await executeBrowser({actor:params.actor,runId:params.runId,stepId:String(step.id),command,mode:'execute',approved:true})
+  const result=await executeBrowser({actor:params.actor,runId:params.runId,stepId:String(step.id),command,mode:'execute',approved:true,bookingOtp:command.flow==='provider_booking'?params.bookingOtp||null:null})
   if(result.status==='completed')await supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:new Date().toISOString()}).eq('id',approved.id).eq('telegram_id',String(tg))
   return result
 }
@@ -688,7 +723,7 @@ export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:stri
     risk:mode==='draft'?'medium':'low',
     approvalAction:meta.approval_action||undefined,
     vaultCredentialId:String(meta.vault_credential_id||'').trim()||undefined,
-    flow:meta.flow==='account_creation'?'account_creation':undefined,
+    flow:commandFlow(meta.flow),
   }
   if(!command.url)throw new Error('browser_resume_missing_url')
 
@@ -739,3 +774,30 @@ export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:stri
   })
 }
 
+
+/**
+ * The person replied on WhatsApp with the OTP for a booking that is waiting for it. Continue the
+ * same approved run in the same browser with the code. The code is passed through only: it is
+ * never stored, logged or shown to a model. Returns null when no booking is waiting for a code.
+ */
+export async function findBookingAwaitingOtp(tg:number){
+  const {data,error}=await supabaseAdmin.from('agent_runs').select('id,status,metadata_json,updated_at')
+    .eq('telegram_id',String(tg)).eq('type','secure_browser').eq('status','paused')
+    .eq('metadata_json->>flow','provider_booking').order('updated_at',{ascending:false}).limit(1).maybeSingle()
+  if(error||!data)return null
+  const requested=Date.parse(String((data.metadata_json as any)?.booking_otp?.requested_at||''))
+  if(!Number.isFinite(requested)||Date.now()-requested>10*60_000||Date.now()<requested)return null
+  return String(data.id)
+}
+
+export async function claimBookingOtpRun(tg:number,runId:string){
+  const {data:run}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',runId).eq('telegram_id',String(tg)).eq('status','paused').maybeSingle()
+  const meta:any=run?.metadata_json
+  if(!meta?.booking_otp?.requested_at)return false
+  // Optimistic claim: the code is used once, by the request that flips paused->running (not
+  // queued, so the approved-run sweeper never races it without the code).
+  const {data:claimed}=await supabaseAdmin.from('agent_runs')
+    .update({status:'running',metadata_json:{...meta,booking_otp:{...meta.booking_otp,requested_at:null}},summary:'Gogo is entering the code and continuing the booking.',updated_at:new Date().toISOString()})
+    .eq('id',runId).eq('telegram_id',String(tg)).eq('status','paused').select('id').maybeSingle()
+  return Boolean(claimed?.id)
+}

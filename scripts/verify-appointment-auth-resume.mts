@@ -49,6 +49,6 @@ assert.match(resume,/eventType:'appointment'/)
 assert.match(browser,/provider_access_limited/)
 assert.match(browser,/status:'paused'/)
 assert.match(recovery,/providerLocked:true,locationLocked:true/)
-assert.match(recovery,/do not navigate to a branch or page for another city/)
+assert.match(recovery,/do not go to a page for another city/)
 
 console.log('✅ Appointment auth-resume regression passed: public inventory unchanged; OTP/login handoff preserves provider+city and verifies provider confirmation before Life Event creation')
