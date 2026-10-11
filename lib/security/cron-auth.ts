@@ -19,7 +19,7 @@ export function isCronAuthorized(request:Request, env:Record<string,string|undef
 }
 
 // ── Internal service-to-service auth ──────────────────────────────────────────
-// A few legacy HTTP routes (todos, contacts, expenses, news, skin-reminder,
+// A few legacy HTTP routes (todos, contacts, expenses, news,
 // briefing, reminders/create, referral) are called SERVER-TO-SERVER by our own
 // bot pipeline (the signed WhatsApp/Telegram webhook handlers, via
 // lib/feature-intents-legacy.ts). Each acts on behalf of an arbitrary user — the

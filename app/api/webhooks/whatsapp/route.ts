@@ -44,11 +44,6 @@ import {
   shouldTreatAudioAsMeeting,
 } from '@/lib/bot/handlers/meeting-notes'
 import {
-  buildSkinCheckFromImage,
-  buildSkinTextCommandReply,
-  isSkinCheckCaption,
-} from '@/lib/bot/handlers/skin-check'
-import {
   buildReferralUnlockReply,
   buildReferralWelcomeNote,
   buildShareMyWinReply,
@@ -163,44 +158,6 @@ function recentImageMarker(params: { mediaUrl: string; contentType: string }) {
     contentType: params.contentType,
     createdAt: new Date().toISOString(),
   })}`
-}
-
-function pendingSkinCheckMarker() {
-  return `[pending_skin_check] ${JSON.stringify({ createdAt: new Date().toISOString() })}`
-}
-
-function completedSkinCheckMarker() {
-  return `[completed_skin_check] ${JSON.stringify({ createdAt: new Date().toISOString() })}`
-}
-
-async function savePendingSkinCheckRequest(telegramId: number) {
-  await saveConversation(telegramId, 'user', pendingSkinCheckMarker())
-}
-
-async function clearPendingSkinCheckRequest(telegramId: number) {
-  await saveConversation(telegramId, 'user', completedSkinCheckMarker())
-}
-
-async function getLatestSkinCheckState(telegramId: number) {
-  const { data } = await supabaseAdmin
-    .from('conversations')
-    .select('content, created_at')
-    .eq('telegram_id', telegramId)
-    .eq('role', 'user')
-    .or('content.like.[pending_skin_check]%,content.like.[completed_skin_check]%')
-    .order('created_at', { ascending: false })
-    .limit(1)
-
-  return data?.[0] || null
-}
-
-async function getRecentPendingSkinCheckRequest(telegramId: number) {
-  const latest = await getLatestSkinCheckState(telegramId)
-  if (!latest?.content?.startsWith('[pending_skin_check]')) return false
-
-  const createdAt = new Date(latest.created_at).getTime()
-  const ageMinutes = (Date.now() - createdAt) / (1000 * 60)
-  return ageMinutes <= 20
 }
 
 async function saveRecentImageContext(params: {
@@ -551,7 +508,6 @@ export async function POST(req: NextRequest) {
     if (numMedia > 0 && firstMediaUrl && isImageContentType(firstMediaType) && !previewThumbnailOnly) {
       try {
         await saveRecentImageContext({ telegramId: resolvedUser.telegramId, mediaUrl: firstMediaUrl, contentType: firstMediaType })
-        const hasPendingSkinCheck = await getRecentPendingSkinCheckRequest(resolvedUser.telegramId)
 
         // ── Image translation (menus, signs, foreign documents) ────────────
         // Also auto-detect if caption contains foreign script characters
@@ -621,7 +577,7 @@ export async function POST(req: NextRequest) {
             // Additive: durably store the document image (captioned ticket that didn't parse).
             await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
           }
-        } else if (isNutritionPhotoCaption(bodyText) || (!bodyText.trim() && !isSkinCheckCaption(bodyText) && !hasPendingSkinCheck)) {
+        } else if (isNutritionPhotoCaption(bodyText) || !bodyText.trim()) {
           // ── Food photo → first verify it's actually food via quick vision check ──
           let isFoodImage = true
           let isTicketImage = false
@@ -710,19 +666,6 @@ export async function POST(req: NextRequest) {
           await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
           await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[food photo]', reply: nutritionReply })
           } // end isFoodImage
-        } else if (isSkinCheckCaption(bodyText) || hasPendingSkinCheck) {
-          await sendWhatsAppMessage(from, 'Running AskGogo Skin Check...')
-          const result = await buildSkinCheckFromImage({
-            telegramId: resolvedUser.telegramId,
-            mediaUrl: firstMediaUrl,
-            contentType: firstMediaType,
-            userCaption: bodyText || 'skin check',
-            userName: resolvedUser.name || profileName,
-          })
-          await clearPendingSkinCheckRequest(resolvedUser.telegramId)
-          await saveConversation(resolvedUser.telegramId, 'user', `[skin check image] ${bodyText || 'skin check'}`.trim())
-          await saveConversation(resolvedUser.telegramId, 'assistant', result.report)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[skin check image]', reply: result.reply })
         } else if (isNameReply(bodyText)) {
           // Check if there's a pending speaker relabel state (within last 10 mins)
           const speakerState = await getLatestFollowupState(resolvedUser.telegramId, 'meeting_speaker_relabel')
@@ -809,7 +752,7 @@ export async function POST(req: NextRequest) {
         }
       } catch (error: any) {
         console.error('WHATSAPP_IMAGE_PROCESSING_FAILED:', error?.message || error)
-        await sendWhatsAppMessage(from, `I couldn't read that image clearly.\n\nFor split receipts, send a clear bill photo with caption: *split receipt Goa Test*.\nFor skin check, send a clear front-facing selfie with caption: *skin check*.\nFor notes, send a clearer photo of the note, diary page, screenshot, or document.`)
+        await sendWhatsAppMessage(from, `I couldn't read that image clearly.\n\nFor split receipts, send a clear bill photo with caption: *split receipt Goa Test*.\nFor notes, send a clearer photo of the note, diary page, screenshot, or document.`)
       }
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
@@ -906,7 +849,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       (isFriendReminderFollowupCandidate(text) && Boolean(await getPendingFriend(resolvedUser.telegramId)))
 
     if (!text) {
-      await sendWhatsAppMessage(from, `I can read text, voice notes, images and PDFs now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.\nFor Skin Check, send a clear selfie with caption: *skin check*.`)
+      await sendWhatsAppMessage(from, `I can read text, voice notes, images and PDFs now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
@@ -1012,10 +955,9 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       }
     }
 
-    // Check context: if last bot msg was nutrition goal menu, digits go to nutrition not skin
-    const isAmbiguousDigit = /^[1-5]$/.test(text.trim())
-    let skinTextReply = null
-    if (isAmbiguousDigit) {
+    // A bare digit answers the nutrition goal menu only when that menu was the last reply.
+    // Any other bare digit (for example "1" for a numbered list of places) carries on routing.
+    if (/^[1-5]$/.test(text.trim())) {
       const { data: lastBotMsg } = await supabaseAdmin
         .from('conversations')
         .select('content')
@@ -1034,42 +976,8 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
         await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: text, reply: nutritionReply })
-      } else {
-        skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
-    } else {
-      skinTextReply = await buildSkinTextCommandReply({ telegramId: resolvedUser.telegramId, text })
-    }
-    if (skinTextReply) {
-      const replyText = getReplyText(skinTextReply)
-      await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
-      await saveConversation(resolvedUser.telegramId, 'assistant', replyText)
-      if (typeof skinTextReply === 'object' && skinTextReply.mediaUrl) {
-        await sendWhatsAppMessage(from, replyText)
-        try {
-          await sendWhatsAppMediaMessage(from, 'Skin Report Card', skinTextReply.mediaUrl)
-        } catch (mediaError: any) {
-          console.error('WHATSAPP_SKIN_REPORT_CARD_MEDIA_FAILED:', {
-            mediaUrl: skinTextReply.mediaUrl,
-            error: mediaError?.message || mediaError,
-          })
-        }
-      } else {
-        await sendWhatsAppMessage(from, replyText)
-      }
-      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
-    }
-
-    if (isSkinCheckCaption(text)) {
-      await savePendingSkinCheckRequest(resolvedUser.telegramId)
-
-      const reply = `*AskGogo Skin Check*\n\nPlease upload a fresh selfie now. I'll run Skin Check on the new photo only.\n\nFor best results:\n- natural light\n- no heavy filter\n- face visible clearly\n- no medical diagnosis - skincare observation only`
-
-      await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
-      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-      await sendWhatsAppMessage(from, reply)
-
-      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
     if (isSaveLastContextCommand(text)) {
