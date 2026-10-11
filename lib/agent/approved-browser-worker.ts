@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp } from '@/lib/whatsapp'
 import type { AgentActor } from './actor'
-import { executeApprovedBrowserCommand } from './browser-command'
+import { executeApprovedBrowserCommand, resumePausedBrowserRun } from './browser-command'
 
 // Approved secure-browser runs are executed by ONE shared function, reached two ways:
 //  1. triggerApprovedBrowserRun(): right after the user approves on WhatsApp, the webhook
@@ -91,6 +91,34 @@ export async function runApprovedBrowserRun(runId: string): Promise<ApprovedBrow
     if (actor.whatsappId) {
       await sendWhatsApp(actor.whatsappId, 'Gogo could not finish the approved browser task. Nothing was repeated. Check the activity page before retrying.').catch(() => {})
     }
+    return 'failed'
+  }
+}
+
+/** Run a read queued by queueBrowserRead, once, and send the result on WhatsApp. */
+export async function runBackgroundBrowserRead(runId: string): Promise<ApprovedBrowserRunOutcome> {
+  const { data: claimed } = await supabaseAdmin.from('agent_runs')
+    .update({ error: 'background_read_running', updated_at: new Date().toISOString() })
+    .eq('id', runId).eq('type', 'secure_browser').eq('status', 'paused').eq('error', 'background_read_queued')
+    .select('id,telegram_id,metadata_json').maybeSingle()
+  if (!claimed?.id) return 'skipped'
+  const meta: any = claimed.metadata_json || {}
+  const suffix = String(meta.notify_suffix || '').trim()
+  const actor = await actorForTelegramId(String(claimed.telegram_id))
+  if (!actor) return 'failed'
+  let host = 'the page'
+  try { host = new URL(String(meta.url || '')).hostname.replace(/^www\./, '') } catch {}
+  try {
+    const result = await resumePausedBrowserRun({ actor, runId })
+    const body = result?.status === 'completed' || result?.status === 'paused' ? String(result.text || '') : `I couldn't read the free slots on ${host} from here.`
+    if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, [body, suffix].filter(Boolean).join('\n\n'))
+    return result?.status === 'completed' ? 'completed' : 'blocked'
+  } catch (err: any) {
+    console.error('BACKGROUND_READ_FAILED:', runId, String(err?.message || '').slice(0, 160))
+    const at = new Date().toISOString()
+    await supabaseAdmin.from('agent_runs').update({ status: 'failed', error: String(err?.message || 'background_read_failed').slice(0, 500), summary: 'Gogo could not open this page.', completed_at: at, updated_at: at })
+      .eq('id', runId).eq('telegram_id', String(claimed.telegram_id)).in('status', ['paused', 'running'])
+    if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, [`I couldn't open ${host} from here just now.${meta.url ? ` You can look at it directly: ${meta.url}` : ''}`, suffix].filter(Boolean).join('\n\n')).catch(() => {})
     return 'failed'
   }
 }

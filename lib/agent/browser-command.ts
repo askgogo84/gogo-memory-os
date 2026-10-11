@@ -801,3 +801,35 @@ export async function claimBookingOtpRun(tg:number,runId:string){
     .eq('id',runId).eq('telegram_id',String(tg)).eq('status','paused').select('id').maybeSingle()
   return Boolean(claimed?.id)
 }
+
+function internalBaseUrl(){return String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')}
+
+/**
+ * Start a public read in the background instead of inside the WhatsApp webhook (60s budget).
+ * 11 Oct live run: opening a Playo listing took longer than the webhook's 42s window, the reply
+ * said "I stopped waiting", and the run that was left behind still held the browser, so the
+ * background retry failed with browser_handoff_in_use. The internal route has 300s and sends the
+ * result on WhatsApp, followed by notifySuffix. Returns null when this cannot be queued.
+ */
+export async function queueBrowserRead(params:{actor:AgentActor;surface:AgentSurface;text:string;notifySuffix?:string;metadata?:Record<string,unknown>}){
+  const command=parseBrowserCommand(params.text)
+  if(!command||command.mode!=='read')return null
+  const tg=params.actor.legacyTelegramId
+  const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:await permission(tg),mode:'read',risk:'low',irreversible:false,approvalStatus:null})
+  if(!policy.allowed)return null
+  const {runId}=await makeRun({actor:params.actor,surface:params.surface,command})
+  const metadata={plan_type:'secure_browser',url:command.url,objective:command.objective,mode:'read',risk:'low',approval_action:null,vault_credential_id:null,flow:null,notify_suffix:safe(params.notifySuffix||'',900)||null,...(params.metadata||{})}
+  await supabaseAdmin.from('agent_runs').update({status:'paused',error:'background_read_queued',summary:'Gogo is opening this page in the background.',metadata_json:metadata,updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg))
+  let dispatched=false
+  const secret=process.env.CRON_SECRET
+  if(secret){
+    try{
+      const res=await fetch(`${internalBaseUrl()}/api/agent/approved-browser`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${secret}`},body:JSON.stringify({runId,read:true}),signal:AbortSignal.timeout(15_000)})
+      dispatched=res.ok
+      if(!res.ok)console.error('BACKGROUND_READ_TRIGGER_REJECTED:',res.status,runId)
+    }catch(err:any){console.error('BACKGROUND_READ_TRIGGER_FAILED:',runId,String(err?.message||'').slice(0,120))}
+  }
+  // Fallback: the every-minute background sweeper resumes paused reads with this marker.
+  if(!dispatched)await supabaseAdmin.from('agent_runs').update({error:'whatsapp_browser_response_timeout',updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg)).eq('error','background_read_queued')
+  return {runId,status:'running' as const,capability:'browser' as const,risk:'low' as const,host:new URL(command.url).hostname.replace(/^www\./,''),handledBy:'secure-browser' as const}
+}

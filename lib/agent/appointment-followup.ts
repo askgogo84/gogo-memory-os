@@ -219,6 +219,7 @@ export async function currentAppointmentReply(tg: number): Promise<string | null
   const text = String(data.content || '')
   const appointmentPrompt = /(?:^|\n)(?:Appointment options\s*[\u00b7:]|Places to book \S)/i.test(text)
     || /I inspected option \d+ without confirming anything/i.test(text)
+    || /^I'm opening option \d+ \(/i.test(text)
     || /I (?:kept|reused) option \d+[\s\S]*appointment/i.test(text)
     || /I have the prepared provider flow, but I need the exact appointment date and time/i.test(text)
     || /^Got it [\u2014-] .+\. (?:Which date|What time) should I book it for\?/i.test(text)
@@ -355,7 +356,7 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
   const profile = await bookingProfile(params.actor)
   const objective = safe(bookingObjective({
     date: slot.date, time: to12h(slot.time), timezone: slot.timezone,
-    service: safe(selection.service || '', 80), title: safe(selection.title || '', 120),
+    service: safe(selection.service || '', 80), title: safe(selection.title || '', 120), location: safe(selection.location || '', 80),
     name: profile.name, email: profile.email, confirmation: safe(params.text, 400),
   }), 1700)
   const { handoff: _handoff, booking_otp: _otp, booking_stage: _stage, browser_safe_to_retry: _retry, auth_action_log: _log, auth_original_url: _orig, ...cleanMeta } = meta

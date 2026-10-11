@@ -97,10 +97,13 @@ export function appointmentBookableScore(result: Pick<WebSearchResult,'title'|'s
   return score
 }
 
+// Social posts are not places to book (live 11 Oct: an Instagram promo was option 2).
+const SOCIAL_HOST = /(?:^|\.)(?:instagram\.com|facebook\.com|fb\.com|youtube\.com|youtu\.be|x\.com|twitter\.com|linkedin\.com|reddit\.com|quora\.com|pinterest\.\w+|threads\.net)$/i
+
 function curate(results: WebSearchResult[], location: string) {
   const seen = new Set<string>()
   const ranked = results
-    .filter(result => result?.url && /^https?:\/\//i.test(result.url) && locationMatch(result, location))
+    .filter(result => result?.url && /^https?:\/\//i.test(result.url) && !SOCIAL_HOST.test(host(result.url)) && locationMatch(result, location))
     .map(result => ({ result, score: appointmentBookableScore(result) }))
     .sort((a,b) => b.score - a.score)
   const options: AppointmentOption[] = []
