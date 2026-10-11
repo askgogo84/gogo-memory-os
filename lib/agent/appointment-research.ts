@@ -15,7 +15,7 @@ function host(url: string) {
 }
 
 function locationHint(text: string) {
-  const match = String(text || '').match(/\b(?:in|near|around)\s+([A-Za-z][A-Za-z .'-]{2,45}?)(?=\s+(?:next|this|tomorrow|today|on|for|at|after|before|with|and|but|do\s+not|don't)\b|[,.!?]|$)/i)
+  const match = String(text || '').match(/\b(?:in|near|around)\s+([A-Za-z][A-Za-z .'-]{2,45}?)(?=\s+(?:next|this|tomorrow|today|on|for|at|after|before|with|and|but|are|is|that|which|free|available|open|do\s+not|don't)\b|[,.!?]|$)/i)
   return safe(match?.[1] || '', 80)
 }
 
@@ -68,6 +68,21 @@ function locationMatch(result: WebSearchResult, location: string) {
   return resultInPlace(`${result.title || ''} ${result.snippet || ''} ${result.url || ''}`, resolveIndiaPlace(location))
 }
 
+// Search snippets arrive as scraped page text (markdown, image names, menus). Keep one readable line.
+export function readableSnippet(raw: string) {
+  const cleaned = String(raw || '')
+    .replace(/!?\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\S+\.(?:webp|png|jpe?g|svg|gif)\)?/gi, ' ')
+    .replace(/#+\s*/g, ' ')
+    .replace(/\[\s*\.\.\.\s*\]|\[…\]/g, ' ')
+    .replace(/(?:privacy\s*policy|terms\s*of\s*service|terms\s*(?:&|and)\s*conditions|cancellation\s*policy|posh\s*policy|download\s*(?:the\s*)?app|need\s*help\??|minimi[sz]e|close\s*icon|live\s*games\s*\d+)/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (cleaned.length <= 180) return cleaned
+  const cut = cleaned.slice(0, 180)
+  return `${cut.slice(0, Math.max(cut.lastIndexOf('. '), cut.lastIndexOf(' '))).trim()}…`
+}
+
 export function appointmentBookableScore(result: Pick<WebSearchResult,'title'|'snippet'|'url'>) {
   const url = String(result.url || '').toLowerCase()
   const text = `${result.title || ''} ${result.snippet || ''}`.toLowerCase()
@@ -76,6 +91,8 @@ export function appointmentBookableScore(result: Pick<WebSearchResult,'title'|'s
   if (/\/(book|booking|appointment|appointments|schedule|slots?|availability)(\/|\?|$)/.test(url)) score += 6
   if (/book[-_]?appointment|appointment[-_]?booking|schedule[-_]?appointment/.test(url)) score += 6
   if (/\b(book appointment|schedule appointment|request appointment|available slots?)\b/.test(text)) score += 5
+  // A site's home page is not a venue or provider (live 11 Oct: playo.co and hudle.in home pages).
+  try { if (/^\/?$/.test(new URL(String(result.url || '')).pathname)) score -= 8 } catch {}
   if (/\b(our clinics|locations|about us|blog|services|dentist near me)\b/.test(text) || /\/(our-clinics|locations|about|blog|services)(\/|\?|$)/.test(url)) score -= 4
   return score
 }
@@ -93,7 +110,7 @@ function curate(results: WebSearchResult[], location: string) {
     const key = `${provider}|${safe(result.title, 180).toLowerCase()}`
     if (!provider || seen.has(key)) continue
     seen.add(key)
-    options.push({ title:safe(result.title || provider,220), snippet:safe(result.snippet || '',520), url:result.url, provider, bookableScore:item.score })
+    options.push({ title:safe(result.title || provider,160), snippet:readableSnippet(safe(result.snippet || '',900)), url:result.url, provider, bookableScore:item.score })
     if (options.length >= 6) break
   }
   return options
@@ -162,8 +179,12 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
     const completedAt = new Date().toISOString()
     await supabaseAdmin.from('agent_steps').update({ status:'completed', output_json:{ options, query, fallbackQuery, usedFallback, verifiedStore:'public-web', locationStrict:true, bookableRanked:true, mutated:false }, completed_at:completedAt }).eq('id',String(step.id))
 
+    const sportsVenue = isSportsVenueRequest(params.text)
+    const heading = sportsVenue ? `Places to book ${service}s` : `Appointment options · ${service}`
     const text = options.length
-      ? `Appointment options · ${service}${location ? ` · ${location}` : ''}${timing ? ` · ${timing}` : ''}\n\n${options.map((o,i) => `${i+1}. ${o.title}\n${o.snippet ? `${o.snippet}\n` : ''}Booking/provider page: ${o.url}`).join('\n\n')}\n\nI ranked direct booking/appointment paths ahead of generic clinic pages where possible. I have not claimed a slot is live and I changed nothing. Tell me which option to prepare and Gogo can inspect the provider flow without confirming anything.`
+      ? `${heading}${location ? ` · ${location}` : ''}${timing ? ` · ${timing}` : ''}\n\n${options.map((o,i) => `${i+1}. ${o.title}\n${o.snippet ? `${o.snippet}\n` : ''}Booking/provider page: ${o.url}`).join('\n\n')}\n\n${sportsVenue
+        ? `I haven't checked live slots or booked anything. Reply *open option 1* (or any number) and I'll open that booking page and look for your time before asking you to approve anything.`
+        : `I put direct booking pages first. I haven't checked live slots or changed anything. Reply *open option 1* (or any number) and I'll open that booking page before asking you to approve anything.`}`
       : `I couldn't find a provider page I can verify for ${service}${location ? ` in ${location}` : ''}. I rejected results from other cities/countries rather than showing you the wrong location. I did not invent availability or change anything.`
 
     await supabaseAdmin.from('agent_runs').update({

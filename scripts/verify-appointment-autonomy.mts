@@ -49,10 +49,11 @@ assert.ok(chatRoute.indexOf('tryRunAppointmentFollowup({ actor') < chatRoute.ind
 
 assert.match(research, /readOnly:\s*true/)
 assert.match(research, /mutated:\s*false/)
-assert.match(research, /I have not claimed a slot is live/)
+assert.match(research, /I haven't checked live slots/)
 assert.match(research, /bookableScore/)
 assert.match(research, /bookableRanked/)
-assert.match(research, /ranked direct booking\/appointment paths ahead of generic clinic pages/i)
+assert.match(research, /I put direct booking pages first/i)
+assert.match(research, /Booking\/provider page: \$\{o\.url\}/, 'the follow-up binds an option number to this exact line')
 
 assert.match(recovery, /appointment_selection/)
 assert.match(recovery, /resolveBookableTarget/)

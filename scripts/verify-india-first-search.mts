@@ -69,3 +69,17 @@ console.log('India-first search: place resolution, filters and restaurant/salon 
   assert.match(readFileSync('lib/services/claude.ts', 'utf8'), /MOVIES \(India\)/, '03: showtimes on BookMyShow/District')
   console.log('Sports venues and showtimes route India-first')
 }
+// Live retest 11 Oct (case 02): heading read "Indiranagar are free", raw scraped text, home pages, clinic wording.
+{
+  const ar = await import('../lib/agent/appointment-research.ts')
+  const snip = ar.readableSnippet('PRIVACY POLICYTERMS OF SERVICECANCELLATION POLICY ### Book sports venues. HudleCOmmunity.webp) [...] # Badminton Courts in Bangalore')
+  assert.doesNotMatch(snip, /POLICY|\.webp|#|\[\.\.\.\]/i)
+  assert.ok(ar.readableSnippet('x '.repeat(300)).length <= 182)
+  assert.ok(ar.appointmentBookableScore({ title: 'Hudle', snippet: 'book', url: 'https://www.hudle.in' }) < ar.appointmentBookableScore({ title: 'Badminton Courts', snippet: 'book', url: 'https://playo.co/venues/bangalore/sports/badminton' }), 'home pages rank below venue pages')
+  const src = readFileSync('lib/agent/appointment-research.ts', 'utf8')
+  assert.match(src, /are\|is\|that\|which\|free\|available\|open/, 'location stops before "are free"')
+  assert.match(src, /Places to book \$\{service\}s/)
+  assert.doesNotMatch(src, /generic clinic pages/)
+  assert.match(readFileSync('lib/agent/appointment-followup.ts', 'utf8'), /Places to book \\S/, 'the option follow-up still works after the new heading')
+  console.log('Venue results are readable and follow-ups still work')
+}
