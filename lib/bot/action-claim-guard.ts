@@ -15,6 +15,10 @@ const FAKE_ACTION_CLAIMS: RegExp[] = [
   // and no watch existed. Chat cannot schedule anything, so it may not promise ongoing work.
   /\b(?:i(?:'ll| will)|gogo\s+will)\s+(?:keep\s+(?:checking|an\s+eye|watching|tracking)|check|monitor|watch|track|ping|alert|notify|remind)\b[^.?!\n]{0,80}\b(?:every|each|daily|hourly|weekly|when(?:ever)?|if|as\s+soon\s+as|starting)\b/i,
   /\bi(?:'ve| have)\s+(?:set\s+(?:up\s+)?(?:a|an|the)\s+(?:watch|alert|monitor|tracker|reminder)|started\s+(?:watching|monitoring|tracking))\b/i,
+  // 11 Oct live run: a bare "Option 1" reached chat, which answered "I've opened the Playo page
+  // for Smaaash..." with nothing opened. Chat cannot open, browse or check a live page.
+  /\b(?:i(?:'ve| have)|i)\s+(?:just\s+)?(?:opened|loaded|visited|browsed|navigated\s+to|pulled\s+up)\s+(?:the\s+|their\s+|its\s+|your\s+)?[\w .'&-]{0,40}\b(?:page|site|website|link|listing|app)\b/i,
+  /\bi(?:'ve| have)\s+(?:checked|looked\s+at|seen)\s+(?:the\s+)?(?:live\s+)?(?:slots?|availability)\b/i,
 ]
 
 export const NO_ACTION_REPLY =

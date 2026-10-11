@@ -2,7 +2,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rememberTypedObjects } from './typed-object-context'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { DEFAULT_TIMEZONE, normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
-import { tryRunBrowserCommand } from './browser-command'
+import { tryRunBrowserCommand, browserApprovalBinding } from './browser-command'
+import { bookingObjective, indianMobileFromWhatsApp, maskMobile } from './provider-booking'
 import { registerLifeEvent } from './life-event-engine'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
@@ -18,22 +19,41 @@ const MONTHS: Record<string, number> = {
 
 function pad(value: number) { return String(value).padStart(2, '0') }
 
-function optionNumber(text: string) {
+// A bare reply to the numbered list: "1", "#2", "option 3", "Option 1." (live test 11 Oct: a
+// bare "Option 1" fell through to chat, which claimed it had opened the page).
+export function bareOptionReply(text: string): number | null {
+  const m = String(text || '').trim().match(/^(?:option|choice|no\.?)?\s*#?\s*(\d{1,2})\s*[.!]?$/i)
+  const value = Number(m?.[1])
+  return m && Number.isInteger(value) && value >= 1 && value <= 20 ? value : null
+}
+
+/** What to say after opening an option. Keeps the phrase the confirmation step looks for. */
+export function bookingNextStepHint(option: number) {
+  return `I inspected option ${option} without confirming anything. To book, tell me the day and time, for example *book the 7 am slot on Saturday*. I'll ask for your approval, then pick the slot, log in with your number and ask you for the OTP here, and stop at payment with a link for you to pay.`
+}
+
+export function optionNumber(text: string) {
+  const bare = bareOptionReply(text)
+  if (bare) return bare
   const match = String(text || '').match(/\b(?:option|choice)\s*#?\s*(\d{1,2})\b/i)
     || String(text || '').match(/\b(?:prepare|open|inspect|check|use|continue\s+with|book)\s+(\d{1,2})\b/i)
   const value = Number(match?.[1])
   return Number.isInteger(value) && value >= 1 && value <= 20 ? value : null
 }
 
-function wantsPrepare(text: string) {
+export function wantsPrepare(text: string) {
+  if (bareOptionReply(text)) return true
   const t = String(text || '').toLowerCase()
   return /\b(prepare|open|inspect|check|use|continue with|book|booking)\b/.test(t) && /\b(option|choice|appointment)\b/.test(t)
 }
 
-function wantsFinalApproval(text: string) {
+export function wantsFinalApproval(text: string) {
   const t = String(text || '').toLowerCase()
+  if (/\bbook\b[^.?!]{0,40}\bslot\b/.test(t)) return true
   return /\b(confirm|finali[sz]e|go ahead|complete|submit|book it|book this|reserve it)\b/.test(t) && /\b(appointment|slot|option|booking)\b/.test(t)
 }
+
+const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
 
 // A bare answer to our "which date / what time?" prompt — e.g. "4:00 PM", "28 September 2026",
 // "confirm at 4pm". These must reach createFinalApproval even without the word "appointment",
@@ -66,6 +86,19 @@ export function explicitDate(text: string, timezone: string) {
 
   if (/\btomorrow\b/i.test(text)) return addDays(localYmd(new Date(), timezone), 1)
   if (/\btoday\b/i.test(text)) return localYmd(new Date(), timezone)
+  // "on Saturday", "this sat", "next Monday": the next such day (today counts for "on <today>").
+  const weekday = text.match(/\b(?:(on|this|next|coming)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i)
+    || text.match(/\b(on|this|next|coming)\s+(sun|mon|tues?|wed|thu(?:rs?)?|fri|sat)\b\.?/i)
+  if (weekday && !/\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}\b|\b20\d{2}-\d/i.test(text)) {
+    const today = localYmd(new Date(), timezone)
+    const todayIndex = new Date(`${today}T12:00:00Z`).getUTCDay()
+    const target = WEEKDAYS.findIndex(day => day.startsWith(weekday[2].toLowerCase().slice(0, 3)))
+    if (target >= 0) {
+      let delta = (target - todayIndex + 7) % 7
+      if (delta === 0 && String(weekday[1] || '').toLowerCase() === 'next') delta = 7
+      return addDays(today, delta)
+    }
+  }
 
   const dayMonth = text.match(/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(20\d{2}))?\b/i)
   const monthDay = text.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:[,\s]+(20\d{2}))?\b/i)
@@ -218,8 +251,10 @@ async function latestPreparedAppointment(tg: number) {
     .select('id,metadata_json,status,completed_at,started_at')
     .eq('telegram_id', String(tg))
     .eq('type', 'secure_browser')
-    .eq('status', 'completed')
-    .order('completed_at', { ascending: false, nullsFirst: false })
+    // The open step is a read; it may finish, stop at a sign-in wall or fail. Any of them still
+    // identifies the provider page the person chose.
+    .in('status', ['completed', 'paused', 'failed'])
+    .order('updated_at', { ascending: false })
     .limit(12)
   if (error) throw new Error(`appointment_prepare_context_failed:${error.message}`)
   return (data || []).find((row: any) => row?.metadata_json?.appointment_selection?.url) || null
@@ -229,6 +264,21 @@ async function markPrepared(runId: string, tg: number, context: Record<string, u
   const { data } = await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id', runId).eq('telegram_id', String(tg)).maybeSingle()
   const metadata = { ...(data?.metadata_json || {}), appointment_selection: context, appointment_prepared: true }
   await supabaseAdmin.from('agent_runs').update({ metadata_json: metadata, updated_at: new Date().toISOString() }).eq('id', runId).eq('telegram_id', String(tg))
+}
+
+async function bookingProfile(actor: AgentActor): Promise<{ name: string; email: string; mobile: string | null }> {
+  const { data } = await supabaseAdmin.from('users').select('name').eq('telegram_id', actor.legacyTelegramId).maybeSingle()
+  let email = ''
+  try {
+    const { data: row, error } = await supabaseAdmin.from('users').select('email').eq('telegram_id', actor.legacyTelegramId).maybeSingle()
+    if (!error) email = String((row as any)?.email || '').trim()
+  } catch {}
+  const name = String(data?.name || actor.name || '').trim()
+  return {
+    name: /^(?:friend|gogo|user)$/i.test(name) ? '' : name.slice(0, 80),
+    email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email.slice(0, 120) : '',
+    mobile: indianMobileFromWhatsApp(actor.whatsappId),
+  }
 }
 
 async function createFinalApproval(params: { actor: AgentActor; prepared: any; text: string }) {
@@ -299,14 +349,24 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
     .select('id').eq('run_id', runId).eq('telegram_id', String(tg)).eq('tool_name', 'secure_browser').limit(1).maybeSingle()
   if (stepError || !step?.id) throw new Error('appointment_prepare_step_missing')
 
-  const objective = `Complete the prepared appointment flow on this provider page for exactly ${slot.date} at ${slot.time} (${slot.timezone}), using the user's explicit confirmation: ${safe(params.text, 600)}. Re-check the exact slot and provider before final confirmation. Do not purchase paid add-ons. Stop if authentication, OTP, CAPTCHA, payment or materially different terms are required.`
+  // 11 Oct: the person wants Gogo to pick the slot, log in with their number, ask for the OTP on
+  // WhatsApp and stop at payment with a link to that same browser. That is the provider_booking
+  // flow: it never submits and never pays.
+  const profile = await bookingProfile(params.actor)
+  const objective = safe(bookingObjective({
+    date: slot.date, time: to12h(slot.time), timezone: slot.timezone,
+    service: safe(selection.service || '', 80), title: safe(selection.title || '', 120),
+    name: profile.name, email: profile.email, confirmation: safe(params.text, 400),
+  }), 1700)
+  const { handoff: _handoff, booking_otp: _otp, booking_stage: _stage, browser_safe_to_retry: _retry, auth_action_log: _log, auth_original_url: _orig, ...cleanMeta } = meta
   const nextMeta = {
-    ...meta,
+    ...cleanMeta,
     url,
     objective,
     mode: 'execute',
     risk: 'high',
     approval_action: 'booking',
+    flow: 'provider_booking',
     appointment_selection: {
       ...selection,
       confirmation_text: safe(params.text, 700),
@@ -320,8 +380,8 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
 
   const { data: approval, error } = await supabaseAdmin.from('agent_approvals').insert({
     telegram_id: String(tg), run_id: runId, action_type: 'booking',
-    title: `Approve appointment confirmation${selection.title ? ` · ${safe(selection.title, 120)}` : ''}`,
-    description: 'Gogo inspected this provider flow without submitting it. Approval allows one final appointment confirmation attempt. Authentication, OTP, CAPTCHA and payment still stop for you.',
+    title: `Approve booking up to payment${selection.title ? ` · ${safe(selection.title, 120)}` : ''}`,
+    description: `Gogo will pick this slot, log in with your mobile number ${maskMobile(profile.mobile)} if the site asks, ask you for the OTP on WhatsApp, and stop at payment with a link for you to pay. Gogo never pays.`,
     payload_preview: [
       { label: 'Provider', value: safe(selection.provider || new URL(url).hostname, 160) },
       { label: 'Selection', value: safe(selection.title || `Option ${selection.option || ''}`, 220) },
@@ -330,6 +390,7 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
     ],
     execution_payload: { plan_type: 'secure_browser', stepId: String(step.id), url },
     risk_level: 'high', status: 'pending',
+    ...browserApprovalBinding(runId, String(step.id), { url, objective, mode: 'execute', risk: 'high', approvalAction: 'booking', flow: 'provider_booking' }),
   }).select('id').single()
   if (error || !approval?.id) throw new Error(`appointment_approval_failed:${error?.message || 'unknown'}`)
 
@@ -342,7 +403,7 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
 
   return {
     runId, status: 'waiting_approval' as const, capability: 'browser' as const, risk: 'high' as const,
-    text: `I prepared the provider flow for ${slot.date} at ${slot.time} and need your approval before final confirmation. I will still stop for authentication, OTP, CAPTCHA or payment.`,
+    text: `Ready to book ${selection.title ? `${safe(selection.title, 80)} ` : ''}for ${slot.date} at ${to12h(slot.time)}.\n\nAfter you approve, I'll pick that slot${profile.mobile ? `, log in with your number ${maskMobile(profile.mobile)} if asked, and ask you here for the OTP` : ''}. I'll stop at payment and send you a link to pay yourself. I never pay.`,
     approvalId: String(approval.id), approvalRequired: true, handledBy: 'appointment-followup' as const,
   }
 }
@@ -457,10 +518,9 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
 
   if (!appointmentReplySelects(currentReply, number, selected.url)) return null
 
-  // Deliberately avoid booking/submit words in this constructed browser command so
-  // the Secure Browser runs in DRAFT mode first. It may inspect live slots and fill
-  // safe fields, but it cannot make the provider-side commitment yet.
-  const objective = `Open ${selected.url} and inspect live appointment slots for ${safe(research.metadata_json?.service || 'the requested service', 120)}${research.metadata_json?.location ? ` in ${safe(research.metadata_json.location, 100)}` : ''}${research.metadata_json?.timing ? ` around ${safe(research.metadata_json.timing, 100)}` : ''}. Prepare the appointment form flow and fill only safe non-sensitive fields if already available. Stop before final confirmation, submission, authentication or payment.`
+  // Opening an option is a read: Gogo looks at the provider page and reports the free dates and
+  // time slots it shows. Nothing is selected, filled or booked until the person approves.
+  const objective = `Read-only. Open ${selected.url} and list the dates and time slots shown as available for ${safe(research.metadata_json?.service || 'the requested service', 120)}${research.metadata_json?.location ? ` in ${safe(research.metadata_json.location, 100)}` : ''}${research.metadata_json?.timing ? ` around ${safe(research.metadata_json.timing, 100)}` : ''}, with prices if shown. You may click public date or sport tabs to see slots. Do not log in.`
   const result = await tryRunBrowserCommand({ actor: params.actor, surface: params.surface, text: objective })
   if (!result) throw new Error('appointment_prepare_browser_not_routed')
   if (result.runId) {
@@ -482,9 +542,7 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
   }
   return {
     ...result,
-    text: result.status === 'completed'
-      ? `${result.text}\n\nI inspected option ${number} without confirming anything. If the provider/slot is right, explicitly tell me to confirm the appointment and include the exact date and time; I will create the final approval boundary first.`
-      : result.text,
+    text: `${result.status === 'completed' || result.status === 'paused' ? result.text : `I couldn't read the free slots on ${(() => { try { return new URL(selected.url).hostname.replace(/^www\./, '') } catch { return 'the provider page' } })()} from here.`}\n\n${bookingNextStepHint(number)}`,
     handledBy: 'appointment-followup' as const,
   }
 }

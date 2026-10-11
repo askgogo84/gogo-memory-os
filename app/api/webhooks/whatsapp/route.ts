@@ -1,5 +1,8 @@
 import { isSportsVenueRequest } from '@/lib/agent/appointment-research'
 import { unsupportedCapability } from '@/lib/bot/unsupported-capabilities'
+import { otpReply } from '@/lib/agent/provider-booking'
+import { claimBookingOtpRun, findBookingAwaitingOtp } from '@/lib/agent/browser-command'
+import { triggerBookingOtpResume } from '@/lib/agent/approved-browser-worker'
 import { subscriptionReviewText } from '@/lib/agent/general-planner'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
@@ -331,8 +334,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    console.log('RAW_TWILIO:', Object.fromEntries([...formData.entries()]))
-    console.log('WhatsApp inbound:', { fromRaw, from, profileName, numMedia, messageSid: inboundMessageSid, body: String(formData.get('Body') || ''), mediaType: String(formData.get('MediaContentType0') || ''), allKeys: [...formData.keys()].join(',') })
+    // A bare one-time code is never written to the logs (it may be a booking OTP).
+    const loggedBody = otpReply(String(formData.get('Body') || '')) ? '[code withheld]' : String(formData.get('Body') || '')
+    console.log('RAW_TWILIO:', { ...Object.fromEntries([...formData.entries()]), Body: loggedBody })
+    console.log('WhatsApp inbound:', { fromRaw, from, profileName, numMedia, messageSid: inboundMessageSid, body: loggedBody, mediaType: String(formData.get('MediaContentType0') || ''), allKeys: [...formData.keys()].join(',') })
     if (!from) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
 
     // ── Consent gate: STOP / UNSUBSCRIBE ────────────────────────────────────────
@@ -369,6 +374,29 @@ export async function POST(req: NextRequest) {
     brainLeaseOwner = brainLease.ownerToken
 
     const bodyText = String(formData.get('Body') || '').slice(0, 2000) // Security: cap input length.trim()
+
+    // ── Booking OTP ─────────────────────────────────────────────────
+    // A bare code while a booking is waiting for one goes straight to that booking, before any
+    // handler or model. The code is never saved to the conversation, never logged, and travels
+    // only to the browser run that types it in.
+    const bookingCode = numMedia === 0 ? otpReply(bodyText) : null
+    if (bookingCode) {
+      const otpRunId = await findBookingAwaitingOtp(resolvedUser.telegramId)
+      if (otpRunId && await claimBookingOtpRun(resolvedUser.telegramId, otpRunId)) {
+        const trigger = await triggerBookingOtpResume(otpRunId, bookingCode)
+        if (trigger !== 'dispatched') {
+          await supabaseAdmin.from('agent_runs').update({ status: 'paused', updated_at: new Date().toISOString() })
+            .eq('id', otpRunId).eq('telegram_id', String(resolvedUser.telegramId)).eq('status', 'running')
+        }
+        const reply = trigger === 'dispatched'
+          ? "Got the code. I'm entering it and continuing your booking. I'll message you here when it's at the payment step."
+          : "I couldn't pass the code on just now. Open the Take control link I sent and type the code there."
+        await saveConversation(resolvedUser.telegramId, 'user', '[booking code sent]')
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWhatsAppMessage(from, reply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
 
     // ── Interactive onboarding menu for new users ───────────────────
     if ((resolvedUser as any).isNewUser) {
