@@ -355,3 +355,18 @@ console.log('Provider booking: failed steps are replanned; failed number/code fi
   await computer.runSecureBrowser({ ...base, bookingPhone: null, bookingOtp: null })
   assert.deepEqual(commands[1].payload.actions, [{ kind: 'click_text', text: 'Book Now' }])
 }
+
+// 11 Oct 15:10: the planner saw today's times ("No courts available") and returned nothing. A booking
+// gets one second look that names the mismatch; the date-first rule is always in the prompt.
+{
+  commands.length = 0; prompts.length = 0
+  script = [venue, venue, venue]
+  plans = [{ approvedOperation: 'none', actions: [] }, { approvedOperation: 'booking', actions: [{ kind: 'click_text', text: '2026-10-17' }] }]
+  await computer.runSecureBrowser({ ...base, bookingPhone: null, bookingOtp: null })
+  assert.match(prompts[0], /set the date first, never a reason to stop/)
+  assert.doesNotMatch(prompts[0], /You returned no actions/)
+  assert.match(prompts[1], /You returned no actions on this booking page/)
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'click_text', text: '2026-10-17' }])
+  assert.equal(prompts.filter(p => /You returned no actions/.test(p)).length, 1, 'one second look per run')
+}
+console.log('Provider booking: an empty plan on a booking page gets one second look')
