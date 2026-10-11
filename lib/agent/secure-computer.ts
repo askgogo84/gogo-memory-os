@@ -590,6 +590,7 @@ async function clickPastOverlay(page,selector){
           if(payload.mode!=='execute'||!payload.bookingFlow){log.push({kind:a.kind,detail:a.text,status:'skipped'});continue;}
           const wanted=String(a.text||'');
           if(/\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(wanted)){log.push({kind:a.kind,detail:wanted,status:'skipped',consequential:true,failure:{reason:'payment_control'}});continue;}
+          if(payload.rehearsal&&/\badd\s+to\s+cart\b/i.test(wanted)){log.push({kind:a.kind,detail:wanted,status:'skipped',failure:{reason:'rehearsal_stop'}});continue;}
           const candidates=page.getByText(wanted,{exact:false});
           const count=await candidates.count().catch(()=>0);
           let pressed=false;
@@ -634,6 +635,8 @@ async function clickPastOverlay(page,selector){
             // A provider booking stops before payment: Gogo never presses Pay or Place order.
             const controlText=await page.locator(a.selector).first().evaluate(el=>[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value')].filter(Boolean).join(' ')).catch(()=>'');
             if(/\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(controlText)){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential:true,failure:{reason:'payment_control'}});continue;}
+            // A rehearsal walks the flow but never changes the cart.
+            if(payload.rehearsal&&/\badd\s+to\s+cart\b/i.test(controlText)){log.push({kind:a.kind,detail:a.selector,status:'skipped',failure:{reason:'rehearsal_stop'}});continue;}
           }
           if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential,failure:{reason:unavailable?'control_unavailable':'consequential_control',guardContext,guardNameShape}});continue;}
           flightResultSearch=payload.mode==='read'&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights(?:[/?]|$)/i.test(payload.url)
@@ -1252,7 +1255,7 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
   let publicFlightRead=false
   try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
   const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
@@ -1507,7 +1510,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       draftActions=actions
       const currentUrl=String(page.url||target.toString())
       const {allow}=first.managed||allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
-      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,readDeadline,bookingFlow:providerBooking,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null,keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:params.keepAlive===true||Boolean(first.managed)})).toString('base64')
+      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,readDeadline,bookingFlow:providerBooking,rehearsal:providerBooking&&params.rehearsal===true,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null,keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:params.keepAlive===true||Boolean(first.managed)})).toString('base64')
       if(readDeadline!==undefined&&Date.now()>=readDeadline)throw new Error('browser_read_deadline')
       // A sign-up's new-password field: write the generated password as a pending Vault record
       // BEFORE anything is submitted. If that record cannot be written, nothing is submitted.
@@ -1563,6 +1566,12 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
       if(!Array.isArray(page.actions)||page.actions.length!==actions.length||actions.some((a,i)=>page.actions[i]?.kind!==a.kind))missingActionEvidence=true
       if(providerBooking&&actions.some(a=>a.kind==='fill_otp'))otpUsed=true
+      // A rehearsal (public pages, no account) logs each step it planned and how it went.
+      if(providerBooking&&params.rehearsal===true)try{console.log('BOOKING_REHEARSAL_WAVE:',JSON.stringify({wave,from:(()=>{try{return new URL(currentUrl).pathname.slice(0,90)}catch{return null}})(),to:(()=>{try{return new URL(String(page.url||'')).pathname.slice(0,90)}catch{return null}})(),
+        planned:actions.map(a=>a.kind+':'+String((a as any).text||(a as any).url||(a as any).selector||'').slice(0,70)),
+        outcome:(page.actions||[]).map((a:any)=>`${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`),
+        controls:(page.controls||[]).slice(0,30).map((c:any)=>String(c?.label||'').slice(0,40)).filter(Boolean),
+        text:String(page.text||'').replace(/\s+/g,' ').slice(0,500)}))}catch{}
       const doneCount=(page.actions||[]).filter((a:any)=>a.status==='done').length
       if(params.mode==='read'){
         unchangedReadWaves=readSnapshot(page)===beforeReadSnapshot?unchangedReadWaves+1:0

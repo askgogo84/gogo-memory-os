@@ -2,6 +2,14 @@ import { measureModelCall, type ModelUsage } from './model-usage'
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import * as asyncHooks from 'node:async_hooks'
+
+// The browser planner model. A caller (the booking rehearsal) may run one task on another model;
+// the override is scoped to that async call only, never to other requests on the same instance.
+const DEFAULT_PLANNER_MODEL='claude-haiku-4-5'
+const plannerModelScope=typeof (asyncHooks as any).AsyncLocalStorage==='function'?new (asyncHooks as any).AsyncLocalStorage():null
+export function withPlannerModel<T>(model:string,work:()=>Promise<T>):Promise<T>{return plannerModelScope?plannerModelScope.run(model,work):work()}
+export function currentPlannerModel():string{return (plannerModelScope?.getStore() as string|undefined)||DEFAULT_PLANNER_MODEL}
 
 type Complete = (prompt:string)=>Promise<string>
 
@@ -36,8 +44,9 @@ const openai=process.env.OPENAI_API_KEY?new OpenAI({apiKey:process.env.OPENAI_AP
 const OPENAI_FALLBACK_MODEL=process.env.OPENAI_FALLBACK_MODEL||'gpt-4o-mini'
 
 async function anthropicComplete(prompt:string,onUsage?: (usage:ModelUsage)=>void,system?:string){
-  const result=await measureModelCall({provider:'anthropic',model:'claude-haiku-4-5',onUsage,usage:(r:any)=>({input:r.usage?.input_tokens,output:r.usage?.output_tokens,cached:Number(r.usage?.cache_read_input_tokens||0)+Number(r.usage?.cache_creation_input_tokens||0)}),call:()=>anthropic.messages.create({
-    model:'claude-haiku-4-5',
+  const model=currentPlannerModel()
+  const result=await measureModelCall({provider:'anthropic',model,onUsage,usage:(r:any)=>({input:r.usage?.input_tokens,output:r.usage?.output_tokens,cached:Number(r.usage?.cache_read_input_tokens||0)+Number(r.usage?.cache_creation_input_tokens||0)}),call:()=>anthropic.messages.create({
+    model,
     max_tokens:2200,
     temperature:0,
     ...(system?{system}:{}),

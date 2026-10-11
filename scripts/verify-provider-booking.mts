@@ -308,4 +308,11 @@ const courts = curate([
 ] as any, 'HSR Layout, Bengaluru', true)
 assert.deepEqual(courts.map((o: any) => o.url), ['https://playo.co/venues/hsr-layout-bengaluru/sports/badminton', 'https://playo.co/venues/bangalore/sports/badminton'])
 
+// The cron rehearsal: public Playo pages, real planner, stops before Add To Cart, self-disabling.
+const rehearsalSrc = readFileSync('lib/agent/booking-rehearsal.ts', 'utf8')
+assert.match(rehearsalSrc, /providerBooking: true, rehearsal: true, bookingPhone: null, bookingOtp: null, reserveHumanHandoff: false/)
+assert.match(rehearsalSrc, /if \(now\.getTime\(\) > REHEARSAL_UNTIL\) return \{ skipped: 'rehearsal_window_closed' \}/)
+assert.match(srcEarly, /if\(payload\.rehearsal&&\/\\badd\\s\+to\\s\+cart\\b\/i\.test\(wanted\)\)/)
+assert.match(srcEarly, /if\(payload\.rehearsal&&\/\\badd\\s\+to\\s\+cart\\b\/i\.test\(controlText\)\)/)
+
 console.log('Provider booking: slot → number → WhatsApp OTP → payment handover, with the number and code kept out of payloads, prompts and logs')

@@ -30,8 +30,8 @@ const scriptPath = join(work, 'gogo-browser.js')
 writeFileSync(scriptPath, exports.BROWSER_SCRIPT)
 
 const page = (name: string) => 'file://' + resolve('scripts/fixtures/booking-widgets', name)
-function wave(url: string, actions: any[]) {
-  const payload = Buffer.from(JSON.stringify({ url, mode: 'execute', actions, bookingFlow: true, keepAlive: false })).toString('base64')
+function wave(url: string, actions: any[], extra: Record<string, unknown> = {}) {
+  const payload = Buffer.from(JSON.stringify({ url, mode: 'execute', actions, bookingFlow: true, keepAlive: false, ...extra })).toString('base64')
   const run = spawnSync('node', [scriptPath, payload], { encoding: 'utf8', timeout: 90_000,
     env: { ...process.env, NODE_PATH: pwModules, PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers' } })
   assert.equal(run.status, 0, run.stderr)
@@ -65,5 +65,10 @@ assert.match(decodeURIComponent(booking.url), /cart\.html\?d=2026-10-17&t=07:00 
 const cart = wave(booking.url, [{ kind: 'click_text', text: 'Proceed to Pay INR 375' }, { kind: 'click', selector: '#pay' }])
 assert.deepEqual(steps(cart), ['click_text:skipped:payment_control', 'click:skipped:payment_control'])
 assert.match(cart.text, /Proceed to Pay INR 375/)
+
+// 5. A rehearsal walks the booking page but never changes the cart.
+const rehearsal = wave(page('booking.html'), [{ kind: 'click_text', text: 'Add To Cart' }, { kind: 'click', selector: '#add' }], { rehearsal: true })
+assert.deepEqual(steps(rehearsal), ['click_text:skipped:rehearsal_stop', 'click:skipped:rehearsal_stop'])
+assert.match(rehearsal.url, /booking\.html$/)
 
 console.log('Browser widgets: div venue card, Book Now, pointer-only listboxes, div calendar and Add To Cart work in real Chromium; Pay is never pressed')
