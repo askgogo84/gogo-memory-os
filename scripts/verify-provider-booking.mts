@@ -219,6 +219,29 @@ assert.deepEqual(commands[1].payload.actions, [{ kind: 'goto', url: 'https://pla
 assert.equal(viaLink.bookingStage, 'otp')
 assert.match(prompts.at(-2) || prompts[0], /use \{"kind":"goto","url":"observed link href"\}/)
 
+// 11 Oct 18:13: Playo venue cards are plain divs (no link) whose generated selector timed out. A
+// booking presses them by visible text; ordinary executions never get click_text.
+commands.length = 0
+script = [list, { ...login }, otpPage]
+plans = [
+  { approvedOperation: 'booking', actions: [{ kind: 'click_text', text: 'Machaxi Milan Sports Centre' }] },
+  { approvedOperation: 'booking', actions: [{ kind: 'click_text', text: 'Proceed to Pay' }, { kind: 'fill_phone', selector: '#mobile' }, { kind: 'click', selector: '#get-otp' }] },
+]
+await computer.runSecureBrowser({ ...base, bookingPhone: '9876543210', bookingOtp: null })
+assert.deepEqual(commands[1].payload.actions, [{ kind: 'click_text', text: 'Machaxi Milan Sports Centre' }])
+assert.match(prompts.at(-2) || '', /\{"kind":"click_text","text":"its exact visible text"\}/)
+const srcEarly = readFileSync('lib/agent/secure-computer.ts', 'utf8')
+const clickTextHandler = srcEarly.slice(srcEarly.indexOf("else if(a.kind==='click_text'){"), srcEarly.indexOf("else if(a.kind==='fill_phone'||a.kind==='fill_otp'){"))
+assert.match(clickTextHandler, /if\(payload\.mode!=='execute'\|\|!payload\.bookingFlow\)/, 'only an approved booking presses by text')
+assert.match(clickTextHandler, /place order\|buy now[\s\S]{0,120}reason:'payment_control'/, 'never a pay control by its label')
+assert.match(clickTextHandler, /if\(\/\\b\(\?:pay\|payment\|place order\|buy now\|complete purchase\)\\b\/i\.test\(shown\)\)continue;/, 'nor by the text of the element found')
+commands.length = 0
+script = [venue, { ...venue, text: 'Booking confirmed' }]
+plans = [{ approvedOperation: 'booking', actions: [{ kind: 'click_text', text: 'Book Now' }, { kind: 'submit', selector: '#proceed' }] }]
+await computer.runSecureBrowser({ userId: 'owner', url: 'https://playo.co/venues/smaaash', objective: 'Book it', mode: 'execute', reserveHumanHandoff: true }).catch(() => null)
+assert.equal(commands.some(c => (c.payload.actions || []).some((a: any) => a.kind === 'click_text')), false, 'not a booking: click_text is dropped')
+assert.match(srcEarly, /if\(providerBooking&&Date\.now\(\)-bookingStartedAt>BOOKING_BUDGET_MS\)return await bookingStop\('review'/, 'a long booking hands over before the 300s route limit')
+
 // ── The worker script itself ────────────────────────────────────────────────
 const src = readFileSync('lib/agent/secure-computer.ts', 'utf8')
 const fillHandler = src.slice(src.indexOf("else if(a.kind==='fill_phone'||a.kind==='fill_otp'){"), src.indexOf("else if(a.kind==='search_enter'){"))
