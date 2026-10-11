@@ -75,6 +75,11 @@ assert.match(decodeURIComponent(booking.url), /cart\.html\?d=2026-10-17&t=07:00 
 const failed = wave(page('booking.html'), [{ kind: 'click_text', text: 'Shuttle Court 9' }, { kind: 'click', selector: '#sport-btn' }])
 assert.deepEqual(steps(failed), ['click_text:failed:action_error'])
 
+// 3c. A short guessed option ("1") must match a whole label, so it never presses "Court 1".
+const guessed = wave(page('booking.html'), [{ kind: 'click', selector: '#court-btn' }, { kind: 'click_text', text: '1' }])
+assert.deepEqual(steps(guessed), ['click:done', 'click_text:failed:action_error'])
+assert.ok(guessed.controls.some((c: any) => /Premium Synthetic Court 1/.test(c.label)), 'the open list is observed for the next step')
+
 // 4. The pay control is never pressed, by text or by selector.
 const cart = wave(booking.url, [{ kind: 'click_text', text: 'Proceed to Pay INR 375' }, { kind: 'click', selector: '#pay' }])
 assert.deepEqual(steps(cart), ['click_text:skipped:payment_control', 'click:skipped:payment_control'])
