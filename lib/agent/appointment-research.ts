@@ -100,11 +100,22 @@ export function appointmentBookableScore(result: Pick<WebSearchResult,'title'|'s
 // Social posts are not places to book (live 11 Oct: an Instagram promo was option 2).
 const SOCIAL_HOST = /(?:^|\.)(?:instagram\.com|facebook\.com|fb\.com|youtube\.com|youtu\.be|x\.com|twitter\.com|linkedin\.com|reddit\.com|quora\.com|pinterest\.\w+|threads\.net)$/i
 
-function curate(results: WebSearchResult[], location: string) {
+// Courts and turfs in India are booked on these platforms. 11 Oct 18:33: a blog ("Where to play
+// badminton in Bengaluru") came first, was picked as option 1, and could not be booked.
+export const SPORT_BOOKING_HOST = /(?:^|\.)(?:playo\.co|hudle\.in|khelomore\.com|turftown\.in|bookmyplay\.in)$/i
+
+export function curate(results: WebSearchResult[], location: string, sports = false) {
   const seen = new Set<string>()
-  const ranked = results
+  const area = resolveIndiaPlace(location).locality.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  let eligible = results
     .filter(result => result?.url && /^https?:\/\//i.test(result.url) && !SOCIAL_HOST.test(host(result.url)) && locationMatch(result, location))
-    .map(result => ({ result, score: appointmentBookableScore(result) }))
+  // For courts, offer only places that can actually be booked when any exist.
+  if (sports && eligible.some(r => SPORT_BOOKING_HOST.test(host(r.url)))) eligible = eligible.filter(r => SPORT_BOOKING_HOST.test(host(r.url)))
+  const ranked = eligible
+    .map(result => ({ result, score: appointmentBookableScore(result)
+      + (sports && SPORT_BOOKING_HOST.test(host(result.url)) ? 10 : 0)
+      // The person's own area page ranks above the whole-city page.
+      + (sports && area && String(result.url).toLowerCase().includes(area) ? 4 : 0) }))
     .sort((a,b) => b.score - a.score)
   const options: AppointmentOption[] = []
   for (const item of ranked) {
@@ -172,11 +183,12 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
 
   try {
     const primary = await searchWebResults(query)
-    let options = curate(primary, location)
+    const sportsSearch = isSportsVenueRequest(params.text)
+    let options = curate(primary, location, sportsSearch)
     let usedFallback = false
     if ((!options.length || (options[0]?.bookableScore ?? 0) < 3) && fallbackQuery !== query) {
       const secondary = await searchWebResults(fallbackQuery)
-      options = curate([...primary, ...secondary], location)
+      options = curate([...primary, ...secondary], location, sportsSearch)
       usedFallback = true
     }
     const completedAt = new Date().toISOString()
