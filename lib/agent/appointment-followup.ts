@@ -29,7 +29,18 @@ export function bareOptionReply(text: string): number | null {
 
 /** What to say after opening an option. Keeps the phrase the confirmation step looks for. */
 export function bookingNextStepHint(option: number) {
-  return `I inspected option ${option} without confirming anything. To book, tell me the day and time, for example *book the 7 am slot on Saturday*. I'll ask for your approval, then pick the slot, log in with your number and ask you for the OTP here, and stop at payment with a link for you to pay.`
+  return `I inspected option ${option} without confirming anything. To book, tell me the venue, day and time, for example *book the 7 am slot at Machaxi Milan on Saturday*. I'll ask for your approval, then pick the slot, log in with your number and ask you for the OTP here, and stop at payment with a link for you to pay.`
+}
+
+/**
+ * What Gogo reads when an option is opened. 11 Oct live runs: asking for "the free slots" on a
+ * Playo area page (a list of venues) sent the reader clicking through venues until the 3-minute
+ * limit, twice. A list page is answered from the page itself; slots only for a single venue.
+ */
+export function optionReadObjective(params: { url: string; service?: string; location?: string; timing?: string }) {
+  const service = safe(params.service || 'the requested service', 120)
+  const area = safe(params.location || '', 100)
+  return `Read-only. Open ${params.url} and report what this page offers for booking ${service}${area ? ` in ${area}` : ''}${params.timing ? ` around ${safe(params.timing, 100)}` : ''}. If it lists several venues, name up to 6 bookable venues nearest ${area || 'the area'} with distance, rating and starting price if shown. If it is one venue's page, list the dates and time slots shown as available, with prices; you may click a public date tab for that. Answer from this page; do not open other venues. Do not log in.`
 }
 
 export function optionNumber(text: string) {
@@ -521,7 +532,7 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
 
   // Opening an option is a read: Gogo looks at the provider page and reports the free dates and
   // time slots it shows. Nothing is selected, filled or booked until the person approves.
-  const objective = `Read-only. Open ${selected.url} and list the dates and time slots shown as available for ${safe(research.metadata_json?.service || 'the requested service', 120)}${research.metadata_json?.location ? ` in ${safe(research.metadata_json.location, 100)}` : ''}${research.metadata_json?.timing ? ` around ${safe(research.metadata_json.timing, 100)}` : ''}, with prices if shown. You may click public date or sport tabs to see slots. Do not log in.`
+  const objective = optionReadObjective({ url: selected.url, service: research.metadata_json?.service, location: research.metadata_json?.location, timing: research.metadata_json?.timing })
   const result = await tryRunBrowserCommand({ actor: params.actor, surface: params.surface, text: objective })
   if (!result) throw new Error('appointment_prepare_browser_not_routed')
   if (result.runId) {

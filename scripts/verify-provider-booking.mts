@@ -20,7 +20,7 @@ import { parseBrowserCommand, browserApprovalBinding } from '../lib/agent/browse
 import { redactSecretShapedText } from '../lib/bot/memory-redaction'
 import { claimsUnperformedAction } from '../lib/bot/action-claim-guard'
 import { appointmentPrepareOptionNumber } from '../lib/agent/appointment-followup-recovery'
-import { bareOptionReply, optionNumber, wantsPrepare, wantsFinalApproval, explicitDate, bookingNextStepHint } from '../lib/agent/appointment-followup'
+import { bareOptionReply, optionNumber, wantsPrepare, wantsFinalApproval, explicitDate, bookingNextStepHint, optionReadObjective } from '../lib/agent/appointment-followup'
 
 // ── Pure rules ──────────────────────────────────────────────────────────────
 assert.equal(booking.otpReply('482913'), '482913')
@@ -246,5 +246,14 @@ assert.doesNotMatch(src.slice(src.indexOf("} else if(a.kind==='submit'){"), src.
 // withheld]" because Gogo's own text went through the secret redactor. It is our text, not user data.
 assert.match(command, /notify_suffix:String\(params\.notifySuffix\|\|''\)\.slice\(0,900\)/)
 assert.match(redactSecretShapedText(bookingNextStepHint(1)), /withheld/, 'why: the secret redactor mangles this hint, so it must not be applied to it')
+
+// 11 Oct 15:08: opening the HSR Layout venue list asked for slots and ran out the 3-minute read
+// twice. A venue list is answered from the page; slots only on a single venue's page.
+const openRead = optionReadObjective({ url: 'https://playo.co/venues/hsr-layout-bengaluru/sports/badminton', service: 'badminton court', location: 'HSR Layout, Bengaluru' })
+assert.equal(parseBrowserCommand(openRead)?.mode, 'read')
+assert.match(openRead, /If it lists several venues, name up to 6 bookable venues nearest HSR Layout, Bengaluru/)
+assert.match(openRead, /Answer from this page; do not open other venues/)
+assert.equal(wantsFinalApproval('book the 7 am slot at Machaxi Milan on Saturday'), true, 'naming the venue still books')
+assert.match(bookingNextStepHint(1), /book the 7 am slot at Machaxi Milan on Saturday/)
 
 console.log('Provider booking: slot → number → WhatsApp OTP → payment handover, with the number and code kept out of payloads, prompts and logs')

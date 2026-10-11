@@ -3,7 +3,7 @@ import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { searchWebResults } from '@/lib/web-search'
 import { normalizeTimezone } from '@/lib/timezone'
 import { tryRunBrowserCommand, queueBrowserRead } from './browser-command'
-import { capturedSlotHints, currentAppointmentReply, appointmentReplySelects, bareOptionReply, bookingNextStepHint } from './appointment-followup'
+import { capturedSlotHints, currentAppointmentReply, appointmentReplySelects, bareOptionReply, bookingNextStepHint, optionReadObjective } from './appointment-followup'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 
@@ -179,7 +179,7 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
 
   // Opening an option is a read: list the free dates and slots. Nothing is selected or booked
   // until the person names a slot and approves.
-  const objective = `Read-only. Open ${target.url} and list the dates and time slots shown as available for ${safe(meta.service || 'the requested service',120)}${meta.location ? ` in ${safe(meta.location,100)}` : ''}${meta.timing ? ` around ${safe(meta.timing,100)}` : ''}, with prices if shown. Keep the provider AND city locked to option ${option}; do not go to a page for another city. You may open this provider's schedule page and click public date or sport tabs to reveal slots. If the page is a list of venues, name the bookable venues nearest ${safe(meta.location || 'the area',100)} with their distance and rating instead. Do not log in.`
+  const objective = `${optionReadObjective({ url: target.url, service: meta.service, location: meta.location, timing: meta.timing })} Keep the provider AND city locked to option ${option}; do not go to a page for another city.`
   // On WhatsApp the page is opened in the background (the webhook has under a minute, and a slow
   // provider page left a run holding the browser on 11 Oct). The slots arrive as a new message.
   if (params.surface === 'whatsapp') {
