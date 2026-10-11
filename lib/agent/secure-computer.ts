@@ -615,7 +615,15 @@ async function clickPastOverlay(page,selector){
           // pointer interception by overlays; consequence checks above still apply.
           const readLink=payload.mode==='read'?await page.locator(a.selector).first().evaluate(el=>
             el.tagName==='A'&&/^https?:/.test(el.href||'')&&!el.hasAttribute?.('download')?el.href:null).catch(()=>null):null;
+          // 11 Oct live Playo booking: clicking a venue card failed (the card is a link that opens a new
+          // tab). A booking follows a same-site link in this tab instead, as reads already do.
+          let bookingLink=null;
+          if(!readLink&&payload.mode==='execute'&&payload.bookingFlow){
+            const href=await page.locator(a.selector).first().evaluate(el=>{const link=el.tagName==='A'?el:(el.closest?el.closest('a[href]'):null);return link&&/^https?:/.test(link.href||'')&&!link.hasAttribute('download')?link.href:null}).catch(()=>null);
+            try{const here=new URL(page.url()).hostname.replace(/^www\./,''),there=new URL(href).hostname.replace(/^www\./,'');if(href&&(there===here||there.endsWith('.'+here)))bookingLink=href;}catch{}
+          }
           if(readLink)await page.goto(readLink,{waitUntil:'domcontentloaded',timeout:navTimeout});
+          else if(bookingLink){await page.goto(bookingLink,{waitUntil:'domcontentloaded',timeout:navTimeout});await page.waitForTimeout(1200);}
           else if(payload.mode==='execute'){
             // 10 Oct live run 3f811cb9: Hugging Face checks the email and password after Next before
             // it shows the next step. Observing 650 ms later still saw page 1, so the planner filled
@@ -1261,7 +1269,12 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     const readWaves=googleFlightReadProgress(page)?MAX_FLIGHT_RESEARCH_WAVES:MAX_RESEARCH_WAVES
     // A provider booking hands the same browser to the person at OTP (unless Gogo has the code),
     // at payment, or wherever it stops. It never reports a booking as done.
-    const bookingStop=async(stage:BookingStage,summary:string,extra:Partial<SecureBrowserResult>={}):Promise<SecureBrowserResult>=>({
+    const bookingStop=async(stage:BookingStage,summary:string,extra:Partial<SecureBrowserResult>={}):Promise<SecureBrowserResult>=>{
+      // Why a booking stopped where it did: stage, page path and step outcomes, never values.
+      try{console.log('BROWSER_BOOKING_STOP:',JSON.stringify({runId:params.runId||null,stage,path:(()=>{try{return new URL(String(page.url||'')).pathname.slice(0,80)}catch{return null}})(),steps:actionLog.slice(-16).map((a:any)=>`${a?.kind}:${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`)}))}catch{}
+      return bookingStopResult(stage,summary,extra)
+    }
+    const bookingStopResult=async(stage:BookingStage,summary:string,extra:Partial<SecureBrowserResult>={}):Promise<SecureBrowserResult>=>({
       status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,
       handoffReservation:params.reserveHumanHandoff===true?await releaseOwnerLock!.reserveHandoff():undefined,
       title:safeText(page.title,300),summary,pageText:'Gogo stopped before payment. Nothing was paid.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
