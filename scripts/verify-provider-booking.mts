@@ -256,4 +256,9 @@ assert.match(openRead, /Answer from this page; do not open other venues/)
 assert.equal(wantsFinalApproval('book the 7 am slot at Machaxi Milan on Saturday'), true, 'naming the venue still books')
 assert.match(bookingNextStepHint(1), /book the 7 am slot at Machaxi Milan on Saturday/)
 
+// 11 Oct 16:50: the first booking click (a venue card that is a link) failed. A booking follows a
+// same-site link in the same tab, and logs why it stopped (step outcomes only, no values).
+assert.match(src, /if\(!readLink&&payload\.mode==='execute'&&payload\.bookingFlow\)\{[\s\S]{0,400}closest\('a\[href\]'\)[\s\S]{0,400}there===here\|\|there\.endsWith\('\.'\+here\)/)
+assert.match(src, /console\.log\('BROWSER_BOOKING_STOP:'/)
+
 console.log('Provider booking: slot → number → WhatsApp OTP → payment handover, with the number and code kept out of payloads, prompts and logs')
