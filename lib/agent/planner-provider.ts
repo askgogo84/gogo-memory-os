@@ -48,7 +48,9 @@ async function anthropicComplete(prompt:string,onUsage?: (usage:ModelUsage)=>voi
   const result=await measureModelCall({provider:'anthropic',model,onUsage,usage:(r:any)=>({input:r.usage?.input_tokens,output:r.usage?.output_tokens,cached:Number(r.usage?.cache_read_input_tokens||0)+Number(r.usage?.cache_creation_input_tokens||0)}),call:()=>anthropic.messages.create({
     model,
     max_tokens:2200,
-    temperature:0,
+    // 11 Oct rehearsal: claude-haiku-5-5 rejects temperature ("deprecated for this model") and the
+    // planner silently fell back to OpenAI. Only the 4.x models take it.
+    ...(/-4-/.test(model)?{temperature:0}:{}),
     ...(system?{system}:{}),
     messages:[{role:'user',content:prompt}],
   })})
