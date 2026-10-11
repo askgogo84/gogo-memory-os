@@ -50,6 +50,16 @@ const venue = wave(page('venue.html'), [{ kind: 'click_text', text: 'Book Now' }
 assert.deepEqual(steps(venue), ['click_text:done'])
 assert.match(venue.url, /booking\.html$/)
 
+// 2b. Picker buttons carry the field name shown beside them; the header Login menu has none.
+const observed = wave(page('booking.html'), [])
+const ctl = (sel: string) => observed.controls.find((c: any) => c.selector === sel)
+assert.equal(ctl('#sport-btn')?.field, 'Sports')
+assert.equal(ctl('#sport-btn')?.popup, 'listbox')
+assert.equal(ctl('#date-btn')?.field, undefined, 'a plain button without a popup gets no field')
+assert.equal(ctl('#time-btn')?.field, 'Start Time')
+assert.equal(ctl('#court-btn')?.field, 'Court')
+assert.equal(ctl('#headlessui-menu-button-r4')?.field, undefined)
+
 // 3. Sport, date, time and court through pointer-only listboxes and a div calendar, then Add To Cart.
 const booking = wave(page('booking.html'), [
   { kind: 'click', selector: '#sport-btn' }, { kind: 'click_text', text: 'Badminton' },

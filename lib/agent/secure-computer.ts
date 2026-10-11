@@ -309,6 +309,29 @@ async function model(page){
     const accessibleLabel=el=>clean(el.getAttribute('aria-label')
       ||(el.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean).map(id=>{const node=document.getElementById?.(id);return node?.getAttribute?.('aria-label')||node?.textContent||''}).join(' ')
       ||el.getAttribute('placeholder')||el.innerText||el.textContent||el.getAttribute('title'));
+    // A picker button shows only its value ("Swimming", "2026-10-11"); its field name ("Sports",
+    // "Date") sits in a nearby label or heading. Give the planner that name so it never confuses
+    // the Sport picker with the site's Login menu.
+    const fieldOf=el=>{try{
+      const attr=k=>el.getAttribute?el.getAttribute(k):null;
+      if(!(el.tagName==='INPUT'||el.tagName==='SELECT'||['combobox','listbox'].includes(attr('role')||'')||attr('aria-haspopup')!=null||attr('aria-expanded')!=null))return '';
+      const own=clean(el.innerText||el.textContent||el.value||'');
+      if(el.id){const lab=document.querySelector('label[for="'+CSS.escape(el.id)+'"]');if(lab){const t=clean(lab.textContent);if(t&&t.length<=40)return t;}}
+      let node=el;
+      for(let depth=0;depth<4&&node&&node.parentElement;depth++){
+        let sib=node.previousSibling,hops=0;
+        while(sib&&hops<3){
+          const t=clean(sib.nodeType===1?(sib.innerText||sib.textContent):sib.textContent);
+          if(t){
+            hops++;
+            if(t.length<=40&&t!==own&&!(sib.nodeType===1&&sib.querySelector('button,input,select,a[href]')))return t;
+          }
+          sib=sib.previousSibling;
+        }
+        node=node.parentElement;
+      }
+      return '';
+    }catch{return ''}};
     const candidates=Array.from(document.querySelectorAll('button,a[href],input,textarea,select,[role="button"],[role="combobox"],[role="searchbox"],[role="option"],[tabindex],div,span,p')).filter(actionable);
     const allControls=candidates.filter(el=>{
       if(el.disabled||el.getAttribute('aria-disabled')==='true')return false;
@@ -324,6 +347,8 @@ async function model(page){
       const text=clean(el.innerText||el.textContent);
       return text.length>0&&text.length<160&&getComputedStyle(el).cursor==='pointer'&&(el.tagName==='P'||/\b(search|location|address)\b/i.test(text))&&!Array.from(el.children).some(child=>clean(child.innerText||child.textContent)===text);
     }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:accessibleLabel(el).slice(0,180),
+      ...((f=>f?{field:f}:{})(fieldOf(el))),
+      ...(el.getAttribute&&el.getAttribute('aria-haspopup')&&el.getAttribute('aria-haspopup')!=='false'?{popup:clean(el.getAttribute('aria-haspopup')).slice(0,20)}:{}),
       ...(el.tagName==='A'&&el.href?{href:el.href}:{}),
       ...((el.tagName==='INPUT'&&['text','search'].includes((el.getAttribute('type')||'text').toLowerCase())
         &&(/\b(search|find)\b/i.test([el.getAttribute('placeholder'),el.getAttribute('aria-label')].join(' '))
@@ -876,6 +901,8 @@ function normalizeActions(raw:any,initialUrl:string,allowSubmit:boolean):Browser
     }else if(['click','check','submit','search_enter'].includes(kind)){
       if(kind==='submit'&&!allowSubmit)continue
       const selector=String(item.selector||'').trim().slice(0,1800);if(selector)out.push({kind,selector} as BrowserAction)
+      // A click written with visible text and no selector is a click_text (only bookings keep it).
+      else if(kind==='click'){const text=String(item.text||'').replace(/\s+/g,' ').trim().slice(0,120);if(text)out.push({kind:'click_text',text})}
     }else if(kind==='fill'||kind==='select'){
       const selector=String(item.selector||'').trim().slice(0,1800);const value=String(item.value||'').slice(0,1200)
       if(selector)out.push({kind,selector,value} as BrowserAction)
@@ -1048,7 +1075,7 @@ function completedSearchControls(page:any,searches:CompletedReadSearch[]):Set<st
 
 // Provider booking: walk towards the booking summary with clicks, never submit, never pay.
 export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:boolean}){
-  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step. When a venue card, button or option has no usable link or selector, use {"kind":"click_text","text":"its exact visible text"} (for example the venue name, Book Now, Badminton, a date or 07:00 AM). For a dropdown, click it and then click_text the option you need in the same step. In a calendar, open it and click_text the requested date as YYYY-MM-DD (Gogo finds the day cell). Set the selectors in page order (sport, then date, then start time, then court): the date changes which times are offered, so end the step after setting the date and pick the time from the next observation. If a step failed, plan it again from what is observed now; never press Add to cart or Continue before the date, time and court match the request.'
+  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step. When a venue card, button or option has no usable link or selector, use {"kind":"click_text","text":"its exact visible text"} (for example the venue name, Book Now, Badminton, a date or 07:00 AM). The field of a control is the name shown beside it (Sports, Date, Start Time, Court): open a picker by the control whose field matches, never a header menu such as Login, Account or Menu. For a dropdown, click it and then click_text the option you need in the same step. In a calendar, open it and click_text the requested date as YYYY-MM-DD (Gogo finds the day cell). Set the selectors in page order (sport, then date, then start time, then court): the date changes which times are offered, so end the step after setting the date and pick the time from the next observation. If a step failed, plan it again from what is observed now; never press Add to cart or Continue before the date, time and court match the request.'
     +(booking.phoneAvailable?' If a login or registration form asks for a mobile or phone number, use {"kind":"fill_phone","selector":"observed selector"} (Gogo fills the number itself; never put a number in any value), then click the observed control that sends the OTP (for example Get OTP, Send OTP or Continue).':' If the site asks for a mobile number, return no actions.')
     +(booking.otpAvailable?' The page is asking for the one-time code and Gogo has it: use {"kind":"fill_otp","selector":"observed selector of the code input (the first box if there are several)"}, then click the observed Verify/Continue/Login control.':' Never fill a one-time code; if the page asks for one, return no actions.')
     +' Never click Pay, Make payment, Place order or Buy now, and never fill card, UPI or bank details: when the page asks for payment, return no actions.'
@@ -1066,6 +1093,8 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
     controls:(page.controls||[]).filter((control:any)=>!rejectedControls.has(String(control.selector))).slice(0,100).map((control:any)=>({
       selector:String(control.selector||'').slice(0,1800),tag:safeText(control.tag,30),
       role:safeText(control.role,50),label:safeText(control.label,180),
+      ...(control.field?{field:safeText(control.field,40)}:{}),
+      ...(control.popup?{popup:safeText(control.popup,20)}:{}),
       ...(control.href?{href:safeText(control.href,1200)}:{}),
       ...(control.searchMode?{searchMode:control.searchMode,value:safeText(control.value,180)}:{}),
       ...(control.publicFilter==='flight-date'?{publicFilter:'flight-date',value:safeText(control.value,80)}:{}),
@@ -1610,7 +1639,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(providerBooking&&params.rehearsal===true)try{console.log('BOOKING_REHEARSAL_WAVE:',JSON.stringify({wave,from:(()=>{try{return new URL(currentUrl).pathname.slice(0,90)}catch{return null}})(),to:(()=>{try{return new URL(String(page.url||'')).pathname.slice(0,90)}catch{return null}})(),
         planned:actions.map(a=>a.kind+':'+String((a as any).text||(a as any).url||(a as any).selector||'').slice(0,70)),
         outcome:(page.actions||[]).map((a:any)=>`${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`),
-        controls:(page.controls||[]).slice(0,30).map((c:any)=>String(c?.label||'').slice(0,40)).filter(Boolean),
+        controls:(page.controls||[]).slice(0,30).map((c:any)=>(c?.field?String(c.field).slice(0,20)+'=':'')+String(c?.label||'').slice(0,40)).filter(Boolean),
         text:String(page.text||'').replace(/\s+/g,' ').slice(0,500)}))}catch{}
       const doneCount=(page.actions||[]).filter((a:any)=>a.status==='done').length
       if(params.mode==='read'){
