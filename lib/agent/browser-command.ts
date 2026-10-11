@@ -818,7 +818,7 @@ export async function queueBrowserRead(params:{actor:AgentActor;surface:AgentSur
   const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:await permission(tg),mode:'read',risk:'low',irreversible:false,approvalStatus:null})
   if(!policy.allowed)return null
   const {runId}=await makeRun({actor:params.actor,surface:params.surface,command})
-  const metadata={plan_type:'secure_browser',url:command.url,objective:command.objective,mode:'read',risk:'low',approval_action:null,vault_credential_id:null,flow:null,notify_suffix:safe(params.notifySuffix||'',900)||null,...(params.metadata||{})}
+  const metadata={plan_type:'secure_browser',url:command.url,objective:command.objective,mode:'read',risk:'low',approval_action:null,vault_credential_id:null,flow:null,notify_suffix:String(params.notifySuffix||'').slice(0,900)||null,...(params.metadata||{})}
   await supabaseAdmin.from('agent_runs').update({status:'paused',error:'background_read_queued',summary:'Gogo is opening this page in the background.',metadata_json:metadata,updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg))
   let dispatched=false
   const secret=process.env.CRON_SECRET
