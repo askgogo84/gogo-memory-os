@@ -346,3 +346,12 @@ console.log('Provider booking: slot → number → WhatsApp OTP → payment hand
   outcomes = []
 }
 console.log('Provider booking: failed steps are replanned; failed number/code fills stop the run')
+
+// 11 Oct 14:35: Haiku 5.5 wrote {"kind":"click","text":"Book Now"}; a booking presses it by text.
+{
+  commands.length = 0
+  script = [venue, venue]
+  plans = [{ approvedOperation: 'booking', actions: [{ kind: 'click', text: 'Book Now' }] }]
+  await computer.runSecureBrowser({ ...base, bookingPhone: null, bookingOtp: null })
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'click_text', text: 'Book Now' }])
+}
