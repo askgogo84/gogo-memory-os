@@ -605,6 +605,36 @@ async function clickPastOverlay(page,selector){
             while(Date.now()<until){await page.waitForTimeout(300);if(page.url()!==before)break;}
             pressed=true;
           }
+          // Date pickers show day numbers, not "2026-10-17": try a matching aria-label, then the
+          // visible enabled day cell whose whole text is the day number.
+          const isoDay=wanted.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+          if(!pressed&&isoDay){
+            const when=new Date(Date.UTC(Number(isoDay[1]),Number(isoDay[2])-1,Number(isoDay[3])));
+            const monthName=when.toLocaleString('en-US',{month:'long',timeZone:'UTC'});
+            const dayNum=String(Number(isoDay[3]));
+            const labels=[monthName+' '+dayNum+', '+isoDay[1],dayNum+' '+monthName+' '+isoDay[1],monthName+' '+dayNum,dayNum+' '+monthName];
+            for(const label of labels){
+              if(pressed)break;
+              const byLabel=page.locator('[aria-label*="'+label+'"]').first();
+              if(await byLabel.isVisible().catch(()=>false)){try{await byLabel.click({timeout:4000});}catch{await byLabel.evaluate(el=>el.click());}pressed=true;}
+            }
+            if(!pressed){
+              const marked=await page.evaluate((day)=>{
+                document.querySelectorAll('[data-gogo-day]').forEach(el=>el.removeAttribute('data-gogo-day'));
+                const cells=Array.from(document.querySelectorAll('button,td,div,span,a,[role=gridcell],[role=option]')).filter(el=>{
+                  if(String(el.textContent||'').trim()!==day)return false;
+                  if(Array.from(el.children).some(c=>String(c.textContent||'').trim()===day))return false;
+                  const r=el.getBoundingClientRect();const cs=getComputedStyle(el);
+                  if(!(r.width>0&&r.height>0)||cs.visibility==='hidden'||cs.display==='none')return false;
+                  if(el.closest('[disabled],[aria-disabled=true]'))return false;
+                  return !/disabled|outside|other-month|text-gray-300|opacity-50/i.test(String(el.className||'')+' '+String((el.parentElement&&el.parentElement.className)||''));
+                });
+                if(!cells.length)return false;
+                cells[0].setAttribute('data-gogo-day','1');return true;
+              },dayNum).catch(()=>false);
+              if(marked){const cell=page.locator('[data-gogo-day="1"]').first();try{await cell.click({timeout:4000});}catch{await cell.evaluate(el=>el.click());}pressed=true;}
+            }
+          }
           if(!pressed)throw new Error('text control not found');
           await page.waitForTimeout(600);
         }
@@ -763,6 +793,9 @@ return receiptCount(after)>receiptCount(before);
         if(a.kind==='fill_secret')break;
         // A booking never presses Verify or Continue after a number or code that was not filled.
         if(a.kind==='fill_phone'||a.kind==='fill_otp')break;
+        // Booking steps depend on each other (the date changes the times, the sport changes the
+        // courts), so stop the wave at the first failure and let the planner look again.
+        if(payload.bookingFlow)break;
       }
     }
     let draftVerified=false;
@@ -1015,7 +1048,7 @@ function completedSearchControls(page:any,searches:CompletedReadSearch[]):Set<st
 
 // Provider booking: walk towards the booking summary with clicks, never submit, never pay.
 export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:boolean}){
-  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step. When a venue card, button or option has no usable link or selector, use {"kind":"click_text","text":"its exact visible text"} (for example the venue name, Book Now, Badminton, a date or 07:00 AM). For a dropdown, click it and then click_text the option you need in the same step.'
+  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step. When a venue card, button or option has no usable link or selector, use {"kind":"click_text","text":"its exact visible text"} (for example the venue name, Book Now, Badminton, a date or 07:00 AM). For a dropdown, click it and then click_text the option you need in the same step. In a calendar, open it and click_text the requested date as YYYY-MM-DD (Gogo finds the day cell). Set the selectors in page order (sport, then date, then start time, then court): the date changes which times are offered, so end the step after setting the date and pick the time from the next observation. If a step failed, plan it again from what is observed now; never press Add to cart or Continue before the date, time and court match the request.'
     +(booking.phoneAvailable?' If a login or registration form asks for a mobile or phone number, use {"kind":"fill_phone","selector":"observed selector"} (Gogo fills the number itself; never put a number in any value), then click the observed control that sends the OTP (for example Get OTP, Send OTP or Continue).':' If the site asks for a mobile number, return no actions.')
     +(booking.otpAvailable?' The page is asking for the one-time code and Gogo has it: use {"kind":"fill_otp","selector":"observed selector of the code input (the first box if there are several)"}, then click the observed Verify/Continue/Login control.':' Never fill a one-time code; if the page asks for one, return no actions.')
     +' Never click Pay, Make payment, Place order or Buy now, and never fill card, UPI or bank details: when the page asks for payment, return no actions.'
@@ -1325,6 +1358,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       handoffReservation:params.reserveHumanHandoff===true?await releaseOwnerLock!.reserveHandoff():undefined,
       title:safeText(page.title,300),summary,pageText:'Gogo stopped before payment. Nothing was paid.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,
       blockReason:'human_auth_required',authReason:stage==='otp'?'otp':stage==='payment'?'payment_auth':undefined,bookingStage:stage,...extra})
+    let bookingIdleWaves=0
     for(let wave=0;wave<(params.mode==='read'?readWaves:params.mode==='execute'&&params.accountCreation===true?MAX_SIGNUP_PAGES:providerBooking?MAX_BOOKING_PAGES:1);wave++){
       const beforeReadSnapshot=readSnapshot(page)
       const providerBlock=detectProviderAccessBlock(page)
@@ -1585,6 +1619,14 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
       // A denied commit is not a failed provider page. Replan from the observed
       // controls with denied selectors removed; never relax the execution guard.
+      // A booking replans after a failed step (the page is observed again), but two waves in a
+      // row with nothing done end the run. A rehearsal or payment stop ends it at once.
+      const bookingHalt=(page.actions||[]).some((a:any)=>a?.failure?.reason==='rehearsal_stop'||a?.failure?.reason==='payment_control'||((a?.kind==='fill_phone'||a?.kind==='fill_otp')&&a?.status==='failed'))
+      if(providerBooking&&!bookingHalt){
+        bookingIdleWaves=doneCount===0?bookingIdleWaves+1:0
+        if(bookingIdleWaves>=2)break
+        continue
+      }
       if(doneCount===0&&!(params.mode==='read'&&(page.actions||[]).some((a:any)=>a.status==='skipped')))break
       // The final submit ends an execution; nothing is planned after it.
       if(params.mode==='execute'&&actions.some(a=>a.kind==='submit'))break
