@@ -27,7 +27,9 @@ import { canAuthorizeConsequentialAction, type TrustClass } from './trust'
 const MAX_SIGNUP_PAGES=4
 // A provider booking walks date, slot, proceed, login (mobile number, then OTP) and the summary.
 // It never submits: it stops on the payment step and hands the same browser to the person.
-const MAX_BOOKING_PAGES=7
+const MAX_BOOKING_PAGES=14
+// The approved-browser route has 300s; keep time to hand the live browser over.
+const BOOKING_BUDGET_MS=225_000
 // On a resumed sign-up, the page the site shows once the account exists.
 const RESUMED_SIGNUP_CREATED=/\baccount\s+(?:(?:has\s+been|was|is)\s+)?(?:created|registered)\b|\bregistration\s+(?:is\s+)?complete\b|\b(?:confirm|verify)\s+your\s+(?:e-?mail|email\s+address)\b|\bcheck\s+your\s+(?:e-?mail|inbox)\b|\bwe(?:'ve|\s+have)?\s+sent\s+(?:you\s+)?(?:a|an)\s+(?:confirmation|verification)\s+(?:e-?mail|link)\b/i
 const MAX_ACTIONS = 12
@@ -79,6 +81,9 @@ type BrowserAction =
   // is ever in a model prompt, the objective, Activity or logs.
   | { kind:'fill_phone'; selector:string }
   | { kind:'fill_otp'; selector:string }
+  // Provider booking only: press a control by its visible text (Playo venue cards and dropdown
+  // options are plain divs whose generated selectors do not resolve reliably).
+  | { kind:'click_text'; text:string }
 
 export type SecureBrowserResult = {
   flightEvidence?:{searchControls:string[];resultLabels:string[];fareBasisLabel?:string}
@@ -579,6 +584,29 @@ async function clickPastOverlay(page,selector){
           if(!isPasswordInput)throw new Error('not an input of type password');
           await secretTarget.fill(signupSecret,{timeout:10000});
         }
+        else if(a.kind==='click_text'){
+          // Provider booking: press the visible control with this text (a venue card, Book Now, a
+          // sport, date or time option). Never a pay control.
+          if(payload.mode!=='execute'||!payload.bookingFlow){log.push({kind:a.kind,detail:a.text,status:'skipped'});continue;}
+          const wanted=String(a.text||'');
+          if(/\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(wanted)){log.push({kind:a.kind,detail:wanted,status:'skipped',consequential:true,failure:{reason:'payment_control'}});continue;}
+          const candidates=page.getByText(wanted,{exact:false});
+          const count=await candidates.count().catch(()=>0);
+          let pressed=false;
+          for(let i=0;i<Math.min(count,8)&&!pressed;i++){
+            const option=candidates.nth(i);
+            const shown=await option.evaluate(el=>{const r=el.getBoundingClientRect();const cs=getComputedStyle(el);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'?String(el.textContent||'').slice(0,200):null}).catch(()=>null);
+            if(shown===null)continue;
+            if(/\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(shown))continue;
+            const before=page.url();
+            try{await option.click({timeout:4000});}catch{await option.evaluate(el=>el.click());}
+            const until=Date.now()+5000;
+            while(Date.now()<until){await page.waitForTimeout(300);if(page.url()!==before)break;}
+            pressed=true;
+          }
+          if(!pressed)throw new Error('text control not found');
+          await page.waitForTimeout(600);
+        }
         else if(a.kind==='fill_phone'||a.kind==='fill_otp'){
           // Provider booking: the person's mobile number, or the OTP they sent on WhatsApp, from a
           // command-scoped variable and only into a real text-like input. Never logged or returned.
@@ -644,7 +672,7 @@ async function clickPastOverlay(page,selector){
           executionBeforeText=await snapshotConfirmation(page,payload.confirmationPattern);captureEvidence=true;
           await page.locator(a.selector).first().click({timeout:10000});
         }
-        log.push({kind:a.kind,detail:a.selector||a.url||String(a.ms||''),status:'done',consequential});
+        log.push({kind:a.kind,detail:a.selector||a.url||a.text||String(a.ms||''),status:'done',consequential});
         await page.waitForTimeout(650);
         if(flightResultSearch)await waitForPublicFlightResults(page);
         if(captureEvidence){
@@ -816,6 +844,10 @@ function normalizeActions(raw:any,initialUrl:string,allowSubmit:boolean):Browser
       if(!allowSubmit)continue
       const selector=String(item.selector||'').trim().slice(0,1800);if(selector)out.push({kind:'fill_secret',selector})
     }
+    else if(kind==='click_text'){
+      if(!allowSubmit)continue
+      const text=String(item.text||'').replace(/\s+/g,' ').trim().slice(0,120);if(text)out.push({kind:'click_text',text})
+    }
     else if(kind==='fill_phone'||kind==='fill_otp'){
       // Only an authorised provider booking may fill the mobile number or the OTP.
       if(!allowSubmit)continue
@@ -975,7 +1007,7 @@ function completedSearchControls(page:any,searches:CompletedReadSearch[]):Set<st
 
 // Provider booking: walk towards the booking summary with clicks, never submit, never pay.
 export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:boolean}){
-  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step.'
+  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step. When a venue card, button or option has no usable link or selector, use {"kind":"click_text","text":"its exact visible text"} (for example the venue name, Book Now, Badminton, a date or 07:00 AM). For a dropdown, click it and then click_text the option you need in the same step.'
     +(booking.phoneAvailable?' If a login or registration form asks for a mobile or phone number, use {"kind":"fill_phone","selector":"observed selector"} (Gogo fills the number itself; never put a number in any value), then click the observed control that sends the OTP (for example Get OTP, Send OTP or Continue).':' If the site asks for a mobile number, return no actions.')
     +(booking.otpAvailable?' The page is asking for the one-time code and Gogo has it: use {"kind":"fill_otp","selector":"observed selector of the code input (the first box if there are several)"}, then click the observed Verify/Continue/Login control.':' Never fill a one-time code; if the page asks for one, return no actions.')
     +' Never click Pay, Make payment, Place order or Buy now, and never fill card, UPI or bank details: when the page asks for payment, return no actions.'
@@ -1237,6 +1269,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
   let lastPageMeta:{title:string;path:string}|null=null
   // Provider booking: the OTP the person sent is typed at most once per run.
   const providerBooking=params.providerBooking===true&&params.mode==='execute'
+  const bookingStartedAt=Date.now()
   let otpUsed=false
   let activeSandbox:{stop:()=>Promise<unknown>}|undefined
   let releaseManaged:(()=>Promise<void>)|undefined
@@ -1297,6 +1330,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         return {status:'blocked',url:safeText(page.url||target,1200),title:safeText(page.title,300),summary:providerBlock,pageText:safeText(page.text,1200),forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
       }
 
+      if(providerBooking&&Date.now()-bookingStartedAt>BOOKING_BUDGET_MS)return await bookingStop('review','Gogo ran out of time before the payment step.')
       // Provider booking: stop at payment (the person pays), and at an OTP Gogo does not have.
       if(providerBooking&&(wave>0||params.resumePage===true)&&bookingAtPayment(page))return await bookingStop('payment','Gogo reached the payment step and stopped. You complete the payment.')
       const otpWaiting=providerBooking&&bookingOtpPrompt(page)
@@ -1443,7 +1477,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         :providerBooking?plan.actions.filter(a=>a.kind!=='submit'&&a.kind!=='fill_secret'&&(a.kind!=='fill_otp'||bookingPlan!.otpAvailable)&&(a.kind!=='fill_phone'||bookingPlan!.phoneAvailable)
           // A booking navigates only to observed links on the same site, never to a URL the page suggests elsewhere.
           &&(a.kind!=='goto'||(sameSite(a.url,String(page.url||params.url))&&(page.links||[]).some((l:any)=>String(l?.href||'')===a.url))))
-        :plan.actions.filter(a=>a.kind!=='fill_phone'&&a.kind!=='fill_otp')
+        :plan.actions.filter(a=>a.kind!=='fill_phone'&&a.kind!=='fill_otp'&&a.kind!=='click_text')
       // One bounded recovery for the actual travel adapter: use only an
       // observed public Search control after both airports/date are populated.
       // It still passes the worker's read action gates and final evidence checks.
