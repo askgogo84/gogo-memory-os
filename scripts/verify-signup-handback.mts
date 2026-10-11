@@ -73,7 +73,7 @@ console.log('Sign-up handback: reason, submit state, details, link and Vault ent
   const at = sc.indexOf('10 Oct live run 3f811cb9')
   assert.ok(at > 0, 'the post-click wait exists')
   const seg = sc.slice(at, at + 1400)
-  assert.match(seg, /const before=await formShape\(\);\s*await page\.locator\(a\.selector\)\.first\(\)\.click\(\{timeout:10000\}\);/)
+  assert.match(seg, /const before=await formShape\(\);\s*await clickPastOverlay\(page,a\.selector\);/)
   assert.match(seg, /const until=Date\.now\(\)\+8000;/)
   assert.match(seg, /if\(now&&now!==before\)break;/)
   assert.ok(!seg.includes('`') && !seg.includes('${'), 'nothing breaks the String.raw worker template')

@@ -93,7 +93,7 @@ assert.match(followup, /action_type:\s*'booking'/)
 assert.match(followup, /risk_level:\s*'high'/)
 assert.match(followup, /appointment_prepared:\s*true/)
 assert.match(followup, /flow: 'provider_booking'/)
-assert.match(followup, /browserApprovalBinding\(runId, String\(step\.id\)/)
+assert.match(followup, /browserApprovalBinding\(booking\.runId, booking\.stepId, command\)/)
 assert.match(followup, /approvalRequired:\s*true/)
 assert.match(followup, /need the exact appointment date and time/)
 assert.match(followup, /scheduled_at/)
@@ -126,7 +126,7 @@ const dependencies:any={
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
   '@/lib/timezone':{DEFAULT_TIMEZONE:'Asia/Kolkata'},
   './calendar-read':{calendarAffirmativeText:(s:string)=>s.split(/\bdo not\b/i)[0]},
-  './browser-command':{tryRunBrowserCommand:async()=>{browserCalls++;return {status:'completed',text:'Fixture provider page'}},browserApprovalBinding:()=>({})},
+  './browser-command':{tryRunBrowserCommand:async()=>{browserCalls++;return {status:'completed',text:'Fixture provider page'}},browserApprovalBinding:()=>({}),createApprovalBrowserRun:async()=>({runId:'booking-run',stepId:'booking-step'})},
   './provider-booking':await import('../lib/agent/provider-booking.ts'),
   './life-event-engine':{},
 }
