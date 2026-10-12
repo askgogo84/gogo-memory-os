@@ -547,3 +547,11 @@ console.log('Provider booking: when reading makes no progress, the screenshot pi
   visionReplies = []
 }
 console.log('Provider booking: a picker that differs from the request is set by Gogo itself')
+
+// 12 Oct: Send OTP failed silently while Google's phone-login hosts were blocked on Playo.
+{
+  const allow = Object.keys(browserPageAllowlist('https://playo.co/venues/hsr-layout-bengaluru/sports/badminton'))
+  for (const h of ['www.google.com', 'www.gstatic.com', 'apis.google.com', 'identitytoolkit.googleapis.com', 'securetoken.googleapis.com']) assert.ok(allow.includes(h), h)
+  assert.equal(Object.keys(browserPageAllowlist('https://example.com/')).includes('apis.google.com'), false, 'only on Playo')
+}
+console.log("Provider booking: Playo's phone login can reach Google's reCAPTCHA and sign-in hosts")
