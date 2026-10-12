@@ -72,7 +72,7 @@ export function bookingObjective(params: { date: string; time: string; timezone:
 export function bookingOtpMessage(params: { host: string; mobile: string | null; takeoverUrl: string; rejected?: boolean }) {
   const lead = params.rejected
     ? `${params.host} did not accept that code. Send the new code from your SMS (tap "Resend" there first if it expired).`
-    : `I picked your slot on ${params.host}. It sent a login code (OTP) by SMS to your number ${maskMobile(params.mobile)}.`
+    : `I'm logging in to ${params.host} with your number ${maskMobile(params.mobile)} first. It sent a login code (OTP) by SMS.`
   return `${lead}\n\nReply here with just the code, for example *482913*. I'll type it in and continue. I don't save the code anywhere.\n\nPrefer to type it yourself? Open this, tap Take control, enter it, then tap Resume:\n${params.takeoverUrl}`
 }
 

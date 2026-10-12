@@ -111,6 +111,11 @@ assert.equal(once.actions[0].detail, 'Add To Cart', 'what was pressed is recorde
 const noBox = waveEnv(page('vision.html'), [{ kind: 'fill_phone_at', x: 170, y: 220 }], {}, { GOGO_BOOKING_PHONE: '9876543210' })
 assert.deepEqual(steps(noBox), ['fill_phone_at:failed:wrong_input_type'], 'the number is only typed into a real input')
 
+// 2e. 12 Oct live run: "Verify" matched the dialog title before the VERIFY button. Real controls first.
+const verified = wave(page('verify.html'), [{ kind: 'click_text', text: 'Verify' }])
+assert.deepEqual(steps(verified), ['click_text:done'])
+assert.match(verified.text, /verified/)
+
 // 3. Sport, date, time and court through pointer-only listboxes and a div calendar, then Add To Cart.
 const booking = wave(page('booking.html'), [
   { kind: 'click', selector: '#sport-btn' }, { kind: 'click_text', text: 'Badminton' },

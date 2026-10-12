@@ -623,7 +623,13 @@ async function pressText(page,wanted){
   const candidates=page.getByText(wanted,{exact:wanted.length<=3});
   const count=await candidates.count().catch(()=>0);
   let pressed=false;
-  for(let i=0;i<Math.min(count,8)&&!pressed;i++){
+  // 12 Oct live run: "Verify" matched the dialog's title before its VERIFY button, so the code was
+  // typed but never submitted. Real controls (button, link, option) are tried before plain text.
+  const order=[];
+  for(let i=0;i<Math.min(count,8);i++){const real=await candidates.nth(i).evaluate(el=>Boolean(el.closest('button,a[href],[role=button],[role=option],[role=menuitem],input[type=submit],input[type=button],label'))).catch(()=>false);order.push({i,real});}
+  order.sort((a,b)=>Number(b.real)-Number(a.real));
+  for(const {i} of order){
+    if(pressed)break;
     const option=candidates.nth(i);
     const shown=await option.evaluate(el=>{const r=el.getBoundingClientRect();const cs=getComputedStyle(el);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'?String(el.textContent||'').slice(0,200):null}).catch(()=>null);
     if(shown===null)continue;
@@ -1370,6 +1376,8 @@ export function bookingOtpActions(page:any):BrowserAction[]|null{
     ||inputs.find(c=>/\botp\b|one[- ]?time|\bcode\b|verification|passcode/i.test(String(c.field||'')+' '+String(c.label||'')+' '+String(c.selector||'')))
     ||(inputs.filter(c=>!/mobile|phone|\+\s*91|e-?mail|name/i.test(String(c.field||'')+' '+String(c.label||''))).length>=4?inputs.find(c=>!/mobile|phone|\+\s*91|e-?mail|name/i.test(String(c.field||'')+' '+String(c.label||''))):null)
   if(!code)return null
+  const button=controls.find(c=>['button','a','input'].includes(String(c?.tag||''))&&c?.type!=='text'&&/^(?:verify(?:\s+(?:otp|code|&\s*continue|and\s+continue))?|confirm(?:\s+otp)?|submit(?:\s+otp)?|continue|login|log in|next)$/i.test(String(c?.label||'').trim()))
+  if(button)return [{kind:'fill_otp',selector:String(code.selector)},{kind:'click',selector:String(button.selector)}] as BrowserAction[]
   const text=String(page?.text||'')
   const verify=text.match(/\b(?:verify(?:\s+(?:otp|code|&\s*continue|and\s+continue))?|confirm\s+otp|submit\s+otp)\b/i)?.[0]
     ||controls.map(c=>String(c?.label||'').trim()).find(l=>/^(?:continue|login|log in|submit|next)$/i.test(l))
@@ -1721,6 +1729,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let bookingLoggedIn=false
     let bookingLoginPressed=false
     let bookingLastLogin='',bookingLoginRepeats=0
+    let otpRechecks=0,otpRecheckActions:BrowserAction[]|null=null
     // Screenshot fallback state: the last viewport image, how often reading made no progress, and
     // a cap on vision steps per run. GOGO_VISION_FALLBACK=off turns it off.
     const visionEnabled=String(process.env.GOGO_VISION_FALLBACK||'').toLowerCase()!=='off'
@@ -1746,7 +1755,15 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // Provider booking: stop at payment (the person pays), and at an OTP Gogo does not have.
       if(providerBooking&&(wave>0||params.resumePage===true)&&bookingAtPayment(page))return await bookingStop('payment','Gogo reached the payment step and stopped. You complete the payment.')
       const otpWaiting=providerBooking&&bookingOtpPrompt(page)
-      if(otpWaiting&&(!params.bookingOtp||otpUsed))return await bookingStop('otp','The site sent a one-time code to your phone.',{otpRejected:otpUsed})
+      // 12 Oct live run: the code was typed but its Verify button was never pressed, and Gogo told the
+      // person the code was rejected. With no error on the page, press Verify again and look once more.
+      const otpError=/\b(?:invalid|incorrect|wrong|expired|does not match|didn'?t match|try again)\b/i.test(String(page?.text||'').slice(0,4000))
+      if(otpWaiting&&params.bookingOtp&&otpUsed&&!otpError&&otpRechecks<2){
+        otpRechecks++
+        const verify=(page.controls||[]).find((c:any)=>['button','a','input'].includes(String(c?.tag||''))&&/^(?:verify(?:\s+(?:otp|code|&\s*continue|and\s+continue))?|confirm(?:\s+otp)?|submit(?:\s+otp)?|continue|login|log in|next)$/i.test(String(c?.label||'').trim()))
+        otpRecheckActions=verify?[{kind:'click',selector:String(verify.selector)},{kind:'wait',ms:2500}]:[{kind:'wait',ms:2500}]
+      }else otpRecheckActions=null
+      if(!otpRecheckActions&&otpWaiting&&(!params.bookingOtp||otpUsed))return await bookingStop('otp','The site sent a one-time code to your phone.',{otpRejected:otpUsed})
 
       let authGate=detectHumanAuthGate(page)
       const loginish=pageLooksLikeLogin(page)
@@ -1901,7 +1918,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         console.log('BROWSER_BOOKING_LOGIN_STEP:',JSON.stringify({runId:params.sessionTaskId||null,step:loginStep.map(a=>a.kind==='click_text'?'click_text:'+a.text:a.kind)}))
         if(loginStep.some(a=>a.kind==='click'))bookingLoginPressed=true
       }
-      let plan=vision?{actions:vision.actions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:loginStep?{actions:loginStep,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
+      let plan=otpRecheckActions?{actions:otpRecheckActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:vision?{actions:vision.actions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:loginStep?{actions:loginStep,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
       // 11 Oct 15:10 rehearsal: the planner saw today's times ("No courts available") and stopped
       // without setting the requested date. A booking gets one second look per run.
       if(providerBooking&&!plan.actions.length&&!bookingRetried&&!bookingAtPayment(page)&&!otpWaiting){
