@@ -691,6 +691,7 @@ async function clickPastOverlay(page,selector){
       let consequential=a.kind==='submit';
       let captureEvidence=false;
       let flightResultSearch=false;
+      let chooseShown='',chooseOptions=[];
       try{
         if(a.kind==='goto') await page.goto(a.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
         else if(a.kind==='fill') await page.locator(a.selector).first().fill(a.value,{timeout:10000});
@@ -743,6 +744,7 @@ async function clickPastOverlay(page,selector){
           const placeholder=(shown)=>!String(shown||'').trim()||/^\W*(?:select|choose|pick)\b/i.test(String(shown||'').trim());
           const same=(shown)=>{if(value==='first')return !placeholder(shown);const n=x=>String(x||'').toLowerCase().replace(/\b0+(\d)/g,'$1').replace(/[^a-z0-9]+/g,' ').trim();return n(shown).includes(n(value));};
           const shownBefore=await pickerText();
+          chooseShown=String(shownBefore||'');
           if(shownBefore===null)throw new Error('picker not found');
           if(!same(shownBefore)){
             const picker=page.locator('[data-gogo-pick="1"]').first();
@@ -778,12 +780,14 @@ async function clickPastOverlay(page,selector){
                     pick.setAttribute('data-gogo-opt','1');return true;
                   }).catch(()=>false);
                   if(marked){const opt=page.locator('[data-gogo-opt="1"]').first();try{await opt.click({timeout:4000});}catch{await opt.evaluate(el=>el.click());}pressed=true;}
+                  if(payload.rehearsal)chooseOptions=await page.evaluate(()=>Array.from(document.querySelectorAll('body *')).filter(el=>{if(el.hasAttribute('data-gogo-seen'))return false;const r=el.getBoundingClientRect();return r.width>0&&r.height>0}).slice(0,8).map(el=>el.tagName.toLowerCase()+(el.getAttribute('role')?'['+el.getAttribute('role')+']':'')+':'+String(el.innerText||el.textContent||'').replace(/\s+/g,' ').trim().slice(0,40))).catch(()=>[]);
                 }
               }else pressed=await pressText(page,value);
               if(!pressed)throw new Error('option not found');
             }
             await page.waitForTimeout(700);
             const shownAfter=await pickerText();
+            chooseShown=String(shownAfter||'');
             if(!same(shownAfter))throw new Error('picker value not set');
           }
           await page.waitForTimeout(300);
@@ -932,6 +936,9 @@ return receiptCount(after)>receiptCount(before);
           :/not an? (?:<input|input|textarea)|not an? editable/i.test(message)?'wrong_input_type'
           :/not visible|not stable/i.test(message)?'not_actionable'
           :/target.*closed|page.*closed|browser.*closed|crashed/i.test(message)?'page_closed'
+          :/^picker not found$/.test(message)?'picker_missing'
+          :/^option not found$/.test(message)?'option_missing'
+          :/^picker value not set$/.test(message)?'value_not_set'
           :e?.name==='TimeoutError'?'timeout':'action_error';
         let counts={matches:null,rendered:null,firstTag:null};
         if(a.selector)try{counts=await page.locator(a.selector).evaluateAll(elements=>({
@@ -939,7 +946,9 @@ return receiptCount(after)>receiptCount(before);
           rendered:elements.filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0}).length,
           firstTag:elements.length?(['input','textarea','button','div','span','a','select'].includes(elements[0].tagName.toLowerCase())?elements[0].tagName.toLowerCase():'other'):null,
         }));}catch{}
-        log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential,failure:{reason,...counts}});
+        // A rehearsal (public pages, no account) records what a failed picker showed.
+        const seen=payload.rehearsal&&a.kind==='choose'?{shown:String(chooseShown||'').slice(0,80),options:chooseOptions}:{};
+        log.push({kind:a.kind,detail:a.selector||a.url||'',status:'failed',consequential,failure:{reason,...counts,...seen}});
         // Never submit a sign-up whose generated password was not filled.
         if(a.kind==='fill_secret')break;
         // A booking never presses Verify or Continue after a number or code that was not filled.
@@ -1793,6 +1802,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(providerBooking&&params.rehearsal===true)try{console.log('BOOKING_REHEARSAL_WAVE:',JSON.stringify({wave,from:(()=>{try{return new URL(currentUrl).pathname.slice(0,90)}catch{return null}})(),to:(()=>{try{return new URL(String(page.url||'')).pathname.slice(0,90)}catch{return null}})(),
         planned:actions.map(a=>a.kind+':'+String((a as any).field?(a as any).field+'='+(a as any).value:(a as any).text||(a as any).url||(a as any).selector||'').slice(0,70)),
         outcome:(page.actions||[]).map((a:any)=>`${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`),
+        pickerFailures:(page.actions||[]).filter((a:any)=>a?.kind==='choose'&&a?.status==='failed').map((a:any)=>({reason:a?.failure?.reason,shown:String(a?.failure?.shown||'').slice(0,80),options:(Array.isArray(a?.failure?.options)?a.failure.options:[]).slice(0,8).map((o:any)=>String(o).slice(0,60))})),
         controls:(page.controls||[]).slice(0,30).map((c:any)=>(c?.field?String(c.field).slice(0,20)+'=':'')+String(c?.label||'').slice(0,40)).filter(Boolean),
         text:String(page.text||'').replace(/\s+/g,' ').slice(0,500)}))}catch{}
       // The worker refused Add to cart because a picker differed: tell the planner which one.
