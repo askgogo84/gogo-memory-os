@@ -8,11 +8,11 @@
 <div class="field">Date<button type="button" id="date-btn" aria-expanded="false"><span id="date">2026-10-11</span></button><div id="cal" class="lb" hidden></div></div>
 <div class="field"><p>Start Time</p><div><button type="button" id="time-btn" aria-haspopup="listbox" aria-expanded="false"><span id="time">07:00 PM</span></button></div>
 <ul role="listbox" class="lb" id="time-lb" hidden><li role="option">06:00 AM</li><li role="option">06:30 AM</li><li role="option">07:00 AM</li><li role="option">07:30 AM</li><li role="option">07:00 PM</li></ul></div>
-<div class="field">Court<button type="button" id="court-btn" aria-haspopup="listbox" aria-expanded="false"><span id="court">--Select Court--</span></button>
-<!-- Like Playo: the court list has no listbox/option roles, only plain divs. -->
-<div class="lb" id="court-lb" hidden><div class="opt">Premium Synthetic Court 1 <span>INR 375</span></div><div class="opt">Premium Synthetic Court 2 <span>INR 375</span></div></div></div>
+<div class="field">Court<button type="button" id="court-btn" aria-haspopup="listbox" aria-expanded="false"><span id="court">--Select Court--</span></button><span id="chips"></span>
+<!-- Like Playo (12 Oct diagnostics): a ul[role=listbox] of plain divs, no role=option. -->
+<ul role="listbox" class="lb" id="court-lb" hidden><div class="opt">Premium Synthetic Court 1 <span>INR 375</span></div><div class="opt">Premium Synthetic Court 2 <span>INR 375</span></div></ul></div>
 <button type="button" id="add">Add To Cart</button>
-<div id="cart">Cart Is Empty</div>
+<div id="cart">Cart Is Empty</div><div id="court-state" hidden></div>
 <script>
 const st={pressed:null};
 // Keep choices across page loads (the worker opens the page again on each step).
@@ -32,12 +32,15 @@ listbox('sport-btn','sport-lb','sport');
 listbox('time-btn','time-lb','time');
 (function(){const b=document.getElementById('court-btn'),lb=document.getElementById('court-lb'),v=document.getElementById('court');
   b.addEventListener('click',()=>{const open=lb.hidden;document.querySelectorAll('.lb').forEach(x=>x.hidden=true);lb.hidden=!open;b.setAttribute('aria-expanded',String(open))});
-  lb.querySelectorAll('.opt').forEach(o=>{o.addEventListener('pointerdown',()=>{st.pressed=o});o.addEventListener('pointerup',()=>{if(st.pressed!==o)return;v.textContent=o.textContent;lb.hidden=true;b.setAttribute('aria-expanded','false');save()})});})();
+  // Like Playo: several courts can be chosen; the button keeps "--Select Court--", each choice is
+  // a chip beside it, the list stays open, and pressing a chosen court again removes it.
+  lb.querySelectorAll('.opt').forEach(o=>{o.addEventListener('pointerdown',()=>{st.pressed=o});o.addEventListener('pointerup',()=>{if(st.pressed!==o)return;const name=o.firstChild.textContent.trim();const chips=document.getElementById('chips');const had=Array.from(chips.children).find(c=>c.textContent===name);if(had)had.remove();else{const c=document.createElement('span');c.className='chip';c.textContent=name;chips.appendChild(c)}document.getElementById('court-state').textContent=chips.textContent})});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){lb.hidden=true;b.setAttribute('aria-expanded','false')}});})();
 const cal=document.getElementById('cal');
 for(let d=1;d<=31;d++){const e=document.createElement('div');e.className='day';e.textContent=String(d);e.addEventListener('click',()=>{document.getElementById('date').textContent='2026-10-'+String(d).padStart(2,'0');cal.hidden=true;save()});cal.appendChild(e)}
 document.getElementById('date-btn').addEventListener('click',()=>{document.querySelectorAll('.lb').forEach(x=>x.hidden=true);cal.hidden=false});
 document.getElementById('add').addEventListener('click',()=>{
-  const ok=document.getElementById('sport').textContent==='Badminton'&&document.getElementById('court').textContent.startsWith('Premium');
+  const ok=document.getElementById('sport').textContent==='Badminton'&&document.getElementById('chips').textContent.startsWith('Premium');
   if(!ok){document.getElementById('cart').textContent='Choose a sport and court';return}
   location.href='cart.html?d='+encodeURIComponent(document.getElementById('date').textContent)+'&t='+encodeURIComponent(document.getElementById('time').textContent);
 });
