@@ -436,22 +436,36 @@ console.log('Provider booking: Add to cart waits until sport, date and time matc
 console.log('Provider booking: Add to Cart is pressed at most once per run')
 
 // 12 Oct (his rule): most sites fill a cart for anyone and ask for an account at Proceed. With the
-// person's number, a booking logs in first: nothing is chosen or added until the code is entered.
+// person's number, a booking logs in first, and Gogo does the login itself (12 Oct 14:07: Playo's
+// mobile box has no label of its own, Send OTP is disabled until a number is typed, and the planner
+// kept pressing LOGIN, which toggles the box).
 {
-  const loggedOut = { ...venue, url: 'https://playo.co/booking?venueId=x', text: 'LOGIN Sports Date Start Time Court Add To Cart',
-    controls: [{ selector: '#login', tag: 'button', label: 'LOGIN' }, { selector: '#sport', tag: 'button', label: 'Swimming', field: 'Sports' }, { selector: '#add', tag: 'button', label: 'Add to Cart' }] }
+  const help = { selector: '#help-mobile', tag: 'input', type: 'text', label: 'Mobile*', field: 'Need help?' }
+  const loggedOut = { ...venue, url: 'https://playo.co/venues/machaxi', text: 'LOGIN Machaxi Milan Book Now Need help? Mobile*',
+    controls: [{ selector: '#login', tag: 'button', label: 'LOGIN' }, { selector: '#book', tag: 'button', label: 'Book Now' }, help] }
+  const loginBox = { ...loggedOut, text: 'LOGIN Machaxi Milan Book Now Login / Sign Up Enter Mobile No * + 91 Send OTP or Email Id Google Need help? Mobile*',
+    controls: [...loggedOut.controls, { selector: '#login-box input', tag: 'input', type: 'number', label: '', field: '+ 91' }] }
+  const codeBox = { ...loggedOut, text: 'Enter the OTP sent to your mobile Resend OTP Verify',
+    controls: [help, { selector: '#otp', tag: 'input', type: 'text', label: 'Enter OTP', field: 'OTP' }] }
   commands.length = 0; prompts.length = 0
-  script = [loggedOut, login, otpPage]
-  plans = [
-    { approvedOperation: 'booking', actions: [{ kind: 'choose', field: 'Sports', value: 'Badminton' }, { kind: 'click', selector: '#add' }] },
-    { approvedOperation: 'booking', actions: [{ kind: 'click', selector: '#login' }] },
-    { approvedOperation: 'booking', actions: [{ kind: 'fill_phone', selector: '#mobile' }, { kind: 'click', selector: '#get-otp' }] },
-  ]
+  script = [loggedOut, loginBox, codeBox]
+  plans = [{ approvedOperation: 'booking', actions: [{ kind: 'choose', field: 'Sports', value: 'Badminton' }, { kind: 'click', selector: '#book' }] }]
   const first = await computer.runSecureBrowser({ ...base, bookingPhone: '9876543210', bookingOtp: null })
-  assert.match(prompts[0], /LOG IN FIRST/)
-  assert.equal(commands.some(c => (c.payload.actions || []).some((a: any) => a.kind === 'choose' || a.selector === '#add')), false, 'nothing is chosen or added before login')
-  assert.equal(commands.some(c => (c.payload.actions || []).some((a: any) => a.selector === '#login')), true)
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'click', selector: '#login' }], 'Gogo presses Login itself, once')
+  assert.deepEqual(commands[2].payload.actions, [{ kind: 'fill_phone', selector: '#login-box input' }, { kind: 'click_text', text: 'Send OTP' }], 'the unlabelled +91 box, never the help form')
+  assert.equal(commands[2].env.GOGO_BOOKING_PHONE, '9876543210')
+  assert.equal(commands.some(c => (c.payload.actions || []).some((a: any) => a.kind === 'choose' || a.selector === '#book' || a.selector === '#help-mobile')), false)
   assert.equal(first.bookingStage, 'otp', 'the run pauses for the code')
+  assert.equal(prompts.length, 0, 'no planner call is needed to log in')
+  // The person sends the code: Gogo types it and verifies, then the planner continues logged in.
+  commands.length = 0; prompts.length = 0
+  script = [codeBox, { ...venue, url: 'https://playo.co/venues/machaxi', controls: [{ selector: '#book', tag: 'button', label: 'Book Now' }] }, cart]
+  plans = [{ approvedOperation: 'booking', actions: [{ kind: 'click', selector: '#book' }] }]
+  await computer.runSecureBrowser({ ...base, resumePage: true, bookingPhone: '9876543210', bookingOtp: '482913' })
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'fill_otp', selector: '#otp' }, { kind: 'click_text', text: 'Verify' }])
+  assert.equal(commands[1].env.GOGO_BOOKING_OTP, '482913')
+  assert.deepEqual(commands[2].payload.actions, [{ kind: 'click', selector: '#book' }], 'after login the planner books')
+  assert.doesNotMatch(prompts[0] || '', /LOG IN FIRST/)
   // Without the number (a rehearsal), selection is not held back.
   commands.length = 0; prompts.length = 0
   script = [loggedOut, loggedOut]
@@ -459,5 +473,11 @@ console.log('Provider booking: Add to Cart is pressed at most once per run')
   await computer.runSecureBrowser({ ...base, bookingPhone: null, bookingOtp: null })
   assert.doesNotMatch(prompts[0], /LOG IN FIRST/)
   assert.deepEqual(commands[1].payload.actions, [{ kind: 'choose', field: 'Sports', value: 'Badminton' }])
+  // If the box never shows a mobile input, Login is not pressed again: the planner is asked.
+  assert.equal(computer.bookingLoginActions(loggedOut, true), null)
+  assert.equal(JSON.stringify(computer.bookingLoginActions(loggedOut, false)), JSON.stringify([{ kind: 'click', selector: '#login' }]))
+  assert.equal(computer.bookingOtpActions(loggedOut), null, 'the help form is never a code box')
+  const bare = { ...loginBox, controls: [...loggedOut.controls, { selector: '#bare', tag: 'input', type: 'number', label: '' }] }
+  assert.equal(JSON.stringify(computer.bookingLoginActions(bare, true)), JSON.stringify([{ kind: 'fill_phone', selector: '#bare' }, { kind: 'click_text', text: 'Send OTP' }]), 'a lone unlabelled box after Login is the mobile box')
 }
-console.log('Provider booking: with the number on file, Gogo logs in before choosing or adding to cart')
+console.log('Provider booking: with the number on file, Gogo logs in itself before choosing or adding to cart')
