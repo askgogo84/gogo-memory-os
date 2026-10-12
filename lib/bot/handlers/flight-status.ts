@@ -131,7 +131,7 @@ const STATE_EVIDENCE: Array<[RegExp, RegExp]> = [
 // Include noun forms (delay/cancellation/diversion) so "no delay" / "no cancellation" are
 // stripped — the evidence regexes accept the bare noun, so negation must cover it too.
 const STATE_WORDS = 'landed|arrived|touched down|cancell?ed|cancellations?|delay(?:ed)?|diverted|diversions?|departed|took off|en ?route|in ?air|airborne|in flight|on[- ]time'
-function stripNegatedStates(text: string): string {
+export function stripNegatedStates(text: string): string {
   const neg = new RegExp(`\\b(?:not|no|never|hasn'?t|haven'?t|isn'?t|aren'?t|wasn'?t|weren'?t|won'?t|didn'?t|yet to)\\s+(?:\\w+\\s+){0,2}?(?:${STATE_WORDS})\\b`, 'gi')
   return String(text || '').replace(neg, ' ')
 }

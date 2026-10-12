@@ -493,6 +493,12 @@ export async function persistAndRemindTicket(
   // Boarding passes omit the year ("12 Oct"); date it before anything is scheduled.
   info = withTicketYears(info, now)
   const legs = buildLegs(info)
+  // Who is travelling, in the user's own words ("Divya" for "URS, Divyashree"), from saved
+  // contacts or past chats. Stored on the ticket so recall, alerts and tracking can use it.
+  const travellerAliases = info.type !== 'event' && info.passengers?.length
+    ? await resolveTravellerAliases(ctx.telegramId, info.passengers as string[]).catch(() => ({} as Record<string, string>))
+    : {} as Record<string, string>
+  if (Object.keys(travellerAliases).length) for (const leg of legs) leg.raw = { ...(leg.raw || {}), travellerAliases }
   let remindersSet = 0
   let remindersFailed = 0
   let remindersAlreadySent = 0
@@ -558,12 +564,7 @@ export async function persistAndRemindTicket(
   // when exactly one saved contact matches. Display only; the stored ticket keeps the printed name.
   let replyInfo = info
   if (info.type !== 'event' && info.passengers?.length) {
-    let contacts: string[] = []
-    try {
-      const { data } = await supabaseAdmin.from('friend_contacts').select('name').eq('owner_telegram_id', ctx.telegramId).limit(200)
-      contacts = (data || []).map((row: any) => String(row.name || '')).filter(Boolean)
-    } catch {}
-    replyInfo = { ...info, passengers: (info.passengers as string[]).map(p => { const shown = displayPassenger(p); const known = knownPersonFor(shown, contacts); return known ? `${shown} (${known})` : shown }) } as typeof info
+    replyInfo = { ...info, passengers: (info.passengers as string[]).map(p => { const shown = displayPassenger(p); const known = travellerAliases[shown]; return known ? `${shown} (${known})` : shown }) } as typeof info
   }
 
   // Start trip tracking now (the cron would otherwise start it later) and say so only when the
@@ -573,7 +574,8 @@ export async function persistAndRemindTicket(
     try {
       const { compileTravelWatchersForUser } = await import('@/lib/agent/contextual-travel-watchers')
       const t = await compileTravelWatchersForUser(ctx.telegramId)
-      if (t.tracking) trackingTail = `\n\n👀 Tracking ${t.flights.length ? t.flights.join(' · ') : 'this trip'}. I'll message you here if there's a delay, cancellation or gate change.`
+      const traveller = Object.values(travellerAliases)[0]
+      if (t.tracking) trackingTail = `\n\n👀 Tracking ${traveller ? `${traveller}'s flights` : 'this trip'}${t.flights.length ? ` (${t.flights.join(' · ')})` : ''}. From 3 hours before take-off until landing, I'll message you here about delays, gate changes, take-off and landing, plus weather or disruption news that affects the trip.`
     } catch (err: any) {
       console.error('TRAVEL_TRACKING_START_FAILED:', err?.message || err)
     }
@@ -619,4 +621,41 @@ export function knownPersonFor(passenger: string, contacts: string[]): string | 
   if (hits.size !== 1) return null
   const [name] = [...hits]
   return name.toLowerCase() === String(passenger).toLowerCase() ? null : name
+}
+
+/** A shorter name the user uses for this first name in their own words ("Divya" for Divyashree). */
+export function aliasFromTexts(firstName: string, texts: string[]): string | null {
+  const first = String(firstName || '').toLowerCase()
+  if (first.length < 4) return null
+  const counts = new Map<string, number>()
+  for (const text of texts) for (const word of String(text || '').match(/\b[A-Z][a-z]{3,}\b/g) || []) {
+    const w = word.toLowerCase()
+    if (first.startsWith(w)) counts.set(word, (counts.get(word) || 0) + 1)
+  }
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1])
+  if (!ranked.length || (ranked[1] && ranked[1][1] === ranked[0][1])) return null
+  return ranked[0][0].toLowerCase() === first ? null : ranked[0][0]
+}
+
+/** Display name → the name the user knows them by; contacts first, then their own past messages. */
+export async function resolveTravellerAliases(telegramId: number | string, passengers: string[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {}
+  const shown = passengers.map(displayPassenger).filter(Boolean).slice(0, 9)
+  if (!shown.length) return out
+  const { data: contactRows } = await supabaseAdmin.from('friend_contacts').select('name').eq('owner_telegram_id', telegramId).limit(200)
+  const contacts = (contactRows || []).map((row: any) => String(row.name || '')).filter(Boolean)
+  for (const name of shown) {
+    const fromContacts = knownPersonFor(name, contacts)
+    if (fromContacts) { out[name] = fromContacts; continue }
+    const first = name.split(/\s+/)[0] || ''
+    const stem = first.slice(0, 4).replace(/[^A-Za-z]/g, '')
+    if (stem.length < 4) continue
+    const [saved, said] = await Promise.all([
+      supabaseAdmin.from('memories').select('content').eq('telegram_id', telegramId).ilike('content', `%${stem}%`).order('created_at', { ascending: false }).limit(60),
+      supabaseAdmin.from('conversations').select('content').eq('telegram_id', telegramId).eq('role', 'user').ilike('content', `%${stem}%`).order('created_at', { ascending: false }).limit(60),
+    ])
+    const alias = aliasFromTexts(first, [...(saved.data || []), ...(said.data || [])].map((row: any) => String(row.content || '')))
+    if (alias) out[name] = alias
+  }
+  return out
 }
