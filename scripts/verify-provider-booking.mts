@@ -236,7 +236,9 @@ const srcEarly = readFileSync('lib/agent/secure-computer.ts', 'utf8')
 const clickTextHandler = srcEarly.slice(srcEarly.indexOf("else if(a.kind==='click_text'){"), srcEarly.indexOf("else if(a.kind==='fill_phone'||a.kind==='fill_otp'){"))
 assert.match(clickTextHandler, /if\(payload\.mode!=='execute'\|\|!payload\.bookingFlow\)/, 'only an approved booking presses by text')
 assert.match(clickTextHandler, /place order\|buy now[\s\S]{0,120}reason:'payment_control'/, 'never a pay control by its label')
-assert.match(clickTextHandler, /if\(\/\\b\(\?:pay\|payment\|place order\|buy now\|complete purchase\)\\b\/i\.test\(shown\)\)continue;/, 'nor by the text of the element found')
+assert.match(clickTextHandler, /const pressed=await pressText\(page,wanted\);/)
+const pressTextFn = srcEarly.slice(srcEarly.indexOf('async function pressText(page,wanted){'), srcEarly.indexOf('async function clickPastOverlay('))
+assert.match(pressTextFn, /if\(\/\\b\(\?:pay\|payment\|place order\|buy now\|complete purchase\)\\b\/i\.test\(shown\)\)continue;/, 'nor by the text of the element found')
 commands.length = 0
 script = [venue, { ...venue, text: 'Booking confirmed' }]
 plans = [{ approvedOperation: 'booking', actions: [{ kind: 'click_text', text: 'Book Now' }, { kind: 'submit', selector: '#proceed' }] }]
@@ -342,7 +344,7 @@ console.log('Provider booking: slot → number → WhatsApp OTP → payment hand
   plans = [{ approvedOperation: 'booking', actions: [{ kind: 'fill_phone', selector: '#mobile' }] }, { approvedOperation: 'booking', actions: [{ kind: 'click', selector: '#get-otp' }] }]
   await computer.runSecureBrowser({ ...base, bookingPhone: '9876543210', bookingOtp: null })
   assert.equal(prompts.length, 1, 'a failed number fill is never followed by another plan')
-  assert.match(readFileSync('lib/agent/secure-computer.ts', 'utf8'), /click_text the requested date as YYYY-MM-DD/)
+  assert.match(readFileSync('lib/agent/secure-computer.ts', 'utf8'), /Use the date as YYYY-MM-DD/)
   outcomes = []
 }
 console.log('Provider booking: failed steps are replanned; failed number/code fills stop the run')
@@ -370,3 +372,42 @@ console.log('Provider booking: failed steps are replanned; failed number/code fi
   assert.equal(prompts.filter(p => /You returned no actions/.test(p)).length, 1, 'one second look per run')
 }
 console.log('Provider booking: an empty plan on a booking page gets one second look')
+
+// 11 Oct 18:30: date and time were set, the sport stayed on Swimming, and the planner went for Add
+// To Cart. Gogo refuses Add to cart/Book/Proceed/Continue while a picker shows something else,
+// tells the planner which field differs, and lets it through once the pickers match.
+{
+  assert.deepEqual(booking.bookingTargetFromObjective(objective), { date: '2026-10-17', time: '7:00 AM', service: 'badminton court' })
+  const pickers = (sport: string) => ({ ...venue, url: 'https://playo.co/booking?venueId=x', text: 'Sports Date Start Time Court Add To Cart',
+    controls: [{ selector: '#sport', tag: 'button', label: sport, field: 'Sports' }, { selector: '#date', tag: 'button', label: '2026-10-17', field: 'Date' },
+      { selector: '#time', tag: 'button', label: '07:00 AM', field: 'Start Time' }, { selector: '#add', tag: 'button', label: 'Add to Cart' }] })
+  commands.length = 0; prompts.length = 0
+  script = [pickers('Swimming'), pickers('Badminton'), pickers('Badminton')]
+  plans = [
+    { approvedOperation: 'booking', actions: [{ kind: 'choose', field: 'Court', value: 'first' }, { kind: 'click', selector: '#add' }] },
+    { approvedOperation: 'booking', actions: [{ kind: 'choose', field: 'Sports', value: 'Badminton' }] },
+    { approvedOperation: 'booking', actions: [{ kind: 'click_text', text: 'Add To Cart' }] },
+  ]
+  await computer.runSecureBrowser({ ...base, bookingPhone: null, bookingOtp: null })
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'choose', field: 'Court', value: 'first' }], 'Add to Cart is dropped while the sport differs')
+  assert.match(prompts[1], /did not press the last Add to cart\/Continue because the sport shown/)
+  assert.deepEqual(commands[2].payload.actions, [{ kind: 'choose', field: 'Sports', value: 'Badminton' }])
+  assert.deepEqual(commands[3].payload.actions, [{ kind: 'click_text', text: 'Add To Cart' }], 'once the pickers match, Add to Cart goes through')
+  assert.doesNotMatch(prompts[2], /did not press the last Add to cart/)
+  assert.match(prompts[0], /\{"kind":"choose","field":"its field name","value":"the option"\}/)
+  const src = readFileSync('lib/agent/secure-computer.ts', 'utf8')
+  assert.match(src, /plan\.actions\.filter\(a=>a\.kind!=='fill_phone'&&a\.kind!=='fill_otp'&&a\.kind!=='click_text'&&a\.kind!=='choose'\)/, 'only bookings choose')
+  const chooseHandler = src.slice(src.indexOf("else if(a.kind==='choose'){"), src.indexOf("else if(a.kind==='fill_phone'||a.kind==='fill_otp'){"))
+  assert.match(chooseHandler, /if\(payload\.mode!=='execute'\|\|!payload\.bookingFlow\)/)
+  assert.match(chooseHandler, /reason:'payment_control'/)
+  assert.match(chooseHandler, /throw new Error\('picker value not set'\)/, 'a choose that did not take fails')
+}
+console.log('Provider booking: Add to cart waits until sport, date and time match; choose is booking-only')
+
+// The page model and the choose action find a picker's field name the same way.
+{
+  const src = readFileSync('lib/agent/secure-computer.ts', 'utf8')
+  const shared = src.slice(src.indexOf('const FIELD_OF_JS=String.raw`\n') + 'const FIELD_OF_JS=String.raw`\n'.length, src.indexOf('\n`\nconst BROWSER_SCRIPT='))
+  const asInline = shared.replace("\n      const fclean=x=>String(x||'').replace(/\\s+/g,' ').trim();", '').replace(/fclean\(/g, 'clean(')
+  assert.ok(src.includes(asInline + '\n    const candidates='), 'the inline page-model copy matches FIELD_OF_JS')
+}

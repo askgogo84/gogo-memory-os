@@ -5,7 +5,7 @@
 <!-- Like Playo's Headless UI listboxes: an option is chosen by a real pointer press, not el.click(). -->
 <div class="field">Sports<button type="button" id="sport-btn" aria-haspopup="listbox" aria-expanded="false"><span id="sport">Swimming</span></button>
 <ul role="listbox" class="lb" id="sport-lb" hidden><li role="option">Swimming</li><li role="option">Table Tennis</li><li role="option">Badminton</li></ul></div>
-<div class="field">Date<button type="button" id="date-btn"><span id="date">2026-10-11</span></button><div id="cal" class="lb" hidden></div></div>
+<div class="field">Date<button type="button" id="date-btn" aria-expanded="false"><span id="date">2026-10-11</span></button><div id="cal" class="lb" hidden></div></div>
 <div class="field"><p>Start Time</p><div><button type="button" id="time-btn" aria-haspopup="listbox" aria-expanded="false"><span id="time">07:00 PM</span></button></div>
 <ul role="listbox" class="lb" id="time-lb" hidden><li role="option">06:00 AM</li><li role="option">06:30 AM</li><li role="option">07:00 AM</li><li role="option">07:30 AM</li><li role="option">07:00 PM</li></ul></div>
 <div class="field">Court<button type="button" id="court-btn" aria-haspopup="listbox" aria-expanded="false"><span id="court">--Select Court--</span></button>
@@ -15,6 +15,7 @@
 <script>
 const st={pressed:null};
 // Keep choices across page loads (the worker opens the page again on each step).
+if(/fresh/.test(location.search))localStorage.removeItem('booking');
 const saved=JSON.parse(localStorage.getItem('booking')||'{}');
 function save(){localStorage.setItem('booking',JSON.stringify({sport:document.getElementById('sport').textContent,date:document.getElementById('date').textContent,time:document.getElementById('time').textContent,court:document.getElementById('court').textContent}))}
 for(const k of ['sport','date','time','court'])if(saved[k])document.getElementById(k).textContent=saved[k];

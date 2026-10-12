@@ -11,7 +11,7 @@ import { browserPageAllowlist } from './browser-page-network'
 import {BROWSER_PAGE_READINESS} from './browser-page-readiness'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
-import { bookingAtPayment, bookingOtpPrompt, type BookingStage } from './provider-booking'
+import { bookingAtPayment, bookingOtpPrompt, bookingTargetFromObjective, bookingSelectionMismatch, bookingAdvanceControlText, type BookingStage } from './provider-booking'
 import { needsBrowserDeliveryLocation } from './browser-location-gate'
 import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
@@ -84,6 +84,7 @@ type BrowserAction =
   // Provider booking only: press a control by its visible text (Playo venue cards and dropdown
   // options are plain divs whose generated selectors do not resolve reliably).
   | { kind:'click_text'; text:string }
+  | { kind:'choose'; field:string; value:string }
 
 export type SecureBrowserResult = {
   flightEvidence?:{searchControls:string[];resultLabels:string[];fareBasisLabel?:string}
@@ -239,6 +240,31 @@ async function model(page){
     console.log(JSON.stringify(out));
   } finally { if(attached)await attached.close();else await context.close(); }
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
+`
+// The field name shown beside a picker ("Sports", "Date"): used by the page model and by the
+// choose action. Plain JS for the worker; no backticks.
+const FIELD_OF_JS=String.raw`
+    const fieldOf=el=>{try{
+      const fclean=x=>String(x||'').replace(/\s+/g,' ').trim();
+      const attr=k=>el.getAttribute?el.getAttribute(k):null;
+      if(!(el.tagName==='INPUT'||el.tagName==='SELECT'||['combobox','listbox'].includes(attr('role')||'')||attr('aria-haspopup')!=null||attr('aria-expanded')!=null))return '';
+      const own=fclean(el.innerText||el.textContent||el.value||'');
+      if(el.id){const lab=document.querySelector('label[for="'+CSS.escape(el.id)+'"]');if(lab){const t=fclean(lab.textContent);if(t&&t.length<=40)return t;}}
+      let node=el;
+      for(let depth=0;depth<4&&node&&node.parentElement;depth++){
+        let sib=node.previousSibling,hops=0;
+        while(sib&&hops<3){
+          const t=fclean(sib.nodeType===1?(sib.innerText||sib.textContent):sib.textContent);
+          if(t){
+            hops++;
+            if(t.length<=40&&t!==own&&!(sib.nodeType===1&&sib.querySelector('button,input,select,a[href]')))return t;
+          }
+          sib=sib.previousSibling;
+        }
+        node=node.parentElement;
+      }
+      return '';
+    }catch{return ''}};
 `
 const BROWSER_SCRIPT=String.raw`
 ${BROWSER_PAGE_READINESS}
@@ -550,6 +576,55 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
 // 11 Oct live Playo runs: a popup covered the next control and the click failed as "obscured".
 // Close it with Escape and click again; if it still covers the control, click the control itself.
 // Only for clicks that already passed the consequence check above (never for submit).
+// Press the visible element with this text (a venue card, Book Now, a sport, time or court option).
+// A YYYY-MM-DD date falls back to the calendar day cell. Never a pay control.
+async function pressText(page,wanted){
+  const candidates=page.getByText(wanted,{exact:wanted.length<=3});
+  const count=await candidates.count().catch(()=>0);
+  let pressed=false;
+  for(let i=0;i<Math.min(count,8)&&!pressed;i++){
+    const option=candidates.nth(i);
+    const shown=await option.evaluate(el=>{const r=el.getBoundingClientRect();const cs=getComputedStyle(el);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'?String(el.textContent||'').slice(0,200):null}).catch(()=>null);
+    if(shown===null)continue;
+    if(/\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(shown))continue;
+    const before=page.url();
+    try{await option.click({timeout:4000});}catch{await option.evaluate(el=>el.click());}
+    const until=Date.now()+5000;
+    while(Date.now()<until){await page.waitForTimeout(300);if(page.url()!==before)break;}
+    pressed=true;
+  }
+  // Date pickers show day numbers, not "2026-10-17": try a matching aria-label, then the
+  // visible enabled day cell whose whole text is the day number.
+  const isoDay=wanted.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!pressed&&isoDay){
+    const when=new Date(Date.UTC(Number(isoDay[1]),Number(isoDay[2])-1,Number(isoDay[3])));
+    const monthName=when.toLocaleString('en-US',{month:'long',timeZone:'UTC'});
+    const dayNum=String(Number(isoDay[3]));
+    const labels=[monthName+' '+dayNum+', '+isoDay[1],dayNum+' '+monthName+' '+isoDay[1],monthName+' '+dayNum,dayNum+' '+monthName];
+    for(const label of labels){
+      if(pressed)break;
+      const byLabel=page.locator('[aria-label*="'+label+'"]').first();
+      if(await byLabel.isVisible().catch(()=>false)){try{await byLabel.click({timeout:4000});}catch{await byLabel.evaluate(el=>el.click());}pressed=true;}
+    }
+    if(!pressed){
+      const marked=await page.evaluate((day)=>{
+        document.querySelectorAll('[data-gogo-day]').forEach(el=>el.removeAttribute('data-gogo-day'));
+        const cells=Array.from(document.querySelectorAll('button,td,div,span,a,[role=gridcell],[role=option]')).filter(el=>{
+          if(String(el.textContent||'').trim()!==day)return false;
+          if(Array.from(el.children).some(c=>String(c.textContent||'').trim()===day))return false;
+          const r=el.getBoundingClientRect();const cs=getComputedStyle(el);
+          if(!(r.width>0&&r.height>0)||cs.visibility==='hidden'||cs.display==='none')return false;
+          if(el.closest('[disabled],[aria-disabled=true]'))return false;
+          return !/disabled|outside|other-month|text-gray-300|opacity-50/i.test(String(el.className||'')+' '+String((el.parentElement&&el.parentElement.className)||''));
+        });
+        if(!cells.length)return false;
+        cells[0].setAttribute('data-gogo-day','1');return true;
+      },dayNum).catch(()=>false);
+      if(marked){const cell=page.locator('[data-gogo-day="1"]').first();try{await cell.click({timeout:4000});}catch{await cell.evaluate(el=>el.click());}pressed=true;}
+    }
+  }
+  return pressed;
+}
 async function clickPastOverlay(page,selector){
   const target=page.locator(selector).first();
   let covered;
@@ -617,52 +692,59 @@ async function clickPastOverlay(page,selector){
           if(/\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(wanted)){log.push({kind:a.kind,detail:wanted,status:'skipped',consequential:true,failure:{reason:'payment_control'}});continue;}
           if(payload.rehearsal&&/\badd\s+to\s+cart\b/i.test(wanted)){log.push({kind:a.kind,detail:wanted,status:'skipped',failure:{reason:'rehearsal_stop'}});continue;}
           // Short text ("1", "17") must match a whole label, or it presses any element containing it.
-          const candidates=page.getByText(wanted,{exact:wanted.length<=3});
-          const count=await candidates.count().catch(()=>0);
-          let pressed=false;
-          for(let i=0;i<Math.min(count,8)&&!pressed;i++){
-            const option=candidates.nth(i);
-            const shown=await option.evaluate(el=>{const r=el.getBoundingClientRect();const cs=getComputedStyle(el);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'?String(el.textContent||'').slice(0,200):null}).catch(()=>null);
-            if(shown===null)continue;
-            if(/\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(shown))continue;
-            const before=page.url();
-            try{await option.click({timeout:4000});}catch{await option.evaluate(el=>el.click());}
-            const until=Date.now()+5000;
-            while(Date.now()<until){await page.waitForTimeout(300);if(page.url()!==before)break;}
-            pressed=true;
-          }
-          // Date pickers show day numbers, not "2026-10-17": try a matching aria-label, then the
-          // visible enabled day cell whose whole text is the day number.
-          const isoDay=wanted.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-          if(!pressed&&isoDay){
-            const when=new Date(Date.UTC(Number(isoDay[1]),Number(isoDay[2])-1,Number(isoDay[3])));
-            const monthName=when.toLocaleString('en-US',{month:'long',timeZone:'UTC'});
-            const dayNum=String(Number(isoDay[3]));
-            const labels=[monthName+' '+dayNum+', '+isoDay[1],dayNum+' '+monthName+' '+isoDay[1],monthName+' '+dayNum,dayNum+' '+monthName];
-            for(const label of labels){
-              if(pressed)break;
-              const byLabel=page.locator('[aria-label*="'+label+'"]').first();
-              if(await byLabel.isVisible().catch(()=>false)){try{await byLabel.click({timeout:4000});}catch{await byLabel.evaluate(el=>el.click());}pressed=true;}
-            }
-            if(!pressed){
-              const marked=await page.evaluate((day)=>{
-                document.querySelectorAll('[data-gogo-day]').forEach(el=>el.removeAttribute('data-gogo-day'));
-                const cells=Array.from(document.querySelectorAll('button,td,div,span,a,[role=gridcell],[role=option]')).filter(el=>{
-                  if(String(el.textContent||'').trim()!==day)return false;
-                  if(Array.from(el.children).some(c=>String(c.textContent||'').trim()===day))return false;
-                  const r=el.getBoundingClientRect();const cs=getComputedStyle(el);
-                  if(!(r.width>0&&r.height>0)||cs.visibility==='hidden'||cs.display==='none')return false;
-                  if(el.closest('[disabled],[aria-disabled=true]'))return false;
-                  return !/disabled|outside|other-month|text-gray-300|opacity-50/i.test(String(el.className||'')+' '+String((el.parentElement&&el.parentElement.className)||''));
-                });
-                if(!cells.length)return false;
-                cells[0].setAttribute('data-gogo-day','1');return true;
-              },dayNum).catch(()=>false);
-              if(marked){const cell=page.locator('[data-gogo-day="1"]').first();try{await cell.click({timeout:4000});}catch{await cell.evaluate(el=>el.click());}pressed=true;}
-            }
-          }
+          const pressed=await pressText(page,wanted);
           if(!pressed)throw new Error('text control not found');
           await page.waitForTimeout(600);
+        }
+        else if(a.kind==='choose'){
+          // Provider booking: set one picker (Sports, Date, Start Time, Court) in a single step:
+          // find it by the field name beside it, open it, press the option and check the picker
+          // now shows it. value "first" takes the first available option (a court). Never pays.
+          if(payload.mode!=='execute'||!payload.bookingFlow){log.push({kind:a.kind,detail:a.field,status:'skipped'});continue;}
+          const field=String(a.field||''),value=String(a.value||'');
+          if(/\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(field+' '+value)){log.push({kind:a.kind,detail:field,status:'skipped',consequential:true,failure:{reason:'payment_control'}});continue;}
+          const pickerText=()=>page.evaluate((want)=>{
+            ${FIELD_OF_JS}
+            document.querySelectorAll('[data-gogo-pick]').forEach(el=>el.removeAttribute('data-gogo-pick'));
+            const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+            const vis=el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0};
+            const els=Array.from(document.querySelectorAll('button,input,select,[role=combobox],[role=listbox],[aria-haspopup],[aria-expanded]')).filter(vis);
+            const w=norm(want);
+            const hit=els.find(el=>norm(fieldOf(el))===w)||els.find(el=>{const f=norm(fieldOf(el));return f&&(f.startsWith(w)||w.startsWith(f))});
+            if(!hit)return null;
+            hit.setAttribute('data-gogo-pick','1');
+            return String(hit.tagName==='SELECT'?(hit.selectedOptions[0]&&hit.selectedOptions[0].textContent)||'':hit.tagName==='INPUT'?hit.value:(hit.innerText||hit.textContent)||'').replace(/\s+/g,' ').trim().slice(0,160);
+          },field);
+          const placeholder=(shown)=>!String(shown||'').trim()||/^\W*(?:select|choose|pick)\b/i.test(String(shown||'').trim());
+          const same=(shown)=>{if(value==='first')return !placeholder(shown);const n=x=>String(x||'').toLowerCase().replace(/\b0+(\d)/g,'$1').replace(/[^a-z0-9]+/g,' ').trim();return n(shown).includes(n(value));};
+          const shownBefore=await pickerText();
+          if(shownBefore===null)throw new Error('picker not found');
+          if(!same(shownBefore)){
+            const picker=page.locator('[data-gogo-pick="1"]').first();
+            if(await picker.evaluate(el=>el.tagName==='SELECT')){
+              await picker.selectOption(value==='first'?{index:1}:{label:value},{timeout:5000});
+            }else{
+              await clickPastOverlay(page,'[data-gogo-pick="1"]');
+              await page.waitForTimeout(500);
+              let pressed=false;
+              if(value==='first'){
+                const options=page.locator('[role=option]:not([aria-disabled="true"])');
+                const n=await options.count().catch(()=>0);
+                for(let i=0;i<Math.min(n,12)&&!pressed;i++){
+                  const opt=options.nth(i);
+                  const t=await opt.evaluate(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0?String(el.textContent||''):null}).catch(()=>null);
+                  if(t===null||/^\s*-+\s*select|\bpay\b|unavailable|sold out|booked/i.test(t))continue;
+                  try{await opt.click({timeout:4000});}catch{await opt.evaluate(el=>el.click());}
+                  pressed=true;
+                }
+              }else pressed=await pressText(page,value);
+              if(!pressed)throw new Error('option not found');
+            }
+            await page.waitForTimeout(700);
+            const shownAfter=await pickerText();
+            if(!same(shownAfter))throw new Error('picker value not set');
+          }
+          await page.waitForTimeout(300);
         }
         else if(a.kind==='fill_phone'||a.kind==='fill_otp'){
           // Provider booking: the person's mobile number, or the OTP they sent on WhatsApp, from a
@@ -916,6 +998,10 @@ function normalizeActions(raw:any,initialUrl:string,allowSubmit:boolean):Browser
     else if(kind==='click_text'){
       if(!allowSubmit)continue
       const text=String(item.text||'').replace(/\s+/g,' ').trim().slice(0,120);if(text)out.push({kind:'click_text',text})
+    }else if(kind==='choose'){
+      if(!allowSubmit)continue
+      const field=String(item.field||'').replace(/\s+/g,' ').trim().slice(0,40);const value=String(item.value||'').replace(/\s+/g,' ').trim().slice(0,120)
+      if(field&&value)out.push({kind:'choose',field,value})
     }
     else if(kind==='fill_phone'||kind==='fill_otp'){
       // Only an authorised provider booking may fill the mobile number or the OTP.
@@ -1075,16 +1161,17 @@ function completedSearchControls(page:any,searches:CompletedReadSearch[]):Set<st
 }
 
 // Provider booking: walk towards the booking summary with clicks, never submit, never pay.
-export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:boolean;retry?:boolean}){
-  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step. When a venue card, button or option has no usable link or selector, use {"kind":"click_text","text":"its exact visible text"} (for example the venue name, Book Now, Badminton, a date or 07:00 AM). The field of a control is the name shown beside it (Sports, Date, Start Time, Court): open a picker by the control whose field matches, never a header menu such as Login, Account or Menu. For a dropdown whose option text you already know from the request (the sport, the date or the start time), click it and then click_text that option in the same step. When you do not know the option names yet (for example the court), click the dropdown and end the step, then click_text the first available observed option on the next step; never guess an option. In a calendar, open it and click_text the requested date as YYYY-MM-DD (Gogo finds the day cell). Set the selectors in page order (sport, then date, then start time, then court): the date changes which times are offered, so end the step after setting the date and pick the time from the next observation. If a step failed, plan it again from what is observed now; never press Add to cart or Continue before the date, time and court match the request.'
+export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:boolean;retry?:boolean;mismatch?:string[]}){
+  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step. When a venue card, button or option has no usable link or selector, use {"kind":"click_text","text":"its exact visible text"} (for example the venue name, Book Now, Badminton, a date or 07:00 AM). The field of a control is the name shown beside it (Sports, Date, Start Time, Court); never open a header menu such as Login, Account or Menu. To set a picker use {"kind":"choose","field":"its field name","value":"the option"}: Gogo opens it, presses the option and checks the picker now shows it. Use the date as YYYY-MM-DD and the time as shown on the site (for example 07:00 AM). Use "value":"first" for the first available option when you do not know the names (for example the court). Plan the pickers in page order in ONE step (sport, then date, then start time, then court), and press Add to cart or Continue in the next step only after the observed pickers show the request; Gogo refuses Add to cart, Book, Proceed or Continue while the sport, date or time shown differ from the request. If a choose failed, plan it again from what is observed now.'
     +(booking.phoneAvailable?' If a login or registration form asks for a mobile or phone number, use {"kind":"fill_phone","selector":"observed selector"} (Gogo fills the number itself; never put a number in any value), then click the observed control that sends the OTP (for example Get OTP, Send OTP or Continue).':' If the site asks for a mobile number, return no actions.')
     +(booking.otpAvailable?' The page is asking for the one-time code and Gogo has it: use {"kind":"fill_otp","selector":"observed selector of the code input (the first box if there are several)"}, then click the observed Verify/Continue/Login control.':' Never fill a one-time code; if the page asks for one, return no actions.')
     +' Never click Pay, Make payment, Place order or Buy now, and never fill card, UPI or bank details: when the page asks for payment, return no actions.'
     +' The times and courts shown are for the date currently selected: missing times or "no courts available" before the requested date is set mean set the date first, never a reason to stop.'
+    +(booking.mismatch&&booking.mismatch.length?' Gogo did not press the last Add to cart/Continue because the '+booking.mismatch.join(', ')+' shown on the page differ from the request: set '+(booking.mismatch.length>1?'them':'it')+' with choose first.':'')
     +(booking.retry?' You returned no actions on this booking page, but the date, time or court shown still differ from the request: plan the next step toward them now (the Date picker first if the date differs). Return no actions only if the page asks for payment, a code or a number Gogo does not have, or the requested slot is shown as unavailable on the requested date.':'')
 }
 
-async function planActions(objective:string,page:any,mode:BrowserMode,objectiveTrust:TrustClass,completedSearches:CompletedReadSearch[]=[],diagnose:(event:BrowserReadDiagnostic)=>void=()=>{},booking?:{otpAvailable:boolean;phoneAvailable:boolean;rehearsal?:boolean;retry?:boolean}):Promise<{actions:BrowserAction[];operation:ApprovedBrowserOperation|null;draftReady:boolean}>{
+async function planActions(objective:string,page:any,mode:BrowserMode,objectiveTrust:TrustClass,completedSearches:CompletedReadSearch[]=[],diagnose:(event:BrowserReadDiagnostic)=>void=()=>{},booking?:{otpAvailable:boolean;phoneAvailable:boolean;rehearsal?:boolean;retry?:boolean;mismatch?:string[]}):Promise<{actions:BrowserAction[];operation:ApprovedBrowserOperation|null;draftReady:boolean}>{
   const rejectedControls=new Set((mode==='read'?page.actions||[]:[]).filter((action:any)=>action.status==='skipped').map((action:any)=>String(action.detail||'')))
   const searchedControls=mode==='read'?completedSearchControls(page,completedSearches):new Set<string>()
   for(const selector of searchedControls)rejectedControls.add(selector)
@@ -1392,6 +1479,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       blockReason:'human_auth_required',authReason:stage==='otp'?'otp':stage==='payment'?'payment_auth':undefined,bookingStage:stage,...extra})
     let bookingIdleWaves=0
     let bookingRetried=false
+    let bookingMismatch:string[]=[]
+    const bookingTarget=providerBooking?bookingTargetFromObjective(params.objective):{}
     for(let wave=0;wave<(params.mode==='read'?readWaves:params.mode==='execute'&&params.accountCreation===true?MAX_SIGNUP_PAGES:providerBooking?MAX_BOOKING_PAGES:1);wave++){
       const beforeReadSnapshot=readSnapshot(page)
       const providerBlock=detectProviderAccessBlock(page)
@@ -1544,7 +1633,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         assessedReadPage=page
         if(readAnswer)break
       }
-      const bookingPlan=providerBooking?{otpAvailable:Boolean(otpWaiting&&params.bookingOtp&&!otpUsed),phoneAvailable:Boolean(params.bookingPhone),rehearsal:params.rehearsal===true}:undefined
+      const bookingPlan=providerBooking?{otpAvailable:Boolean(otpWaiting&&params.bookingOtp&&!otpUsed),phoneAvailable:Boolean(params.bookingPhone),rehearsal:params.rehearsal===true,mismatch:bookingMismatch}:undefined
       let plan=await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
       // 11 Oct 15:10 rehearsal: the planner saw today's times ("No courts available") and stopped
       // without setting the requested date. A booking gets one second look per run.
@@ -1559,7 +1648,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         :providerBooking?plan.actions.filter(a=>a.kind!=='submit'&&a.kind!=='fill_secret'&&(a.kind!=='fill_otp'||bookingPlan!.otpAvailable)&&(a.kind!=='fill_phone'||bookingPlan!.phoneAvailable)
           // A booking navigates only to observed links on the same site, never to a URL the page suggests elsewhere.
           &&(a.kind!=='goto'||(sameSite(a.url,String(page.url||params.url))&&(page.links||[]).some((l:any)=>String(l?.href||'')===a.url))))
-        :plan.actions.filter(a=>a.kind!=='fill_phone'&&a.kind!=='fill_otp'&&a.kind!=='click_text')
+        :plan.actions.filter(a=>a.kind!=='fill_phone'&&a.kind!=='fill_otp'&&a.kind!=='click_text'&&a.kind!=='choose')
       // One bounded recovery for the actual travel adapter: use only an
       // observed public Search control after both airports/date are populated.
       // It still passes the worker's read action gates and final evidence checks.
@@ -1568,6 +1657,18 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         if(recovery){actions.push(recovery);flightSearchRecoveryUsed=true}
       }
       if(flightProgress)console.log('BROWSER_FLIGHT_PROGRESS:',JSON.stringify({wave,...googleFlightReadProgress(page,actions)}))
+      // A booking never presses Add to cart, Book, Proceed or Continue while the pickers on the page
+      // show a different sport, date or time than the request (11 Oct 18:30: Swimming in the cart).
+      if(providerBooking&&actions.length){
+        const mismatch=bookingSelectionMismatch(page.controls||[],bookingTarget)
+        const advance=actions.findIndex(a=>bookingAdvanceControlText(a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):''))
+        if(mismatch.length&&advance>=0){
+          console.log('BROWSER_BOOKING_GUARD:',JSON.stringify({runId:params.sessionTaskId||null,mismatch,dropped:actions.length-advance}))
+          actions.splice(advance)
+          bookingMismatch=mismatch
+          if(!actions.length){bookingIdleWaves++;if(bookingIdleWaves>=2)break;continue}
+        }else bookingMismatch=[]
+      }
       if(!actions.length)break
       const submitCount=actions.filter(a=>a.kind==='submit').length
       // An earlier page of a multi-page sign-up: fill it and click its Next control, no submit.
@@ -1647,7 +1748,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(providerBooking&&actions.some(a=>a.kind==='fill_otp'))otpUsed=true
       // A rehearsal (public pages, no account) logs each step it planned and how it went.
       if(providerBooking&&params.rehearsal===true)try{console.log('BOOKING_REHEARSAL_WAVE:',JSON.stringify({wave,from:(()=>{try{return new URL(currentUrl).pathname.slice(0,90)}catch{return null}})(),to:(()=>{try{return new URL(String(page.url||'')).pathname.slice(0,90)}catch{return null}})(),
-        planned:actions.map(a=>a.kind+':'+String((a as any).text||(a as any).url||(a as any).selector||'').slice(0,70)),
+        planned:actions.map(a=>a.kind+':'+String((a as any).field?(a as any).field+'='+(a as any).value:(a as any).text||(a as any).url||(a as any).selector||'').slice(0,70)),
         outcome:(page.actions||[]).map((a:any)=>`${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`),
         controls:(page.controls||[]).slice(0,30).map((c:any)=>(c?.field?String(c.field).slice(0,20)+'=':'')+String(c?.label||'').slice(0,40)).filter(Boolean),
         text:String(page.text||'').replace(/\s+/g,' ').slice(0,500)}))}catch{}
