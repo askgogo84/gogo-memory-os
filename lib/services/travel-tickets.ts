@@ -1,4 +1,4 @@
-import { ticketTimezone, ticketInstant, flightInstants } from './travel-time'
+import { ticketTimezone, ticketInstant, flightInstants, withTicketYears } from './travel-time'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToList } from '@/lib/lists'
 import { buildTicketReply, type TicketInfo, type FlightInfo, type TrainInfo, type EventInfo } from './pdf-reader'
@@ -490,6 +490,8 @@ export async function persistAndRemindTicket(
   if (!info) return { reply: buildTicketReply(null), remindersSet: 0 }
 
   const now = Date.now()
+  // Boarding passes omit the year ("12 Oct"); date it before anything is scheduled.
+  info = withTicketYears(info, now)
   const legs = buildLegs(info)
   let remindersSet = 0
   let remindersFailed = 0
@@ -552,7 +554,32 @@ export async function persistAndRemindTicket(
       ? `\n\n⏰ I could not verify the departure date, time or airport timezone. No alerts were set for that leg; please confirm those details.`
       : `\n\n⏰ No alerts set — the departure time has already passed.`
   }
-  let reply = buildTicketReply(info, reminderTail)
+  // Passes print "URS, Divyashree". Show "Divyashree Urs", and the name the user knows her by
+  // when exactly one saved contact matches. Display only; the stored ticket keeps the printed name.
+  let replyInfo = info
+  if (info.type !== 'event' && info.passengers?.length) {
+    let contacts: string[] = []
+    try {
+      const { data } = await supabaseAdmin.from('friend_contacts').select('name').eq('owner_telegram_id', ctx.telegramId).limit(200)
+      contacts = (data || []).map((row: any) => String(row.name || '')).filter(Boolean)
+    } catch {}
+    replyInfo = { ...info, passengers: (info.passengers as string[]).map(p => { const shown = displayPassenger(p); const known = knownPersonFor(shown, contacts); return known ? `${shown} (${known})` : shown }) } as typeof info
+  }
+
+  // Start trip tracking now (the cron would otherwise start it later) and say so only when the
+  // flight-status monitor is actually active.
+  let trackingTail = ''
+  if (info.type === 'flight' && legs.some(leg => leg.departAt && leg.departAt.getTime() > now - 6 * 3600_000 && leg.departAt.getTime() < now + 14 * 86400_000)) {
+    try {
+      const { compileTravelWatchersForUser } = await import('@/lib/agent/contextual-travel-watchers')
+      const t = await compileTravelWatchersForUser(ctx.telegramId)
+      if (t.tracking) trackingTail = `\n\n👀 Tracking ${t.flights.length ? t.flights.join(' · ') : 'this trip'}. I'll message you here if there's a delay, cancellation or gate change.`
+    } catch (err: any) {
+      console.error('TRAVEL_TRACKING_START_FAILED:', err?.message || err)
+    }
+  }
+
+  let reply = buildTicketReply(replyInfo, reminderTail) + trackingTail
 
   // Check-in window already open → surface it now rather than skipping silently.
   if (openNowNotes.length) {
@@ -568,4 +595,28 @@ export async function persistAndRemindTicket(
   }
 
   return { reply, remindersSet }
+}
+
+/** "URS, Divyashree" / "URS/DIVYASHREE MS" → "Divyashree Urs". Other shapes are only re-cased. */
+export function displayPassenger(name: string): string {
+  const raw = String(name || '').replace(/\s+/g, ' ').trim()
+  const title = (w: string) => w.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (_m, a, b) => a + b.toUpperCase())
+  const m = raw.match(/^([^,/]+)\s*[,/]\s*(.+)$/)
+  const shown = m ? `${m[2].replace(/\s+(?:MR|MRS|MS|MSTR|MISS|DR)\.?$/i, '')} ${m[1]}` : raw
+  return /[a-z]/.test(shown) && /[A-Z]/.test(shown) && !m ? shown : title(shown.trim())
+}
+
+/** The saved contact name for this passenger, when exactly one contact matches the first name. */
+export function knownPersonFor(passenger: string, contacts: string[]): string | null {
+  const first = String(passenger || '').trim().split(/\s+/)[0]?.toLowerCase() || ''
+  if (first.length < 3) return null
+  const hits = new Set<string>()
+  for (const c of contacts) {
+    const name = String(c || '').trim()
+    const lead = name.split(/\s+/)[0]?.toLowerCase() || ''
+    if (lead.length >= 4 && (first === lead || first.startsWith(lead))) hits.add(name)
+  }
+  if (hits.size !== 1) return null
+  const [name] = [...hits]
+  return name.toLowerCase() === String(passenger).toLowerCase() ? null : name
 }

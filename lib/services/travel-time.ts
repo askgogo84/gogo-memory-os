@@ -48,3 +48,42 @@ export function flightInstants(f:{from:string;to:string;date:string;departure:st
   const arriveAt=departAt&&candidate&&candidate>departAt?candidate:null
   return {departAt,arriveAt,departTz,arrivalTz}
 }
+
+const MONTHS=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec']
+/**
+ * Boarding passes print "12 Oct" with no year. Without one the leg can't be dated, so no alert,
+ * tracking or brief entry exists. Choose the year that puts the date nearest `now`, allowing it
+ * to be up to 60 days in the past (a pass forwarded after the trip) and otherwise the next
+ * occurrence. A date that already carries a year is returned unchanged.
+ */
+export function withTicketYear(date:string|undefined,now:number,notBefore?:string):string|undefined{
+  if(!date)return date
+  const text=date.trim().replace(/,/g,' ').replace(/\s+/g,' ')
+  const m=text.match(/^(\d{1,2})\s*([A-Za-z]{3,})$/)||text.match(/^([A-Za-z]{3,})\s*(\d{1,2})$/)
+  if(!m)return date
+  const [day,monthName]=/^\d/.test(m[1])?[Number(m[1]),m[2]]:[Number(m[2]),m[1]]
+  const month=MONTHS.indexOf(monthName.slice(0,3).toLowerCase())
+  if(month<0||day<1||day>31)return date
+  const floor=notBefore?Date.parse(`${notBefore} 00:00 UTC`)-86400_000:now-60*86400_000
+  const thisYear=new Date(now).getUTCFullYear()
+  for(const year of [thisYear-1,thisYear,thisYear+1,thisYear+2]){
+    const at=Date.UTC(year,month,day)
+    if(new Date(at).getUTCDate()!==day)continue
+    if(at>=floor)return `${day} ${MONTHS[month][0].toUpperCase()}${MONTHS[month].slice(1)} ${year}`
+  }
+  return date
+}
+
+/** Fills missing years on every date a ticket carries; arrival dates follow their departure. */
+export function withTicketYears<T>(info:T,now:number):T{
+  const t:any=info
+  if(!t||typeof t!=='object')return info
+  if(t.type==='flight'&&Array.isArray(t.flights)){
+    return {...t,flights:t.flights.map((f:any)=>{
+      const date=withTicketYear(f.date,now)
+      return {...f,date,...(f.arrivalDate?{arrivalDate:withTicketYear(f.arrivalDate,now,date)}:{})}
+    })}
+  }
+  if(t.type==='train'||t.type==='event')return {...t,date:withTicketYear(t.date,now)}
+  return info
+}
