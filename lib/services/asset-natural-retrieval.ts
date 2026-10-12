@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { buildAssetRetrievalReply, isAssetRetrievalCommand } from '@/lib/services/asset-memory'
+import { buildAssetRetrievalReply, isAssetRetrievalCommand, buildDocumentReplyById, isBusinessCardText } from '@/lib/services/asset-memory'
+import { getList } from '@/lib/data/lists'
 import { stripReportingDirectives } from '@/lib/services/reporting-directive'
 
 const RETRIEVAL_VERB_RE = /\b(show me|find|send me|get me|pull up|do you have|where'?s|where is|open(?: my| the)?|retrieve)\b/i
@@ -89,20 +90,33 @@ export async function buildNaturalAssetRetrievalReply(
   // "show passport number" is the explicit confirmation phrase created by the
   // sensitive-field gate. Decline it here so buildAssetFieldReply can consume the
   // one-shot pending binding later in the WhatsApp route.
-  if (!shouldAttemptNaturalAssetRetrieval(raw)) return null
+  const verbOk = shouldAttemptNaturalAssetRetrieval(raw)
+  const contactAsk = isContactQuestion(raw) && !RESERVED_RETRIEVAL_RE.test(raw) && !SENSITIVE_REVEAL_CONFIRM_RE.test(raw)
+  if (!verbOk && !contactAsk) return null
 
   const qTokens = tokens(raw)
   if (!qTokens.length) return null
 
   const { data } = await supabaseAdmin
     .from('documents')
-    .select('id, doc_type, title, extracted, created_at')
+    .select('id, doc_type, title, summary, extracted, created_at')
     .eq('telegram_id', telegramId)
     .order('created_at', { ascending: false })
     .limit(120)
 
   const docs = (data || []) as any[]
-  if (!docs.length) return null
+
+  // A person or company named in what was saved ("Pradip Kumar card", "SkyHi contact"):
+  // search the text read from each saved file, not just its title. Older saves (image notes,
+  // pre-documents notes) carry the name only in their text.
+  const byName = matchSavedByName(raw, docs, { verbOk })
+  if (byName) return buildDocumentReplyById(telegramId, String(byName.id), raw, messageId ?? null)
+  if (contactAsk) {
+    const notes = await getList(telegramId, 'notes').catch(() => null)
+    const note = matchNoteByName(raw, Array.isArray((notes as any)?.items) ? (notes as any).items : [])
+    if (note) return `📝 From your saved notes${note.at ? ` (${new Date(note.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })})` : ''}:\n\n${note.text.slice(0, 1500)}`
+  }
+  if (!verbOk || !docs.length) return null
 
   const tokenDocFrequency = new Map<string, number>()
   for (const doc of docs) {
@@ -176,4 +190,76 @@ export async function buildNaturalAssetRetrievalReply(
   }
 
   return null
+}
+
+const CONTACT_RE = /\b(cards?|visiting|business card|contacts?|numbers?|phone|mobile|e-?mail|mail id|address|details|who is)\b/i
+export function isContactQuestion(text: string): boolean { return CONTACT_RE.test(String(text || '')) }
+
+// Words that describe what is wanted, not who: never treated as a name.
+const NOT_A_NAME = new Set([
+  'card', 'cards', 'visiting', 'business', 'contact', 'contacts', 'number', 'numbers', 'phone', 'mobile', 'email',
+  'mail', 'details', 'address', 'who', 'his', 'her', 'their', 'name', 'had', 'shared', 'always', 'long', 'back',
+  'kept', 'gave', 'sent', 'earlier', 'last', 'what', 'whats', 'with', 'and', 'you', 'your', 'can', 'need', 'want',
+  'person', 'guy', 'there', 'here', 'yes', 'yeah', 'search', 'look', 'tell',
+])
+function nameTokens(raw: string): string[] {
+  return tokens(raw.replace(/'s\b/gi, '')).filter((t) => !NOT_A_NAME.has(t))
+}
+function docHay(doc: any): string {
+  const ex = doc?.extracted || {}
+  const fields = ex.fields && typeof ex.fields === 'object' ? Object.values(ex.fields).join(' ') : ''
+  return ` ${normalize([doc?.title, doc?.summary, ex.text, ex.summary, fields, ex.userLabel].filter(Boolean).join(' '))} `
+}
+function isCardDoc(doc: any): boolean {
+  return String(doc?.extracted?.assetType || doc?.doc_type || '') === 'business_card' || isBusinessCardText(`${doc?.title || ''} ${doc?.summary || ''} ${doc?.extracted?.text || ''}`)
+}
+function phraseIn(hay: string, names: string[]): boolean {
+  for (let i = 0; i + 1 < names.length; i++) if (hay.includes(` ${names[i]} ${names[i + 1]} `)) return true
+  return false
+}
+
+/**
+ * The saved file a person/company name points at. Contact-shaped questions match business
+ * cards on a two-word name ("pradip kumar") or a unique single name; any other saved file
+ * needs a "show/find" verb and EVERY name word present, so a request like "find a badminton
+ * court in HSR Layout" can't pull up an old receipt that happens to mention HSR Layout.
+ */
+export function matchSavedByName(raw: string, docs: any[], opts: { verbOk: boolean }): any | null {
+  const names = nameTokens(raw)
+  if (!names.length) return null
+  const contact = isContactQuestion(raw)
+  const scored = docs.map((doc) => {
+    const hay = docHay(doc)
+    const hits = names.filter((t) => hay.includes(` ${t} `))
+    return { doc, hay, hits: hits.length, card: isCardDoc(doc), phrase: phraseIn(hay, names) }
+  })
+  const ok = scored.filter((x) => {
+    if (x.card && contact) {
+      if (names.length >= 2) return x.phrase || x.hits === names.length
+      return names[0].length >= 4 && x.hits === 1
+    }
+    return opts.verbOk && (contact || EXPLICIT_ASSET_NOUN_RE.test(raw)) && names.length >= 2 && x.hits === names.length && x.phrase
+  })
+  if (!ok.length) return null
+  ok.sort((a, b) => (Number(b.card) - Number(a.card)) || (b.hits - a.hits) || (Date.parse(b.doc.created_at || 0) - Date.parse(a.doc.created_at || 0)))
+  // One name that fits several different cards ("Rahul") is ambiguous; repeat saves of the same card are not.
+  if (names.length === 1 && ok.filter((x) => x.card).length > 1) {
+    // Same first name, different surnames → different people.
+    const people = new Set(ok.filter((x) => x.card).map((x) => (x.hay.match(new RegExp(` ${names[0]} ([a-z0-9]+) `)) || [])[1] || ''))
+    if (people.size > 1) return null
+  }
+  return ok[0].doc
+}
+
+/** Older saves that only live in the notes list. */
+export function matchNoteByName(raw: string, items: any[]): { text: string; at?: string } | null {
+  const names = nameTokens(raw)
+  if (!names.length || (names.length === 1 && names[0].length < 5)) return null
+  // Only contact-like notes (a card, an email or a phone number), so "my HDFC card number"
+  // can never surface an unrelated note that mentions HDFC.
+  const contactLike = (t: string) => isBusinessCardText(t) || /[\w.+-]+@[\w-]+\.[\w.]+/.test(t) || /(?:\+?\d[\d\s-]{8,}\d)/.test(t)
+  const hits = items
+    .map((it: any) => ({ text: String(it?.text ?? it ?? ''), at: it?.added_at || it?.created_at || it?.at }))
+    .filter((n) => { const hay = ` ${normalize(n.text)} `; return contactLike(n.text) && (names.length >= 2 ? phraseIn(hay, names) : hay.includes(` ${names[0]} `)) })
+  return hits.length ? hits[hits.length - 1] : null
 }
