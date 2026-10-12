@@ -196,11 +196,19 @@ assert.match(prompts[0], /Gogo has it: use \{"kind":"fill_otp"/)
 
 // A wrong code: the OTP page is still there after typing it. Gogo asks again and says so.
 commands.length = 0
-script = [otpPage, otpPage]
+script = [otpPage, { ...otpPage, text: otpPage.text + '\nInvalid OTP. Please try again.' }]
 plans = [{ approvedOperation: 'booking', actions: [{ kind: 'fill_otp', selector: '#otp' }, { kind: 'click', selector: '#verify' }] }]
 const wrong = await computer.runSecureBrowser({ ...base, resumePage: true, bookingPhone: '9876543210', bookingOtp: '000000' })
 assert.equal(wrong.bookingStage, 'otp')
 assert.equal(wrong.otpRejected, true)
+// 12 Oct live run: the code was typed but Verify never pressed, and Gogo said it was rejected. With
+// no error on the page, Gogo presses Verify again (twice at most) before saying so.
+commands.length = 0
+script = [otpPage, otpPage, otpPage, otpPage]
+plans = [{ approvedOperation: 'booking', actions: [{ kind: 'fill_otp', selector: '#otp' }, { kind: 'click_text', text: 'Verify' }] }]
+const slow = await computer.runSecureBrowser({ ...base, resumePage: true, bookingPhone: '9876543210', bookingOtp: '000000' })
+assert.deepEqual(commands.slice(2).map(c => c.payload.actions), [[{ kind: 'click', selector: '#verify' }, { kind: 'wait', ms: 2500 }], [{ kind: 'click', selector: '#verify' }, { kind: 'wait', ms: 2500 }]])
+assert.equal(slow.otpRejected, true)
 
 // Not a booking: fill_phone and fill_otp are dropped, so an ordinary execution never gets them.
 commands.length = 0
