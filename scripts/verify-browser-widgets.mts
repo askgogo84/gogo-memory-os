@@ -81,6 +81,36 @@ assert.deepEqual(steps(sent), ['click:done', 'fill_phone:done', 'click_text:done
 assert.match(sent.text, /Enter the OTP sent to \+91 \*+3210/, 'the code was requested for the number on file')
 assert.doesNotMatch(JSON.stringify(sent), /9876543210/, 'the number never comes back in the result')
 
+// 2d. Screenshot fallback (adapted from OrgoAI/bops): a booking wave can return the viewport image,
+// and act at a point. The worker keeps every rule: never Pay, nothing added before login, no repeat
+// Add to Cart, and the number is typed from the command-scoped variable only.
+function waveEnv(url: string, actions: any[], extra: Record<string, unknown>, env: Record<string, string> = {}) {
+  const payload = Buffer.from(JSON.stringify({ url, mode: 'execute', actions, bookingFlow: true, keepAlive: false, ...extra })).toString('base64')
+  const run = spawnSync('node', [scriptPath, payload], { encoding: 'utf8', timeout: 90_000,
+    env: { ...process.env, ...env, NODE_PATH: pwModules, PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers' } })
+  assert.equal(run.status, 0, run.stderr)
+  const lines = run.stdout.trim().split('\n'); return JSON.parse(lines[lines.length - 1])
+}
+const shot = waveEnv(page('vision.html'), [], { screenshot: true })
+assert.ok(typeof shot.shot === 'string' && shot.shot.length > 2000, 'a viewport image comes back')
+assert.ok(shot.viewport && shot.viewport.w > 0 && shot.viewport.h > 0)
+const point = waveEnv(page('vision.html'), [{ kind: 'click_at', x: 170, y: 120 }, { kind: 'fill_phone_at', x: 400, y: 315 }], {}, { GOGO_BOOKING_PHONE: '9876543210' })
+assert.deepEqual(steps(point), ['click_at:done', 'fill_phone_at:done'])
+assert.match(point.text, /typed 10 digits ending 3210/)
+assert.doesNotMatch(JSON.stringify(point), /9876543210/, 'the number never comes back')
+const pay = waveEnv(page('vision.html'), [{ kind: 'click_at', x: 170, y: 220 }], {})
+assert.deepEqual(steps(pay), ['click_at:skipped:payment_control'])
+assert.doesNotMatch(pay.text, /PAID/)
+const early = waveEnv(page('vision.html'), [{ kind: 'click_at', x: 370, y: 220 }], { loginFirst: true })
+assert.deepEqual(steps(early), ['click_at:skipped:login_first'])
+const again = waveEnv(page('vision.html'), [{ kind: 'click_at', x: 370, y: 220 }], { advancePressed: ['add to cart'] })
+assert.deepEqual(steps(again), ['click_at:skipped:repeat'])
+const once = waveEnv(page('vision.html'), [{ kind: 'click_at', x: 370, y: 220 }], {})
+assert.deepEqual(steps(once), ['click_at:done'])
+assert.equal(once.actions[0].detail, 'Add To Cart', 'what was pressed is recorded so it is never pressed twice')
+const noBox = waveEnv(page('vision.html'), [{ kind: 'fill_phone_at', x: 170, y: 220 }], {}, { GOGO_BOOKING_PHONE: '9876543210' })
+assert.deepEqual(steps(noBox), ['fill_phone_at:failed:wrong_input_type'], 'the number is only typed into a real input')
+
 // 3. Sport, date, time and court through pointer-only listboxes and a div calendar, then Add To Cart.
 const booking = wave(page('booking.html'), [
   { kind: 'click', selector: '#sport-btn' }, { kind: 'click_text', text: 'Badminton' },

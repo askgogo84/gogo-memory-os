@@ -130,8 +130,11 @@ const commands: Array<{ payload: any; env: Record<string, string> }> = []
 const prompts: string[] = []
 let plans: any[] = []
 let outcomes: any[] = []
+const visionCalls: Array<{ prompt: string; image: string }> = []
+let visionReplies: string[] = []
 const computer = load('secure-computer.ts', {
-  './planner-provider': { completeAgentPlanPrompt: async (prompt: string) => { prompts.push(prompt); return JSON.stringify(plans.shift() || { approvedOperation: 'booking', actions: [] }) } },
+  './planner-provider': { completeAgentPlanPrompt: async (prompt: string) => { prompts.push(prompt); return JSON.stringify(plans.shift() || { approvedOperation: 'booking', actions: [] }) },
+    completeVisionPrompt: async (prompt: string, image: string) => { visionCalls.push({ prompt, image }); return visionReplies.shift() || '{"action":"none","why":"nothing"}' } },
   '@vercel/sandbox': { Sandbox: { getOrCreate: async () => ({ expiresAt: new Date(Date.now() + 1200000), extendTimeout: async () => {}, writeFiles: async () => {}, updateNetworkPolicy: async () => {}, stop: async () => {},
     runCommand: async (cmd: any) => {
       const payload = JSON.parse(Buffer.from(String(cmd.args[3]), 'base64').toString('utf8'))
@@ -396,7 +399,7 @@ console.log('Provider booking: an empty plan on a booking page gets one second l
   assert.doesNotMatch(prompts[2], /did not press the last Add to cart/)
   assert.match(prompts[0], /\{"kind":"choose","field":"its field name","value":"the option"\}/)
   const src = readFileSync('lib/agent/secure-computer.ts', 'utf8')
-  assert.match(src, /plan\.actions\.filter\(a=>a\.kind!=='fill_phone'&&a\.kind!=='fill_otp'&&a\.kind!=='click_text'&&a\.kind!=='choose'\)/, 'only bookings choose')
+  assert.match(src, /plan\.actions\.filter\(a=>!\['fill_phone','fill_otp','click_text','choose','click_at','fill_phone_at','fill_otp_at','scroll_by'\]\.includes\(a\.kind\)\)/, 'only bookings choose or act by screenshot')
   const chooseHandler = src.slice(src.indexOf("else if(a.kind==='choose'){"), src.indexOf("else if(a.kind==='fill_phone'||a.kind==='fill_otp'){"))
   assert.match(chooseHandler, /if\(payload\.mode!=='execute'\|\|!payload\.bookingFlow\)/)
   assert.match(chooseHandler, /reason:'payment_control'/)
@@ -486,3 +489,39 @@ console.log('Provider booking: Add to Cart is pressed at most once per run')
   assert.equal(JSON.stringify(computer.bookingLoginActions(bare, true)), JSON.stringify([{ kind: 'fill_phone', selector: '#bare' }, { kind: 'click_text', text: 'Send OTP' }]), 'a lone unlabelled box after Login is the mobile box')
 }
 console.log('Provider booking: with the number on file, Gogo logs in itself before choosing or adding to cart')
+
+
+// Screenshot fallback (adapted from OrgoAI/bops). 12 Oct live run: number + Send OTP repeated nine
+// times on a page that never changed. When reading makes no progress, the next step comes from the
+// viewport image; the same login step never runs more than twice.
+{
+  const shot = 'Z'.repeat(4000)
+  const stuck = { url: 'https://playo.co/venues/hsr', title: 'Playo', text: '[Open dialog] Login / Sign Up Enter Mobile No * + 91 Send OTP', forms: [],
+    controls: [{ selector: '#login', tag: 'button', label: 'LOGIN' }, { selector: '#m', tag: 'input', type: 'number', label: '', field: '+ 91', inDialog: true }], shot, viewport: { w: 1280, h: 800 } }
+  const sent = { ...stuck, text: 'Enter the OTP sent to your mobile. Resend OTP', controls: [{ selector: '#otp', tag: 'input', type: 'text', label: 'OTP' }] }
+  commands.length = 0; prompts.length = 0; visionCalls.length = 0
+  script = [stuck, stuck, stuck, sent]
+  visionReplies = ['{"action":"click","x":640,"y":455,"why":"Send OTP is below the number box"}']
+  const r = await computer.runSecureBrowser({ ...base, bookingPhone: '9876543210', bookingOtp: null })
+  assert.ok(visionCalls.length >= 1, 'the screenshot is used once reading stops making progress')
+  assert.equal(visionCalls[0].image, shot)
+  assert.match(visionCalls[0].prompt, /1280x800 pixels/)
+  assert.match(visionCalls[0].prompt, /never press Pay/)
+  assert.match(visionCalls[0].prompt, /fill_phone/)
+  assert.doesNotMatch(visionCalls[0].prompt, /9876543210/, 'the number is never in the vision prompt')
+  const kinds = commands.slice(1).map(c => (c.payload.actions || []).map((a: any) => a.kind).join('+'))
+  assert.deepEqual(kinds, ['fill_phone+click_text', 'click_at', 'fill_phone+click_text'], 'one unchanged wave, then the screenshot step')
+  assert.deepEqual(commands[2].payload.actions, [{ kind: 'click_at', x: 640, y: 455 }])
+  assert.equal(commands[2].payload.screenshot, true)
+  assert.equal(r.bookingStage, 'otp')
+  assert.equal(JSON.stringify(r).includes(shot), false, 'the screenshot never reaches the result')
+  // The vision step can point at the number box; it never carries a typed value.
+  const plan = await computer.visionPlan('Book it', shot, { w: 1280, h: 800 }, { phoneAvailable: true, otpAvailable: false, loginFirst: true, tried: [] })
+  assert.ok(plan)
+  visionReplies = ['{"action":"fill_phone","x":400,"y":300,"why":"mobile box"}', '{"action":"fill_otp","x":1,"y":1}', '{"action":"type","x":1,"y":1,"text":"hello"}']
+  assert.equal(JSON.stringify((await computer.visionPlan('Book it', shot, { w: 1280, h: 800 }, { phoneAvailable: true, otpAvailable: false, loginFirst: true, tried: [] })).actions), JSON.stringify([{ kind: 'fill_phone_at', x: 400, y: 300 }]))
+  assert.equal((await computer.visionPlan('Book it', shot, { w: 1280, h: 800 }, { phoneAvailable: true, otpAvailable: false, loginFirst: true, tried: [] })).actions.length, 0, 'no code box without a code')
+  assert.equal((await computer.visionPlan('Book it', shot, { w: 1280, h: 800 }, { phoneAvailable: true, otpAvailable: true, loginFirst: false, tried: [] })).actions.length, 0, 'the model can never type text')
+  visionReplies = []
+}
+console.log('Provider booking: when reading makes no progress, the screenshot picks the next step; nothing typed by the model')
