@@ -392,7 +392,7 @@ console.log('Provider booking: an empty plan on a booking page gets one second l
     { approvedOperation: 'booking', actions: [{ kind: 'click_text', text: 'Add To Cart' }] },
   ]
   await computer.runSecureBrowser({ ...base, bookingPhone: null, bookingOtp: null })
-  assert.deepEqual(commands[1].payload.actions, [{ kind: 'choose', field: 'Court', value: 'first' }], 'Add to Cart is dropped while the sport differs')
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'choose', field: 'Sports', value: 'Badminton' }, { kind: 'choose', field: 'Court', value: 'first' }], 'Add to Cart is dropped while the sport differs, and Gogo sets the sport')
   assert.match(prompts[1], /did not press the last Add to cart\/Continue because the sport shown/)
   assert.deepEqual(commands[2].payload.actions, [{ kind: 'choose', field: 'Sports', value: 'Badminton' }])
   assert.deepEqual(commands[3].payload.actions, [{ kind: 'click_text', text: 'Add To Cart' }], 'once the pickers match, Add to Cart goes through')
@@ -510,9 +510,9 @@ console.log('Provider booking: with the number on file, Gogo logs in itself befo
   assert.match(visionCalls[0].prompt, /fill_phone/)
   assert.doesNotMatch(visionCalls[0].prompt, /9876543210/, 'the number is never in the vision prompt')
   const kinds = commands.slice(1).map(c => (c.payload.actions || []).map((a: any) => a.kind).join('+'))
-  assert.deepEqual(kinds, ['fill_phone+click_text', 'click_at', 'fill_phone+click_text'], 'one unchanged wave, then the screenshot step')
-  assert.deepEqual(commands[2].payload.actions, [{ kind: 'click_at', x: 640, y: 455 }])
-  assert.equal(commands[2].payload.screenshot, true)
+  assert.deepEqual(kinds, ['fill_phone+click_text', 'fill_phone+click_text', 'click_at'], 'two unchanged waves, then the screenshot step')
+  assert.deepEqual(commands[3].payload.actions, [{ kind: 'click_at', x: 640, y: 455 }])
+  assert.equal(commands[3].payload.screenshot, true)
   assert.equal(r.bookingStage, 'otp')
   assert.equal(JSON.stringify(r).includes(shot), false, 'the screenshot never reaches the result')
   // The vision step can point at the number box; it never carries a typed value.
@@ -525,3 +525,25 @@ console.log('Provider booking: with the number on file, Gogo logs in itself befo
   visionReplies = []
 }
 console.log('Provider booking: when reading makes no progress, the screenshot picks the next step; nothing typed by the model')
+
+// 12 Oct 11:10 rehearsal: the sport stayed on Swimming while the planner set the date and time, and the
+// screenshot step then went for Add To Cart. A picker that differs from the request is set by Gogo.
+{
+  const target = booking.bookingTargetFromObjective(objective)
+  const controls = [{ selector: '#s', field: 'Sports', label: 'Swimming' }, { selector: '#d', field: 'Date', label: '2026-10-12' }, { selector: '#t', field: 'Start Time', label: '07:00 AM' }]
+  assert.equal(JSON.stringify(computer.bookingPickerFixes(controls, target)), JSON.stringify([{ kind: 'choose', field: 'Sports', value: 'Badminton' }, { kind: 'choose', field: 'Date', value: '2026-10-17' }]))
+  assert.equal(computer.bookingPickerFixes([{ field: 'Sports', label: 'Badminton' }, { field: 'Date', label: '2026-10-17' }, { field: 'Start Time', label: '07:00 AM' }], target).length, 0)
+  const wrong = { ...venue, url: 'https://playo.co/booking?venueId=x', text: 'Sports Date Start Time Add To Cart', controls: [...controls.map(c => ({ ...c, tag: 'button' })), { selector: '#add', tag: 'button', label: 'Add to Cart' }] }
+  commands.length = 0; prompts.length = 0
+  script = [wrong, wrong]
+  plans = [{ approvedOperation: 'booking', actions: [{ kind: 'choose', field: 'Date', value: '2026-10-17' }, { kind: 'click', selector: '#add' }] }]
+  await computer.runSecureBrowser({ ...base, bookingPhone: null, bookingOtp: null })
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'choose', field: 'Sports', value: 'Badminton' }, { kind: 'choose', field: 'Date', value: '2026-10-17' }], 'Gogo sets the sport itself, and Add to Cart waits')
+  const shot = 'Z'.repeat(4000)
+  visionReplies = ['{"action":"none"}']
+  visionCalls.length = 0
+  await computer.visionPlan('Book it', shot, { w: 1280, h: 800 }, { phoneAvailable: false, otpAvailable: false, loginFirst: false, tried: [], mismatch: ['sport'] })
+  assert.match(visionCalls[0].prompt, /the sport shown on the page do not match the request yet: change it first/)
+  visionReplies = []
+}
+console.log('Provider booking: a picker that differs from the request is set by Gogo itself')
