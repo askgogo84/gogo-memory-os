@@ -13,7 +13,7 @@ import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { checkCostAllowance, COST_ESTIMATES_PAISE, recordCostEvent } from '@/lib/services/cost-guard'
 import { FLIGHT_TRACKER_DOMAINS, isFareShoppingResult, classifyOccurrence, stripNegatedStates } from '@/lib/bot/handlers/flight-status'
 import { extractDateTokens } from '@/lib/agent/watcher-quality'
-import { ticketTimezone } from '@/lib/services/travel-time'
+import { ticketTimezone, withTicketYears, flightInstants } from '@/lib/services/travel-time'
 import { deliverWatchAlert } from './watch-alert-delivery'
 
 export type LegState = 'scheduled' | 'delayed' | 'departed' | 'landed' | 'cancelled' | 'diverted' | 'unknown'
@@ -89,20 +89,38 @@ export function statusFromWeb(results: WebSearchResult[], leg: Pick<TrackedLeg, 
   const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(leg.departAt))
   const w = trackingWindow(leg.departAt, leg.arriveAt)
   const rank: LegState[] = ['cancelled', 'diverted', 'landed', 'departed', 'delayed']
-  let found: { state: LegState; url?: string } | null = null
+  // Per tracker site: the most serious state it reports for THIS flight and date.
+  const bySite = new Map<string, { state: LegState; url?: string }>()
+  const positive = new Set<string>() // sites showing the flight operating normally
   for (const r of results) {
     if (isFareShoppingResult(r)) continue
     const hay = `${r.title || ''} ${r.snippet || ''}`
     if (!extractDateTokens(hay).length && !/20\d{2}-?\d{2}-?\d{2}/.test(String(r.url || ''))) continue // must be dated
     if (!classifyOccurrence(r, `${code} on ${ymd}`, ymd).usable) continue
+    let site = ''
+    try { site = new URL(String(r.url || '')).hostname.replace(/^www\./, '') } catch { continue }
     const t = stripNegatedStates(hay)
+    if (/\b(on[- ]time|scheduled|as scheduled|boarding|departed|en ?route|in ?air|landed|arrived)\b/i.test(t) && !/\bcancell?ed\b/i.test(t)) positive.add(site)
     const state: LegState | null = /\bcancell?ed\b/i.test(t) ? 'cancelled' : /\bdiverted\b/i.test(t) ? 'diverted'
       : /\b(landed|arrived)\b/i.test(t) && now >= w.arr - 60 * MIN ? 'landed'
       : /\b(departed|took off|en ?route|in ?air|airborne)\b/i.test(t) && now >= w.dep - 30 * MIN ? 'departed'
       : /\bdelay(?:ed)?\b/i.test(t) ? 'delayed' : null
-    if (state && (!found || rank.indexOf(state) < rank.indexOf(found.state))) found = { state, url: r.url }
+    const prev = bySite.get(site)
+    if (state && (!prev || rank.indexOf(state) < rank.indexOf(prev.state))) bySite.set(site, { state, url: r.url })
   }
-  return found ? { state: found.state, source: 'web', url: found.url } : null
+  // A cancellation or diversion is only reported when two different trackers agree and none
+  // shows the flight operating; one site's flag is often stale or about another day.
+  const sitesWith = (st: LegState) => [...bySite.entries()].filter(([, v]) => v.state === st)
+  for (const st of ['cancelled', 'diverted'] as LegState[]) {
+    const agree = sitesWith(st)
+    const contradicted = [...positive].some(site => !agree.some(([a]) => a === site))
+    if (agree.length >= 2 && !contradicted) return { state: st, source: 'web', url: agree[0][1].url }
+  }
+  for (const st of ['landed', 'departed', 'delayed'] as LegState[]) {
+    const hit = sitesWith(st)[0]
+    if (hit) return { state: st, source: 'web', url: hit[1].url }
+  }
+  return null
 }
 
 function localClock(iso: string | undefined, city: string) {
@@ -164,6 +182,35 @@ async function webStatus(leg: TrackedLeg, now: number): Promise<LegStatus | null
   const results = await searchWebResults(`${normalizeFlightNo(leg.flightNo)} flight status ${date}`, { includeDomains: FLIGHT_TRACKER_DOMAINS })
   await recordCostEvent({ telegramId: leg.telegramId, category: 'web_search_basic', metadata: { source: 'flight_leg_tracker', ticket_id: leg.id } }).catch(() => {})
   return statusFromWeb(results, leg, now)
+}
+
+/**
+ * Boarding passes saved before the missing-year fix have no departure time, so nothing tracks
+ * them. Date legs saved in the last 3 days whose printed date lacks only the year, relative to
+ * when they were saved.
+ */
+export async function repairYearlessFlightLegs(nowMs = Date.now()) {
+  const { data, error } = await supabaseAdmin.from('travel_tickets')
+    .select('id,telegram_id,from_city,to_city,raw,created_at')
+    .eq('type', 'flight').is('depart_at', null)
+    .gte('created_at', new Date(nowMs - 3 * 24 * 60 * MIN).toISOString()).limit(100)
+  if (error) throw new Error(`flight_repair_read_failed:${error.message}`)
+  let repaired = 0
+  for (const row of data || []) {
+    const raw: any = row.raw || {}
+    if (!raw.date || /\b\d{4}\b/.test(String(raw.date))) continue
+    const savedAt = Date.parse(String(row.created_at)) || nowMs
+    const dated: any = withTicketYears({ type: 'flight', flights: [raw] }, savedAt)
+    const f = dated.flights[0]
+    const { departAt, arriveAt, departTz } = flightInstants({ ...f, from: f.from || row.from_city, to: f.to || row.to_city })
+    if (!departAt) continue
+    const { error: upErr } = await supabaseAdmin.from('travel_tickets').update({
+      depart_at: departAt.toISOString(), arrive_at: arriveAt ? arriveAt.toISOString() : null, depart_tz: departTz || null,
+      date_label: f.date, raw: { ...raw, date: f.date, ...(f.arrivalDate ? { arrivalDate: f.arrivalDate } : {}), yearRepairedAt: new Date(nowMs).toISOString() },
+    }).eq('id', row.id).eq('telegram_id', row.telegram_id).is('depart_at', null)
+    if (!upErr) repaired++
+  }
+  return { repaired }
 }
 
 export async function runFlightLegTracker(nowMs = Date.now()) {
