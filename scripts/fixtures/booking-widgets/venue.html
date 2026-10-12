@@ -1,5 +1,24 @@
 <!doctype html><html><head><title>Machaxi Milan Sports Centre - Begur, Bengaluru</title><meta charset="utf-8"></head><body>
+<header><button type="button" id="headlessui-menu-button-r2">LOGIN</button></header>
 <h1>Machaxi Milan Sports Centre</h1>
 <button type="button" id="book">Book Now</button><button type="button">Share</button>
-<script>document.getElementById('book').addEventListener('click',()=>{location.href='booking.html'})</script>
+<!-- Like Playo: a help form with its own Mobile field, and hundreds of footer links. -->
+<form id="help"><p>Need help?</p><input placeholder="Name*"><input placeholder="Mobile*"><input placeholder="Email*"><textarea placeholder="Query*"></textarea><button type="button">Submit Ticket</button></form>
+<footer id="footer"></footer>
+<script>
+document.getElementById('book').addEventListener('click',()=>{location.href='booking.html'})
+const f=document.getElementById('footer');
+for(let i=0;i<180;i++){const a=document.createElement('a');a.href='#c'+i;a.textContent='Badminton Courts in City '+i+' and many more sports venues near you';f.appendChild(a);f.appendChild(document.createTextNode(' '))}
+// Like Playo: LOGIN toggles a dialog added at the very end of <body>; its mobile box has no label
+// of its own ("+91" beside it, "Enter Mobile No" above) and Send OTP is disabled until a number is typed.
+document.getElementById('headlessui-menu-button-r2').addEventListener('click',()=>{
+  const open=document.getElementById('login-dialog');if(open){open.remove();return}
+  const d=document.createElement('div');d.id='login-dialog';d.setAttribute('role','dialog');d.setAttribute('aria-modal','true');
+  d.innerHTML='<h2>Login / Sign Up</h2><p>Enter Mobile No *</p><div class="row"><div>+ 91</div><input id="m" type="number"></div><button type="button" id="send" disabled>Send OTP</button><p>or</p><button type="button">Email Id</button><button type="button">Google</button><p id="sent"></p>';
+  document.body.appendChild(d);
+  const m=d.querySelector('#m'),s=d.querySelector('#send');
+  m.addEventListener('input',()=>{s.disabled=String(m.value).length!==10});
+  s.addEventListener('click',()=>{d.querySelector('#sent').textContent='Enter the OTP sent to +91 ******'+String(m.value).slice(-4)+'. Resend OTP'});
+});
+</script>
 </body></html>

@@ -60,6 +60,27 @@ assert.equal(ctl('#time-btn')?.field, 'Start Time')
 assert.equal(ctl('#court-btn')?.field, 'Court')
 assert.equal(ctl('#headlessui-menu-button-r4')?.field, undefined)
 
+// 2c. 12 Oct live run: the login box opens at the end of a long page and was cut off. An open
+// dialog is read first, so its unlabelled mobile box is observed, and Gogo's own login step fills it
+// (never the help form's Mobile*) and presses Send OTP.
+const loginOpen = wave(page('venue.html'), [{ kind: 'click', selector: '#headlessui-menu-button-r2' }])
+assert.match(loginOpen.text, /^\[Open dialog\] Login \/ Sign Up/)
+const mobile = loginOpen.controls.find((c: any) => c.selector === '#m')
+assert.ok(mobile && mobile.inDialog, 'the dialog input is among the observed controls')
+const step = exports.bookingLoginActions(loginOpen, true)
+assert.equal(JSON.stringify(step), JSON.stringify([{ kind: 'fill_phone', selector: '#m' }, { kind: 'click_text', text: 'Send OTP' }]))
+const sent = (() => {
+  const payload = Buffer.from(JSON.stringify({ url: page('venue.html'), mode: 'execute', bookingFlow: true, keepAlive: false,
+    actions: [{ kind: 'click', selector: '#headlessui-menu-button-r2' }, ...step] })).toString('base64')
+  const run = spawnSync('node', [scriptPath, payload], { encoding: 'utf8', timeout: 90_000,
+    env: { ...process.env, GOGO_BOOKING_PHONE: '9876543210', NODE_PATH: pwModules, PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers' } })
+  assert.equal(run.status, 0, run.stderr)
+  const lines = run.stdout.trim().split('\n'); return JSON.parse(lines[lines.length - 1])
+})()
+assert.deepEqual(steps(sent), ['click:done', 'fill_phone:done', 'click_text:done'])
+assert.match(sent.text, /Enter the OTP sent to \+91 \*+3210/, 'the code was requested for the number on file')
+assert.doesNotMatch(JSON.stringify(sent), /9876543210/, 'the number never comes back in the result')
+
 // 3. Sport, date, time and court through pointer-only listboxes and a div calendar, then Add To Cart.
 const booking = wave(page('booking.html'), [
   { kind: 'click', selector: '#sport-btn' }, { kind: 'click_text', text: 'Badminton' },
