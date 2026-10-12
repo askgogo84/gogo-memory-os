@@ -72,3 +72,26 @@ export async function completeAgentPlanPrompt(prompt:string,onUsage?:(usage:Mode
   return completePlannerPromptWithFallback(prompt,p=>anthropicComplete(p,onUsage,system),p=>openAiComplete(p,onUsage,system))
 }
 
+
+// Screenshot fallback (adapted from OrgoAI/bops' computer-use loop): one model call with the
+// viewport image. Anthropic first, OpenAI as the fallback, same as the text planner.
+async function anthropicVision(prompt:string,jpegBase64:string,onUsage?:(usage:ModelUsage)=>void){
+  const model=currentPlannerModel()
+  const result=await measureModelCall({provider:'anthropic',model,onUsage,usage:(r:any)=>({input:r.usage?.input_tokens,output:r.usage?.output_tokens}),call:()=>anthropic.messages.create({
+    model,max_tokens:600,
+    ...(/-4-/.test(model)?{temperature:0}:{}),
+    messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:jpegBase64}},{type:'text',text:prompt}]}],
+  } as any)})
+  return result.content[0]?.type==='text'?result.content[0].text:''
+}
+async function openAiVision(prompt:string,jpegBase64:string,onUsage?:(usage:ModelUsage)=>void){
+  if(!openai)throw new Error('openai_planner_fallback_not_configured')
+  const result=await measureModelCall({provider:'openai',model:OPENAI_FALLBACK_MODEL,onUsage,usage:(r:any)=>({input:r.usage?.prompt_tokens,output:r.usage?.completion_tokens}),call:()=>openai.chat.completions.create({
+    model:OPENAI_FALLBACK_MODEL,max_tokens:600,temperature:0,
+    messages:[{role:'user',content:[{type:'text',text:prompt},{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+jpegBase64}}]}],
+  } as any)})
+  return result.choices?.[0]?.message?.content||''
+}
+export async function completeVisionPrompt(prompt:string,jpegBase64:string,onUsage?:(usage:ModelUsage)=>void){
+  return completePlannerPromptWithFallback(prompt,p=>anthropicVision(p,jpegBase64,onUsage),p=>openAiVision(p,jpegBase64,onUsage))
+}
