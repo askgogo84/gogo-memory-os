@@ -478,6 +478,11 @@ console.log('Provider booking: Add to Cart is pressed at most once per run')
   assert.equal(JSON.stringify(computer.bookingLoginActions(loggedOut, false)), JSON.stringify([{ kind: 'click', selector: '#login' }]))
   assert.equal(computer.bookingOtpActions(loggedOut), null, 'the help form is never a code box')
   const bare = { ...loginBox, controls: [...loggedOut.controls, { selector: '#bare', tag: 'input', type: 'number', label: '' }] }
+  // Hidden attributes count (adapted from Bops): autocomplete="tel" and autocomplete="one-time-code".
+  const byHint = { ...loginBox, controls: [...loggedOut.controls, { selector: '#x1', tag: 'input', type: 'text', label: '', hint: 'phoneNumber tel' }] }
+  assert.equal(JSON.stringify(computer.bookingLoginActions(byHint, false)), JSON.stringify([{ kind: 'fill_phone', selector: '#x1' }, { kind: 'click_text', text: 'Send OTP' }]))
+  const otpHint = { ...codeBox, controls: [help, { selector: '#c1', tag: 'input', type: 'text', label: '', hint: 'one-time-code' }] }
+  assert.equal(JSON.stringify(computer.bookingOtpActions(otpHint)), JSON.stringify([{ kind: 'fill_otp', selector: '#c1' }, { kind: 'click_text', text: 'Verify' }]))
   assert.equal(JSON.stringify(computer.bookingLoginActions(bare, true)), JSON.stringify([{ kind: 'fill_phone', selector: '#bare' }, { kind: 'click_text', text: 'Send OTP' }]), 'a lone unlabelled box after Login is the mobile box')
 }
 console.log('Provider booking: with the number on file, Gogo logs in itself before choosing or adding to cart')

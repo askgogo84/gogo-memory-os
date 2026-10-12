@@ -374,6 +374,9 @@ async function model(page){
       return text.length>0&&text.length<160&&getComputedStyle(el).cursor==='pointer'&&(el.tagName==='P'||/\b(search|location|address)\b/i.test(text))&&!Array.from(el.children).some(child=>clean(child.innerText||child.textContent)===text);
     }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:accessibleLabel(el).slice(0,180),
       ...(el.tagName==='INPUT'?{type:String(el.getAttribute('type')||'text').toLowerCase().slice(0,20)}:{}),
+      // What a field is for, from attributes a person never sees (adapted from Bops' form matching):
+      // name, id, autocomplete ("tel", "one-time-code"), inputmode and maxlength.
+      ...(el.tagName==='INPUT'?{hint:[el.getAttribute('name'),el.id,el.getAttribute('autocomplete'),el.getAttribute('inputmode'),el.getAttribute('maxlength')?'max'+el.getAttribute('maxlength'):''].filter(Boolean).join(' ').slice(0,80)}:{}),
       ...((f=>f?{field:f}:{})(fieldOf(el))),
       ...(el.getAttribute&&el.getAttribute('aria-haspopup')&&el.getAttribute('aria-haspopup')!=='false'?{popup:clean(el.getAttribute('aria-haspopup')).slice(0,20)}:{}),
       ...(el.tagName==='A'&&el.href?{href:el.href}:{}),
@@ -1256,7 +1259,7 @@ export function bookingLoginActions(page:any,loginPressed:boolean):BrowserAction
   const controls:any[]=page?.controls||[]
   const notHelp=(c:any)=>!/need help|query|support|ticket|feedback|contact|newsletter|subscribe/i.test(String(c?.field||''))
   const phone=controls.filter(c=>c?.tag==='input'&&notHelp(c)&&!/^(?:hidden|password|checkbox|radio|submit|button|email|search)$/.test(String(c?.type||'text')))
-    .find(c=>c.type==='tel'||/mobile|phone|\+\s*91|\bnumber\b/i.test(String(c.field||'')+' '+String(c.label||'')+' '+String(c.selector||'')))
+    .find(c=>c.type==='tel'||/\btel\b|mobile|phone|msisdn/i.test(String(c.hint||''))||/mobile|phone|\+\s*91|\bnumber\b/i.test(String(c.field||'')+' '+String(c.label||'')+' '+String(c.selector||'')))
   // After Login was pressed, a single unlabelled number/text box outside the help form is the mobile box.
   const lone=loginPressed?controls.filter(c=>c?.tag==='input'&&notHelp(c)&&['tel','number','text'].includes(String(c?.type||'text'))&&!String(c?.label||'').trim()):[]
   if(!phone&&lone.length===1&&/mobile|phone|\+\s*91/i.test(String(page?.text||'')))return bookingLoginActions({...page,controls:[...controls.filter(c=>c!==lone[0]),{...lone[0],field:'mobile'}]},false)
@@ -1277,7 +1280,8 @@ export function bookingOtpActions(page:any):BrowserAction[]|null{
   const controls:any[]=page?.controls||[]
   const notHelp=(c:any)=>!/need help|query|support|ticket|feedback|contact|newsletter|subscribe/i.test(String(c?.field||''))
   const inputs=controls.filter(c=>c?.tag==='input'&&notHelp(c)&&['text','tel','number','password'].includes(String(c?.type||'text')))
-  const code=inputs.find(c=>/\botp\b|one[- ]?time|\bcode\b|verification|passcode/i.test(String(c.field||'')+' '+String(c.label||'')+' '+String(c.selector||'')))
+  const code=inputs.find(c=>/one-time-code|\botp\b|\bcode\b|verif|passcode/i.test(String(c.hint||'')))
+    ||inputs.find(c=>/\botp\b|one[- ]?time|\bcode\b|verification|passcode/i.test(String(c.field||'')+' '+String(c.label||'')+' '+String(c.selector||'')))
     ||(inputs.filter(c=>!/mobile|phone|\+\s*91|e-?mail|name/i.test(String(c.field||'')+' '+String(c.label||''))).length>=4?inputs.find(c=>!/mobile|phone|\+\s*91|e-?mail|name/i.test(String(c.field||'')+' '+String(c.label||''))):null)
   if(!code)return null
   const text=String(page?.text||'')
@@ -1301,6 +1305,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
       ...(control.field?{field:safeText(control.field,40)}:{}),
       ...(control.type?{type:safeText(control.type,20)}:{}),
       ...(control.inDialog?{inDialog:true}:{}),
+      ...(control.hint?{hint:safeText(control.hint,80)}:{}),
       ...(control.popup?{popup:safeText(control.popup,20)}:{}),
       ...(control.href?{href:safeText(control.href,1200)}:{}),
       ...(control.searchMode?{searchMode:control.searchMode,value:safeText(control.value,180)}:{}),
