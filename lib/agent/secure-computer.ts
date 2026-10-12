@@ -1232,8 +1232,9 @@ function completedSearchControls(page:any,searches:CompletedReadSearch[]):Set<st
 }
 
 // Provider booking: walk towards the booking summary with clicks, never submit, never pay.
-export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:boolean;retry?:boolean;mismatch?:string[]}){
-  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step. When a venue card, button or option has no usable link or selector, use {"kind":"click_text","text":"its exact visible text"} (for example the venue name, Book Now, Badminton, a date or 07:00 AM). The field of a control is the name shown beside it (Sports, Date, Start Time, Court); never open a header menu such as Login, Account or Menu. To set a picker use {"kind":"choose","field":"its field name","value":"the option"}: Gogo opens it, presses the option and checks the picker now shows it. Use the date as YYYY-MM-DD and the time as shown on the site (for example 07:00 AM). Use "value":"first" for the first available option when you do not know the names (for example the court). Plan the pickers in page order in ONE step (sport, then date, then start time, then court), and press Add to cart or Continue in the next step only after the observed pickers show the request; Gogo refuses Add to cart, Book, Proceed or Continue while the sport, date or time shown differ from the request. If a choose failed, plan it again from what is observed now.'
+export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:boolean;retry?:boolean;mismatch?:string[];loginFirst?:boolean}){
+  return ' PROVIDER BOOKING FLOW (overrides the submit rule above): use approvedOperation booking and NEVER use submit. Work one step at a time with click/fill/select: choose the requested date, then the requested time slot, then the Book/Proceed/Continue/Add to cart control, and end the plan after any click that opens a new step so the next page is observed first. To open a venue or another page of this site, use {"kind":"goto","url":"observed link href"} with the exact href from the observed links (for example the named venue\'s page) instead of clicking its card, as the only action of that step. When a venue card, button or option has no usable link or selector, use {"kind":"click_text","text":"its exact visible text"} (for example the venue name, Book Now, Badminton, a date or 07:00 AM). The field of a control is the name shown beside it (Sports, Date, Start Time, Court); never open a header menu such as Account or Menu (open Login only to log in). To set a picker use {"kind":"choose","field":"its field name","value":"the option"}: Gogo opens it, presses the option and checks the picker now shows it. Use the date as YYYY-MM-DD and the time as shown on the site (for example 07:00 AM). Use "value":"first" for the first available option when you do not know the names (for example the court). Plan the pickers in page order in ONE step (sport, then date, then start time, then court), and press Add to cart or Continue in the next step only after the observed pickers show the request; Gogo refuses Add to cart, Book, Proceed or Continue while the sport, date or time shown differ from the request. If a choose failed, plan it again from what is observed now. Add exactly one court or slot: once the cart lists the requested slot (for example "Cart (1)" with the date and time), never add again; press the Proceed or Checkout control of the cart to continue.'
+    +(booking.loginFirst?' LOG IN FIRST: this site shows a Login / Sign in control, so Gogo is not logged in. Before choosing anything or adding to a cart, click that observed Login / Sign in control (it may be in the header), then use fill_phone on the mobile number field and press the control that sends the OTP. Gogo refuses choose, Add to cart, Book, Proceed and Checkout until the login is done.':'')
     +(booking.phoneAvailable?' If a login or registration form asks for a mobile or phone number, use {"kind":"fill_phone","selector":"observed selector"} (Gogo fills the number itself; never put a number in any value), then click the observed control that sends the OTP (for example Get OTP, Send OTP or Continue).':' If the site asks for a mobile number, return no actions.')
     +(booking.otpAvailable?' The page is asking for the one-time code and Gogo has it: use {"kind":"fill_otp","selector":"observed selector of the code input (the first box if there are several)"}, then click the observed Verify/Continue/Login control.':' Never fill a one-time code; if the page asks for one, return no actions.')
     +' Never click Pay, Make payment, Place order or Buy now, and never fill card, UPI or bank details: when the page asks for payment, return no actions.'
@@ -1242,7 +1243,7 @@ export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:
     +(booking.retry?' You returned no actions on this booking page, but the date, time or court shown still differ from the request: plan the next step toward them now (the Date picker first if the date differs). Return no actions only if the page asks for payment, a code or a number Gogo does not have, or the requested slot is shown as unavailable on the requested date.':'')
 }
 
-async function planActions(objective:string,page:any,mode:BrowserMode,objectiveTrust:TrustClass,completedSearches:CompletedReadSearch[]=[],diagnose:(event:BrowserReadDiagnostic)=>void=()=>{},booking?:{otpAvailable:boolean;phoneAvailable:boolean;rehearsal?:boolean;retry?:boolean;mismatch?:string[]}):Promise<{actions:BrowserAction[];operation:ApprovedBrowserOperation|null;draftReady:boolean}>{
+async function planActions(objective:string,page:any,mode:BrowserMode,objectiveTrust:TrustClass,completedSearches:CompletedReadSearch[]=[],diagnose:(event:BrowserReadDiagnostic)=>void=()=>{},booking?:{otpAvailable:boolean;phoneAvailable:boolean;rehearsal?:boolean;retry?:boolean;mismatch?:string[];loginFirst?:boolean}):Promise<{actions:BrowserAction[];operation:ApprovedBrowserOperation|null;draftReady:boolean}>{
   const rejectedControls=new Set((mode==='read'?page.actions||[]:[]).filter((action:any)=>action.status==='skipped').map((action:any)=>String(action.detail||'')))
   const searchedControls=mode==='read'?completedSearchControls(page,completedSearches):new Set<string>()
   for(const selector of searchedControls)rejectedControls.add(selector)
@@ -1551,6 +1552,11 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let bookingIdleWaves=0
     let bookingRetried=false
     let bookingMismatch:string[]=[]
+    const bookingAdvancePressed=new Set<string>()
+    // 12 Oct (his rule): most sites let anyone fill a cart, then ask for an account at Proceed.
+    // A booking with the person's number logs in before selecting anything.
+    let bookingLoggedIn=false
+    const loggedOutCue=(p:any)=>(p?.controls||[]).some((c:any)=>/^\s*(?:log\s*in|login|sign\s*in)(?:\s*(?:\/|or|&)\s*(?:sign\s*up|register))?\s*$/i.test(String(c?.label||'')))
     const bookingTarget=providerBooking?bookingTargetFromObjective(params.objective):{}
     for(let wave=0;wave<(params.mode==='read'?readWaves:params.mode==='execute'&&params.accountCreation===true?MAX_SIGNUP_PAGES:providerBooking?MAX_BOOKING_PAGES:1);wave++){
       const beforeReadSnapshot=readSnapshot(page)
@@ -1704,7 +1710,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         assessedReadPage=page
         if(readAnswer)break
       }
-      const bookingPlan=providerBooking?{otpAvailable:Boolean(otpWaiting&&params.bookingOtp&&!otpUsed),phoneAvailable:Boolean(params.bookingPhone),rehearsal:params.rehearsal===true,mismatch:bookingMismatch}:undefined
+      const loginFirst=Boolean(providerBooking&&params.bookingPhone&&!bookingLoggedIn&&!otpWaiting&&loggedOutCue(page))
+      const bookingPlan=providerBooking?{otpAvailable:Boolean(otpWaiting&&params.bookingOtp&&!otpUsed),phoneAvailable:Boolean(params.bookingPhone),rehearsal:params.rehearsal===true,mismatch:bookingMismatch,loginFirst}:undefined
       let plan=await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
       // 11 Oct 15:10 rehearsal: the planner saw today's times ("No courts available") and stopped
       // without setting the requested date. A booking gets one second look per run.
@@ -1730,6 +1737,25 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(flightProgress)console.log('BROWSER_FLIGHT_PROGRESS:',JSON.stringify({wave,...googleFlightReadProgress(page,actions)}))
       // A booking never presses Add to cart, Book, Proceed or Continue while the pickers on the page
       // show a different sport, date or time than the request (11 Oct 18:30: Swimming in the cart).
+      // 12 Oct live run: Add to Cart was pressed four times in one run. A booking presses each
+      // advance control (Add to cart, Book, Proceed, Continue) at most once per run.
+      const advanceKey=(a:BrowserAction)=>{const label=a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):'';return bookingAdvanceControlText(label)?label.toLowerCase().replace(/[^a-z]+/g,' ').trim():''}
+      if(loginFirst){
+        const early=actions.findIndex(a=>{if(a.kind==='choose')return true;const label=a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):'';return /\b(?:add\s+to\s+cart|book|proceed|checkout|check\s*out|buy|reserve)\b/i.test(label)})
+        if(early>=0){
+          console.log('BROWSER_BOOKING_LOGIN_FIRST:',JSON.stringify({runId:params.sessionTaskId||null,dropped:actions.length-early}))
+          actions.splice(early)
+          if(!actions.length){bookingIdleWaves++;if(bookingIdleWaves>=2)break;continue}
+        }
+      }
+      if(providerBooking){
+        const repeat=actions.findIndex(a=>{const k=advanceKey(a);return Boolean(k)&&bookingAdvancePressed.has(k)})
+        if(repeat>=0){
+          console.log('BROWSER_BOOKING_REPEAT:',JSON.stringify({runId:params.sessionTaskId||null,control:advanceKey(actions[repeat]).slice(0,40)}))
+          actions.splice(repeat)
+          if(!actions.length)break
+        }
+      }
       if(providerBooking&&actions.length){
         const mismatch=bookingSelectionMismatch(page.controls||[],bookingTarget)
         const advance=actions.findIndex(a=>bookingAdvanceControlText(a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):''))
@@ -1761,6 +1787,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       draftActions=actions
       const currentUrl=String(page.url||target.toString())
       const {allow}=first.managed||allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
+      const plannedAdvance=providerBooking?actions.map(a=>advanceKey(a)):[]
       const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,readDeadline,bookingFlow:providerBooking,bookingTarget:providerBooking?bookingTarget:null,rehearsal:providerBooking&&params.rehearsal===true,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null,keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:params.keepAlive===true||Boolean(first.managed)})).toString('base64')
       if(readDeadline!==undefined&&Date.now()>=readDeadline)throw new Error('browser_read_deadline')
       // A sign-up's new-password field: write the generated password as a pending Vault record
@@ -1818,12 +1845,17 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(!Array.isArray(page.actions)||page.actions.length!==actions.length||actions.some((a,i)=>page.actions[i]?.kind!==a.kind))missingActionEvidence=true
       if(providerBooking&&actions.some(a=>a.kind==='fill_otp'))otpUsed=true
       // A rehearsal (public pages, no account) logs each step it planned and how it went.
-      if(providerBooking&&params.rehearsal===true)try{console.log('BOOKING_REHEARSAL_WAVE:',JSON.stringify({wave,from:(()=>{try{return new URL(currentUrl).pathname.slice(0,90)}catch{return null}})(),to:(()=>{try{return new URL(String(page.url||'')).pathname.slice(0,90)}catch{return null}})(),
+      // Every booking logs each step it planned and how it went. Real runs strip anything personal
+      // (numbers, emails); rehearsals are public pages with no account.
+      if(providerBooking)try{const scrub=(x:string)=>params.rehearsal===true?x:safeText(x,2000).replace(/[^\s@]+@[^\s@]+/g,'[email]').replace(/\+?\d[\d\s-]{6,}\d/g,'[number]');console.log(params.rehearsal===true?'BOOKING_REHEARSAL_WAVE:':'BOOKING_WAVE:',scrub(JSON.stringify({runId:params.rehearsal===true?undefined:params.sessionTaskId||null,wave,from:(()=>{try{return new URL(currentUrl).pathname.slice(0,90)}catch{return null}})(),to:(()=>{try{return new URL(String(page.url||'')).pathname.slice(0,90)}catch{return null}})(),
         planned:actions.map(a=>a.kind+':'+String((a as any).field?(a as any).field+'='+(a as any).value:(a as any).text||(a as any).url||(a as any).selector||'').slice(0,70)),
         outcome:(page.actions||[]).map((a:any)=>`${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`),
         pickerFailures:(page.actions||[]).filter((a:any)=>a?.kind==='choose'&&a?.status==='failed').map((a:any)=>({reason:a?.failure?.reason,shown:String(a?.failure?.shown||'').slice(0,80),options:(Array.isArray(a?.failure?.options)?a.failure.options:[]).slice(0,8).map((o:any)=>String(o).slice(0,60))})),
         controls:(page.controls||[]).slice(0,30).map((c:any)=>(c?.field?String(c.field).slice(0,20)+'=':'')+String(c?.label||'').slice(0,40)).filter(Boolean),
-        text:String(page.text||'').replace(/\s+/g,' ').slice(0,500)}))}catch{}
+        text:String(page.text||'').replace(/\s+/g,' ').slice(0,500)})))}catch{}
+      if(providerBooking)actions.forEach((a,i)=>{const k=plannedAdvance[i];if(k&&page.actions?.[i]?.status==='done')bookingAdvancePressed.add(k)})
+      // After logging in with the code, the site may need Add to cart once more.
+      if(providerBooking&&actions.some((a,i)=>a.kind==='fill_otp'&&page.actions?.[i]?.status==='done')){bookingAdvancePressed.clear();bookingLoggedIn=true}
       // The worker refused Add to cart because a picker differed: tell the planner which one.
       if(providerBooking&&(page.actions||[]).some((a:any)=>a?.failure?.reason==='selection_mismatch'))bookingMismatch=bookingSelectionMismatch(page.controls||[],bookingTarget)
       const doneCount=(page.actions||[]).filter((a:any)=>a.status==='done').length

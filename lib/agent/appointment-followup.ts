@@ -29,7 +29,7 @@ export function bareOptionReply(text: string): number | null {
 
 /** What to say after opening an option. Keeps the phrase the confirmation step looks for. */
 export function bookingNextStepHint(option: number) {
-  return `I inspected option ${option} without confirming anything. To book, tell me the venue, day and time, for example *book the 7 am slot at Machaxi Milan on Saturday*. I'll ask for your approval, then pick the slot, log in with your number and ask you for the OTP here, and stop at payment with a link for you to pay.`
+  return `I inspected option ${option} without confirming anything. To book, tell me the venue, day and time, for example *book the 7 am slot at Machaxi Milan on Saturday*. I'll ask for your approval, then log in with your number and ask you for the OTP here, pick the slot and add it to the cart, and stop at payment with a link for you to pay.`
 }
 
 /**
@@ -415,7 +415,7 @@ async function createFinalApproval(params: { actor: AgentActor; prepared: any; t
 
   return {
     runId: booking.runId, status: 'waiting_approval' as const, capability: 'browser' as const, risk: 'high' as const,
-    text: `Ready to book ${selection.title ? `${safe(selection.title, 80)} ` : ''}for ${slot.date} at ${to12h(slot.time)}.\n\nAfter you approve, I'll pick that slot${profile.mobile ? `, log in with your number ${maskMobile(profile.mobile)} if asked, and ask you here for the OTP` : ''}. I'll stop at payment and send you a link to pay yourself. I never pay.`,
+    text: `Ready to book ${selection.title ? `${safe(selection.title, 80)} ` : ''}for ${slot.date} at ${to12h(slot.time)}.\n\nAfter you approve, ${profile.mobile ? `I'll log in with your number ${maskMobile(profile.mobile)} first and ask you here for the OTP, then pick that slot and add it to the cart` : `I'll pick that slot and add it to the cart`}. I'll stop at payment and send you a link to pay yourself. I never pay.`,
     approvalId: String(approval.id), approvalRequired: true, handledBy: 'appointment-followup' as const,
   }
 }

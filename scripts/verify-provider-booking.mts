@@ -411,3 +411,53 @@ console.log('Provider booking: Add to cart waits until sport, date and time matc
   const asInline = shared.replace("\n      const fclean=x=>String(x||'').replace(/\\s+/g,' ').trim();", '').replace(/fclean\(/g, 'clean(')
   assert.ok(src.includes(asInline + '\n    const candidates='), 'the inline page-model copy matches FIELD_OF_JS')
 }
+
+// 12 Oct live run: Add to Cart was pressed four times in one run. Each advance control is pressed
+// at most once per run (until a code is entered); a repeat ends the run for the person.
+{
+  const ready = { ...venue, url: 'https://playo.co/booking?venueId=x', text: 'Sports Date Start Time Court Add To Cart',
+    controls: [{ selector: '#sport', tag: 'button', label: 'Badminton', field: 'Sports' }, { selector: '#date', tag: 'button', label: '2026-10-17', field: 'Date' },
+      { selector: '#time', tag: 'button', label: '07:00 AM', field: 'Start Time' }, { selector: '#add', tag: 'button', label: 'Add to Cart' }] }
+  commands.length = 0; prompts.length = 0
+  script = [ready, ready, ready, ready]
+  plans = [
+    { approvedOperation: 'booking', actions: [{ kind: 'click', selector: '#add' }] },
+    { approvedOperation: 'booking', actions: [{ kind: 'choose', field: 'Court', value: 'first' }, { kind: 'click_text', text: 'Add to cart' }] },
+    { approvedOperation: 'booking', actions: [{ kind: 'click', selector: '#add' }] },
+  ]
+  const once = await computer.runSecureBrowser({ ...base, bookingPhone: null, bookingOtp: null })
+  const pressed = commands.flatMap(c => (c.payload.actions || [])).filter((a: any) => (a.kind === 'click' && a.selector === '#add') || (a.kind === 'click_text' && /add to cart/i.test(a.text)))
+  assert.equal(pressed.length, 1, 'Add to Cart is pressed once')
+  assert.deepEqual(commands[2].payload.actions, [{ kind: 'choose', field: 'Court', value: 'first' }])
+  assert.equal(once.bookingStage, 'review')
+  assert.match(readFileSync('lib/agent/secure-computer.ts', 'utf8'), /bookingAdvancePressed\.clear\(\)/)
+  assert.match(prompts[0], /once the cart lists the requested slot[^.]*never add again; press the Proceed or Checkout control of the cart/)
+}
+console.log('Provider booking: Add to Cart is pressed at most once per run')
+
+// 12 Oct (his rule): most sites fill a cart for anyone and ask for an account at Proceed. With the
+// person's number, a booking logs in first: nothing is chosen or added until the code is entered.
+{
+  const loggedOut = { ...venue, url: 'https://playo.co/booking?venueId=x', text: 'LOGIN Sports Date Start Time Court Add To Cart',
+    controls: [{ selector: '#login', tag: 'button', label: 'LOGIN' }, { selector: '#sport', tag: 'button', label: 'Swimming', field: 'Sports' }, { selector: '#add', tag: 'button', label: 'Add to Cart' }] }
+  commands.length = 0; prompts.length = 0
+  script = [loggedOut, login, otpPage]
+  plans = [
+    { approvedOperation: 'booking', actions: [{ kind: 'choose', field: 'Sports', value: 'Badminton' }, { kind: 'click', selector: '#add' }] },
+    { approvedOperation: 'booking', actions: [{ kind: 'click', selector: '#login' }] },
+    { approvedOperation: 'booking', actions: [{ kind: 'fill_phone', selector: '#mobile' }, { kind: 'click', selector: '#get-otp' }] },
+  ]
+  const first = await computer.runSecureBrowser({ ...base, bookingPhone: '9876543210', bookingOtp: null })
+  assert.match(prompts[0], /LOG IN FIRST/)
+  assert.equal(commands.some(c => (c.payload.actions || []).some((a: any) => a.kind === 'choose' || a.selector === '#add')), false, 'nothing is chosen or added before login')
+  assert.equal(commands.some(c => (c.payload.actions || []).some((a: any) => a.selector === '#login')), true)
+  assert.equal(first.bookingStage, 'otp', 'the run pauses for the code')
+  // Without the number (a rehearsal), selection is not held back.
+  commands.length = 0; prompts.length = 0
+  script = [loggedOut, loggedOut]
+  plans = [{ approvedOperation: 'booking', actions: [{ kind: 'choose', field: 'Sports', value: 'Badminton' }] }]
+  await computer.runSecureBrowser({ ...base, bookingPhone: null, bookingOtp: null })
+  assert.doesNotMatch(prompts[0], /LOG IN FIRST/)
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'choose', field: 'Sports', value: 'Badminton' }])
+}
+console.log('Provider booking: with the number on file, Gogo logs in before choosing or adding to cart')
