@@ -38,6 +38,7 @@ export type AssetType =
   | 'invoice'
   | 'generic_document'
   | 'generic_image'
+  | 'business_card'
 
 export interface AssetExtraction {
   assetType: AssetType
@@ -51,7 +52,8 @@ export interface AssetExtraction {
 }
 
 // These are still auto-saved when confidently detected, preserving Pass 1.
-const AUTO_SAVE_TYPES: AssetType[] = ['payment_proof', 'passport', 'id_document']
+// Business cards are saved too: a contact is only useful if it can be found again later.
+const AUTO_SAVE_TYPES: AssetType[] = ['payment_proof', 'passport', 'id_document', 'business_card']
 
 export function isStructuredAsset(t: AssetType): boolean {
   return AUTO_SAVE_TYPES.includes(t)
@@ -152,6 +154,7 @@ assetType (choose one):
 - "passport": a passport data page (any country).
 - "id_document": national ID, driving licence, Aadhaar, PAN, voter ID, residence permit, etc.
 - "invoice": invoice or bill requesting/recording payment, where it is not clearly a completed-payment receipt.
+- "business_card": a visiting / business card (a person's name with their company, role and contact details).
 - "generic_document": any other paperwork (lease, contract, letter, form, statement, report).
 - "generic_image": a photo that is not primarily a document.
 
@@ -173,6 +176,7 @@ Per-type fields:
 - passport: { "name": , "passport_number": , "dob": , "issue_date": , "expiry_date": , "nationality": }
 - id_document: { "name": , "document_kind": , "id_number": , "dob": , "expiry_date": }
 - invoice: { "vendor": , "amount": , "date": , "reference_number": , "summary": }
+- business_card: { "name": , "designation": , "company": , "phones": "<all phone/mobile numbers, comma-separated, as printed>", "emails": "<comma-separated>", "address": , "website": }
 - generic_document / generic_image: { "title": , "summary": }
 
 Reply with ONLY the JSON object.`
@@ -194,17 +198,20 @@ function toIsoOrNull(v: any): string | null {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null
 }
 
-function normalizeExtraction(raw: any): AssetExtraction | null {
+export function normalizeExtraction(raw: any): AssetExtraction | null {
   if (!raw || typeof raw !== 'object') return null
   const assetType = String(raw.assetType || '').trim() as AssetType
   const allowed: AssetType[] = [
     'payment_proof', 'passport', 'id_document', 'receipt', 'order_estimate',
-    'invoice', 'generic_document', 'generic_image',
+    'invoice', 'generic_document', 'generic_image', 'business_card',
   ]
-  if (!allowed.includes(assetType)) return null
+  let assetType2 = assetType
+  // Older prompts (and the occasional miss) call a visiting card a generic document.
+  if ((assetType === 'generic_document' || assetType === 'generic_image') && isBusinessCardText(`${raw.displayTitle || ''} ${raw.fields?.title || ''} ${raw.fields?.summary || ''}`)) assetType2 = 'business_card'
+  if (!allowed.includes(assetType2)) return null
 
   const privacyClass: 'sensitive' | 'normal' =
-    ['passport', 'id_document', 'payment_proof'].includes(assetType) ? 'sensitive' : 'normal'
+    ['passport', 'id_document', 'payment_proof'].includes(assetType2) ? 'sensitive' : 'normal'
 
   const fields: Record<string, string> = {}
   if (raw.fields && typeof raw.fields === 'object') {
@@ -223,10 +230,15 @@ function normalizeExtraction(raw: any): AssetExtraction | null {
         .slice(0, 20)
     : []
 
+  if (assetType2 === 'business_card' && !fields.name) {
+    // Recover the person from a generic extraction ("Business Card - Pradip Kumar, SkyHi Technologies").
+    const m = String(raw.displayTitle || '').match(/(?:business|visiting)\s*card\s*[-–—:·]\s*([^,(]+?)(?:\s*[,(]\s*([^)]+)\)?)?$/i)
+    if (m) { fields.name = m[1].trim(); if (m[2] && !fields.company) fields.company = m[2].trim() }
+  }
   return {
-    assetType,
+    assetType: assetType2,
     privacyClass,
-    displayTitle: stripLongDigits(String(raw.displayTitle || '').trim()).slice(0, 200) || 'Document',
+    displayTitle: (assetType2 === 'business_card' && fields.name ? `Business card · ${fields.name}${fields.company ? ` (${fields.company})` : ''}` : stripLongDigits(String(raw.displayTitle || '').trim())).slice(0, 200) || 'Document',
     fields,
     docDateISO: toIsoOrNull(raw.docDateISO),
     expiryISO: toIsoOrNull(raw.expiryISO),
@@ -336,6 +348,8 @@ function buildConfirmation(ex: AssetExtraction): string {
     return `✅ Saved — ${label}${line2 ? `\n${line2}` : ''}\n\nI've securely saved the original file and the details.\n\nYou can ask later:\n${asks}`
   }
 
+  if (ex.assetType === 'business_card') return `${businessCardLines(f, `📇 Saved ${fmt(f.name) ? `${fmt(f.name)}'s card` : 'business card'}`)}\n\nI've kept the original too. Ask anytime, e.g. "${fmt(f.name) || 'their'}${fmt(f.name) ? "'s" : ''} number" or "show me ${fmt(f.name) || 'that'} card".`
+
   const noun: Record<string, string> = {
     receipt: 'receipt',
     order_estimate: 'order estimate',
@@ -379,6 +393,9 @@ function buildStoredSummary(ex: AssetExtraction): string {
     const kind = ex.assetType === 'passport' ? `${fmt(f.nationality)} Passport`.trim() : fmt(f.document_kind)
     const expiry = ex.expiryHuman || fmt(f.expiry_date)
     return stripLongDigits([fmt(f.name), kind, expiry ? `expires ${expiry}` : ''].filter(Boolean).join(' · '))
+  }
+  if (ex.assetType === 'business_card') {
+    return ['Business card', fmt(f.name), fmt(f.designation), fmt(f.company), fmt(f.address)].filter(Boolean).join(' · ')
   }
   if (ex.assetType === 'receipt') {
     return stripLongDigits([fmt(f.merchant), fmt(f.amount), fmt(f.date), shortSafeSummary(f.summary, 240)].filter(Boolean).join(' · '))
@@ -845,9 +862,12 @@ async function buildAssetFileReply(
   doc: any,
   requested?: { keys: string[]; label: string } | null,
 ): Promise<string> {
-  const lines: string[] = [`📎 ${doc.title || 'Document'}`]
-  if (doc.summary) lines.push(doc.summary)
-  if (requested) {
+  const isCard = String(doc?.extracted?.assetType || doc?.doc_type || '') === 'business_card'
+  const lines: string[] = isCard
+    ? [businessCardLines((doc?.extracted?.fields || {}) as Record<string, string>, `📇 ${doc.title || 'Business card'}`)]
+    : [`📎 ${doc.title || 'Document'}`]
+  if (!isCard && doc.summary) lines.push(doc.summary)
+  if (requested && !isCard) {
     const val = fieldFromDoc(doc, requested.keys)
     if (val) lines.push(`\n${requested.label}: ${val}`)
     else lines.push(`\nI don't have the ${requested.label.toLowerCase()} on file for this one.`)
@@ -984,4 +1004,32 @@ export async function buildAssetFieldReply(telegramId: number, text: string): Pr
   const val = fieldFromDoc(doc, req.keys)
   if (!val) return null
   return `${req.label}: ${val}`
+}
+
+export function isBusinessCardText(text: string): boolean {
+  return /\b(business|visiting|name)\s*card\b/i.test(String(text || ''))
+}
+
+/** A contact card as WhatsApp lines. Contact details on a card the user saved are not secrets. */
+export function businessCardLines(f: Record<string, string>, head: string): string {
+  const v = (x?: string) => String(x || '').trim()
+  return [
+    head,
+    [v(f.designation), v(f.company)].filter(Boolean).join(' · '),
+    v(f.phones) && `📞 ${v(f.phones)}`,
+    v(f.emails) && `✉️ ${v(f.emails)}`,
+    v(f.website) && `🌐 ${v(f.website)}`,
+    v(f.address) && `📍 ${v(f.address)}`,
+  ].filter(Boolean).join('\n')
+}
+
+/** Reply for one known document (used when the caller already resolved which one). */
+export async function buildDocumentReplyById(telegramId: number, docId: string, text: string, messageId?: string | null): Promise<string | null> {
+  const doc = await fetchDocumentById(telegramId, docId)
+  if (!doc) return null
+  await clearFollowupState(telegramId, 'last_asset')
+  await saveFollowupState(telegramId, 'last_asset', { docId: doc.id, messageId: messageId ?? null, source: 'retrieval' })
+  const requested = requestedField(text)
+  if (isSensitiveDoc(doc)) return requested ? await gateSensitiveFieldRequest(telegramId, doc, requested) : await buildMaskedSensitiveReply(telegramId, doc)
+  return buildAssetFileReply(telegramId, doc, requested)
 }
