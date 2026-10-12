@@ -78,7 +78,7 @@ assert.deepEqual(steps(failed), ['click_text:failed:action_error'])
 // 3c. A short guessed option ("1") must match a whole label, so it never presses "Court 1".
 const guessed = wave(page('booking.html'), [{ kind: 'click', selector: '#court-btn' }, { kind: 'click_text', text: '1' }])
 assert.deepEqual(steps(guessed), ['click:done', 'click_text:failed:action_error'])
-assert.ok(guessed.controls.some((c: any) => /Premium Synthetic Court 1/.test(c.label)), 'the open list is observed for the next step')
+assert.match(guessed.text, /Premium Synthetic Court 1/, 'the open list is observed for the next step')
 
 // 3d. One step: choose sets each picker by its field name and checks it, including the court
 // ("first") that only the open list names. Then Add To Cart.
@@ -87,13 +87,16 @@ const chosen = wave(page('booking.html') + '?fresh=1', [
   { kind: 'choose', field: 'Date', value: '2026-10-18' },
   { kind: 'choose', field: 'Start Time', value: '06:30 AM' },
   { kind: 'choose', field: 'Court', value: 'first' },
+  { kind: 'choose', field: 'Court', value: 'first' },
   { kind: 'choose', field: 'Sports', value: 'Badminton' },
 ])
-assert.deepEqual(steps(chosen), Array(5).fill('choose:done'))
+assert.deepEqual(steps(chosen), Array(6).fill('choose:done'))
 const shown = (sel: string) => chosen.controls.find((c: any) => c.selector === sel)?.label
 assert.equal(shown('#date-btn'), '2026-10-18')
 assert.equal(shown('#time-btn'), '06:30 AM')
-assert.match(shown('#court-btn') || '', /Premium Synthetic Court 1/)
+assert.equal(shown('#court-btn'), '--Select Court--', 'a multi-select keeps its placeholder')
+assert.match(chosen.text, /--Select Court--\s*Premium Synthetic Court 1\s/, 'the chosen court is a chip beside it, and a second choose did not remove it')
+assert.doesNotMatch(chosen.text, /Premium Synthetic Court 2/, 'the list was closed after choosing')
 const missing = wave(page('booking.html'), [{ kind: 'choose', field: 'Start Time', value: '11:00 PM' }, { kind: 'click_text', text: 'Add To Cart' }])
 assert.deepEqual(steps(missing), ['choose:failed:option_missing'], 'an option that is not offered fails and ends the wave')
 

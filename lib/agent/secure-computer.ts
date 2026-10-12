@@ -739,12 +739,27 @@ async function clickPastOverlay(page,selector){
             const hit=els.find(el=>norm(fieldOf(el))===w)||els.find(el=>{const f=norm(fieldOf(el));return f&&(f.startsWith(w)||w.startsWith(f))});
             if(!hit)return null;
             hit.setAttribute('data-gogo-pick','1');
-            return String(hit.tagName==='SELECT'?(hit.selectedOptions[0]&&hit.selectedOptions[0].textContent)||'':hit.tagName==='INPUT'?hit.value:(hit.innerText||hit.textContent)||'').replace(/\s+/g,' ').trim().slice(0,160);
-          },field);
+            const own=String(hit.tagName==='SELECT'?(hit.selectedOptions[0]&&hit.selectedOptions[0].textContent)||'':hit.tagName==='INPUT'?hit.value:(hit.innerText||hit.textContent)||'').replace(/\s+/g,' ').trim().slice(0,160);
+            // Multi-select pickers (Playo's courts) keep their placeholder and show each choice as
+            // a chip beside it: also read the field's surroundings, without any open list.
+            // Stop before a container that also holds another picker (a neighbouring field).
+            let box=hit;
+            for(let i=0;i<2&&box.parentElement;i++){const up=box.parentElement;if(Array.from(up.querySelectorAll('select,input,[aria-haspopup],[aria-expanded]')).some(el=>el!==hit&&vis(el)))break;box=up;}
+            const copy=box.cloneNode(true);copy.querySelectorAll('[role=listbox],[role=option],ul,ol,[hidden]').forEach(el=>el.remove());
+            const around=String(copy.textContent||'').replace(/\s+/g,' ').trim().slice(0,300);
+            return JSON.stringify({own,around,field:fieldOf(hit)});
+          },field).then(r=>r===null?null:JSON.parse(r));
           const placeholder=(shown)=>!String(shown||'').trim()||/^\W*(?:select|choose|pick)\b/i.test(String(shown||'').trim());
-          const same=(shown)=>{if(value==='first')return !placeholder(shown);const n=x=>String(x||'').toLowerCase().replace(/\b0+(\d)/g,'$1').replace(/[^a-z0-9]+/g,' ').trim();return n(shown).includes(n(value));};
+          const n=x=>String(x||'').toLowerCase().replace(/\b0+(\d)/g,'$1').replace(/[^a-z0-9]+/g,' ').trim();
+          const same=(p)=>{
+            if(!p)return false;
+            if(value!=='first')return n(p.own).includes(n(value))||n(p.around).includes(n(value));
+            if(!placeholder(p.own))return true;
+            // Chips beside a placeholder: anything left once the field name and placeholder go.
+            return n(n(p.around).replace(n(p.own),' ').replace(n(p.field),' ')).length>0;
+          };
           const shownBefore=await pickerText();
-          chooseShown=String(shownBefore||'');
+          chooseShown=shownBefore?String(shownBefore.own||''):'';
           if(shownBefore===null)throw new Error('picker not found');
           if(!same(shownBefore)){
             const picker=page.locator('[data-gogo-pick="1"]').first();
@@ -784,10 +799,14 @@ async function clickPastOverlay(page,selector){
                 }
               }else pressed=await pressText(page,value);
               if(!pressed)throw new Error('option not found');
+              await page.waitForTimeout(400);
+              // A multi-select list stays open over Add to cart: close it.
+              const stillOpen=await page.locator('[role=listbox]:visible').count().catch(()=>0)||await page.locator('[data-gogo-pick="1"][aria-expanded="true"]').count().catch(()=>0);
+              if(stillOpen){try{await page.keyboard.press('Escape');}catch{}}
             }
             await page.waitForTimeout(700);
             const shownAfter=await pickerText();
-            chooseShown=String(shownAfter||'');
+            chooseShown=shownAfter?String(shownAfter.own+' | '+shownAfter.around):'';
             if(!same(shownAfter))throw new Error('picker value not set');
           }
           await page.waitForTimeout(300);
