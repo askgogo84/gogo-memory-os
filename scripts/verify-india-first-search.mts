@@ -57,7 +57,7 @@ console.log('India-first search: place resolution, filters and restaurant/salon 
   const c02 = "Which badminton courts near Indiranagar are free this Saturday 7-9 am? I'll pick one, then book it and add it to my calendar."
   assert.equal(isSportsVenueRequest(c02), true)
   assert.equal(isAppointmentResearchRequest(c02), true)
-  for (const t of ['book a turf in HSR Layout for Sunday 7 am', 'any tennis courts open near Koramangala tonight', 'find a swimming pool slot in Whitefield']) assert.equal(isSportsVenueRequest(t), true, t)
+  for (const t of ['book a turf in HSR Layout for Sunday 7 am', 'any tennis courts open near Koramangala tonight', 'find a swimming pool slot in Whitefield', 'Find a  pickle ball court in HSR Layout, Bangalore for Saturday 7 am', 'any foot ball turf free in HSR tonight', 'book a table-tennis table slot in Indiranagar', 'find a padel court in Whitefield']) assert.equal(isSportsVenueRequest(t), true, t)
   for (const t of ['remind me to book the badminton court on Friday', 'who won the badminton final', 'Book a table for 4 at Toit']) assert.equal(isSportsVenueRequest(t), false, t)
   const { parseCalendarCreate } = await import('../lib/bot/handlers/calendar-actions.ts')
   assert.equal(parseCalendarCreate(c02), null, 'a discovery question is not a calendar create')
