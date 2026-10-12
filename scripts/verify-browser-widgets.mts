@@ -168,6 +168,12 @@ const ready = wave(page('booking.html') + '?fresh=1', [
 ], target)
 assert.deepEqual(steps(ready), ['choose:done', 'choose:done', 'choose:done', 'choose:done', 'click:skipped:rehearsal_stop'])
 
+// 3f. Live slot check: read the court picker's options (Playo-like ul[listbox] of divs), choose nothing.
+const listed = wave(page('booking.html') + '?fresh=1', [{ kind: 'list_options', field: 'Court' }])
+assert.deepEqual(steps(listed), ['list_options:done'])
+assert.deepEqual(JSON.parse(listed.actions[0].detail), ['Premium Synthetic Court 1 INR 375', 'Premium Synthetic Court 2 INR 375'])
+assert.doesNotMatch(listed.text, /--Select Court--\s*Premium/, 'nothing was chosen')
+
 // 4. The pay control is never pressed, by text or by selector.
 const cart = wave(booking.url, [{ kind: 'click_text', text: 'Proceed to Pay INR 375' }, { kind: 'click', selector: '#pay' }])
 assert.deepEqual(steps(cart), ['click_text:skipped:payment_control', 'click:skipped:payment_control'])

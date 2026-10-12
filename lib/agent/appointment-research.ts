@@ -200,11 +200,33 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
 
     const sportsVenue = isSportsVenueRequest(params.text)
     const heading = sportsVenue ? `Places to book ${service}s` : `Appointment options · ${service}`
-    const text = options.length
+    let text = options.length
       ? `${heading}${location ? ` · ${location}` : ''}${timing ? ` · ${timing}` : ''}\n\n${options.map((o,i) => `${i+1}. ${o.title}\n${o.snippet ? `${o.snippet}\n` : ''}Booking/provider page: ${o.url}`).join('\n\n')}\n\n${sportsVenue
         ? `I haven't checked live slots or booked anything. Reply *open option 1* (or any number) and I'll open that booking page and look for your time before asking you to approve anything.`
         : `I put direct booking pages first. I haven't checked live slots or changed anything. Reply *open option 1* (or any number) and I'll open that booking page before asking you to approve anything.`}`
       : `I couldn't find a provider page I can verify for ${service}${location ? ` in ${location}` : ''}. I rejected results from other cities/countries rather than showing you the wrong location. I did not invent availability or change anything.`
+
+    // 12 Oct (modelled on Instinct): for sports venues on a booking site, check the live slots at the
+    // top venues right away, read-only, and message the courts and prices when done.
+    let liveCheck = false
+    const listing = sportsVenue ? options.find(o => /(?:^|\.)playo\.co$/i.test((() => { try { return new URL(o.url).hostname } catch { return '' } })())) : null
+    if (listing && params.actor.whatsappId) {
+      try {
+        const followup = await import('./appointment-followup')
+        const tz = String(params.actor.timezone || 'Asia/Kolkata')
+        const date = followup.explicitDate(params.text, tz)
+        const clock = followup.explicitClock(params.text)
+        if (date && clock) {
+          const [h, m] = clock.split(':').map(Number)
+          const time = `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
+          const { queueBrowserRead } = await import('./browser-command')
+          const queued = await queueBrowserRead({ actor: params.actor, surface: params.surface, text: `open ${listing.url} and check the live slots`,
+            metadata: { slot_check: { listUrl: listing.url, date, time, timezone: tz, service, location: location || '' } } })
+          liveCheck = Boolean(queued)
+          if (liveCheck) text = text.replace(/\n\nI haven't checked live slots or booked anything\.[^\n]*$/, `\n\nChecking the live ${time} slots at the top venues on Playo now. I'll message you here in 2–3 minutes with the courts and prices. Nothing is booked.`)
+        }
+      } catch (err: any) { console.error('LIVE_SLOT_QUEUE_FAILED:', String(err?.message || err).slice(0, 160)) }
+    }
 
     await supabaseAdmin.from('agent_runs').update({
       status:'completed', summary:safe(text,1800), progress:100, completed_at:completedAt, updated_at:completedAt,

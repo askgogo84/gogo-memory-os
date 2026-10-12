@@ -91,6 +91,8 @@ type BrowserAction =
   | { kind:'fill_phone_at'; x:number; y:number }
   | { kind:'fill_otp_at'; x:number; y:number }
   | { kind:'scroll_by'; dy:number }
+  // Live slot check only (issued by Gogo, never by a planner): open a picker and read its options.
+  | { kind:'list_options'; field:string }
 
 export type SecureBrowserResult = {
   flightEvidence?:{searchControls:string[];resultLabels:string[];fareBasisLabel?:string}
@@ -115,6 +117,8 @@ export type SecureBrowserResult = {
   otpRejected?: boolean
   // The site's robot check (reCAPTCHA) stopped a booking login; the person takes over.
   robotCheck?: boolean
+  // Live slot check: what the venue's picker offered at the requested date and time.
+  slots?: { venue: string; options: string[]; none?: boolean; reason?: string }
 }
 
 function safeText(value:unknown,max=1200){
@@ -839,6 +843,39 @@ async function clickPastOverlay(page,selector){
             if(!same(shownAfter))throw new Error('picker value not set');
           }
           await page.waitForTimeout(300);
+        }
+        else if(a.kind==='list_options'){
+          // Live slot check: open the picker named by its field (Court) and read what it offers, then
+          // close it. Reads public page text only; nothing is chosen.
+          if(payload.mode!=='execute'||!payload.bookingFlow){log.push({kind:a.kind,detail:'',status:'skipped'});continue;}
+          const found=await page.evaluate((want)=>{
+            ${FIELD_OF_JS}
+            document.querySelectorAll('[data-gogo-pick]').forEach(el=>el.removeAttribute('data-gogo-pick'));
+            const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+            const vis=el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0};
+            const els=Array.from(document.querySelectorAll('button,input,select,[role=combobox],[role=listbox],[aria-haspopup],[aria-expanded]')).filter(vis);
+            const w=norm(want);
+            const hit=els.find(el=>norm(fieldOf(el))===w)||els.find(el=>{const f=norm(fieldOf(el));return f&&(f.startsWith(w)||w.startsWith(f))});
+            if(!hit)return false;hit.setAttribute('data-gogo-pick','1');return true;
+          },String(a.field||'')).catch(()=>false);
+          if(!found)throw new Error('picker not found');
+          await page.evaluate(()=>{document.querySelectorAll('[data-gogo-seen]').forEach(el=>el.removeAttribute('data-gogo-seen'));for(const el of Array.from(document.querySelectorAll('body *'))){const r=el.getBoundingClientRect();if(r.width>0&&r.height>0)el.setAttribute('data-gogo-seen','1')}}).catch(()=>{});
+          await clickPastOverlay(page,'[data-gogo-pick="1"]');
+          await page.waitForTimeout(700);
+          const options=await page.evaluate(()=>{
+            const tx=el=>String(el.innerText||el.textContent||'').replace(/\s+/g,' ').trim();
+            const vis=el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0};
+            let items=Array.from(document.querySelectorAll('[role=option]')).filter(vis).map(tx);
+            if(!items.length){
+              const fresh=Array.from(document.querySelectorAll('body *')).filter(el=>!el.hasAttribute('data-gogo-seen')&&vis(el));
+              items=fresh.filter(el=>{const t=tx(el);if(!t||t.length>80)return false;if(Array.from(el.children).some(c=>tx(c)===t))return false;if(Array.from(el.children).filter(c=>tx(c)).length>=2)return false;return true});
+              const outer=items.filter(el=>!items.some(o=>o!==el&&o.contains(el)));
+              items=outer.map(el=>tx(el.closest('li,[role=option]')||el));
+            }
+            const seen=new Set();return items.filter(t=>t&&!/^\W*(?:select|choose|pick)\b/i.test(t)&&!seen.has(t)&&seen.add(t)).slice(0,15);
+          }).catch(()=>[]);
+          try{await page.keyboard.press('Escape');}catch{}
+          log.push({kind:a.kind,detail:JSON.stringify(options).slice(0,1500),status:'done'});continue;
         }
         else if(a.kind==='click_at'||a.kind==='fill_phone_at'||a.kind==='fill_otp_at'||a.kind==='scroll_by'){
           // Screenshot fallback (adapted from OrgoAI/bops): act at a point the vision model chose.
@@ -1658,7 +1695,7 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
   let publicFlightRead=false
   try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
   const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
@@ -1716,6 +1753,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // Why a booking stopped where it did: stage, page path and step outcomes, never values.
       // 12 Oct live run: "Recaptcha verification failed" ended the run with a generic message.
       if(stage==='review'&&bookingRobotCheck(String(page?.text||'')))extra={...extra,robotCheck:true}
+      if(params.slotCheck===true&&!extra.slots&&slotOptions)extra={...extra,slots:{venue:venueName(),options:slotOptions,none:slotOptions.length===0}}
       try{console.log('BROWSER_BOOKING_STOP:',JSON.stringify({runId:params.runId||null,stage,path:(()=>{try{return new URL(String(page.url||'')).pathname.slice(0,80)}catch{return null}})(),steps:actionLog.slice(-16).map((a:any)=>`${a?.kind}:${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`)}))}catch{}
       return bookingStopResult(stage,summary,extra)
     }
@@ -1735,6 +1773,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let bookingLastLogin='',bookingLoginRepeats=0
     let otpRechecks=0,otpRecheckActions:BrowserAction[]|null=null
     let robotRetried=false,robotActions:BrowserAction[]|null=null
+    let slotActions:BrowserAction[]|null=null,slotListed=false,slotOptions:string[]|null=null,slotTimeMissing=false
+    const venueName=()=>{const t=String(page?.title||'');return safeText((t.match(/\bat\s+(.+?)(?:\s+on\s+\w+)?$/i)?.[1]||t).trim(),120)}
     // Screenshot fallback state: the last viewport image, how often reading made no progress, and
     // a cap on vision steps per run. GOGO_VISION_FALLBACK=off turns it off.
     const visionEnabled=String(process.env.GOGO_VISION_FALLBACK||'').toLowerCase()!=='off'
@@ -1775,6 +1815,20 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         const retry=(page.controls||[]).find((c:any)=>/^(?:retry|try again)$/i.test(String(c?.label||'').trim()))
         if(retry&&!robotRetried){robotRetried=true;robotActions=[{kind:'click',selector:String(retry.selector)},{kind:'wait',ms:3000}]}
         else return await bookingStop('review','The site\'s robot check stopped the login.')
+      }
+      // Live slot check (read-only, no login, never a cart): once sport, date and time match the
+      // request, read the court picker's options and stop.
+      slotActions=null
+      if(providerBooking&&params.slotCheck===true){
+        if(slotOptions)return await bookingStop('review','Live slots checked.',{slots:{venue:venueName(),options:slotOptions,none:slotOptions.length===0}})
+        if(slotTimeMissing)return await bookingStop('review','The requested start time is not offered.',{slots:{venue:venueName(),options:[],none:true,reason:'time_not_offered'}})
+        const pickers=(page.controls||[]).filter((c:any)=>c?.field)
+        const hasDateTime=pickers.some((c:any)=>/\bdate\b/i.test(String(c.field)))&&pickers.some((c:any)=>/\btime\b|\bslot\b/i.test(String(c.field)))
+        if(hasDateTime&&!bookingSelectionMismatch(page.controls||[],bookingTarget).length){
+          if(/\bno\s+(?:courts?|slots?|tables?|lanes?|pitches?)\s+available\b/i.test(String(page.text||'')))return await bookingStop('review','Nothing free at that time.',{slots:{venue:venueName(),options:[],none:true,reason:'none_available'}})
+          const resource=pickers.find((c:any)=>/court|table|lane|pitch|ground|turf|net|resource|pool/i.test(String(c.field))&&!/date|time|sport|duration/i.test(String(c.field)))
+          if(resource&&!slotListed){slotListed=true;slotActions=[{kind:'list_options',field:String(resource.field)}]}
+        }
       }
 
       let authGate=detectHumanAuthGate(page)
@@ -1930,7 +1984,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         console.log('BROWSER_BOOKING_LOGIN_STEP:',JSON.stringify({runId:params.sessionTaskId||null,step:loginStep.map(a=>a.kind==='click_text'?'click_text:'+a.text:a.kind)}))
         if(loginStep.some(a=>a.kind==='click'))bookingLoginPressed=true
       }
-      let plan=robotActions?{actions:robotActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:otpRecheckActions?{actions:otpRecheckActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:vision?{actions:vision.actions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:loginStep?{actions:loginStep,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
+      let plan=slotActions?{actions:slotActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:robotActions?{actions:robotActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:otpRecheckActions?{actions:otpRecheckActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:vision?{actions:vision.actions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:loginStep?{actions:loginStep,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
       // 11 Oct 15:10 rehearsal: the planner saw today's times ("No courts available") and stopped
       // without setting the requested date. A booking gets one second look per run.
       if(providerBooking&&!plan.actions.length&&!bookingRetried&&!bookingAtPayment(page)&&!otpWaiting){
@@ -1958,6 +2012,12 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // 12 Oct live run: Add to Cart was pressed four times in one run. A booking presses each
       // advance control (Add to cart, Book, Proceed, Continue) at most once per run.
       const advanceKey=(a:BrowserAction)=>{const label=a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):'';return bookingAdvanceControlText(label)?label.toLowerCase().replace(/[^a-z]+/g,' ').trim():''}
+      // A live slot check never adds to a cart or checks out.
+      if(providerBooking&&params.slotCheck===true){
+        const stopAt=actions.findIndex(a=>{const label=a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):'';return a.kind==='click_at'||/\b(?:add\s+to\s+cart|proceed|checkout|check\s*out|pay)\b/i.test(label)})
+        if(stopAt>=0)actions.splice(stopAt)
+        if(!actions.length){bookingIdleWaves++;if(bookingIdleWaves>=2)break;continue}
+      }
       if(loginFirst){
         const early=actions.findIndex(a=>{if(a.kind==='choose')return true;const label=a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):'';return /\b(?:add\s+to\s+cart|book|proceed|checkout|check\s*out|buy|reserve)\b/i.test(label)})
         if(early>=0){
@@ -2101,6 +2161,13 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
       // After logging in with the code, the site may need Add to cart once more.
       if(providerBooking&&actions.some((a,i)=>(a.kind==='fill_otp'||a.kind==='fill_otp_at')&&page.actions?.[i]?.status==='done')){bookingAdvancePressed.clear();bookingLoggedIn=true}
+      if(providerBooking&&params.slotCheck===true){
+        actions.forEach((a,i)=>{
+          const done=page.actions?.[i]
+          if(a.kind==='list_options'&&done?.status==='done'){try{const list=JSON.parse(String(done.detail||'[]'));slotOptions=Array.isArray(list)?list.map((x:any)=>safeText(x,80)).filter(Boolean).slice(0,15):[]}catch{slotOptions=[]}}
+          if(a.kind==='choose'&&/\btime\b|\bslot\b/i.test(a.field)&&done?.status==='failed'&&done?.failure?.reason==='option_missing')slotTimeMissing=true
+        })
+      }
       // The worker refused Add to cart because a picker differed: tell the planner which one.
       if(providerBooking&&(page.actions||[]).some((a:any)=>a?.failure?.reason==='selection_mismatch'))bookingMismatch=bookingSelectionMismatch(page.controls||[],bookingTarget)
       const doneCount=(page.actions||[]).filter((a:any)=>a.status==='done').length

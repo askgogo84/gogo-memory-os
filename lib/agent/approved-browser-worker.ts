@@ -108,6 +108,25 @@ export async function runBackgroundBrowserRead(runId: string): Promise<ApprovedB
   if (!actor) return 'failed'
   let host = 'the page'
   try { host = new URL(String(meta.url || '')).hostname.replace(/^www\./, '') } catch {}
+  // Live slot check after a sports-venue search: read-only, the top venues in parallel.
+  if (meta.slot_check && typeof meta.slot_check === 'object') {
+    const { runLiveSlotCheck, liveSlotMessage } = await import('./live-slots')
+    try {
+      const venues = await runLiveSlotCheck({ userId: actor.userId, runId, req: meta.slot_check })
+      const text = liveSlotMessage(meta.slot_check, venues)
+      const at = new Date().toISOString()
+      await supabaseAdmin.from('agent_runs').update({ status: 'completed', error: null, summary: text.slice(0, 600), completed_at: at, updated_at: at, metadata_json: { ...meta, slot_results: venues } })
+        .eq('id', runId).eq('telegram_id', String(claimed.telegram_id))
+      if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, text)
+      return 'completed'
+    } catch (err: any) {
+      console.error('LIVE_SLOTS_FAILED:', runId, String(err?.message || '').slice(0, 160))
+      const at = new Date().toISOString()
+      await supabaseAdmin.from('agent_runs').update({ status: 'failed', error: 'live_slots_failed', completed_at: at, updated_at: at }).eq('id', runId).eq('telegram_id', String(claimed.telegram_id))
+      if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, `I couldn't check the live slots on ${host} just now. Reply *open option 1* and I'll open the venue list for you.`).catch(() => {})
+      return 'failed'
+    }
+  }
   try {
     const result = await resumePausedBrowserRun({ actor, runId })
     const body = result?.status === 'completed' || result?.status === 'paused' ? String(result.text || '') : `I couldn't read the free slots on ${host} from here.`
