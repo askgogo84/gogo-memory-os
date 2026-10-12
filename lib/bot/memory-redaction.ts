@@ -59,8 +59,11 @@ export function redactSecretShapedText(content: string): string {
     } catch { return false }
   })
   // Catch long unlabelled identifier-like digit runs that survived the labelled pass.
+  // A calendar date (2026-10-17) is 8 digits too, but not an identifier: 12 Oct, the booking
+  // planner never saw the requested date because it was withheld here.
   out = out.replace(/\b(?:\d[\s-]?){8,}\b/g, (value, offset: number) =>
     reportLinks.some(link => offset >= link.index! && offset + value.length <= link.index! + link[0].length)
+      || /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/.test(value.trim())
       ? value : '[sensitive detail withheld]')
 
   return out

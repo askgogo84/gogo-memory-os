@@ -83,3 +83,42 @@ export function bookingPaymentMessage(params: { host: string; summary?: string; 
 export function bookingReviewMessage(params: { host: string; summary?: string; takeoverUrl: string }) {
   return `I got as far as I safely could on ${params.host}, but didn't reach the payment step, so nothing is booked yet.\n\nOpen this, tap *Take control* and finish from where I stopped:\n${params.takeoverUrl}`
 }
+
+export type BookingTarget = { date?: string; time?: string; service?: string }
+
+/** The date, time and service an approved booking objective asks for (from bookingObjective). */
+export function bookingTargetFromObjective(objective: string | null | undefined): BookingTarget {
+  const text = String(objective || '')
+  const when = text.match(/choose exactly (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2}\s*[AP]M)/i)
+  const what = text.match(/^Provider booking up to payment for (.+?)(?: at [^:]+)?:/i)
+  return {
+    ...(when ? { date: when[1], time: when[2].toUpperCase().replace(/\s+/, ' ') } : {}),
+    ...(what && what[1] ? { service: what[1].trim() } : {}),
+  }
+}
+
+const norm = (s: string) => String(s || '').toLowerCase().replace(/\b0+(\d)/g, '$1').replace(/[^a-z0-9]+/g, ' ').trim()
+
+/**
+ * Before Gogo presses Add to cart, Book, Proceed or Continue on a page with pickers, the pickers
+ * must show the requested sport, date and time. 11 Oct 18:30: the planner set the date and time,
+ * left the sport on Swimming and went for Add to Cart. Returns the fields that do not match.
+ */
+export function bookingSelectionMismatch(controls: Array<{ field?: string; label?: string }> | null | undefined, target: BookingTarget): string[] {
+  const pickers = (controls || []).filter(c => c && c.field)
+  const value = (re: RegExp) => pickers.find(c => re.test(String(c.field)))
+  const out: string[] = []
+  const date = value(/\bdate\b|\bday\b/i)
+  if (target.date && date && !norm(String(date.label)).includes(norm(target.date))) out.push('date')
+  const time = value(/\btime\b|\bslot\b/i)
+  if (target.time && time && !norm(String(time.label)).includes(norm(target.time))) out.push('time')
+  const sport = value(/\bsports?\b|\bactivity\b|\bservice\b|\bgame\b/i)
+  const words = norm(target.service || '').split(' ').filter(w => w.length > 3 && !/^(court|courts|slot|slots|booking|venue|session)$/.test(w))
+  if (words.length && sport && !words.some(w => norm(String(sport.label)).includes(w))) out.push('sport')
+  return out
+}
+
+/** A control that moves a booking forward (adds to cart, books, proceeds). */
+export function bookingAdvanceControlText(text: string): boolean {
+  return /\b(?:add\s+to\s+cart|book\s+now|book|proceed|continue|checkout|check\s*out|confirm|reserve)\b/i.test(String(text || ''))
+}

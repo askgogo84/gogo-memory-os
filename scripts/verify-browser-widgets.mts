@@ -55,7 +55,7 @@ const observed = wave(page('booking.html'), [])
 const ctl = (sel: string) => observed.controls.find((c: any) => c.selector === sel)
 assert.equal(ctl('#sport-btn')?.field, 'Sports')
 assert.equal(ctl('#sport-btn')?.popup, 'listbox')
-assert.equal(ctl('#date-btn')?.field, undefined, 'a plain button without a popup gets no field')
+assert.equal(ctl('#date-btn')?.field, 'Date')
 assert.equal(ctl('#time-btn')?.field, 'Start Time')
 assert.equal(ctl('#court-btn')?.field, 'Court')
 assert.equal(ctl('#headlessui-menu-button-r4')?.field, undefined)
@@ -79,6 +79,23 @@ assert.deepEqual(steps(failed), ['click_text:failed:action_error'])
 const guessed = wave(page('booking.html'), [{ kind: 'click', selector: '#court-btn' }, { kind: 'click_text', text: '1' }])
 assert.deepEqual(steps(guessed), ['click:done', 'click_text:failed:action_error'])
 assert.ok(guessed.controls.some((c: any) => /Premium Synthetic Court 1/.test(c.label)), 'the open list is observed for the next step')
+
+// 3d. One step: choose sets each picker by its field name and checks it, including the court
+// ("first") that only the open list names. Then Add To Cart.
+const chosen = wave(page('booking.html') + '?fresh=1', [
+  { kind: 'choose', field: 'Sports', value: 'Badminton' },
+  { kind: 'choose', field: 'Date', value: '2026-10-18' },
+  { kind: 'choose', field: 'Start Time', value: '06:30 AM' },
+  { kind: 'choose', field: 'Court', value: 'first' },
+  { kind: 'choose', field: 'Sports', value: 'Badminton' },
+])
+assert.deepEqual(steps(chosen), Array(5).fill('choose:done'))
+const shown = (sel: string) => chosen.controls.find((c: any) => c.selector === sel)?.label
+assert.equal(shown('#date-btn'), '2026-10-18')
+assert.equal(shown('#time-btn'), '06:30 AM')
+assert.match(shown('#court-btn') || '', /Premium Synthetic Court 1/)
+const missing = wave(page('booking.html'), [{ kind: 'choose', field: 'Start Time', value: '11:00 PM' }, { kind: 'click_text', text: 'Add To Cart' }])
+assert.deepEqual(steps(missing), ['choose:failed:action_error'], 'an option that is not offered fails and ends the wave')
 
 // 4. The pay control is never pressed, by text or by selector.
 const cart = wave(booking.url, [{ kind: 'click_text', text: 'Proceed to Pay INR 375' }, { kind: 'click', selector: '#pay' }])
