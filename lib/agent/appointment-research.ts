@@ -31,7 +31,9 @@ function serviceHint(text: string) {
   const withProvider = raw.match(/\b(?:appointment|consultation|session)\s+(?:with|at)\s+(?:an?\s+)?([A-Za-z][A-Za-z &.'-]{2,50}?)(?=\s+(?:in|near|around|next|this|tomorrow|today|on|for|at|after|before|and|but)\b|[,.!?]|$)/i)?.[1]
   if (withProvider) return safe(withProvider, 80)
   const sport = raw.match(SPORT)?.[1]
-  if (sport) return safe(`${sport.toLowerCase()} court`.replace(/(turf|nets|pool) court$/,'$1'), 80)
+  // One spelling for the search and the booking objective ("pickle ball" → "pickleball").
+  const named = sport ? sport.toLowerCase().replace(/^(pickle|foot|basket|volley)[\s-]?ball$/, '$1ball').replace(/^table[\s-]?tennis$/, 'table tennis') : ''
+  if (named) return safe(`${named} court`.replace(/(turf|nets|pool) court$/,'$1'), 80)
   const category = raw.match(/\b(dentist|dental|doctor|physician|dermatologist|cardiologist|ophthalmologist|optometrist|physiotherapist|therapist|psychologist|psychiatrist|clinic|hospital|salon|spa|visa|passport)\b/i)?.[1]
   return safe(category || 'appointment provider', 80)
 }
@@ -44,7 +46,9 @@ function timingHint(text: string) {
 // Muse case 02 (11 Oct): "Which badminton courts near Indiranagar are free this Saturday 7-9 am?"
 // was caught by the calendar and reminder routes. Sports venues are found like salons: India-first,
 // on Playo/Hudle and venue pages, read-only; booking stays a separate, approved step.
-const SPORT = /\b(badminton|tennis|squash|pickleball|table\s+tennis|turf|futsal|football|cricket\s+nets?|box\s+cricket|swimming|basketball|volleyball)\b/i
+// 12 Oct: "pickle ball court" (two words) fell through to general chat, which then claimed a slot was
+// free without checking. Sports written as two words or with a hyphen count too.
+const SPORT = /\b(badminton|tennis|squash|pickle[\s-]?ball|table[\s-]?tennis|turf|futsal|foot[\s-]?ball|cricket\s+nets?|box\s+cricket|swimming|basket[\s-]?ball|volley[\s-]?ball|padel)\b/i
 export function isSportsVenueRequest(raw: string) {
   const text = String(raw || '')
   return SPORT.test(text) && /\b(courts?|turfs?|nets|venues?|grounds?|pools?|slots?|arena)\b/i.test(text)
