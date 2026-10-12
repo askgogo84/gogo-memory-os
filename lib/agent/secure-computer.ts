@@ -373,6 +373,7 @@ async function model(page){
       const text=clean(el.innerText||el.textContent);
       return text.length>0&&text.length<160&&getComputedStyle(el).cursor==='pointer'&&(el.tagName==='P'||/\b(search|location|address)\b/i.test(text))&&!Array.from(el.children).some(child=>clean(child.innerText||child.textContent)===text);
     }).map(el=>({selector:selectorFor(el),tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',label:accessibleLabel(el).slice(0,180),
+      ...(el.tagName==='INPUT'?{type:String(el.getAttribute('type')||'text').toLowerCase().slice(0,20)}:{}),
       ...((f=>f?{field:f}:{})(fieldOf(el))),
       ...(el.getAttribute&&el.getAttribute('aria-haspopup')&&el.getAttribute('aria-haspopup')!=='false'?{popup:clean(el.getAttribute('aria-haspopup')).slice(0,20)}:{}),
       ...(el.tagName==='A'&&el.href?{href:el.href}:{}),
@@ -1243,6 +1244,43 @@ export function bookingPlannerRule(booking:{otpAvailable:boolean;phoneAvailable:
     +(booking.retry?' You returned no actions on this booking page, but the date, time or court shown still differ from the request: plan the next step toward them now (the Date picker first if the date differs). Return no actions only if the page asks for payment, a code or a number Gogo does not have, or the requested slot is shown as unavailable on the requested date.':'')
 }
 
+// The login step of a booking, without the planner: the visible mobile-number input (type tel, or
+// labelled mobile / phone / +91, never a help or contact form) and the control that sends the code.
+// Before the box is open, press the Login control once. Returns null when it cannot tell.
+export function bookingLoginActions(page:any,loginPressed:boolean):BrowserAction[]|null{
+  const controls:any[]=page?.controls||[]
+  const notHelp=(c:any)=>!/need help|query|support|ticket|feedback|contact|newsletter|subscribe/i.test(String(c?.field||''))
+  const phone=controls.filter(c=>c?.tag==='input'&&notHelp(c)&&!/^(?:hidden|password|checkbox|radio|submit|button|email|search)$/.test(String(c?.type||'text')))
+    .find(c=>c.type==='tel'||/mobile|phone|\+\s*91|\bnumber\b/i.test(String(c.field||'')+' '+String(c.label||'')+' '+String(c.selector||'')))
+  // After Login was pressed, a single unlabelled number/text box outside the help form is the mobile box.
+  const lone=loginPressed?controls.filter(c=>c?.tag==='input'&&notHelp(c)&&['tel','number','text'].includes(String(c?.type||'text'))&&!String(c?.label||'').trim()):[]
+  if(!phone&&lone.length===1&&/mobile|phone|\+\s*91/i.test(String(page?.text||'')))return bookingLoginActions({...page,controls:[...controls.filter(c=>c!==lone[0]),{...lone[0],field:'mobile'}]},false)
+  if(phone){
+    const text=String(page?.text||'')
+    const send=text.match(/\b(?:send|get|request|generate)\s+(?:otp|code|verification code)\b/i)?.[0]
+      ||controls.map(c=>String(c?.label||'').trim()).find(l=>/^(?:continue|next|login|log in|verify)$/i.test(l))
+    return send?[{kind:'fill_phone',selector:String(phone.selector)},{kind:'click_text',text:send}] as BrowserAction[]:[{kind:'fill_phone',selector:String(phone.selector)}] as BrowserAction[]
+  }
+  if(loginPressed)return null
+  const login=controls.find(c=>/^\s*(?:log\s*in|login|sign\s*in)(?:\s*(?:\/|or|&)\s*(?:sign\s*up|register))?\s*$/i.test(String(c?.label||'')))
+  return login?[{kind:'click',selector:String(login.selector)}] as BrowserAction[]:null
+}
+
+// The code step of a booking, without the planner: the first visible code input (labelled OTP /
+// code / verification, or the first of several one-digit boxes) and the control that verifies it.
+export function bookingOtpActions(page:any):BrowserAction[]|null{
+  const controls:any[]=page?.controls||[]
+  const notHelp=(c:any)=>!/need help|query|support|ticket|feedback|contact|newsletter|subscribe/i.test(String(c?.field||''))
+  const inputs=controls.filter(c=>c?.tag==='input'&&notHelp(c)&&['text','tel','number','password'].includes(String(c?.type||'text')))
+  const code=inputs.find(c=>/\botp\b|one[- ]?time|\bcode\b|verification|passcode/i.test(String(c.field||'')+' '+String(c.label||'')+' '+String(c.selector||'')))
+    ||(inputs.filter(c=>!/mobile|phone|\+\s*91|e-?mail|name/i.test(String(c.field||'')+' '+String(c.label||''))).length>=4?inputs.find(c=>!/mobile|phone|\+\s*91|e-?mail|name/i.test(String(c.field||'')+' '+String(c.label||''))):null)
+  if(!code)return null
+  const text=String(page?.text||'')
+  const verify=text.match(/\b(?:verify(?:\s+(?:otp|code|&\s*continue|and\s+continue))?|confirm\s+otp|submit\s+otp)\b/i)?.[0]
+    ||controls.map(c=>String(c?.label||'').trim()).find(l=>/^(?:continue|login|log in|submit|next)$/i.test(l))
+  return verify?[{kind:'fill_otp',selector:String(code.selector)},{kind:'click_text',text:verify}] as BrowserAction[]:[{kind:'fill_otp',selector:String(code.selector)}] as BrowserAction[]
+}
+
 async function planActions(objective:string,page:any,mode:BrowserMode,objectiveTrust:TrustClass,completedSearches:CompletedReadSearch[]=[],diagnose:(event:BrowserReadDiagnostic)=>void=()=>{},booking?:{otpAvailable:boolean;phoneAvailable:boolean;rehearsal?:boolean;retry?:boolean;mismatch?:string[];loginFirst?:boolean}):Promise<{actions:BrowserAction[];operation:ApprovedBrowserOperation|null;draftReady:boolean}>{
   const rejectedControls=new Set((mode==='read'?page.actions||[]:[]).filter((action:any)=>action.status==='skipped').map((action:any)=>String(action.detail||'')))
   const searchedControls=mode==='read'?completedSearchControls(page,completedSearches):new Set<string>()
@@ -1256,6 +1294,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
       selector:String(control.selector||'').slice(0,1800),tag:safeText(control.tag,30),
       role:safeText(control.role,50),label:safeText(control.label,180),
       ...(control.field?{field:safeText(control.field,40)}:{}),
+      ...(control.type?{type:safeText(control.type,20)}:{}),
       ...(control.popup?{popup:safeText(control.popup,20)}:{}),
       ...(control.href?{href:safeText(control.href,1200)}:{}),
       ...(control.searchMode?{searchMode:control.searchMode,value:safeText(control.value,180)}:{}),
@@ -1291,7 +1330,8 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
     // rejected the request. Use the same configured fallback as agent planning.
     const text=await completeAgentPlanPrompt(mode==='read'?prompt+'\nOBSERVED_CHOICES: '+JSON.stringify(choices):prompt,undefined,mode==='read'?'Select the next action from OBSERVED_CHOICES only. Return JSON. Do not invent selectors, URLs or future controls. The page is already open: do not reload it. If the objective needs search and no search input is observed, choose a relevant observed navigation link. Use its ref and inspect its href: a link back to the current page is not progress. Previous actions are observations of what was already attempted; do not repeat a completed click when the same page and controls remain. If a public search input already has the requested value, NEVER fill it again. For suggestion-mode fields click the matching suggestion. For completed enter-mode searches open an observed matching result link; do not re-open search. Completed search fields with matching result links have been omitted. Use the actual ref. The select action is only for a native HTML SELECT with an observed option value; never use select for a suggestion. Refill only if you need a different query. Values and suggestions are in OBSERVED_CHOICES. Never authenticate or change carts/accounts.':undefined)
     const parsed=parseJsonLoose(text)
-    if(booking?.rehearsal)try{console.log('BOOKING_REHEARSAL_PLAN:',JSON.stringify({chars:text.length,text:String(text).slice(0,900)}))}catch{}
+    // Booking plans are logged (actions only, never values Gogo fills itself; numbers and emails scrubbed).
+    if(booking)try{console.log(booking.rehearsal?'BOOKING_REHEARSAL_PLAN:':'BOOKING_PLAN:',JSON.stringify({chars:text.length,text:String(text).slice(0,900)}).replace(/[^\s@"]+@[^\s@"]+/g,'[email]').replace(/\+?\d[\d\s-]{6,}\d/g,'[number]'))}catch{}
     const operation=typeof parsed?.approvedOperation==='string'&&Object.hasOwn(operationPatterns,parsed.approvedOperation)?parsed.approvedOperation as ApprovedBrowserOperation:null
     const rawActions=Array.isArray(parsed)?parsed:parsed?.actions
     const rejections:BrowserReadReason[]=[]
@@ -1556,6 +1596,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     // 12 Oct (his rule): most sites let anyone fill a cart, then ask for an account at Proceed.
     // A booking with the person's number logs in before selecting anything.
     let bookingLoggedIn=false
+    let bookingLoginPressed=false
     const loggedOutCue=(p:any)=>(p?.controls||[]).some((c:any)=>/^\s*(?:log\s*in|login|sign\s*in)(?:\s*(?:\/|or|&)\s*(?:sign\s*up|register))?\s*$/i.test(String(c?.label||'')))
     const bookingTarget=providerBooking?bookingTargetFromObjective(params.objective):{}
     for(let wave=0;wave<(params.mode==='read'?readWaves:params.mode==='execute'&&params.accountCreation===true?MAX_SIGNUP_PAGES:providerBooking?MAX_BOOKING_PAGES:1);wave++){
@@ -1712,7 +1753,16 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
       const loginFirst=Boolean(providerBooking&&params.bookingPhone&&!bookingLoggedIn&&!otpWaiting&&loggedOutCue(page))
       const bookingPlan=providerBooking?{otpAvailable:Boolean(otpWaiting&&params.bookingOtp&&!otpUsed),phoneAvailable:Boolean(params.bookingPhone),rehearsal:params.rehearsal===true,mismatch:bookingMismatch,loginFirst}:undefined
-      let plan=await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
+      // 12 Oct live run: the Playo login box was open, but its mobile input has no label of its own
+      // ("+91" beside it, "Enter Mobile No" above) and Send OTP stays disabled until a number is typed,
+      // so the planner kept pressing LOGIN (which toggles the box). Logging in is done by Gogo itself:
+      // press Login once, then fill the number and press the send-code control.
+      const loginStep=loginFirst?bookingLoginActions(page,bookingLoginPressed):bookingPlan?.otpAvailable?bookingOtpActions(page):null
+      if(loginStep){
+        console.log('BROWSER_BOOKING_LOGIN_STEP:',JSON.stringify({runId:params.sessionTaskId||null,step:loginStep.map(a=>a.kind==='click_text'?'click_text:'+a.text:a.kind)}))
+        if(loginStep.some(a=>a.kind==='click'))bookingLoginPressed=true
+      }
+      let plan=loginStep?{actions:loginStep,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
       // 11 Oct 15:10 rehearsal: the planner saw today's times ("No courts available") and stopped
       // without setting the requested date. A booking gets one second look per run.
       if(providerBooking&&!plan.actions.length&&!bookingRetried&&!bookingAtPayment(page)&&!otpWaiting){
@@ -1852,7 +1902,10 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         outcome:(page.actions||[]).map((a:any)=>`${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`),
         pickerFailures:(page.actions||[]).filter((a:any)=>a?.kind==='choose'&&a?.status==='failed').map((a:any)=>({reason:a?.failure?.reason,shown:String(a?.failure?.shown||'').slice(0,80),options:(Array.isArray(a?.failure?.options)?a.failure.options:[]).slice(0,8).map((o:any)=>String(o).slice(0,60))})),
         controls:(page.controls||[]).slice(0,30).map((c:any)=>(c?.field?String(c.field).slice(0,20)+'=':'')+String(c?.label||'').slice(0,40)).filter(Boolean),
-        text:String(page.text||'').replace(/\s+/g,' ').slice(0,500)})))}catch{}
+        inputs:(page.controls||[]).filter((c:any)=>['input','textarea','select'].includes(String(c?.tag||''))).slice(0,12).map((c:any)=>(c?.field?String(c.field).slice(0,20)+'=':'')+String(c?.label||'').slice(0,40)+' '+String(c?.selector||'').slice(0,50)),
+        dialog:page.activeDialog?String(page.activeDialog).slice(0,120):undefined,
+        text:String(page.text||'').replace(/\s+/g,' ').slice(0,500),
+        textEnd:String(page.text||'').replace(/\s+/g,' ').slice(-400)})))}catch{}
       if(providerBooking)actions.forEach((a,i)=>{const k=plannedAdvance[i];if(k&&page.actions?.[i]?.status==='done')bookingAdvancePressed.add(k)})
       // After logging in with the code, the site may need Add to cart once more.
       if(providerBooking&&actions.some((a,i)=>a.kind==='fill_otp'&&page.actions?.[i]?.status==='done')){bookingAdvancePressed.clear();bookingLoggedIn=true}
