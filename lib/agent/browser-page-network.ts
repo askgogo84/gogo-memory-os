@@ -48,7 +48,11 @@ const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.awswaf.com', 'hcaptcha.com', '*.hcapt
 // 11 Oct live Playo booking: the broker aborted Playo's own API (api.playo.io), which serves venue
 // and slot data, and its image CDN on gumlet, so slots did not load and the takeover showed no
 // photos. First-party Playo hosts and its observed image/font hosts only.
-const PLAYO_PAGE_DEPENDENCIES = ['api.playo.io','playo.gumlet.io','playo-website.gumlet.io','fonts.googleapis.com','fonts.gstatic.com']
+// 12 Oct live runs: Send OTP did nothing while apis.google.com and www.google.com were blocked on every
+// Playo page. Its phone login needs Google's invisible reCAPTCHA and sign-in services, so those load
+// on Playo. Gogo still never solves a visible CAPTCHA: the person takes over for that.
+const GOOGLE_PHONE_LOGIN = ['www.google.com','www.gstatic.com','apis.google.com','www.recaptcha.net','identitytoolkit.googleapis.com','securetoken.googleapis.com']
+const PLAYO_PAGE_DEPENDENCIES = ['api.playo.io','playo.gumlet.io','playo-website.gumlet.io','playov2.gumlet.io','playo-activities.gumlet.io','fonts.googleapis.com','fonts.gstatic.com',...GOOGLE_PHONE_LOGIN]
 
 export function browserPageAllowlist(url:string):Record<string,string[]>{
   const target=new URL(url)
