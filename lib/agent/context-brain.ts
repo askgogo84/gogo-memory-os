@@ -170,6 +170,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
       // the answer layer can state it instead of denying a saved confirmation exists.
       pnr:safe(row.pnr,40)||safe(raw.pnr,40)||safe(raw.bookingReference,40)||null,
       passengers:(Array.isArray(row.passengers)?row.passengers:[]).map((name:unknown)=>safe(name,100)).filter(Boolean),
+      travellerAliases:Object.values(raw.travellerAliases&&typeof raw.travellerAliases==='object'?raw.travellerAliases:{}).map((name:unknown)=>safe(name,60)).filter(Boolean),
       seatObservations:(Array.isArray(raw.passengerDetails)?raw.passengerDetails:[{passengers:row.passengers,seat:row.seat||raw.seat}]).flatMap((detail:any)=>{
         const names=(Array.isArray(detail?.passengers)?detail.passengers:[]).map((name:unknown)=>safe(name,100)).filter(Boolean)
         const seat=safe(detail?.seat,30)
@@ -191,7 +192,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     }
     if(departMs>horizonEnd||departMs<now-pastWindowMs)continue
     const validArrival=leg.arriveAt&&Date.parse(leg.arriveAt)>departMs?leg.arriveAt:null
-    const passengerLabel=leg.passengers.length?`Passengers: ${leg.passengers.join(', ')}`:'Passenger identity not recorded'
+    const passengerLabel=(leg.passengers.length?`Passengers: ${leg.passengers.join(', ')}`:'Passenger identity not recorded')+(leg.travellerAliases.length?` (the user calls them ${leg.travellerAliases.join(', ')})`:'')
     const arrivalLabel=validArrival?`Arrival ${new Intl.DateTimeFormat('en-GB',{timeZone:leg.arrivalTz||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(validArrival))} (${leg.arrivalTz||'UTC'})`:'Arrival instant unverified; check source ticket'
     // A leg whose departure instant is already in the past must be labelled as such,
     // so the reply layer recomputes status against the current clock instead of

@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCostBudget } from '@/lib/services/cost-guard'
 import { ticketTimezone } from '@/lib/services/travel-time'
 import { isValidTimezone } from '@/lib/timezone'
+import { normalizeFlightNo } from './flight-leg-tracker'
 
 type TravelRow={
   id:string
@@ -15,6 +16,7 @@ type TravelRow={
   arrive_at?:string|null
   airline?:string|null
   flight_no?:string|null
+  raw?:any
 }
 
 type ContextMeta={
@@ -22,7 +24,8 @@ type ContextMeta={
   contextualKind:'travel'
   contextKey:string
   contextRoot:string
-  contextClass:'flight_status'|'connection_ground'|'destination_weather'|'travel_email'
+  contextClass:'flight_status'|'connection_ground'|'destination_weather'|'travel_email'|'airline_news'
+  traveller?:string|null
   reason:string
   expiresAt:string
   sourceRefs:Array<{type:'travel_ticket';id:string}>
@@ -53,7 +56,12 @@ function sourceRefs(rows:TravelRow[]){
   return rows.slice(0,8).map(row=>({type:'travel_ticket' as const,id:String(row.id)}))
 }
 function flightLabel(rows:TravelRow[]){
-  return rows.map(row=>clean(row.flight_no,30)).filter(Boolean).join(' + ')
+  return rows.map(row=>normalizeFlightNo(clean(row.flight_no,30))).filter(Boolean).join(' + ')
+}
+/** The name the user calls the traveller ("Divya"), when the ticket recorded one. */
+function travellerOf(rows:TravelRow[]){
+  for(const row of rows){const v=Object.values(row.raw?.travellerAliases||{})[0];if(v)return clean(v,40)}
+  return null
 }
 function routeLabel(rows:TravelRow[]){
   const first=rows[0],last=rows[rows.length-1]
@@ -123,9 +131,10 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
     ]).filter(Boolean)
   )).join(' ')
   const refs=sourceRefs(rows)
+  const airline=clean(rows.map(row=>row.airline).find(Boolean),60).replace(/\s+Royal Dutch Airlines$/i,'')
   const base=(contextClass:ContextMeta['contextClass'],reason:string):ContextMeta=>({
     contextual:true,contextualKind:'travel',contextKey:`${root}:${contextClass}`,contextRoot:root,
-    contextClass,reason,expiresAt,sourceRefs:refs,
+    contextClass,reason,expiresAt,sourceRefs:refs,traveller:travellerOf(rows),
   })
   return [
     {
@@ -137,7 +146,7 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
         delivery:'both',cadenceMinutes:180,burstUntil:null,
         // Per-leg "flightNo @ departure date" so a disruption is verified against the
         // date of the SPECIFIC leg whose flight number the result cites (not any leg date).
-        flightLegs:rows.map(row=>`${clean(row.flight_no,30)} @ ${dateLabel(String(row.depart_at||row.arrive_at||''),ticketTimezone(row.from_city))}`).filter(s=>!s.startsWith(' @')),
+        flightLegs:rows.map(row=>`${normalizeFlightNo(clean(row.flight_no,30))} @ ${dateLabel(String(row.depart_at||row.arrive_at||''),ticketTimezone(row.from_city))}`).filter(s=>!s.startsWith(' @')),
         ...base('flight_status','Watch only for material changes to the saved flight legs before and during departure.'),
       },
     },
@@ -165,6 +174,16 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
         expiresAt:destinationStayExpiry(rows,expiresAt),
       },
     },
+    ...(airline?[{
+      type:'web_search' as const,
+      condition:{
+        title:`Trip airline news · ${airline}`,
+        query:`${airline} strike outage cancellations ${departDate}`,
+        triggerKeywords:['strike','industrial action','outage','system outage','grounded','mass cancellations','walkout'],
+        delivery:'both',cadenceMinutes:360,burstUntil:null,
+        ...base('airline_news','Watch for airline-wide disruption (strikes, outages, groundings) that could affect this trip.'),
+      },
+    }]:[]),
   ]
 }
 
@@ -289,7 +308,7 @@ export async function compileUpcomingTravelWatchers(limit=200){
   const lower=new Date(now.getTime()-6*3600_000).toISOString()
   const upper=new Date(now.getTime()+14*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('travel_tickets')
-    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no')
+    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,raw')
     .eq('type','flight').gte('depart_at',lower).lt('depart_at',upper)
     .order('depart_at',{ascending:true}).limit(Math.max(1,Math.min(500,limit)))
   if(error)throw new Error(`context_travel_read_failed:${error.message}`)
@@ -315,7 +334,7 @@ export async function compileUpcomingTravelWatchers(limit=200){
 export async function compileTravelWatchersForUser(telegramId:string|number){
   const now=Date.now()
   const {data,error}=await supabaseAdmin.from('travel_tickets')
-    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no')
+    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,raw')
     .eq('telegram_id',telegramId).eq('type','flight')
     .gte('depart_at',new Date(now-6*3600_000).toISOString()).lt('depart_at',new Date(now+14*86400_000).toISOString())
     .order('depart_at',{ascending:true}).limit(20)
@@ -329,5 +348,19 @@ export async function compileTravelWatchersForUser(telegramId:string|number){
   const {data:active}=await supabaseAdmin.from('agent_watchers').select('id')
     .eq('telegram_id',telegramId).eq('active',true)
     .eq('condition_json->>contextualKind','travel').eq('condition_json->>contextClass','flight_status').limit(1)
-  return {...r,tracking:Boolean(active?.length),flights:group.map(row=>clean(row.flight_no,20)).filter(Boolean)}
+  return {...r,tracking:Boolean(active?.length),flights:group.map(row=>normalizeFlightNo(clean(row.flight_no,20))).filter(Boolean)}
+}
+
+/** WhatsApp text for a trip monitor's finding: names the trip and person, never shopping copy. */
+export function travelWatchAlertMessage(condition:any,result:{title:string;snippet?:string;url:string}){
+  const cls=String(condition?.contextClass||'')
+  const label=String(condition?.title||'').split('·').slice(1).join('·').trim()
+  const who=condition?.traveller?`${clean(condition.traveller,40)}'s`:'your'
+  const head=cls==='flight_status'?`⚠️ Flight update for ${who} trip (${label})`
+    :cls==='destination_weather'?`🌦️ Weather alert for ${who} trip: ${label}`
+    :cls==='connection_ground'?`🚧 Travel disruption that may affect ${who} trip (${label})`
+    :cls==='airline_news'?`📰 ${label} news that may affect ${who} trip`
+    :`Trip update (${label})`
+  const snippet=clean(result.snippet,280)
+  return `${head}\n\n${clean(result.title,160)}${snippet?`\n${snippet}`:''}\n\nSource: ${result.url}\n\nFrom a news or tracker page, not the airline. I'll keep watching and only message you again if something new comes up.`
 }

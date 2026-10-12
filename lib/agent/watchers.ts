@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { deliverWatchAlert } from './watch-alert-delivery'
+import { travelWatchAlertMessage } from './contextual-travel-watchers'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { checkCostAllowance, COST_ESTIMATES_PAISE, getCostBudget, recordCostEvent } from '@/lib/services/cost-guard'
 import { adaptiveWatcherCadence } from './watch-cost-policy'
@@ -30,12 +31,13 @@ export type ContextualWatcherMeta = {
   contextualKind?: 'travel'
   contextKey?: string
   contextRoot?: string
-  contextClass?: 'flight_status'|'connection_ground'|'destination_weather'|'travel_email'
+  contextClass?: 'flight_status'|'connection_ground'|'destination_weather'|'travel_email'|'airline_news'
   reason?: string
   expiresAt?: string|null
   sourceRefs?: Array<Record<string,unknown>>
   userStoppedAt?: string|null
   flightLegs?: string[]
+  traveller?: string|null
 }
 
 export type DeadlineWatcherCondition = {
@@ -93,7 +95,7 @@ function normalizeDelivery(value: unknown): WatcherDelivery {
 function normalizeContextualMeta(input:any):ContextualWatcherMeta {
   if(input?.contextual!==true)return{}
   const expiresAt=input?.expiresAt?validDate(input.expiresAt):null
-  const contextClass=['flight_status','connection_ground','destination_weather','travel_email'].includes(String(input?.contextClass))
+  const contextClass=['flight_status','connection_ground','destination_weather','travel_email','airline_news'].includes(String(input?.contextClass))
     ? String(input.contextClass) as ContextualWatcherMeta['contextClass'] : undefined
   return {
     contextual:true,
@@ -106,6 +108,7 @@ function normalizeContextualMeta(input:any):ContextualWatcherMeta {
     sourceRefs:Array.isArray(input?.sourceRefs)?input.sourceRefs.slice(0,12):[],
     userStoppedAt:input?.userStoppedAt?validDate(input.userStoppedAt):null,
     flightLegs:Array.isArray(input?.flightLegs)?input.flightLegs.map((x:any)=>String(x||'').slice(0,80)).filter(Boolean).slice(0,12):undefined,
+    traveller:input?.traveller?String(input.traveller).replace(/\s+/g,' ').trim().slice(0,40):undefined,
   }
 }
 
@@ -1158,7 +1161,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       const delivery = await deliverWatchAlert({
         watcherId: String(watcher.id), owner: telegramId, key: pendingAlert.key, due: pendingAlert.due,
         condition: watcher.condition_json,
-        message: candidate.result.title + '\n\nSearch result for ' + condition.title.replace(/^Watch:\s*/i, '') +
+        message: (condition as any).contextualKind === 'travel' ? travelWatchAlertMessage(condition, candidate.result) : candidate.result.title + '\n\nSearch result for ' + condition.title.replace(/^Watch:\s*/i, '') +
           '. Price, stock and offer eligibility have not been verified on the provider page.\n\n' + candidate.result.url +
           '\n\nI’ll keep checking and only alert on a new relevant result.',
       })
