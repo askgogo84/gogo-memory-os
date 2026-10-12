@@ -97,6 +97,18 @@ assert.match(shown('#court-btn') || '', /Premium Synthetic Court 1/)
 const missing = wave(page('booking.html'), [{ kind: 'choose', field: 'Start Time', value: '11:00 PM' }, { kind: 'click_text', text: 'Add To Cart' }])
 assert.deepEqual(steps(missing), ['choose:failed:action_error'], 'an option that is not offered fails and ends the wave')
 
+// 3e. In the live page, Add to cart waits until the pickers show the request (12 Oct 06:10: the
+// sport was still Swimming). In a rehearsal the matching case reaches rehearsal_stop.
+const target = { bookingTarget: { date: '2026-10-17', time: '7:00 AM', service: 'badminton court' }, rehearsal: true }
+const wrongSport = wave(page('booking.html') + '?fresh=1', [{ kind: 'click_text', text: 'Add To Cart' }, { kind: 'click', selector: '#sport-btn' }], target)
+assert.deepEqual(steps(wrongSport), ['click_text:skipped:selection_mismatch'])
+const ready = wave(page('booking.html') + '?fresh=1', [
+  { kind: 'choose', field: 'Sports', value: 'Badminton' }, { kind: 'choose', field: 'Date', value: '2026-10-17' },
+  { kind: 'choose', field: 'Start Time', value: '07:00 AM' }, { kind: 'choose', field: 'Court', value: 'first' },
+  { kind: 'click', selector: '#add' },
+], target)
+assert.deepEqual(steps(ready), ['choose:done', 'choose:done', 'choose:done', 'choose:done', 'click:skipped:rehearsal_stop'])
+
 // 4. The pay control is never pressed, by text or by selector.
 const cart = wave(booking.url, [{ kind: 'click_text', text: 'Proceed to Pay INR 375' }, { kind: 'click', selector: '#pay' }])
 assert.deepEqual(steps(cart), ['click_text:skipped:payment_control', 'click:skipped:payment_control'])

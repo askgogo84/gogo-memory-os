@@ -576,6 +576,30 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
 // 11 Oct live Playo runs: a popup covered the next control and the click failed as "obscured".
 // Close it with Escape and click again; if it still covers the control, click the control itself.
 // Only for clicks that already passed the consequence check above (never for submit).
+// The pickers on the live page (Sports, Date, Start Time) against the approved request. A booking
+// never presses Add to cart, Book, Proceed or Continue while one differs (11 Oct 18:30 and 12 Oct
+// 06:10: the sport was still Swimming). Mirrors bookingSelectionMismatch in provider-booking.ts.
+async function liveMismatch(page,target){
+  if(!target||(!target.date&&!target.time&&!target.service))return [];
+  return await page.evaluate((t)=>{
+    ${FIELD_OF_JS}
+    const norm=x=>String(x||'').toLowerCase().replace(/\b0+(\d)/g,'$1').replace(/[^a-z0-9]+/g,' ').trim();
+    const vis=el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0};
+    const pickers=Array.from(document.querySelectorAll('button,input,select,[role=combobox],[role=listbox],[aria-haspopup],[aria-expanded]')).filter(vis)
+      .map(el=>({field:fieldOf(el),label:el.tagName==='SELECT'?((el.selectedOptions[0]&&el.selectedOptions[0].textContent)||''):el.tagName==='INPUT'?el.value:(el.innerText||el.textContent||'')})).filter(p=>p.field);
+    const find=re=>pickers.find(p=>re.test(p.field));
+    const out=[];
+    const date=find(/\bdate\b|\bday\b/i);
+    if(t.date&&date&&!norm(date.label).includes(norm(t.date)))out.push('date');
+    const time=find(/\btime\b|\bslot\b/i);
+    if(t.time&&time&&!norm(time.label).includes(norm(t.time)))out.push('time');
+    const sport=find(/\bsports?\b|\bactivity\b|\bservice\b|\bgame\b/i);
+    const words=norm(t.service||'').split(' ').filter(w=>w.length>3&&!/^(court|courts|slot|slots|booking|venue|session)$/.test(w));
+    if(words.length&&sport&&!words.some(w=>norm(sport.label).includes(w)))out.push('sport');
+    return out;
+  },target).catch(()=>[]);
+}
+const BOOKING_ADVANCE=/\b(?:add\s+to\s+cart|book\s+now|book|proceed|continue|checkout|check\s*out|confirm|reserve)\b/i;
 // Press the visible element with this text (a venue card, Book Now, a sport, time or court option).
 // A YYYY-MM-DD date falls back to the calendar day cell. Never a pay control.
 async function pressText(page,wanted){
@@ -690,6 +714,7 @@ async function clickPastOverlay(page,selector){
           if(payload.mode!=='execute'||!payload.bookingFlow){log.push({kind:a.kind,detail:a.text,status:'skipped'});continue;}
           const wanted=String(a.text||'');
           if(/\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(wanted)){log.push({kind:a.kind,detail:wanted,status:'skipped',consequential:true,failure:{reason:'payment_control'}});continue;}
+          if(BOOKING_ADVANCE.test(wanted)){const mismatch=await liveMismatch(page,payload.bookingTarget);if(mismatch.length){log.push({kind:a.kind,detail:wanted,status:'skipped',failure:{reason:'selection_mismatch'}});break;}}
           if(payload.rehearsal&&/\badd\s+to\s+cart\b/i.test(wanted)){log.push({kind:a.kind,detail:wanted,status:'skipped',failure:{reason:'rehearsal_stop'}});continue;}
           // Short text ("1", "17") must match a whole label, or it presses any element containing it.
           const pressed=await pressText(page,wanted);
@@ -724,6 +749,8 @@ async function clickPastOverlay(page,selector){
             if(await picker.evaluate(el=>el.tagName==='SELECT')){
               await picker.selectOption(value==='first'?{index:1}:{label:value},{timeout:5000});
             }else{
+              // Remember what was visible before opening: the options are what appears.
+              await page.evaluate(()=>{document.querySelectorAll('[data-gogo-seen]').forEach(el=>el.removeAttribute('data-gogo-seen'));for(const el of Array.from(document.querySelectorAll('body *'))){const r=el.getBoundingClientRect();if(r.width>0&&r.height>0)el.setAttribute('data-gogo-seen','1')}}).catch(()=>{});
               await clickPastOverlay(page,'[data-gogo-pick="1"]');
               await page.waitForTimeout(500);
               let pressed=false;
@@ -736,6 +763,21 @@ async function clickPastOverlay(page,selector){
                   if(t===null||/^\s*-+\s*select|\bpay\b|unavailable|sold out|booked/i.test(t))continue;
                   try{await opt.click({timeout:4000});}catch{await opt.evaluate(el=>el.click());}
                   pressed=true;
+                }
+                // 12 Oct 06:05: Playo's court list has no role=option. Take the first new, enabled
+                // entry that appeared when the picker opened.
+                if(!pressed){
+                  const marked=await page.evaluate(()=>{
+                    document.querySelectorAll('[data-gogo-opt]').forEach(el=>el.removeAttribute('data-gogo-opt'));
+                    const tx=el=>String(el.innerText||el.textContent||'').replace(/\s+/g,' ').trim();
+                    const fresh=Array.from(document.querySelectorAll('body *')).filter(el=>{if(el.hasAttribute('data-gogo-seen'))return false;const r=el.getBoundingClientRect();return r.width>0&&r.height>0});
+                    const entries=fresh.filter(el=>{const t=tx(el);if(!t||t.length>80)return false;if(Array.from(el.children).some(c=>tx(c)===t))return false;if(Array.from(el.children).filter(c=>tx(c)).length>=2)return false;if(el.closest('[aria-disabled=true],[disabled]'))return false;return !/^\W*(?:select|choose|pick)\b|\bpay\b|unavailable|sold out|\bbooked\b|not available/i.test(t)});
+                    const top=entries.map(el=>el.closest('[role=option],li,button')||el).filter(el=>!el.hasAttribute('data-gogo-seen'));
+                    const pick=top[0]||entries[0];
+                    if(!pick)return false;
+                    pick.setAttribute('data-gogo-opt','1');return true;
+                  }).catch(()=>false);
+                  if(marked){const opt=page.locator('[data-gogo-opt="1"]').first();try{await opt.click({timeout:4000});}catch{await opt.evaluate(el=>el.click());}pressed=true;}
                 }
               }else pressed=await pressText(page,value);
               if(!pressed)throw new Error('option not found');
@@ -774,6 +816,7 @@ async function clickPastOverlay(page,selector){
             const controlText=await page.locator(a.selector).first().evaluate(el=>[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value')].filter(Boolean).join(' ')).catch(()=>'');
             if(/\b(?:pay|payment|place order|buy now|complete purchase)\b/i.test(controlText)){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential:true,failure:{reason:'payment_control'}});continue;}
             // A rehearsal walks the flow but never changes the cart.
+            if(BOOKING_ADVANCE.test(controlText)){const mismatch=await liveMismatch(page,payload.bookingTarget);if(mismatch.length){log.push({kind:a.kind,detail:a.selector,status:'skipped',failure:{reason:'selection_mismatch'}});break;}}
             if(payload.rehearsal&&/\badd\s+to\s+cart\b/i.test(controlText)){log.push({kind:a.kind,detail:a.selector,status:'skipped',failure:{reason:'rehearsal_stop'}});continue;}
           }
           if(payload.mode!=='execute' && consequential){log.push({kind:a.kind,detail:a.selector,status:'skipped',consequential,failure:{reason:unavailable?'control_unavailable':'consequential_control',guardContext,guardNameShape}});continue;}
@@ -1690,7 +1733,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       draftActions=actions
       const currentUrl=String(page.url||target.toString())
       const {allow}=first.managed||allowedHosts(currentUrl);await first.sandbox.updateNetworkPolicy({allow} as any)
-      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,readDeadline,bookingFlow:providerBooking,rehearsal:providerBooking&&params.rehearsal===true,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null,keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:params.keepAlive===true||Boolean(first.managed)})).toString('base64')
+      const payload=Buffer.from(JSON.stringify({url:currentUrl,mode:params.mode,actions,readDeadline,bookingFlow:providerBooking,bookingTarget:providerBooking?bookingTarget:null,rehearsal:providerBooking&&params.rehearsal===true,confirmationPattern:approvedOperation?operationPatterns[approvedOperation]:null,keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:params.keepAlive===true||Boolean(first.managed)})).toString('base64')
       if(readDeadline!==undefined&&Date.now()>=readDeadline)throw new Error('browser_read_deadline')
       // A sign-up's new-password field: write the generated password as a pending Vault record
       // BEFORE anything is submitted. If that record cannot be written, nothing is submitted.
@@ -1752,6 +1795,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         outcome:(page.actions||[]).map((a:any)=>`${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`),
         controls:(page.controls||[]).slice(0,30).map((c:any)=>(c?.field?String(c.field).slice(0,20)+'=':'')+String(c?.label||'').slice(0,40)).filter(Boolean),
         text:String(page.text||'').replace(/\s+/g,' ').slice(0,500)}))}catch{}
+      // The worker refused Add to cart because a picker differed: tell the planner which one.
+      if(providerBooking&&(page.actions||[]).some((a:any)=>a?.failure?.reason==='selection_mismatch'))bookingMismatch=bookingSelectionMismatch(page.controls||[],bookingTarget)
       const doneCount=(page.actions||[]).filter((a:any)=>a.status==='done').length
       if(params.mode==='read'){
         unchangedReadWaves=readSnapshot(page)===beforeReadSnapshot?unchangedReadWaves+1:0
