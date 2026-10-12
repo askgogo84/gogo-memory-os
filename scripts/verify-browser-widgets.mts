@@ -95,7 +95,7 @@ assert.equal(shown('#date-btn'), '2026-10-18')
 assert.equal(shown('#time-btn'), '06:30 AM')
 assert.match(shown('#court-btn') || '', /Premium Synthetic Court 1/)
 const missing = wave(page('booking.html'), [{ kind: 'choose', field: 'Start Time', value: '11:00 PM' }, { kind: 'click_text', text: 'Add To Cart' }])
-assert.deepEqual(steps(missing), ['choose:failed:action_error'], 'an option that is not offered fails and ends the wave')
+assert.deepEqual(steps(missing), ['choose:failed:option_missing'], 'an option that is not offered fails and ends the wave')
 
 // 3e. In the live page, Add to cart waits until the pickers show the request (12 Oct 06:10: the
 // sport was still Swimming). In a rehearsal the matching case reaches rehearsal_stop.
