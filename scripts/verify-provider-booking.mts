@@ -583,3 +583,52 @@ console.log("Provider booking: Playo's phone login can reach Google's reCAPTCHA 
   assert.match(msg, /tap \*Take control\*, tap Send OTP/)
 }
 console.log("Provider booking: a failed robot check gets the site's Retry once, then a clear handover")
+
+// 12 Oct (modelled on Instinct): a live slot check sets sport/date/time, reads the court picker and
+// stops. Read-only: no login, Add to Cart / Proceed never run, nothing is chosen in the court list.
+{
+  const live = await import('../lib/agent/live-slots.ts').catch(() => null)
+  const req = { listUrl: 'https://playo.co/venues/hsr-layout-bengaluru/sports/badminton', date: '2026-10-17', time: '7:00 AM', timezone: 'Asia/Kolkata', service: 'badminton court', location: 'HSR Layout, Bengaluru' }
+  const objectiveLive = booking.bookingObjective({ date: req.date, time: req.time, timezone: req.timezone, service: req.service, location: req.location, confirmation: 'check live availability only' }) + ' LIVE SLOT CHECK ONLY'
+  const ready = { url: 'https://playo.co/booking?venueId=x', title: 'Check Real-Time Slots Availability at Machaxi Milan Sports Centre, Begur on Playo', text: 'LOGIN Sports Date Start Time Court Add To Cart', forms: [],
+    controls: [{ selector: '#login', tag: 'button', label: 'LOGIN' }, { selector: '#s', tag: 'button', label: 'Badminton', field: 'Sports' }, { selector: '#d', tag: 'button', label: '2026-10-17', field: 'Date' },
+      { selector: '#t', tag: 'button', label: '07:00 AM', field: 'Start Time' }, { selector: '#c', tag: 'button', label: '--Select Court--', field: 'Court' }, { selector: '#add', tag: 'button', label: 'Add to Cart' }] }
+  commands.length = 0; prompts.length = 0
+  script = [ready, ready]
+  outcomes = [null, [{ kind: 'list_options', detail: JSON.stringify(['Premium Synthetic Court 1 INR 375', 'Premium Synthetic Court 2 INR 375']), status: 'done' }]]
+  const r = await computer.runSecureBrowser({ ...base, objective: objectiveLive, providerBooking: true, rehearsal: true, slotCheck: true, bookingPhone: null, bookingOtp: null })
+  outcomes = []
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'list_options', field: 'Court' }], 'Gogo reads the court list itself, without the planner')
+  assert.equal(prompts.length, 0)
+  assert.equal(commands.length, 2, 'then it stops')
+  assert.equal(JSON.stringify(r.slots), JSON.stringify({ venue: 'Machaxi Milan Sports Centre, Begur', options: ['Premium Synthetic Court 1 INR 375', 'Premium Synthetic Court 2 INR 375'], none: false }))
+  // Nothing free at that time.
+  commands.length = 0
+  script = [{ ...ready, text: 'Sports Date Start Time Court --Select Court-- No Courts Available For The Selected Time Add To Cart' }]
+  const none = await computer.runSecureBrowser({ ...base, objective: objectiveLive, providerBooking: true, rehearsal: true, slotCheck: true, bookingPhone: null, bookingOtp: null })
+  assert.equal(none.slots?.none, true)
+  assert.equal(commands.length, 1)
+  // A planner that tries Add to Cart in a slot check is cut off.
+  commands.length = 0
+  const venuePage = { ...venue, url: 'https://playo.co/venues/machaxi', controls: [{ selector: '#book', tag: 'button', label: 'Book Now' }, { selector: '#add', tag: 'button', label: 'Add to Cart' }] }
+  script = [venuePage, venuePage, venuePage]
+  plans = [{ approvedOperation: 'booking', actions: [{ kind: 'click', selector: '#book' }, { kind: 'click', selector: '#add' }] }]
+  await computer.runSecureBrowser({ ...base, objective: objectiveLive, providerBooking: true, rehearsal: true, slotCheck: true, bookingPhone: null, bookingOtp: null })
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'click', selector: '#book' }])
+  assert.equal(commands.some(c => JSON.stringify(c.payload.actions || []).includes('#add')), false)
+  plans = []
+  if (live) {
+    const msg = live.liveSlotMessage(req, [
+      { venue: 'Machaxi Milan Sports Centre, Begur', options: ['Premium Synthetic Court 1 INR 375', 'Premium Synthetic Court 2 INR 375'], none: false, checked: true },
+      { venue: 'The Majesstine Sports', options: [], none: true, reason: 'time_not_offered', checked: true },
+    ])
+    assert.match(msg, /Live slots · Sat, 17 Oct, 7:00 AM/)
+    assert.match(msg, /Machaxi Milan Sports Centre, Begur: 2 open: Premium Synthetic Court 1 \(₹375\), Premium Synthetic Court 2 \(₹375\)/)
+    assert.match(msg, /The Majesstine Sports: nothing free at 7:00 AM \(that start time isn't offered\)/)
+    assert.match(msg, /book the 7 am slot at Machaxi Milan Sports Centre on Saturday/)
+    assert.match(msg, /checkout fees aren't included/)
+    assert.match(live.liveSlotObjective(req, 1), /^Provider booking up to payment for badminton court/)
+    assert.match(live.liveSlotObjective(req, 1), /open the second bookable venue/)
+  }
+}
+console.log('Provider booking: live slot check reads the courts and prices read-only, then stops')
