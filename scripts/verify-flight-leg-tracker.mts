@@ -73,7 +73,15 @@ assert.equal(T.statusFromWeb([r('KL642 12 Oct 2026', 'KL642 New York to Amsterda
 assert.equal(T.statusFromWeb([r('KL642 12 Oct 2026', 'KL642 landed in Amsterdam')], leg, at('2026-10-13T04:10:00Z'))?.state, 'landed')
 assert.equal(T.statusFromWeb([r('KL642 11 Oct 2026', 'KL642 landed')], leg, at('2026-10-13T04:10:00Z')), null, "another day's flight is ignored")
 assert.equal(T.statusFromWeb([r('KL642 12 Oct 2026', 'KL642 has not departed yet, no delay')], leg, at('2026-10-12T20:00:00Z')), null, 'negations are not states')
-assert.equal(T.statusFromWeb([r('KL642 12 Oct 2026', 'KL642 cancelled')], leg, at('2026-10-12T19:00:00Z'))?.state, 'cancelled')
+// 12 Oct, Instinct: one tracker said CANCELLED, others conflicted; it alerted, then retracted.
+const fa = (snip: string) => r('KL642 12 Oct 2026', snip, 'https://www.flightaware.com/live/flight/KLM642/history/20261012')
+const fr = (snip: string) => r('KL642 12 Oct 2026', snip, 'https://www.flightradar24.com/data/flights/kl642')
+const ao = (snip: string) => r('KL642 12 Oct 2026', snip, 'https://www.airportoverview.com/kl642')
+assert.equal(T.statusFromWeb([ao('KL642 JFK to AMS cancelled')], leg, at('2026-10-12T18:15:00Z')), null, 'one tracker saying cancelled is not enough')
+assert.equal(T.statusFromWeb([ao('KL642 JFK to AMS cancelled'), fa('KL642 scheduled 16:40, on time')], leg, at('2026-10-12T18:15:00Z')), null, 'a tracker showing it operating contradicts it')
+assert.equal(T.statusFromWeb([ao('KL642 cancelled'), fa('KL642 cancelled')], leg, at('2026-10-12T18:15:00Z'))?.state, 'cancelled', 'two trackers agreeing is reported')
+assert.equal(T.statusFromWeb([ao('KL642 cancelled'), ao('KL642 flight cancelled')], leg, at('2026-10-12T18:15:00Z')), null, 'two pages of one site are one source')
+assert.equal(T.statusFromWeb([fr('KL642 departed JFK 16:52, en route')], leg, at('2026-10-12T21:00:00Z'))?.state, 'departed')
 assert.equal(T.statusFromWeb([r('KL642 12 Oct 2026 cheap flights', 'KL642 from $520', 'https://www.skyscanner.com/x')], leg, at('2026-10-12T19:00:00Z')), null, 'shopping pages never count')
 
 // The trip monitor now matches trackers that drop the leading zero.
@@ -90,4 +98,6 @@ assert.match(cron, /runFlightLegTracker\(\)/, 'the tracker runs every 15 minutes
 const tracker = readFileSync(new URL('../lib/agent/flight-leg-tracker.ts', import.meta.url), 'utf8')
 assert.match(tracker, /condition_json->>contextClass', 'flight_status'\)/, 'tracking follows the trip monitor (plan limits and stop apply)')
 
+const cronSrc = readFileSync(new URL('../app/api/cron/agent-watchers/route.ts', import.meta.url), 'utf8')
+assert.ok(cronSrc.indexOf('repairYearlessFlightLegs()') < cronSrc.indexOf('compileUpcomingTravelWatchers()'), 'year-less legs are dated before monitors are compiled')
 console.log('Flight leg tracker: traveller known by name, each flight followed from 3h before take-off to landing (data API or dated tracker pages), alerts on gate, delay, take-off, landing; trip alerts read as travel news')
