@@ -392,7 +392,12 @@ async function model(page){
     // Only values already classified as public search fields participate.
     const queryTokens=[...new Set(allControls.filter(c=>c.searchMode&&c.value).flatMap(c=>String(c.value).toLowerCase().split(/[^a-z0-9]+/).filter(t=>t.length>2)))].slice(0,12);
     const relevance = text => queryTokens.reduce((score,token)=>score+Number(String(text||'').toLowerCase().includes(token)),0);
-    const controls=allControls.sort((a,b)=>relevance(b.label)-relevance(a.label)||Number(/search|location|address/i.test(b.label))-Number(/search|location|address/i.test(a.label))).slice(0,100);
+    // 12 Oct live run: Playo opened its login box at the very end of a page with hundreds of footer
+    // links, so it fell past the 100-control and text limits and Gogo never saw it. Whatever sits in
+    // an open dialog is read first.
+    const openDialog=activeDialog?null:Array.from(document.querySelectorAll('[aria-modal="true"],[role="dialog"],[role="alertdialog"]')).filter(el=>el&&el.getAttribute&&/^(?:dialog|alertdialog)$/.test(el.getAttribute('role')||'')||el&&el.getAttribute&&el.getAttribute('aria-modal')==='true').filter(el=>visible(el)&&clean(el.innerText||el.textContent).length>0).pop()||null;
+    const inOpenDialog=sel=>{try{return Boolean(openDialog&&sel&&openDialog.contains(document.querySelector(sel)))}catch{return false}};
+    const controls=allControls.map(c=>({...c,...(inOpenDialog(c.selector)?{inDialog:true}:{})})).sort((a,b)=>Number(Boolean(b.inDialog))-Number(Boolean(a.inDialog))||relevance(b.label)-relevance(a.label)||Number(/search|location|address/i.test(b.label))-Number(/search|location|address/i.test(a.label))).slice(0,100);
     const inputs = el => {
       const id=el.id||''; const name=el.getAttribute('name')||''; const type=(el.getAttribute('type')||el.tagName||'').toLowerCase();
       const label=id ? clean(document.querySelector('label[for="'+CSS.escape(id)+'"]')?.textContent||'') : '';
@@ -411,7 +416,7 @@ async function model(page){
       url:location.href,title:document.title,
       ...(flightEvidence?{flightEvidence}:{}),
       ...(activeDialog?{activeDialog:clean(activeDialog.getAttribute('aria-label')||activeDialog.getAttribute('aria-labelledby')||'Public flight picker')}:{}),
-      text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
+      text:((openDialog?'[Open dialog] '+String(openDialog.innerText||'').trim()+'\n\n':'')+String(document.body?.innerText||'')).replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       links:Array.from(document.querySelectorAll('a[href]')).filter(actionable).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).sort((a,b)=>relevance(b.text)-relevance(a.text)).slice(0,100),
       controls,
       forms:[...Array.from(document.forms).filter(visible),...(Array.from(document.querySelectorAll('input,textarea,select')).some(el=>!el.form&&actionable(el))?[document.body]:[])].slice(0,16).map(f=>({
@@ -1295,6 +1300,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
       role:safeText(control.role,50),label:safeText(control.label,180),
       ...(control.field?{field:safeText(control.field,40)}:{}),
       ...(control.type?{type:safeText(control.type,20)}:{}),
+      ...(control.inDialog?{inDialog:true}:{}),
       ...(control.popup?{popup:safeText(control.popup,20)}:{}),
       ...(control.href?{href:safeText(control.href,1200)}:{}),
       ...(control.searchMode?{searchMode:control.searchMode,value:safeText(control.value,180)}:{}),
