@@ -9,7 +9,8 @@
 <div class="field"><p>Start Time</p><div><button type="button" id="time-btn" aria-haspopup="listbox" aria-expanded="false"><span id="time">07:00 PM</span></button></div>
 <ul role="listbox" class="lb" id="time-lb" hidden><li role="option">06:00 AM</li><li role="option">06:30 AM</li><li role="option">07:00 AM</li><li role="option">07:30 AM</li><li role="option">07:00 PM</li></ul></div>
 <div class="field">Court<button type="button" id="court-btn" aria-haspopup="listbox" aria-expanded="false"><span id="court">--Select Court--</span></button>
-<ul role="listbox" class="lb" id="court-lb" hidden><li role="option">Premium Synthetic Court 1 INR 375</li><li role="option">Premium Synthetic Court 2 INR 375</li></ul></div>
+<!-- Like Playo: the court list has no listbox/option roles, only plain divs. -->
+<div class="lb" id="court-lb" hidden><div class="opt">Premium Synthetic Court 1 <span>INR 375</span></div><div class="opt">Premium Synthetic Court 2 <span>INR 375</span></div></div></div>
 <button type="button" id="add">Add To Cart</button>
 <div id="cart">Cart Is Empty</div>
 <script>
@@ -29,7 +30,9 @@ function listbox(btnId,lbId,valId,after){
 }
 listbox('sport-btn','sport-lb','sport');
 listbox('time-btn','time-lb','time');
-listbox('court-btn','court-lb','court');
+(function(){const b=document.getElementById('court-btn'),lb=document.getElementById('court-lb'),v=document.getElementById('court');
+  b.addEventListener('click',()=>{const open=lb.hidden;document.querySelectorAll('.lb').forEach(x=>x.hidden=true);lb.hidden=!open;b.setAttribute('aria-expanded',String(open))});
+  lb.querySelectorAll('.opt').forEach(o=>{o.addEventListener('pointerdown',()=>{st.pressed=o});o.addEventListener('pointerup',()=>{if(st.pressed!==o)return;v.textContent=o.textContent;lb.hidden=true;b.setAttribute('aria-expanded','false');save()})});})();
 const cal=document.getElementById('cal');
 for(let d=1;d<=31;d++){const e=document.createElement('div');e.className='day';e.textContent=String(d);e.addEventListener('click',()=>{document.getElementById('date').textContent='2026-10-'+String(d).padStart(2,'0');cal.hidden=true;save()});cal.appendChild(e)}
 document.getElementById('date-btn').addEventListener('click',()=>{document.querySelectorAll('.lb').forEach(x=>x.hidden=true);cal.hidden=false});
