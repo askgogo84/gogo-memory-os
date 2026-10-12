@@ -310,3 +310,24 @@ export async function compileUpcomingTravelWatchers(limit=200){
   }
   return {users,created,reused,stopped,skipped,failed}
 }
+
+/** Same as the cron pass, for one user, right after a ticket is saved so tracking starts now. */
+export async function compileTravelWatchersForUser(telegramId:string|number){
+  const now=Date.now()
+  const {data,error}=await supabaseAdmin.from('travel_tickets')
+    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no')
+    .eq('telegram_id',telegramId).eq('type','flight')
+    .gte('depart_at',new Date(now-6*3600_000).toISOString()).lt('depart_at',new Date(now+14*86400_000).toISOString())
+    .order('depart_at',{ascending:true}).limit(20)
+  if(error)throw new Error(`context_travel_read_failed:${error.message}`)
+  if(!data?.length)return {created:0,reused:0,stopped:0,skipped:0,tracking:false,flights:[] as string[]}
+  const r=await compileForUser(String(telegramId),data as TravelRow[])
+  const sorted=(data as TravelRow[]).slice().sort((a,b)=>Date.parse(a.depart_at)-Date.parse(b.depart_at))
+  const first=sorted[0]
+  const group=first.booking_group?sorted.filter(row=>String(row.booking_group||'')===String(first.booking_group)):[first]
+  // Report tracking only when the flight-status monitor is actually active (plan limits can skip it).
+  const {data:active}=await supabaseAdmin.from('agent_watchers').select('id')
+    .eq('telegram_id',telegramId).eq('active',true)
+    .eq('condition_json->>contextualKind','travel').eq('condition_json->>contextClass','flight_status').limit(1)
+  return {...r,tracking:Boolean(active?.length),flights:group.map(row=>clean(row.flight_no,20)).filter(Boolean)}
+}

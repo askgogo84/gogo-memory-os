@@ -123,7 +123,7 @@ import {
 import { addScannedReceiptToSplit, handleReceiptItemizeCommand, isReceiptItemizeCommand } from '@/lib/splitwise/receipt-itemizer'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 120
 
 function normalizeWhatsAppNumber(value: string | null | undefined): string {
   return (value || '').replace(/^whatsapp:/, '').trim()
@@ -320,8 +320,16 @@ export async function POST(req: NextRequest) {
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
 
     brainUserKey = `user:${resolvedUser.telegramId}`
-    const brainLease = await acquireBrainUserLease(brainUserKey, 90)
+    // Several photos forwarded together arrive as separate webhooks while the first is still
+    // being read. Rejecting them (503) let Twilio's quick retries run out and the photo was lost,
+    // so wait for the user's turn instead, in arrival order.
+    let brainLease = await acquireBrainUserLease(brainUserKey, 90)
+    for (const waitStart = Date.now(); !brainLease && Date.now() - waitStart < 45_000;) {
+      await new Promise(resolve => setTimeout(resolve, 1_000))
+      brainLease = await acquireBrainUserLease(brainUserKey, 90)
+    }
     if (!brainLease) {
+      console.error('WHATSAPP_INBOUND_BUSY_DROPPED:', { messageSid: inboundMessageSid })
       if (inboundClaimOwned && inboundClaim) {
         await failInboundEvent({ id: inboundClaim.id, ownerToken: inboundClaim.ownerToken, error: 'brain_user_lease_busy' })
         inboundClaimOwned = false
