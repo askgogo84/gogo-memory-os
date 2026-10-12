@@ -563,3 +563,23 @@ console.log('Provider booking: a picker that differs from the request is set by 
   assert.equal(Object.keys(browserPageAllowlist('https://example.com/')).includes('apis.google.com'), false, 'only on Playo')
 }
 console.log("Provider booking: Playo's phone login can reach Google's reCAPTCHA and sign-in hosts")
+
+// 12 Oct 18:46 live run: "Recaptcha verification failed  Retry". Gogo presses the site's own Retry once,
+// then hands over with a clear message. It never solves or gets around the check.
+{
+  const robot = { url: 'https://playo.co/venues/hsr', title: 'Playo', text: '[Open dialog] Login / Sign Up Recaptcha verification failed Retry', forms: [],
+    controls: [{ selector: '#retry', tag: 'button', label: 'Retry' }, { selector: '#login', tag: 'button', label: 'LOGIN' }] }
+  commands.length = 0
+  script = [robot, robot, robot]
+  const r = await computer.runSecureBrowser({ ...base, bookingPhone: '9876543210', bookingOtp: null })
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'click', selector: '#retry' }, { kind: 'wait', ms: 3000 }], "the site's own Retry, once")
+  assert.equal(commands.length, 2, 'then Gogo stops')
+  assert.equal(r.bookingStage, 'review')
+  assert.equal(r.robotCheck, true)
+  assert.equal(booking.bookingRobotCheck('Recaptcha verification failed Retry'), true)
+  assert.equal(booking.bookingRobotCheck('Badminton Venues in HSR Layout'), false)
+  const msg = booking.bookingReviewMessage({ host: 'playo.co', takeoverUrl: 'https://app.askgogo.in/x', robotCheck: true })
+  assert.match(msg, /robot check/)
+  assert.match(msg, /tap \*Take control\*, tap Send OTP/)
+}
+console.log("Provider booking: a failed robot check gets the site's Retry once, then a clear handover")

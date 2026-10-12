@@ -453,7 +453,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
             const tooMany=result.bookingStage==='otp'&&Number(bookingOtp?.attempts||0)>=3
             const text=result.bookingStage==='payment'?bookingPaymentMessage({host,takeoverUrl:resumeUrl})
               :result.bookingStage==='otp'&&!tooMany?bookingOtpMessage({host,mobile:bookingPhone,takeoverUrl:resumeUrl,rejected:result.otpRejected===true})
-              :bookingReviewMessage({host,takeoverUrl:resumeUrl})
+              :bookingReviewMessage({host,takeoverUrl:resumeUrl,robotCheck:(result as any).robotCheck===true})
             if(tooMany)await supabaseAdmin.from('agent_runs').update({metadata_json:{...runMetadata,handoff,booking_otp:null,booking_stage:'review'}}).eq('id',params.runId).eq('telegram_id',String(tg))
             await supabaseAdmin.from('agent_runs').update({summary:safe(text.split('\n')[0],600)}).eq('id',params.runId).eq('telegram_id',String(tg))
             return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text,blockedReason:blockReason,bookingStage:result.bookingStage,handledBy:'secure-browser' as const}

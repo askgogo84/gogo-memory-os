@@ -80,7 +80,14 @@ export function bookingPaymentMessage(params: { host: string; summary?: string; 
   return `Your booking on ${params.host} is ready for payment. I stopped before paying.\n\nPay here (it's the same browser I used, with your slot already selected):\n${params.takeoverUrl}\n\nTap *Take control*, check the date, time and amount, then pay with UPI or card. I never enter payment details or press Pay. The booking is only confirmed once you've paid and ${params.host} shows its confirmation.`
 }
 
-export function bookingReviewMessage(params: { host: string; summary?: string; takeoverUrl: string }) {
+/** The site's own robot check (reCAPTCHA and similar) failed or is asking for a person. Gogo never
+ * solves or gets around these: it presses the site's own Retry once, then hands over. */
+export function bookingRobotCheck(text: string | null | undefined): boolean {
+  return /\b(?:re-?captcha|captcha)\b[^.\n]{0,40}\b(?:fail|failed|error|expired|verify|verification)|\bverify (?:that )?you(?:'re| are) (?:a )?human\b|\bi'?m not a robot\b|\bunusual traffic\b/i.test(String(text || '').slice(0, 6000))
+}
+
+export function bookingReviewMessage(params: { host: string; summary?: string; takeoverUrl: string; robotCheck?: boolean }) {
+  if (params.robotCheck) return `${params.host}'s robot check ("are you human") stopped the login, so it didn't send the code. I don't get around these checks myself.\n\nOpen this, tap *Take control*, tap Send OTP (and finish the check if it shows one), then tap *Resume*. I'll ask you for the code and carry on:\n${params.takeoverUrl}`
   return `I got as far as I safely could on ${params.host}, but didn't reach the payment step, so nothing is booked yet.\n\nOpen this, tap *Take control* and finish from where I stopped:\n${params.takeoverUrl}`
 }
 

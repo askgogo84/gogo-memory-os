@@ -11,7 +11,7 @@ import { browserPageAllowlist } from './browser-page-network'
 import {BROWSER_PAGE_READINESS} from './browser-page-readiness'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
-import { bookingAtPayment, bookingOtpPrompt, bookingTargetFromObjective, bookingSelectionMismatch, bookingAdvanceControlText, type BookingStage } from './provider-booking'
+import { bookingAtPayment, bookingOtpPrompt, bookingRobotCheck, bookingTargetFromObjective, bookingSelectionMismatch, bookingAdvanceControlText, type BookingStage } from './provider-booking'
 import { needsBrowserDeliveryLocation } from './browser-location-gate'
 import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
@@ -113,6 +113,8 @@ export type SecureBrowserResult = {
   // Provider booking: where Gogo handed over (OTP needed, payment, or anything else).
   bookingStage?: BookingStage
   otpRejected?: boolean
+  // The site's robot check (reCAPTCHA) stopped a booking login; the person takes over.
+  robotCheck?: boolean
 }
 
 function safeText(value:unknown,max=1200){
@@ -1712,6 +1714,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     // at payment, or wherever it stops. It never reports a booking as done.
     const bookingStop=async(stage:BookingStage,summary:string,extra:Partial<SecureBrowserResult>={}):Promise<SecureBrowserResult>=>{
       // Why a booking stopped where it did: stage, page path and step outcomes, never values.
+      // 12 Oct live run: "Recaptcha verification failed" ended the run with a generic message.
+      if(stage==='review'&&bookingRobotCheck(String(page?.text||'')))extra={...extra,robotCheck:true}
       try{console.log('BROWSER_BOOKING_STOP:',JSON.stringify({runId:params.runId||null,stage,path:(()=>{try{return new URL(String(page.url||'')).pathname.slice(0,80)}catch{return null}})(),steps:actionLog.slice(-16).map((a:any)=>`${a?.kind}:${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`)}))}catch{}
       return bookingStopResult(stage,summary,extra)
     }
@@ -1730,6 +1734,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let bookingLoginPressed=false
     let bookingLastLogin='',bookingLoginRepeats=0
     let otpRechecks=0,otpRecheckActions:BrowserAction[]|null=null
+    let robotRetried=false,robotActions:BrowserAction[]|null=null
     // Screenshot fallback state: the last viewport image, how often reading made no progress, and
     // a cap on vision steps per run. GOGO_VISION_FALLBACK=off turns it off.
     const visionEnabled=String(process.env.GOGO_VISION_FALLBACK||'').toLowerCase()!=='off'
@@ -1764,6 +1769,13 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         otpRecheckActions=verify?[{kind:'click',selector:String(verify.selector)},{kind:'wait',ms:2500}]:[{kind:'wait',ms:2500}]
       }else otpRecheckActions=null
       if(!otpRecheckActions&&otpWaiting&&(!params.bookingOtp||otpUsed))return await bookingStop('otp','The site sent a one-time code to your phone.',{otpRejected:otpUsed})
+      // The site's robot check failed: press its own Retry once, then hand over. Never solved by Gogo.
+      robotActions=null
+      if(providerBooking&&bookingRobotCheck(String(page?.text||''))){
+        const retry=(page.controls||[]).find((c:any)=>/^(?:retry|try again)$/i.test(String(c?.label||'').trim()))
+        if(retry&&!robotRetried){robotRetried=true;robotActions=[{kind:'click',selector:String(retry.selector)},{kind:'wait',ms:3000}]}
+        else return await bookingStop('review','The site\'s robot check stopped the login.')
+      }
 
       let authGate=detectHumanAuthGate(page)
       const loginish=pageLooksLikeLogin(page)
@@ -1918,7 +1930,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         console.log('BROWSER_BOOKING_LOGIN_STEP:',JSON.stringify({runId:params.sessionTaskId||null,step:loginStep.map(a=>a.kind==='click_text'?'click_text:'+a.text:a.kind)}))
         if(loginStep.some(a=>a.kind==='click'))bookingLoginPressed=true
       }
-      let plan=otpRecheckActions?{actions:otpRecheckActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:vision?{actions:vision.actions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:loginStep?{actions:loginStep,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
+      let plan=robotActions?{actions:robotActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:otpRecheckActions?{actions:otpRecheckActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:vision?{actions:vision.actions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:loginStep?{actions:loginStep,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
       // 11 Oct 15:10 rehearsal: the planner saw today's times ("No courts available") and stopped
       // without setting the requested date. A booking gets one second look per run.
       if(providerBooking&&!plan.actions.length&&!bookingRetried&&!bookingAtPayment(page)&&!otpWaiting){
@@ -2100,7 +2112,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // controls with denied selectors removed; never relax the execution guard.
       // A booking replans after a failed step (the page is observed again), but two waves in a
       // row with nothing done end the run. A rehearsal or payment stop ends it at once.
-      const bookingHalt=(page.actions||[]).some((a:any)=>a?.failure?.reason==='rehearsal_stop'||a?.failure?.reason==='payment_control'||a?.failure?.reason==='repeat'||(['fill_phone','fill_otp','fill_phone_at','fill_otp_at'].includes(a?.kind)&&a?.status==='failed'))
+      const bookingHalt=(page.actions||[]).some((a:any)=>a?.failure?.reason==='rehearsal_stop'||a?.failure?.reason==='payment_control'||a?.failure?.reason==='repeat'||(['fill_phone','fill_otp','fill_phone_at','fill_otp_at'].includes(a?.kind)&&a?.status==='failed'&&!bookingRobotCheck(String(page?.text||''))))
       if(providerBooking&&!bookingHalt){
         bookingIdleWaves=doneCount===0?bookingIdleWaves+1:0
         if(bookingIdleWaves>=2)break
