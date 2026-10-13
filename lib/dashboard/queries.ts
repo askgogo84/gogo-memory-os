@@ -3,7 +3,7 @@ import { istDayWindow } from '@/lib/ist'
 import type { ListItem } from '@/lib/data/lists'
 import { getPlan, getLimits, getUsage } from '@/lib/services/meter'
 import { getPlanLimits } from '@/lib/data/limits'
-import { refreshAccessToken } from '@/lib/services/google-calendar'
+import { getCalendarAccountAccess, mergeAccountEvents } from '@/lib/services/google-calendar-accounts'
 
 // ── The dashboard's read layer ────────────────────────────────────────────────
 // Every Supabase read the dashboard does lives here, one function per surface,
@@ -340,12 +340,13 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
       return { ok: true, connected: false }
     }
 
-    const accessToken = await refreshAccessToken(user.google_refresh_token)
-    if (!accessToken) return { ok: true, connected: false } // refresh failed → treat as not connected, write nothing
+    const accounts = await getCalendarAccountAccess(tgNum, user.google_refresh_token)
+    if (!accounts.length) return { ok: true, connected: false } // refresh failed → treat as not connected, write nothing
 
     // Read-only events fetch, bounded to the user's IST day — NOT the UTC day the
     // shared getTodayEvents assumes. India-first: an event at 00:30 IST belongs to
     // today, not yesterday. Same istDayWindow the reminders query + friend cron use.
+    // Every linked Google account is read, so a second account's events show up too.
     const { startUtc, endUtc } = istDayWindow()
     const params = new URLSearchParams({
       timeMin: startUtc.toISOString(),
@@ -353,14 +354,17 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
       singleEvents: 'true',
       orderBy: 'startTime',
     })
-    const res = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } },
-    )
-    const data = await res.json()
-    const items: Array<{ id?: string; summary?: string; start?: { dateTime?: string } }> = Array.isArray(data?.items)
-      ? data.items
-      : []
+    type RawItem = { id?: string; summary?: string; iCalUID?: string; start?: { dateTime?: string } }
+    const perAccount = await Promise.all(accounts.map(async (account) => {
+      const res = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`,
+        { headers: { Authorization: `Bearer ${account.accessToken}` } },
+      )
+      const data = await res.json()
+      const events: RawItem[] = Array.isArray(data?.items) ? data.items : []
+      return { email: account.email, events, hasMore: false }
+    }))
+    const items = mergeAccountEvents(perAccount).events as RawItem[]
 
     const zone = user.timezone || 'Asia/Kolkata'
     const events: CalendarEvent[] = items.map((it, i) => ({

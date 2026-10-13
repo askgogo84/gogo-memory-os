@@ -134,9 +134,17 @@ export function maskNumber(value: string | null | undefined): string {
 
 // Collapse identifier-like long digit runs. Commas/decimal punctuation intentionally
 // break the run so ordinary money amounts such as ₹51,000 remain useful.
+// A plain digit run with a money-style fraction ("29900.00") is an amount, not an identifier: card,
+// account and passport numbers never carry ".00". Without this a bill's total showed as "••••.00".
 function stripLongDigits(text: string): string {
-  return String(text || '').replace(/\d[\d\s-]{3,}\d/g, '••••')
+  const source = String(text || '')
+  return source.replace(/\d[\d\s-]{3,}\d/g, (run, offset: number) => {
+    const after = source.slice(offset + run.length)
+    return /^\.\d{1,2}(?!\d)/.test(after) && /^\d+$/.test(run) && run.length <= 9 ? run : '••••'
+  })
 }
+
+export const __test_stripLongDigits = stripLongDigits
 
 // ── Classification + extraction ──────────────────────────────────────────────
 

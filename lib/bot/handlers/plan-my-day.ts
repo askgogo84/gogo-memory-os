@@ -1,7 +1,8 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { fetchWeatherForecast, formatCurrentWeather } from '@/lib/services/weather'
-import { getTodayEvents, refreshAccessToken } from '@/lib/google-calendar'
+import { getTodayEvents } from '@/lib/google-calendar'
+import { getTodayEventsAllAccounts } from '@/lib/services/google-calendar-accounts'
 import { saveFollowupState } from './followup-state'
 
 type DayPlanItem = {
@@ -113,21 +114,11 @@ async function getCalendarEvents(telegramId: number) {
     }
   }
 
-  const accessToken = await refreshAccessToken(user.google_refresh_token)
-
-  if (!accessToken) {
-    return {
-      connected: false,
-      events: [],
-    }
-  }
-
   try {
-    const events = await getTodayEvents(accessToken)
-
+    const result = await getTodayEventsAllAccounts(telegramId, user.google_refresh_token, getTodayEvents)
     return {
-      connected: true,
-      events,
+      connected: result.connected,
+      events: result.events,
     }
   } catch {
     return {

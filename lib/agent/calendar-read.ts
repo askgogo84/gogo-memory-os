@@ -1,6 +1,7 @@
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchPrimaryCalendarEventsPage, fetchPrimaryCalendarAccount, refreshAccessToken } from '@/lib/google-calendar'
+import { listExtraCalendarAccounts, getCalendarAccountAccess, fetchMergedCalendarEventsPage, describeCalendarAccounts, type CalendarAccountAccess } from '@/lib/services/google-calendar-accounts'
 import { isValidTimezone, normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
@@ -224,7 +225,13 @@ async function calendarAccess(actor:AgentActor){
   const timezone=normalizeTimezone(String(data.timezone||'Asia/Kolkata'))
   const accessToken=await refreshAccessToken(String(data.google_refresh_token))
   if(!accessToken)throw new Error('calendar_token_refresh_failed')
-  return {accessToken,timezone}
+  // More than one linked Google account: read all of them, not just the first.
+  let accounts:CalendarAccountAccess[]|undefined
+  if((await listExtraCalendarAccounts(actor.legacyTelegramId)).length){
+    const all=await getCalendarAccountAccess(actor.legacyTelegramId,String(data.google_refresh_token))
+    if(all.length>1)accounts=all
+  }
+  return {accessToken,timezone,accounts}
 }
 
 export function requestedCalendarTimezone(text:string){
@@ -259,7 +266,10 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   if(requestedMinute!==undefined&&requestedMinute+duration>1440)throw new Error('calendar_time_unsupported')
   const start=parseLocalDateTime({date:window.startDate,time:'00:00',timezone}).dueAtUtc
   const end=parseLocalDateTime({date:addDays(window.endDate,1),time:'00:00',timezone}).dueAtUtc
-  const page=await fetchPrimaryCalendarEventsPage(access.accessToken,start.toISOString(),end.toISOString(),'AGENT_CALENDAR_READ_FAILED',MAX_EVENTS)
+  const multi=!!access.accounts&&access.accounts.length>1
+  const page:{events:any[];hasMore:boolean;accountsRead?:number;accountsTotal?:number}=multi
+    ?await fetchMergedCalendarEventsPage(access.accounts!,start.toISOString(),end.toISOString(),'AGENT_CALENDAR_READ_FAILED',MAX_EVENTS)
+    :await fetchPrimaryCalendarEventsPage(access.accessToken,start.toISOString(),end.toISOString(),'AGENT_CALENDAR_READ_FAILED',MAX_EVENTS)
   const events=page.events.filter((event:any)=>event.status!=='cancelled')
   const complete=!page.hasMore
   const busyEvents=events.filter(blocksCalendarTime)
@@ -267,17 +277,23 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
 
   if(!wantsAvailability){
     const items=events.slice(0,12).map((event:any)=>({
+      account:multi?String(event?._account||''):'',
       id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),start:String(event?.start?.dateTime||event?.start?.date||''),end:event?.endTimeUnspecified===true?'':String(event?.end?.dateTime||event?.end?.date||''),
       label:eventInterval(event,timezone)?.allDay?`All day · ${event.start.date} (end ${event.end.date} exclusive)`:
         eventInterval(event,timezone)?slotLabel(event.start.dateTime,event.end.dateTime,timezone):`${event.start?.dateTime||event.start?.date||'Start not verified'} · end time not verified`,
     }))
     if(params.rememberSelection)await rememberTypedObjects(params.actor.legacyTelegramId,'calendar',items.map(e=>({id:e.id,title:e.summary}))).catch(()=>{})
-    const lines=[`Calendar ${window.label} (${timezone}):`,items.length?items.map((e:any,i:number)=>`${i+1}. ${e.summary} — ${e.label}`).join('\n'):
+    const lines=[`Calendar ${window.label} (${timezone}):`,items.length?items.map((e:any,i:number)=>`${i+1}. ${e.summary} — ${e.label}${e.account?` (${e.account})`:''}`).join('\n'):
       complete?`No calendar events found for ${window.label}.`:'No events returned on this partial calendar page.']
     if(events.length>items.length)lines.push(`Showing ${items.length} of ${events.length} returned events.`)
     // Say which Google account this schedule came from.
-    const account=await fetchPrimaryCalendarAccount(access.accessToken)
-    if(account)lines.push(`Google account: ${account}`)
+    if(multi){
+      lines.push(describeCalendarAccounts(access.accounts!).replace(/\*/g,'').replace('Accounts:','Google accounts (all read):'))
+      if((page.accountsRead??0)<(page.accountsTotal??0))lines.push('One linked Google account could not be read just now, so this list may be incomplete.')
+    }else{
+      const account=await fetchPrimaryCalendarAccount(access.accessToken)
+      if(account)lines.push(`Google account: ${account}`)
+    }
     if(!complete)lines.push('Partial calendar page; more events are available. This is not the full schedule.')
     const conflicts:Array<{first:string;second:string}>=[]
     const wantsConflicts=/\b(overlaps?|overlapping|conflicts?|clash(?:es)?|double[- ]booked)\b/i.test(text)
