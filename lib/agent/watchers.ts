@@ -664,6 +664,21 @@ async function processProductStockWatcher(watcher:any, now:Date) {
     return { triggered:false, failed:true }
   }
 
+  // The flight-status feed (flight-leg-tracker) already watches every saved leg with real data and sends
+  // delay/gate/take-off/landing alerts. This generic web-page watcher would fire on boilerplate words on a
+  // tracker page ("Flight update ... From a news or tracker page", 13 Oct 8:45 pm) and cost searches, so
+  // it stands down while the feed key is configured.
+  if ((condition as any).contextClass === 'flight_status' && process.env.AERODATABOX_RAPIDAPI_KEY) {
+    await supabaseAdmin.from('agent_watchers').update({
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + 6 * 60 * 60_000).toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), handledBy:'flight_leg_tracker', lastSkippedAt:now.toISOString() },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
+      .eq('condition_json', JSON.stringify(watcher.condition_json))
+    return { triggered:false, failed:false }
+  }
+
   const telegramId = String(watcher.telegram_id)
   const budget = await getCostBudget(telegramId)
   if (budget.activeWebWatchersMax <= 0) {
