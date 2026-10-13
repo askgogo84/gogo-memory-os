@@ -253,7 +253,9 @@ export async function runFlightLegTracker(nowMs = Date.now()) {
       const prev = leg.tracking || {}
       const delivered = new Set(prev.sent || [])
       for (const e of events) {
-        const delivery = await deliverWatchAlert({ watcherId: String(monitor.id), owner: leg.telegramId, key: `flight/${leg.id}/${e.key}`, due: new Date(nowMs).toISOString(), condition: monitor.condition_json, message: e.text })
+        // Due a minute early so a server/database clock difference can't defer the claim.
+        const delivery = await deliverWatchAlert({ watcherId: String(monitor.id), owner: leg.telegramId, key: `flight/${leg.id}/${e.key}`, due: new Date(nowMs - 60_000).toISOString(), condition: monitor.condition_json, message: e.text })
+        console.log('FLIGHT_TRACKER_DELIVERY:', JSON.stringify({ leg: leg.id, event: e.key, state: delivery.state, accepted: delivery.accepted }))
         if (delivery.accepted || ['outcome_unknown'].includes(delivery.state)) {
           delivered.add(e.key); sent++
           await supabaseAdmin.from('conversations').insert({ telegram_id: Number(leg.telegramId), role: 'assistant', content: e.text }).then(() => {}, () => {})
