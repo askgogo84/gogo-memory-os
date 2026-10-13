@@ -23,7 +23,7 @@ export function isConnectionStatus(text:string){
 export async function tryGetConnectionStatus(params:{actor:AgentActor;text:string}){
   if(!isConnectionStatus(params.text))return null
   const {data,error}=await supabaseAdmin.from('users')
-    .select('gmail_connected,gmail_send_connected,gmail_email,gmail_connected_at,google_calendar_connected')
+    .select('gmail_connected,gmail_send_connected,gmail_email,gmail_connected_at,google_calendar_connected,google_refresh_token')
     .eq('telegram_id',params.actor.legacyTelegramId)
     .maybeSingle()
   if(error)throw new Error(`connection_status_read_failed:${error.message}`)
@@ -38,8 +38,15 @@ export async function tryGetConnectionStatus(params:{actor:AgentActor;text:strin
     lines.push(`✉️ Gmail Send: ${data.gmail_send_connected?'enabled (approval-gated)':'not enabled'}`)
   }else lines.push('📧 Gmail / Workspace: not connected')
   if(data.google_calendar_connected){
-    lines.push('📅 Google Calendar: connected to its primary calendar')
-    if(!data.gmail_email)lines.push('_This older Calendar connection does not store the account email yet._')
+    let calendarAccount:string|null=null
+    try{
+      if(data.google_refresh_token){
+        const {refreshAccessToken,fetchPrimaryCalendarAccount}=await import('@/lib/google-calendar')
+        const token=await refreshAccessToken(String(data.google_refresh_token))
+        if(token)calendarAccount=await fetchPrimaryCalendarAccount(token)
+      }
+    }catch{calendarAccount=null}
+    lines.push(calendarAccount?`📅 Google Calendar: connected to *${clean(calendarAccount,160)}* (primary calendar)`:'📅 Google Calendar: connected to its primary calendar')
   }else lines.push('📅 Google Calendar: not connected')
   return {
     runId:'connection-status',

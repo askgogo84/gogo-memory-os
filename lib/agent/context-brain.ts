@@ -177,7 +177,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
         return seat&&names.length?[{names,seat}]:[]
       }),
       arrivalTz:ticketTimezone(row.to_city,row.raw?.arrivalTimezone),
-      live:{eta:validIso(raw.liveTracking?.etaArrival),actual:validIso(raw.liveTracking?.actualArrival),checkedAt:validIso(raw.liveTracking?.lastCheckedAt)},
+      live:{eta:validIso(raw.liveTracking?.etaArrival),actual:validIso(raw.liveTracking?.actualArrival),scheduled:validIso(raw.liveTracking?.scheduledArrival),checkedAt:validIso(raw.liveTracking?.lastCheckedAt)},
     }})
     .filter((row:any)=>row.id)
     .sort((a:any,b:any)=>Date.parse(a.departAt)-Date.parse(b.departAt))
@@ -197,9 +197,9 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     const arrivalLabel=validArrival?`Arrival ${new Intl.DateTimeFormat('en-GB',{timeZone:leg.arrivalTz||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(validArrival))} (${leg.arrivalTz||'UTC'})`:'Arrival instant unverified; check source ticket'
     // The flight-status feed's own arrival estimate (or actual landing), when the tracker has stored one.
     // It is labelled as an estimate from that feed so the answer never presents it as the ticket's time.
-    const liveInstant=leg.live?.actual||leg.live?.eta
+    const liveInstant=leg.live?.actual||leg.live?.eta||leg.live?.scheduled
     const liveFormat=(iso:string,tz:string)=>new Intl.DateTimeFormat('en-GB',{timeZone:tz,dateStyle:'medium',timeStyle:'short'}).format(new Date(iso))
-    const liveLabel=liveInstant?`${leg.live.actual?'Flight-status feed reports it LANDED at':'Flight-status feed live arrival ESTIMATE (not on the ticket):'} ${liveFormat(liveInstant,leg.arrivalTz||'UTC')} (${leg.arrivalTz||'UTC'})${leg.live.checkedAt?`, feed last checked ${liveFormat(leg.live.checkedAt,'Asia/Kolkata')} IST`:''}${validArrival?'':'; the ticket itself has no arrival time, so answer a landing-time question from this estimate and call it an estimate'}`:null
+    const liveLabel=liveInstant?`${leg.live.actual?'Flight-status feed reports it LANDED at':leg.live.eta?'Flight-status feed live arrival ESTIMATE (not on the ticket):':'Flight-status feed SCHEDULED arrival (the airline timetable, not on the ticket; no live estimate yet):'} ${liveFormat(liveInstant,leg.arrivalTz||'UTC')} (${leg.arrivalTz||'UTC'})${leg.live.checkedAt?`, feed last checked ${liveFormat(leg.live.checkedAt,'Asia/Kolkata')} IST`:''}${validArrival?'':'; the ticket itself has no arrival time, so answer a landing-time question from this estimate and call it an estimate'}`:null
     // A leg whose departure instant is already in the past must be labelled as such,
     // so the reply layer recomputes status against the current clock instead of
     // replaying a stale relative check-in countdown ("check-in opens in 6 days …"
