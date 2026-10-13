@@ -35,14 +35,35 @@ function decodeCalendarState(token:string,purpose:CalendarState['purpose']) {
   }catch{return null}
 }
 
+// Compact signed connect token: "c1.<id>.<expiry seconds, base36>.<nonce>.<signature>". The long JSON form
+// made the WhatsApp link wrap over most of a screen (13 Oct); this keeps the link short and still signed.
+function shortConnectSignature(payload:string) {
+  const secret=calendarStateSecret()
+  if(!secret)return null
+  return createHmac('sha256',secret).update('calendar_connect.c1.'+payload).digest('base64url').slice(0,22)
+}
 export function buildCalendarConnectUrl(telegramId:number):string|null {
   // WhatsApp users have NEGATIVE telegram_ids (resolve-user.ts); only 0 is invalid.
   if(!Number.isFinite(telegramId)||telegramId===0)return null
-  const token=encodeCalendarState({tg:telegramId,purpose:'calendar_connect',exp:Date.now()+CALENDAR_CONNECT_TTL_MS,nonce:randomBytes(16).toString('base64url')})
-  return token?`https://app.askgogo.in/api/calendar/connect?token=${encodeURIComponent(token)}`:null
+  const payload=`${Math.trunc(telegramId)}.${Math.floor((Date.now()+CALENDAR_CONNECT_TTL_MS)/1000).toString(36)}.${randomBytes(8).toString('base64url')}`
+  const signature=shortConnectSignature(payload)
+  return signature?`https://app.askgogo.in/api/calendar/connect?token=c1.${payload}.${signature}`:null
 }
 export function verifyCalendarConnectToken(token:string):number|null {
-  return decodeCalendarState(token,'calendar_connect')?.tg||null
+  const value=String(token||'')
+  if(value.startsWith('c1.')){
+    const parts=value.slice(3).split('.')
+    if(parts.length!==4)return null
+    const [tg,expiry,nonce,supplied]=parts
+    const expected=shortConnectSignature(`${tg}.${expiry}.${nonce}`)
+    if(!expected)return null
+    const a=Buffer.from(supplied),b=Buffer.from(expected)
+    if(a.length!==b.length||!timingSafeEqual(a,b))return null
+    const id=Number(tg),expiresAt=parseInt(expiry,36)*1000
+    if(!Number.isInteger(id)||id===0||!Number.isFinite(expiresAt)||expiresAt<=Date.now()||!nonce)return null
+    return id
+  }
+  return decodeCalendarState(value,'calendar_connect')?.tg||null
 }
 export function consumeCalendarOauthState(state:string):number|null {
   return decodeCalendarState(state,'calendar_oauth')?.tg||null
@@ -57,7 +78,8 @@ export function getAuthUrl(telegramId: number): string {
     response_type: 'code',
     scope: 'https://www.googleapis.com/auth/calendar.events',
     access_type: 'offline',
-    prompt: 'consent',
+    // Let the person pick which Google account to connect (also how they switch accounts).
+    prompt: 'select_account consent',
     state,
   })
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
