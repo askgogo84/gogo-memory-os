@@ -1,6 +1,6 @@
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { fetchPrimaryCalendarEventsPage, refreshAccessToken } from '@/lib/google-calendar'
+import { fetchPrimaryCalendarEventsPage, fetchPrimaryCalendarAccount, refreshAccessToken } from '@/lib/google-calendar'
 import { isValidTimezone, normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
@@ -275,6 +275,9 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
     const lines=[`Calendar ${window.label} (${timezone}):`,items.length?items.map((e:any,i:number)=>`${i+1}. ${e.summary} — ${e.label}`).join('\n'):
       complete?`No calendar events found for ${window.label}.`:'No events returned on this partial calendar page.']
     if(events.length>items.length)lines.push(`Showing ${items.length} of ${events.length} returned events.`)
+    // Say which Google account this schedule came from.
+    const account=await fetchPrimaryCalendarAccount(access.accessToken)
+    if(account)lines.push(`Google account: ${account}`)
     if(!complete)lines.push('Partial calendar page; more events are available. This is not the full schedule.')
     const conflicts:Array<{first:string;second:string}>=[]
     const wantsConflicts=/\b(overlaps?|overlapping|conflicts?|clash(?:es)?|double[- ]booked)\b/i.test(text)

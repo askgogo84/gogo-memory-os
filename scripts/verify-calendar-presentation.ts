@@ -94,7 +94,10 @@ async function main(){
   return q // No insert/update/delete method: any mutation fails the test.
  }
  globalThis.fetch=(async(url:any,opts:any)=>{
-  const u=String(url);http.push(u)
+  const u=String(url)
+  // The account-name probe is not an events query; keep it out of the routed-query assertions.
+  if(u.includes('fields=summary'))return new Response(JSON.stringify({summary:'fixture@example.com'}))
+  http.push(u)
   if(u==='https://oauth2.googleapis.com/token')return new Response(JSON.stringify({access_token:'fixture-access'}))
   assert.match(u,/googleapis.com\/calendar\/v3\/calendars\/primary\/events\?/)
   assert.ok(!opts.method||opts.method==='GET','calendar read never creates an event')
@@ -110,6 +113,7 @@ async function main(){
  try{
   const actor={legacyTelegramId:123} as any
   const calendar=await readTomorrowSchedule({actor,scope:'calendar'})
+  assert.match(calendar.text,/Google account: fixture@example\.com/,'a calendar read names the Google account')
   assert.match(calendar.text,/Calendar event fixture/)
   assert.doesNotMatch(calendar.text,/reminder|attention|watcher/i)
   assert.equal(calendar.calendarReadVerified,true);assert.ok(!tables.includes('reminders'))
