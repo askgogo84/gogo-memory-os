@@ -1,4 +1,5 @@
 import { buildGmailConnectUrl, fetchLatestEmails, fetchUnreadEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
+import { redactEmailAuthSecrets } from '@/lib/agent/google-workspace-read'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { decryptGoogleToken, encryptGoogleToken } from '@/lib/security/google-token-crypto'
 
@@ -85,7 +86,7 @@ export async function buildEmailActionReply(telegramId: number, input: string) {
   const email = pickEmailByIntent(input, emails)
   const subject = email?.subject || '(No subject)'
   const from = email?.from || 'Unknown sender'
-  const snippet = (email?.snippet || '').replace(/\s+/g, ' ').trim()
+  const snippet = redactEmailAuthSecrets((email?.snippet || '').replace(/\s+/g, ' ').trim())
   const signature = String(user?.name || 'Gogo user').trim() || 'Gogo user'
 
   return `*Draft reply suggestion*\n\nTo: ${from}\nSubject: Re: ${subject}\n\nHi,\n\nThanks for the update. I’ve gone through this and will review it shortly.\n\n${snippet ? `Context I noted: ${snippet.slice(0, 220)}${snippet.length > 220 ? '...' : ''}\n\n` : ''}I’ll get back to you soon.\n\nBest,\n${signature}`

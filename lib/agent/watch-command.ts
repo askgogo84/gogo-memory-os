@@ -410,9 +410,39 @@ export function declaresStorageNotApplicable(text:string){
   return false
 }
 
+// "Tell me if Sony WH-1000XM5 drops below ₹25,000 on Amazon", "Alert me when the price of X falls under 40k",
+// "Let me know when X is below 15,000". The threshold must look like money and the subject must be a product:
+// "tell me if it drops below 20 degrees" or a gold/fare/stock level is not a product price watch.
+const PRICE_ALERT_LEAD='(?:(?:tell|alert|notify|ping|message|inform)\\s+me|let\\s+me\\s+know|send\\s+me\\s+an?\\s+alert)'
+const PRICE_DROP_VERB='(?:drops?|falls?|goes|go|gets|get|comes|come|dips?|slips?|is|are|becomes?|hits?)'
+const PRICE_BELOW='(?:below|under|less\\s+than|lower\\s+than|cheaper\\s+than|down\\s+to|to)'
+const MONEY='(?:(?:₹|rs\\.?|inr|\\$|€|£)\\s*\\d[\\d,]*(?:\\.\\d+)?(?:\\s*(?:k|lakh|lakhs|rupees))?|\\d[\\d,]*(?:\\.\\d+)?\\s*(?:k|lakh|lakhs|rupees|rs\\.?|inr))'
+const NOT_A_PRODUCT=/\b(?:temperature|temp|weather|rain|humidity|aqi|score|gold|silver|petrol|diesel|stock|share|shares|nifty|sensex|bitcoin|btc|eth|crypto|flight|flights|fare|fares|ticket|tickets|battery|balance|rate|rates)\b/i
+
+export function parseNaturalPriceAlert(raw:string):{product:string;threshold:string}|null{
+  const text=raw.replace(/\s+/g,' ').trim().replace(/[.!?]+$/,'')
+  const site='(?:\\s+(?:on|at|from|in)\\s+([A-Za-z][A-Za-z0-9.\\- ]{1,30}?))?'
+  const tail=`\\s+(?:${PRICE_DROP_VERB}\\s+)?(?:down\\s+)?${PRICE_BELOW}\\s+(${MONEY})${site}$`
+  const forms:RegExp[]=[
+    new RegExp(`^(?:please\\s+)?${PRICE_ALERT_LEAD}\\s+(?:if|when)\\s+(?:the\\s+)?(?:price\\s+of\\s+)?(.+?)(?:'s)?(?:\\s+price)?${tail}`,'i'),
+    new RegExp(`^(?:please\\s+)?(?:watch|monitor|track)\\s+(?:the\\s+)?(?:price\\s+of\\s+)?(.+?)(?:\\s+price)?\\s+(?:and\\s+|then\\s+)?${PRICE_ALERT_LEAD}\\s+(?:if|when)\\s+(?:it|the\\s+price)\\s+(?:${PRICE_DROP_VERB}\\s+)?(?:down\\s+)?${PRICE_BELOW}\\s+(${MONEY})${site}$`,'i'),
+  ]
+  for(const re of forms){
+    const m=text.match(re)
+    if(!m?.[1]||!m?.[2])continue
+    let product=m[1].replace(/^(?:the|a|an)\\s+/i,'').trim()
+    if(!product||product.length<3||NOT_A_PRODUCT.test(product)||/^(?:it|this|that|they)$/i.test(product))continue
+    if(m[3])product=`${product} on ${m[3].trim()}`
+    return {product,threshold:m[2].trim()}
+  }
+  return null
+}
+
 export function parsePriceWatchCommand(text:string){
   const raw=clean(text,1200)
-  const m=raw.match(/^(?:please\s+)?(?:watch|monitor|track)\s+(?:the\s+)?price\s+of\s+(.+?)\s+(?:and\s+)?(?:tell|notify|alert|let)\s+me\s+(?:know\s+)?if\s+(?:it|the\s+price)\s+(?:drops?|falls?|goes?)\s+below\s+(.+)$/i)
+  const strict=raw.match(/^(?:please\s+)?(?:watch|monitor|track)\s+(?:the\s+)?price\s+of\s+(.+?)\s+(?:and\s+)?(?:tell|notify|alert|let)\s+me\s+(?:know\s+)?if\s+(?:it|the\s+price)\s+(?:drops?|falls?|goes?)\s+below\s+(.+)$/i)
+  const natural=strict?null:parseNaturalPriceAlert(raw)
+  const m=strict||(natural?[raw,natural.product,natural.threshold] as any:null)
   if(!m?.[1]||!m?.[2])return null
   const product=clean(m[1],160)
   const threshold=clean(m[2],80)
@@ -577,6 +607,11 @@ export function parseWebWatchCommand(text: string) {
     /^(?:please\s+)?(?:watch|monitor|track|follow)\s+(.+?)\s+news\b(.*)$/i,
     /^(?:please\s+)?(?:set\s+up\s+|create\s+)?(?:a\s+)?news\s+alerts?\s+(?:on|about|for)\s+(.+)$/i,
     /^(?:please\s+)?keep\s+me\s+(?:updated|posted)\s+(?:on|about)\s+(?:the\s+)?(?:news\s+(?:on|about)\s+)?(.+)$/i,
+    // "Alert me when there's news about KLM strikes", "Tell me if there is any news on X", "Send me news updates on X"
+    /^(?:please\s+)?(?:alert|tell|notify|ping|message|inform)\s+me\s+(?:when|if|whenever)\s+there(?:'s|\s+is|\s+are)\s+(?:any\s+|new\s+|breaking\s+|fresh\s+)*news\s+(?:on|about|regarding|for|around)\s+(.+)$/i,
+    /^(?:please\s+)?let\s+me\s+know\s+(?:when|if|whenever)\s+there(?:'s|\s+is|\s+are)\s+(?:any\s+|new\s+|breaking\s+|fresh\s+)*news\s+(?:on|about|regarding|for|around)\s+(.+)$/i,
+    /^(?:please\s+)?(?:alert|notify|ping)\s+me\s+(?:on|about)\s+(?:any\s+|new\s+|breaking\s+)*news\s+(?:on|about|regarding|for)\s+(.+)$/i,
+    /^(?:please\s+)?send\s+me\s+(?:news\s+)?(?:updates?|alerts?)\s+(?:on|about|regarding|for)\s+(.+)$/i,
   ]
   let query = ''
   for (const re of patterns) {

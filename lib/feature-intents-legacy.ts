@@ -24,6 +24,7 @@ import { handleLinkVaultText } from '@/lib/services/link-vault'
 import { internalServiceAuthHeaders } from '@/lib/security/cron-auth'
 import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { mayClaim, type RuleCapability } from '@/lib/agent/semantic-gate'
+import { isDriveWriteRequest } from '@/lib/bot/drive-write-request'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
@@ -123,7 +124,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   // swallow any food word ("milk") and log a meal. "add X to Y" is unambiguous,
   // so capture an arbitrary trailing list name ("weekend list", "Goa list") too.
   const listAdd = text.match(/^\s*(?:gogo[,!\s]+)?add\s+(.+?)\s+(?:to|into)\s+(?:my\s+)?(.+?)\s*$/i)
-  if (listAdd && extra?.telegramId && may('list', 'legacy_list_add')) {
+  if (listAdd && extra?.telegramId && !isDriveWriteRequest(text) && may('list', 'legacy_list_add')) {
     const item = listAdd[1].trim()
     const listName = normalizeListName(listAdd[2])
     // "add a reminder to call mom" is a reminder, not a list item — let it fall

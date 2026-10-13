@@ -27,6 +27,7 @@ runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/bot/detect-inten
   {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText,
 {exports: intentModule, Date: FixedDate, Intl, console, require(name: string) {
   if (name === './reminder-command') return {isTimeFirstReminder: () => false}
+  if (name === './drive-write-request') return {isDriveWriteRequest: () => false}
   if (name === '@/lib/agent/food-comparison-intent') return {isFoodComparisonRequest: () => false}
   if (name === '@/lib/data/lists-core') return {classifyCheckVerb: () => null}
   if (name === '@/lib/bot/handlers/calendar-actions') return {CALENDAR_WORD_RE: /calendar/}

@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isReminderReadQuestion } from '@/lib/bot/detect-intent'
 import {
   stopReminderSeries,
   skipReminderOccurrence,
@@ -171,7 +172,8 @@ function isShowReminderCommand(input: string) {
     lower === 'list reminders' ||
     lower === 'what are my reminders' ||
     lower === 'what reminders do i have' ||
-    lower.includes('show pending reminders')
+    lower.includes('show pending reminders') ||
+    isReminderReadQuestion(lower)
   )
 }
 

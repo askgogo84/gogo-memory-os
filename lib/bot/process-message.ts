@@ -42,7 +42,7 @@ import { gateDetectedIntent } from '@/lib/agent/semantic-gate'
 import { isCalendarMutation, isCalendarMutationConfirm, buildCalendarMutationReply, confirmCalendarMutation } from './handlers/calendar-mutations'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
-import { buildGmailConnectReply, buildGmailReadReply } from './handlers/gmail-read'
+import { buildGmailConnectReply, buildGmailReadReply, parseGmailReadFilter } from './handlers/gmail-read'
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { recallQuery } from '@/lib/agent/recall-query'
@@ -1131,7 +1131,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const mode=/\bunread\b/i.test(incomingText)?'unread':'latest'
     let reply=''
     try{
-      reply=await buildGmailReadReply(resolvedUser.telegramId,mode,5)
+      reply=await buildGmailReadReply(resolvedUser.telegramId,mode,5,parseGmailReadFilter(incomingText))
       if(/\bdraft\b/i.test(incomingText))reply+=`\n\nI can draft one reply at a time for you to approve. Say *draft a reply to <sender>*. Nothing was drafted or sent yet.`
     }catch(err:any){
       console.error('GMAIL_READ_HANDLER_FAILED:',err?.message||err)
