@@ -231,7 +231,7 @@ const deliveryMocks:any={
     providerCalls++;return {sid:'SM-verified-adapter-fixture'}
   }},
   '@/lib/services/notification-delivery':{deliverNotification:async(p:any)=>{
-    assert.equal(p.source,'followup');assert.equal(p.owner,101)
+    assert.equal(p.source,'watch_alert');assert.equal(p.owner,101) // 13 Oct: 'followup' was cancelled by the database
     await p.prepare();readyMutation?.()
     if(!await p.ready())return 'suppressed'
     const id=await p.send('fixture-receipt-token')
