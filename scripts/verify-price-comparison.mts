@@ -20,6 +20,15 @@ assert.equal(model.parsePriceComparison('what is the price of iPhone 15 128GB on
   assert.equal(model.comparisonQuote('xm5', {...row, evidence: row.evidence.replace('Sony WH-1000XM5', 'Sony WH-1000XM4')}), null, 'a different model is still refused')
   assert.equal(model.comparisonQuote('sony', row), null, 'a single plain word is still too vague')
   // 13 Oct 17:27: "xm5" matched the Fujifilm X-M5 camera once punctuation was ignored.
+  // 13 Oct 17:46: the real Amazon page text for the WF-1000XM5 (displayed price twice, then list price twice).
+  const wf:any = {provider:'amazon',status:'observed',sourceUrl:'https://www.amazon.in/Sony-WF-1000XM5-Cancelling-Headphones-Multi-Point/dp/B0C33XXS56',
+    evidence:'Sony WF-1000XM5 Best Active Noise Cancelling Wireless Bluetooth Earbuds with Mic, TWS, Up to 24 Hours Battery Life - Black : Amazon.in: Electronics\n& Accessories › Headphones › In-Ear Enjoy Unlimited FREE Same day/1-day delivery, Prime offers everyday and more Join Prime >> ₹21,990.00 ₹21,990 . 00 FREE delivery Tuesday, 27\nand more Join Prime >> ₹21,990.00 ₹21,990 . 00 FREE delivery Tuesday, 27 October. Details Delivering to Dhubri 783301 - Update location In stock Quantity: 1 2 3 4 Quantity:1 Add to cart Buy Now Ships from Amazon Sold by CLICKBUY RETAIL TECH Gift options Available at checkout\n₹21,990.00 ₹29,990.00 ₹29,990.00 See 1 options with no featured offers Brand Sony Colour Black'}
+  assert.equal(model.comparisonQuote('xm5', wf)?.price, '₹21,990', 'the repeated first price on an Amazon page is the displayed price')
+  assert.equal(model.comparisonQuote('xm5', {...wf, provider:'flipkart', sourceUrl:'https://www.flipkart.com/sony-wf-1000xm5/p/itm1?pid=A'}), null, 'the rule is Amazon only')
+  assert.equal(model.comparisonQuote('xm5', {...wf, evidence: wf.evidence.replace(/₹21,990 \. 00/g, '')}), null, 'no repeated first price, still ambiguous')
+  const waWf = model.comparisonWhatsAppSummary({metadata_json:{subject:'xm5',request:'xm5 price on amazon',providers:[{...wf,checkedAt:'2026-10-13T12:16:00Z'}]}} as any)
+  assert.match(waWf, /Sony WF-1000XM5[^\n]*\n₹21,990\n/); assert.match(waWf, /matched this on the model code only/)
+  assert.doesNotMatch(model.comparisonWhatsAppSummary({metadata_json:{subject:'Sony WH-1000XM5',request:'x',providers:[{...wf,checkedAt:'2026-10-13T12:16:00Z'}]}} as any), /model code only/)
   const camera = {...row, sourceUrl:'https://www.amazon.in/Fujifilm-mirrorless-vlogging-Recording-Lifestyle/dp/B0DJC4NBV8', evidence:'Fujifilm X-M5 26.1MP APS-C X-Trans CMOS 4 Mirrorless Camera\nListed price ₹79,999'}
   const wa = model.comparisonWhatsAppSummary({metadata_json:{subject:'xm5',request:'xm5 price on amazon',providers:[{...row,checkedAt:'2026-10-13T11:57:00Z'}]}} as any)
   assert.match(wa, /Sony WH-1000XM5 Best Active Noise Cancelling[^\n]*\n₹24,990/, 'the reply names the product it priced')
