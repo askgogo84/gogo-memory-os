@@ -67,3 +67,7 @@ assert.match(sc, /there===here\|\|there\.endsWith\('\.'\+here\)\|\|here\.endsWit
 assert.match(sc, /await clickFollowingNewTab\(page,async\(\)=>\{try\{await option\.click/)
 assert.match(sc, /clickFollowingNewTab\(page,\(\)=>page\.mouse\.click\(x,y\)\)/)
 console.log('Booking browser: a venue card that opens a new tab is followed in the same tab')
+
+// 13 Oct 16:11: a planned click on the Book Now button's CSS path is pressed by its label instead.
+assert.match(sc, /if\(\/\^book\\s\*now\$\/i\.test\(label\)\)actions\[i\]=\{kind:'click_text',text:label\} as any/)
+console.log('Booking browser: Book Now is pressed by its label, not its CSS path')

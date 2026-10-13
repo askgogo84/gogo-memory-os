@@ -2049,6 +2049,16 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // 12 Oct live run: Add to Cart was pressed four times in one run. A booking presses each
       // advance control (Add to cart, Book, Proceed, Continue) at most once per run.
       const advanceKey=(a:BrowserAction)=>{const label=a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):'';return bookingAdvanceControlText(label)?label.toLowerCase().replace(/[^a-z]+/g,' ').trim():''}
+      // 13 Oct 16:11: on Game Theory's page a planned click on the "Book Now" button's long CSS path timed
+      // out every time (the path matched a hidden copy). Pressing it by its label finds the visible one.
+      if(providerBooking&&params.slotCheck===true){
+        for(let i=0;i<actions.length;i++){
+          const a:any=actions[i]
+          if(a?.kind!=='click')continue
+          const label=String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||'').trim()
+          if(/^book\s*now$/i.test(label))actions[i]={kind:'click_text',text:label} as any
+        }
+      }
       // A live slot check never adds to a cart or checks out.
       if(providerBooking&&params.slotCheck===true){
         const stopAt=actions.findIndex(a=>{const label=a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):'';return a.kind==='click_at'||/\b(?:add\s+to\s+cart|proceed|checkout|check\s*out|pay)\b/i.test(label)})
