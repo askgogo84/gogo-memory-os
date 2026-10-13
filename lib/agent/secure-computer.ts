@@ -629,6 +629,21 @@ const BOOKING_ADVANCE=/\b(?:add\s+to\s+cart|book\s+now|book|proceed|continue|che
 // Press the visible element with this text (a venue card, Book Now, a sport, time or court option).
 // A YYYY-MM-DD date falls back to the calendar day cell. Never a pay control.
 let sawDisabled=false;
+// 13 Oct 15:49: Playo's venue card opens the venue in a NEW tab, so the click "worked" and Gogo stayed
+// on the list page and stopped. A same-site tab opened by a click is followed in this tab.
+async function clickFollowingNewTab(page,doClick){
+  const ctx=page.context();let popup=null;const on=(p)=>{popup=p};
+  try{ctx.on('page',on);}catch{}
+  try{await doClick();await page.waitForTimeout(1200);}finally{try{ctx.off('page',on);}catch{}}
+  if(!popup)return;
+  try{
+    await popup.waitForLoadState('domcontentloaded',{timeout:8000}).catch(()=>{});
+    const url=popup.url();
+    await popup.close().catch(()=>{});
+    const here=new URL(page.url()).hostname.replace(/^www\./,''),there=new URL(url).hostname.replace(/^www\./,'');
+    if(/^https:/.test(url)&&(there===here||there.endsWith('.'+here)||here.endsWith('.'+there)))await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+  }catch{}
+}
 async function pressText(page,wanted){
   sawDisabled=false;
   const candidates=page.getByText(wanted,{exact:wanted.length<=3});
@@ -649,7 +664,7 @@ async function pressText(page,wanted){
     const disabled=await option.evaluate(el=>{const b=el.closest('button,[role=button],input[type=submit]')||el;return Boolean(b.disabled||b.getAttribute('aria-disabled')==='true')}).catch(()=>false);
     if(disabled){sawDisabled=true;continue;}
     const before=page.url();
-    try{await option.click({timeout:4000});}catch{await option.evaluate(el=>el.click());}
+    await clickFollowingNewTab(page,async()=>{try{await option.click({timeout:4000});}catch{await option.evaluate(el=>el.click());}});
     const until=Date.now()+5000;
     while(Date.now()<until){await page.waitForTimeout(300);if(page.url()!==before)break;}
     pressed=true;
@@ -908,7 +923,7 @@ async function clickPastOverlay(page,selector){
               if(BOOKING_ADVANCE.test(said)){const mismatch=await liveMismatch(page,payload.bookingTarget);if(mismatch.length){log.push({kind:a.kind,detail:said.slice(0,60),status:'skipped',failure:{reason:'selection_mismatch'}});break;}}
               if(BOOKING_ADVANCE.test(said)&&(payload.advancePressed||[]).includes(said.toLowerCase().replace(/[^a-z]+/g,' ').trim())){log.push({kind:a.kind,detail:said.slice(0,60),status:'skipped',failure:{reason:'repeat'}});break;}
               if(payload.rehearsal&&/\badd\s+to\s+cart\b/i.test(said)){log.push({kind:a.kind,detail:said.slice(0,60),status:'skipped',failure:{reason:'rehearsal_stop'}});continue;}
-              await page.mouse.click(x,y);
+              await clickFollowingNewTab(page,()=>page.mouse.click(x,y));
               await page.waitForTimeout(900);
               log.push({kind:a.kind,detail:said.slice(0,60),status:'done'});continue;
             }else{
