@@ -64,8 +64,15 @@ export function parsePriceComparison(text: string) {
   const subject = text.replace(/^.*?\bcompare\s+(?:grocery prices for\s+|prices for\s+)?/i, '')
     .replace(/^\s*(?:(?:what(?:'s| is)|check|find|show|tell me)\s+(?:me\s+)?(?:the\s+)?(?:live\s+)?(?:price|cost|availability|stock)\s+(?:of\s+|for\s+)?|(?:is|are)\s+the\s+|(?:how much (?:is|does)\s+))/i, '')
     .split(/\s+(?:on|across|between|from)\s+(?:amazon|flipkart|croma|instamart|swiggy|zepto|blinkit|zomato)\b/i)[0]
-    .replace(/[?.!]+$/g, '').split(/[.!?]\s/)[0].trim().slice(0, 180)
+    .replace(/[?.!]+$/g, '').split(/[.!?]\s/)[0]
+    // "xm5 price on amazon": the word "price" asks for a price, it is not part of the product name.
+    .replace(/\s+(?:prices?|pricing|cost|rates?)\s*$/i, '').trim().slice(0, 180)
   return {subject: subject || 'Price comparison', request: text.slice(0, 2000), providers}
+}
+
+/** Two words name a product; so does one model code such as "xm5" (letters and digits together). */
+function namesProduct(tokens: string[]) {
+  return tokens.length >= 2 || (tokens.length === 1 && tokens[0].length >= 3 && /[a-z]/i.test(tokens[0]) && /\d/.test(tokens[0]))
 }
 
 export function comparisonSource(provider: ComparisonProvider, value: unknown) {
@@ -105,7 +112,7 @@ export function comparisonSource(provider: ComparisonProvider, value: unknown) {
 export function comparisonProductLead(provider: ComparisonProvider, subject: string, leads: Array<{url: string; title?: string}>) {
   const compact = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
   const tokens = subject.replace(/(\d+)\s+(GB|TB)\b/gi, '$1$2').match(/[a-z0-9]+/gi) || []
-  if (tokens.length < 2) return null
+  if (!namesProduct(tokens)) return null
   const accessory = /\b(?:screen\s*(?:guard|protector)|case|cover|skin|cable|adapter|replacement|ear\s*pads?)\b/i
   const matches = (label: string) => {
     if (accessory.test(label) && !accessory.test(subject)) return false
@@ -192,7 +199,7 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
     if (position < 0) return null
     cursor = position + compact(token).length
   }
-  if (requested.length < 2 || heading.length > 220) return null
+  if (!namesProduct(requested) || heading.length > 220) return null
   // A different phone tier is not the requested variant, even if all base words match.
   if (/\biPhone\b/i.test(subject) && ['max', 'plus', 'mini'].some(tier => new RegExp('\\b'+tier+'\\b','i').test(heading) && !new RegExp('\\b'+tier+'\\b','i').test(subject))) return null
   const text = evidence.replace(/\s+/g, ' ').trim()

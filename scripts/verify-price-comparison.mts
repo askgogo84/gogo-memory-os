@@ -9,6 +9,17 @@ import {indiaShoppingSearch} from '../lib/web-search'
 // model invented M185 prices, sellers and free delivery. Fixtures are NOT live.
 const request = 'Compare Logitech M185 wireless mouse, grey, quantity 1, on Amazon India and Flipkart. Verify price and seller. Do not buy or create a watch.'
 assert.deepEqual(model.parsePriceComparison(request)?.providers, ['amazon', 'flipkart'])
+// 13 Oct 17:14: "xm5 price on amazon" - "price" asks for a price, it is not part of the product name.
+assert.equal(model.parsePriceComparison('xm5 price on amazon')?.subject, 'xm5')
+assert.equal(model.parsePriceComparison('Sony WH-1000XM5 price on amazon')?.subject, 'Sony WH-1000XM5')
+assert.equal(model.parsePriceComparison('what is the price of iPhone 15 128GB on amazon')?.subject, 'iPhone 15 128GB')
+{
+  const row:any = {provider:'amazon',status:'observed',sourceUrl:'https://www.amazon.in/Sony-WH-1000XM5-Cancelling-Headphones-Connectivity/dp/B0BZP2H373',
+    evidence:'Sony WH-1000XM5 Best Active Noise Cancelling Wireless Bluetooth Over Ear Headphones Mid Night Blue\nListed price ₹24,990 (23% off)'}
+  assert.equal(model.comparisonQuote('xm5', row)?.price, '₹24,990', 'one model code names the product')
+  assert.equal(model.comparisonQuote('xm5', {...row, evidence: row.evidence.replace('Sony WH-1000XM5', 'Sony WH-1000XM4')}), null, 'a different model is still refused')
+  assert.equal(model.comparisonQuote('sony', row), null, 'a single plain word is still too vague')
+}
 assert.ok(model.parsePriceComparison('Compare Sony WH-1000XM5 black on Amazon India, Flipkart and Croma. Do not create a watch.'))
 assert.deepEqual(model.parsePriceComparison('Compare grocery prices for Amul Taaza 1 litre x1 and atta 1kg on Instamart, Zepto and Blinkit.')?.providers, ['instamart', 'zepto', 'blinkit'])
 assert.deepEqual(model.parsePriceComparison('Compare vegetarian burger delivery on Swiggy and Zomato')?.providers, ['swiggy', 'zomato'])
