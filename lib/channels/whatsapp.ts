@@ -11,7 +11,7 @@ export function sanitizeWhatsAppReply(text:string){
   return raw
 }
 
-function parseCalendarApproval(text: string): { title: string; when: string; duration: string } | null {
+export function parseCalendarApproval(text: string): { title: string; when: string; duration: string; account?: string; conflict?: string } | null {
   const raw = String(text || '')
   if (!/Ready to add\s*[—-]\s*approval required/i.test(raw)) return null
 
@@ -33,14 +33,24 @@ function parseCalendarApproval(text: string): { title: string; when: string; dur
   const duration = after[durationIndex].replace(/^Duration:\s*/i, '').trim() || '30 mins'
   if (!title || !when) return null
 
-  return { title, when, duration }
+  // The approved card template only has title / time / duration slots, so the account the event goes to and
+  // any clash with an existing event ride along inside those slots instead of being dropped.
+  const account = after.map((x) => x.match(/^Calendar:\s*(\S+@\S+)$/i)?.[1]).find(Boolean)
+  const conflict = after.map((x) => x.match(/^(?:⚠️\s*)?Conflict:\s*(.+)$/i)?.[1]).find(Boolean)
+
+  return { title, when, duration, ...(account ? { account } : {}), ...(conflict ? { conflict } : {}) }
 }
 
 export async function sendWhatsAppMessage(phone: string, text: string) {
   const clean = sanitizeWhatsAppReply(text)
   const approval = parseCalendarApproval(clean)
   if (approval) {
-    await sendWhatsAppCalendarApprovalButtons(phone, approval.title, approval.when, approval.duration)
+    await sendWhatsAppCalendarApprovalButtons(
+      phone,
+      approval.title,
+      approval.conflict ? `${approval.when} · ⚠️ Conflict: ${approval.conflict}` : approval.when,
+      approval.account ? `${approval.duration} · Calendar: ${approval.account}` : approval.duration,
+    )
     return
   }
   await sendWhatsApp(phone, clean)
