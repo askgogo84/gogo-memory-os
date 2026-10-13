@@ -195,8 +195,9 @@ export async function POST(req: NextRequest) {
     }
     const shadowEventId = `web-${randomUUID()}`
 
+    let webObservation:Awaited<ReturnType<typeof observeShadowBrainTurn>>|null=null
     try {
-      await observeShadowBrainTurn({ actor, surface:'web', text, eventId:shadowEventId })
+      webObservation = await observeShadowBrainTurn({ actor, surface:'web', text, eventId:shadowEventId })
     } catch (shadowError:any) {
       console.error('SHADOW_BRAIN_DASHBOARD_FAILED:', String(shadowError?.message || shadowError).slice(0,180))
     }
@@ -338,6 +339,7 @@ export async function POST(req: NextRequest) {
     const featureReply = await routeFeatureIntent(String(user.whatsapp_id), text, {
       telegramId: Number(user.telegram_id),
       caption: text,
+      semantic: webObservation?.jev,
     })
 
     if (featureReply) {
@@ -353,6 +355,7 @@ export async function POST(req: NextRequest) {
       userName: user.name || 'Gogo',
       messageType: 'text',
       messageId: shadowEventId,
+      semantic: webObservation?.jev,
     })
 
     await recordShadowRouterOutcome({

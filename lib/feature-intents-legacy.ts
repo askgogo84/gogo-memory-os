@@ -21,10 +21,15 @@ import { isCalendarListName } from '@/lib/data/calendar-word'
 import { buildNaturalAssetRetrievalReply } from '@/lib/services/asset-natural-retrieval'
 import { handleLinkVaultText } from '@/lib/services/link-vault'
 import { internalServiceAuthHeaders } from '@/lib/security/cron-auth'
+import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
+import { mayClaim, type RuleCapability } from '@/lib/agent/semantic-gate'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
-export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string }): Promise<string | null> {
+export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string; semantic?: JevShadowResult | null }): Promise<string | null> {
+  // A keyword rule below may claim the message only if the sentence's meaning (as read by the semantic
+  // classifier) does not belong to another capability. See lib/agent/semantic-gate.ts.
+  const may = (capability: RuleCapability, rule?: string) => mayClaim(capability, text, extra?.semantic, rule)
 
   // T14 Link Vault owns explicit saved-link capture/retrieval before legacy social
   // buckets. It is private owner-bound state; a saved link is context, never permission.
@@ -117,7 +122,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   // swallow any food word ("milk") and log a meal. "add X to Y" is unambiguous,
   // so capture an arbitrary trailing list name ("weekend list", "Goa list") too.
   const listAdd = text.match(/^\s*(?:gogo[,!\s]+)?add\s+(.+?)\s+(?:to|into)\s+(?:my\s+)?(.+?)\s*$/i)
-  if (listAdd && extra?.telegramId) {
+  if (listAdd && extra?.telegramId && may('list', 'legacy_list_add')) {
     const item = listAdd[1].trim()
     const listName = normalizeListName(listAdd[2])
     // "add a reminder to call mom" is a reminder, not a list item — let it fall
@@ -173,7 +178,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   }
 
   // ── NUTRITION (before split — split parser matches breakfast/lunch/dinner) ─
-  if (isNutritionLogText(text) || isNutritionCommand(text)) {
+  if ((isNutritionLogText(text) || isNutritionCommand(text)) && may('nutrition', 'legacy_nutrition')) {
     if (extra?.telegramId) {
       return handleNutritionText({ telegramId: extra.telegramId, text, whatsappId: phone })
     }
@@ -181,7 +186,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
 
   // ── ASK GOGO SPLIT ──────────────────────────────────────────────────────
   // Guard: skip split parser for food-logging sentences
-  if (!isNutritionLogText(text) && parseSplitIntent(text)) {
+  if (!isNutritionLogText(text) && parseSplitIntent(text) && may('money', 'legacy_split')) {
     return (await post('/api/splitbill', { phone, text }))?.reply ?? null
   }
 
@@ -194,20 +199,20 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     (/^\d+\s+(on|for)\s+/i.test(t)) ||
     (/^[a-z][\w\s]+\s+\d{2,5}$/i.test(t) && t.split(' ').length <= 4 && !/^(remind|set|add|show|my|get|how|what|when|tasks?|notes?)/i.test(t))
   )
-  if (isExpenseLog) {
+  if (isExpenseLog && may('money', 'legacy_expense_log')) {
     const expReply = (await post('/api/expenses', { phone, text }))?.reply
     if (expReply) return expReply
   }
 
   // Query: "expenses today", "expense insight", "my spending this week"
-  if (/^(my expenses?|expenses? today|spending today|expense (report|insight|summary)|how much.*(spend|spent)|analyse.*spend)/i.test(t)) {
+  if (/^(my expenses?|expenses? today|spending today|expense (report|insight|summary)|how much.*(spend|spent)|analyse.*spend)/i.test(t) && may('money', 'legacy_expense_query')) {
     const insight = /insight|analys|ai/i.test(t) ? '1' : '0'
     const period = /month/i.test(t) ? 'month' : /week/i.test(t) ? 'week' : 'today'
     return (await get('/api/expenses', { phone, period, insight }))?.reply ?? null
   }
 
   // ── TODOS ──────────────────────────────────────────────────────────────
-  if (/^(add task|new task|todo|task:)\s/i.test(t)) {
+  if (/^(add task|new task|todo|task:)\s/i.test(t) && may('list', 'legacy_task_add')) {
     const taskText = text.replace(/^(add task|new task|todo|task:)\s*/i, '').trim()
     return (await post('/api/todos', { phone, action: 'add', text: taskText }))?.reply ?? null
   }
@@ -215,7 +220,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     return (await post('/api/todos', { phone, action: 'list' }))?.reply ?? null
   }
   const doneMatch = t.match(/^(done|completed?|finished?|did)\s+(.+)/)
-  if (doneMatch) {
+  if (doneMatch && may('list', 'legacy_done')) {
     const arg = doneMatch[2].trim()
     // "done <number>" (done 1) stays EXACTLY as before → reminders/todos. Only a
     // non-numeric "done <text>" is eligible for the list-first divert, and only when a
@@ -256,15 +261,18 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     /[\w.+-]+@[\w-]+\.[\w.-]+/.test(factText) ||                     // email
     /\b(number|phone|mobile|whatsapp|email|contact|birthday|bday|anniversary|address)\b/i.test(factText)
   if (
-    rememberMatch &&
+    rememberMatch && may('contacts', 'legacy_contact_save') &&
     !/^remember\s+that\b/i.test(text) &&
     !NON_CONTACT_LEADS.has(rememberMatch[1].toLowerCase()) &&
     looksLikeContact
   ) {
     return (await post('/api/contacts', { phone, action: 'save', name: rememberMatch[1], fact: rememberMatch[2] }))?.reply ?? null
   }
-  const recallMatch = text.match(/(?:what do i know about|tell me about|notes on)\s+(\w+)/i)
-  if (recallMatch) {
+  // A contact recall is the whole message ("tell me about Rahul"), never the start of a longer sentence
+  // ("tell me about the new pricing").
+  const recallMatch = text.match(/^\s*(?:what do i know about|tell me about|notes on)\s+(\w+)\s*[?.!]*\s*$/i)
+  const recallIsContactName = Boolean(recallMatch) && !NON_CONTACT_LEADS.has(recallMatch![1].toLowerCase())
+  if (recallMatch && recallIsContactName && may('contacts', 'legacy_contact_recall')) {
     return (await post('/api/contacts', { phone, action: 'recall', query: recallMatch[1] }))?.reply ?? null
   }
   if (/^(my contacts?|contact notes?)$/i.test(t)) {
@@ -273,7 +281,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
 
   // ── FOLLOW-UPS ─────────────────────────────────────────────────────────
   const fuMatch = text.match(/follow.?up with\s+(\w+)(?:.*?in\s+(\d+)\s+days?)?/i)
-  if (fuMatch) {
+  if (fuMatch && may('contacts', 'legacy_followup')) {
     return (await post('/api/followups', { phone, contact: fuMatch[1], daysIfNoReply: fuMatch[2] ? parseInt(fuMatch[2]) : 2, context: text }))?.reply ?? null
   }
 
