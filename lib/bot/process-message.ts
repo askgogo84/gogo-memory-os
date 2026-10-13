@@ -15,7 +15,7 @@ import { askClaude, askClaudeWithContext, type Message } from '@/lib/claude'
 import { addToListDetailed, formatAddResult, clearList, formatList, getAllLists, getList, setItemDoneByText, resolveAndSetDoneAcrossLists, normalizeListName } from '@/lib/lists'
 import { checkAndIncrementLimit, getUsageStatusReply, getFriendReminderCap } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAuthUrl, fetchPrimaryCalendarAccount } from '@/lib/google-calendar'
+import { getAuthUrl, buildCalendarConnectUrl, fetchPrimaryCalendarAccount } from '@/lib/google-calendar'
 import { resolveUser, type Channel } from './resolve-user'
 import { detectIntent } from './detect-intent'
 import { parseClaudeResponse } from './parse-claude-response'
@@ -1100,14 +1100,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     // is told so plainly; the link is only offered for adding a DIFFERENT account.
     const calTokens = await getCalendarTokens(resolvedUser.telegramId)
     if (calTokens.connected) {
-      const url = getAuthUrl(resolvedUser.telegramId)
+      const url = buildCalendarConnectUrl(resolvedUser.telegramId) || getAuthUrl(resolvedUser.telegramId)
       // Name the account so "which calendar am I connected to?" has an answer.
       const account = calTokens.accessToken ? await fetchPrimaryCalendarAccount(calTokens.accessToken) : null
       const reply = `✅ *Your Google Calendar is already connected.*${account ? `\nAccount: *${account}*` : ''}\n\nYour schedule already shows up in your *Today* briefing.\n\nWant to connect a *different* Google account? Use this link:\n${url}`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
-    const url = getAuthUrl(resolvedUser.telegramId)
+    const url = buildCalendarConnectUrl(resolvedUser.telegramId) || getAuthUrl(resolvedUser.telegramId)
     const reply = `📅 *Connect Google Calendar*\n\nThis lets AskGogo include your schedule in Today briefing and help you plan reminders better.\n\n${url}\n\nAfter connecting, come back and type:\nToday`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }

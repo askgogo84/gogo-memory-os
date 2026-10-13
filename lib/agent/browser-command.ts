@@ -111,17 +111,20 @@ function startsWithProviderTarget(text:string){
 export function parseConnectedProviderReadCommand(text:string):BrowserCommand|null{
   const raw=String(text||'').trim()
   if(!raw)return null
+  // A provider named only inside a shared link is not a request to read that provider:
+  // a pasted instagram.com reel link was sent to Instagram's login page (13 Oct 18:46).
+  const proseOnly=raw.replace(/https?:\/\/[^\s<>)\]}]+/gi,' ')
   // Public shopping sites need browser routing even without a Vault integration.
   // Keep these entry points separate from password-provider configuration.
   const shoppingSites=[
     {alias:/\bblinkit\b/i,loginUrl:'https://blinkit.com/'},
     {alias:/\b(?:swiggy\s+)?instamart\b/i,loginUrl:'https://www.swiggy.com/instamart'},
     {alias:/\bzepto\b/i,loginUrl:'https://www.zepto.com/'},
-  ].filter(site=>site.alias.test(raw))
+  ].filter(site=>site.alias.test(proseOnly))
   const vaultCandidates=Object.values(VAULT_PROVIDERS).map(provider=>({
     alias:new RegExp('\\b(?:'+(provider.aliases||[provider.key]).map(name=>name.replace(/\./g,'\\.')).join('|')+')\\b','i'),
     loginUrl:provider.loginUrl,
-  })).filter(provider=>provider.alias.test(raw))
+  })).filter(provider=>provider.alias.test(proseOnly))
   const candidates=[...shoppingSites,...vaultCandidates]
   let provider=candidates[0]
   // Provider names inside search content are not extra navigation targets.
