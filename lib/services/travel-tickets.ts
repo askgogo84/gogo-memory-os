@@ -498,6 +498,7 @@ export async function persistAndRemindTicket(
   const travellerAliases = info.type !== 'event' && info.passengers?.length
     ? await resolveTravellerAliases(ctx.telegramId, info.passengers as string[]).catch(() => ({} as Record<string, string>))
     : {} as Record<string, string>
+  for (const k of Object.keys(travellerAliases)) travellerAliases[k] = travellerAliases[k].replace(/\b[a-z]/g, c => c.toUpperCase())
   if (Object.keys(travellerAliases).length) for (const leg of legs) leg.raw = { ...(leg.raw || {}), travellerAliases }
   let remindersSet = 0
   let remindersFailed = 0
@@ -558,6 +559,8 @@ export async function persistAndRemindTicket(
       ? '\n\nNo new alerts scheduled — the matching alerts were already sent and were not rearmed.'
       : legs.some(leg=>!leg.departAt)
       ? `\n\n⏰ I could not verify the departure date, time or airport timezone. No alerts were set for that leg; please confirm those details.`
+      : legs.some(leg => leg.departAt && now - leg.departAt.getTime() > 12 * 3600_000 && ctx.source !== 'pdf')
+      ? `\n\n⏰ No alerts set: I read the date as ${legs.map(leg => leg.dateLabel).filter(Boolean).join(', ')}, which has already passed. If that's misread, send the pass again or tell me the right date.`
       : `\n\n⏰ No alerts set — the departure time has already passed.`
   }
   // Passes print "URS, Divyashree". Show "Divyashree Urs", and the name the user knows her by
