@@ -76,6 +76,7 @@ function loadPulseModule(file:string,extra=''):any{
       if(name==='@/lib/supabase-admin')return {supabaseAdmin:db}
       if(name==='@/lib/whatsapp')return {sendWhatsApp:async(_to:string,text:string)=>{deliveries.push(text);return {sid:'fixture'}},sendWhatsAppReminderTemplate:async()=>{throw new Error('unexpected template')}}
       if(name==='./task-lifecycle')return {retiredRunReason:()=>null,isRelevantOpenLoop:()=>true}
+      if(name==='./google-workspace-read')return {decodeHtmlEntities:(v:string)=>String(v).replace(/&#39;/g,"'").replace(/&amp;/g,'&')}
       if(name==='./browser-failure-notice')return loadPulseModule('browser-failure-notice')
       throw new Error(`Unexpected dependency ${name}`)
     },
