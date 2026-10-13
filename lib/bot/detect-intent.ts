@@ -3,6 +3,7 @@ import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
 import { classifyCheckVerb } from '@/lib/data/lists-core'
 import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
 import { hasConcreteFlightCode } from '@/lib/bot/flight-codes'
+import { isNutritionLogText } from '@/lib/bot/nutrition-text'
 
 // "google calendar" (+ misspellings) â†’ connect intent, derived from the shared spelling
 // set rather than re-encoding the vowel-swaps by hand. Hoisted out of the per-message
@@ -215,7 +216,8 @@ export function detectIntent(text: string): DetectedIntent {
 
   // Nutrition commands
   if (/^(nutrition|nutrition today|calories today|my calories|food today|what did i eat|nutrition report|nutrition week|nutrition summary|nutrition goal|set nutrition goal|set calorie goal|nutrition help|calorie help|food help|nutrition card|daily card|nutrition daily card|nutrition report card|weekly card|nutrition weekly card)$/i.test(lower)) return { type: 'nutrition_query', confidence: 'high' }
-  if (/^(log |track )/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
+  // "log"/"track" is a meal command only when a food or meal follows: "track divya flight", "track my order" are not.
+  if (/^(log|track)\s/i.test(lower) && isNutritionLogText(lower)) return { type: 'nutrition_log', confidence: 'high' }
   if (/^(log this|log that|log it|track this|save this meal|log meal)/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
   if (/^(had |ate |just had |just ate |i had |i ate |i just had |i just ate |breakfast:|lunch:|dinner:|snack:)/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
   if (/^(for (breakfast|lunch|dinner|snack) (i |i've |we )?had|for (breakfast|lunch|dinner|snack):)/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }

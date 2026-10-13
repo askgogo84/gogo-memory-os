@@ -15,7 +15,7 @@ const STOP = new Set([
   'about','after','attached','attachment','attachments','before','brief','drive','email','emails','file','files','find','from','gmail','google','inbox','latest','message','messages','read','recent','search','show','the','this','with','workspace','unread','please','look','looking','need','meeting','document','documents','use','using',
 ])
 
-function decodeHtmlEntities(value:string) {
+export function decodeHtmlEntities(value:string) {
   return String(value || '')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')

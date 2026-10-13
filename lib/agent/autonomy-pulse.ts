@@ -3,6 +3,7 @@ import { browserFailureSummary } from './browser-failure-notice'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp, sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
 import { retiredRunReason, isRelevantOpenLoop } from './task-lifecycle'
+import { decodeHtmlEntities } from './google-workspace-read'
 
 const PULSE_COOLDOWN_MINUTES=180
 const MAX_USERS_PER_PASS=80
@@ -251,11 +252,12 @@ async function sendPulse(telegramId:string){
   const previous=await lastPulse(telegramId)
   if(String(previous?.metadata_json?.fingerprint||'')===pulse.fingerprint)return {sent:false,reason:'duplicate'}
 
-  const message=[
+  // Email subjects and snippets can arrive HTML-escaped ("company&#39;s"); never show the raw entity.
+  const message=decodeHtmlEntities([
     ...pulse.items.map(x=>x.line),
     '',
     'If you want the full status, ask *what are you working on for me?*',
-  ].join('\n')
+  ].join('\n'))
   // Use natural free-form copy while the WhatsApp service window is open.
   // Outside the window we must fall back to an approved Utility template.
   const activeSession=await hasRecentWhatsAppSession(telegramId)
