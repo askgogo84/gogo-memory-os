@@ -28,6 +28,7 @@ assert.equal(model.parsePriceComparison('what is the price of iPhone 15 128GB on
   assert.equal(model.comparisonQuote('xm5', {...wf, evidence: wf.evidence.replace(/₹21,990 \. 00/g, '')}), null, 'no repeated first price, still ambiguous')
   const waWf = model.comparisonWhatsAppSummary({metadata_json:{subject:'xm5',request:'xm5 price on amazon',providers:[{...wf,checkedAt:'2026-10-13T12:16:00Z'}]}} as any)
   assert.match(waWf, /Sony WF-1000XM5[^\n]*\n₹21,990\n/); assert.match(waWf, /matched this on the model code only/)
+  assert.match(waWf, /Sony WF-1000XM5 Best Active Noise Cancelling Wireless Bluetooth Earbuds with Mic, TWS, Up…\n/, 'a long product name is cut at a word, not mid-word')
   assert.doesNotMatch(model.comparisonWhatsAppSummary({metadata_json:{subject:'Sony WH-1000XM5',request:'x',providers:[{...wf,checkedAt:'2026-10-13T12:16:00Z'}]}} as any), /model code only/)
   const camera = {...row, sourceUrl:'https://www.amazon.in/Fujifilm-mirrorless-vlogging-Recording-Lifestyle/dp/B0DJC4NBV8', evidence:'Fujifilm X-M5 26.1MP APS-C X-Trans CMOS 4 Mirrorless Camera\nListed price ₹79,999'}
   const wa = model.comparisonWhatsAppSummary({metadata_json:{subject:'xm5',request:'xm5 price on amazon',providers:[{...row,checkedAt:'2026-10-13T11:57:00Z'}]}} as any)
