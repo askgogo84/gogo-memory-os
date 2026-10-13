@@ -59,3 +59,11 @@ assert.match(sc, /e&&e\.name==='TimeoutError'&&await target\.count\(\)/)
 assert.match(sc, /if\(await pressTimedOut\(page,target,e\)\)return;throw e;/)
 assert.match(sc, /if\(!await twin\.isVisible\(\)\.catch\(\(\)=>false\)\)continue/)
 console.log('Live slots: venue pages checked directly; timed-out clicks retried on the visible control')
+
+// 13 Oct 15:49: a venue card that opens a new tab is followed in Gogo's tab (same site only).
+assert.match(sc, /async function clickFollowingNewTab\(page,doClick\)/)
+assert.match(sc, /ctx\.on\('page',on\)/)
+assert.match(sc, /there===here\|\|there\.endsWith\('\.'\+here\)\|\|here\.endsWith\('\.'\+there\)/)
+assert.match(sc, /await clickFollowingNewTab\(page,async\(\)=>\{try\{await option\.click/)
+assert.match(sc, /clickFollowingNewTab\(page,\(\)=>page\.mouse\.click\(x,y\)\)/)
+console.log('Booking browser: a venue card that opens a new tab is followed in the same tab')
