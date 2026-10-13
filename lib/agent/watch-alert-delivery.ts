@@ -12,7 +12,8 @@ export async function deliverWatchAlert(params: {
   if (!Number.isSafeInteger(owner)) throw new Error('watch_alert_owner_invalid')
   let phone = ''
   const status = await deliverNotification({
-    key: params.key, source: 'followup', owner, channel: 'whatsapp', due: params.due,
+    // 'watch_alert', not 'followup': the database cancels a 'followup' with no scheduled followups row.
+    key: params.key, source: 'watch_alert', owner, channel: 'whatsapp', due: params.due,
     deadline: Date.now() + 30_000,
     prepare: async () => {
       const { data, error } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', owner).maybeSingle()

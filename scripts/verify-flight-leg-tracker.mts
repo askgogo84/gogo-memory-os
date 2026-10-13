@@ -100,4 +100,9 @@ assert.match(tracker, /condition_json->>contextClass', 'flight_status'\)/, 'trac
 
 const cronSrc = readFileSync(new URL('../app/api/cron/agent-watchers/route.ts', import.meta.url), 'utf8')
 assert.ok(cronSrc.indexOf('repairYearlessFlightLegs()') < cronSrc.indexOf('compileUpcomingTravelWatchers()'), 'year-less legs are dated before monitors are compiled')
+const delivery = readFileSync(new URL('../lib/agent/watch-alert-delivery.ts', import.meta.url), 'utf8')
+assert.match(delivery, /source: 'watch_alert'/, "watch alerts don't use the followup source (the database cancels those)")
+const mig = readFileSync(new URL('../supabase/migrations/20261013073000_watch_alert_delivery_source.sql', import.meta.url), 'utf8')
+assert.match(mig, /'watch_alert'/)
+assert.match(tracker, /flight-alert\/\$\{leg\.id\}/, 'flight alerts use fresh keys (the old ones were cancelled)')
 console.log('Flight leg tracker: traveller known by name, each flight followed from 3h before take-off to landing (data API or dated tracker pages), alerts on gate, delay, take-off, landing; trip alerts read as travel news')
