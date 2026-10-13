@@ -1,3 +1,4 @@
+import { isDriveWriteRequest } from './drive-write-request'
 import { isTimeFirstReminder } from './reminder-command'
 import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
 import { classifyCheckVerb } from '@/lib/data/lists-core'
@@ -81,6 +82,15 @@ export function leadingVerbEditsReminder(lower: string): boolean {
   return true
 }
 
+// "What reminders do I have tomorrow?" asks to read existing reminders; it must not be claimed by the
+// weekday/time fallback that creates one.
+export function isReminderReadQuestion(lower: string): boolean {
+  const t = lower.trim().replace(/[?.!]+$/g, '')
+  if (!/\breminders?\b/.test(t)) return false
+  if ((/\b(?:set|create|make|add|schedule)\b/.test(t) && !/\b(?:are|is|already|got)\s+(?:set|scheduled)\b/.test(t)) || /\bremind\s+me\b/.test(t)) return false
+  return /^(?:what|which)\s+(?:are\s+my\s+)?reminders?\b/.test(t) || /^(?:do\s+i\s+have|are\s+there)\s+(?:any\s+)?reminders?\b/.test(t) || /^how\s+many\s+reminders?\b/.test(t)
+}
+
 // A weather word is a weather question only when the sentence asks for weather. "Rain or shine, I'll be at the
 // gym at 6am" uses the word as an idiom inside a statement about the user's own plans.
 const WEATHER_WORD_RE = /\b(?:weather|temperature|temp|rain|raining|rainfall|forecast)\b/
@@ -92,6 +102,15 @@ export function asksAboutWeather(lower: string): boolean {
   if (WEATHER_IDIOM_RE.test(lower)) return false
   if (PLAN_STATEMENT_RE.test(lower) && !WEATHER_ASK_RE.test(lower)) return false
   return true
+}
+
+// Reading mail is a read verb applied to the user's own mail. "Read my latest password reset email" and
+// "what needs my attention in my inbox?" read Gmail; "email Rahul saying hi" sends and is not matched.
+const GMAIL_READ_VERB_RE = /^(?:please\s+)?(?:(?:can|could)\s+you\s+)?(?:read|show|open|check|find|get|fetch|pull\s+up|summari[sz]e|look\s+at|go\s+through)\s+(?:me\s+)?(?:my|the)\s+(?:(?:latest|last|newest|most\s+recent|recent|unread|new|important|urgent)\s+)?(?:[\w'&-]+\s+){0,4}?(?:e-?mails?|mails?|inbox|gmail)\b/
+const GMAIL_ASK_RE = /^(?:what|which|who|anything|any|do\s+i\s+have\s+(?:any|anything))\b[^?]*\b(?:my\s+inbox|in\s+my\s+(?:gmail|e-?mails?)|my\s+unread)\b/
+export function isGmailReadRequest(lower: string): boolean {
+  const t = lower.trim()
+  return GMAIL_READ_VERB_RE.test(t) || GMAIL_ASK_RE.test(t)
 }
 
 function isReferralIntent(lower: string) {
@@ -184,6 +203,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   // Muse case 18 (11 Oct): "Draft replies to my unread work emails from today" went to web search.
   if (/\bdraft\s+(?:some\s+)?repl(?:y|ies)\s+(?:to|for)\s+(?:all\s+)?(?:my\s+)?(?:unread|new|latest|today'?s|work)\b[^.?!]{0,30}\b(?:e-?mails?|mails?|inbox)\b/i.test(lower)) return { type: 'read_gmail', confidence: 'high' }
+  if (isGmailReadRequest(lower)) return { type: 'read_gmail', confidence: 'high' }
   if (lower.includes('draft a reply') || lower.includes('reply to this email') || lower.includes('reply to this mail') || lower.includes('reply to the latest mail') || lower.includes('reply to latest email') || lower.includes('reply to the vercel email') || lower.includes('reply to the latest unread email') || lower.includes('reply to latest unread email') || lower.includes('reply to the latest unread mail') || lower.includes('reply to latest unread mail') || lower.includes('draft reply to') || lower.includes('write a reply to this email')) return { type: 'email_action', confidence: 'high' }
 
   if (lower.includes('check my mail') || lower.includes('check my mails') || lower.includes('check my email') || lower.includes('check my emails') || lower.includes('check my latest mail') || lower.includes('check my latest mails') || lower.includes('latest mail') || lower.includes('latest mails') || lower.includes('latest email') || lower.includes('latest emails') || lower.includes('show my unread emails') || lower.includes('show unread emails') || lower.includes('check unread emails') || lower.includes('any new mails') || lower.includes('any new mail') || lower.includes('check my inbox') || lower.includes('mail summary') || lower.includes('mails summary') || lower.includes('email summary') || lower.includes('emails summary') || lower.includes('top 3 mails') || lower.includes('top 3 mail') || lower.includes('top 3 emails') || lower.includes('top 3 email') || lower.includes('check my top 3 mail') || lower.includes('check my top 3 email') || lower.includes('show me my top 3 mails') || lower.includes('show me my top 3 email') || lower.includes('summarize my mails') || lower.includes('summarize my emails') || lower.includes('summarize top 3 mails') || lower.includes('summarize top 3 emails') || lower.includes('top 3 mails summary') || lower.includes('top 3 emails summary')) return { type: 'read_gmail', confidence: 'high' }
@@ -192,6 +212,7 @@ export function detectIntent(text: string): DetectedIntent {
   // CALENDAR_WORD_RE â€” "connect calender" used to miss and fall to the freeform LLM.
   if (((lower.includes('connect') || lower.includes('link')) && CALENDAR_WORD_RE.test(lower)) || GOOGLE_CALENDAR_RE.test(lower)) return { type: 'connect_calendar', confidence: 'high' }
   // Check "remind me" BEFORE weather - marathon/training reminders must not go to weather
+  if (isReminderReadQuestion(lower)) return { type: 'edit_reminder', confidence: 'high', meta: { show: true } }
   // "Can you remind me what Srini told me" is a question about memory, not a reminder to create.
   if (isRecallQuestion(lower)) return { type: 'general_chat', confidence: 'low', meta: { recallQuestion: true } }
   if (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ')) return { type: 'set_reminder', confidence: 'high' }
@@ -244,7 +265,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (lower === 'show all lists' || lower === 'list all' || lower === 'show my lists') return { type: 'list_show_all', confidence: 'high' }
   if ((lower.startsWith('show ') || lower.startsWith('open ') || lower.startsWith('view ')) && lower.includes(' list')) return { type: 'list_show', confidence: 'medium' }
-  if (lower.startsWith('add ') && (lower.includes(' to ') || lower.includes(' into '))) return { type: 'list_add', confidence: 'medium' }
+  if (lower.startsWith('add ') && (lower.includes(' to ') || lower.includes(' into ')) && !isDriveWriteRequest(lower)) return { type: 'list_add', confidence: 'medium' }
   // uncheck/untick/undone/unmark â†’ list_uncheck; check/tick/mark â†’ list_check. Ordered
   // uncheck-first and check kept PREFIX-anchored inside classifyCheckVerb so "uncheck X"
   // can never be claimed by the check branch (it CONTAINS "check").

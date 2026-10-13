@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildGmailConnectUrl, fetchLatestEmails, fetchUnreadEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
+import { formatEmailSnippet, redactEmailAuthSecrets } from '@/lib/agent/google-workspace-read'
 
 function clean(value:unknown,max=500){
   return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)
@@ -37,7 +38,27 @@ export async function buildGmailConnectReply(telegramId:number){
   return `📧 *Connect Google Workspace*\n\nThis gives Gogo read-only access to the Gmail, Contacts and Drive context you approve.\n\n${url}\n\nSending email, changing files or other consequential actions are not enabled by this connection.`
 }
 
-export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unread'='latest',maxResults=5){
+export type GmailReadFilter = { sender?: string | null; topic?: string | null }
+
+// "latest email from Swiggy" / "my latest password reset email": pull the sender and the topic out of the
+// sentence so the reader shows the mail that was asked for instead of the five newest.
+export function parseGmailReadFilter(text: string): GmailReadFilter {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim()
+  const from = raw.match(/\bfrom\s+([A-Za-z0-9][A-Za-z0-9 .&'@-]{1,40}?)(?=\s*(?:[?.!,]|$|\bto\b|\babout\b|\bregarding\b))/i)
+  const topic = raw.match(/\b(?:latest|last|newest|recent|unread)\s+([A-Za-z][A-Za-z '&-]{2,40}?)\s+(?:e-?mails?|mails?|messages?)\b/i)
+  const topicWords = String(topic?.[1] || '').replace(/\b(?:my|the|a|an|new|unread|important|urgent)\b/gi, '').replace(/\s+/g, ' ').trim()
+  return { sender: from?.[1]?.trim() || null, topic: topicWords || null }
+}
+
+function matchesFilter(row: any, filter?: GmailReadFilter) {
+  if (!filter?.sender && !filter?.topic) return true
+  const hay = `${row.from || ''} ${row.subject || ''} ${row.snippet || ''}`.toLowerCase()
+  if (filter.sender && !String(row.from || '').toLowerCase().includes(filter.sender.toLowerCase())) return false
+  if (filter.topic) return filter.topic.toLowerCase().split(' ').filter(Boolean).every(word => hay.includes(word))
+  return true
+}
+
+export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unread'='latest',maxResults=5,filter?:GmailReadFilter){
   const access=await gmailAccess(telegramId)
   if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
   if(!access.connected){
@@ -47,16 +68,24 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
       : 'Your Google Workspace account is not connected yet.'
   }
 
-  const rows=mode==='unread'
-    ? await fetchUnreadEmails(access.accessToken,maxResults)
-    : await fetchLatestEmails(access.accessToken,maxResults)
-  if(!rows.length)return mode==='unread'?'You have no unread emails in the current Gmail view.':'I could not find recent Gmail messages.'
+  const filtered=Boolean(filter?.sender||filter?.topic)
+  const fetched=mode==='unread'
+    ? await fetchUnreadEmails(access.accessToken,filtered?25:maxResults)
+    : await fetchLatestEmails(access.accessToken,filtered?25:maxResults)
+  const rows=fetched.filter((row:any)=>matchesFilter(row,filter)).slice(0,maxResults)
+  if(!rows.length){
+    if(filtered){
+      const what=[filter?.topic,filter?.sender?`from ${filter.sender}`:''].filter(Boolean).join(' ')
+      return `I couldn't find a recent email${what?` matching “${what}”`:''} in your latest Gmail messages. I did not guess.`
+    }
+    return mode==='unread'?'You have no unread emails in the current Gmail view.':'I could not find recent Gmail messages.'
+  }
 
-  const heading=mode==='unread'?'📧 *Unread emails*':'📧 *Latest emails*'
+  const heading=mode==='unread'?'📧 *Unread emails*':filtered?'📧 *Matching emails*':'📧 *Latest emails*'
   const lines=rows.map((row:any,index:number)=>{
     const from=clean(row.from,120)
-    const subject=clean(row.subject,160)
-    const snippet=clean(row.snippet,220)
+    const subject=clean(redactEmailAuthSecrets(String(row.subject||'')),160)
+    const snippet=formatEmailSnippet(row.snippet,220)
     return `${index+1}. *${subject}*\nFrom: ${from}${snippet?`\n${snippet}`:''}`
   })
   return `${heading}\n\n${lines.join('\n\n')}\n\nI only read the Google context you approved. I have not sent, deleted, archived or modified anything.`

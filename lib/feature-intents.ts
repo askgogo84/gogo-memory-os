@@ -14,7 +14,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isBookingOrEventLinkText } from '@/lib/services/whatsapp-preview-routing'
 import { sendWhatsAppMediaMessage } from '@/lib/channels/whatsapp'
 import { addToListDetailed, formatAddResult, formatList, getList, normalizeListName } from '@/lib/lists'
-import { normalizeNaturalReminderSave, parseNumberedChecklist, saveNaturalReminder } from '@/lib/bot/handlers/natural-command-routing'
+import { normalizeNaturalReminderSave, parseNumberedChecklist, saveNaturalReminder, isReminderReadQuery as isNaturalReminderRead } from '@/lib/bot/handlers/natural-command-routing'
 import { normalizeUserInputForRouting } from '@/lib/bot/input-normalizer'
 import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import { isActiveListShow, parseActiveListAdd, parseExplicitListShow } from '@/lib/bot/handlers/list-conversation-context'
@@ -29,6 +29,9 @@ import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import { isGmailReplyCommand, tryRunGmailSendCommand } from '@/lib/agent/gmail-send'
 import { capabilityIsOff, parseAutonomyCommand, tryRunAdaptiveAutonomyCommand } from '@/lib/agent/adaptive-autonomy'
 import { isAdaptiveTrustQuery, tryRunAdaptiveTrustCommand } from '@/lib/agent/adaptive-trust'
+
+import { isDriveWriteRequest, DRIVE_WRITE_REPLY } from '@/lib/bot/drive-write-request'
+import { isCommodityAlertRequest, COMMODITY_ALERT_REPLY } from '@/lib/bot/commodity-alert'
 
 function isSimpleWorkspaceRead(text:string) {
   const t=String(text||'')
@@ -345,7 +348,7 @@ export async function routeFeatureIntent(
     if (queued) return queued.text
   }
 
-  if (extra?.telegramId && normalizeNaturalReminderSave(text) && mayClaim('reminder_create', text, extra?.semantic, 'natural_reminder_save')) {
+  if (extra?.telegramId && normalizeNaturalReminderSave(text) && mayClaim(isNaturalReminderRead(text) ? 'reminder_edit' : 'reminder_create', text, extra?.semantic, isNaturalReminderRead(text) ? 'natural_reminder_read' : 'natural_reminder_save')) {
     if(await capabilityIsOff(extra.telegramId,'reminders')){
       return 'Reminders are currently off in your Gogo autonomy settings. Say *set reminders autonomy to auto* (or *ask*) to turn them back on.'
     }
@@ -454,6 +457,9 @@ export async function routeFeatureIntent(
         ? `Connect Google Workspace here:\n${url}\n\nThis gives Gogo only the read-only Gmail, Contacts and Drive context you approve. Sending email, changing files or scheduling still requires the normal approval boundary.`
         : 'Google Workspace connection is temporarily unavailable. Please try again shortly.'
     }
+
+    if (isDriveWriteRequest(text)) return DRIVE_WRITE_REPLY
+    if (isCommodityAlertRequest(text)) return COMMODITY_ALERT_REPLY
 
     if (isSimpleWorkspaceRead(text)) {
       const result=await dispatchThroughSameBrain({actor,text})
