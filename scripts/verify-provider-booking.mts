@@ -614,7 +614,8 @@ console.log("Provider booking: a failed robot check gets the site's Retry once, 
   script = [venuePage, venuePage, venuePage]
   plans = [{ approvedOperation: 'booking', actions: [{ kind: 'click', selector: '#book' }, { kind: 'click', selector: '#add' }] }]
   await computer.runSecureBrowser({ ...base, objective: objectiveLive, providerBooking: true, rehearsal: true, slotCheck: true, bookingPhone: null, bookingOtp: null })
-  assert.deepEqual(commands[1].payload.actions, [{ kind: 'click', selector: '#book' }])
+  // 13 Oct 16:11: a slot check presses Book Now by its label (a CSS path matched a hidden copy); Add to Cart still never runs
+  assert.deepEqual(commands[1].payload.actions, [{ kind: 'click_text', text: 'Book Now' }])
   assert.equal(commands.some(c => JSON.stringify(c.payload.actions || []).includes('#add')), false)
   plans = []
   if (live) {
