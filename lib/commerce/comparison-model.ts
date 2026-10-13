@@ -296,10 +296,11 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
       const checked = row.checkedAt && Number.isFinite(Date.parse(row.checkedAt))
         ? new Intl.DateTimeFormat('en-IN', {timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true}).format(new Date(row.checkedAt)) + ' IST'
         : 'time unavailable'
-      const product = quote ? String(row.evidence || '').split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 90) : ''
+      const product = quote ? String(row.evidence || '').split('\n')[0].replace(/\s+/g, ' ').trim() : ''
+      const productLine = product.length > 90 ? product.slice(0, 90).replace(/\s+\S*$/, '') + '…' : product
       const price = quote ? `${quote.price}${quote.taxesIncluded ? ' including taxes' : ''}${quote.fee ? '\nAdditional fee shown: '+quote.fee : ''}`
         : 'The page was read, but one exact item price could not be isolated. See the saved report.'
-      return `*${label}* · checked ${checked}${product ? '\n' + product : ''}\n${price}\nProduct page: ${row.sourceUrl}`
+      return `*${label}* · checked ${checked}${productLine ? '\n' + productLine : ''}\n${price}\nProduct page: ${row.sourceUrl}`
     }
     const reason = row.reason || (row.status === 'pending' || row.status === 'checking'
       ? 'Still checking the store.' : 'No product-page price was verified.')

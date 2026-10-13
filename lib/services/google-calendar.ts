@@ -164,6 +164,20 @@ export async function createCalendarEvent(
   return { ...body, verification: 'unknown' }
 }
 
+/** The Google account behind the primary calendar: its title is the account's email address.
+ * Returns null when it cannot be read or the calendar was renamed to something that is not an email. */
+export async function fetchPrimaryCalendarAccount(accessToken: string): Promise<string | null> {
+  try {
+    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=1&fields=summary', {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+      cache: 'no-store',
+    })
+    if (!response.ok) return null
+    const summary = String((await response.json())?.summary || '').trim()
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(summary) ? summary : null
+  } catch { return null }
+}
+
 export async function fetchPrimaryCalendarEvents(
   accessToken: string,
   timeMin: string,
