@@ -15,7 +15,8 @@ import { askClaude, askClaudeWithContext, type Message } from '@/lib/claude'
 import { addToListDetailed, formatAddResult, clearList, formatList, getAllLists, getList, setItemDoneByText, resolveAndSetDoneAcrossLists, normalizeListName } from '@/lib/lists'
 import { checkAndIncrementLimit, getUsageStatusReply, getFriendReminderCap } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAuthUrl, buildCalendarConnectUrl, fetchPrimaryCalendarAccount } from '@/lib/google-calendar'
+import { getAuthUrl, buildCalendarConnectUrl } from '@/lib/google-calendar'
+import { getAllCalendarAccountAccess, describeCalendarAccounts } from '@/lib/services/google-calendar-accounts'
 import { resolveUser, type Channel } from './resolve-user'
 import { detectIntent } from './detect-intent'
 import { parseClaudeResponse } from './parse-claude-response'
@@ -1102,8 +1103,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (calTokens.connected) {
       const url = buildCalendarConnectUrl(resolvedUser.telegramId) || getAuthUrl(resolvedUser.telegramId)
       // Name the account so "which calendar am I connected to?" has an answer.
-      const account = calTokens.accessToken ? await fetchPrimaryCalendarAccount(calTokens.accessToken) : null
-      const reply = `✅ *Your Google Calendar is already connected.*${account ? `\nAccount: *${account}*` : ''}\n\nYour schedule already shows up in your *Today* briefing.\n\nWant to connect a *different* Google account? Use this link:\n${url}`
+      const accountLine = describeCalendarAccounts(await getAllCalendarAccountAccess(resolvedUser.telegramId).catch(() => []))
+      const reply = `✅ *Your Google Calendar is already connected.*${accountLine ? `\n${accountLine}` : ''}\n\nYour schedule already shows up in your *Today* briefing.\n\nWant to connect another Google account? Use this link (it adds to the ones above, it does not replace them):\n${url}`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { consumeCalendarOauthState, exchangeCode } from '@/lib/google-calendar'
+import { consumeCalendarOauthState, exchangeCode, fetchPrimaryCalendarAccount, refreshAccessToken } from '@/lib/google-calendar'
+import { saveExtraCalendarAccount } from '@/lib/services/google-calendar-accounts'
 import { encryptGoogleToken, hasGoogleTokenEncryptionKey } from '@/lib/security/google-token-crypto'
 
 export const dynamic = 'force-dynamic'
@@ -29,10 +30,26 @@ export async function GET(req: NextRequest) {
     return new NextResponse(failedPageHtml(), { status:503, headers:{'Content-Type':'text/html; charset=utf-8'} })
   }
 
-  const { error } = await supabaseAdmin.from('users').update({
-    google_refresh_token: encryptGoogleToken(tokens.refresh_token),
+  const encrypted = encryptGoogleToken(tokens.refresh_token)
+  const savePrimary = async () => (await supabaseAdmin.from('users').update({
+    google_refresh_token: encrypted,
     google_calendar_connected: true,
-  }).eq('telegram_id', telegramId)
+  }).eq('telegram_id', telegramId)).error
+
+  // A second Google account is ADDED next to the first, never swapped in for it. The first
+  // account stays primary; the same account connecting again just refreshes its token.
+  let error: { message: string } | null = null
+  const newEmail = (await fetchPrimaryCalendarAccount(tokens.access_token))?.toLowerCase() || null
+  const { data: existing } = await supabaseAdmin.from('users')
+    .select('google_calendar_connected,google_refresh_token').eq('telegram_id', telegramId).maybeSingle()
+  let addedAsExtra = false
+  if (newEmail && existing?.google_calendar_connected && existing?.google_refresh_token) {
+    const primaryAccess = await refreshAccessToken(String(existing.google_refresh_token))
+    const primaryEmail = primaryAccess ? (await fetchPrimaryCalendarAccount(primaryAccess))?.toLowerCase() || null : null
+    // Primary still works and is a different account: keep it, store the new one beside it.
+    if (primaryAccess && primaryEmail && primaryEmail !== newEmail) addedAsExtra = await saveExtraCalendarAccount(telegramId, newEmail, encrypted)
+  }
+  if (!addedAsExtra) error = await savePrimary()
 
   if (error) {
     console.error('CALENDAR_CONNECTION_SAVE_FAILED:', error.message)

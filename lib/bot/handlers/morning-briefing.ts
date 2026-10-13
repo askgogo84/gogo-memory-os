@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchWeatherForecast, formatCurrentWeather } from '@/lib/services/weather'
-import { getTodayEvents, refreshAccessToken } from '@/lib/google-calendar'
+import { getTodayEvents } from '@/lib/google-calendar'
+import { getTodayEventsAllAccounts } from '@/lib/services/google-calendar-accounts'
 
 function todayDateKey() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -150,26 +151,26 @@ async function getCalendarState(telegramId: number) {
       connected: false,
       events: [],
       error: false,
-    }
-  }
-
-  const accessToken = await refreshAccessToken(user.google_refresh_token)
-
-  if (!accessToken) {
-    return {
-      connected: false,
-      events: [],
-      error: false,
+      multi: false,
     }
   }
 
   try {
-    const events = await getTodayEvents(accessToken)
+    const result = await getTodayEventsAllAccounts(telegramId, user.google_refresh_token, getTodayEvents)
+    if (!result.connected) {
+      return {
+        connected: false,
+        events: [],
+        error: false,
+        multi: false,
+      }
+    }
 
     return {
       connected: true,
-      events,
+      events: result.events,
       error: false,
+      multi: result.multi,
     }
   } catch (err) {
     // Fetch failed (bad/expired token, wrong account, Google error). Flag it so the
@@ -179,6 +180,7 @@ async function getCalendarState(telegramId: number) {
       connected: true,
       events: [],
       error: true,
+      multi: false,
     }
   }
 }
@@ -256,7 +258,7 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
     } else if (calendarState.events.length) {
       cal += calendarState.events
         .slice(0, 5)
-        .map((event: any) => `• ${formatEventTime(event)} — ${event.summary || 'Untitled event'}`)
+        .map((event: any) => `• ${formatEventTime(event)} — ${event.summary || 'Untitled event'}${calendarState.multi && event._account ? ` (${event._account})` : ''}`)
         .join('\n')
     } else {
       cal += `No calendar events lined up today.`

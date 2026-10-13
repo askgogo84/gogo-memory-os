@@ -38,15 +38,16 @@ export async function tryGetConnectionStatus(params:{actor:AgentActor;text:strin
     lines.push(`✉️ Gmail Send: ${data.gmail_send_connected?'enabled (approval-gated)':'not enabled'}`)
   }else lines.push('📧 Gmail / Workspace: not connected')
   if(data.google_calendar_connected){
-    let calendarAccount:string|null=null
+    let calendarAccounts:Array<{email:string|null}>=[]
     try{
-      if(data.google_refresh_token){
-        const {refreshAccessToken,fetchPrimaryCalendarAccount}=await import('@/lib/google-calendar')
-        const token=await refreshAccessToken(String(data.google_refresh_token))
-        if(token)calendarAccount=await fetchPrimaryCalendarAccount(token)
-      }
-    }catch{calendarAccount=null}
-    lines.push(calendarAccount?`📅 Google Calendar: connected to *${clean(calendarAccount,160)}* (primary calendar)`:'📅 Google Calendar: connected to its primary calendar')
+      const {getCalendarAccountAccess}=await import('@/lib/services/google-calendar-accounts')
+      calendarAccounts=await getCalendarAccountAccess(params.actor.legacyTelegramId,data.google_refresh_token?String(data.google_refresh_token):null)
+    }catch{calendarAccounts=[]}
+    const emails=calendarAccounts.map(a=>a.email).filter((e):e is string=>!!e)
+    if(emails.length>1){
+      lines.push(`📅 Google Calendar: ${emails.length} accounts connected`)
+      emails.forEach((e,i)=>lines.push(`   ${i+1}. *${clean(e,160)}*${i===0?' (primary: new events go here unless you pick another)':''}`))
+    }else lines.push(emails.length?`📅 Google Calendar: connected to *${clean(emails[0],160)}* (primary calendar)`:'📅 Google Calendar: connected to its primary calendar')
   }else lines.push('📅 Google Calendar: not connected')
   return {
     runId:'connection-status',

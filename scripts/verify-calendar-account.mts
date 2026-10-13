@@ -18,6 +18,6 @@ try {
   assert.equal(await cal.fetchPrimaryCalendarAccount('t'), null)
 } finally { globalThis.fetch = real }
 const pm = readFileSync(new URL('../lib/bot/process-message.ts', import.meta.url), 'utf8')
-assert.match(pm, /fetchPrimaryCalendarAccount\(calTokens\.accessToken\)/)
-assert.match(pm, /Account: \*\$\{account\}\*/)
+assert.match(pm, /describeCalendarAccounts\(await getAllCalendarAccountAccess\(resolvedUser\.telegramId\)/)
+assert.match(pm, /it adds to the ones above, it does not replace them/)
 console.log('Calendar: the connected Google account is named in the "already connected" reply')
