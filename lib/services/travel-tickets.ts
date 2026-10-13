@@ -492,6 +492,20 @@ export async function persistAndRemindTicket(
   const now = Date.now()
   // Boarding passes omit the year ("12 Oct"); date it before anything is scheduled.
   info = withTicketYears(info, now)
+  // A leg that reads as already departed (or undated) is checked against the airline schedule.
+  if (info.type === 'flight' && typeof process !== 'undefined' && process.env?.AERODATABOX_RAPIDAPI_KEY) {
+    try {
+      const { scheduleCheckedLeg } = await import('./flight-schedule')
+      const checked = await Promise.all(info.flights.map(async f => {
+        const { departAt, departTz } = flightInstants(f)
+        return scheduleCheckedLeg(f, departAt, now, departTz || ticketTimezone(f.from))
+      }))
+      info = { ...info, flights: checked } as typeof info
+    } catch (err: any) {
+      console.error('FLIGHT_SCHEDULE_CHECK_FAILED:', String(err?.message || err).slice(0, 120))
+    }
+  }
+  const scheduleChecked = info.type === 'flight' && info.flights.some((f: any) => f.scheduleChecked)
   const legs = buildLegs(info)
   // Who is travelling, in the user's own words ("Divya" for "URS, Divyashree"), from saved
   // contacts or past chats. Stored on the ticket so recall, alerts and tracking can use it.
@@ -584,7 +598,7 @@ export async function persistAndRemindTicket(
     }
   }
 
-  let reply = buildTicketReply(replyInfo, reminderTail) + trackingTail
+  let reply = buildTicketReply(replyInfo, reminderTail) + (scheduleChecked ? `\n\n✔️ I couldn't read the date clearly, so I matched it against the airline's schedule.` : '') + trackingTail
 
   // Check-in window already open → surface it now rather than skipping silently.
   if (openNowNotes.length) {

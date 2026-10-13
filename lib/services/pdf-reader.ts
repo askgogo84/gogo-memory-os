@@ -470,8 +470,9 @@ export async function parseImageTicket(
   const base64Img = Buffer.from(imgBuffer).toString('base64')
   const cleanMediaType = mediaType.includes('png') ? 'image/png' : 'image/jpeg'
 
-  const result = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+  // Small forwarded screenshots are hard to read; prefer the newer model, fall back if unavailable.
+  const ask = (model: string) => anthropic.messages.create({
+    model,
     max_tokens: 1024,
     messages: [
       {
@@ -492,6 +493,10 @@ export async function parseImageTicket(
         ],
       },
     ],
+  })
+  const result = await ask('claude-sonnet-5-5').catch((err: any) => {
+    console.error('[ticket-reader] newer model unavailable, falling back:', String(err?.message || err).slice(0, 120))
+    return ask('claude-sonnet-4-5')
   })
 
   const text = result.content[0]?.type === 'text' ? result.content[0].text.trim() : ''
