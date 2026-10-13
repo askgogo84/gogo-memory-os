@@ -21,7 +21,7 @@ export type LegStatus = {
   state: LegState
   delayMinutes?: number
   depGate?: string; depTerminal?: string; arrGate?: string; arrTerminal?: string; belt?: string
-  revisedDeparture?: string; revisedArrival?: string; actualArrival?: string
+  revisedDeparture?: string; revisedArrival?: string; actualArrival?: string; scheduledArrival?: string
   source: 'flight_data' | 'web'; url?: string
 }
 export type TrackedLeg = {
@@ -31,7 +31,7 @@ export type TrackedLeg = {
 }
 export type TrackingState = { lastCheckedAt?: string; state?: LegState; sent?: string[]; delayNotified?: number; gateNotified?: string
   /** Latest live arrival estimate / actual landing from the flight-status feed (ISO), kept so "when does she land?" can be answered. */
-  etaArrival?: string; actualArrival?: string }
+  etaArrival?: string; actualArrival?: string; scheduledArrival?: string }
 export type LegEvent = { kind: 'delayed' | 'gate' | 'departed' | 'landed' | 'cancelled' | 'diverted'; key: string; text: string }
 
 const MIN = 60_000
@@ -81,6 +81,7 @@ export function parseFlightData(json: any, departAt: string): LegStatus | null {
     arrGate: s(best.arrival?.gate), arrTerminal: s(best.arrival?.terminal), belt: s(best.arrival?.baggageBelt),
     revisedDeparture: revised, revisedArrival: adbTime(best.arrival?.revisedTime) || adbTime(best.arrival?.predictedTime),
     actualArrival: adbTime(best.arrival?.runwayTime) || adbTime(best.arrival?.actualTime),
+    scheduledArrival: adbTime(best.arrival?.scheduledTime),
   }
 }
 
@@ -251,7 +252,7 @@ export async function runFlightLegTracker(nowMs = Date.now()) {
       }
       checked++
       const events = status ? legEvents(leg, status) : []
-      console.log('FLIGHT_TRACKER_LEG:', JSON.stringify({ leg: leg.id, flight: normalizeFlightNo(leg.flightNo), dataKey, source, state: status?.state || null, delay: status?.delayMinutes || 0, events: events.map(e => e.key) }))
+      console.log('FLIGHT_TRACKER_LEG:', JSON.stringify({ leg: leg.id, flight: normalizeFlightNo(leg.flightNo), dataKey, source, state: status?.state || null, delay: status?.delayMinutes || 0, hasEta: Boolean(status?.revisedArrival), hasScheduledArrival: Boolean(status?.scheduledArrival), events: events.map(e => e.key) }))
       const prev = leg.tracking || {}
       const delivered = new Set(prev.sent || [])
       for (const e of events) {
@@ -270,6 +271,7 @@ export async function runFlightLegTracker(nowMs = Date.now()) {
         delayNotified: delayEvent ? status?.delayMinutes || prev.delayNotified : prev.delayNotified,
         gateNotified: gateEvent ? status?.depGate : prev.gateNotified,
         etaArrival: status?.revisedArrival || prev.etaArrival, actualArrival: status?.actualArrival || prev.actualArrival,
+        scheduledArrival: status?.scheduledArrival || prev.scheduledArrival,
       }
       await supabaseAdmin.from('travel_tickets').update({ raw: { ...raw, liveTracking: tracking } }).eq('id', leg.id).eq('telegram_id', row.telegram_id)
     } catch (err: any) {
