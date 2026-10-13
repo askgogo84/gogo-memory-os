@@ -6,21 +6,21 @@ import { evaluateAgentExecutionPolicy } from './policy'
 import { runSecureBrowser } from './secure-computer'
 import { bookingObjective } from './provider-booking'
 
-export type LiveSlotRequest = { listUrl: string; date: string; time: string; timezone: string; service: string; location: string }
+export type LiveSlotRequest = { listUrl: string; date: string; time: string; timezone: string; service: string; location: string; venues?: number }
 export type VenueSlots = { venue: string; options: string[]; none: boolean; reason?: string; checked: boolean }
 
 const ORDINAL = ['first', 'second', 'third']
 
 export function liveSlotObjective(req: LiveSlotRequest, nth: number, skip: string[] = []) {
-  // The booking objective carries the date/time/service the worker parses; drop its cart, login and
-  // payment steps so the planner never sees "book" and "check only" at once (12 Oct: it refused twice).
-  const base = bookingObjective({ date: req.date, time: req.time, timezone: req.timezone, service: req.service, location: req.location, confirmation: 'check live availability only' })
-    .replace(/, and continue \(Book, Proceed, Continue or Add to cart\) until the booking summary or cart is shown\./, '.')
-    .replace(/, then add one court to the cart and open the cart\./, '.')
-    .replace(/ If the site asks to log in or register[^.]*\./, '')
-    .replace(/ Stop on the payment step: never pay, never enter card, UPI or bank details\./, '')
-  const avoid = skip.filter(Boolean).length ? ` Do not open ${skip.filter(Boolean).join(' or ')}; pick a different venue.` : ''
-  return base + ` LIVE SLOT CHECK ONLY (read-only): on the list page open the ${ORDINAL[nth] || 'first'} bookable venue listed in ${req.location || 'the area'} (skip ads and venues elsewhere).${avoid} Press Book Now, and set the sport, date and start time with choose. Gogo reads the courts itself. Never log in, never add to a cart, never proceed or pay.`
+  // 13 Oct 14:35: "booking up to payment" next to "read-only, never add to a cart" made the planner
+  // refuse every step as contradictory. The objective now asks only for what this run does (open the
+  // venue's booking page and set sport, date and time); the code itself stops before any cart,
+  // proceed or pay control and never logs in, so the prohibition needs no wording here.
+  const avoid = skip.filter(Boolean).length ? ` Not ${skip.filter(Boolean).join(' or ')}.` : ''
+  return bookingObjective({
+    date: req.date, time: req.time, timezone: req.timezone, service: req.service, location: req.location,
+    confirmation: `Show me the free courts: open the ${ORDINAL[nth] || 'first'} bookable venue listed in ${req.location || 'the area'} (skip ads and venues elsewhere; if this page is already a venue, use it).${avoid} Press Book Now and set the sport, date and start time with choose so Gogo can read the free courts.`,
+  })
 }
 
 /** One venue: the nth bookable venue on the list page. */
@@ -40,14 +40,15 @@ export async function runLiveSlotCheck(params: { userId: string; runId: string; 
   // Same gate as any execute-mode browser task; this one never commits anything.
   const policy = evaluateAgentExecutionPolicy({ capability: 'browser', permissionLevel: 'ask', mode: 'execute', risk: 'low', irreversible: false, approvalStatus: 'approved' })
   if (!policy.allowed) throw new Error('live_slots_policy_blocked')
-  const count = Math.max(1, Math.min(3, params.venues || 2))
+  const count = Math.max(1, Math.min(3, params.venues || params.req.venues || 2))
   // One after another, so each later check is told which venues are already covered
   // (12 Oct: two parallel checks both opened the first venue).
   const venues: VenueSlots[] = []
   for (let nth = 0; nth < count; nth++) {
-    const skip = venues.filter(v => v.checked).map(v => v.venue.split(',')[0].trim())
+    // Every venue already opened, read or not (13 Oct: an unread first venue was opened again).
+    const skip = venues.map(v => v.venue.split(/,| - /)[0].trim()).filter(v => v && v !== 'a venue')
     const v = await checkVenueSlots({ ...params, nth, skip }).catch(() => null)
-    if (v && !venues.some(x => x.checked && x.venue === v.venue)) venues.push(v)
+    if (v && !venues.some(x => x.venue === v.venue)) venues.push(v)
   }
   return venues
 }

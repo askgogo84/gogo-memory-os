@@ -29,9 +29,9 @@ assert.match(text, /2 open: Premium Hybrid Court 5, Premium Hybrid Court 6 \(₹
 // 3. The slot-check objective no longer says "add to cart / continue to the cart" (the planner refused twice),
 //    still parses date, time and service, and tells later checks which venue is covered.
 const obj = LS.liveSlotObjective(req, 1, ['The Majesstine Sports'])
-assert.doesNotMatch(obj, /add one court to the cart|until the booking summary or cart is shown|fill_phone/)
+assert.doesNotMatch(obj, /never add|never log in|never proceed|LIVE SLOT CHECK ONLY|read-only/i, '13 Oct 14:35: "never ..." next to the booking objective made the planner refuse every step')
 assert.deepEqual(PB.bookingTargetFromObjective(obj), { date: '2026-10-17', time: '7:00 AM', service: 'badminton' })
-assert.match(obj, /Do not open The Majesstine Sports; pick a different venue\./)
+assert.match(obj, /Not The Majesstine Sports\./)
 const lsSrc = readFileSync(new URL('../lib/agent/live-slots.ts', import.meta.url), 'utf8')
 assert.doesNotMatch(lsSrc, /Promise\.allSettled/, 'venue checks run one after another')
 
