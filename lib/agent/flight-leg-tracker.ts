@@ -29,7 +29,9 @@ export type TrackedLeg = {
   fromCity: string; toCity: string; departAt: string; arriveAt?: string | null
   alias?: string | null; tracking?: TrackingState
 }
-export type TrackingState = { lastCheckedAt?: string; state?: LegState; sent?: string[]; delayNotified?: number; gateNotified?: string }
+export type TrackingState = { lastCheckedAt?: string; state?: LegState; sent?: string[]; delayNotified?: number; gateNotified?: string
+  /** Latest live arrival estimate / actual landing from the flight-status feed (ISO), kept so "when does she land?" can be answered. */
+  etaArrival?: string; actualArrival?: string }
 export type LegEvent = { kind: 'delayed' | 'gate' | 'departed' | 'landed' | 'cancelled' | 'diverted'; key: string; text: string }
 
 const MIN = 60_000
@@ -267,6 +269,7 @@ export async function runFlightLegTracker(nowMs = Date.now()) {
         lastCheckedAt: new Date(nowMs).toISOString(), state: status?.state || prev.state, sent: [...delivered].slice(-30),
         delayNotified: delayEvent ? status?.delayMinutes || prev.delayNotified : prev.delayNotified,
         gateNotified: gateEvent ? status?.depGate : prev.gateNotified,
+        etaArrival: status?.revisedArrival || prev.etaArrival, actualArrival: status?.actualArrival || prev.actualArrival,
       }
       await supabaseAdmin.from('travel_tickets').update({ raw: { ...raw, liveTracking: tracking } }).eq('id', leg.id).eq('telegram_id', row.telegram_id)
     } catch (err: any) {
