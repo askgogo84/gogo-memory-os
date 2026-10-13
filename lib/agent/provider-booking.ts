@@ -89,11 +89,43 @@ export function bookingRobotCheck(text: string | null | undefined): boolean {
   return /\b(?:re-?captcha|captcha)\b[^.\n]{0,40}\b(?:fail|failed|error|expired|verify|verification)|\bverify (?:that )?you(?:'re| are) (?:a )?human\b|\bi'?m not a robot\b|\bunusual traffic\b/i.test(String(text || '').slice(0, 6000))
 }
 
-export function bookingReviewMessage(params: { host: string; summary?: string; takeoverUrl: string; robotCheck?: boolean; loginSwitchRefused?: boolean; accountCreationRefused?: boolean }) {
-  if (params.accountCreationRefused) return `${params.host} started creating a new account instead of logging you in, so I stopped. I never create accounts for you without asking.\n\nIf you have a ${params.host} account on your mobile number, open this, tap *Take control*, log in with that number, then tap *Resume*:\n${params.takeoverUrl}`
-  if (params.loginSwitchRefused || params.robotCheck) return `${params.host}'s robot check ("are you human") stopped the login with your mobile number, so it didn't send the code. I don't get around these checks, and I don't switch to email or Google login on my own.\n\nOpen this, tap *Take control*, tap Send OTP (and finish the check if it shows one), then tap *Resume*. I'll ask you for the code and carry on:\n${params.takeoverUrl}`
-  if (params.robotCheck) return `${params.host}'s robot check ("are you human") stopped the login, so it didn't send the code. I don't get around these checks myself.\n\nOpen this, tap *Take control*, tap Send OTP (and finish the check if it shows one), then tap *Resume*. I'll ask you for the code and carry on:\n${params.takeoverUrl}`
-  return `I got as far as I safely could on ${params.host}, but didn't reach the payment step, so nothing is booked yet.\n\nOpen this, tap *Take control* and finish from where I stopped:\n${params.takeoverUrl}`
+/** The provider page to send the person to: where Gogo stopped if it is on the same site, else the
+ * approved page. Path only: a query or fragment can carry session or login state. */
+export function bookingDirectUrl(observed: string | null | undefined, approved: string | null | undefined): string | null {
+  const clean = (u: string | null | undefined) => { try { const x = new URL(String(u || '')); if (x.protocol !== 'https:' || x.username || x.password) return null; return x } catch { return null } }
+  const a = clean(approved), o = clean(observed)
+  const site = (h: string) => h.replace(/^www\./, '').split('.').slice(-2).join('.')
+  const pick = o && a && site(o.hostname) === site(a.hostname) && !/\/(?:login|signin|sign-in|auth|otp|checkout|payment|cart)\b/i.test(o.pathname) ? o : a
+  return pick ? `${pick.origin}${pick.pathname}` : null
+}
+
+/** "Sat 17 Oct · 7:00 AM · Badminton" from an approved booking target. */
+export function bookingSlotLine(target: BookingTarget | null | undefined): string {
+  const t = target || {}
+  let day = ''
+  if (t.date && /^\d{4}-\d{2}-\d{2}$/.test(t.date)) day = new Date(`${t.date}T12:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).replace(/,/g, '')
+  const sport = String(t.service || '').replace(/\b(?:court|courts|slot|slots|booking)\b/gi, '').trim()
+  return [day, t.time, sport ? sport[0].toUpperCase() + sport.slice(1) : ''].filter(Boolean).join(' · ')
+}
+
+/**
+ * Where a booking stopped before anything was in the cart, the person finishes in THEIR browser
+ * (13 Oct 15:26, his ask, modelled on Instinct): a plain link to the provider page opens in their
+ * own browser or the provider's app, where they are usually logged in and the robot check passes.
+ * Gogo's browser link stays only as a secondary option.
+ */
+export function bookingReviewMessage(params: { host: string; summary?: string; takeoverUrl: string; directUrl?: string | null; target?: BookingTarget | null; robotCheck?: boolean; loginSwitchRefused?: boolean; accountCreationRefused?: boolean }) {
+  const slot = bookingSlotLine(params.target)
+  const steps = `Tap Book Now${slot ? `, choose ${slot}` : ' and pick your slot'}, select a court and pay there.`
+  const own = params.directUrl
+    ? `Book it yourself here. It opens in your own browser or the ${params.host.replace(/\.(?:co|com|in)$/, '')} app, where you're usually logged in already:\n${params.directUrl}\n\n${steps}`
+    : ''
+  const mine = (what: string) => params.directUrl
+    ? `\n\nOr let me carry on in my browser (${what}):\n${params.takeoverUrl}`
+    : `\n\nOpen this, tap *Take control*, ${what}:\n${params.takeoverUrl}`
+  if (params.accountCreationRefused) return `${params.host} started creating a new account instead of logging you in, so I stopped. I never create accounts for you without asking. Nothing is booked yet.${own ? `\n\n${own}` : ''}${mine('log in with your number, then tap *Resume*')}`
+  if (params.loginSwitchRefused || params.robotCheck) return `${params.host}'s robot check ("are you human") stopped my login with your number, so nothing is booked yet. I don't get around these checks, and I don't switch to email or Google login on my own.${own ? `\n\n${own}` : ''}${mine('tap Send OTP, then *Resume*, and I\'ll ask you for the code')}`
+  return `I got as far as I safely could on ${params.host}, but didn't reach the payment step, so nothing is booked yet.${own ? `\n\n${own}` : ''}${mine('finish from where I stopped')}`
 }
 
 export type BookingTarget = { date?: string; time?: string; service?: string }

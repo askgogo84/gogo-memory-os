@@ -686,11 +686,20 @@ async function pressText(page,wanted){
   }
   return pressed;
 }
+// 13 Oct: Playo's "Book Now" path pointed at a hidden copy of the button and the click timed out.
+// Press the visible control with the same label, else the element itself. False: not handled.
+async function pressTimedOut(page,target,e){
+  if(!(e&&e.name==='TimeoutError'&&await target.count().catch(()=>0)))return false;
+  const label=String(await target.innerText({timeout:2000}).catch(()=>'')).trim().slice(0,80);
+  if(label){const twins=page.getByText(label,{exact:true});const n=Math.min(6,await twins.count().catch(()=>0));
+    for(let i=0;i<n;i++){const twin=twins.nth(i);if(!await twin.isVisible().catch(()=>false))continue;try{await twin.click({timeout:4000});return true;}catch{}}}
+  try{await target.evaluate(el=>el.click());return true;}catch{return false;}
+}
 async function clickPastOverlay(page,selector){
   const target=page.locator(selector).first();
   let covered;
   try{await target.click({timeout:10000});return;}
-  catch(e){if(!/intercepts pointer events/i.test(String(e&&e.message||'')))throw e;covered=e;}
+  catch(e){if(!/intercepts pointer events/i.test(String(e&&e.message||''))){if(await pressTimedOut(page,target,e))return;throw e;}covered=e;}
   try{await page.keyboard.press('Escape');await page.waitForTimeout(300);}catch{}
   try{await target.click({timeout:4000});return;}
   catch(e){if(!/intercepts pointer events/i.test(String(e&&e.message||'')))throw e;}

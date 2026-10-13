@@ -6,7 +6,7 @@ import { evaluateAgentExecutionPolicy } from './policy'
 import { runSecureBrowser } from './secure-computer'
 import { bookingObjective } from './provider-booking'
 
-export type LiveSlotRequest = { listUrl: string; date: string; time: string; timezone: string; service: string; location: string; venues?: number }
+export type LiveSlotRequest = { listUrl: string; date: string; time: string; timezone: string; service: string; location: string; venues?: number; venueUrls?: string[] }
 export type VenueSlots = { venue: string; options: string[]; none: boolean; reason?: string; checked: boolean }
 
 const ORDINAL = ['first', 'second', 'third']
@@ -24,9 +24,10 @@ export function liveSlotObjective(req: LiveSlotRequest, nth: number, skip: strin
 }
 
 /** One venue: the nth bookable venue on the list page. */
-export async function checkVenueSlots(params: { userId: string; runId: string; req: LiveSlotRequest; nth: number; skip?: string[] }): Promise<VenueSlots> {
+export async function checkVenueSlots(params: { userId: string; runId: string; req: LiveSlotRequest; nth: number; skip?: string[]; slot?: number }): Promise<VenueSlots> {
+  const slot = params.slot ?? params.nth
   const result = await runSecureBrowser({
-    userId: `${params.userId}:slots:${params.nth}`, runId: `${params.runId}-v${params.nth + 1}`, url: params.req.listUrl,
+    userId: `${params.userId}:slots:${slot}`, runId: `${params.runId}-v${slot + 1}`, url: params.req.listUrl,
     objective: liveSlotObjective(params.req, params.nth, params.skip || []), mode: 'execute',
     providerBooking: true, rehearsal: true, slotCheck: true, bookingPhone: null, bookingOtp: null, reserveHumanHandoff: false,
   })
@@ -44,6 +45,17 @@ export async function runLiveSlotCheck(params: { userId: string; runId: string; 
   // One after another, so each later check is told which venues are already covered
   // (12 Oct: two parallel checks both opened the first venue).
   const venues: VenueSlots[] = []
+  // 13 Oct 15:17: the search's top Playo result was one venue's page, so the second check was told
+  // to open "the second venue" while standing on the first and refused. With venue pages and no
+  // list page, each venue page is checked on its own.
+  const direct = (params.req.venueUrls || []).filter(Boolean).slice(0, count)
+  if (direct.length) {
+    for (let i = 0; i < direct.length; i++) {
+      const v = await checkVenueSlots({ ...params, req: { ...params.req, listUrl: direct[i] }, nth: 0, skip: [], slot: i }).catch(() => null)
+      if (v && !venues.some(x => x.venue === v.venue)) venues.push(v)
+    }
+    return venues
+  }
   for (let nth = 0; nth < count; nth++) {
     // Every venue already opened, read or not (13 Oct: an unread first venue was opened again).
     const skip = venues.map(v => v.venue.split(/,| - /)[0].trim()).filter(v => v && v !== 'a venue')

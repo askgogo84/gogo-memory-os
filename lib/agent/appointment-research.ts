@@ -209,7 +209,11 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
     // 12 Oct (modelled on Instinct): for sports venues on a booking site, check the live slots at the
     // top venues right away, read-only, and message the courts and prices when done.
     let liveCheck = false
-    const listing = sportsVenue ? options.find(o => /(?:^|\.)playo\.co$/i.test((() => { try { return new URL(o.url).hostname } catch { return '' } })())) : null
+    const playo = sportsVenue ? options.filter(o => /(?:^|\.)playo\.co$/i.test((() => { try { return new URL(o.url).hostname } catch { return '' } })())) : []
+    const isVenuePage = (u: string) => { try { return /^\/venues\/[^/]+\/[^/]+/i.test(new URL(u).pathname) } catch { return false } }
+    // A list page lets the check pick the top venues; with only venue pages, check those pages.
+    const listing = playo.find(o => !isVenuePage(o.url)) || playo[0] || null
+    const venueUrls = listing && isVenuePage(listing.url) ? playo.filter(o => isVenuePage(o.url)).slice(0, 2).map(o => o.url) : undefined
     if (listing && params.actor.whatsappId) {
       try {
         const followup = await import('./appointment-followup')
@@ -221,7 +225,7 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
           const time = `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
           const { queueBrowserRead } = await import('./browser-command')
           const queued = await queueBrowserRead({ actor: params.actor, surface: params.surface, text: `open ${listing.url} and check the live slots`,
-            metadata: { slot_check: { listUrl: listing.url, date, time, timezone: tz, service, location: location || '' } } })
+            metadata: { slot_check: { listUrl: listing.url, date, time, timezone: tz, service, location: location || '', ...(venueUrls ? { venueUrls } : {}) } } })
           liveCheck = Boolean(queued)
           if (liveCheck) text = text.replace(/\n\nI haven't checked live slots or booked anything\.[^\n]*$/, `\n\nChecking the live ${time} slots at the top venues on Playo now. I'll message you here in 2–3 minutes with the courts and prices. Nothing is booked.`)
         }
