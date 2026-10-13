@@ -115,6 +115,11 @@ export type SecureBrowserResult = {
   // Provider booking: where Gogo handed over (OTP needed, payment, or anything else).
   bookingStage?: BookingStage
   otpRejected?: boolean
+  // Where the site sent the login code (12 Oct: Playo's email login sent it by email).
+  otpChannel?: 'sms'|'email'
+  // 13 Oct safeguards: Gogo refused to switch login method / stopped at account creation.
+  loginSwitchRefused?: boolean
+  accountCreationRefused?: boolean
   // The site's robot check (reCAPTCHA) stopped a booking login; the person takes over.
   robotCheck?: boolean
   // Live slot check: what the venue's picker offered at the requested date and time.
@@ -1753,6 +1758,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // Why a booking stopped where it did: stage, page path and step outcomes, never values.
       // 12 Oct live run: "Recaptcha verification failed" ended the run with a generic message.
       if(stage==='review'&&bookingRobotCheck(String(page?.text||'')))extra={...extra,robotCheck:true}
+      if(stage==='otp')extra={...extra,otpChannel:otpChannelOf(String(page?.text||''))}
       if(params.slotCheck===true&&!extra.slots&&slotOptions)extra={...extra,slots:{venue:venueName(),options:slotOptions,none:slotOptions.length===0}}
       try{console.log('BROWSER_BOOKING_STOP:',JSON.stringify({runId:params.runId||null,stage,path:(()=>{try{return new URL(String(page.url||'')).pathname.slice(0,80)}catch{return null}})(),steps:actionLog.slice(-16).map((a:any)=>`${a?.kind}:${a?.status}${a?.failure?.reason?':'+a.failure.reason:''}`)}))}catch{}
       return bookingStopResult(stage,summary,extra)
@@ -1796,7 +1802,12 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         return {status:'blocked',url:safeText(page.url||target,1200),title:safeText(page.title,300),summary:providerBlock,pageText:safeText(page.text,1200),forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
       }
 
-      if(providerBooking&&Date.now()-bookingStartedAt>BOOKING_BUDGET_MS)return await bookingStop('review','Gogo ran out of time before the payment step.')
+      // 13 Oct: the code screen appeared just as time ran out and Gogo sent a generic handover.
+      // A run waiting for the person's code asks for it, whatever the clock says.
+      if(providerBooking&&Date.now()-bookingStartedAt>BOOKING_BUDGET_MS){
+        if(bookingOtpPrompt(page)&&(!params.bookingOtp||otpUsed))return await bookingStop('otp','The site sent a one-time code.',{otpRejected:otpUsed})
+        return await bookingStop('review','Gogo ran out of time before the payment step.')
+      }
       // Provider booking: stop at payment (the person pays), and at an OTP Gogo does not have.
       if(providerBooking&&(wave>0||params.resumePage===true)&&bookingAtPayment(page))return await bookingStop('payment','Gogo reached the payment step and stopped. You complete the payment.')
       const otpWaiting=providerBooking&&bookingOtpPrompt(page)
@@ -1809,6 +1820,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         otpRecheckActions=verify?[{kind:'click',selector:String(verify.selector)},{kind:'wait',ms:2500}]:[{kind:'wait',ms:2500}]
       }else otpRecheckActions=null
       if(!otpRecheckActions&&otpWaiting&&(!params.bookingOtp||otpUsed))return await bookingStop('otp','The site sent a one-time code to your phone.',{otpRejected:otpUsed})
+      // A booking never creates an account: stop the moment the site says it is making one.
+      if(providerBooking&&bookingAccountCreation(String(page?.text||'')))return await bookingStop('review','The site started creating a new account, so Gogo stopped.',{accountCreationRefused:true})
       // The site's robot check failed: press its own Retry once, then hand over. Never solved by Gogo.
       robotActions=null
       if(providerBooking&&bookingRobotCheck(String(page?.text||''))){
@@ -2017,6 +2030,18 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         const stopAt=actions.findIndex(a=>{const label=a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):'';return a.kind==='click_at'||/\b(?:add\s+to\s+cart|proceed|checkout|check\s*out|pay)\b/i.test(label)})
         if(stopAt>=0)actions.splice(stopAt)
         if(!actions.length){bookingIdleWaves++;if(bookingIdleWaves>=2)break;continue}
+      }
+      // 13 Oct 01:38: after the mobile login hit a robot check, the planner switched to the site's
+      // email login, typed the person's email and requested a code, and Playo began creating a
+      // second account. A booking logs in only the way the person approved (their mobile number):
+      // never another login method, and never an email, name or password into a form.
+      if(providerBooking){
+        const cut=bookingLoginSwitchIndex(actions,page)
+        if(cut>=0){
+          console.log('BROWSER_BOOKING_LOGIN_SWITCH_REFUSED:',JSON.stringify({runId:params.sessionTaskId||null,dropped:actions.length-cut}))
+          actions.splice(cut)
+          if(!actions.length)return await bookingStop('review','Gogo only logs in with your mobile number and does not switch to another login method.',{loginSwitchRefused:true})
+        }
       }
       if(loginFirst){
         const early=actions.findIndex(a=>{if(a.kind==='choose')return true;const label=a.kind==='click_text'?a.text:a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):'';return /\b(?:add\s+to\s+cart|book|proceed|checkout|check\s*out|buy|reserve)\b/i.test(label)})
@@ -2296,4 +2321,32 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     // A generated password that was not resolved stays pending (never discarded on a guess).
     if(signup&&!signupVault)console.error('SIGNUP_PENDING_UNRESOLVED:',JSON.stringify({pendingId:signup.pendingId}))
   }
+}
+
+/** Email or SMS: an email address (or "email") shown with the code prompt means the code went by email. */
+export function otpChannelOf(text:string):'sms'|'email'{
+  const t=String(text||'').slice(0,4000)
+  return /\b(?:otp|code)\b[^\n]{0,120}(?:[\w.+-]+@[\w-]+\.[\w.]+|\be-?mail\b)|(?:[\w.+-]+@[\w-]+\.[\w.]+|\be-?mail\b)[^\n]{0,60}\b(?:otp|code)\b/i.test(t)?'email':'sms'
+}
+
+/** Index of the first action that would log in some other way than the approved mobile number. */
+export function bookingLoginSwitchIndex(actions:BrowserAction[],page:any):number{
+  const controls:any[]=page?.controls||[]
+  const of=(sel:string)=>controls.find((c:any)=>c?.selector===sel)
+  const OTHER=/\b(?:e-?mail(?:\s*id)?|google|apple|facebook|microsoft|continue with|sign\s*(?:in|up) with|use (?:e-?mail|password)|password|sign\s*up|register|create (?:an |your )?account)\b/i
+  return actions.findIndex((a:any)=>{
+    if(a.kind==='fill'){
+      const c=of(String(a.selector||''))
+      const desc=[c?.type,c?.field,c?.label,c?.hint,a.selector].map(x=>String(x||'')).join(' ')
+      if(/need help|query|support|ticket|feedback|newsletter|search/i.test(String(c?.field||'')))return false
+      return c?.type==='email'||c?.type==='password'||/\b(?:e-?mail|password|full\s*name|first\s*name|last\s*name|user\s*name)\b/i.test(desc)
+    }
+    const label=a.kind==='click_text'?String(a.text||''):a.kind==='click'?String(of(String(a.selector||''))?.label||''):''
+    return Boolean(label)&&OTHER.test(label)&&!/\b(?:mobile|phone|otp)\b/i.test(label)
+  })
+}
+
+/** The site says it is creating an account (as opposed to logging in). */
+export function bookingAccountCreation(text:string):boolean{
+  return /\b(?:thanks? for creating|create (?:an |your )?(?:new )?account|creating (?:an |your )?account|complete (?:your )?(?:sign\s*up|registration|profile)|set (?:a |your )?password)\b/i.test(String(text||'').slice(0,6000))
 }

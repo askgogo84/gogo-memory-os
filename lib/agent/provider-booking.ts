@@ -69,10 +69,13 @@ export function bookingObjective(params: { date: string; time: string; timezone:
   return `Provider booking up to payment${what ? ` for ${what}` : ''}: on this provider page${params.location ? ` (if it lists several venues, open one in ${params.location} that has this slot free)` : ''} choose exactly ${params.date} at ${params.time} (${params.timezone}), select that slot, and continue (Book, Proceed, Continue or Add to cart) until the booking summary or cart is shown. On a venue page press Book Now. If the booking page has sport, date and start-time selectors, set the sport (from the service), the date and the start time to match, then add one court to the cart and open the cart. If the site asks to log in or register, use fill_phone for the mobile number field and press the control that sends the OTP${who ? `; if it asks for more details use ${who}` : ''}. Stop on the payment step: never pay, never enter card, UPI or bank details. The person's confirmation: ${params.confirmation}`
 }
 
-export function bookingOtpMessage(params: { host: string; mobile: string | null; takeoverUrl: string; rejected?: boolean }) {
+export function bookingOtpMessage(params: { host: string; mobile: string | null; takeoverUrl: string; rejected?: boolean; channel?: 'sms' | 'email' }) {
+  const email = params.channel === 'email'
   const lead = params.rejected
-    ? `${params.host} did not accept that code. Send the new code from your SMS (tap "Resend" there first if it expired).`
-    : `I'm logging in to ${params.host} with your number ${maskMobile(params.mobile)} first. It sent a login code (OTP) by SMS.`
+    ? `${params.host} did not accept that code. Send the new code from your ${email ? 'email' : 'SMS'} (tap "Resend" there first if it expired).`
+    : email
+      ? `I'm logging in to ${params.host} first. It sent a login code (OTP) to your email; check your inbox (and spam).`
+      : `I'm logging in to ${params.host} with your number ${maskMobile(params.mobile)} first. It sent a login code (OTP) by SMS.`
   return `${lead}\n\nReply here with just the code, for example *482913*. I'll type it in and continue. I don't save the code anywhere.\n\nPrefer to type it yourself? Open this, tap Take control, enter it, then tap Resume:\n${params.takeoverUrl}`
 }
 
@@ -86,7 +89,9 @@ export function bookingRobotCheck(text: string | null | undefined): boolean {
   return /\b(?:re-?captcha|captcha)\b[^.\n]{0,40}\b(?:fail|failed|error|expired|verify|verification)|\bverify (?:that )?you(?:'re| are) (?:a )?human\b|\bi'?m not a robot\b|\bunusual traffic\b/i.test(String(text || '').slice(0, 6000))
 }
 
-export function bookingReviewMessage(params: { host: string; summary?: string; takeoverUrl: string; robotCheck?: boolean }) {
+export function bookingReviewMessage(params: { host: string; summary?: string; takeoverUrl: string; robotCheck?: boolean; loginSwitchRefused?: boolean; accountCreationRefused?: boolean }) {
+  if (params.accountCreationRefused) return `${params.host} started creating a new account instead of logging you in, so I stopped. I never create accounts for you without asking.\n\nIf you have a ${params.host} account on your mobile number, open this, tap *Take control*, log in with that number, then tap *Resume*:\n${params.takeoverUrl}`
+  if (params.loginSwitchRefused || params.robotCheck) return `${params.host}'s robot check ("are you human") stopped the login with your mobile number, so it didn't send the code. I don't get around these checks, and I don't switch to email or Google login on my own.\n\nOpen this, tap *Take control*, tap Send OTP (and finish the check if it shows one), then tap *Resume*. I'll ask you for the code and carry on:\n${params.takeoverUrl}`
   if (params.robotCheck) return `${params.host}'s robot check ("are you human") stopped the login, so it didn't send the code. I don't get around these checks myself.\n\nOpen this, tap *Take control*, tap Send OTP (and finish the check if it shows one), then tap *Resume*. I'll ask you for the code and carry on:\n${params.takeoverUrl}`
   return `I got as far as I safely could on ${params.host}, but didn't reach the payment step, so nothing is booked yet.\n\nOpen this, tap *Take control* and finish from where I stopped:\n${params.takeoverUrl}`
 }
