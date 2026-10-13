@@ -255,7 +255,7 @@ script = [venue, { ...venue, text: 'Booking confirmed' }]
 plans = [{ approvedOperation: 'booking', actions: [{ kind: 'click_text', text: 'Book Now' }, { kind: 'submit', selector: '#proceed' }] }]
 await computer.runSecureBrowser({ userId: 'owner', url: 'https://playo.co/venues/smaaash', objective: 'Book it', mode: 'execute', reserveHumanHandoff: true }).catch(() => null)
 assert.equal(commands.some(c => (c.payload.actions || []).some((a: any) => a.kind === 'click_text')), false, 'not a booking: click_text is dropped')
-assert.match(srcEarly, /if\(providerBooking&&Date\.now\(\)-bookingStartedAt>BOOKING_BUDGET_MS\)return await bookingStop\('review'/, 'a long booking hands over before the 300s route limit')
+assert.match(srcEarly, /if\(providerBooking&&Date\.now\(\)-bookingStartedAt>BOOKING_BUDGET_MS\)\{[\s\S]{0,240}return await bookingStop\('review','Gogo ran out of time/, 'a long booking hands over before the 300s route limit (asking for the code if one is on screen)')
 
 // ── The worker script itself ────────────────────────────────────────────────
 const src = readFileSync('lib/agent/secure-computer.ts', 'utf8')
