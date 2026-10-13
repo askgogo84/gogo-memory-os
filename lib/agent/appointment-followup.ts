@@ -539,6 +539,20 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
 
   if (!appointmentReplySelects(currentReply, number, selected.url)) return null
 
+  // 13 Oct: opening a Playo venue as a plain page read found no slots (they only show after Book
+  // Now and the pickers). A sports venue on Playo gets the live slot check for that venue instead.
+  const venueSlots = await queueVenueSlotCheck({ actor: params.actor, surface: params.surface, research, selected }).catch(() => null)
+  if (venueSlots) {
+    const timezone = await actorTimezone(params.actor)
+    const { requestedTime, requestedDate } = capturedSlotHints(String(research.metadata_json?.input_text || ''), timezone)
+    await markPrepared(venueSlots.runId, tg, {
+      option: number, researchRunId: String(research.id), title: safe(selected.title || '', 220), provider: safe(selected.provider || '', 160), url: selected.url,
+      service: safe(research.metadata_json?.service || '', 120), location: safe(research.metadata_json?.location || '', 120), timing: safe(research.metadata_json?.timing || '', 120),
+      requestedTime, requestedDate,
+    })
+    return { runId: venueSlots.runId, status: 'running' as const, capability: 'browser' as const, risk: 'low' as const, text: venueSlots.text, handledBy: 'appointment-followup' as const }
+  }
+
   // Opening an option is a read: Gogo looks at the provider page and reports the free dates and
   // time slots it shows. Nothing is selected, filled or booked until the person approves.
   const objective = optionReadObjective({ url: selected.url, service: research.metadata_json?.service, location: research.metadata_json?.location, timing: research.metadata_json?.timing })
@@ -604,9 +618,33 @@ async function directVenueBooking(params: { actor: AgentActor; surface: AgentSur
   const service = SPORT.test(params.text) ? serviceHint(params.text) : fresh && /court|turf|nets|pool/i.test(String(research?.metadata_json?.service || '')) ? safe(String(research?.metadata_json?.service), 80) : ''
   const done = (text: string) => ({ runId: '', status: 'paused' as const, capability: 'browser' as const, risk: 'low' as const, text, handledBy: 'appointment-followup' as const })
   if (!service) return done(`Which sport should I book at ${params.venue}? For example: *book the 7 am badminton slot at ${params.venue} on Saturday*.`)
-  const results = await searchWebResults(`${params.venue} ${location} ${service.replace(/ court$/, '')} playo`.replace(/\s+/g, ' ').trim(), { includeDomains: ['playo.co'] }).catch(() => [])
-  const page = pickVenuePage(results as any, params.venue)
+  // The venue name alone first (13 Oct: adding "HSR Layout" hid Machaxi Milan, which is in Begur).
+  let page: { url: string; title: string } | null = null
+  for (const q of [`${params.venue} playo`, `${params.venue} ${location} ${service.replace(/ court$/, '')} playo`]) {
+    const results = await searchWebResults(q.replace(/\s+/g, ' ').trim(), { includeDomains: ['playo.co'] }).catch(() => [])
+    page = pickVenuePage(results as any, params.venue)
+    if (page) break
+  }
   if (!page) return done(`I couldn't find ${params.venue} on Playo. Send me its Playo link, or search first, for example: *find a ${service.replace(/ court$/, '')} court in ${location || 'HSR Layout, Bangalore'} for Saturday 7 am*.`)
   const prepared = { id: '', metadata_json: { appointment_selection: { url: page.url, title: page.title, provider: 'playo.co', service, location } } }
   return createFinalApproval({ actor: params.actor, prepared, text: params.text, surface: params.surface })
+}
+
+const PLAYO_VENUE = /^https:\/\/(?:www\.)?playo\.co\/venues\/[^/?#]+\/(?!sports\/)[^/?#]+/i
+async function queueVenueSlotCheck(params: { actor: AgentActor; surface: AgentSurface; research: any; selected: any }): Promise<{ runId: string; text: string } | null> {
+  const url = String(params.selected?.url || '')
+  const service = String(params.research?.metadata_json?.service || '')
+  if (!PLAYO_VENUE.test(url) || !/court|turf|nets|pool/i.test(service) || !params.actor.whatsappId) return null
+  const tz = await actorTimezone(params.actor)
+  const input = String(params.research?.metadata_json?.input_text || '')
+  const date = explicitDate(input, tz), clock = explicitClock(input)
+  if (!date || !clock) return null
+  const [h, m] = clock.split(':').map(Number)
+  const time = `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
+  const { queueBrowserRead } = await import('./browser-command')
+  const queued: any = await queueBrowserRead({ actor: params.actor, surface: params.surface, text: `open ${url} and check the live slots`,
+    metadata: { slot_check: { listUrl: url, date, time, timezone: tz, service, location: String(params.research?.metadata_json?.location || ''), venues: 1 } } })
+  if (!queued?.runId) return null
+  const name = safe(String(params.selected?.title || '').replace(/\s*[-|]\s*Playo.*$/i, ''), 80) || 'that venue'
+  return { runId: String(queued.runId), text: `Checking the live ${time} slots at ${name} on Playo now. I'll message you here in 1–2 minutes with the free courts and prices. Nothing is booked.` }
 }

@@ -30,4 +30,9 @@ const src = readFileSync(new URL('../lib/agent/appointment-followup.ts', import.
 assert.ok(src.indexOf('directVenueTarget(params.text)') < src.indexOf('const currentReply = await currentAppointmentReply(tg)'), 'a named venue does not need an earlier search')
 assert.match(src, /return createFinalApproval\(\{ actor: params\.actor, prepared, text: params\.text, surface: params\.surface \}\)\n\}/, 'the same approval step (Gogo never books without APPROVE)')
 
+assert.ok(src.indexOf('`${params.venue} playo`') < src.indexOf('`${params.venue} ${location}'), '13 Oct: the venue name alone is searched first')
+assert.match(src, /queueVenueSlotCheck\(\{ actor: params\.actor/, 'opening a Playo venue option runs the live slot check for it')
+assert.match(src, /\/\(\?!sports\\\/\)/, 'a sports list page is not a venue page')
+const ls = readFileSync(new URL('../lib/agent/live-slots.ts', import.meta.url), 'utf8')
+assert.match(ls, /const skip = venues\.map\(v =>/, 'every venue already opened is skipped, read or not')
 console.log('Direct venue booking: "book the 7 am slot at <venue> on <day>" finds the venue\'s Playo page and asks for approval, without an earlier search')
