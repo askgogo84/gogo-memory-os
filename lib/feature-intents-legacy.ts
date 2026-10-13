@@ -15,6 +15,7 @@ import {
   normalizeListName,
   setItemDoneByText,
   findPendingExactAcrossLists,
+  removeDuplicateItems,
 } from '@/lib/lists'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import { isCalendarListName } from '@/lib/data/calendar-word'
@@ -136,6 +137,21 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     if (item && listName && !isReminderShape && !isCalendarShape) {
       const res = await addToListDetailed(extra.telegramId, listName, [item])
       return formatAddResult(listName, res)
+    }
+  }
+
+  // ── REMOVE DUPLICATES ("remove duplicates from my grocery list") ───────────────────
+  // The object is a list, so this must never reach the reminder editor that owns the verb "remove".
+  // Claims only when the named list exists.
+  const dedupeMatch = t.match(/^(?:please\s+)?(?:remove|delete|clear|clean\s*up|get\s+rid\s+of|merge)\s+(?:the\s+|all\s+|any\s+)?(?:duplicates?|dupes?|repeated\s+items|double\s+entries)\s+(?:from|in|on|of)\s+(?:my\s+)?(.+?)\s*$/)
+  if (dedupeMatch && extra?.telegramId && may('list', 'legacy_list_dedupe')) {
+    const dedupeName = normalizeListName(dedupeMatch[1])
+    if (dedupeName && !RESERVED_SHOW_NAMES.has(dedupeName)) {
+      const result = await removeDuplicateItems(extra.telegramId, dedupeName)
+      if (result) {
+        if (!result.removed) return `✅ No duplicates in *${result.name}* — ${result.items.length} item${result.items.length === 1 ? '' : 's'}, all different.`
+        return `🧹 Removed ${result.removed} duplicate${result.removed === 1 ? '' : 's'} from *${result.name}*.\n\n${formatList(result.name, result.items)}`
+      }
     }
   }
 

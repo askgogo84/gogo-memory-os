@@ -1,6 +1,10 @@
 {
   "_note": "jev = what a competent semantic classifier should read from the sentence (a stand-in, not a live call). expect = handler types that are acceptable after the gate; 'general_chat' means the contextual assistant reads the sentence. Live classifier output is checked separately from production logs.",
   "cases": [
+    {"text": "Skip lunch today, I'm fasting", "jev": ["nutrition_log", 0.64], "expect": ["general_chat"]},
+    {"text": "Remove duplicates from my grocery list", "jev": ["list_task", 1], "expect": ["general_chat"]},
+    {"text": "Rain or shine, I'll be at the gym at 6am tomorrow", "jev": ["memory_context", 0.47], "expect": ["general_chat"]},
+    {"text": "Can you remind me what Srini told me about the Flipkart launch", "jev": ["reminder_read", 0.73], "expect": ["general_chat"]},
     {"text": "Track divya flight.. where is it now?", "jev": ["travel_research", 0.95], "expect": ["general_chat"]},
     {"text": "Track Divya's flight", "jev": ["travel_research", 0.93], "expect": ["general_chat"]},
     {"text": "When does Divya land?", "jev": ["travel_research", 0.95], "expect": ["general_chat"]},

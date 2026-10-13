@@ -496,7 +496,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   // A keyword rule may not claim a sentence the semantic classifier is confident means something else.
   const intent = gateDetectedIntent(detectIntent(incomingText), incomingText, params.semantic) as ReturnType<typeof detectIntent>
-  console.log('PIM:intent', intent)
+  console.log('PIM:intent', intent, 'semantic:', params.semantic?.intent?.choice ?? null, params.semantic?.intent?.confidence ?? null)
   // A delegated reminder needs its own pending task so a corrected time can
   // complete the same request. Do not discard it in the self-reminder guard.
   const timingProblem=intent.type==='set_reminder'&&!detectFriendReminder(incomingText)?reminderTimingProblem(incomingText):null
