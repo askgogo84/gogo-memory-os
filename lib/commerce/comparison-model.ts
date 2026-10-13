@@ -120,6 +120,7 @@ export function comparisonProductLead(provider: ComparisonProvider, subject: str
       new RegExp('\\b' + tier + '\\b', 'i').test(label) && !new RegExp('\\b' + tier + '\\b', 'i').test(subject))) return false
     const capacity = compact(subject.match(/\b\d+\s*(?:GB|TB)\b/i)?.[0] || '')
     if (capacity && (label.match(/\b\d+\s*(?:GB|TB)\b/gi) || []).some(value => compact(value) !== capacity)) return false
+    if (tokens.length === 1 && !label.toLowerCase().includes(tokens[0].toLowerCase())) return false
     let cursor = 0
     const identity = compact(label)
     for (const token of tokens) {
@@ -200,6 +201,8 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
     cursor = position + compact(token).length
   }
   if (!namesProduct(requested) || heading.length > 220) return null
+  // One model code must appear as written: "xm5" is in "WH-1000XM5" but not in the camera "X-M5".
+  if (requested.length === 1 && !heading.toLowerCase().includes(requested[0].toLowerCase())) return null
   // A different phone tier is not the requested variant, even if all base words match.
   if (/\biPhone\b/i.test(subject) && ['max', 'plus', 'mini'].some(tier => new RegExp('\\b'+tier+'\\b','i').test(heading) && !new RegExp('\\b'+tier+'\\b','i').test(subject))) return null
   const text = evidence.replace(/\s+/g, ' ').trim()
@@ -281,9 +284,10 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
       const checked = row.checkedAt && Number.isFinite(Date.parse(row.checkedAt))
         ? new Intl.DateTimeFormat('en-IN', {timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true}).format(new Date(row.checkedAt)) + ' IST'
         : 'time unavailable'
+      const product = quote ? String(row.evidence || '').split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 90) : ''
       const price = quote ? `${quote.price}${quote.taxesIncluded ? ' including taxes' : ''}${quote.fee ? '\nAdditional fee shown: '+quote.fee : ''}`
         : 'The page was read, but one exact item price could not be isolated. See the saved report.'
-      return `*${label}* · checked ${checked}\n${price}\nProduct page: ${row.sourceUrl}`
+      return `*${label}* · checked ${checked}${product ? '\n' + product : ''}\n${price}\nProduct page: ${row.sourceUrl}`
     }
     const reason = row.reason || (row.status === 'pending' || row.status === 'checking'
       ? 'Still checking the store.' : 'No product-page price was verified.')
