@@ -237,9 +237,11 @@ export async function runFlightLegTracker(nowMs = Date.now()) {
       monitors.set(leg.telegramId, w || null)
     }
     const monitor = monitors.get(leg.telegramId)
-    if (!monitor) { skipped++; continue }
+    if (!monitor) { skipped++; console.log('FLIGHT_TRACKER_LEG:', JSON.stringify({ leg: leg.id, flight: normalizeFlightNo(leg.flightNo), skipped: 'no_active_flight_monitor' })); continue }
     try {
-      let status = await fetchFlightData(leg).catch(() => null)
+      const dataKey = Boolean(process.env.AERODATABOX_RAPIDAPI_KEY)
+      let status = await fetchFlightData(leg).catch((err: any) => { console.error('FLIGHT_TRACKER_DATA_FAILED:', String(err?.message || err).slice(0, 120)); return null })
+      const source = status ? 'flight_data' : 'web'
       if (!status) {
         const allowance = await checkCostAllowance(leg.telegramId, COST_ESTIMATES_PAISE.web_search_basic)
         if (!allowance.allowed) { skipped++; continue }
@@ -247,6 +249,7 @@ export async function runFlightLegTracker(nowMs = Date.now()) {
       }
       checked++
       const events = status ? legEvents(leg, status) : []
+      console.log('FLIGHT_TRACKER_LEG:', JSON.stringify({ leg: leg.id, flight: normalizeFlightNo(leg.flightNo), dataKey, source, state: status?.state || null, delay: status?.delayMinutes || 0, events: events.map(e => e.key) }))
       const prev = leg.tracking || {}
       const delivered = new Set(prev.sent || [])
       for (const e of events) {
@@ -268,5 +271,6 @@ export async function runFlightLegTracker(nowMs = Date.now()) {
       console.error('FLIGHT_TRACKER_LEG_FAILED:', leg.id, String(err?.message || err).slice(0, 200))
     }
   }
+  console.log('FLIGHT_TRACKER_RUN:', JSON.stringify({ legs: (data || []).length, checked, sent, skipped }))
   return { checked, sent, skipped }
 }
