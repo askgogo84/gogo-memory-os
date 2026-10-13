@@ -21,6 +21,19 @@ assert.match(sched[0].summary, /SCHEDULED arrival \(the airline timetable, not o
 assert.ok(!/ESTIMATE/.test(sched[0].summary), 'a timetable time is not called a live estimate')
 const junk = buildTravelPresenceFacts([row({etaArrival: 'soon'})], now, 60, 'when does Divya land')
 assert.ok(!/ESTIMATE/.test(junk[0].summary), 'an unparseable estimate is ignored')
+// Two-leg trip: after she boarded the connection, "when does she land" is about that leg, not the first.
+const leg1 = {id: 't0', type: 'flight', from_city: 'New York', to_city: 'Amsterdam', airline: 'KLM', flight_no: 'KL642', booking_group: 'g1',
+  passengers: ['Divyashree'], depart_at: '2026-10-12T21:00:00Z', arrive_at: '2026-10-13T04:00:00Z', raw: {timeNormalizationVersion: 2}}
+const leg2 = {...row({etaArrival: '2026-10-13T17:40:00Z', state: 'departed'}), booking_group: 'g1'}
+const trip = buildTravelPresenceFacts([leg1, leg2], now, 60, 'when does Divya land')
+const f1 = trip.find((f: any) => f.id === 'travel-ticket:t0')!, f2 = trip.find((f: any) => f.id === 'travel-ticket:t1')!
+assert.match(f1.summary, /this leg is finished\. The traveller has since departed on KL879 Amsterdam → Bengaluru/, 'the earlier leg points at the later one')
+assert.match(f1.summary, /NOT this one/)
+assert.ok(!/IN THE AIR NOW/.test(f1.summary))
+assert.match(f2.summary, /IN THE AIR NOW on this leg/, 'the current leg is marked as the one she is on')
+assert.match(f2.summary, /live arrival ESTIMATE/)
+const notYet = buildTravelPresenceFacts([leg1, {...leg2, depart_at: '2026-10-13T20:00:00Z'}], now, 60, 'when does Divya land')
+assert.ok(!/this leg is finished/.test(notYet.find((f: any) => f.id === 'travel-ticket:t0')!.summary), 'a connection not yet taken does not close the first leg')
 const tracker = readFileSync(new URL('../lib/agent/flight-leg-tracker.ts', import.meta.url), 'utf8')
 assert.match(tracker, /scheduledArrival: adbTime\(best\.arrival\?\.scheduledTime\)/)
 const claude = readFileSync(new URL('../lib/services/claude.ts', import.meta.url), 'utf8')

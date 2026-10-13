@@ -865,6 +865,19 @@ async function buildMaskedSensitiveReply(telegramId: number, doc: any): Promise<
   return out
 }
 
+// Documents saved before decimal amounts were exempt from digit masking carry "••••.00" in their
+// stored summary. The extracted fields are still on file, so rebuild the line from them at read time.
+const AMOUNT_BEARING_TYPES = ['invoice', 'receipt', 'order_estimate', 'payment_proof']
+export function refreshedStoredSummary(doc: any): string {
+  const stored = String(doc?.summary || '')
+  const ex = doc?.extracted
+  if (!stored.includes('••••.') || !ex?.fields || ex.privacyClass === 'sensitive' || !AMOUNT_BEARING_TYPES.includes(String(ex.assetType || doc?.doc_type || ''))) return stored
+  try {
+    const rebuilt = buildStoredSummary({ assetType: ex.assetType || doc.doc_type, fields: ex.fields, displayTitle: String(doc?.title || ''), expiryHuman: ex.expiryHuman } as any)
+    return rebuilt || stored
+  } catch { return stored }
+}
+
 async function buildAssetFileReply(
   telegramId: number,
   doc: any,
@@ -874,7 +887,8 @@ async function buildAssetFileReply(
   const lines: string[] = isCard
     ? [businessCardLines((doc?.extracted?.fields || {}) as Record<string, string>, `📇 ${doc.title || 'Business card'}`)]
     : [`📎 ${doc.title || 'Document'}`]
-  if (!isCard && doc.summary) lines.push(doc.summary)
+  const shownSummary = isCard ? '' : refreshedStoredSummary(doc)
+  if (shownSummary) lines.push(shownSummary)
   if (requested && !isCard) {
     const val = fieldFromDoc(doc, requested.keys)
     if (val) lines.push(`\n${requested.label}: ${val}`)

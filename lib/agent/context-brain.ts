@@ -207,18 +207,26 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     const arrivedMs=validArrival?Date.parse(validArrival):NaN
     const departed=Number.isFinite(departMs)&&departMs<now
     const arrived=Number.isFinite(arrivedMs)&&arrivedMs<now
-    const timeStatusLabel=arrived
+    // A connection the traveller has already taken makes this leg history: "when does she land?"
+    // is about the leg she is on now, never the earlier one (13 Oct: answered with the New York → Amsterdam leg).
+    const samePassengers=(other:any)=>JSON.stringify(other.passengers)===JSON.stringify(leg.passengers)
+    const takenNext=flights.slice(i+1).find((other:any)=>other.departAt&&samePassengers(other)&&(other.from===leg.to||(leg.bookingGroup&&other.bookingGroup===leg.bookingGroup))&&Date.parse(other.departAt)>departMs&&Date.parse(other.departAt)<now)
+    const airborne=departed&&!arrived&&!leg.live?.actual&&!takenNext&&now-departMs<24*3600_000
+    const timeStatusLabel=takenNext
+      ? `STATUS: this leg is finished. The traveller has since departed on ${takenNext.flightNo||'the next flight'} ${takenNext.from} → ${takenNext.to}. A "when does she land" or "where is she" question is about that later leg, NOT this one; do not answer it from this leg`
+      : arrived
       ? 'STATUS: scheduled arrival time is already in the past (per the current clock); this is the booked schedule, not verified live arrival — do not claim it landed without a live check, and do not state a check-in countdown'
       : departed
         ? 'STATUS: departure time is already in the past (per the current clock); check-in has closed — do not state a check-in countdown'
         : null
+    const airborneLabel=airborne?'STATUS: IN THE AIR NOW on this leg (this is the flight the traveller is on); a "when does she land" question is about this leg, answered from the flight-status feed estimate below':null
     facts.push({
       id:`travel-ticket:${leg.id}`,
       source:'travel_ticket',
       // timeStatusLabel is placed BEFORE unbounded passenger/seat details so a large
       // group booking can never truncate away the past-leg warning that suppresses
       // stale check-in countdowns and unverified landing claims.
-      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,timeStatusLabel,liveLabel,leg.airline,leg.flightNo,leg.pnr?`Booking ref ${leg.pnr}`:null,passengerLabel,...leg.seatObservations.map((detail:any)=>detail.names.length===1?`Seat for ${detail.names[0]}: ${detail.seat}`:`Seat ${detail.seat} recorded with ${detail.names.join(', ')}; individual assignment unverified`),...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel].filter(Boolean).join(' · '),700),
+      summary:safe([`Flight ${leg.from||'origin'} → ${leg.to||'destination'}`,timeStatusLabel,airborneLabel,liveLabel,leg.airline,leg.flightNo,leg.pnr?`Booking ref ${leg.pnr}`:null,passengerLabel,...leg.seatObservations.map((detail:any)=>detail.names.length===1?`Seat for ${detail.names[0]}: ${detail.seat}`:`Seat ${detail.seat} recorded with ${detail.names.join(', ')}; individual assignment unverified`),...(!leg.departAt?['Departure instant unverified; check source ticket']:[]),arrivalLabel].filter(Boolean).join(' · '),700),
       score:0.8,
       confidence:0.98,
       startAt:leg.departAt,
