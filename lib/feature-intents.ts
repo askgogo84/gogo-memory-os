@@ -21,7 +21,7 @@ import { isActiveListShow, parseActiveListAdd, parseExplicitListShow } from '@/l
 import { parseCalendarCreate, getCalendarTokens, createCalendarConflictEvent } from '@/lib/bot/handlers/calendar-actions'
 import { resolvePendingCalendar, looksLikeNewCommand } from '@/lib/bot/pending-followup'
 import { fetchPrimaryCalendarEvents } from '@/lib/google-calendar'
-import { getAllCalendarAccountAccess, getAccessTokenForCalendarAccount, pickCalendarAccountFromText } from '@/lib/services/google-calendar-accounts'
+import { getAllCalendarAccountAccess, getAccessTokenForCalendarAccount, pickCalendarAccountFromText, mergeAccountEvents, findConflictingEvent, describeConflict } from '@/lib/services/google-calendar-accounts'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import { isGmailReplyCommand, tryRunGmailSendCommand } from '@/lib/agent/gmail-send'
@@ -156,14 +156,14 @@ async function stageCalendarApproval(telegramId:number,payload:CalendarApprovalP
     const start=new Date(payload.startIso)
     const dayStart=new Date(start);dayStart.setUTCHours(0,0,0,0)
     const dayEnd=new Date(dayStart);dayEnd.setUTCDate(dayEnd.getUTCDate()+1)
-    const events=await fetchPrimaryCalendarEvents(accessToken,dayStart.toISOString(),dayEnd.toISOString(),'GCAL_APPROVAL_CONFLICT_CHECK_FAILED')
-    const s=new Date(payload.startIso).getTime(),e=new Date(payload.endIso).getTime()
-    const hit=(events||[]).find((x:any)=>{
-      const xs=x?.start?.dateTime?new Date(x.start.dateTime).getTime():NaN
-      const xe=x?.end?.dateTime?new Date(x.end.dateTime).getTime():NaN
-      return Number.isFinite(xs)&&Number.isFinite(xe)&&xs<e&&xe>s
-    })
-    if(hit)conflict=`${hit.summary||'Calendar event'} at ${calendarDisplay(hit.start.dateTime)}`
+    // The clash can sit on any linked account, not only the one the event is going to.
+    const accounts=(await getAllCalendarAccountAccess(telegramId).catch(()=>[])).filter(a=>a.email)
+    const sources=accounts.length>1?accounts:[{email:payload.accountEmail||null,accessToken}]
+    const settled=await Promise.allSettled(sources.map(async a=>({email:a.email,events:await fetchPrimaryCalendarEvents(a.accessToken,dayStart.toISOString(),dayEnd.toISOString(),'GCAL_APPROVAL_CONFLICT_CHECK_FAILED'),hasMore:false})))
+    const ok=settled.filter((r):r is PromiseFulfilledResult<{email:string|null;events:any[];hasMore:boolean}>=>r.status==='fulfilled').map(r=>r.value)
+    const merged=mergeAccountEvents(ok).events
+    const hit=findConflictingEvent(merged,new Date(payload.startIso).getTime(),new Date(payload.endIso).getTime())
+    if(hit)conflict=describeConflict(hit,sources.length>1)
   }catch(err){console.error('CALENDAR_APPROVAL_CONFLICT_CHECK_FAILED:',err)}
   await saveFollowupState(telegramId,'calendar_create_approval',payload)
   return approvalReply(payload,conflict)

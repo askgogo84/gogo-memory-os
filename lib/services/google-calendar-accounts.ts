@@ -129,3 +129,45 @@ export function pickCalendarAccountFromText<T extends { email: string | null }>(
   })
   return named.length === 1 ? named[0] : null
 }
+
+const IST_FORMAT = { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true } as const
+const IST_TIME = { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true } as const
+const istDay = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(ms))
+
+/**
+ * "Thu, 8 Oct, 11:30 am–12:00 pm" for a same-day event, "Thu, 8 Oct, 11:30 am → Mon, 13 Oct, 5:00 pm"
+ * when it runs past midnight, so a long event is never shown as if it were a single moment.
+ */
+export function describeEventRange(event: any): string {
+  const startIso = event?.start?.dateTime || event?.start?.date
+  if (!startIso) return 'time not set'
+  if (!event?.start?.dateTime) return new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(startIso)) + ' (all day)'
+  const startMs = Date.parse(event.start.dateTime)
+  const endMs = event?.end?.dateTime ? Date.parse(event.end.dateTime) : NaN
+  const start = new Intl.DateTimeFormat('en-IN', IST_FORMAT).format(new Date(startMs))
+  if (!Number.isFinite(endMs)) return start
+  if (istDay(startMs) === istDay(endMs)) return `${start}–${new Intl.DateTimeFormat('en-IN', IST_TIME).format(new Date(endMs))}`
+  return `${start} → ${new Intl.DateTimeFormat('en-IN', IST_FORMAT).format(new Date(endMs))}`
+}
+
+/**
+ * The first timed event that really overlaps [startMs, endMs). Events the user declined and events
+ * marked "free" do not block the slot.
+ */
+export function findConflictingEvent(events: TaggedEvent[], startMs: number, endMs: number): TaggedEvent | null {
+  for (const x of events || []) {
+    if (!x || x.status === 'cancelled' || x.transparency === 'transparent') continue
+    const self = Array.isArray(x.attendees) ? x.attendees.find((a: any) => a?.self) : null
+    if (self?.responseStatus === 'declined') continue
+    const xs = x?.start?.dateTime ? Date.parse(x.start.dateTime) : NaN
+    const xe = x?.end?.dateTime ? Date.parse(x.end.dateTime) : NaN
+    if (Number.isFinite(xs) && Number.isFinite(xe) && xs < endMs && xe > startMs) return x
+  }
+  return null
+}
+
+/** One line, "Daily Standup on a@x.com (Thu, 8 Oct, 11:30 am–12:00 pm)": the WhatsApp card carries it in one template slot. */
+export function describeConflict(event: TaggedEvent, multi: boolean): string {
+  const account = multi && event._account ? ` on ${event._account}` : ''
+  return `${event.summary || 'Calendar event'}${account} (${describeEventRange(event)})`
+}

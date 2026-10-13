@@ -5,14 +5,13 @@
  * (kind 'calendar_mutation') to hold the pending action, mirroring the existing
  * calendar_conflict flow.
  */
-import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
-  refreshAccessToken,
   listUpcomingEvents,
   updateCalendarEvent,
   deleteCalendarEvent,
 } from '@/lib/google-calendar'
 import { saveFollowupState } from './followup-state'
+import { getAllCalendarAccountAccess, mergeAccountEvents, describeEventRange, type CalendarAccountAccess } from '@/lib/services/google-calendar-accounts'
 
 export type CalMutResult = { handled: boolean; reply: string }
 
@@ -32,15 +31,16 @@ export function isCalendarMutationConfirm(text: string): boolean {
   return /^(y|yes|yep|yeah|confirm|ok|okay|do it|go ahead|sure)\b/.test(t) || /^[1-9]$/.test(t) || /^no|^cancel$|^stop$/.test(t)
 }
 
-// ── Token ────────────────────────────────────────────────────────────────────
-async function getToken(telegramId: number): Promise<string | null> {
-  const { data: user } = await supabaseAdmin
-    .from('users')
-    .select('google_calendar_connected, google_refresh_token')
-    .eq('telegram_id', telegramId)
-    .single()
-  if (!user?.google_calendar_connected || !user?.google_refresh_token) return null
-  return await refreshAccessToken(user.google_refresh_token)
+// ── Accounts ─────────────────────────────────────────────────────────────────
+// Every linked Google account is searched; the event id only exists on the account it came from,
+// so that account's email travels with the pending action and the write goes back to it.
+async function getAccounts(telegramId: number): Promise<CalendarAccountAccess[]> {
+  return await getAllCalendarAccountAccess(telegramId).catch(() => [])
+}
+
+function accessFor(accounts: CalendarAccountAccess[], email?: string | null): CalendarAccountAccess | null {
+  if (email) return accounts.find(a => a.email === String(email).toLowerCase()) || null
+  return accounts.find(a => a.primary) || accounts[0] || null
 }
 
 // ── Parsing helpers ──────────────────────────────────────────────────────────
@@ -70,12 +70,10 @@ function istParts(iso: string) {
   return { h: d.getUTCHours(), m: d.getUTCMinutes(), day: d.getUTCDate() }
 }
 
-function fmtEvent(ev: any): string {
-  const start = ev.start?.dateTime || ev.start?.date
-  const when = start
-    ? new Date(start).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
-    : 'unscheduled'
-  return `${ev.summary || '(no title)'} — ${when}`
+function fmtEvent(ev: any, multi = false): string {
+  const when = ev.start?.dateTime || ev.start?.date ? describeEventRange(ev) : 'unscheduled'
+  const account = multi && ev._account ? ` · ${ev._account}` : ''
+  return `${ev.summary || '(no title)'} — ${when}${account}`
 }
 
 // score each event against the phrase; return sorted candidates (score > 0)
@@ -130,21 +128,25 @@ function computeNewTime(text: string, ev: any): { startIso: string; endIso: stri
 
 // ── Main entry: find the event, confirm or disambiguate ──────────────────────
 export async function buildCalendarMutationReply(telegramId: number, text: string): Promise<CalMutResult> {
-  const token = await getToken(telegramId)
-  if (!token) {
-    return { handled: true, reply: `Your Google Calendar isn't connected yet — reply *connect calendar* to link it, then I can move or cancel events for you.` }
+  const accounts = await getAccounts(telegramId)
+  if (!accounts.length) {
+    return { handled: true, reply: `Your Google Calendar isn't connected yet — reply *connect calendar* to link it, then I can move or delete events for you.` }
   }
+  const multi = accounts.length > 1
 
   const action = extractAction(text)
-  const events = await listUpcomingEvents(token, 7)
+  const settled = await Promise.allSettled(accounts.map(async a => ({ email: a.email, events: await listUpcomingEvents(a.accessToken, 7), hasMore: false })))
+  const read = settled.filter((r): r is PromiseFulfilledResult<{ email: string | null; events: any[]; hasMore: boolean }> => r.status === 'fulfilled').map(r => r.value)
+  const events = mergeAccountEvents(read).events
+  const partial = read.length < accounts.length
   if (!events.length) {
-    return { handled: true, reply: `You have no upcoming events in the next 7 days, so there's nothing to ${action}.` }
+    return { handled: true, reply: `You have no upcoming events in the next 7 days${partial ? ' on the calendars I could read' : ''}, so there's nothing to ${action}.` }
   }
 
   const matches = matchEvents(events, text)
 
   if (matches.length === 0) {
-    const list = events.slice(0, 6).map((e, i) => `${i + 1}. ${fmtEvent(e)}`).join('\n')
+    const list = events.slice(0, 6).map((e, i) => `${i + 1}. ${fmtEvent(e, multi)}`).join('\n')
     return { handled: true, reply: `I couldn't find that event. Here's what's coming up:\n\n${list}\n\nTry again with a word from the title, e.g. *${action} the standup*.` }
   }
 
@@ -152,27 +154,27 @@ export async function buildCalendarMutationReply(telegramId: number, text: strin
     const ev = matches[0]
     if (action === 'delete') {
       await saveFollowupState(telegramId, 'calendar_mutation', {
-        action: 'delete', eventId: ev.id, summary: ev.summary, created_at: new Date().toISOString(), candidates: null,
+        action: 'delete', eventId: ev.id, summary: ev.summary, accountEmail: ev._account || null, created_at: new Date().toISOString(), candidates: null,
       })
-      return { handled: true, reply: `Cancel *${fmtEvent(ev)}*?\n\nReply *yes* to confirm, or *no* to keep it.` }
+      return { handled: true, reply: `Delete *${fmtEvent(ev, multi)}* from your calendar?\n\nReply *yes* to delete it, or *no* to keep it.` }
     }
     const nt = computeNewTime(text, ev)
     if (!nt) {
       return { handled: true, reply: `Move *${ev.summary}* to when? Tell me a time, e.g. *move it to 4pm* or *reschedule to tomorrow 10am*.` }
     }
     await saveFollowupState(telegramId, 'calendar_mutation', {
-      action: 'move', eventId: ev.id, summary: ev.summary, startIso: nt.startIso, endIso: nt.endIso, created_at: new Date().toISOString(), candidates: null,
+      action: 'move', eventId: ev.id, summary: ev.summary, accountEmail: ev._account || null, startIso: nt.startIso, endIso: nt.endIso, created_at: new Date().toISOString(), candidates: null,
     })
     const newWhen = new Date(nt.startIso).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
-    return { handled: true, reply: `Move *${ev.summary}*\nfrom ${fmtEvent(ev).split('— ')[1]}\nto *${newWhen}*?\n\nReply *yes* to confirm, or *no* to cancel.` }
+    return { handled: true, reply: `Move *${ev.summary}*\nfrom ${describeEventRange(ev)}${multi && ev._account ? ` (${ev._account})` : ''}\nto *${newWhen}*?\n\nReply *yes* to confirm, or *no* to cancel.` }
   }
 
   // multiple candidates -> numbered pick
   const top = matches.slice(0, 5)
-  const list = top.map((e, i) => `${i + 1}. ${fmtEvent(e)}`).join('\n')
+  const list = top.map((e, i) => `${i + 1}. ${fmtEvent(e, multi)}`).join('\n')
   await saveFollowupState(telegramId, 'calendar_mutation', {
     action, text, created_at: new Date().toISOString(),
-    candidates: top.map(e => ({ eventId: e.id, summary: e.summary, startIso: e.start?.dateTime, endIso: e.end?.dateTime })),
+    candidates: top.map(e => ({ eventId: e.id, summary: e.summary, accountEmail: e._account || null, startIso: e.start?.dateTime, endIso: e.end?.dateTime })),
   })
   return { handled: true, reply: `I found a few — which one to ${action}?\n\n${list}\n\nReply with the number (e.g. *1*).` }
 }
@@ -189,8 +191,8 @@ export async function confirmCalendarMutation(telegramId: number, input: string,
     return `Okay, left it unchanged.`
   }
 
-  const token = await getToken(telegramId)
-  if (!token) return `Your calendar isn't connected anymore — reply *connect calendar* to re-link.`
+  const accounts = await getAccounts(telegramId)
+  if (!accounts.length) return `Your calendar isn't connected anymore — reply *connect calendar* to re-link.`
 
   // resolve which event
   let action = payload.action as 'move' | 'delete'
@@ -198,6 +200,7 @@ export async function confirmCalendarMutation(telegramId: number, input: string,
   let summary = payload.summary
   let startIso = payload.startIso
   let endIso = payload.endIso
+  let accountEmail: string | null = payload.accountEmail || null
 
   if (payload.candidates && Array.isArray(payload.candidates)) {
     const n = parseInt(t, 10)
@@ -207,6 +210,7 @@ export async function confirmCalendarMutation(telegramId: number, input: string,
     const chosen = payload.candidates[n - 1]
     eventId = chosen.eventId
     summary = chosen.summary
+    accountEmail = chosen.accountEmail || null
     if (action === 'move') {
       const nt = payload.text && computeNewTime(payload.text, { start: { dateTime: chosen.startIso }, end: { dateTime: chosen.endIso } })
       if (!nt) { await saveFollowupState(telegramId, 'calendar_mutation', { consumed: true }); return `Got it — *${summary}*. Move it to when? e.g. *move to 4pm*.` }
@@ -214,18 +218,27 @@ export async function confirmCalendarMutation(telegramId: number, input: string,
     }
   } else if (!/^(y|yes|yep|yeah|confirm|ok|okay|do it|go ahead|sure)\b/.test(t)) {
     // single-match confirm expects a yes
-    return `Reply *yes* to ${action === 'delete' ? 'cancel' : 'move'} *${summary}*, or *no* to keep it.`
+    return `Reply *yes* to ${action === 'delete' ? 'delete' : 'move'} *${summary}*, or *no* to keep it.`
   }
+
+  // The event lives on one specific account; if that account is no longer linked, never write to another one.
+  const access = accessFor(accounts, accountEmail)
+  if (!access) {
+    await saveFollowupState(telegramId, 'calendar_mutation', { consumed: true })
+    return `I can't reach the calendar that event is on (${accountEmail}) any more — reply *connect calendar* to re-link it.`
+  }
+  const token = access.accessToken
+  const where = accounts.length > 1 && access.email ? ` (${access.email})` : ''
 
   await saveFollowupState(telegramId, 'calendar_mutation', { consumed: true })
 
   if (action === 'delete') {
     const res = await deleteCalendarEvent(token, eventId)
-    return res.ok ? `\ud83d\uddd1 Cancelled *${summary}*.` : `Couldn't cancel it: ${res.error}. Try again in a moment.`
+    return res.ok ? `\ud83d\uddd1 Deleted *${summary}* from your calendar${where}.` : `Couldn't delete it: ${res.error}. Try again in a moment.`
   } else {
     const res = await updateCalendarEvent(token, eventId, { startTime: startIso, endTime: endIso })
     if (!res.ok) return `Couldn't move it: ${res.error}. Try again in a moment.`
     const newWhen = new Date(startIso).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
-    return `\u2705 Moved *${summary}* to ${newWhen}.`
+    return `\u2705 Moved *${summary}* to ${newWhen}${where}.`
   }
 }
