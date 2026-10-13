@@ -4,6 +4,7 @@ import {
   ListWriteConflictError,
   normalizeListName,
   normItemText,
+  dedupeListItems,
   applyAdd,
   applySetDone,
   findPendingExactMatches,
@@ -209,6 +210,20 @@ export async function clearList(telegramId: number, listName: string) {
     .from('lists')
     .delete()
     .eq('id', list.id)
+}
+
+// "Remove duplicates from my grocery list": keeps the first copy of every item. Returns null when the list
+// does not exist, so the caller can fall through instead of claiming a list that is not there.
+export async function removeDuplicateItems(telegramId: number, listName: string) {
+  const list = await getList(telegramId, listName)
+  if (!list) return null
+  let removed = 0
+  const items = await mutateListItems(list.id, current => {
+    const result = dedupeListItems(current)
+    removed = result.removed
+    return result.removed > 0 ? result.items : null
+  })
+  return { name: list.list_name as string, removed, items }
 }
 
 export async function removeDone(telegramId: number, listName: string) {

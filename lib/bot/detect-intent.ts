@@ -56,6 +56,44 @@ const SEARCH_HINT_RE = new RegExp(`\\b(?:${SEARCH_HINTS.join('|')})\\b`)
 // "today" alone is a statement about the day ("today I met the team"); it hints at a lookup only inside a question.
 const QUESTION_SHAPE_RE = /\?|^\s*(?:what|who|which|when|where|how|is|are|does|do|did|will|can|could|should|tell me|show me)\b/i
 
+/**
+ * Sentence-shape guards. Each rule below used to fire on a word or on the first word of the sentence;
+ * these decide from the whole sentence whether the rule's meaning is actually what was said.
+ */
+
+// "Remind me what Srini told me about the launch" asks to recall something. "Remind me to call mom" schedules.
+// "what/who/how to ..." is still a reminder ("remind me what to buy at 5pm" keeps its reminder shape).
+const RECALL_REMIND_RE = /\bremind me\s+(?:again\s+)?(?:what|who|whom|where|which|why|how|whether)\b(?!\s+to\b)/i
+export function isRecallQuestion(lower: string): boolean {
+  return RECALL_REMIND_RE.test(lower)
+}
+
+// "cancel / delete / remove / skip" open the reminder editor only when the sentence is about a reminder.
+// A list, a draft, a subscription or a booking is another capability's object, and a first-person reason
+// ("skip lunch today, I'm fasting") is a statement, not a command.
+const REMINDER_WORD_RE = /\b(?:reminders?|alarms?|nudges?|alerts?)\b/
+const NON_REMINDER_OBJECT_RE = /\b(?:lists?|grocer(?:y|ies)|shopping|duplicates?|dupes?|subscriptions?|memberships?|accounts?|drafts?|e-?mails?|mails?|orders?|bookings?|tickets?|expenses?|notes?)\b/
+const STATEMENT_CLAUSE_RE = /,\s*(?:i|we)\b|\b(?:because|since|as i|i'm|i am|i'll|i will|i have|i've|we're|we are)\b/
+export function leadingVerbEditsReminder(lower: string): boolean {
+  if (REMINDER_WORD_RE.test(lower)) return true
+  if (STATEMENT_CLAUSE_RE.test(lower)) return false
+  if (NON_REMINDER_OBJECT_RE.test(lower)) return false
+  return true
+}
+
+// A weather word is a weather question only when the sentence asks for weather. "Rain or shine, I'll be at the
+// gym at 6am" uses the word as an idiom inside a statement about the user's own plans.
+const WEATHER_WORD_RE = /\b(?:weather|temperature|temp|rain|raining|rainfall|forecast)\b/
+const WEATHER_IDIOM_RE = /\b(?:rain or shine|rain check|come rain|rain,? hail|come hell)\b/
+const PLAN_STATEMENT_RE = /\b(?:i'll|i will|i am|i'm|we'll|we will|we're|we are|i have|i've|i plan|i'd)\b/
+const WEATHER_ASK_RE = /\?|^(?:what|how|is|are|will|does|do|should|can|could|check|show|tell|give|get)\b|\b(?:how'?s|what'?s|how is|what is|how are|is it|will it|does it|do i need|should i (?:carry|take|bring))\b/
+export function asksAboutWeather(lower: string): boolean {
+  if (!WEATHER_WORD_RE.test(lower)) return false
+  if (WEATHER_IDIOM_RE.test(lower)) return false
+  if (PLAN_STATEMENT_RE.test(lower) && !WEATHER_ASK_RE.test(lower)) return false
+  return true
+}
+
 function isReferralIntent(lower: string) {
   return (
     lower === 'invite' || lower === 'invite friends' || lower === 'invite frnds' || lower === 'invite frnd' ||
@@ -136,7 +174,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (isReferralIntent(lower)) return { type: 'referral_flow', confidence: 'high' }
 
-  if (lower === 'show reminders' || lower === 'show my reminders' || lower === 'my reminders' || lower === 'pending reminders' || lower === 'active reminders' || lower === 'list reminders' || lower === 'what are my reminders' || lower === 'what reminders do i have' || lower.includes('show pending reminders') || /^cancel\b/i.test(lower) || /^delete\b/i.test(lower) || /^remove\b/i.test(lower) || /^clear reminder\b/i.test(lower) || /^stop reminder\b/i.test(lower) || /^done\s+\d+\b/i.test(lower) || /^complete\s+\d+\b/i.test(lower) || /^mark\s+\d+\s+done\b/i.test(lower) || /^snooze\s+\d+\s+(for\s+)?\d+\s*(minute|minutes|min|mins|hour|hours)\b/i.test(lower) || lower === 'done' || lower === 'mark done' || lower === 'completed' || lower === 'complete' || lower === 'finished' || lower === 'mark as done' || /^snooze\b/i.test(lower) || /^move it\b/i.test(lower) || /^move reminder\b/i.test(lower) || /^reschedule\b/i.test(lower) || /^tomorrow instead$/i.test(lower) || /^change it to\b/i.test(lower) || /^skip\b/i.test(lower) || lower === 'not today') return { type: 'edit_reminder', confidence: 'high' }
+  if (lower === 'show reminders' || lower === 'show my reminders' || lower === 'my reminders' || lower === 'pending reminders' || lower === 'active reminders' || lower === 'list reminders' || lower === 'what are my reminders' || lower === 'what reminders do i have' || lower.includes('show pending reminders') || (/^(?:cancel|delete|remove)\b/i.test(lower) && leadingVerbEditsReminder(lower)) || /^clear reminder\b/i.test(lower) || /^stop reminder\b/i.test(lower) || /^done\s+\d+\b/i.test(lower) || /^complete\s+\d+\b/i.test(lower) || /^mark\s+\d+\s+done\b/i.test(lower) || /^snooze\s+\d+\s+(for\s+)?\d+\s*(minute|minutes|min|mins|hour|hours)\b/i.test(lower) || lower === 'done' || lower === 'mark done' || lower === 'completed' || lower === 'complete' || lower === 'finished' || lower === 'mark as done' || /^snooze\b/i.test(lower) || /^move it\b/i.test(lower) || /^move reminder\b/i.test(lower) || /^reschedule\b/i.test(lower) || /^tomorrow instead$/i.test(lower) || /^change it to\b/i.test(lower) || (/^skip\b/i.test(lower) && leadingVerbEditsReminder(lower)) || lower === 'not today') return { type: 'edit_reminder', confidence: 'high' }
 
   if (isBriefingSettingsIntent(lower)) return { type: 'set_briefing_time', confidence: 'high' }
 
@@ -154,6 +192,8 @@ export function detectIntent(text: string): DetectedIntent {
   // CALENDAR_WORD_RE â€” "connect calender" used to miss and fall to the freeform LLM.
   if (((lower.includes('connect') || lower.includes('link')) && CALENDAR_WORD_RE.test(lower)) || GOOGLE_CALENDAR_RE.test(lower)) return { type: 'connect_calendar', confidence: 'high' }
   // Check "remind me" BEFORE weather - marathon/training reminders must not go to weather
+  // "Can you remind me what Srini told me" is a question about memory, not a reminder to create.
+  if (isRecallQuestion(lower)) return { type: 'general_chat', confidence: 'low', meta: { recallQuestion: true } }
   if (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ')) return { type: 'set_reminder', confidence: 'high' }
 
   // Time-first noun directive must schedule, not search for the appointment provider.
@@ -186,7 +226,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   // Word-boundary matching, never raw substring. includes('rain') matched "trains",
   // routing "direct trains from Bangalore to Mysuru" to weather at high confidence.
-  if (/\b(weather|temperature|temp|rain|raining|rainfall|forecast)\b/.test(lower)) return { type: 'weather_live', confidence: 'high' }
+  if (asksAboutWeather(lower)) return { type: 'weather_live', confidence: 'high' }
   if (lower.includes('gold price') || lower.includes('gold rate') || lower.includes('silver price') || lower.includes('silver rate')) return { type: 'gold_live', confidence: 'high' }
   if (lower.includes('ipl table') || lower.includes('points table') || lower.includes('table toppers') || lower.includes('ipl standings') || lower.includes('ipl topper')) return { type: 'sports_standings', confidence: 'high' }
   if ((lower.includes('rcb') && lower.includes('match')) || (lower.includes('ipl') && lower.includes('match')) || lower.includes('next rcb match') || lower.includes('when is the next rcb match')) return { type: 'sports_schedule', confidence: 'high' }
@@ -198,7 +238,9 @@ export function detectIntent(text: string): DetectedIntent {
   const asksReminder = /\bremind|\breminder|\balert me\b|\bping me\b|\bnudge me\b/i.test(lower)
   // A question or request for advice that merely mentions a day or time ("my sister's birthday is on Sunday, what should I gift") is not a reminder.
   const asksForAnswer = !asksReminder && (/\?/.test(lower) || /\b(?:what should|which should|should i|can you|could you|how do i|how can i)\b/.test(lower))
-  if (!(otherTaskFirst && !asksReminder) && !asksForAnswer && (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ') || lower.includes('set a reminder') || lower.includes('set reminder') || lower.includes('reminder for') || /\b(on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower) || /\b(tomorrow|tmrw|tmr)\b/i.test(lower) || /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(lower) || /\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(lower))) return { type: 'set_reminder', confidence: 'high' }
+  // "Rain or shine, I'll be at the gym at 6am tomorrow" tells Gogo a plan; it does not ask for a reminder.
+  const statesOwnPlan = !asksReminder && /\b(?:i'll|i will|we'll|we will|i'm going to|i am going to|we're going to|we are going to)\b/.test(lower)
+  if (!(otherTaskFirst && !asksReminder) && !asksForAnswer && !statesOwnPlan && (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ') || lower.includes('set a reminder') || lower.includes('set reminder') || lower.includes('reminder for') || /\b(on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower) || /\b(tomorrow|tmrw|tmr)\b/i.test(lower) || /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(lower) || /\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(lower))) return { type: 'set_reminder', confidence: 'high' }
 
   if (lower === 'show all lists' || lower === 'list all' || lower === 'show my lists') return { type: 'list_show_all', confidence: 'high' }
   if ((lower.startsWith('show ') || lower.startsWith('open ') || lower.startsWith('view ')) && lower.includes(' list')) return { type: 'list_show', confidence: 'medium' }

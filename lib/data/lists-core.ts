@@ -96,6 +96,26 @@ export function normItemText(s: string): string {
   return (s || '').toLowerCase().trim().replace(/\s+/g, ' ')
 }
 
+/**
+ * Collapses repeated items ("milk", "Milk ", "milk") to the first occurrence. An item stays done only if
+ * every copy was done, so removing a duplicate never hides something still to buy.
+ */
+export function dedupeListItems(items: ListItem[]): { items: ListItem[]; removed: number } {
+  const seen = new Map<string, number>()
+  const out: ListItem[] = []
+  for (const item of items) {
+    const key = normItemText(item.text)
+    const at = seen.get(key)
+    if (at === undefined) {
+      seen.set(key, out.length)
+      out.push({ ...item })
+    } else if (!item.done) {
+      out[at] = { ...out[at], done: false }
+    }
+  }
+  return { items: out, removed: items.length - out.length }
+}
+
 // Classify a check/uncheck command. uncheck is tested FIRST and is ^un-anchored;
 // check stays PREFIX-anchored (startsWith), never /\bcheck\b/ — because "uncheck"
 // CONTAINS "check", a loosened boundary would let the check branch steal it (the same
