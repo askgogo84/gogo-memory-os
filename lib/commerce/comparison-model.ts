@@ -240,6 +240,18 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
     selected = local
     choices = values(local)
   }
+  // Amazon prints the displayed price first and twice in a row (visible + screen-reader copy,
+  // "₹21,990.00 ₹21,990 . 00"); the list price follows later. The first price, when it is
+  // repeated straight away, is the displayed one. Only for Amazon: other stores keep the strict rule.
+  if (choices.length !== 1 && row.provider === 'amazon' && candidates.length) {
+    const first = candidates[0], firstValue = Number(first[1].replace(/,/g,''))
+    const next = text.slice(first.index! + first[0].length, first.index! + first[0].length + 16)
+    const twin = next.match(/^\s*(?:₹\s*|\b(?:INR|Rs\.?)\s*)(\d[\d,]*)(?:\s*\.\s*\d{2})?/i)
+    if (twin && Number(twin[1].replace(/,/g,'')) === firstValue) {
+      selected = candidates.filter(match => Number(match[1].replace(/,/g,'')) === firstValue)
+      choices = [firstValue]
+    }
+  }
   if (choices.length !== 1) return null
   const samePrice = selected.filter(match => Number(match[1].replace(/,/g,'')) === choices[0])
   const following = (match: typeof candidates[number]) => text.slice(match.index! + match[0].length, match.index! + match[0].length + 100)
@@ -294,7 +306,10 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
     return `*${label}* · ${reason}`
   })
   const pending = task.metadata_json.providers.some(row => ['pending','checking'].includes(row.status))
-  return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'I’ll send the results when the remaining checks finish.\n' : ''}Delivery charges, location availability and conditional offers are unverified unless stated above.`
+  // A lone model code ("xm5") fits several products; say what it was matched on.
+  const loneCode = (task.metadata_json.subject.match(/[a-z0-9]+/gi) || []).length === 1
+  const matchedOnCode = loneCode && task.metadata_json.providers.some(row => row.status === 'observed')
+  return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'I’ll send the results when the remaining checks finish.\n' : ''}${matchedOnCode ? 'I matched this on the model code only. If it is not the product you meant, send the full name, for example "Sony WH-1000XM5 price on amazon".\n' : ''}Delivery charges, location availability and conditional offers are unverified unless stated above.`
 }
 
 export function comparisonObjective(task: PriceComparison, provider: ComparisonProvider) {
