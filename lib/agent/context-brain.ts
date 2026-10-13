@@ -212,13 +212,14 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     const samePassengers=(other:any)=>JSON.stringify(other.passengers)===JSON.stringify(leg.passengers)
     const takenNext=flights.slice(i+1).find((other:any)=>other.departAt&&samePassengers(other)&&(other.from===leg.to||(leg.bookingGroup&&other.bookingGroup===leg.bookingGroup))&&Date.parse(other.departAt)>departMs&&Date.parse(other.departAt)<now)
     const airborne=departed&&!arrived&&!leg.live?.actual&&!takenNext&&now-departMs<24*3600_000
-    const timeStatusLabel=takenNext
-      ? `STATUS: this leg is finished. The traveller has since departed on ${takenNext.flightNo||'the next flight'} ${takenNext.from} → ${takenNext.to}. A "when does she land" or "where is she" question is about that later leg, NOT this one; do not answer it from this leg`
-      : arrived
+    const baseStatus=arrived
       ? 'STATUS: scheduled arrival time is already in the past (per the current clock); this is the booked schedule, not verified live arrival — do not claim it landed without a live check, and do not state a check-in countdown'
       : departed
         ? 'STATUS: departure time is already in the past (per the current clock); check-in has closed — do not state a check-in countdown'
         : null
+    const timeStatusLabel=takenNext
+      ? [baseStatus,`THIS LEG IS FINISHED: the traveller has since departed on ${takenNext.flightNo||'the next flight'} ${takenNext.from} → ${takenNext.to}. A "when does she land" or "where is she" question is about that later leg, NOT this one; do not answer it from this leg`].filter(Boolean).join(' · ')
+      : baseStatus
     const airborneLabel=airborne?'STATUS: IN THE AIR NOW on this leg (this is the flight the traveller is on); a "when does she land" question is about this leg, answered from the flight-status feed estimate below':null
     facts.push({
       id:`travel-ticket:${leg.id}`,
