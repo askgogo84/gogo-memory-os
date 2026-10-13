@@ -19,6 +19,13 @@ assert.equal(model.parsePriceComparison('what is the price of iPhone 15 128GB on
   assert.equal(model.comparisonQuote('xm5', row)?.price, '₹24,990', 'one model code names the product')
   assert.equal(model.comparisonQuote('xm5', {...row, evidence: row.evidence.replace('Sony WH-1000XM5', 'Sony WH-1000XM4')}), null, 'a different model is still refused')
   assert.equal(model.comparisonQuote('sony', row), null, 'a single plain word is still too vague')
+  // 13 Oct 17:27: "xm5" matched the Fujifilm X-M5 camera once punctuation was ignored.
+  const camera = {...row, sourceUrl:'https://www.amazon.in/Fujifilm-mirrorless-vlogging-Recording-Lifestyle/dp/B0DJC4NBV8', evidence:'Fujifilm X-M5 26.1MP APS-C X-Trans CMOS 4 Mirrorless Camera\nListed price ₹79,999'}
+  const wa = model.comparisonWhatsAppSummary({metadata_json:{subject:'xm5',request:'xm5 price on amazon',providers:[{...row,checkedAt:'2026-10-13T11:57:00Z'}]}} as any)
+  assert.match(wa, /Sony WH-1000XM5 Best Active Noise Cancelling[^\n]*\n₹24,990/, 'the reply names the product it priced')
+  assert.equal(model.comparisonQuote('xm5', camera), null, 'a camera called X-M5 is not the XM5 headphones')
+  assert.equal(model.comparisonProductLead('amazon', 'xm5', [{url: camera.sourceUrl, title: 'Fujifilm X-M5 Mirrorless Camera'}]), null)
+  assert.equal(model.comparisonProductLead('amazon', 'xm5', [{url: row.sourceUrl, title: 'Sony WH-1000XM5 Headphones'}]), row.sourceUrl)
 }
 assert.ok(model.parsePriceComparison('Compare Sony WH-1000XM5 black on Amazon India, Flipkart and Croma. Do not create a watch.'))
 assert.deepEqual(model.parsePriceComparison('Compare grocery prices for Amul Taaza 1 litre x1 and atta 1kg on Instamart, Zepto and Blinkit.')?.providers, ['instamart', 'zepto', 'blinkit'])
