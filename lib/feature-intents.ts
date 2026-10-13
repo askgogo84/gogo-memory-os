@@ -21,6 +21,7 @@ import { isActiveListShow, parseActiveListAdd, parseExplicitListShow } from '@/l
 import { parseCalendarCreate, getCalendarTokens, createCalendarConflictEvent } from '@/lib/bot/handlers/calendar-actions'
 import { resolvePendingCalendar, looksLikeNewCommand } from '@/lib/bot/pending-followup'
 import { fetchPrimaryCalendarEvents } from '@/lib/google-calendar'
+import { getAllCalendarAccountAccess, getAccessTokenForCalendarAccount, pickCalendarAccountFromText } from '@/lib/services/google-calendar-accounts'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import { isGmailReplyCommand, tryRunGmailSendCommand } from '@/lib/agent/gmail-send'
@@ -123,6 +124,7 @@ type CalendarApprovalPayload={
   endIso:string
   displayTime:string
   created_at:string
+  accountEmail?:string
 }
 
 function istOffsetIso(parts:{year:number;month:number;day:number;hour:number;minute:number}){
@@ -142,6 +144,7 @@ function approvalReply(payload:CalendarApprovalPayload,conflict?:string){
   return (
     `📅 *Ready to add — approval required*\n\n`+
     `${payload.title}\n${payload.displayTime}\nDuration: 30 mins\n`+
+    (payload.accountEmail?`Calendar: ${payload.accountEmail}\n`:'')+
     (conflict?`\n⚠️ Conflict: ${conflict}\n`:'')+
     `\nNothing has been added yet.\nReply *yes* to add it, or *cancel* to leave your calendar unchanged.`
   )
@@ -166,7 +169,41 @@ async function stageCalendarApproval(telegramId:number,payload:CalendarApprovalP
   return approvalReply(payload,conflict)
 }
 
+/**
+ * With two or more linked Google accounts the user says which one gets the event. A message that
+ * names an account ("... on my tipplr calendar") is taken as the answer; otherwise ask.
+ */
+async function routeCalendarCreate(telegramId:number,payload:CalendarApprovalPayload,primaryToken:string,text:string){
+  const accounts=(await getAllCalendarAccountAccess(telegramId).catch(()=>[])).filter(a=>a.email)
+  if(accounts.length>1){
+    const named=pickCalendarAccountFromText(accounts,text)
+    if(named)return await stageCalendarApproval(telegramId,{...payload,accountEmail:named.email!},named.accessToken)
+    await saveFollowupState(telegramId,'calendar_create_account_choice',{...payload,created_at:new Date().toISOString()})
+    return `📅 *Which calendar should I add this to?*\n\n${accounts.map((a,i)=>`${i+1}. ${a.email}${a.primary?' (primary)':''}`).join('\n')}\n\n*${payload.title}* · ${payload.displayTime}\n\nReply *1* or *2*, or *cancel*. Nothing has been added yet.`
+  }
+  return await stageCalendarApproval(telegramId,payload,primaryToken)
+}
+
+async function tryHandleCalendarAccountChoice(telegramId:number,text:string):Promise<string|null>{
+  const pending=await getLatestFollowupState(telegramId,'calendar_create_account_choice')
+  if(!pending||!isStrictlyFreshFollowupState(pending,15)||!pending.payload?.startIso||pending.payload?.consumed)return null
+  const answer=String(text||'').replace(/^[\s↩️↪️✅☑️✔️❌✖️🗓️📅]+/u,'').trim()
+  if(/^(cancel|no|never mind|nevermind)$/i.test(answer)){
+    await clearFollowupState(telegramId,'calendar_create_account_choice')
+    return `❌ Cancelled — nothing was added to your calendar.`
+  }
+  const accounts=(await getAllCalendarAccountAccess(telegramId).catch(()=>[])).filter(a=>a.email)
+  const numbered=answer.match(/^([1-9])[.)]?$/)
+  const chosen=numbered?accounts[Number(numbered[1])-1]:pickCalendarAccountFromText(accounts,answer)
+  if(!chosen)return null
+  await clearFollowupState(telegramId,'calendar_create_account_choice')
+  const {created_at:_ignored,consumed:_c,...rest}=pending.payload
+  return await stageCalendarApproval(telegramId,{...(rest as CalendarApprovalPayload),accountEmail:chosen.email!,created_at:new Date().toISOString()},chosen.accessToken)
+}
+
 async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<string|null>{
+  const accountChoice=await tryHandleCalendarAccountChoice(telegramId,text)
+  if(accountChoice)return accountChoice
   const raw=String(text||'').trim()
   // WhatsApp quick-reply titles include presentation emoji (e.g. "✅ Yes, add it").
   // Normalize those before approval matching so the calendar capability owns the
@@ -197,14 +234,14 @@ async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<
         // The feature-intent approval path is independent of the Agent approval
         // orchestrator. Verify the exact staged event against Google before consuming
         // approval or returning any success-shaped copy.
-        const tokens=await getCalendarTokens(telegramId)
-        if(!tokens.connected||!tokens.accessToken)return `I couldn't verify that calendar change, so I won't claim it was added.`
+        const verifyToken=pending.payload.accountEmail?await getAccessTokenForCalendarAccount(telegramId,String(pending.payload.accountEmail)):(await getCalendarTokens(telegramId)).accessToken
+        if(!verifyToken)return `I couldn't verify that calendar change, so I won't claim it was added.`
         const start=new Date(pending.payload.startIso)
         const dayStart=new Date(start.getTime());dayStart.setUTCHours(0,0,0,0)
         const dayEnd=new Date(dayStart.getTime());dayEnd.setUTCDate(dayEnd.getUTCDate()+1)
         let verified=false
         try{
-          const events=await fetchPrimaryCalendarEvents(tokens.accessToken,dayStart.toISOString(),dayEnd.toISOString(),'GCAL_FEATURE_APPROVAL_VERIFY_FAILED')
+          const events=await fetchPrimaryCalendarEvents(verifyToken,dayStart.toISOString(),dayEnd.toISOString(),'GCAL_FEATURE_APPROVAL_VERIFY_FAILED')
           const norm=(v:string)=>String(v||'').toLowerCase().replace(/["“”']/g,'').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
           const wanted=norm(String(pending.payload.title||''))
           const wantedStart=new Date(pending.payload.startIso).getTime()
@@ -240,7 +277,7 @@ async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<
           displayTime:calendarDisplay(start.toISOString()),
           created_at:new Date().toISOString(),
         }
-        return await stageCalendarApproval(telegramId,payload,tokens.accessToken)
+        return await routeCalendarCreate(telegramId,payload,tokens.accessToken,text)
       }
     }
   }
@@ -254,7 +291,7 @@ async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<
     displayTime:calendarDisplay(istOffsetIso(createIntent.start)),
     created_at:new Date().toISOString(),
   }
-  return await stageCalendarApproval(telegramId,payload,tokens.accessToken)
+  return await routeCalendarCreate(telegramId,payload,tokens.accessToken,text)
 }
 
 export async function routeFeatureIntent(

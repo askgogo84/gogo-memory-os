@@ -105,3 +105,27 @@ export async function getTodayEventsAllAccounts(telegramId: number | string, pri
   if (!ok.length) throw new Error('calendar_fetch_failed')
   return { connected: true as const, events: mergeAccountEvents(ok).events, multi: accounts.length > 1 }
 }
+
+/** Access token for one named linked account, or null when it is not linked or no longer refreshes. */
+export async function getAccessTokenForCalendarAccount(telegramId: number | string, email: string): Promise<string | null> {
+  const wanted = String(email || '').toLowerCase()
+  if (!wanted) return null
+  const match = (await getAllCalendarAccountAccess(telegramId)).find(a => a.email === wanted)
+  return match?.accessToken || null
+}
+
+/**
+ * Which linked account a message names: the full address, or the address's domain label
+ * ("tipplr", "gmail") as a whole word. The part before the @ is never used because both of
+ * a person's accounts often share it. Returns null unless exactly one account matches.
+ */
+export function pickCalendarAccountFromText<T extends { email: string | null }>(accounts: T[], text: string): T | null {
+  const lower = String(text || '').toLowerCase()
+  const named = accounts.filter(a => {
+    if (!a.email) return false
+    if (lower.includes(a.email)) return true
+    const label = a.email.split('@')[1]?.split('.')[0]
+    return !!label && new RegExp(`\\b${label.replace(/[^a-z0-9]/g, '')}\\b`).test(lower)
+  })
+  return named.length === 1 ? named[0] : null
+}

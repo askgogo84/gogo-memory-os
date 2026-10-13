@@ -21,6 +21,7 @@ type CalendarActionResult = {
 // existing importers (detect-intent.ts) keep working.
 export { CALENDAR_WORD_RE } from '@/lib/data/calendar-word'
 import { CALENDAR_WORD_RE } from '@/lib/data/calendar-word'
+import { getAccessTokenForCalendarAccount } from '@/lib/services/google-calendar-accounts'
 
 // Calendar-create SIGNAL phrases, derived from the shared spelling set rather than
 // re-encoding the cal[ae]nd[ae]rs? vowel-swaps by hand (that hand-encoding is exactly how
@@ -36,6 +37,8 @@ type CalendarCreatePayload = {
   endIso: string
   displayTime: string
   created_at?: string
+  // Set when the user has two or more linked Google accounts and chose one for this event.
+  accountEmail?: string
 }
 
 function istPartsNow() {
@@ -170,6 +173,7 @@ function calendarRangeForTarget(target: CalendarDateTarget) {
 function cleanTitle(text: string) {
   return (text || 'Meeting')
     .replace(/^(add|create|schedule|book|set up)\s+/i, '')
+    .replace(/\b(?:to|on|in|into)\s+(?:my|the|your)\s+(?:calendar|calender|calandar)\b/gi, '')
     .replace(/\b(on|in my)?\s*calendar\b/gi, '')
     .replace(/\btomorrow\b/gi, '')
     .replace(/\btoday\b/gi, '')
@@ -320,6 +324,15 @@ async function findRecentNoteEvent(telegramId: number) {
     time: parseTime(blob),
   }
 }
+// A title the user quoted: `called "X"`, or a quoted name straight after the verb
+// (Add 'Gogo test' to my calendar tomorrow at 4 pm). Curly and straight quotes both work.
+const QUOTED_AFTER_VERB = /^\s*(?:please\s+)?(?:add|create|schedule|book|put|set\s+up)\s+(?:an?\s+|the\s+)?(?:(?:calendar\s+)?(?:event|meeting)\s+)?(?:(?:called|titled)\s+)?(?:"([^"]{1,180})"|\u201c([^\u201d]{1,180})\u201d|'([^']{1,180})'(?=\s|$|[,.;!])|\u2018([^\u2019]{1,180})\u2019)/i
+export function quotedEventTitle(text: string): string | undefined {
+  const called = text.match(/(?:called|titled)\s+["\u201c]([^"\u201d]+)["\u201d]/i)?.[1]
+  const afterVerb = text.match(QUOTED_AFTER_VERB)?.slice(1).find(Boolean)
+  return (called || afterVerb)?.trim() || undefined
+}
+
 export function parseCalendarCreate(text: string) {
   // Muse case 07 (10 Oct): "Add a meeting with Srini tomorrow at 4 pm, then move it to 5 pm" was
   // added at 4 pm titled "A meeting with Srini, then move it to". A trailing "then move/change it
@@ -414,7 +427,7 @@ export function parseCalendarCreate(text: string) {
   const target = targetFromText(text)
   const parts = absolute || targetParts(target)
 
-  const quotedTitle = text.match(/(?:called|titled)\s+["“]([^"”]+)["”]/i)?.[1]?.trim()
+  const quotedTitle = quotedEventTitle(text)
   let title = quotedTitle ? quotedTitle.slice(0, 180) : cleanTitle(text)
 
   if (!title || title.length < 3) {
@@ -560,7 +573,8 @@ async function createEventFromPayload(
     `✅ *Calendar event added*\n\n` +
     `${payload.title}\n` +
     `${payload.displayTime}\n\n` +
-    `Duration: 30 mins`
+    `Duration: 30 mins` +
+    (payload.accountEmail ? `\nCalendar: ${payload.accountEmail}` : '')
   )
 }
 
@@ -590,6 +604,12 @@ export async function createCalendarConflictEvent(
   if (payload.created_at) {
     const ageMs = Date.now() - new Date(payload.created_at).getTime()
     if (ageMs > 15 * 60 * 1000) return null
+  }
+
+  if (payload.accountEmail) {
+    const accountToken = await getAccessTokenForCalendarAccount(telegramId, payload.accountEmail)
+    if (!accountToken) return null
+    return await createEventFromPayload(telegramId, accountToken, payload)
   }
 
   const tokens = await getCalendarTokens(telegramId)
