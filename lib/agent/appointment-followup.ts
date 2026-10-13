@@ -7,6 +7,7 @@ import { bookingObjective, indianMobileFromWhatsApp, maskMobile } from './provid
 import { registerLifeEvent } from './life-event-engine'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
+import { searchWebResults } from '@/lib/web-search'
 
 function safe(value: unknown, max = 1400) {
   return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
@@ -487,6 +488,14 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
   if(/^\s*(?:open|browse|visit|navigate to|go to)\s+https?:\/\/\S+\s+(?:in|using)\s+(?:the\s+)?browser\b/i.test(params.text))return null
   const tg = params.actor.legacyTelegramId
   if (!wantsFinalApproval(params.text) && !isSlotOnlyReply(params.text) && !(optionNumber(params.text) && wantsPrepare(params.text))) return null
+  // 13 Oct: "book the 7 am slot at Machaxi Milan on Saturday" sent on its own went to general chat,
+  // because booking only worked right after a search and "1". A named venue starts its own booking.
+  const venue = wantsFinalApproval(params.text) ? directVenueTarget(params.text) : null
+  if (venue) {
+    const prepared = await latestPreparedAppointment(tg)
+    const sel: any = prepared?.metadata_json?.appointment_selection || {}
+    if (!prepared || !venueMatches(venue, `${sel.title || ''} ${sel.url || ''}`)) return directVenueBooking({ ...params, venue })
+  }
   const currentReply = await currentAppointmentReply(tg)
   if (!currentReply) return null
 
@@ -557,4 +566,47 @@ export async function tryRunAppointmentFollowup(params: { actor: AgentActor; sur
     text: `${result.status === 'completed' || result.status === 'paused' ? result.text : `I couldn't read the free slots on ${(() => { try { return new URL(selected.url).hostname.replace(/^www\./, '') } catch { return 'the provider page' } })()} from here.`}\n\n${bookingNextStepHint(number)}`,
     handledBy: 'appointment-followup' as const,
   }
+}
+
+const VENUE_TAIL = /(?=\s+(?:on|for|this|next|tomorrow|today|tonight|by|from|at\s+\d)\b|\s*[,.!?]|$)/i
+/** "book the 7 am slot at Machaxi Milan on Saturday" → "Machaxi Milan". */
+export function directVenueTarget(text: string): string | null {
+  const raw = String(text || '')
+  if (!/\bbook\b/i.test(raw)) return null
+  const m = raw.match(new RegExp(`\\bat\\s+(?:the\\s+)?([a-z][a-z0-9&'. -]{2,60}?)${VENUE_TAIL.source}`, 'i'))
+  const venue = m?.[1]?.trim().replace(/\s+/g, ' ') || ''
+  if (!venue || /^(?:\d|noon|night|morning|evening|afternoon|the same time|that time|this slot|that slot|it)\b/i.test(venue)) return null
+  return venue
+}
+
+const vtokens = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(t => t.length >= 3 && !['the', 'sports', 'centre', 'center', 'court', 'courts', 'arena', 'club', 'academy', 'venue'].includes(t))
+export function venueMatches(venue: string, hay: string): boolean {
+  const want = vtokens(venue), have = new Set(vtokens(hay))
+  return want.length > 0 && want.every(t => have.has(t))
+}
+
+/** The venue's own booking page on a sports-booking site, found by name. */
+export function pickVenuePage(results: Array<{ url?: string; title?: string }>, venue: string): { url: string; title: string } | null {
+  for (const r of results) {
+    const url = String(r?.url || '')
+    if (!/^https:\/\/(?:www\.)?playo\.co\/venues\/[^/?#]+\/[^/?#]+/i.test(url)) continue
+    if (venueMatches(venue, `${r.title || ''} ${url}`)) return { url: url.split(/[?#]/)[0], title: String(r.title || venue).replace(/\s*[-|].*$/, '').trim() || venue }
+  }
+  return null
+}
+
+async function directVenueBooking(params: { actor: AgentActor; surface: AgentSurface; text: string; venue: string }) {
+  const tg = params.actor.legacyTelegramId
+  const research = await latestAppointmentResearch(tg).catch(() => null)
+  const fresh = research && Date.now() - Date.parse(String(research.completed_at || research.started_at || '')) < 14 * 86400_000
+  const location = safe(fresh ? String(research?.metadata_json?.location || '') : '', 80)
+  const { SPORT, serviceHint } = await import('./appointment-research')
+  const service = SPORT.test(params.text) ? serviceHint(params.text) : fresh && /court|turf|nets|pool/i.test(String(research?.metadata_json?.service || '')) ? safe(String(research?.metadata_json?.service), 80) : ''
+  const done = (text: string) => ({ runId: '', status: 'paused' as const, capability: 'browser' as const, risk: 'low' as const, text, handledBy: 'appointment-followup' as const })
+  if (!service) return done(`Which sport should I book at ${params.venue}? For example: *book the 7 am badminton slot at ${params.venue} on Saturday*.`)
+  const results = await searchWebResults(`${params.venue} ${location} ${service.replace(/ court$/, '')} playo`.replace(/\s+/g, ' ').trim(), { includeDomains: ['playo.co'] }).catch(() => [])
+  const page = pickVenuePage(results as any, params.venue)
+  if (!page) return done(`I couldn't find ${params.venue} on Playo. Send me its Playo link, or search first, for example: *find a ${service.replace(/ court$/, '')} court in ${location || 'HSR Layout, Bangalore'} for Saturday 7 am*.`)
+  const prepared = { id: '', metadata_json: { appointment_selection: { url: page.url, title: page.title, provider: 'playo.co', service, location } } }
+  return createFinalApproval({ actor: params.actor, prepared, text: params.text, surface: params.surface })
 }

@@ -26,7 +26,7 @@ function locationProfile(location: string) {
   return { canonical: [place.locality && place.locality.toLowerCase() !== place.city.toLowerCase() ? place.locality : '', place.city].filter(Boolean).join(', ') || location, place, querySuffix: place.querySuffix }
 }
 
-function serviceHint(text: string) {
+export function serviceHint(text: string) {
   const raw = String(text || '')
   const withProvider = raw.match(/\b(?:appointment|consultation|session)\s+(?:with|at)\s+(?:an?\s+)?([A-Za-z][A-Za-z &.'-]{2,50}?)(?=\s+(?:in|near|around|next|this|tomorrow|today|on|for|at|after|before|and|but)\b|[,.!?]|$)/i)?.[1]
   if (withProvider) return safe(withProvider, 80)
@@ -48,7 +48,7 @@ function timingHint(text: string) {
 // on Playo/Hudle and venue pages, read-only; booking stays a separate, approved step.
 // 12 Oct: "pickle ball court" (two words) fell through to general chat, which then claimed a slot was
 // free without checking. Sports written as two words or with a hyphen count too.
-const SPORT = /\b(badminton|tennis|squash|pickle[\s-]?ball|table[\s-]?tennis|turf|futsal|foot[\s-]?ball|cricket\s+nets?|box\s+cricket|swimming|basket[\s-]?ball|volley[\s-]?ball|padel)\b/i
+export const SPORT = /\b(badminton|tennis|squash|pickle[\s-]?ball|table[\s-]?tennis|turf|futsal|foot[\s-]?ball|cricket\s+nets?|box\s+cricket|swimming|basket[\s-]?ball|volley[\s-]?ball|padel)\b/i
 export function isSportsVenueRequest(raw: string) {
   const text = String(raw || '')
   return SPORT.test(text) && /\b(courts?|turfs?|nets|venues?|grounds?|pools?|slots?|arena)\b/i.test(text)
