@@ -1317,7 +1317,7 @@ _"${originalText}"_
     // <event> tomorrow?" can never create unrelated reminder state.
     const isNamedCalendarRead=/^(?:what\s+time|when)\s+(?:is|does)\s+.+(?:calendar|meeting|event|appointment).*(?:today|tomorrow|on\s+.+)?\??$/i.test(text.trim())
     if(isNamedCalendarRead){
-      const calendarReply=await routeFeatureIntent(from,text,{telegramId:resolvedUser.telegramId,caption:bodyText})
+      const calendarReply=await routeFeatureIntent(from,text,{telegramId:resolvedUser.telegramId,caption:bodyText,semantic:brainObservation?.jev})
       if(calendarReply){
         await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:'calendar-named-read',actualCapability:'calendar'}).catch(()=>{})
         await saveConversation(resolvedUser.telegramId,'user',text)
@@ -1418,7 +1418,7 @@ _"${originalText}"_
           return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
         }
       }else if(jevIntent==='calendar_read'||jevIntent==='calendar_mutation'){
-        const promotedCalendar=await routeFeatureIntent(from,text,{telegramId:resolvedUser.telegramId,caption:bodyText})
+        const promotedCalendar=await routeFeatureIntent(from,text,{telegramId:resolvedUser.telegramId,caption:bodyText,semantic:brainObservation?.jev})
         if(promotedCalendar){
           await recordJevRoutingHint({
             telegramId:resolvedUser.telegramId,
@@ -1471,8 +1471,8 @@ _"${originalText}"_
     }
 
     const featureReply = preserveFriendFlow ? null : (
-      await routeFeatureIntent(from, text, { telegramId: resolvedUser.telegramId, caption: bodyText }) ||
-      (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText, { telegramId: resolvedUser.telegramId }) : null)
+      await routeFeatureIntent(from, text, { telegramId: resolvedUser.telegramId, caption: bodyText, semantic: brainObservation?.jev }) ||
+      (incoming.wasVoice && originalText !== text ? await routeFeatureIntent(from, originalText, { telegramId: resolvedUser.telegramId, semantic: brainObservation?.jev }) : null)
     )
     if (featureReply) {
       await recordShadowRouterOutcome({
@@ -1777,7 +1777,7 @@ _Reminder cancelled._`
     }
 
     await sendThinkingIfNeeded(from, text)
-    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', messageId: inboundMessageSid || null })
+    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', messageId: inboundMessageSid || null, semantic: brainObservation?.jev })
     await recordShadowRouterOutcome({
       telegramId:resolvedUser.telegramId,
       surface:'whatsapp',

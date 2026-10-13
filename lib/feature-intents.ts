@@ -21,6 +21,8 @@ import { isActiveListShow, parseActiveListAdd, parseExplicitListShow } from '@/l
 import { parseCalendarCreate, getCalendarTokens, createCalendarConflictEvent } from '@/lib/bot/handlers/calendar-actions'
 import { resolvePendingCalendar, looksLikeNewCommand } from '@/lib/bot/pending-followup'
 import { fetchPrimaryCalendarEvents } from '@/lib/google-calendar'
+import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
+import { mayClaim } from '@/lib/agent/semantic-gate'
 import { getAllCalendarAccountAccess, getAccessTokenForCalendarAccount, pickCalendarAccountFromText, mergeAccountEvents, findConflictingEvent, describeConflict } from '@/lib/services/google-calendar-accounts'
 import { RESERVED_SHOW_NAMES } from '@/lib/data/reserved-names'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
@@ -297,7 +299,7 @@ async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<
 export async function routeFeatureIntent(
   phone: string,
   text: string,
-  extra?: { telegramId?: number; caption?: string },
+  extra?: { telegramId?: number; caption?: string; semantic?: JevShadowResult | null },
 ): Promise<string | null> {
   const normalized=normalizeUserInputForRouting(text)
   if(normalized.changed) console.info('INPUT_NORMALIZED_FOR_FEATURE_ROUTING:',{reasons:normalized.reasons,originalLength:String(text||'').length,normalizedLength:normalized.text.length})
@@ -343,7 +345,7 @@ export async function routeFeatureIntent(
     if (queued) return queued.text
   }
 
-  if (extra?.telegramId && normalizeNaturalReminderSave(text)) {
+  if (extra?.telegramId && normalizeNaturalReminderSave(text) && mayClaim('reminder_create', text, extra?.semantic, 'natural_reminder_save')) {
     if(await capabilityIsOff(extra.telegramId,'reminders')){
       return 'Reminders are currently off in your Gogo autonomy settings. Say *set reminders autonomy to auto* (or *ask*) to turn them back on.'
     }
@@ -356,7 +358,7 @@ export async function routeFeatureIntent(
   }
 
   const checklist = extra?.telegramId ? parseNumberedChecklist(text) : null
-  if (extra?.telegramId && checklist) {
+  if (extra?.telegramId && checklist && mayClaim('list', text, extra?.semantic, 'numbered_checklist')) {
     if(await capabilityIsOff(extra.telegramId,'lists')){
       return 'Lists are currently off in your Gogo autonomy settings. Say *set lists autonomy to auto* (or *ask*) to turn them back on.'
     }

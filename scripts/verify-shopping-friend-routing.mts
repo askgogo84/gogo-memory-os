@@ -11,6 +11,7 @@ import * as previewRouting from '../lib/services/whatsapp-preview-routing'
 import {handleInboxReplyRead} from '../lib/agent/open-loops'
 import * as accountIntent from '../lib/agent/external-account-intent'
 import * as nutritionText from '../lib/bot/nutrition-text'
+import * as semanticGate from '../lib/agent/semantic-gate'
 
 // Fixed phone incident: Wed 7 Oct 2026, 12:37 IST.
 const RealDate = Date
@@ -124,6 +125,7 @@ const actual: Record<string, any> = {
   '@/lib/supabase-admin': {supabaseAdmin: db},
   './resolve-user': {resolveUser: async () => ({id: 'owner', telegramId: 42, whatsappId: '+919999999999', name: 'Gogo', tier: 'free'})},
   './detect-intent': {detectIntent},
+  '@/lib/agent/semantic-gate': semanticGate,
   './handlers/reminders': reminders,
   './format-response': {formatOutgoingText},
   '@/lib/commerce/comparison-model': {namesRetailerPriceRead},

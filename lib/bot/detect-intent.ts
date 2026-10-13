@@ -51,7 +51,10 @@ export type DetectedIntent = {
   meta?: Record<string, any>
 }
 
-const SEARCH_HINTS = ['latest', 'news', 'today', 'current', 'score', 'stock', 'price']
+const SEARCH_HINTS = ['latest', 'news', 'current', 'score', 'stock', 'price']
+const SEARCH_HINT_RE = new RegExp(`\\b(?:${SEARCH_HINTS.join('|')})\\b`)
+// "today" alone is a statement about the day ("today I met the team"); it hints at a lookup only inside a question.
+const QUESTION_SHAPE_RE = /\?|^\s*(?:what|who|which|when|where|how|is|are|does|do|did|will|can|could|should|tell me|show me)\b/i
 
 function isReferralIntent(lower: string) {
   return (
@@ -129,7 +132,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (lower === 'pricing' || lower === 'price' || lower === 'plans' || lower === 'plan' || lower === 'upgrade' || lower === '/upgrade' || lower === 'payment' || lower === 'payments' || lower === 'subscribe' || lower === 'razorpay' || lower === 'paid plan') return { type: 'upgrade_plan', confidence: 'high' }
 
-  if (lower === 'notify me' || lower === 'notify' || lower === 'notify me when live' || lower === 'notify me when payment is live' || lower === 'founder offer' || lower === 'founder pricing' || lower.includes('early access') || lower.includes('i want pro') || lower.includes('i want lite') || lower.includes('i want starter') || lower.includes('i want founder') || lower.includes('want paid plan') || lower.includes('want to subscribe') || lower.includes('interested in paid')) return { type: 'notify_me', confidence: 'high' }
+  if (lower === 'notify me' || lower === 'notify' || lower === 'notify me when live' || lower === 'notify me when payment is live' || lower === 'founder offer' || lower === 'founder pricing' || lower.includes('early access') || /\bi want (?:the )?(?:pro|lite|starter|founder)(?: plan| pricing| tier)?\s*[.!]*$/.test(lower) || lower.includes('want paid plan') || lower.includes('want to subscribe') || lower.includes('interested in paid')) return { type: 'notify_me', confidence: 'high' }
 
   if (isReferralIntent(lower)) return { type: 'referral_flow', confidence: 'high' }
 
@@ -193,7 +196,9 @@ export function detectIntent(text: string): DetectedIntent {
   // with another task verb is that task unless it explicitly asks for a reminder.
   const otherTaskFirst = /^(?:(?:please|can you|could you)\s+)?(?:from\s+my\s+[^,]{1,40},\s*)?(?:prep|prepare|plan|make|create|write|draft|research|find|search|compare|summari[sz]e|build|show|give|tell|explain|analy[sz]e|list|suggest|recommend|book|order|buy|watch|track|monitor|check|which|what|when|where|who|how|every\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+(?:draft|reply|post|write|check|send))\b/i.test(lower)
   const asksReminder = /\bremind|\breminder|\balert me\b|\bping me\b|\bnudge me\b/i.test(lower)
-  if (!(otherTaskFirst && !asksReminder) && (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ') || lower.includes('set a reminder') || lower.includes('set reminder') || lower.includes('reminder for') || /\b(on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower) || /\b(tomorrow|tmrw|tmr)\b/i.test(lower) || /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(lower) || /\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(lower))) return { type: 'set_reminder', confidence: 'high' }
+  // A question or request for advice that merely mentions a day or time ("my sister's birthday is on Sunday, what should I gift") is not a reminder.
+  const asksForAnswer = !asksReminder && (/\?/.test(lower) || /\b(?:what should|which should|should i|can you|could you|how do i|how can i)\b/.test(lower))
+  if (!(otherTaskFirst && !asksReminder) && !asksForAnswer && (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ') || lower.includes('set a reminder') || lower.includes('set reminder') || lower.includes('reminder for') || /\b(on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower) || /\b(tomorrow|tmrw|tmr)\b/i.test(lower) || /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(lower) || /\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(lower))) return { type: 'set_reminder', confidence: 'high' }
 
   if (lower === 'show all lists' || lower === 'list all' || lower === 'show my lists') return { type: 'list_show_all', confidence: 'high' }
   if ((lower.startsWith('show ') || lower.startsWith('open ') || lower.startsWith('view ')) && lower.includes(' list')) return { type: 'list_show', confidence: 'medium' }
@@ -203,9 +208,10 @@ export function detectIntent(text: string): DetectedIntent {
   // can never be claimed by the check branch (it CONTAINS "check").
   const checkVerb = classifyCheckVerb(lower)
   if (checkVerb) return { type: checkVerb, confidence: 'medium' }
-  if (lower.startsWith('clear ') || lower.startsWith('delete list ') || lower.startsWith('remove list ')) return { type: 'list_clear', confidence: 'medium' }
+  if (/^clear\s+(?:my\s+|the\s+)?[a-z0-9-]+(?:\s+list)?$/.test(lower) || lower.startsWith('delete list ') || lower.startsWith('remove list ')) return { type: 'list_clear', confidence: 'medium' }
   if (lower.startsWith('remember ') || lower.includes('remember that ') || lower.includes('save this memory')) return { type: 'save_memory', confidence: 'high' }
-  if (SEARCH_HINTS.some((k) => lower.includes(k))) return { type: 'web_search', confidence: 'medium' }
+  // Whole words only: "newsletter", "scored", "currently" and "stockholm" are not search requests.
+  if (SEARCH_HINT_RE.test(lower) || (/\btoday\b/.test(lower) && QUESTION_SHAPE_RE.test(lower))) return { type: 'web_search', confidence: 'medium' }
 
   // Media memory commands
   if (/^my (instagram|facebook|youtube|linkedin|twitter|tiktok|social) (saves|notes|reels|videos|posts)$/i.test(lower)) return { type: 'media_memory', confidence: 'high' }
@@ -219,8 +225,9 @@ export function detectIntent(text: string): DetectedIntent {
   // "log"/"track" is a meal command only when a food or meal follows: "track divya flight", "track my order" are not.
   if (/^(log|track)\s/i.test(lower) && isNutritionLogText(lower)) return { type: 'nutrition_log', confidence: 'high' }
   if (/^(log this|log that|log it|track this|save this meal|log meal)/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
-  if (/^(had |ate |just had |just ate |i had |i ate |i just had |i just ate |breakfast:|lunch:|dinner:|snack:)/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
-  if (/^(for (breakfast|lunch|dinner|snack) (i |i've |we )?had|for (breakfast|lunch|dinner|snack):)/i.test(lower)) return { type: 'nutrition_log', confidence: 'high' }
+  // An eating verb alone ("I ate too much today", "had a meeting") is not a meal; a food has to be named.
+  if (/^(had |ate |just had |just ate |i had |i ate |i just had |i just ate |breakfast:|lunch:|dinner:|snack:)/i.test(lower) && isNutritionLogText(lower)) return { type: 'nutrition_log', confidence: 'high' }
+  if (/^(for (breakfast|lunch|dinner|snack) (i |i've |we )?had|for (breakfast|lunch|dinner|snack):)/i.test(lower) && isNutritionLogText(lower)) return { type: 'nutrition_log', confidence: 'high' }
 
   return { type: 'general_chat', confidence: 'low' }
 }

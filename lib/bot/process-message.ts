@@ -37,6 +37,8 @@ import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { parsePlanSelection, buildPlanCheckoutReply } from './handlers/plan-checkout'
 import { buildCalendarActionReply, createCalendarConflictEvent, createCalendarEventAtIso, isCalendarAction, getCalendarTokens } from './handlers/calendar-actions'
+import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
+import { gateDetectedIntent } from '@/lib/agent/semantic-gate'
 import { isCalendarMutation, isCalendarMutationConfirm, buildCalendarMutationReply, confirmCalendarMutation } from './handlers/calendar-mutations'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
@@ -169,6 +171,8 @@ export type ProcessIncomingParams = {
   userName?: string
   messageType?: 'text' | 'voice' | 'image' | 'document'
   messageId?: string | number | null
+  /** The semantic classifier's reading of this sentence (with recent conversation), when available. */
+  semantic?: JevShadowResult | null
 }
 
 export type ProcessIncomingResult = {
@@ -490,7 +494,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId,'assistant',priceComparison.text)
     return {text:formatOutgoingText(params.channel,priceComparison.text),resolvedUser,handledBy:priceComparison.handledBy}
   }
-  const intent = detectIntent(incomingText)
+  // A keyword rule may not claim a sentence the semantic classifier is confident means something else.
+  const intent = gateDetectedIntent(detectIntent(incomingText), incomingText, params.semantic) as ReturnType<typeof detectIntent>
   console.log('PIM:intent', intent)
   // A delegated reminder needs its own pending task so a corrected time can
   // complete the same request. Do not discard it in the self-reminder guard.

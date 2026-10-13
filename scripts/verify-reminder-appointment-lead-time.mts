@@ -11,6 +11,7 @@ import * as amPmFollowup from '../lib/bot/handlers/reminder-ampm-followup'
 import { isCalendarAction, buildCalendarActionReply } from '../lib/bot/handlers/calendar-actions'
 import { isCalendarMutation } from '../lib/bot/handlers/calendar-mutations'
 import * as contentWorkflows from '../lib/agent/content-workflows'
+import * as semanticGate from '../lib/agent/semantic-gate'
 
 // Oct 1 WhatsApp failure: 16:30 appointment minus ten minutes was saved as 17:20.
 // Exercise the actual processIncomingMessage -> insert -> confirmation path with
@@ -79,6 +80,7 @@ const actual: Record<string, any> = {
   '@/lib/supabase-admin': { supabaseAdmin: db },
   './handlers/calendar-actions': { isCalendarAction, buildCalendarActionReply },
   './handlers/calendar-mutations': { isCalendarMutation },
+  '@/lib/agent/semantic-gate': semanticGate,
   './resolve-user': { resolveUser: async () => ({ id: 'owner', telegramId: 42, whatsappId: 'test-owner', name: 'Test', tier: 'free' }) },
   '@/lib/limits': { checkAndIncrementLimit: async () => ({ allowed: true }) },
   '@/lib/agent/typed-object-context': { rememberTypedObjects: async () => {} },

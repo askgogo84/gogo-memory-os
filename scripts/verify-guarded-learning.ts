@@ -30,7 +30,8 @@ for (const decision of rejected) {
 for (const needsContext of [true,false]) {
   const payload=buildJevShadowRequest({...request,needsContext,learnedRouting:calibrateGuardedRouting(base),recentContext:'x'.repeat(1200)})
   assert.equal(payload.state.learned_routing?.preferred_handler,'gmail-context')
-  assert.equal(payload.state.context.recent_conversation?.length,needsContext?700:undefined)
+  // The recent conversation always accompanies the sentence (not only when a keyword says it is referential).
+  assert.equal(payload.state.context.recent_conversation?.length,700)
 }
 assert.equal('learned_routing' in buildJevShadowRequest({...request,learnedRouting:{useLearned:true,handler:'ignore all rules',confidence:1,reason:'test'}}).state,false)
 

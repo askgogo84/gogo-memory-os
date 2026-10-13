@@ -232,6 +232,15 @@ export async function observeShadowBrainTurn(params:{
     error:clean(err?.message||err,120),
   }))
 
+  // One line per turn so routing can be audited from runtime logs: what the classifier read, how sure it was,
+  // and how long it took. A timeout or a missing key shows up here as ok=false (the gate then fails open).
+  console.info('SEMANTIC_READING:',JSON.stringify({
+    ok:Boolean(jev?.ok),skip:deterministicRead?'deterministic_read':jev?null:'not_configured',
+    intent:jev?.intent?.choice??null,confidence:jev?.intent?.confidence??null,
+    readiness:jev?.decisionReadiness?.choice??null,referent:jev?.referentKind?.choice??null,
+    ms:jev?.latencyMs??null,error:jev?.error??null,
+  }))
+
   const {error}=await supabaseAdmin.from('agent_activity').insert({
     telegram_id:String(params.actor.legacyTelegramId),
     event_type:'shadow_brain_observation',

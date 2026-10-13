@@ -50,7 +50,9 @@ export function buildJevShadowRequest(params: {
 }) {
   const rawText = String(params.text || '').slice(0, 1200)
   const rawSummary = String(params.focusSummary || '').slice(0, 320)
-  const rawRecent = params.needsContext ? String(params.recentContext || '').slice(0, 700) : ''
+  // The recent conversation always goes with the sentence: whether a message needs context is not a
+  // judgement a keyword list can make ("track divya flight" has no pronoun and still depends on who Divya is).
+  const rawRecent = String(params.recentContext || '').slice(0, 700)
   const safeText = isSecretShapedMemory(rawText) ? '[sensitive turn withheld from TypeSafe]' : redactSecretShapedText(rawText)
   const safeSummary = isSecretShapedMemory(rawSummary) ? '[sensitive context withheld from TypeSafe]' : redactSecretShapedText(rawSummary)
   const safeRecent = isSecretShapedMemory(rawRecent) ? '[sensitive recent context withheld from TypeSafe]' : redactSecretShapedText(rawRecent)
@@ -142,7 +144,7 @@ export async function runJevShadow(params: {
   const apiKey = String(process.env.TYPESAFE_API_KEY || '').trim()
   if (!apiKey) return null
 
-  if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || '')) || (params.needsContext && isSecretShapedMemory(String(params.recentContext || '')))) {
+  if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || '')) || isSecretShapedMemory(String(params.recentContext || ''))) {
     return {
       ok: false,
       attempted: false,

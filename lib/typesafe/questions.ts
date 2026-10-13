@@ -1,5 +1,5 @@
 export const JEV_SHADOW_MODEL = 'jev-latest'
-export const JEV_SHADOW_VERSION = 'jev-shadow-v1.5'
+export const JEV_SHADOW_VERSION = 'jev-shadow-v1.6'
 
 export const JEV_INTENT_CRITERIA = {
   reminder_read: 'Read, list, inspect, or answer questions about reminders without changing them.',
@@ -9,10 +9,14 @@ export const JEV_INTENT_CRITERIA = {
   email_read: 'Read, search, summarize, or inspect Gmail/email without sending or changing it.',
   email_mutation: 'Draft, reply, forward, compose, or send email. Sending remains approval-gated by deterministic policy.',
   watcher: 'Create, inspect, update, or stop ongoing monitoring, alerts, watches, or condition checks.',
-  travel_research: 'Research, compare, inspect, or discuss flights, hotels, trips, tickets, or travel options without booking.',
+  travel_research: 'Research, compare, inspect, or discuss flights, hotels, trips, tickets, or travel options without booking. Also asking where someone\'s flight is, whether it has landed or is delayed, or to track a flight or trip.',
   browser_action: 'Navigate or act on an external website or provider, including forms, booking, checkout, or account actions.',
   memory_context: 'Save, recall, or use personal memory/context that is not better handled by another capability.',
   list_task: 'Create, read, or change a list, checklist, task, or todo.',
+  nutrition_log: 'The user says what they ate or drank so it can be logged, or asks about their own logged food, meals or calorie intake. Not a general nutrition or recipe question.',
+  live_info: 'Ask for current real-world information such as weather, gold or commodity prices, sports scores or schedules, or news headlines.',
+  money_tracking: 'Log or review personal expenses, split bills or group balances, or ask about credit-card points, rewards or balances.',
+  account_settings: 'Plans, pricing, referrals, the dashboard link, briefing settings, or connecting or disconnecting an account such as Gmail or Calendar.',
   general_reasoning: 'A general question or reasoning request that does not cleanly fit the other options.',
   other: 'None of the listed intents fit well.',
 } as const
