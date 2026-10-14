@@ -24,6 +24,37 @@ const FAKE_ACTION_CLAIMS: RegExp[] = [
 export const NO_ACTION_REPLY =
   "Nothing has been started. Gogo only runs a task after it sends you a real approval request for it, and there isn't one waiting. Send the request again in one message (for example: create a Hugging Face account for you@example.com) and I'll set it up."
 
+// 14 Oct live run (dashboard): "Skip lunch today, I'm fasting" reached plain chat, which replied
+// "Skipped today's lunch reminder (2:30 pm). It'll fire again tomorrow as usual" — there was no
+// lunch reminder and nothing ran. The phrase list above can never be complete, so this reads the
+// SHAPE of each sentence instead: a sentence that opens by reporting a finished change to the
+// user's own reminders, lists, events or times ("Skipped …", "I've cancelled …", "Added … to your
+// list", "Set for 6am") is a receipt. Receipts come only from handlers that did the work; plain
+// chat has no executor, so one from chat is false whatever the wording.
+const CHANGE_VERB =
+  '(?:skipped|cancell?ed|deleted|removed|added|created|scheduled|rescheduled|snoozed|updated|moved|marked|saved|stopped|paused|cleared|renamed|booked|sent|set(?=\\s+(?:for|to|it|up)\\b))'
+const RECEIPT_LEAD = new RegExp(
+  '^[\\s\\W_]*(?:(?:done|ok(?:ay)?|got\\s+it|sure|all\\s+set|alright)[\\s,.!:\\u2013-]*)?' +
+    "(?:(?:i(?:'ve|\\s+have)?|gogo(?:\\s+has)?)\\s+(?:just\\s+)?|just\\s+)?" +
+    CHANGE_VERB +
+    '\\b(.{0,90})',
+  'i',
+)
+const USER_ITEM =
+  /\b(?:reminders?|lists?|events?|alarms?|meetings?|tasks?|notes?|calendar|schedule|appointments?|watch(?:es)?|alerts?|drafts?|expenses?|occurrences?)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b(?:today|tomorrow)(?:'s|\u2019s)\b/i
+
+export function claimsCompletedChange(reply: string): boolean {
+  return String(reply || '')
+    .split(/\n+|(?<=[.!?])\s+/)
+    .some((sentence) => {
+      const m = RECEIPT_LEAD.exec(sentence)
+      return !!m && USER_ITEM.test(m[1] || '')
+    })
+}
+
+export const NO_CHANGE_REPLY =
+  "I haven't changed anything. That reply came from a normal chat answer, and chat can't skip, cancel, add or set things. If you want something done, say it directly, for example: skip my water reminder today."
+
 export function claimsUnperformedAction(reply: string): boolean {
   const text = String(reply || '')
   return FAKE_ACTION_CLAIMS.some((re) => re.test(text))
@@ -31,6 +62,7 @@ export function claimsUnperformedAction(reply: string): boolean {
 
 /** Replace a chat reply that claims an action Gogo did not take. */
 export function guardChatActionClaims(reply: string): { text: string; blocked: boolean } {
-  if (!claimsUnperformedAction(reply)) return { text: reply, blocked: false }
-  return { text: NO_ACTION_REPLY, blocked: true }
+  if (claimsUnperformedAction(reply)) return { text: NO_ACTION_REPLY, blocked: true }
+  if (claimsCompletedChange(reply)) return { text: NO_CHANGE_REPLY, blocked: true }
+  return { text: reply, blocked: false }
 }

@@ -226,6 +226,46 @@ const CANCEL_STOPWORDS = [
 // Returns the cleaned match query, or null when nothing meaningful survives stripping.
 // Null is deliberate: an empty query must fall through to the numbered-list fallback
 // rather than match every reminder — an over-eager cancel is worse than a miss.
+// A reminder is named by WHAT it is ("gym"), while "6am tomorrow" says WHEN it fires. When
+// someone says "delete the gym reminder for 6am tomorrow" the when-words must not be required
+// to appear in the name (they never do), so they are split off the query. A clock time is kept
+// as a hint that can pick between reminders that share a name.
+const WHEN_PHRASES: RegExp[] = [
+  /\b(?:at|around|by|for)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi,
+  /\b(?:at|around|by)\s+\d{1,2}(?::\d{2})?\b/gi,
+  /\b(?:this|next)\s+(?:morning|afternoon|evening|week|weekend|month)\b/gi,
+  /\b(?:today|tomorrow|tonight|weekend)\b/gi,
+  /\b(?:on\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/gi,
+]
+
+export function stripWhenWords(text: string): string {
+  let out = text
+  for (const re of WHEN_PHRASES) out = out.replace(re, ' ')
+  return out.replace(/\b(?:at|on|by|around)\b/gi, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/** "…for 6am tomorrow" → 6, "…at 8:30 pm" → 20 (24h clock hour), otherwise null. */
+export function extractWhenHour(text: string): number | null {
+  const m = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+  if (!m) return null
+  let hour = Number(m[1]) % 12
+  if (m[3].toLowerCase() === 'pm') hour += 12
+  return hour
+}
+
+function reminderHour(reminder: any): number | null {
+  return extractWhenHour(String(formatReminderTimeOfDay(reminder.remind_at) || '').toLowerCase())
+}
+
+/** Several reminders share the name: the clock time in the sentence picks the one it points at. */
+export function narrowByWhen(matches: any[], input: string): any[] {
+  if (matches.length < 2) return matches
+  const hour = extractWhenHour(input)
+  if (hour === null) return matches
+  const same = matches.filter((item) => reminderHour(item) === hour)
+  return same.length ? same : matches
+}
+
 export function extractCancelQuery(input: string): string | null {
   let out = input
     .replace(/^(cancel|delete|remove|clear|stop)\s+/i, '')
@@ -233,7 +273,7 @@ export function extractCancelQuery(input: string): string | null {
   for (const w of CANCEL_STOPWORDS) {
     out = out.replace(new RegExp(`\\b${w}\\b`, 'gi'), ' ')
   }
-  out = out.replace(/\s+/g, ' ').trim()
+  out = stripWhenWords(out)
   return out.length ? out : null
 }
 
@@ -391,8 +431,9 @@ export async function cancelReminder(telegramId: number, input: string) {
       // MORE THAN ONE match → do NOT act. Cancel stopping the wrong series (the hourly
       // "Drink water" instead of the daily one) is exactly the bug this guards. Ask with
       // the SAME numbered list skip uses; only a single match is safe to cancel outright.
-      if (matches.length > 1) return reminderDisambiguation('cancel', reminders)
-      reminder = matches[0] || null
+      const narrowed = narrowByWhen(matches, lower)
+      if (narrowed.length > 1) return reminderDisambiguation('cancel', reminders)
+      reminder = narrowed[0] || null
     }
   }
 
@@ -444,7 +485,7 @@ export function extractSkipQuery(input: string): string | null {
   for (const w of CANCEL_STOPWORDS) {
     out = out.replace(new RegExp(`\\b${w}\\b`, 'gi'), ' ')
   }
-  out = out.replace(/\s+/g, ' ').trim()
+  out = stripWhenWords(out)
   return out.length ? out : null
 }
 
@@ -470,8 +511,9 @@ export async function skipReminder(telegramId: number, input: string) {
       // MORE THAN ONE match → ask, don't guess. Skipping the wrong series (the 6pm
       // "Drink water" instead of the 9am one) is the same hazard cancel guards; use
       // the SAME numbered list so skip and cancel disambiguate identically.
-      if (matches.length > 1) return reminderDisambiguation('skip', reminders)
-      reminder = matches[0] || null
+      const narrowed = narrowByWhen(matches, lower)
+      if (narrowed.length > 1) return reminderDisambiguation('skip', reminders)
+      reminder = narrowed[0] || null
     }
   }
 
