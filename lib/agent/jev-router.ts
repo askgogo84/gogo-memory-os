@@ -75,6 +75,10 @@ export async function recordJevRoutingHint(params:{
 
 export function jevClarificationReply(jev:JevShadowResult|null|undefined):string|null{
   if(!jev?.ok||!jev.contextual)return null
+  // The guard exists so Gogo never acts on the wrong object. Reading or searching acts on nothing: listing
+  // every match ("find my Amsterdam flight ticket" with three saved) beats asking which one first.
+  const mode=String(jev.actionMode?.choice||'')
+  if((mode==='read'||mode==='research')&&Number(jev.actionMode?.confidence||0)>=0.6)return null
   const readiness=String(jev.decisionReadiness?.choice||'')
   const readinessConfidence=Number(jev.decisionReadiness?.confidence||0)
   if(readiness!=='clarify'||readinessConfidence<0.9)return null

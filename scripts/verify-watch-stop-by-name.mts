@@ -65,12 +65,26 @@ const none = await wc.tryStopWatcherFromCommand({ actor, text: 'stop watching Pi
 assert.ok(none && none.status === 'paused' && /could not find/i.test(none.text))
 assert.equal(active().length, 3, 'nothing stopped when nothing matched')
 
-// A name that matches two equally is not guessed.
+// 15 Oct: the same full name saved twice (two Sony WH-1000XM5 watches) stops both and says so.
 seed()
 stores.agent_watchers.push({ id: 'w-sony2', telegram_id: '42', type: 'web_search', active: true, created_at: '2026-10-14T13:27:00Z', condition_json: { title: 'Sony WH-1000XM5 price below ₹22,000', query: 'x' } })
 const two = await wc.tryStopWatcherFromCommand({ actor, text: 'stop watching Sony WH-1000XM5' })
-assert.ok(two && two.status === 'paused' && /more than one/i.test(two.text))
+assert.ok(two && two.status === 'completed' && /Stopped 2 watches/.test(two.text), two?.text)
+assert.deepEqual(active(), ['w-iphone', 'w-trip'])
+
+// A one-word name shared by different products is listed by name, and nothing is stopped.
+seed()
+stores.agent_watchers.push({ id: 'w-tv', telegram_id: '42', type: 'web_search', active: true, created_at: '2026-10-14T13:28:00Z', condition_json: { title: 'Sony Bravia 55 price below ₹60,000', query: 'x' } })
+const vague = await wc.tryStopWatcherFromCommand({ actor, text: 'stop watching Sony' })
+assert.ok(vague && vague.status === 'paused' && /More than one watch matches/.test(vague.text) && vague.text.includes('Sony Bravia') && vague.text.includes('Sony WH-1000XM5'), vague?.text)
 assert.equal(active().length, 4, 'ambiguous names stop nothing')
+
+// 15 Oct: "drops below 20000" with no currency sign is a price alert too.
+for (const [text, threshold] of [['Alert me when Sony WH-1000XM5 drops below 20000', '₹20000'], ['Alert me when Sony WH-1000XM5 drops below 20,000', '₹20,000']]) {
+  const p = wc.parsePriceWatchCommand(text)
+  assert.ok(p && p.product === 'Sony WH-1000XM5' && p.threshold === threshold, `${text} -> ${JSON.stringify(p)}`)
+}
+for (const text of ['Alert me when the temperature drops below 200', 'Alert me when it drops below 500', 'tell me when the flight fare drops below 5000']) assert.equal(wc.parsePriceWatchCommand(text), null, text)
 
 // The old rules still hold: bare verb, "that / it / this" refer to the current list and never pick the latest silently; "all" stops all.
 for (const text of ['stop watching', 'stop watching that', 'stop watching it', 'stop monitoring this']) {

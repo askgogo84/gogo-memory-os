@@ -317,7 +317,7 @@ export async function getFriendContacts(telegramId: string): Promise<FriendConta
 // on a missing flag/token OR a failed refresh, returns the not-connected state and
 // writes NOTHING — flipping google_calendar_connected on failure is owned by the
 // briefing job (see stash@{0} / lib/bot/morning-briefing), never the dashboard.
-export type CalendarEvent = { id: string; title: string; time: string | null }
+export type CalendarEvent = { id: string; title: string; time: string | null; startAt?: string | null }
 export type TodayCalendar =
   | { ok: true; connected: false }
   | { ok: true; connected: true; events: CalendarEvent[] }
@@ -371,6 +371,7 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
       id: String(it?.id ?? i),
       title: (typeof it?.summary === 'string' && it.summary.trim()) || 'Untitled',
       time: it?.start?.dateTime ? formatClock(it.start.dateTime, zone) : null,
+      startAt: it?.start?.dateTime || null,
     }))
     return { ok: true, connected: true, events }
   } catch (err) {

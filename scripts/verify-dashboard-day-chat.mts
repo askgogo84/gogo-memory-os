@@ -1,13 +1,15 @@
+import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { detectDashboardDayIntent, formatDashboardDayReply } from '../lib/dashboard/day-chat'
 import { detectReadOnlyScheduleRequest, nextLocalDateKey } from '../lib/agent/read-only-schedule'
 
 let failed = 0
 
-const intentCases: Array<[string, 'summary' | 'next' | null]> = [
+const intentCases: Array<[string, 'summary' | 'next' | 'plan' | null]> = [
   ['What do I have today?', 'summary'],
   ['Brief my day', 'summary'],
-  ['Plan my day', 'summary'],
+  ['Plan my day', 'plan'],
+  ["Today's plan", 'plan'],
   ["What's on today?", 'summary'],
   ["What's next?", 'next'],
   ['Find cheap flights to Mumbai', null],
@@ -104,3 +106,32 @@ if (!failed) console.log('✓ personal day reply is private, concise and dashboa
 
 if (failed) process.exit(1)
 console.log('✅ Dashboard day + read-only schedule routing checks passed')
+// 15 Oct: "Plan my day" gave exactly the "What do I have today?" list. It is now one ordered timeline of
+// meetings and reminders, what is waiting on the person, and the longest free stretch before 10 pm.
+{
+  const now = new Date('2026-10-15T04:30:00Z') // 10:00 IST
+  const plan = formatDashboardDayReply({
+    intent: 'plan', tz: 'Asia/Kolkata', now,
+    remindersOk: true,
+    reminders: [
+      { id: 'r1', message: 'drink water', remind_at: '2026-10-15T08:30:00Z', sent: false } as any, // 2:00 pm
+      { id: 'r0', message: 'already done', remind_at: '2026-10-15T03:00:00Z', sent: false } as any, // 8:30 am, past
+    ],
+    calendarOk: true, calendarConnected: true,
+    calendarEvents: [{ id: 'e1', title: 'Daily Connect-Standup Call', time: '11:30am', startAt: '2026-10-15T06:00:00Z' }],
+    approvalsWaiting: 3,
+  })
+  const lines = plan.split('\n')
+  assert.equal(lines[0], 'Your plan for the rest of today:')
+  assert.ok(lines[1].startsWith('11:30') && lines[1].includes('Daily Connect-Standup Call (meeting)'), plan)
+  assert.ok(lines[2].startsWith('2:00') && lines[2].includes('drink water'), plan)
+  assert.ok(!plan.includes('already done'), 'past reminders are not in the plan')
+  assert.ok(plan.includes('Needs you: 3 decisions waiting'), plan)
+  assert.ok(plan.includes('Longest free stretch: 2:00 PM – 10:00 PM'), plan)
+  const summary = formatDashboardDayReply({ intent: 'summary', tz: 'Asia/Kolkata', now, remindersOk: true, reminders: [], calendarOk: true, calendarConnected: true, calendarEvents: [] })
+  assert.notEqual(summary.split('\n')[0], lines[0], 'plan and summary differ')
+  // At 1 am there is no "free until 10 pm" line.
+  const night = formatDashboardDayReply({ intent: 'plan', tz: 'Asia/Kolkata', now: new Date('2026-10-14T19:30:00Z'), remindersOk: true, reminders: [], calendarOk: true, calendarConnected: true, calendarEvents: [] })
+  assert.ok(!night.includes('Longest free stretch') && night.includes('Nothing scheduled from now on.'), night)
+  console.log('✓ plan my day is an ordered plan')
+}
