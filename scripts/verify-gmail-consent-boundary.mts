@@ -86,7 +86,7 @@ const routeMocks:any={
   '@/lib/agent/actor':{resolveAgentActor:async()=>actor},
   '@/lib/bot/handlers/friend-reminders':{detectFriendReminder:()=>null,isFriendReminderFollowupCandidate:()=>false},
   '@/lib/agent/watch-command':{
-    tryGetWatcherStatusFromCommand:async()=>null,tryUpdateWebWatchFromCommand:async()=>null,tryCreateWebWatchFromCommand:async()=>null,
+    tryGetWatcherStatusFromCommand:async()=>null,tryRunPriceWatchClarification:async()=>null,tryStopWatcherFromCommand:async()=>null,tryUpdateWebWatchFromCommand:async()=>null,tryCreateWebWatchFromCommand:async()=>null,
     tryCreateInboxTriageWatchFromCommand:watches.tryCreateInboxTriageWatchFromCommand,
   },
   '@/lib/dashboard/day-chat':{detectDashboardDayIntent:()=>null},
