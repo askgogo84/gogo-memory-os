@@ -32,6 +32,14 @@ Safety properties confirmed in code: secret-shaped text is withheld or redacted 
 - 28 readings pass the intent part of the promotion rule (promotable intent, 0.9 or more). 14 of those carry readiness=clarify. Overall readiness=clarify on 34 of 53 (64%), including clear requests such as email_read at 1.0 and reminder_read at 0.73. The log does not record readiness confidence, so how many actually blocked (clarify at 0.7 or more) is not known.
 - Accuracy: not measurable from logs. They hold no message text and no ground truth. Token usage and cost: not in logs.
 
+
+## 2b. Database measurements (agent_activity, shadow_brain_observation, 7 days, run by the owner in Supabase)
+- Calls attempted: 279 (about 40 per day, mostly owner test traffic). Failed: 2 (0.7%), both `typesafe_timeout` at the 900 ms ceiling.
+- Latency: p50 303 ms, p95 363 ms.
+- Tokens per call (277 of 279 calls had usage data): average input 1,476.9, average output 299.5. Totals for the week: about 412,000 input and 83,600 output tokens.
+- Estimate (characters divided by 4, not a tokenizer count): the fixed question and criteria text is about 1,050 tokens per plain call and 1,230 per contextual call, so roughly 70 to 83% of input is the same text re-sent every call. The intent question alone is about 550 tokens.
+- Cost in rupees or dollars: not computed. TypeSafe pricing is not known to me.
+
 ## 3. Gaps found
 1. Dashboard and WhatsApp differ. The dashboard chat route passes Jev to `routeFeatureIntent` and `processIncomingMessage` (so the gate applies) but never calls `promotedJevIntent`, `recordJevRoutingHint` or `jevClarificationReply`. Only WhatsApp gets first-refusal promotion and the clarification guard.
 2. Jev runs serially before routing on every non-deterministic turn: about 0.3 s added to every message, including ones a deterministic rule then answers. Could start in parallel with the cheap deterministic checks.
@@ -40,7 +48,8 @@ Safety properties confirmed in code: secret-shaped text is withheld or redacted 
 5. Jev adds a call per turn; it replaces no LLM call today. Cost per LLM call avoided is therefore zero so far. Where typed decisions could replace LLM calls is not measured.
 6. Not verified: what `recentConversation()` can contain. Up to 700 characters of it go to TypeSafe. If assistant replies containing email text are included, then email content reaches Jev, which the docs say does not treat injected text as hostile.
 7. Data handling: user text and recent context are sent to a US-hosted vendor. Needs a decision against DPDP expectations and your privacy policy.
-8. Admin report at /api/admin/shadow-brain needs an admin session; not called here.
+8. About 70 to 83% of every call is the same question text. Asking only the questions a turn needs (referent and attention state only when relevant) would cut input tokens. Whether Jev bills per token or per call is not known.
+9. Admin report at /api/admin/shadow-brain needs an admin session; not called here.
 
 ## 4. Component registry: what exists
 There is no registry. The only UI-selection mechanism is `lib/agent/flight-choices.ts` `flightChoiceFromText`: it matches Gogo's own fixed question sentences exactly and returns the matching option set. WhatsApp turns it into buttons and the dashboard (components/dashboard/gogo-chat.tsx) into chips. That is deterministic, needs no model, and cannot be triggered by user text. Any registry should keep this rule: when the server wrote the question, the server picks the component. Jev is only useful where the component depends on the meaning of what the user typed.
