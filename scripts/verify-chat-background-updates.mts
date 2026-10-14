@@ -7,6 +7,7 @@ import * as chatState from '../lib/dashboard/gogo-chat-state'
 import * as flightChoices from '../lib/agent/flight-choices'
 import * as chatSuggestions from '../lib/dashboard/chat-suggestions'
 import * as approxLocation from '../lib/dashboard/approx-location'
+import * as chatText from '../lib/dashboard/chat-text'
 
 // Execute the shipped component's effects and send callbacks with a controlled
 // clock/network. This reproduces a worker finishing while chat stays open.
@@ -47,6 +48,7 @@ runInNewContext(ts.transpileModule(readFileSync('components/dashboard/gogo-chat.
     if(id.includes('flight-choices'))return flightChoices
     if(id.includes('chat-suggestions'))return chatSuggestions
     if(id.includes('approx-location'))return approxLocation
+    if(id.includes('chat-text'))return chatText
     return {}
   },
 })
@@ -119,6 +121,7 @@ function renderStatus(runs:any[]) {
     if(id.includes('flight-choices'))return flightChoices
     if(id.includes('chat-suggestions'))return chatSuggestions
     if(id.includes('approx-location'))return approxLocation
+    if(id.includes('chat-text'))return chatText
     return {}
   }})
   const labels:string[]=[]

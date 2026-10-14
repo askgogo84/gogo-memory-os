@@ -8,6 +8,7 @@ import { selectActiveRun, summarizeActiveRunState } from '@/lib/dashboard/run-st
 import { CHAT_STATE_LABEL, CHAT_STATE_SHORT, chatGogoState, type ChatGogoState } from '@/lib/dashboard/gogo-chat-state'
 import { flightChoiceFromText } from '@/lib/agent/flight-choices'
 import { CHAT_SUGGESTIONS, greetingFor, type ChatSuggestion } from '@/lib/dashboard/chat-suggestions'
+import { splitChatText } from '@/lib/dashboard/chat-text'
 import { LOCATION_STORAGE_KEY, locationIsStale, locationTag, parseApproxLocation, parseLocationPreference, type LocationPreference } from '@/lib/dashboard/approx-location'
 
 type ChatMessage={
@@ -28,6 +29,13 @@ function linkify(text:string){
   return parts.map((part,index)=>/^https?:\/\//.test(part)
     ? <a key={index} href={part} target="_blank" rel="noreferrer" className="font-medium text-[#4cd0bd] underline underline-offset-2">{part}</a>
     : <span key={index}>{part}</span>)
+}
+
+// Gogo's own replies: real bold where WhatsApp-style *bold* was written, links still clickable.
+function richText(text:string){
+  return splitChatText(text).map((part,index)=>part.bold
+    ? <strong key={index} className="font-semibold">{linkify(part.text)}</strong>
+    : <span key={index}>{linkify(part.text)}</span>)
 }
 
 // Gogo's character sits on a cream disc so every pose reads on the dark page. The pose is the canonical
@@ -51,7 +59,7 @@ function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPic
     <Avatar size={40}/>
     <div className="min-w-0 max-w-[90%] pt-1 text-[16px] leading-[1.65] text-[#f2efea] sm:max-w-[84%] sm:text-[17px]">
       <div className="whitespace-pre-wrap break-words">
-        {linkify(message.content)}
+        {richText(message.content)}
         {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
       </div>
       {chips&&chips.length>0&&onPick&&<div className="mt-4 flex flex-wrap gap-2.5" role="group" aria-label="Quick answers">
@@ -328,8 +336,18 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
       <div className="sticky bottom-0 z-20 shrink-0 border-t border-[#1f1f1f] bg-[#0b0b0b] px-4 pb-4 pt-3 sm:px-6 lg:px-10 lg:pb-5">
         <div className="mx-auto max-w-[980px]">
           {error&&<div className="mb-3 rounded-[12px] border border-red-500/30 bg-red-500/10 px-4 py-3 text-[15px] text-red-300">{error}</div>}
+          {loc.status==='ask'&&visible.length>0&&<div className="mb-3 rounded-[16px] border border-[#2a2a2a] bg-[#151515] p-3.5">
+            <div className="text-[16px] font-bold text-[#f2efea]">Get more useful local help</div>
+            <p className="mt-0.5 text-[14px] leading-[1.45] text-[#c4c4c0]">Weather for where you are. Your approximate area stays in this browser and goes out only with a message.</p>
+            <div className="mt-2.5 flex gap-3">
+              <button type="button" onClick={()=>saveLoc({status:'off'})} className="min-h-11 flex-1 rounded-xl border border-[#2f2f2f] text-[15px] text-[#d8d8d3]">Not now</button>
+              <button type="button" onClick={()=>void enableLocation()} disabled={locBusy} className="min-h-11 flex-1 rounded-xl bg-[#efe6d7] text-[15px] font-bold text-[#0b0b0b] disabled:opacity-60">{locBusy?'Checking…':'Enable location'}</button>
+            </div>
+            {locNote&&<p className="mt-2 text-[14px] text-[#e2b04a]">{locNote}</p>}
+          </div>}
           {(loading||visible.length>0)&&<div className="mb-3 flex gap-2.5 overflow-x-auto pb-1">
             {CHAT_SUGGESTIONS.map(item=><button key={item.id} type="button" onClick={()=>pickSuggestion(item)} className="min-h-11 shrink-0 rounded-full border border-[#2f2f2f] px-5 text-[15px] text-[#d8d8d3] hover:border-[#4cd0bd] hover:text-[#f2efea] lg:text-[16px]">{item.title}</button>)}
+            {loc.status!=='ask'&&<button type="button" onClick={loc.status==='on'?disableLocation:()=>void enableLocation()} disabled={locBusy} className="min-h-11 shrink-0 rounded-full border border-dashed border-[#2f2f2f] px-5 text-[15px] text-[#a8a8a4] hover:text-[#f2efea] disabled:opacity-60 lg:text-[16px]">{loc.status==='on'?`Location on${loc.label?` · ${loc.label}`:''} · turn off`:locBusy?'Checking…':'Use my location'}</button>}
           </div>}
           <form onSubmit={onSubmit} className="flex items-end gap-3 rounded-[28px] border border-[#2f2f2f] bg-[#131313] py-2 pl-5 pr-2 focus-within:border-[#4cd0bd]">
             <textarea ref={inputRef} value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void submit()}}} rows={1} maxLength={2000} placeholder="Message Gogo" className="max-h-32 min-h-12 flex-1 resize-none bg-transparent py-3 text-[17px] leading-6 text-[#f2efea] outline-none placeholder:text-[#a8a8a4] lg:text-[18px]"/>
