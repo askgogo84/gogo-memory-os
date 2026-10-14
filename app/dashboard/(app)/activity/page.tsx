@@ -3,6 +3,7 @@ import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { browserContextForRun, getDashboardActivityRuns, type DashboardActivityRun } from '@/lib/dashboard/agent-activity'
 import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
+import { collapseRepeatedRuns } from '@/lib/dashboard/activity-collapse'
 
 export const dynamic='force-dynamic'
 
@@ -92,12 +93,14 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
   const requested=String(params?.filter||'All')
   const filter=(FILTERS.includes(requested as Filter)?requested:'All') as Filter
   const visible=filter==='All'?runs:runs.filter(r=>r.category===filter)
-  const grouped=new Map<string,DashboardActivityRun[]>()
+  const byDay=new Map<string,DashboardActivityRun[]>()
   for(const run of visible){
     const key=dayKey(run.updatedAt||run.startedAt)
-    const list=grouped.get(key)||[]
-    list.push(run);grouped.set(key,list)
+    const list=byDay.get(key)||[]
+    list.push(run);byDay.set(key,list)
   }
+  // The same background check repeated through the day is one row with a count, not dozens of rows.
+  const grouped=new Map([...byDay.entries()].map(([day,list])=>[day,collapseRepeatedRuns(list)] as const))
 
   return <div className="w-full pb-8">
     <header className="flex flex-col gap-4 border-b border-[#2A2A2A]/70 pb-5 lg:flex-row lg:items-end lg:justify-between">
@@ -143,6 +146,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
                   {(waiting||run.status==='closed')&&<span className={`rounded-full px-2 py-1 text-[12px] font-bold uppercase tracking-[.1em] ${statusTone(run.status)}`}>{statusLabel(run.status)}</span>}
                 </div>
                 <p className={`mt-1 line-clamp-2 text-[16px] leading-5 ${active?'font-semibold text-[#D9A441]':'text-[#9A9A9A]'}`}>{runSubline(run)}</p>
+                {run.repeats>1&&<p className="mt-1 text-[14px] text-[#6A6A6A]">Ran {run.repeats} times{day==='Today'?' today':''}{run.firstAt?` · first at ${fmtTime(run.firstAt)}`:''}</p>}
                 {active&&<div className="mt-2 flex max-w-[320px] items-center gap-2"><div className="flex flex-1 gap-1">{[1,2,3,4,5].map((n)=><span key={n} className={`h-[2px] flex-1 ${n<=Math.max(1,Math.ceil((run.progress||0)/20))?'bg-[#2FB8A6]':'bg-[#2A2A2A]/50'}`}/>)}</div><span className="text-[13px] font-bold uppercase tracking-[.08em] text-[#6A6A6A]">{run.progress||0}%</span></div>}
                 {browser.hasBrowser&&<div className="mt-2 inline-flex items-center gap-2 rounded-[10px] border border-[#2A2A2A] bg-[#111111] px-2.5 py-1.5 text-[14px] text-[#9A9A9A]"><span>▣</span><span>{browser.hostname||'Gogo browser'}</span><span className="font-bold text-[#2FB8A6]">Open task →</span></div>}
               </div>
