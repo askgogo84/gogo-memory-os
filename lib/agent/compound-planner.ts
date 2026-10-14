@@ -112,6 +112,35 @@ function localDateKey(value: Date, timezone: string) {
   return `${out.year}-${out.month}-${out.day}`
 }
 
+const WEEKDAY_INDEX: Record<string, number> = { sunday:0, monday:1, tuesday:2, wednesday:3, thursday:4, friday:5, saturday:6 }
+
+// The day a reminder question is about: today, tomorrow, the day after, or a named weekday
+// ("which reminders are set for friday"). A weekday means its next occurrence, today included;
+// "next friday" skips today. The label names the exact date so the person can see which day was read.
+export function resolveReminderDay(lower: string, timezone: string, now: Date): { date: string; label: string } | null {
+  const todayKey = localDateKey(now, timezone)
+  const shift = (days: number) => {
+    const d = new Date(todayKey + 'T12:00:00Z')
+    d.setUTCDate(d.getUTCDate() + days)
+    return d
+  }
+  const named = (d: Date, word?: string) => ({
+    date: d.toISOString().slice(0, 10),
+    label: word || new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' }).format(d),
+  })
+  if (/\bday\s+after\s+tomorrow\b/.test(lower)) return named(shift(2))
+  if (/\btomorrow\b/.test(lower)) return named(shift(1), 'tomorrow')
+  if (/\b(?:today|tonight)\b/.test(lower)) return named(shift(0), 'today')
+  const weekday = lower.match(/\b(?:(next|this|coming)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/)
+  if (weekday) {
+    const todayIndex = shift(0).getUTCDay()
+    let delta = (WEEKDAY_INDEX[weekday[2]] - todayIndex + 7) % 7
+    if (delta === 0 && weekday[1] === 'next') delta = 7
+    return named(shift(delta))
+  }
+  return null
+}
+
 async function readReminderQuery(actor: AgentActor, text: string) {
   const timezone = await actorTimezone(actor)
   const lower = String(text || '').toLowerCase()
@@ -123,13 +152,9 @@ async function readReminderQuery(actor: AgentActor, text: string) {
     const year = Number(explicit[3] || new Intl.DateTimeFormat('en',{timeZone:timezone,year:'numeric'}).format(new Date()))
     explicitDate = `${year}-${String(months[explicit[2].toLowerCase()]).padStart(2,'0')}-${String(Number(explicit[1])).padStart(2,'0')}`
   }
-  const tomorrow = new Date(localDateKey(new Date(),timezone)+'T12:00:00Z')
-  tomorrow.setUTCDate(tomorrow.getUTCDate()+1)
-  const targetDate = explicitDate || (/\btomorrow\b/i.test(lower)
-    ? tomorrow.toISOString().slice(0,10)
-    : /\btoday\b/i.test(lower)
-      ? localDateKey(new Date(), timezone)
-      : null)
+  const relativeDay = explicitDate ? null : resolveReminderDay(lower, timezone, new Date())
+  const targetDate = explicitDate || relativeDay?.date || null
+  const dayLabel = relativeDay?.label || null
 
   const { data, error } = await supabaseAdmin.from('reminders')
     .select('id,message,remind_at,timezone')
@@ -155,13 +180,13 @@ async function readReminderQuery(actor: AgentActor, text: string) {
   rows=rows.slice(0,20)
   await rememberTypedObjects(actor.legacyTelegramId,'reminders',rows.map((r:any)=>({id:String(r.id),title:r.message}))).catch(()=>{})
 
-  if (!rows.length) return targeted ? `I could not find an active reminder matching “${targeted.query}”.` : targetDate ? 'You have no reminders for that day.' : 'You have no active reminders.'
+  if (!rows.length) return targeted ? `I could not find an active reminder matching “${targeted.query}”.` : targetDate ? (dayLabel && dayLabel !== 'today' && dayLabel !== 'tomorrow' ? `You have no reminders on ${dayLabel}.` : 'You have no reminders for that day.') : 'You have no active reminders.'
 
   const fmt = new Intl.DateTimeFormat('en-IN', {
     timeZone: timezone,
     weekday: 'short', day: 'numeric', month: 'short', year:'numeric', hour: 'numeric', minute: '2-digit', hour12: true,timeZoneName:'short',
   })
-  const heading = /\btomorrow\b/i.test(lower) ? '⏰ *Reminders for tomorrow*' : /\btoday\b/i.test(lower) ? '⏰ *Reminders for today*' : '⏰ *Your reminders*'
+  const heading = dayLabel ? `⏰ *Reminders for ${dayLabel}*` : '⏰ *Your reminders*'
   return `${heading}\n\n${rows.map((row: any, index: number) => `${index + 1}. ${row.message || 'Reminder'} — ${fmt.format(new Date(row.remind_at))}${Date.parse(row.remind_at)<Date.now()?' · overdue':''}`).join('\n')}`
 }
 

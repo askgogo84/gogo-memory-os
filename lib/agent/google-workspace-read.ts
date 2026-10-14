@@ -86,6 +86,18 @@ export function workspaceSearchTerms(input: string, maxTerms = 6) {
   return out
 }
 
+// "show my latest email from Google" names a sender. That is a Gmail from: constraint, not a keyword:
+// a keyword search for "google" would match any mail that mentions Google, and dropping it returns the
+// five newest messages of anyone. Returns the sender and the sentence without the "from X" clause.
+export function extractEmailSender(input: string): { sender: string | null; rest: string } {
+  const raw = String(input || '').replace(/\s+/g, ' ').trim()
+  const m = raw.match(/\b(?:e-?mails?|mails?|messages?|notifications?|alerts?)\s+(?:sent\s+)?(?:from|by)\s+([A-Za-z0-9][A-Za-z0-9 .&'@_-]{0,40}?)(?=\s*(?:[?.!,;]|$|\b(?:about|regarding|with|containing|that|which|and|then|please|today|yesterday|last|this)\b))/i)
+  if (!m) return { sender: null, rest: raw }
+  const sender = m[1].replace(/\s+/g, ' ').trim().replace(/[()"\\]/g, '')
+  if (!sender) return { sender: null, rest: raw }
+  return { sender, rest: raw.replace(m[0], ' ').replace(/\s+/g, ' ').trim() }
+}
+
 async function credentials(actor: AgentActor) {
   const { data, error } = await supabaseAdmin.from('users')
     .select('gmail_connected,gmail_access_token,gmail_refresh_token,gmail_email')
@@ -253,12 +265,13 @@ export async function searchWorkspaceEmails(actor:AgentActor, input:string, opti
   const rooms=[...new Set([...String(input||'').matchAll(/(?:^|[\s(<])(?:https:\/\/)?meet\.google\.com\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?=$|[\s.,;!?)}\]])/gi)].map(match=>match[1].toLowerCase()))]
   if(rooms.length>1)throw new Error('workspace_email_meeting_link_ambiguous')
   const meetingLink=rooms.length?`meet.google.com/${rooms[0]}`:null
-  const terms=meetingLink?[meetingLink]:workspaceSearchTerms(input)
+  const senderPart=extractEmailSender(input)
+  const terms=meetingLink?[meetingLink]:workspaceSearchTerms(senderPart.rest)
   if(options.topic==='meeting'&&!terms.includes('meeting'))terms.unshift('meeting')
   const subjectQuery=exactSubject?`subject:"${exactSubject.replace(/"/g,'')}"`:''
   const q=audit?audit.query:meetingLink
     ? [subjectQuery,`"${meetingLink}"`,'-in:spam','-in:trash'].filter(Boolean).join(' ')
-    : exactSubject?`${subjectQuery} -in:spam -in:trash`:[...terms,'newer_than:2y'].join(' ').trim()
+    : exactSubject?`${subjectQuery} -in:spam -in:trash`:[senderPart.sender?`from:(${senderPart.sender})`:'',...terms,'newer_than:2y'].filter(Boolean).join(' ').trim()
   const maxEmails=audit?.limit||MAX_EMAILS
   const params=new URLSearchParams({maxResults:String(maxEmails)})
   if(q)params.set('q',q)
