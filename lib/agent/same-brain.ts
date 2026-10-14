@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { cleanEmailSnippet, formatEmailDateIST, wantsSingleLatestEmail } from './email-format'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rememberTypedObjects } from './typed-object-context'
 import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
@@ -104,13 +105,20 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
         return 'I found matching email context, but no readable attachment matched the brief request. I did not substitute the email snippet for the document.'
       }
 
-      const lines=result.messages.slice(0,5).map((m:any,index:number)=>`${index+1}. ${m.subject}\nFrom: ${m.from}${m.date?`\nDate: ${m.date}`:''}${m.snippet?`\n${m.snippet}`:''}`)
+      const single=wantsSingleLatestEmail(text)
+      const byNewest=[...result.messages].sort((a:any,b:any)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0))
+      const shown=single?byNewest.slice(0,1):result.messages.slice(0,5)
+      const lines=shown.map((m:any,index:number)=>{
+        const date=formatEmailDateIST(m.date),snippet=cleanEmailSnippet(m.snippet)
+        return `${single?'':`${index+1}. `}${m.subject}\nFrom: ${m.from}${date?`\nReceived: ${date}`:''}${snippet?`\n${snippet}`:''}`
+      })
       await clearFollowupState(actor.legacyTelegramId,'gmail_search_results')
       await saveFollowupState(actor.legacyTelegramId,'gmail_search_results',{messages:result.messages.slice(0,6),created_at:new Date().toISOString()})
-      if(result.messages.length===1){
+      if(result.messages.length===1||single){
         await clearFollowupState(actor.legacyTelegramId,'gmail_selected_message')
-        await saveFollowupState(actor.legacyTelegramId,'gmail_selected_message',{message:result.messages[0],created_at:new Date().toISOString()})
+        await saveFollowupState(actor.legacyTelegramId,'gmail_selected_message',{message:single?shown[0]:result.messages[0],created_at:new Date().toISOString()})
       }
+      if(single)return `Your latest matching email:\n\n${lines[0]}`
       return `I found these in your connected Gmail:\n\n${lines.join('\n\n')}`
     }
     if(isContactRead(text)) {

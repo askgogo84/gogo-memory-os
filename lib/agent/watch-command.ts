@@ -311,7 +311,32 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
       return {row,label,score}
     }).filter((x:any)=>x.score>0).sort((a:any,b:any)=>b.score-a.score)
     const best:any=ranked[0],second:any=ranked[1]
-    if(!best||second?.score===best.score){
+    if(best&&second?.score===best.score){
+      const tied=ranked.filter((x:any)=>x.score===best.score)
+      // Every tied watch names the whole target ("Sony WH-1000XM5" twice): they are the same watch saved more than
+      // once, so stopping all of them is what the person asked. Different watches that only share a word are listed.
+      // A one-word name ("Sony") can mean different products, so that case is listed instead.
+      if(tokens.length>=2&&best.score===tokens.length){
+        const now=new Date().toISOString()
+        const ids=tied.map((x:any)=>String(x.row.id))
+        for(const x of tied){
+          const condition:any=x.row.condition_json||{}
+          const {error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:now,
+            condition_json:condition.contextual===true?{...condition,userStoppedAt:now}:condition})
+            .eq('id',x.row.id).eq('telegram_id',tg).eq('active',true)
+          if(error)throw new Error(`watcher_stop_failed:${error.message}`)
+        }
+        const remaining=await canonicalActiveWatchers(tg)
+        if(remaining.some((row:any)=>ids.includes(String(row.id))))throw new Error('watcher_stop_read_after_write_failed')
+        await dismissIdeasForWatcherIds(tg,ids)
+        return {runId:`watcher-stop-${ids[0]}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
+          text:`Stopped ${ids.length} watches for ${String(best.label)}. ${remaining.length} active monitor${remaining.length===1?'':'s'} left.`,handledBy:'watcher-stop'}
+      }
+      const list=tied.slice(0,6).map((x:any,i:number)=>`${i+1}. ${String(x.label)}`).join('\n')
+      return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+        text:`More than one watch matches:\n${list}\n\nSay stop watching followed by the exact name.`,handledBy:'watcher-stop'}
+    }
+    if(!best){
       return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:best?'I found more than one plausible active watcher. Please be more specific.':'I could not find that active watcher in persistent watcher state.',handledBy:'watcher-stop'}
     }
     const chosen=best.row
@@ -420,7 +445,9 @@ export function declaresStorageNotApplicable(text:string){
 const PRICE_ALERT_LEAD='(?:(?:tell|alert|notify|ping|message|inform)\\s+me|let\\s+me\\s+know|send\\s+me\\s+an?\\s+alert)'
 const PRICE_DROP_VERB='(?:drops?|falls?|goes|go|gets|get|comes|come|dips?|slips?|is|are|becomes?|hits?)'
 const PRICE_BELOW='(?:below|under|less\\s+than|lower\\s+than|cheaper\\s+than|down\\s+to|to)'
-const MONEY='(?:(?:₹|rs\\.?|inr|\\$|€|£)\\s*\\d[\\d,]*(?:\\.\\d+)?(?:\\s*(?:k|lakh|lakhs|rupees))?|\\d[\\d,]*(?:\\.\\d+)?\\s*(?:k|lakh|lakhs|rupees|rs\\.?|inr))'
+// A bare number of three or more digits after "below" is a price too ("drops below 20000"); NOT_A_PRODUCT keeps
+// temperatures, scores and fares out.
+const MONEY='(?:(?:₹|rs\\.?|inr|\\$|€|£)\\s*\\d[\\d,]*(?:\\.\\d+)?(?:\\s*(?:k|lakh|lakhs|rupees))?|\\d[\\d,]*(?:\\.\\d+)?\\s*(?:k|lakh|lakhs|rupees|rs\\.?|inr)|\\d{1,3}(?:,\\d{2,3})+|\\d{3,})'
 const NOT_A_PRODUCT=/\b(?:temperature|temp|weather|rain|humidity|aqi|score|gold|silver|petrol|diesel|stock|share|shares|nifty|sensex|bitcoin|btc|eth|crypto|flight|flights|fare|fares|ticket|tickets|battery|balance|rate|rates)\b/i
 
 export function parseNaturalPriceAlert(raw:string):{product:string;threshold:string}|null{
@@ -437,7 +464,8 @@ export function parseNaturalPriceAlert(raw:string):{product:string;threshold:str
     let product=m[1].replace(/^(?:the|a|an)\\s+/i,'').trim()
     if(!product||product.length<3||NOT_A_PRODUCT.test(product)||/^(?:it|this|that|they)$/i.test(product))continue
     if(m[3])product=`${product} on ${m[3].trim()}`
-    return {product,threshold:m[2].trim()}
+    const threshold=m[2].trim()
+    return {product,threshold:/^[\d,]+$/.test(threshold)?`₹${threshold}`:threshold}
   }
   return null
 }

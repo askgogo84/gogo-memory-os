@@ -1,7 +1,7 @@
 import { getTodayCalendar, getTodayReminders, type ReminderRow } from '@/lib/dashboard/queries'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
-export type DashboardDayIntent = 'summary' | 'next'
+export type DashboardDayIntent = 'summary' | 'next' | 'plan'
 
 export function detectDashboardDayIntent(rawText: string): DashboardDayIntent | null {
   const text = String(rawText || '').trim().toLowerCase().replace(/[’]/g, "'")
@@ -9,8 +9,11 @@ export function detectDashboardDayIntent(rawText: string): DashboardDayIntent | 
 
   if (/\b(what(?:'s| is) next|what do i have next|next thing|what should i do next)\b/.test(text)) return 'next'
 
+  // "Plan my day" asks for an ordered plan, not the same list "what do I have today" gets.
+  if (/\b(plan my day|plan (?:out )?today|today's plan|todays plan|plan for today|organi[sz]e my day)\b/.test(text)) return 'plan'
+
   if (
-    /\b(what do i have today|what(?:'s| is) on today|what do i need to do today|what am i doing today|show me my day|brief my day|plan my day|my day today|today's plan|todays plan)\b/.test(text)
+    /\b(what do i have today|what(?:'s| is) on today|what do i need to do today|what am i doing today|show me my day|brief my day|my day today)\b/.test(text)
   ) return 'summary'
 
   return null
@@ -45,7 +48,9 @@ export function formatDashboardDayReply(params: {
   reminders: ReminderRow[]
   calendarOk: boolean
   calendarConnected: boolean
-  calendarEvents: Array<{ id: string; title: string; time: string | null }>
+  calendarEvents: Array<{ id: string; title: string; time: string | null; startAt?: string | null }>
+  /** Pending approvals waiting on the person; null when unknown. */
+  approvalsWaiting?: number | null
   now?: Date
 }) {
   const now = params.now || new Date()
@@ -64,6 +69,8 @@ export function formatDashboardDayReply(params: {
     if (!params.remindersOk || !params.calendarOk) return `I couldn't read your full day right now. Try again in a moment.`
     return `Nothing else is waiting today. Your day is clear.`
   }
+
+  if (params.intent === 'plan') return formatDayPlan(params, now, upcoming)
 
   const lines: string[] = [`Here’s your day:`]
 
@@ -100,6 +107,69 @@ export function formatDashboardDayReply(params: {
   return lines.join('\n')
 }
 
+
+type PlanItem = { at: number; label: string; kind: 'meeting' | 'reminder' }
+const MEETING_MINUTES = 30
+const DAY_END_HOUR = 22
+
+/** Minutes past midnight of a moment in the person's zone. */
+function minutesIn(ms: number, tz: string) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(ms))
+    const h = Number(parts.find(p => p.type === 'hour')?.value || 0) % 24, m = Number(parts.find(p => p.type === 'minute')?.value || 0)
+    return h * 60 + m
+  } catch { const d = new Date(ms); return d.getHours() * 60 + d.getMinutes() }
+}
+
+/**
+ * One ordered plan for the rest of today: meetings and reminders on a single timeline, what is waiting on the
+ * person, and the longest open stretch before 10 pm. Only facts from their own data; no invented advice.
+ */
+function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], now: Date, upcoming: ReminderRow[]) {
+  const nowMs = now.getTime()
+  const items: PlanItem[] = []
+  const allDay: string[] = []
+  if (params.calendarOk && params.calendarConnected) {
+    for (const e of params.calendarEvents) {
+      const at = e.startAt ? new Date(e.startAt).getTime() : NaN
+      if (!Number.isFinite(at)) { if (!e.time) allDay.push(e.title); continue }
+      if (at + MEETING_MINUTES * 60_000 > nowMs) items.push({ at, label: e.title, kind: 'meeting' })
+    }
+  }
+  for (const r of upcoming) items.push({ at: new Date(r.remind_at).getTime(), label: cleanLabel(r.message), kind: 'reminder' })
+  items.sort((a, b) => a.at - b.at)
+
+  const lines: string[] = [`Your plan for the rest of today:`]
+  if (allDay.length) lines.push(`All day — ${allDay.join(', ')}`)
+  if (!items.length) lines.push(`Nothing scheduled from now on.`)
+  for (const item of items.slice(0, 8)) {
+    lines.push(`${clock(new Date(item.at).toISOString(), params.tz)} — ${item.label}${item.kind === 'meeting' ? ' (meeting)' : ''}`)
+  }
+  if (items.length > 8) lines.push(`+${items.length - 8} more`)
+
+  if (typeof params.approvalsWaiting === 'number' && params.approvalsWaiting > 0) {
+    lines.push('', `Needs you: ${params.approvalsWaiting} decision${params.approvalsWaiting === 1 ? '' : 's'} waiting. Open Needs you to clear them.`)
+  }
+
+  // Longest open stretch between now and 10 pm, counting a meeting as 30 minutes and a reminder as a moment.
+  const nowMinutes = minutesIn(nowMs, params.tz)
+  const endOfDay = nowMs + (DAY_END_HOUR * 60 - nowMinutes) * 60_000
+  // Only during waking hours: at 1 am "free until 10 pm" is not a useful fact.
+  if (endOfDay > nowMs && nowMinutes >= 6 * 60) {
+    let cursor = nowMs, best = { from: 0, to: 0 }
+    for (const item of items.filter(i => i.at < endOfDay)) {
+      if (item.at - cursor > best.to - best.from) best = { from: cursor, to: item.at }
+      cursor = Math.max(cursor, item.at + (item.kind === 'meeting' ? MEETING_MINUTES * 60_000 : 0))
+    }
+    if (endOfDay - cursor > best.to - best.from) best = { from: cursor, to: endOfDay }
+    if (best.to - best.from >= 60 * 60_000) {
+      lines.push('', `Longest free stretch: ${clock(new Date(best.from).toISOString(), params.tz)} – ${clock(new Date(best.to).toISOString(), params.tz)}.`)
+    }
+  }
+  if (!params.remindersOk || !params.calendarOk) lines.push('', `Part of your day could not be loaded, so this plan may be missing items.`)
+  return lines.join('\n')
+}
+
 export async function getDashboardDayReply(telegramId: string, intent: DashboardDayIntent) {
   const tgNum = parseInt(telegramId, 10)
   let tz = 'Asia/Kolkata'
@@ -108,9 +178,13 @@ export async function getDashboardDayReply(telegramId: string, intent: Dashboard
     if (data?.timezone) tz = String(data.timezone)
   }
 
-  const [reminders, calendar] = await Promise.all([
+  const [reminders, calendar, approvals] = await Promise.all([
     getTodayReminders(telegramId),
     getTodayCalendar(telegramId),
+    intent === 'plan'
+      ? Promise.resolve(supabaseAdmin.from('agent_approvals').select('id', { count: 'exact', head: true }).eq('telegram_id', telegramId).eq('status', 'pending'))
+          .then((r: any) => (r?.error ? null : (r?.count ?? null))).catch(() => null)
+      : Promise.resolve(null),
   ])
 
   return formatDashboardDayReply({
@@ -121,5 +195,6 @@ export async function getDashboardDayReply(telegramId: string, intent: Dashboard
     calendarOk: calendar.ok,
     calendarConnected: calendar.ok ? calendar.connected : false,
     calendarEvents: calendar.ok && calendar.connected ? calendar.events : [],
+    approvalsWaiting: approvals,
   })
 }
