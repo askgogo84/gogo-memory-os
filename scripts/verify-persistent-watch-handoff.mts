@@ -177,6 +177,9 @@ const commandMocks:any={
   './watchers':freshWorker(), '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/services/cost-guard':{getCostBudget:async()=>budget}, './google-workspace-read':{listRecentWorkspaceInbox:async(actor:any)=>{assert.equal(actor.legacyTelegramId,101);if(!inboxReadingEnabled)throw new Error('workspace_email_reading_disabled');return {messages:structuredClone(inboxMessages)}}},
     './watch-cost-policy':cadence,
+    // The dashboard now runs the price-watch clarifier too; with no pending question it must find none.
+    '@/lib/bot/handlers/followup-state':{getLatestFollowupState:async()=>null,isStrictlyFreshFollowupState:()=>false,clearFollowupState:async()=>{},saveFollowupState:async()=>{}},
+    './price-threshold':priceThreshold,
 }
 vm.runInNewContext(commandsOutput,{exports:commandExports,module:{exports:commandExports},require:(name:string)=>commandMocks[name]||{},Date,URL,console,Buffer})
 const parsed=commandExports.parseWebWatchCommand('Keep searching for Christopher Ward C63 Sealander in India and alert me when you find a new listing')

@@ -178,6 +178,9 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
 function stopWatcherIntent(text:string) {
   const raw=clean(text,400).toLowerCase()
   if(/^(?:stop|cancel|remove|disable)\s+.+?\s+(?:watcher|watch|monitor)\b/.test(raw))return 'named'
+  // "stop watching Sony WH-1000XM5": the thing named after the verb is the watch to stop. Only a bare verb or
+  // "that / it / this / all" falls through to the latest/all rules below.
+  if(/^(?:stop|cancel|remove|disable)\s+(?:monitoring|watching|tracking)\s+(?!(?:that|it|this|all|everything|them|these|those)\b)\S/.test(raw))return 'named'
   if(/^(?:stop|cancel|remove|disable)\s+(?:all\s+)?(?:monitoring|watching|tracking|monitors?|watchers?|watches)\b/.test(raw))return raw.includes('all')?'all':'latest'
   if(/^(?:stop|cancel|remove|disable)\s+(?:monitoring|watching|tracking)\s+(?:that|it|this)\b/.test(raw))return 'latest'
   if(/^(?:stop|cancel)\s+(?:that|this)\s+(?:watch|monitor)\b/.test(raw))return 'latest'
@@ -298,7 +301,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
   const intent=stopWatcherIntent(params.text)
   if(!intent)return null
   const tg=String(params.actor.legacyTelegramId)
-  if(intent==='named'){    const target=clean(params.text,400).toLowerCase().replace(/^(?:stop|cancel|remove|disable)\s+/,'').replace(/\s+(?:watcher|watch|monitor).*$/,'').trim()
+  if(intent==='named'){    const target=clean(params.text,400).toLowerCase().replace(/^(?:stop|cancel|remove|disable)\s+/,'').replace(/^(?:monitoring|watching|tracking)\s+/,'').replace(/^(?:the|my)\s+/,'').replace(/\s+(?:watcher|watch|monitor)\b.*$/,'').trim()
     const rows=await canonicalActiveWatchers(tg)
     const tokens=watcherIdentityTokens(target)
     const ranked=rows.map((row:any)=>{

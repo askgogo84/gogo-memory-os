@@ -5,7 +5,7 @@ import {detectFriendReminder, getPendingFriend, isFriendReminderFollowupCandidat
 import {namesRetailerPriceRead} from '@/lib/commerce/comparison-model'
 import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
-import { tryCreateInboxTriageWatchFromCommand, tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand } from '@/lib/agent/watch-command'
+import { tryCreateInboxTriageWatchFromCommand, tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand, tryRunPriceWatchClarification, tryStopWatcherFromCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
@@ -159,6 +159,19 @@ export async function POST(req: NextRequest) {
     if(watcherStatus){
       await saveConversation(user.telegram_id,text,watcherStatus.text)
       return NextResponse.json(watcherStatus)
+    }
+    // Same watch handling as WhatsApp. A price alert asks its one clarifying question (listed price or after
+    // offers) before anything is saved, and "stop watching <name>" stops that watch by name. Both read the
+    // sentence themselves and return nothing for anything else, so other messages continue below.
+    const priceWatch=await tryRunPriceWatchClarification({actor,surface:'web',text})
+    if(priceWatch){
+      await saveConversation(user.telegram_id,text,priceWatch.text)
+      return NextResponse.json(priceWatch)
+    }
+    const watcherStop=await tryStopWatcherFromCommand({actor,text})
+    if(watcherStop){
+      await saveConversation(user.telegram_id,text,watcherStop.text)
+      return NextResponse.json(watcherStop)
     }
     // Inbox monitoring must create a real watcher before the generic planner
     // can turn the same request into an ordinary task with no scheduled checks.
