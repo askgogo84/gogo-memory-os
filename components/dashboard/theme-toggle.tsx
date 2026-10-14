@@ -1,10 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { parseTheme, THEME_STORAGE_KEY, type DashboardTheme } from '@/lib/dashboard/theme'
 
-type Theme = 'light' | 'dark'
-
-function applyTheme(theme: Theme) {
+function applyTheme(theme: DashboardTheme) {
   const root = document.querySelector('.dashboard-root')
   if (!root) return
   root.classList.toggle('theme-dark', theme === 'dark')
@@ -12,41 +11,37 @@ function applyTheme(theme: Theme) {
   root.setAttribute('data-theme', theme)
 }
 
-export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>('light')
+/** Dark / Light switch. Dark is the default; the choice stays in this browser. */
+export function ThemeToggle({ compact = false }: { compact?: boolean }) {
+  const [theme, setTheme] = useState<DashboardTheme>('dark')
 
   useEffect(() => {
-    const saved = window.localStorage.getItem('askgogo-dashboard-theme') as Theme | null
-    const initial: Theme = saved === 'dark' ? 'dark' : 'light'
-    setTheme(initial)
-    applyTheme(initial)
+    let stored: string | null = null
+    try { stored = window.localStorage.getItem(THEME_STORAGE_KEY) } catch {}
+    setTheme(parseTheme(stored))
   }, [])
 
-  function toggle() {
-    const next: Theme = theme === 'light' ? 'dark' : 'light'
+  function choose(next: DashboardTheme) {
     setTheme(next)
-    window.localStorage.setItem('askgogo-dashboard-theme', next)
+    try { window.localStorage.setItem(THEME_STORAGE_KEY, next) } catch {}
     applyTheme(next)
   }
 
-  return (
+  const option = (value: DashboardTheme, label: string) => (
     <button
+      key={value}
       type="button"
-      onClick={toggle}
-      aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-      title={theme === 'light' ? 'Dark mode' : 'Light mode'}
-      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gogo-ink/10 bg-gogo-surface text-gogo-ink-2 shadow-[0_1px_3px_rgba(62,35,18,0.06)] transition-colors hover:bg-gogo-ink/5"
-    >
-      {theme === 'light' ? (
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-          <path d="M21 12.8A8.2 8.2 0 1 1 11.2 3 6.5 6.5 0 0 0 21 12.8Z" />
-        </svg>
-      ) : (
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-          <circle cx="12" cy="12" r="4" />
-          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-        </svg>
-      )}
-    </button>
+      role="radio"
+      aria-checked={theme === value}
+      onClick={() => choose(value)}
+      className={`min-h-10 flex-1 rounded-full px-4 text-[15px] font-semibold transition ${theme === value ? 'bg-[#2fb8a6] text-[#0b0b0b]' : 'text-[#c9c9c4] hover:text-[#f2efea]'}`}
+    >{label}</button>
+  )
+
+  return (
+    <div role="radiogroup" aria-label="Colour theme" className={`flex gap-1 rounded-full border border-[#2a2a2a] bg-[#111111] p-1 ${compact ? 'w-full' : 'w-[220px]'}`}>
+      {option('dark', 'Dark')}
+      {option('light', 'Light')}
+    </div>
   )
 }

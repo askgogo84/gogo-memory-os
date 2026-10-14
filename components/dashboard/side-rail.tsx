@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { ThemeToggle } from './theme-toggle'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
@@ -85,7 +86,8 @@ export function SideRail() {
         })}
       </nav>
 
-      <div className="dashboard-rail-status mt-auto rounded-[14px] p-4">
+      <div className="mt-auto pb-3"><ThemeToggle compact/></div>
+      <div className="dashboard-rail-status rounded-[14px] p-4">
         <div className="flex items-center gap-2 text-[15px] font-semibold text-[#e0e0dc]">
           <span className="h-2 w-2 rounded-full bg-[#2fb8a6]" />
           Safe mode on
