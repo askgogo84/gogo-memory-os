@@ -36,3 +36,14 @@ export const CHAT_STATE_LABEL: Record<ChatGogoState, string> = {
   approval: 'Waiting for you',
   done: 'Done',
 }
+
+/** One or two words for the slim phone header, where the long label would be cut off. */
+export const CHAT_STATE_SHORT: Record<ChatGogoState, string> = {
+  calm: 'Ready',
+  listening: 'Listening',
+  thinking: 'Thinking',
+  acting: 'Working',
+  watching: 'Watching',
+  approval: 'Waiting for you',
+  done: 'Done',
+}

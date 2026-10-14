@@ -14,7 +14,7 @@ const tabs=[
 export function TabBar(){
   const pathname=usePathname()
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto flex max-w-[520px] border-t border-[#1f1f1f] bg-[#0f0f0f]/98 backdrop-blur-xl lg:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto flex max-w-[520px] border-t border-[#1f1f1f] bg-[#0f0f0f]/98 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden">
       {tabs.map(t=>{
         const active=pathname===t.href||pathname.startsWith(t.href+'/')
         return <Link key={t.key} href={t.href} className={`relative flex min-h-16 flex-1 flex-col items-center justify-center gap-1 text-[12px] font-semibold transition ${active?'text-[#f2efea]':'text-[#a8a8a4]'}`}>
