@@ -121,6 +121,23 @@ function minutesIn(ms: number, tz: string) {
   } catch { const d = new Date(ms); return d.getHours() * 60 + d.getMinutes() }
 }
 
+
+/** YYYY-MM-DD of a moment in the person's zone. */
+function dayKeyIn(ms: number, tz: string) {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)) }
+  catch { return new Date(ms).toISOString().slice(0, 10) }
+}
+
+/** Today's instant for a clock time like "11:30am" or "4:00 PM" in the person's zone; NaN when unreadable. */
+export function todayAtClock(clockText: string, nowMs: number, tz: string): number {
+  const m = String(clockText || '').trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/)
+  if (!m) return NaN
+  let h = Number(m[1]) % 12 + (m[3] === 'pm' ? 12 : 0)
+  if (!m[3]) h = Number(m[1])
+  const target = h * 60 + Number(m[2] || 0)
+  return nowMs + (target - minutesIn(nowMs, tz)) * 60_000 - (nowMs % 60_000)
+}
+
 /**
  * One ordered plan for the rest of today: meetings and reminders on a single timeline, what is waiting on the
  * person, and the longest open stretch before 10 pm. Only facts from their own data; no invented advice.
@@ -131,8 +148,12 @@ function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], no
   const allDay: string[] = []
   if (params.calendarOk && params.calendarConnected) {
     for (const e of params.calendarEvents) {
-      const at = e.startAt ? new Date(e.startAt).getTime() : NaN
+      let at = e.startAt ? new Date(e.startAt).getTime() : NaN
+      // No usable start instant but a clock time ("11:30am"): place it on today in the person's zone.
+      // A start that is not today (a recurring event's first date) also falls back to today's clock time.
+      if (e.time && (!Number.isFinite(at) || dayKeyIn(at, params.tz) !== dayKeyIn(nowMs, params.tz))) at = todayAtClock(e.time, nowMs, params.tz)
       if (!Number.isFinite(at)) { if (!e.time) allDay.push(e.title); continue }
+      if (at + MEETING_MINUTES * 60_000 <= nowMs) console.info('DAY_PLAN_PAST_EVENT:', JSON.stringify({ startAt: e.startAt ?? null, time: e.time, now: now.toISOString() }))
       if (at + MEETING_MINUTES * 60_000 > nowMs) items.push({ at, label: e.title, kind: 'meeting' })
     }
   }

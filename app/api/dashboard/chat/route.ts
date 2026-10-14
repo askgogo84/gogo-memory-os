@@ -365,6 +365,7 @@ export async function POST(req: NextRequest) {
       telegramId: Number(user.telegram_id),
       caption: text,
       semantic: webObservation?.jev,
+      surface: 'web',
     })
 
     if (featureReply) {

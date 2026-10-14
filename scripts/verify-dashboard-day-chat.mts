@@ -135,3 +135,15 @@ console.log('✅ Dashboard day + read-only schedule routing checks passed')
   assert.ok(!night.includes('Longest free stretch') && night.includes('Nothing scheduled from now on.'), night)
   console.log('✓ plan my day is an ordered plan')
 }
+
+// 15 Oct live: the 11:30 standup showed in "What do I have today?" but not in "Plan my day". A meeting whose start
+// instant is missing or not today (a recurring event's first date) is placed at today's clock time.
+{
+  const now = new Date('2026-10-14T19:15:00Z') // 00:45 IST, 15 Oct
+  for (const startAt of [null, 'garbage', '2025-03-03T11:30:00+05:30']) {
+    const plan = formatDashboardDayReply({ intent: 'plan', tz: 'Asia/Kolkata', now, remindersOk: true, reminders: [], calendarOk: true, calendarConnected: true,
+      calendarEvents: [{ id: 'e', title: 'Daily Connect-Standup Call', time: '11:30am', startAt }] })
+    assert.ok(plan.includes('11:30 AM — Daily Connect-Standup Call (meeting)'), `${startAt}: ${plan}`)
+  }
+  console.log('✓ plan keeps meetings whose start is missing or not today')
+}
