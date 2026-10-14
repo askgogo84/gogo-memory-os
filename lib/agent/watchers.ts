@@ -24,6 +24,8 @@ import {
   verifyContextualDisruption,
 } from './watcher-quality'
 
+import { assessPriceCheck, appendPriceRun, buildPriceRun, normalizePriceRule, priceAlertText, priceStateFrom, type PriceRule } from './price-threshold'
+
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
 
 export type ContextualWatcherMeta = {
@@ -72,6 +74,8 @@ export type WebSearchWatcherCondition = ContextualWatcherMeta & {
   burstUntil?: string | null
   // Manual find requests surface their first match, even after empty checks.
   notifyOnFirstMatch?: boolean
+  // Numeric price watch: alert only when the listed price is strictly below the threshold.
+  priceRule?: PriceRule
   originalRequest?: string
 }
 
@@ -177,6 +181,7 @@ export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition
   if (!title || !query) return null
   return { title, query, triggerKeywords, delivery, cadenceMinutes, burstUntil,
     notifyOnFirstMatch:input?.notifyOnFirstMatch===true && input?.contextual!==true,
+    priceRule:normalizePriceRule(input?.priceRule)||undefined,
     originalRequest:String(input?.originalRequest||'').trim().slice(0,2000)||undefined,
     ...normalizeContextualMeta(input) }
 }
@@ -1061,7 +1066,8 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       condition_json:{ ...condition, cadenceMinutes },
       last_checked_at:now.toISOString(),
       next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
-      last_state_json:{ ...(watcher.last_state_json || {}), quietChecks, lastEmptyAt:now.toISOString(), costGuard:'ok' },
+      last_state_json:{ ...(watcher.last_state_json || {}), quietChecks, lastEmptyAt:now.toISOString(), costGuard:'ok',
+        ...(condition.priceRule ? { priceRuns: appendPriceRun(watcher.last_state_json?.priceRuns, { at:now.toISOString(), outcome:'no_relevant_result', observed:null, kind:null, reason:'no_results', source:null }) } : {}) },
       updated_at:now.toISOString(),
     }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
       .eq('condition_json', JSON.stringify(watcher.condition_json))
@@ -1112,8 +1118,8 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       triggerKeywords: condition.triggerKeywords,
       // A previously nonmatching page can later contain the requested result.
       // Find watches deduplicate delivered content rather than the URL alone.
-      seenUrls: condition.notifyOnFirstMatch ? [] : armedUrls,
-      seenSignatures: armedSignatures,
+      seenUrls: condition.notifyOnFirstMatch || condition.priceRule ? [] : armedUrls,
+      seenSignatures: condition.priceRule ? [] : armedSignatures,
       seenEventKeys: armedEventKeys,
       occurrence: occurrenceFor(result),
     }),
@@ -1136,12 +1142,21 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     if (contextual && !verifyItem(item).verified) { sawUnverified = true; continue }
     candidate = item; break
   }
+  // Price watch: relevance only says the result is about the product. Whether to alert is decided
+  // by NUMBER (listed price strictly below the threshold) and the explicit new-low/re-arm policy.
+  const priceRule = condition.priceRule
+  const eligibleItems = assessments.filter((item: any) => item.quality.eligible)
+  const priceCheck = priceRule
+    ? assessPriceCheck(priceRule, priceStateFrom(watcher.last_state_json), eligibleItems.map((item: any) => item.result))
+    : null
+  if (priceRule && priceCheck) candidate = priceCheck.pick !== null ? eligibleItems[priceCheck.pick] : null
+  const priceHost = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' } }
   const alertGate = webWatchAlertAllowed({
     now,
     lastAlertAt: watcher.last_state_json?.lastAlertAt || watcher.last_state_json?.lastTriggeredAt || null,
     alertTimes: Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : [],
   })
-  const material = Boolean(retained && candidate) || ((!isBaseline || condition.notifyOnFirstMatch===true) && Boolean(candidate) && alertGate.allowed)
+  const material = Boolean(retained && candidate) || ((!isBaseline || condition.notifyOnFirstMatch===true || Boolean(priceRule)) && Boolean(candidate) && alertGate.allowed)
   const suppressedReason = !isBaseline && !candidate && sawUnverified ? 'unverified_context'
     : !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
   const quietChecks = material || isBaseline ? 0 : currentQuiet + 1
@@ -1176,7 +1191,9 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       const delivery = await deliverWatchAlert({
         watcherId: String(watcher.id), owner: telegramId, key: pendingAlert.key, due: pendingAlert.due,
         condition: watcher.condition_json,
-        message: (condition as any).contextualKind === 'travel' ? travelWatchAlertMessage(condition, candidate.result) : candidate.result.title + '\n\nSearch result for ' + condition.title.replace(/^Watch:\s*/i, '') +
+        message: priceRule && priceCheck?.verdict?.observed != null
+          ? priceAlertText({ title: candidate.result.title, url: candidate.result.url, host: priceHost(candidate.result.url), observed: priceCheck.verdict.observed, rule: priceRule, at: now })
+          : (condition as any).contextualKind === 'travel' ? travelWatchAlertMessage(condition, candidate.result) : candidate.result.title + '\n\nSearch result for ' + condition.title.replace(/^Watch:\s*/i, '') +
           '. Price, stock and offer eligibility have not been verified on the provider page.\n\n' + candidate.result.url +
           '\n\nI’ll keep checking and only alert on a new relevant result.',
       })
@@ -1223,6 +1240,23 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     ? [...alertGate.recentAlertTimes, now.toISOString()]
     : alertGate.recentAlertTimes
 
+  // One ledger line per check (observed price, outcome, reason) so counts agree everywhere.
+  const priorPriceState = priceStateFrom(watcher.last_state_json)
+  const sentNow = Boolean(material && notificationAccepted && candidate)
+  const nextPriceState = !priceCheck?.decision ? priorPriceState
+    : priceCheck.decision.notify ? (sentNow ? priceCheck.decision.next : priorPriceState)
+    : priceCheck.decision.next
+  const priceLedger = priceRule && priceCheck ? {
+    priceArmed: nextPriceState.armed,
+    lastAlertPrice: nextPriceState.lastAlertPrice,
+    lastObservedPrice: priceCheck.verdict?.observed ?? watcher.last_state_json?.lastObservedPrice ?? null,
+    priceRuns: appendPriceRun(watcher.last_state_json?.priceRuns, buildPriceRun({
+      now, eligibleCount: eligibleItems.length, check: priceCheck, sent: sentNow,
+      gateReason: priceCheck.decision?.notify && !sentNow ? (suppressedReason || 'delivery_pending') : null,
+      source: priceHost((candidate?.result || eligibleItems[0]?.result || topResults[0])?.url || ''),
+    })),
+  } : {}
+
   const { error: stateError } = await supabaseAdmin.from('agent_watchers').update({
     cadence_minutes:cadenceMinutes,
     condition_json:{ ...condition, cadenceMinutes },
@@ -1230,6 +1264,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
     last_state_json:{
       ...(watcher.last_state_json || {}),
+      ...priceLedger,
       fingerprint,
       pendingAlert: null,
       lastResult:material && candidate ? {

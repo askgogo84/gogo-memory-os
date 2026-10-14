@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { formatRupees, parseMoneyAmount } from './price-threshold'
 import { latestTypedContext, selectedTypedObject, rememberTypedObjects } from './typed-object-context'
 import { getCostBudget } from '@/lib/services/cost-guard'
 import { buildGmailConnectUrl } from '@/lib/services/google-gmail'
@@ -497,6 +498,16 @@ async function persistPriceClarification(tg:number,p:PendingPriceWatch){
 // mismatch is a FAILED creation, never a formatting problem: we do not announce success.
 async function finalizePriceWatch(params:{actor:AgentActor;surface:AgentSurface},p:PendingPriceWatch){
   const offers:'included'|'excluded'=p.offers==='included'?'included':'excluded'
+  // The rule is numeric and checked by code, so the amount must be a number. Do not start a watch
+  // that could only ever alert on wording.
+  const thresholdAmount=parseMoneyAmount(p.threshold)
+  if(thresholdAmount===null){
+    return {
+      runId:'price-watch-threshold-unreadable',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+      text:`I could not read "${p.threshold}" as an amount, so I have not started the watch. Tell me the price as a number, for example ₹24,000.`,
+      handledBy:'price-watch-clarification',
+    }
+  }
   const storageNA=p.storageNA||!p.storage
   const storageToken=(!storageNA&&p.storage)?` ${p.storage}`:''
   const basisPhrase=offers==='included'?'including bank/card offers':'excluding bank/card offers'
@@ -529,11 +540,24 @@ async function finalizePriceWatch(params:{actor:AgentActor;surface:AgentSurface}
       handledBy:'price-watch-clarification',
     }
   }
+  const priceRule={threshold:thresholdAmount,comparison:'below' as const,offers}
+  const stored=await supabaseAdmin.from('agent_watchers')
+    .update({condition_json:{...(persisted.condition_json as any),priceRule},updated_at:new Date().toISOString()})
+    .eq('id',persisted.id).eq('telegram_id',tg).eq('active',true).select('id').maybeSingle()
+  if(stored.error||!stored.data?.id){
+    await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
+      .eq('id',persisted.id).eq('telegram_id',tg)
+    return {
+      runId:'price-watch-verify-failed',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+      text:'I could not save the price rule for this watch, so I have not started it. Please try again.',
+      handledBy:'price-watch-clarification',
+    }
+  }
   const basisText=persistedOffers==='included'?'including bank/card offers':'excluding bank/card offers'
   const storageText=persistedStorage?persistedStorage:'no storage variant (N/A)'
   return {
     ...created,
-    text:`Persistent watch created: ${p.product}, ${storageText}, India, threshold ${p.threshold}, ${basisText}. ${created.text}`,
+    text:`Persistent watch created: ${p.product}, ${storageText}, India, threshold ${formatRupees(thresholdAmount)}, ${basisText}. I compare the price shown in each search result with that number: strictly below alerts, equal or above stays silent, and I never buy. ${created.text}`,
     handledBy:'price-watch-clarification',
   }
 }
