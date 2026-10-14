@@ -3,6 +3,8 @@ import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import * as runState from '../lib/dashboard/run-state'
+import * as chatState from '../lib/dashboard/gogo-chat-state'
+import * as flightChoices from '../lib/agent/flight-choices'
 
 // Execute the shipped component's effects and send callbacks with a controlled
 // clock/network. This reproduces a worker finishing while chat stays open.
@@ -39,6 +41,8 @@ runInNewContext(ts.transpileModule(readFileSync('components/dashboard/gogo-chat.
     if(id==='react/jsx-runtime')return {jsx:(type:any,props:any)=>({type,props}),jsxs:(type:any,props:any)=>({type,props})}
     if(id==='next/navigation')return {useSearchParams:()=>({get:()=>null})}
     if(id.includes('run-state'))return {selectActiveRun:()=>null,summarizeActiveRunState:()=>({label:'Ready',tone:'idle'})}
+    if(id.includes('gogo-chat-state'))return chatState
+    if(id.includes('flight-choices'))return flightChoices
     return {}
   },
 })
@@ -107,6 +111,8 @@ function renderStatus(runs:any[]) {
     if(id==='react/jsx-runtime')return {jsx:(type:any,props:any)=>({type,props}),jsxs:(type:any,props:any)=>({type,props})}
     if(id==='next/navigation')return {useSearchParams:()=>({get:()=>null})}
     if(id.includes('run-state'))return runState
+    if(id.includes('gogo-chat-state'))return chatState
+    if(id.includes('flight-choices'))return flightChoices
     return {}
   }})
   const labels:string[]=[]

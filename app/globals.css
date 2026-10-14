@@ -267,7 +267,7 @@ body {
 
 .dashboard-root.final-dark .dashboard-brand-wordmark {
   font-family:var(--font-onest), Onest, system-ui, sans-serif;
-  font-size:18px;
+  font-size:22px;
   font-weight:650;
   letter-spacing:-.02em;
 }
