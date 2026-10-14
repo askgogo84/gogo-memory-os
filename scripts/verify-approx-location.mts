@@ -93,6 +93,6 @@ same(seen, [{ lat: 12.97, lon: 77.59 }, null, null])
 
 // 6. The chat page: opt-in card, consent kept in the browser, position sent only when on, easy to turn off
 const ui = fs.readFileSync('components/dashboard/gogo-chat.tsx', 'utf8')
-for (const needle of ['Get more useful local help', 'Not now', 'Enable location', 'Turn off', 'LOCATION_STORAGE_KEY', "loc.status==='on'?{text:next,location:{lat:loc.lat,lon:loc.lon}}:{text:next}", 'navigator.geolocation']) assert.ok(ui.includes(needle), needle)
+for (const needle of ['Get more useful local help', 'Not now', 'Enable location', 'Turn off', 'LOCATION_STORAGE_KEY', "loc.status==='on'?{text:next,location:{lat:loc.lat,lon:loc.lon}}:{text:next}", 'navigator.geolocation', 'enableHighAccuracy:true']) assert.ok(ui.includes(needle), needle) // a coarse network fix once put Rajajinagar about 6 km off
 assert.ok(!/enableLocation\(\)\s*\}\s*,\s*\[\s*\]/.test(ui), 'the page must never ask for permission on its own')
 console.log('verify-approx-location: ok')
