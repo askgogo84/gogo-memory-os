@@ -26,9 +26,29 @@ assert.equal(first.tripType, undefined); assert.equal(first.adults, undefined); 
 assert.deepEqual(t.flightBriefSlots(first), ['trip', 'travellers', 'cabin', 'time'])
 const ask = t.askFlightBrief(first, t.flightBriefSlots(first))
 assert.match(ask, /Bengaluru to Singapore on 27 Oct 2026/)
-assert.match(ask, /1\. Trip: one-way, or round trip\?/)
-assert.match(ask, /2\. Travellers: how many adults/)
-assert.match(ask, /3\. Cabin: economy, premium economy, business or first class\?/)
+assert.match(ask, /\nOne-way or round trip\?\n/)
+assert.doesNotMatch(ask, /Travellers|Cabin/, 'one question at a time so each can be a tap')
+// Each question is recognised for tap buttons; the rest of the flow asks in this order.
+const { flightChoiceFromText, FLIGHT_CHOICES } = await import('../lib/agent/flight-choices.ts')
+const tapTrip = flightChoiceFromText(ask)!
+assert.equal(tapTrip.choice.kind, 'trip')
+assert.deepEqual(tapTrip.choice.options.map(o => o.title), ['One way', 'Round trip'])
+assert.equal(tapTrip.body, 'Bengaluru to Singapore on 27 Oct 2026. One-way or round trip?')
+const oneWay = t.applyFlightBriefReply(first, ['trip'], 'One way', now, tz).brief
+assert.equal(oneWay.tripType, 'one_way')
+const askTravellers = t.askFlightBrief(oneWay, t.flightBriefSlots(oneWay))
+assert.equal(flightChoiceFromText(askTravellers)!.choice.kind, 'travellers')
+const twoAdults = t.applyFlightBriefReply(oneWay, ['travellers'], '2 adults', now, tz).brief
+assert.equal(twoAdults.adults, 2)
+assert.equal(flightChoiceFromText(t.askFlightBrief(twoAdults, t.flightBriefSlots(twoAdults)))!.choice.kind, 'cabin')
+const tapped = t.applyFlightBriefReply(twoAdults, ['cabin'], 'Premium economy', now, tz).brief
+assert.equal(tapped.cabin, 'premium_economy')
+const tappedTime = flightChoiceFromText(t.askFlightBrief(tapped, t.flightBriefSlots(tapped)))!
+assert.equal(tappedTime.choice.kind, 'time'); assert.equal(tappedTime.choice.options.length, 5)
+for (const option of FLIGHT_CHOICES.time.options) assert.equal(t.applyFlightBriefReply(tapped, ['time'], option.title, now, tz).brief.timeOfDay, option.title === 'Any time' ? 'any' : option.title.toLowerCase(), option.title)
+for (const option of FLIGHT_CHOICES.cabin.options) assert.ok(t.applyFlightBriefReply(oneWay, ['cabin'], option.title, now, tz).brief.cabin, option.title)
+// A person's own message that merely contains the question words is not turned into buttons.
+assert.equal(flightChoiceFromText('Do you know if it is a One-way or round trip? what should I pick'), null)
 assert.match(ask, /say go and I'll search 1 adult, economy, one-way/)
 assert.doesNotMatch(ask, /SEARCH:|momondo|typical pricing/i)
 
@@ -51,7 +71,7 @@ assert.equal(step.brief.returnDate, '2026-11-02'); assert.equal(step.brief.retur
 step = t.applyFlightBriefReply(step.brief, ['travellers', 'cabin', 'time'], '2 adults, business', now, tz)
 assert.deepEqual([step.brief.adults, step.brief.cabin], [2, 'business'])
 assert.deepEqual(t.flightBriefSlots(step.brief), ['time'])
-assert.match(t.askFlightBrief(step.brief, ['time']), /morning, afternoon, evening, night or any time/)
+assert.match(t.askFlightBrief(step.brief, ['time']), /Departure time: morning, afternoon, evening, night or any time\?/)
 step = t.applyFlightBriefReply(step.brief, ['time'], 'morning', now, tz)
 assert.equal(step.brief.timeOfDay, 'morning')
 assert.deepEqual(t.flightBriefSlots(step.brief), [])

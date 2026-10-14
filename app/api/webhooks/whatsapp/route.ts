@@ -203,7 +203,8 @@ async function sendWithFirstValueNudge(params: { from: string; telegramId: numbe
 }
 
 async function getTextFromIncomingWhatsApp(formData: FormData) {
-  const bodyRaw = String(formData.get('Body') || '').trim()
+  // A tap on a list menu may arrive with the chosen item in a list field rather than Body.
+  const bodyRaw = String(formData.get('Body') || formData.get('ListTitle') || formData.get('ListId') || '').trim()
   const numMedia = Number(formData.get('NumMedia') || '0')
   if (bodyRaw) return { text: bodyRaw, wasVoice: false, voiceTranscript: null as string | null }
   if (numMedia <= 0) return { text: '', wasVoice: false, voiceTranscript: null as string | null }

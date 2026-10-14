@@ -1,4 +1,5 @@
-import { sendWhatsApp, sendWhatsAppCalendarApprovalButtons, sendWhatsAppTypingIndicator } from '@/lib/whatsapp'
+import { sendWhatsApp, sendWhatsAppCalendarApprovalButtons, sendWhatsAppChoice, sendWhatsAppTypingIndicator } from '@/lib/whatsapp'
+import { flightChoiceFromText } from '@/lib/agent/flight-choices'
 
 // Product invariant: users should never receive the exact raw/generic infrastructure
 // failure copy. Anchor the guard to the entire reply so legitimate explanations,
@@ -52,6 +53,16 @@ export async function sendWhatsAppMessage(phone: string, text: string) {
       approval.account ? `${approval.duration} · Calendar: ${approval.account}` : approval.duration,
     )
     return
+  }
+  // One of Gogo's flight questions: send tap options. If that cannot be sent, the same question goes as text.
+  const flightChoice = flightChoiceFromText(clean)
+  if (flightChoice) {
+    try {
+      await sendWhatsAppChoice(phone, flightChoice.choice.kind, flightChoice.body, flightChoice.choice.options)
+      return
+    } catch (error: any) {
+      console.error('WHATSAPP_CHOICE_FAILED:', { kind: flightChoice.choice.kind, error: error?.message || error })
+    }
   }
   await sendWhatsApp(phone, clean)
 }

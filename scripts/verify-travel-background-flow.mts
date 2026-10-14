@@ -75,7 +75,7 @@ const browser = load('lib/agent/travel-browser-task.ts',{
 })
 let queue:any
 const travel = load('lib/agent/travel-research.ts',{
-  '@/lib/supabase-admin':{supabaseAdmin:db},'./typed-object-context':{rememberTypedObjects:async()=>{}},
+  '@/lib/supabase-admin':{supabaseAdmin:db},'./typed-object-context':{rememberTypedObjects:async()=>{}},'./flight-choices':load('lib/agent/flight-choices.ts',{}),
   '@/lib/web-search':{searchWebResults:async(_query:string,options:any)=>{assert.equal(options.timeoutMs,15000,'fallback is bounded inside the completion reserve');searches++;return [{title:'BLR to BOM fare ₹4,999',snippet:'Generic route page without a departure date',url:'https://example.com/flights'}]}},
   '@/lib/integrations/creditiq-travel':{searchCreditIQLiveFlights:async()=>null},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},'./travel-browser-task':browser,
@@ -121,7 +121,7 @@ for(const input of ['Search flights from BLR to BOM on 2027-02-30','Search fligh
 assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:'Compare flights from BLR to BOM on 1 October 2026'})).text,/past/)
 assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:'Compare flights to Mumbai'})).text,/departure city.*travel date/)
 // Children are understood (fares are per adult), and the one open choice is asked before searching.
-assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:text.replace('one-way ','').replace('1 adult','2 adults and 1 child')})).text,/Trip: one-way, or round trip\?/)
+assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:text.replace('one-way ','').replace('1 adult','2 adults and 1 child')})).text,/One-way or round trip\?/)
 const dashScope=travel.buildTravelResearchContext('On 20 October 2026, compare flights from BLR to Mumbai - research only; do not book or pay',fixedNow)
 const negativeRoute=travel.buildTravelResearchContext('On 20 October 2026, compare flights to Mumbai. Do not book from any site.',fixedNow)
 assert.equal(negativeRoute.origin,undefined,'route markers inside a negated safety clause are not departure cities')
@@ -279,19 +279,21 @@ assert.equal(retained.startDate,'2026-10-20','multiple clarifications retain the
 tables.agent_runs.length=0;tables.conversations.length=0
 const say=async(value:string)=>(await (await postDetails(value)).json())
 let turn=await say('Check Singapore flight from Bangalore on 27th October')
-assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Trip: one-way, or round trip\?/);assert.match(turn.text,/Travellers: how many adults/);assert.match(turn.text,/Cabin: economy, premium economy, business or first class\?/)
+assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/\nOne-way or round trip\?\n/);assert.doesNotMatch(turn.text,/Travellers|Cabin/,'one question at a time, so each can be a tap')
 assert.equal(tables.agent_runs.length,0,'nothing is searched before the open choices are answered')
-turn=await say('Check for round trip')
-assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Return date: which day are you coming back\?/);assert.doesNotMatch(turn.text,/Trip: one-way/)
+turn=await say('Round trip')
+assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Return date: which day are you coming back\?/);assert.doesNotMatch(turn.text,/One-way or round trip/)
 turn=await say('27th October to 2nd October back')
 assert.match(turn.text,/Did you mean 2 Nov 2026\? Reply yes/)
 turn=await say('yes')
-assert.equal(turn.handledBy,'travel-details');assert.doesNotMatch(turn.text,/Return date/);assert.match(turn.text,/Travellers: how many adults/)
+assert.equal(turn.handledBy,'travel-details');assert.doesNotMatch(turn.text,/Return date/);assert.match(turn.text,/How many people are travelling\?/)
 assert.equal(tables.agent_runs.length,0)
-turn=await say('2 adults, business')
-assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Departure time: morning, afternoon, evening, night or any time\?/);assert.doesNotMatch(turn.text,/Travellers:/)
+turn=await say('2 adults')
+assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Which cabin: economy, premium economy, business or first class\?/)
+turn=await say('Business')
+assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Departure time: morning, afternoon, evening, night or any time\?/)
 assert.equal(tables.agent_runs.length,0,'time of day is asked before searching')
-turn=await say('morning')
+turn=await say('Morning')
 assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/2 adults, business, morning departures, round trip/);assert.match(turn.text,/two results/);assert.match(turn.text,/never book, pay/)
 assert.equal(tables.agent_runs.length,2,'one saved search per direction')
 const legInputs=tables.agent_runs.map((row:any)=>row.metadata_json.input_text).sort()

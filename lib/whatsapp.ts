@@ -187,6 +187,38 @@ export async function sendWhatsAppCalendarApprovalButtons(
   return message
 }
 
+// ---- tap choices (quick-reply buttons and a list menu) for the flight questions -----------------------
+// Twilio sends these from a content template. The template is created once through the Content API and
+// reused by name. They are session messages (the person has just written to Gogo), and a tap comes back
+// as ordinary text, so no reply handling is needed beyond what typed answers already get.
+const choiceContentCache = new Map<string, string>()
+
+async function ensureChoiceContent(kind: string, options: { title: string; description?: string }[]): Promise<string> {
+  const friendlyName = `gogo_flight_choice_${kind}_v1`
+  const cached = choiceContentCache.get(friendlyName)
+  if (cached) return cached
+  const existing = (await client.content.v1.contents.list({ pageSize: 200, limit: 400 })).find(item => item.friendlyName === friendlyName)
+  if (existing?.sid) { choiceContentCache.set(friendlyName, existing.sid); return existing.sid }
+  const id = (title: string) => title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+  const types: any = options.some(o => o.description)
+    ? { 'twilio/list-picker': { body: '{{1}}', button: 'Choose time', items: options.map(o => ({ item: o.title, id: id(o.title), description: o.description || '' })) } }
+    : { 'twilio/quick-reply': { body: '{{1}}', actions: options.map(o => ({ title: o.title, id: id(o.title) })) } }
+  const created = await client.content.v1.contents.create({ friendlyName, language: 'en', variables: { '1': 'Question' }, types } as any)
+  choiceContentCache.set(friendlyName, created.sid)
+  return created.sid
+}
+
+export async function sendWhatsAppChoice(toNumber: string, kind: string, body: string, options: { title: string; description?: string }[]) {
+  const contentSid = await ensureChoiceContent(kind, options)
+  const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
+  const to = normalizeWhatsAppAddress(toNumber)
+  const payload: any = { from, to, contentSid, contentVariables: JSON.stringify({ '1': String(body || '').replace(/\s+/g, ' ').trim().slice(0, 900) }) }
+  if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
+  const message = await client.messages.create(payload)
+  console.log('WHATSAPP_CHOICE_SENT:', { sid: message.sid, to, kind, status: message.status })
+  return message
+}
+
 // Dashboard login OTP sent through an approved WhatsApp Authentication template.
 // The OTP is generated and verified by AskGogo; Twilio only delivers it. The
 // content template should use {{1}} for the six-digit code / copy-code button.
