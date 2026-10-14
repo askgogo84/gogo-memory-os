@@ -106,7 +106,7 @@ const worker = load('lib/agent/travel-research-worker.ts',{
   }},
 })
 
-const text='Compare flights from Bengaluru to Mumbai on 20 October 2026 for 1 adult in economy. Show verified non-stop options with INR fares and provider links. Do not book or pay.'
+const text='Compare one-way flights from Bengaluru to Mumbai on 20 October 2026 for 1 adult in economy. Show verified non-stop options with INR fares and provider links. Do not book or pay.'
 const preferences=travel.flightSearchPreferences('Search flights from BLR to BOM on 20 October 2026 for two adults in premium economy, non-stop')
 assert.equal(preferences.cabin,'premium_economy');assert.equal(preferences.adults,2);assert.equal(preferences.nonStop,true)
 const late=new Date('2026-10-07T20:00:00Z')
@@ -120,7 +120,8 @@ for(const input of ['Search flights from BLR to BOM on 2027-02-30','Search fligh
 }
 assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:'Compare flights from BLR to BOM on 1 October 2026'})).text,/past/)
 assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:'Compare flights to Mumbai'})).text,/departure city.*travel date/)
-assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:text.replace('1 adult','2 adults and 1 child')})).text,/child\/infant/)
+// Children are understood (fares are per adult), and the one open choice is asked before searching.
+assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:text.replace('one-way ','').replace('1 adult','2 adults and 1 child')})).text,/Trip: one-way, or round trip\?/)
 const dashScope=travel.buildTravelResearchContext('On 20 October 2026, compare flights from BLR to Mumbai - research only; do not book or pay',fixedNow)
 const negativeRoute=travel.buildTravelResearchContext('On 20 October 2026, compare flights to Mumbai. Do not book from any site.',fixedNow)
 assert.equal(negativeRoute.origin,undefined,'route markers inside a negated safety clause are not departure cities')
@@ -231,7 +232,7 @@ const web=load('app/api/dashboard/chat/route.ts',webMocks)
 const initialDetails=await web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:'Compare flights to Mumbai. Research only; do not book or pay.'})}))
 assert.equal(initialDetails.status,200)
 assert.equal((await initialDetails.json()).handledBy,'travel-details')
-const detailsText='From Bengaluru on 20 October 2026, for 1 adult in economy, non-stop. Research only; do not book or pay.'
+const detailsText='From Bengaluru on 20 October 2026, one-way, for 1 adult in economy, non-stop. Research only; do not book or pay.'
 assert.equal(travel.isTravelResearchDetailsReply('Forget that search.'),false,'prefix matching must not consume an unrelated instruction')
 const resumedDetails=await web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:detailsText})}))
 assert.equal(resumedDetails.status,200,'a flight details reply must not fall through to generic PIM')
@@ -261,7 +262,7 @@ assert.equal(resumedOnWhatsApp.runId,resumedReply.runId,'shared queue uses the s
 assert.equal(tables.agent_runs.length,1,'failed context checks cannot enqueue browser work')
 tables.agent_runs.length=0;tables.conversations.length=0
 const postDetails=(value:string)=>web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:value})}))
-assert.equal((await postDetails('Compare non-stop flights to Mumbai for 2 adults in premium economy. Research only; do not book or pay.')).status,200)
+assert.equal((await postDetails('Compare non-stop one-way flights to Mumbai for 2 adults in premium economy. Research only; do not book or pay.')).status,200)
 const partialDetails=await postDetails('From Bengaluru.')
 assert.equal(partialDetails.status,200)
 assert.match((await partialDetails.json()).text,/travel date together/)
@@ -273,6 +274,31 @@ const retained=tables.agent_runs[0].metadata_json.context
 assert.equal(retained.origin.code,'BLR');assert.equal(retained.destination.code,'BOM')
 assert.equal(retained.adults,2);assert.equal(retained.cabin,'premium_economy');assert.equal(retained.nonStop,true)
 assert.equal(retained.startDate,'2026-10-20','multiple clarifications retain the original constraints')
+
+// The 14 Oct phone conversation, end to end: ask once for what is missing, remember each answer, search per direction.
+tables.agent_runs.length=0;tables.conversations.length=0
+const say=async(value:string)=>(await (await postDetails(value)).json())
+let turn=await say('Check Singapore flight from Bangalore on 27th October')
+assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Trip: one-way, or round trip\?/);assert.match(turn.text,/Travellers: how many adults/);assert.match(turn.text,/Cabin: economy, premium economy, business or first class\?/)
+assert.equal(tables.agent_runs.length,0,'nothing is searched before the open choices are answered')
+turn=await say('Check for round trip')
+assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Return date: which day are you coming back\?/);assert.doesNotMatch(turn.text,/Trip: one-way/)
+turn=await say('27th October to 2nd October back')
+assert.match(turn.text,/Did you mean 2 Nov 2026\? Reply yes/)
+turn=await say('yes')
+assert.equal(turn.handledBy,'travel-details');assert.doesNotMatch(turn.text,/Return date/);assert.match(turn.text,/Travellers: how many adults/)
+assert.equal(tables.agent_runs.length,0)
+turn=await say('2 adults, business')
+assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/2 adults, business, round trip/);assert.match(turn.text,/two results/);assert.match(turn.text,/never book, pay/)
+assert.equal(tables.agent_runs.length,2,'one saved search per direction')
+const legInputs=tables.agent_runs.map((row:any)=>row.metadata_json.input_text).sort()
+assert.deepEqual(legInputs,['Compare flights from BLR to SIN on 2026-10-27 for 2 adults in business. Research only; do not book or pay.','Compare flights from SIN to BLR on 2026-11-02 for 2 adults in business. Research only; do not book or pay.'])
+const outbound=tables.agent_runs.find((row:any)=>row.metadata_json.context.origin.code==='BLR').metadata_json.context
+assert.equal(outbound.destination.code,'SIN');assert.equal(outbound.adults,2);assert.equal(outbound.cabin,'business');assert.equal(outbound.startDate,'2026-10-27')
+// Once searched, a stray "yes" or an unrelated message is not read as an answer.
+assert.equal(await queue.enqueueTravelResearch({actor,surface:'web',text:'yes'}),null)
+assert.equal(tables.agent_runs.length,2)
+tables.agent_runs.length=0;tables.conversations.length=0
 // The mobile/agent API must persist its clarification too: follow-up requests
 // and cross-surface replies share the same owned conversation boundary.
 tables.agent_runs.length=0;tables.conversations.length=0

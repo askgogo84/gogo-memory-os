@@ -355,6 +355,19 @@ async function learnedReturn(actor:AgentActor,text:string,result:any,fallbackHan
   return {...result,handledBy:handler}
 }
 
+// A short reply to a flight question Gogo just asked ("round trip", "2 adults, business", "yes") answers
+// that question. It is not a vague reference to some other item, so it gets first refusal before the
+// semantic ambiguity guard. Only a fresh, owner-bound pending question can claim it.
+export async function tryAnswerOpenFlightQuestion(params:{user:ResolvedUser;text:string}){
+  if(!isTravelResearchDetailsReply(params.text))return null
+  const actor=actorFromResolvedUser(params.user)
+  if(!actor)return null
+  const travel=await tryRunTravelResearch({actor,surface:'whatsapp',text:params.text})
+  if(!travel)return null
+  const hardened=await hardenTravelResearchResult(travel,params.text)
+  return {...hardened,handledBy:String(hardened.handledBy||'travel-research')}
+}
+
 export async function tryRunWhatsAppAgent(params: {
   user: ResolvedUser
   text: string

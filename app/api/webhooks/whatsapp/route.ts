@@ -54,7 +54,7 @@ import {
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
-import { approvalIntent, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
+import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
@@ -1232,6 +1232,19 @@ _"${originalText}"_
         await saveConversation(resolvedUser.telegramId,'user',text)
         await saveConversation(resolvedUser.telegramId,'assistant',continuationAgent.text)
         await sendWhatsAppMessage(from,continuationAgent.text)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
+    // The answer to a flight question Gogo just asked ("round trip", "2 adults, business") is task state,
+    // not a vague reference. It gets first refusal before Jev clarification and legacy routing.
+    if(!preserveFriendFlow&&typeof tryAnswerOpenFlightQuestion==='function'){
+      const flightAnswer=await tryAnswerOpenFlightQuestion({user:resolvedUser,text})
+      if(flightAnswer){
+        await recordShadowRouterOutcome({telegramId:resolvedUser.telegramId,surface:'whatsapp',eventId:inboundMessageSid,actualHandler:flightAnswer.handledBy||'travel-details',actualCapability:'travel',status:(flightAnswer as any).status||null,runId:(flightAnswer as any).runId||null}).catch(()=>{})
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',flightAnswer.text)
+        await sendWhatsAppMessage(from,flightAnswer.text)
         return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
       }
     }

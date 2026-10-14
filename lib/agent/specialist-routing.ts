@@ -1,7 +1,11 @@
 export function shouldPreferSpecialistTravel(text: string) {
   const raw = String(text || '').trim()
   if (!/\b(flight|flights|airfare|fare|fares|hotel|hotels|travel)\b/i.test(raw)) return false
-  if (!/\b(find|search|compare|options|available|availability|current fare|current fares|live sources?|best available|cheapest|price|prices)\b/i.test(raw)) return false
+  const asksToSearch = /\b(find|search|compare|options|available|availability|current fare|current fares|live sources?|best available|cheapest|price|prices)\b/i.test(raw)
+  // "Check Singapore flight from Bangalore on 27th October": flights plus a route is a search request.
+  const namesRoute = /\b(?:flights?|airfare)\b/i.test(raw) && /\b(?:from|to)\s+[a-z]{3,}/i.test(raw)
+    && !/\b(?:status|delayed|delay|on\s+time|cancell?ed|gate|terminal|pnr|boarding|check[- ]?in|baggage)\b/i.test(raw)
+  if (!asksToSearch && !namesRoute) return false
 
   // A pure research request belongs to the specialist travel engine so the real
   // provider/public-web result is the user-facing answer. Explicit cross-feature
