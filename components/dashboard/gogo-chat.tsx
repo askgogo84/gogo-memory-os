@@ -198,18 +198,18 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
     void submit()
   }
 
-  return <div className="grid h-[calc(100dvh-6rem)] min-h-[520px] w-full overflow-hidden border border-[#1f1f1f] bg-[#0b0b0b] lg:h-[calc(100dvh-4.25rem)] lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
+  return <div className="grid h-[calc(100dvh-6rem)] min-h-[520px] w-full overflow-hidden bg-[#0b0b0b] lg:border lg:border-[#1f1f1f] lg:h-[calc(100dvh-4.25rem)] lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
     <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-      <header className="shrink-0 border-b border-[#1f1f1f] px-4 py-4 sm:px-6 lg:px-10 lg:py-5">
-        <div className="flex items-center justify-between gap-4">
+      <header className="shrink-0 border-b border-[#1f1f1f] px-4 py-2.5 sm:px-6 lg:px-10 lg:py-5">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="lg:hidden"><Avatar state={gogoState} size={48} showStatus/></div>
+            <div className="lg:hidden"><Avatar state={gogoState} size={40} showStatus/></div>
             <div className="min-w-0">
-              <h1 className="text-[28px] font-bold leading-tight tracking-[-.02em] text-[#f2efea] lg:text-[34px]">Gogo</h1>
-              <p className="mt-0.5 text-[15px] text-[#b4b4b0] lg:text-[16px]"><span className="lg:hidden">{CHAT_STATE_LABEL[gogoState]} · </span>One conversation, across here and WhatsApp.</p>
+              <h1 className="truncate text-[22px] font-bold leading-tight tracking-[-.02em] text-[#f2efea] lg:text-[34px]">Gogo<span className="ml-2 text-[14px] font-normal tracking-normal text-[#b4b4b0] lg:hidden">{CHAT_STATE_LABEL[gogoState]}</span></h1>
+              <p className="mt-0.5 hidden text-[16px] text-[#b4b4b0] lg:block">One conversation, across here and WhatsApp.</p>
             </div>
           </div>
-          {archived.length>0&&<button type="button" onClick={()=>setHistoryOpen(v=>!v)} className="min-h-11 shrink-0 rounded-full border border-[#2f2f2f] px-5 text-[15px] text-[#d8d8d3] hover:text-[#f2efea] lg:text-[16px]">{historyOpen?'Current':'History'}</button>}
+          {archived.length>0&&<button type="button" onClick={()=>setHistoryOpen(v=>!v)} className="min-h-10 shrink-0 rounded-full border border-[#2f2f2f] px-4 text-[14px] text-[#d8d8d3] hover:text-[#f2efea] lg:min-h-11 lg:px-5 lg:text-[16px]">{historyOpen?'Current':'History'}</button>}
         </div>
       </header>
 
