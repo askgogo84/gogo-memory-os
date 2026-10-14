@@ -302,7 +302,7 @@ async function tryHandleCalendarApproval(telegramId:number,text:string):Promise<
 export async function routeFeatureIntent(
   phone: string,
   text: string,
-  extra?: { telegramId?: number; caption?: string; semantic?: JevShadowResult | null },
+  extra?: { telegramId?: number; caption?: string; semantic?: JevShadowResult | null; surface?: 'web' | 'whatsapp' },
 ): Promise<string | null> {
   const normalized=normalizeUserInputForRouting(text)
   if(normalized.changed) console.info('INPUT_NORMALIZED_FOR_FEATURE_ROUTING:',{reasons:normalized.reasons,originalLength:String(text||'').length,normalizedLength:normalized.text.length})
@@ -337,6 +337,8 @@ export async function routeFeatureIntent(
 
   if (extra?.telegramId && isEventCredentialRetrieval(text)) {
     const ticket = await retrieveEventCredential(extra.telegramId, text)
+    // On the dashboard the ticket is shown there; nothing is pushed to WhatsApp from a dashboard request.
+    if (ticket && extra?.surface === 'web') return `${ticket.caption}\n\nOpen the ticket (link valid for 10 minutes): ${ticket.mediaUrl}`
     if (ticket) {
       await sendWhatsAppMediaMessage(phone, ticket.caption, ticket.mediaUrl).catch((err:any) => console.error('EVENT_TICKET_MEDIA_SEND_FAILED:', err?.message || err))
       return `Sent the provider-issued ticket/QR for *${ticket.title}*. It stays attached to the same Life Event.`
