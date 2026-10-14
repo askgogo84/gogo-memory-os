@@ -29,7 +29,7 @@ function Node({ node, children }: { node: ThreadNode; children?: ReactNode }) {
   return (
     <div className="flex gap-[14px] py-[9px] lg:gap-4">
       <span
-        className={`w-[46px] shrink-0 pt-0.5 text-right text-[11.5px] font-semibold tabular-nums lg:text-[12px] ${
+        className={`w-[46px] shrink-0 pt-0.5 text-right text-[14px] font-semibold tabular-nums lg:text-[15px] ${
           node.past ? 'text-gogo-ink-3' : 'text-gogo-ink-2'
         }`}
       >
@@ -47,7 +47,7 @@ function Node({ node, children }: { node: ThreadNode; children?: ReactNode }) {
       </span>
       <div className="min-w-0 flex-1">
         <p
-          className={`text-[14.5px] leading-[1.35] lg:text-[15px] ${
+          className={`text-[14.5px] leading-[1.35] lg:text-[16px] ${
             node.past
               ? 'font-medium text-gogo-ink-3 line-through decoration-gogo-ink/20'
               : 'font-semibold text-gogo-ink'
@@ -55,7 +55,7 @@ function Node({ node, children }: { node: ThreadNode; children?: ReactNode }) {
         >
           {node.label}
         </p>
-        {node.seriesMeta && <p className="mt-[3px] text-[12.5px] text-gogo-ink-3">{node.seriesMeta}</p>}
+        {node.seriesMeta && <p className="mt-[3px] text-[15px] text-gogo-ink-3">{node.seriesMeta}</p>}
         {children}
       </div>
     </div>
@@ -82,7 +82,7 @@ export function ReminderThread({ rows, tz }: { rows: ReminderRow[]; tz: string }
       {/* The now-marker — one per screen, orange, between past and upcoming. Same flex
           triplet as a node: label, dot column, then a thin faded rule as the content. */}
       <div className="flex items-center gap-[14px] pb-1.5 pt-2.5 lg:gap-4">
-        <span className="w-[46px] shrink-0 text-right text-[11.5px] font-bold tabular-nums text-gogo-orange lg:text-[12px]">
+        <span className="w-[46px] shrink-0 text-right text-[14px] font-bold tabular-nums text-gogo-orange lg:text-[15px]">
           {nowLabel}
         </span>
         <span className="flex w-[9px] shrink-0 justify-center">
@@ -97,7 +97,7 @@ export function ReminderThread({ rows, tz }: { rows: ReminderRow[]; tz: string }
         <div className="mb-1.5 mt-0.5 flex gap-[14px] lg:gap-4">
           <span className="w-[46px] shrink-0" aria-hidden />
           <span className="w-[9px] shrink-0" aria-hidden />
-          <p className="flex-1 font-serif text-[14px] font-semibold leading-[1.4] text-gogo-plum lg:text-[16px]">
+          <p className="flex-1 font-serif text-[16px] font-semibold leading-[1.4] text-gogo-plum lg:text-[16px]">
             {gapLine}
           </p>
         </div>

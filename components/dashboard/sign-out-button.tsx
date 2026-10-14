@@ -33,7 +33,7 @@ export function SignOutButton() {
       type="button"
       onClick={signOut}
       disabled={busy}
-      className="mx-auto mt-3.5 mb-6 block text-[13.5px] font-semibold text-gogo-ink-3 transition-opacity duration-300 ease-calm disabled:opacity-50"
+      className="mx-auto mt-3.5 mb-6 block text-[16px] font-semibold text-gogo-ink-3 transition-opacity duration-300 ease-calm disabled:opacity-50"
     >
       {busy ? 'Signing out…' : 'Sign out'}
     </button>

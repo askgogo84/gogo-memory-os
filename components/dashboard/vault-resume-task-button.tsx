@@ -23,9 +23,9 @@ export function VaultResumeTaskButton({runId,credentialId,label}:{runId:string;c
   }
   return <div>
     <button type="button" onClick={resume} disabled={busy}
-      className="inline-flex h-11 w-full items-center justify-center rounded-[11px] bg-[#2FB8A6] px-4 text-[13px] font-bold text-[#0B0B0B] disabled:opacity-50">
+      className="inline-flex h-11 w-full items-center justify-center rounded-[11px] bg-[#2FB8A6] px-4 text-[16px] font-bold text-[#0B0B0B] disabled:opacity-50">
       {busy?'Resuming…':label||'Retry with saved login'}
     </button>
-    {error&&<p role="alert" className="mt-2 text-[11px] leading-4 text-[#9a8778]">{error}</p>}
+    {error&&<p role="alert" className="mt-2 text-[14px] leading-4 text-[#9a8778]">{error}</p>}
   </div>
 }

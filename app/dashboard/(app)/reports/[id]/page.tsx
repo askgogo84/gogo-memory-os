@@ -17,12 +17,12 @@ export default async function ReportPage({params}:{params:Promise<{id:string}>})
   if(!report)notFound()
   const sections=artifactSections(report.content_json)
   return <div className="mx-auto max-w-3xl pb-10">
-    <Link href="/dashboard/chat" className="text-sm text-[#2FB8A6]">← Gogo</Link>
+    <Link href="/dashboard/chat" className="text-[16px] text-[#2FB8A6]">← Gogo</Link>
     <h1 className="mt-5 font-serif text-3xl text-[#F2EFEA]">{report.title}</h1>
-    <p className="mt-2 text-sm text-[#9A9A9A]">Private report · visible only to your signed-in account</p>
+    <p className="mt-2 text-[16px] text-[#9A9A9A]">Private report · visible only to your signed-in account</p>
     {sections.length?sections.map((section,index)=><section key={index} className="mt-6 rounded-xl border border-[#2A2A2A] p-5">
       <h2 className="text-lg font-semibold text-[#F2EFEA]">{section.title}</h2>
-      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-[#F2EFEA]">{section.text}</p>
+      <p className="mt-3 whitespace-pre-wrap break-words text-[16px] leading-6 text-[#F2EFEA]">{section.text}</p>
     </section>):<p className="mt-6 text-[#9A9A9A]">No completed source results were saved in this report.</p>}
   </div>
 }

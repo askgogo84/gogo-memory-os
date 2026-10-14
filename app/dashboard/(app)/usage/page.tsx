@@ -48,7 +48,7 @@ export default async function UsagePage() {
     <div className="flex flex-col gap-5 lg:max-w-[480px]">
       <header>
         {Title}
-        <p className="mt-1 text-[13px] font-medium text-gogo-ink-3">
+        <p className="mt-1 text-[16px] font-medium text-gogo-ink-3">
           {planLabel} · {priceLine} · resets at midnight
         </p>
       </header>
@@ -59,7 +59,7 @@ export default async function UsagePage() {
         <div className="mt-3.5 font-serif text-[30px] font-semibold tracking-[-0.6px] text-gogo-ink">
           {ai} <span className="font-sans text-[17px] font-medium text-gogo-ink-3">of {aiLimit} today</span>
         </div>
-        <p className="mx-auto mt-1.5 max-w-[250px] text-[13.5px] leading-[1.5] text-gogo-ink-2">{status}</p>
+        <p className="mx-auto mt-1.5 max-w-[250px] text-[16px] leading-[1.5] text-gogo-ink-2">{status}</p>
       </div>
 
       {/* Metered ledgers — calm bars, never red. */}
@@ -70,7 +70,7 @@ export default async function UsagePage() {
       </div>
 
       {/* Reminders are NOT metered — a fair-use ceiling, never a bar approaching a limit. */}
-      <p className="text-center text-[12.5px] leading-[1.5] text-gogo-ink-3">
+      <p className="text-center text-[15px] leading-[1.5] text-gogo-ink-3">
         Reminders aren’t metered — they run under a fair-use daily ceiling
         {limits.remindersFairUse > 0 ? ` of ${limits.remindersFairUse}` : ''}.
       </p>

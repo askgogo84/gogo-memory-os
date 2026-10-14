@@ -20,9 +20,9 @@ export function RestoreBrowserHandoffButton({runId}: {runId: string}) {
   }
   return <div>
     <button type="button" disabled={busy} onClick={restore}
-      className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-[11px] bg-[#2FB8A6] px-4 text-[13px] font-bold text-[#0B0B0B] disabled:opacity-60">
+      className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-[11px] bg-[#2FB8A6] px-4 text-[16px] font-bold text-[#0B0B0B] disabled:opacity-60">
       {busy ? 'Restoring secure browser…' : 'Restore secure browser'}
     </button>
-    {error && <p role="alert" className="mt-2 text-[12px] text-[#D9A441]">{error}</p>}
+    {error && <p role="alert" className="mt-2 text-[15px] text-[#D9A441]">{error}</p>}
   </div>
 }

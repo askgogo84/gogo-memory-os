@@ -102,29 +102,29 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
   return <div className="w-full pb-8">
     <header className="flex flex-col gap-4 border-b border-[#2A2A2A]/70 pb-5 lg:flex-row lg:items-end lg:justify-between">
       <div>
-        <p className="text-[11px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">AskGogo</p>
+        <p className="text-[14px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">AskGogo</p>
         <h1 className="mt-1 text-[36px] font-medium leading-none tracking-[-.035em] text-[#F2EFEA] lg:text-[40px]">Activity</h1>
-        <p className="mt-2 text-[13px] text-[#6A6A6A]">What Gogo has done, newest first.</p>
+        <p className="mt-2 text-[16px] text-[#6A6A6A]">What Gogo has done, newest first.</p>
       </div>
       <div className="flex gap-1.5 overflow-x-auto pb-1">
-        {FILTERS.map(item=><Link key={item} href={item==='All'?'/dashboard/activity':`/dashboard/activity?filter=${encodeURIComponent(item)}`} className={`shrink-0 rounded-full px-3 py-1.5 text-[12px] font-semibold transition ${filter===item?'bg-[#2FB8A6] text-[#111111]':'border border-[#2A2A2A] text-[#F2EFEA] hover:bg-[#161616]'}`}>{item}</Link>)}
+        {FILTERS.map(item=><Link key={item} href={item==='All'?'/dashboard/activity':`/dashboard/activity?filter=${encodeURIComponent(item)}`} className={`shrink-0 rounded-full px-3 py-1.5 text-[15px] font-semibold transition ${filter===item?'bg-[#2FB8A6] text-[#111111]':'border border-[#2A2A2A] text-[#F2EFEA] hover:bg-[#161616]'}`}>{item}</Link>)}
       </div>
     </header>
 
     <div className="mt-5 grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]">
       <main className="min-w-0">
     {visible.length===0?<section className="rounded-[24px] border border-[#2A2A2A] bg-[#111111] p-7">
-      <div className="flex items-center gap-3"><span className="h-3 w-3 rounded-full border border-[#2A2A2A]"/><span className="text-[11px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">Today</span></div>
+      <div className="flex items-center gap-3"><span className="h-3 w-3 rounded-full border border-[#2A2A2A]"/><span className="text-[14px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">Today</span></div>
       <h2 className="mt-7 font-serif text-[28px] font-semibold text-[#F2EFEA]">Nothing here yet.</h2>
-      <p className="mt-3 max-w-xl text-[14px] leading-6 text-[#9A9A9A]">When Gogo does something for you — runs research, opens a site, works through a task, or creates an output — it shows up here.</p>
-      <Link href="/dashboard/chat" className="mt-6 inline-flex h-10 items-center rounded-[10px] bg-[#2FB8A6] px-4 text-[13px] font-bold text-[#F2EFEA]">Ask Gogo</Link>
+      <p className="mt-3 max-w-xl text-[16px] leading-6 text-[#9A9A9A]">When Gogo does something for you — runs research, opens a site, works through a task, or creates an output — it shows up here.</p>
+      <Link href="/dashboard/chat" className="mt-6 inline-flex h-10 items-center rounded-[10px] bg-[#2FB8A6] px-4 text-[16px] font-bold text-[#F2EFEA]">Ask Gogo</Link>
     </section>:
     <div className="mt-5 space-y-7">
       {[...grouped.entries()].map(([day,items])=><section key={day}>
         <div className="flex items-center gap-2.5 pb-2">
-          <span className={`text-[11px] font-bold uppercase tracking-[.12em] ${day==='Today'?'text-[#D9A441]':'text-[#6A6A6A]'}`}>{day}</span>
+          <span className={`text-[14px] font-bold uppercase tracking-[.12em] ${day==='Today'?'text-[#D9A441]':'text-[#6A6A6A]'}`}>{day}</span>
           <span className="h-px flex-1 bg-[#2A2A2A]"/>
-          <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-[#161616] px-1.5 text-[11px] font-bold text-[#2FB8A6]">{items.length}</span>
+          <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-[#161616] px-1.5 text-[14px] font-bold text-[#2FB8A6]">{items.length}</span>
         </div>
         <div className="relative">
           <div className="absolute bottom-4 left-[9px] top-4 w-px bg-[#2A2A2A]"/>
@@ -136,17 +136,17 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
               <div className="flex justify-center pt-2.5">
                 <span className={`relative z-10 block rounded-full border-2 border-[#111111] ${active?'h-[13px] w-[13px] bg-[#2FB8A6] shadow-[0_0_0_4px_rgba(241,130,25,.12)]':'h-[11px] w-[11px] '+dotTone(run.status)}`}/>
               </div>
-              <span className={`mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full text-[15px] ${active||waiting?'bg-[#1A1710]':'bg-[#161616]'} text-[#9A9A9A]`}>{iconFor(run)}</span>
+              <span className={`mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full text-[16px] ${active||waiting?'bg-[#1A1710]':'bg-[#161616]'} text-[#9A9A9A]`}>{iconFor(run)}</span>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="truncate text-[15px] font-semibold text-[#F2EFEA] group-hover:text-[#2FB8A6]">{run.title}</h2>
-                  {(waiting||run.status==='closed')&&<span className={`rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-[.1em] ${statusTone(run.status)}`}>{statusLabel(run.status)}</span>}
+                  <h2 className="truncate text-[16px] font-semibold text-[#F2EFEA] group-hover:text-[#2FB8A6]">{run.title}</h2>
+                  {(waiting||run.status==='closed')&&<span className={`rounded-full px-2 py-1 text-[12px] font-bold uppercase tracking-[.1em] ${statusTone(run.status)}`}>{statusLabel(run.status)}</span>}
                 </div>
-                <p className={`mt-1 line-clamp-2 text-[13px] leading-5 ${active?'font-semibold text-[#D9A441]':'text-[#9A9A9A]'}`}>{runSubline(run)}</p>
-                {active&&<div className="mt-2 flex max-w-[320px] items-center gap-2"><div className="flex flex-1 gap-1">{[1,2,3,4,5].map((n)=><span key={n} className={`h-[2px] flex-1 ${n<=Math.max(1,Math.ceil((run.progress||0)/20))?'bg-[#2FB8A6]':'bg-[#2A2A2A]/50'}`}/>)}</div><span className="text-[10px] font-bold uppercase tracking-[.08em] text-[#6A6A6A]">{run.progress||0}%</span></div>}
-                {browser.hasBrowser&&<div className="mt-2 inline-flex items-center gap-2 rounded-[10px] border border-[#2A2A2A] bg-[#111111] px-2.5 py-1.5 text-[11px] text-[#9A9A9A]"><span>▣</span><span>{browser.hostname||'Gogo browser'}</span><span className="font-bold text-[#2FB8A6]">Open task →</span></div>}
+                <p className={`mt-1 line-clamp-2 text-[16px] leading-5 ${active?'font-semibold text-[#D9A441]':'text-[#9A9A9A]'}`}>{runSubline(run)}</p>
+                {active&&<div className="mt-2 flex max-w-[320px] items-center gap-2"><div className="flex flex-1 gap-1">{[1,2,3,4,5].map((n)=><span key={n} className={`h-[2px] flex-1 ${n<=Math.max(1,Math.ceil((run.progress||0)/20))?'bg-[#2FB8A6]':'bg-[#2A2A2A]/50'}`}/>)}</div><span className="text-[13px] font-bold uppercase tracking-[.08em] text-[#6A6A6A]">{run.progress||0}%</span></div>}
+                {browser.hasBrowser&&<div className="mt-2 inline-flex items-center gap-2 rounded-[10px] border border-[#2A2A2A] bg-[#111111] px-2.5 py-1.5 text-[14px] text-[#9A9A9A]"><span>▣</span><span>{browser.hostname||'Gogo browser'}</span><span className="font-bold text-[#2FB8A6]">Open task →</span></div>}
               </div>
-              <span className="col-start-3 mt-1 text-[11px] text-[#6A6A6A] lg:col-start-4 lg:row-start-1 lg:mt-0">{fmtTime(run.updatedAt||run.startedAt)}</span>
+              <span className="col-start-3 mt-1 text-[14px] text-[#6A6A6A] lg:col-start-4 lg:row-start-1 lg:mt-0">{fmtTime(run.updatedAt||run.startedAt)}</span>
             </Link>
           })}
         </div>
@@ -160,7 +160,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
             <div className="border-b border-[#2A2A2A]/60 px-5 py-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#6A6A6A]">Now</p>
+                  <p className="text-[13px] font-bold uppercase tracking-[.14em] text-[#6A6A6A]">Now</p>
                   <h2 className="mt-1 font-serif text-[23px] font-semibold text-[#F2EFEA]">Gogo at work</h2>
                 </div>
                 <span className="h-2.5 w-2.5 rounded-full bg-[#2FB8A6] shadow-[0_0_0_5px_rgba(241,130,25,.10)]"/>
@@ -169,35 +169,35 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
             {activeRun?
               <Link href={`/dashboard/activity/${encodeURIComponent(activeRun.id)}`} className="block px-5 py-4 transition hover:bg-[#141414]">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="rounded-full bg-[#1A1710] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[.1em] text-[#D9A441]">{statusLabel(activeRun.status)}</span>
-                  <span className="text-[11px] font-semibold text-[#6A6A6A]">{activeRun.progress||0}%</span>
+                  <span className="rounded-full bg-[#1A1710] px-2.5 py-1 text-[12px] font-bold uppercase tracking-[.1em] text-[#D9A441]">{statusLabel(activeRun.status)}</span>
+                  <span className="text-[14px] font-semibold text-[#6A6A6A]">{activeRun.progress||0}%</span>
                 </div>
-                <h3 className="mt-3 text-[15px] font-semibold leading-5 text-[#F2EFEA]">{activeRun.title}</h3>
-                <p className="mt-1.5 line-clamp-3 text-[12.5px] leading-5 text-[#9A9A9A]">{runSubline(activeRun)}</p>
+                <h3 className="mt-3 text-[16px] font-semibold leading-5 text-[#F2EFEA]">{activeRun.title}</h3>
+                <p className="mt-1.5 line-clamp-3 text-[15px] leading-5 text-[#9A9A9A]">{runSubline(activeRun)}</p>
                 <div className="mt-4 flex gap-1">{[1,2,3,4,5].map(n=><span key={n} className={`h-[3px] flex-1 rounded-full ${n<=Math.max(1,Math.ceil((activeRun.progress||0)/20))?'bg-[#2FB8A6]':'bg-[#2A2A2A]'}`}/>)}</div>
-                <div className="mt-3 text-[11px] font-bold text-[#2FB8A6]">Open task →</div>
+                <div className="mt-3 text-[14px] font-bold text-[#2FB8A6]">Open task →</div>
               </Link>
-            :<div className="px-5 py-5 text-[13px] leading-5 text-[#9A9A9A]">Nothing is running right now. Gogo is standing by.</div>}
+            :<div className="px-5 py-5 text-[16px] leading-5 text-[#9A9A9A]">Nothing is running right now. Gogo is standing by.</div>}
           </section>
 
           <section className="rounded-[22px] border border-[#2A2A2A]/80 bg-[#111111] p-5 shadow-[0_14px_38px_rgba(62,35,18,.04)]">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#6A6A6A]">Needs you</p>
+                <p className="text-[13px] font-bold uppercase tracking-[.14em] text-[#6A6A6A]">Needs you</p>
                 <h2 className="mt-1 font-serif text-[21px] font-semibold text-[#F2EFEA]">Approvals and handoffs</h2>
               </div>
-              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#161616] px-2 text-[11px] font-bold text-[#2FB8A6]">{approvals.length+handoffRows.length}</span>
+              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#161616] px-2 text-[14px] font-bold text-[#2FB8A6]">{approvals.length+handoffRows.length}</span>
             </div>
-            {!approvals.length&&!handoffRows.length?<p className="mt-3 text-[12.5px] leading-5 text-[#9A9A9A]">Nothing needs your input right now.</p>:
+            {!approvals.length&&!handoffRows.length?<p className="mt-3 text-[15px] leading-5 text-[#9A9A9A]">Nothing needs your input right now.</p>:
               <div className="mt-3 space-y-2">
                 {approvals.slice(0,3).map((a:any)=><Link key={a.id} href="/dashboard/agent" className="block rounded-[14px] bg-[#1A1710] px-3.5 py-3 transition hover:bg-[#221D13]">
-                  <div className="text-[12.5px] font-semibold text-[#F2EFEA]">{a.title}</div>
-                  <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-[#9A9A9A]">{a.description||'Gogo is waiting for your decision.'}</div>
+                  <div className="text-[15px] font-semibold text-[#F2EFEA]">{a.title}</div>
+                  <div className="mt-1 line-clamp-2 text-[14px] leading-4 text-[#9A9A9A]">{a.description||'Gogo is waiting for your decision.'}</div>
                 </Link>)}
                 {handoffRows.slice(0,3).map(handoff=><Link key={handoff.id} href={`/dashboard/activity/${handoff.id}/browser`} className="block rounded-[14px] bg-[#1A1710] px-3.5 py-3 transition hover:bg-[#221D13]">
-                  <div className="text-[12.5px] font-semibold text-[#F2EFEA]">{handoff.title}</div>
-                  <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-[#9A9A9A]">{handoff.summary}</div>
-                  <div className="mt-2 text-[11px] font-bold text-[#D9A441]">Take control →</div>
+                  <div className="text-[15px] font-semibold text-[#F2EFEA]">{handoff.title}</div>
+                  <div className="mt-1 line-clamp-2 text-[14px] leading-4 text-[#9A9A9A]">{handoff.summary}</div>
+                  <div className="mt-2 text-[14px] font-bold text-[#D9A441]">Take control →</div>
                 </Link>)}
               </div>}
           </section>
@@ -205,12 +205,12 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
           <section className="rounded-[22px] border border-[#2A2A2A]/80 bg-[#111111] p-5 shadow-[0_14px_38px_rgba(62,35,18,.04)]">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#6A6A6A]">Background Gogo</p>
+                <p className="text-[13px] font-bold uppercase tracking-[.14em] text-[#6A6A6A]">Background Gogo</p>
                 <h2 className="mt-1 font-serif text-[21px] font-semibold text-[#F2EFEA]">Watching for you</h2>
               </div>
-              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#161616] px-2 text-[11px] font-bold text-[#2FB8A6]">{watchers.length}</span>
+              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#161616] px-2 text-[14px] font-bold text-[#2FB8A6]">{watchers.length}</span>
             </div>
-            {watchers.length===0?<p className="mt-3 text-[12.5px] leading-5 text-[#9A9A9A]">No active background watches.</p>:
+            {watchers.length===0?<p className="mt-3 text-[15px] leading-5 text-[#9A9A9A]">No active background watches.</p>:
               <div className="mt-3 space-y-2.5">
                 {watchers.slice(0,4).map((w:any)=>{
                   const condition=w.condition_json||{}
@@ -219,8 +219,8 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
                     <div className="flex items-start gap-2.5">
                       <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#7FB069]"/>
                       <div className="min-w-0">
-                        <div className="truncate text-[12.5px] font-semibold text-[#F2EFEA]">{title}</div>
-                        <div className="mt-1 text-[10.5px] text-[#6A6A6A]">Every {w.cadence_minutes||60} min · next {w.next_check_at?fmtTime(w.next_check_at):'—'}</div>
+                        <div className="truncate text-[15px] font-semibold text-[#F2EFEA]">{title}</div>
+                        <div className="mt-1 text-[13px] text-[#6A6A6A]">Every {w.cadence_minutes||60} min · next {w.next_check_at?fmtTime(w.next_check_at):'—'}</div>
                       </div>
                     </div>
                   </div>
@@ -228,7 +228,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
               </div>}
           </section>
 
-          <Link href="/dashboard/chat" className="flex h-12 items-center justify-between rounded-[16px] bg-[#2FB8A6] px-4 text-[13px] font-bold text-[#111111] shadow-[0_14px_30px_rgba(77,42,80,.16)]">
+          <Link href="/dashboard/chat" className="flex h-12 items-center justify-between rounded-[16px] bg-[#2FB8A6] px-4 text-[16px] font-bold text-[#111111] shadow-[0_14px_30px_rgba(77,42,80,.16)]">
             <span>Talk to Gogo</span><span>→</span>
           </Link>
         </div>

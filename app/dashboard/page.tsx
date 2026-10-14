@@ -171,7 +171,7 @@ export default function Dashboard() {
       <main className="min-h-screen bg-[#fbf6ef] text-[#3e2312] grid place-items-center px-6">
         <div className="text-center">
           <div className="mx-auto mb-4 h-11 w-11 rounded-2xl bg-[#f18219] text-white grid place-items-center text-xl">✦</div>
-          <p className="text-sm text-[#9a8778]">Opening your AskGogo dashboard…</p>
+          <p className="text-[16px] text-[#9a8778]">Opening your AskGogo dashboard…</p>
         </div>
       </main>
     )
@@ -197,12 +197,12 @@ export default function Dashboard() {
           </div>
 
           <div className="mt-12 max-w-xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#714c77]">Your personal control center</p>
+            <p className="text-[14px] font-semibold uppercase tracking-[0.18em] text-[#714c77]">Your personal control center</p>
             <h1 className="mt-4 font-serif text-4xl md:text-6xl leading-[0.98] tracking-[-0.045em]">Everything AskGogo remembers, organised for you.</h1>
             <p className="mt-6 max-w-lg text-base md:text-lg leading-7 text-[#6b4a34]">Reminders, memory, calendar, lists and your saved files — one secure dashboard, still powered by WhatsApp.</p>
           </div>
 
-          <div className="mt-10 grid gap-3 text-sm text-[#6b4a34] sm:grid-cols-3">
+          <div className="mt-10 grid gap-3 text-[16px] text-[#6b4a34] sm:grid-cols-3">
             <div className="rounded-2xl border border-white/80 bg-white/70 p-4"><strong className="block text-[#3e2312]">Memory</strong>Find saved notes and documents.</div>
             <div className="rounded-2xl border border-white/80 bg-white/70 p-4"><strong className="block text-[#3e2312]">Today</strong>Your reminders and calendar.</div>
             <div className="rounded-2xl border border-white/80 bg-white/70 p-4"><strong className="block text-[#3e2312]">Private</strong>Your session stays on this device.</div>
@@ -210,17 +210,17 @@ export default function Dashboard() {
         </div>
 
         <div className="p-8 md:p-14 flex flex-col justify-center">
-          <p className="text-sm font-semibold text-[#714c77]">Welcome back</p>
+          <p className="text-[16px] font-semibold text-[#714c77]">Welcome back</p>
           <h2 className="mt-2 text-3xl font-semibold tracking-[-0.03em]">Open your calm space</h2>
-          <p className="mt-2 text-sm leading-6 text-[#9a8778]">Use the WhatsApp number you already use with AskGogo. We’ll send a private 6-digit code.</p>
+          <p className="mt-2 text-[16px] leading-6 text-[#9a8778]">Use the WhatsApp number you already use with AskGogo. We’ll send a private 6-digit code.</p>
 
-          {googleMessage && <div className="mt-5 rounded-2xl bg-[#fdf0e2] px-4 py-3 text-sm leading-5 text-[#6b4a34]">{googleMessage}</div>}
-          {phase === 'error' && <div className="mt-5 rounded-2xl bg-[#fff1ee] px-4 py-3 text-sm text-[#8a3d31]">That old WhatsApp link has expired or was already used. Sign in with your number instead.</div>}
+          {googleMessage && <div className="mt-5 rounded-2xl bg-[#fdf0e2] px-4 py-3 text-[16px] leading-5 text-[#6b4a34]">{googleMessage}</div>}
+          {phase === 'error' && <div className="mt-5 rounded-2xl bg-[#fff1ee] px-4 py-3 text-[16px] text-[#8a3d31]">That old WhatsApp link has expired or was already used. Sign in with your number instead.</div>}
 
           <div className="mt-7 rounded-[24px] border border-[#eee5dc] bg-[#fffdfa] p-5">
             {otpStep === 'phone' ? (
               <div>
-                <label className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a8778]">WhatsApp number</label>
+                <label className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#9a8778]">WhatsApp number</label>
                 <input
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
@@ -237,10 +237,10 @@ export default function Dashboard() {
               <form onSubmit={verifyOtp}>
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a8778]">6-digit code</p>
-                    <p className="mt-1 text-xs text-[#b09c8b]">Sent to {phone}</p>
+                    <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#9a8778]">6-digit code</p>
+                    <p className="mt-1 text-[14px] text-[#b09c8b]">Sent to {phone}</p>
                   </div>
-                  <button type="button" onClick={() => { setOtpStep('phone'); setOtpError(''); setOtpInfo('') }} className="text-xs font-semibold text-[#714c77]">Change number</button>
+                  <button type="button" onClick={() => { setOtpStep('phone'); setOtpError(''); setOtpInfo('') }} className="text-[14px] font-semibold text-[#714c77]">Change number</button>
                 </div>
                 <input
                   value={otp}
@@ -254,34 +254,34 @@ export default function Dashboard() {
                 <button type="submit" disabled={otpBusy || otp.length !== 6} className="mt-3 w-full rounded-2xl bg-[#3e2312] px-5 py-3.5 font-semibold text-white disabled:opacity-40">
                   {otpBusy ? 'Checking…' : 'Verify & open dashboard'}
                 </button>
-                <button type="button" disabled={resendIn > 0 || otpBusy} onClick={resendOtp} className="mt-3 w-full text-xs font-semibold text-[#714c77] disabled:text-[#b8a797]">
+                <button type="button" disabled={resendIn > 0 || otpBusy} onClick={resendOtp} className="mt-3 w-full text-[14px] font-semibold text-[#714c77] disabled:text-[#b8a797]">
                   {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
                 </button>
               </form>
             )}
 
-            {otpInfo && <p className="mt-3 text-xs leading-5 text-[#6f7f67]">{otpInfo}</p>}
-            {otpError && <p className="mt-3 text-xs leading-5 text-[#a14a3b]">{otpError}</p>}
+            {otpInfo && <p className="mt-3 text-[14px] leading-5 text-[#6f7f67]">{otpInfo}</p>}
+            {otpError && <p className="mt-3 text-[14px] leading-5 text-[#a14a3b]">{otpError}</p>}
           </div>
 
-          <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-[0.14em] text-[#b8a797]"><span className="h-px flex-1 bg-[#eee5dc]" />or<span className="h-px flex-1 bg-[#eee5dc]" /></div>
+          <div className="my-6 flex items-center gap-3 text-[14px] uppercase tracking-[0.14em] text-[#b8a797]"><span className="h-px flex-1 bg-[#eee5dc]" />or<span className="h-px flex-1 bg-[#eee5dc]" /></div>
 
           <a href="/api/dashboard/google/start?mode=login" className="flex h-13 items-center justify-center gap-3 rounded-2xl border border-[#ded7cf] bg-white px-5 font-semibold text-[#3e2312] shadow-sm transition hover:bg-[#fffaf5]">
-            <span className="grid h-7 w-7 place-items-center rounded-full border border-[#e6e0da] text-sm font-bold">G</span>
+            <span className="grid h-7 w-7 place-items-center rounded-full border border-[#e6e0da] text-[16px] font-bold">G</span>
             Continue with Google
           </a>
 
           <details className="mt-5 rounded-2xl border border-[#eee5dc] bg-[#fffdfa] p-4">
-            <summary className="cursor-pointer text-sm font-semibold">Other sign-in options</summary>
-            <a href={WA_DASHBOARD_LINK} className="mt-4 flex h-11 items-center justify-center rounded-xl border border-[#dfe8df] bg-white px-4 text-sm font-semibold text-[#207c45]">Ask AskGogo for the old login link</a>
+            <summary className="cursor-pointer text-[16px] font-semibold">Other sign-in options</summary>
+            <a href={WA_DASHBOARD_LINK} className="mt-4 flex h-11 items-center justify-center rounded-xl border border-[#dfe8df] bg-white px-4 text-[16px] font-semibold text-[#207c45]">Ask AskGogo for the old login link</a>
             <form onSubmit={submitCode} className="mt-4">
               <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="ABCD-EFGH" aria-label="Dashboard code" className="w-full rounded-xl border border-[#ddd6cc] bg-white px-4 py-3 text-center text-base tracking-[0.16em] outline-none focus:border-[#f18219]" />
-              <button type="submit" disabled={submitting || !code.trim()} className="mt-3 w-full rounded-xl bg-[#6b4a34] px-4 py-3 text-sm font-semibold text-white disabled:opacity-40">{submitting ? 'Checking…' : 'Use existing dashboard code'}</button>
-              {codeError && <p className="mt-3 text-xs leading-5 text-[#a14a3b]">That code did not work. Request a fresh WhatsApp code above.</p>}
+              <button type="submit" disabled={submitting || !code.trim()} className="mt-3 w-full rounded-xl bg-[#6b4a34] px-4 py-3 text-[16px] font-semibold text-white disabled:opacity-40">{submitting ? 'Checking…' : 'Use existing dashboard code'}</button>
+              {codeError && <p className="mt-3 text-[14px] leading-5 text-[#a14a3b]">That code did not work. Request a fresh WhatsApp code above.</p>}
             </form>
           </details>
 
-          <p className="mt-6 text-xs leading-5 text-[#b8a797]">After you sign in, this browser stays signed in for up to 30 days unless you sign out.</p>
+          <p className="mt-6 text-[14px] leading-5 text-[#b8a797]">After you sign in, this browser stays signed in for up to 30 days unless you sign out.</p>
         </div>
       </section>
     </main>

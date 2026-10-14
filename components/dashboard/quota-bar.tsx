@@ -28,7 +28,7 @@ export function QuotaBar({
   const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0
   return (
     <div className="rounded-[16px] border border-gogo-ink/10 bg-gogo-surface px-[14px] py-[13px]">
-      <div className="flex items-center justify-between text-[13.5px] font-semibold text-gogo-ink">
+      <div className="flex items-center justify-between text-[16px] font-semibold text-gogo-ink">
         <span>{label}</span>
         {/* Used in ink-3, the limit a tier fainter (ink-4) — the design's hierarchy
             where "3" carries the weight and "/ 10" recedes. */}

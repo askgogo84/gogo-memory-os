@@ -24,9 +24,9 @@ export default async function ListsPage() {
         <div className="pointer-events-none absolute -right-16 -top-28 h-72 w-72 rounded-full bg-gogo-orange/10 blur-3xl" />
         <div className="relative flex flex-wrap items-end justify-between gap-5">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gogo-plum">Your collections</p>
+            <p className="text-[13px] font-bold uppercase tracking-[0.16em] text-gogo-plum">Your collections</p>
             <h1 className="mt-1 font-serif text-[36px] font-semibold tracking-[-0.8px] text-gogo-ink">Lists</h1>
-            <p className="mt-2 text-[13px] text-gogo-ink-3">
+            <p className="mt-2 text-[16px] text-gogo-ink-3">
               {hasLists ? `${lists.length} lists · ${openItems} open items · ${completed} completed` : 'Keep the small things out of your head.'}
             </p>
           </div>
@@ -38,9 +38,9 @@ export default async function ListsPage() {
 
         {hasLists && (
           <div className="relative mt-5 grid max-w-[620px] grid-cols-3 gap-2">
-            <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[10px] uppercase tracking-[0.12em] text-gogo-ink-3">Lists</div><div className="mt-1 font-serif text-[23px] font-semibold text-gogo-ink">{lists.length}</div></div>
-            <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[10px] uppercase tracking-[0.12em] text-gogo-ink-3">Open</div><div className="mt-1 font-serif text-[23px] font-semibold text-gogo-orange">{openItems}</div></div>
-            <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[10px] uppercase tracking-[0.12em] text-gogo-ink-3">Done</div><div className="mt-1 font-serif text-[23px] font-semibold text-emerald-700">{completed}</div></div>
+            <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[13px] uppercase tracking-[0.12em] text-gogo-ink-3">Lists</div><div className="mt-1 font-serif text-[23px] font-semibold text-gogo-ink">{lists.length}</div></div>
+            <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[13px] uppercase tracking-[0.12em] text-gogo-ink-3">Open</div><div className="mt-1 font-serif text-[23px] font-semibold text-gogo-orange">{openItems}</div></div>
+            <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[13px] uppercase tracking-[0.12em] text-gogo-ink-3">Done</div><div className="mt-1 font-serif text-[23px] font-semibold text-emerald-700">{completed}</div></div>
           </div>
         )}
       </header>

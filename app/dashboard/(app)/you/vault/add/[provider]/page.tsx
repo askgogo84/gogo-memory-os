@@ -24,12 +24,12 @@ export default async function AddVaultCredentialPage({params,searchParams}:{para
   if(!provider)notFound()
 
   return <div className="mx-auto w-full max-w-[620px] pb-12">
-    <Link href="/dashboard/you/vault" className="text-[11px] font-bold uppercase tracking-[.12em] text-gogo-ink-3">← Vault</Link>
+    <Link href="/dashboard/you/vault" className="text-[14px] font-bold uppercase tracking-[.12em] text-gogo-ink-3">← Vault</Link>
     <div className="mt-5 rounded-[26px] border border-gogo-ink/10 bg-gogo-surface/82 p-6 shadow-[0_18px_50px_rgba(62,35,18,.05)] sm:p-8">
       <div className="grid h-12 w-12 place-items-center rounded-[15px] bg-gogo-ink text-xl text-white">🔒</div>
-      <p className="mt-5 text-[10px] font-bold uppercase tracking-[.14em] text-gogo-ink-3">Secure login</p>
+      <p className="mt-5 text-[13px] font-bold uppercase tracking-[.14em] text-gogo-ink-3">Secure login</p>
       <h1 className="mt-1 font-serif text-[31px] font-semibold tracking-[-.02em] text-gogo-ink">{provider.label}</h1>
-      <p className="mt-2 text-[13px] leading-5 text-gogo-ink-3">Save this once. Gogo can reuse the login only on {provider.domains.join(', ')} and will prefer an existing authenticated browser session whenever possible.</p>
+      <p className="mt-2 text-[16px] leading-5 text-gogo-ink-3">Save this once. Gogo can reuse the login only on {provider.domains.join(', ')} and will prefer an existing authenticated browser session whenever possible.</p>
       <div className="mt-7">
         <VaultCredentialForm
           provider={provider.key}

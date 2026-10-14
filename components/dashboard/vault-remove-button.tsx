@@ -15,5 +15,5 @@ export function VaultRemoveButton({id}:{id:string}){
       router.refresh()
     }finally{setBusy(false)}
   }
-  return <button type="button" onClick={remove} disabled={busy} className="rounded-full border border-gogo-ink/12 px-3 py-1.5 text-[11px] font-semibold text-gogo-ink-2 disabled:opacity-50">{busy?'Removing…':'Remove'}</button>
+  return <button type="button" onClick={remove} disabled={busy} className="rounded-full border border-gogo-ink/12 px-3 py-1.5 text-[14px] font-semibold text-gogo-ink-2 disabled:opacity-50">{busy?'Removing…':'Remove'}</button>
 }

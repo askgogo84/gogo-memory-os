@@ -62,8 +62,8 @@ function RestRow({
         <Icon className="block h-[22px] w-[22px]" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="text-[14px] font-semibold text-gogo-ink">{title}</div>
-        <div className="truncate text-[12.5px] text-gogo-ink-3">{fact}</div>
+        <div className="text-[16px] font-semibold text-gogo-ink">{title}</div>
+        <div className="truncate text-[15px] text-gogo-ink-3">{fact}</div>
       </div>
       {chip && <WhatsAppChip message={chip.message} label={chip.label} />}
     </div>
@@ -170,7 +170,7 @@ export default async function TodayPage() {
       <div className="flex flex-col gap-5 lg:hidden">
         <header>
           <h1 className="font-serif text-[26px] font-semibold leading-[1.15] tracking-[-0.4px] text-gogo-ink">{greeting}</h1>
-          <p className="mt-[5px] text-[13px] font-medium text-gogo-ink-3">
+          <p className="mt-[5px] text-[16px] font-medium text-gogo-ink-3">
             {dayLine(now, tz)}
             {hasThread ? ` · ${leftLabel}` : ''}
           </p>
@@ -182,8 +182,8 @@ export default async function TodayPage() {
                   key={p.label}
                   className={
                     p.active
-                      ? 'inline-flex items-center gap-1.5 rounded-full bg-gogo-orange px-[13px] py-[7px] text-[12.5px] font-semibold text-white'
-                      : 'inline-flex items-center gap-1.5 rounded-full border border-gogo-ink/10 bg-gogo-surface px-[13px] py-[7px] text-[12.5px] font-semibold text-gogo-ink-2'
+                      ? 'inline-flex items-center gap-1.5 rounded-full bg-gogo-orange px-[13px] py-[7px] text-[15px] font-semibold text-white'
+                      : 'inline-flex items-center gap-1.5 rounded-full border border-gogo-ink/10 bg-gogo-surface px-[13px] py-[7px] text-[15px] font-semibold text-gogo-ink-2'
                   }
                 >
                   {p.label}
@@ -206,7 +206,7 @@ export default async function TodayPage() {
         )}
         {restRows.length > 0 && (
           <section className="flex flex-col gap-[9px]">
-            <h2 className="text-[12px] font-semibold uppercase tracking-[0.1em] text-gogo-ink-3">The rest of today</h2>
+            <h2 className="text-[15px] font-semibold uppercase tracking-[0.1em] text-gogo-ink-3">The rest of today</h2>
             {restRows.map((row) => (
               <RestRow key={row.key} title={row.title} fact={row.fact} tone={row.tone} Icon={row.Icon} chip={row.chip} />
             ))}

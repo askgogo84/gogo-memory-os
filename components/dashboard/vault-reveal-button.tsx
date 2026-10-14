@@ -29,10 +29,10 @@ export function VaultRevealButton({id}:{id:string}){
   }
   return <div className="mt-3">
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" onClick={reveal} disabled={busy} className="rounded-full border border-gogo-ink/12 px-3 py-1.5 text-[11px] font-semibold text-gogo-ink-2 disabled:opacity-50">{busy?'Opening…':secret?'Hide password':'Show password'}</button>
-      {secret?<button type="button" onClick={copy} className="rounded-full bg-gogo-ink px-3 py-1.5 text-[11px] font-semibold text-white">Copy</button>:null}
+      <button type="button" onClick={reveal} disabled={busy} className="rounded-full border border-gogo-ink/12 px-3 py-1.5 text-[14px] font-semibold text-gogo-ink-2 disabled:opacity-50">{busy?'Opening…':secret?'Hide password':'Show password'}</button>
+      {secret?<button type="button" onClick={copy} className="rounded-full bg-gogo-ink px-3 py-1.5 text-[14px] font-semibold text-white">Copy</button>:null}
     </div>
-    {secret?<p className="mt-2 select-all break-all rounded-[10px] bg-gogo-cream/70 px-3 py-2 font-mono text-[13px] text-gogo-ink">{secret}</p>:null}
-    {note?<p className="mt-1 text-[11px] text-gogo-ink-3">{note}</p>:null}
+    {secret?<p className="mt-2 select-all break-all rounded-[10px] bg-gogo-cream/70 px-3 py-2 font-mono text-[16px] text-gogo-ink">{secret}</p>:null}
+    {note?<p className="mt-1 text-[14px] text-gogo-ink-3">{note}</p>:null}
   </div>
 }

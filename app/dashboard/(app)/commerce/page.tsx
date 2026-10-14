@@ -114,10 +114,10 @@ export default function CommerceConnectionsPage() {
     finally { setBusy(null) }
   }
   return <div className="mx-auto max-w-3xl space-y-6 pb-10">
-    <Link href="/dashboard/connections" className="text-sm text-[#2fb8a6]">← Connections</Link>
+    <Link href="/dashboard/connections" className="text-[16px] text-[#2fb8a6]">← Connections</Link>
     <h1 className="text-3xl font-medium">Food and groceries</h1>
-    <p className="text-sm text-[#a0a0a0]">Connect your own account to use saved delivery addresses. Sign-in happens with the provider; do not send your OTP in chat.</p>
-    <p role="status" className="text-sm text-[#a0a0a0]">{message}</p>
+    <p className="text-[16px] text-[#a0a0a0]">Connect your own account to use saved delivery addresses. Sign-in happens with the provider; do not send your OTP in chat.</p>
+    <p role="status" className="text-[16px] text-[#a0a0a0]">{message}</p>
     {task && <section className="rounded-xl border border-[#292929] p-5 space-y-2">
       <h2 className="text-lg font-medium">Your {task.subject} comparison</h2>
       <p className="whitespace-pre-line">{task.summary}</p>
@@ -128,7 +128,7 @@ export default function CommerceConnectionsPage() {
     </section>}
     <section className="rounded-xl border border-[#2fb8a6] p-5 space-y-3">
       <h2 className="text-lg font-medium">Use browser</h2>
-      <p className="text-sm text-[#a0a0a0]">Gogo can check the provider website without an account connection below. If sign-in is needed, open the browser task, take control, then resume it. Website access may still be blocked.</p>
+      <p className="text-[16px] text-[#a0a0a0]">Gogo can check the provider website without an account connection below. If sign-in is needed, open the browser task, take control, then resume it. Website access may still be blocked.</p>
       {task&&!task.state.startsWith('cart_')?<>
         <div className="flex flex-wrap gap-3">{(task.service==='food'?[['swiggy','Swiggy Food']]:[['instamart','Instamart'],['zepto','Zepto'],['blinkit','Blinkit']]).map(([key,label])=>{
           const read=task.browserReads?.find(item=>item.provider===key)
@@ -139,34 +139,34 @@ export default function CommerceConnectionsPage() {
           <a href={read.taskUrl} className="text-[#2fb8a6]">Open browser task / take control</a>
           <button disabled={busy!==null||['running','queued'].includes(read.status)} onClick={()=>useBrowser(read.provider,'take_control')} className="block mt-2 rounded-lg border border-[#292929] px-4 py-2 disabled:opacity-50">Choose account or delivery location in browser</button>
         </div>)}
-        <p className="text-sm text-[#a0a0a0]">These checks do not change your cart or place orders. A completed browser read does not mean delivered totals or a phone cart are verified.</p>
-      </>:<p className="text-sm">Start a food or grocery comparison in <Link href="/dashboard/chat" className="text-[#2fb8a6]">Gogo</Link>, then open its comparison link to choose a browser check.</p>}
+        <p className="text-[16px] text-[#a0a0a0]">These checks do not change your cart or place orders. A completed browser read does not mean delivered totals or a phone cart are verified.</p>
+      </>:<p className="text-[16px]">Start a food or grocery comparison in <Link href="/dashboard/chat" className="text-[#2fb8a6]">Gogo</Link>, then open its comparison link to choose a browser check.</p>}
     </section>
     {providers.map(provider => <section key={provider.provider} className="rounded-xl border border-[#292929] p-5 space-y-3">
       <h2 className="text-lg font-medium">{provider.label}{provider.provider === 'swiggy' ? ' Food and Instamart' : ''}</h2>
-      <p className="text-sm text-[#a0a0a0]">{provider.state === 'provider_approval_required' ? 'Account connection is not enabled in AskGogo. Provider approval and setup are still required; this is not an application-status check.' : provider.state === 'authorized' ? 'Account authorized. Address, price and cart verification are still required for each task.' : 'Not connected, or sign-in has expired.'}</p>
-      {provider.state !== 'provider_approval_required' && <button disabled={busy !== null || (!!runId && (!task || task.state==='browser_research' || task.state.startsWith('cart_') || provider.provider !== 'swiggy'))} onClick={() => act(provider.provider, provider.state === 'authorized' && !runId ? 'disconnect' : 'connect')} className="rounded-lg bg-[#2fb8a6] px-4 py-2 text-sm text-black disabled:opacity-50">
+      <p className="text-[16px] text-[#a0a0a0]">{provider.state === 'provider_approval_required' ? 'Account connection is not enabled in AskGogo. Provider approval and setup are still required; this is not an application-status check.' : provider.state === 'authorized' ? 'Account authorized. Address, price and cart verification are still required for each task.' : 'Not connected, or sign-in has expired.'}</p>
+      {provider.state !== 'provider_approval_required' && <button disabled={busy !== null || (!!runId && (!task || task.state==='browser_research' || task.state.startsWith('cart_') || provider.provider !== 'swiggy'))} onClick={() => act(provider.provider, provider.state === 'authorized' && !runId ? 'disconnect' : 'connect')} className="rounded-lg bg-[#2fb8a6] px-4 py-2 text-[16px] text-black disabled:opacity-50">
         {busy === provider.provider ? 'Please wait…' : provider.state === 'authorized' ? (!runId ? 'Disconnect' : 'Use connected ' + provider.label + ' account') : 'Connect ' + provider.label}
       </button>}
-      {runId && provider.provider === 'zepto' && <p className="text-sm text-[#a0a0a0]">{task?.service === 'grocery' ? 'Zepto comparison is waiting for provider access and verified integration.' : 'Zepto groceries cannot be compared with a restaurant meal.'}</p>}
+      {runId && provider.provider === 'zepto' && <p className="text-[16px] text-[#a0a0a0]">{task?.service === 'grocery' ? 'Zepto comparison is waiting for provider access and verified integration.' : 'Zepto groceries cannot be compared with a restaurant meal.'}</p>}
       {task && task.state!=='browser_research' && !task.state.startsWith('cart_') && task.provider === 'swiggy' && provider.provider === 'swiggy' && provider.state === 'authorized' && <button disabled={busy !== null} onClick={() => readAddresses(1)} className="block rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Choose saved delivery address</button>}
     </section>)}
     {task?.addressLabel && task.state!=='browser_research' && !task.state.startsWith('cart_') && task.provider === 'swiggy' && providers.some(provider => provider.provider === 'swiggy' && provider.state === 'authorized') && <section className="space-y-3">
       <button disabled={busy !== null} onClick={() => readCatalogue()} className="rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">{task.service === 'grocery' ? 'Read available grocery products' : 'Read available restaurants'}</button>
-      {task.catalogue?.observedAt && <p className="text-sm text-[#a0a0a0]">Checked: {new Date(task.catalogue.observedAt).toLocaleString()}</p>}
+      {task.catalogue?.observedAt && <p className="text-[16px] text-[#a0a0a0]">Checked: {new Date(task.catalogue.observedAt).toLocaleString()}</p>}
       {task.catalogue?.restaurants?.map(restaurant => <button key={restaurant.id} disabled={busy !== null} onClick={() => readCatalogue(restaurant.id)} className="block w-full rounded-xl border border-[#292929] p-4 text-left disabled:opacity-50">
         <strong>{restaurant.name}</strong>
         <p>{restaurant.distanceKm !== null ? restaurant.distanceKm + ' km away' : 'Distance not provided'} · {restaurant.deliveryMinutes !== null ? 'Estimated ' + restaurant.deliveryMinutes + ' min' : 'Delivery estimate not provided'}</p>
-        <span className="text-sm text-[#2fb8a6]">Read matching menu items</span>
+        <span className="text-[16px] text-[#2fb8a6]">Read matching menu items</span>
       </button>)}
       {task.catalogue?.products?.map(item => <div key={item.id + ':' + item.skuId} className="rounded-xl border border-[#292929] p-4">
         <strong>{item.name} — {item.variant}</strong>
-        <p className="text-sm text-[#a0a0a0]">Available at the last check. Price and delivered total remain unverified. Nothing has been added to your cart.</p>
+        <p className="text-[16px] text-[#a0a0a0]">Available at the last check. Price and delivered total remain unverified. Nothing has been added to your cart.</p>
         {task.state === 'waiting_item_selection' && <button disabled={busy !== null} onClick={() => cart('add', item.id, item.skuId)} className="mt-3 rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Add 1 to Instamart cart — price unverified</button>}
       </div>)}
       {task.catalogue?.items?.map(item => <div key={item.id} className="rounded-xl border border-[#292929] p-4">
         <strong>{item.name}</strong>
-        <p className="text-sm text-[#a0a0a0]">Available at the last check. Price and delivered total not verified.{item.needsCustomization ? ' Options must be confirmed before any cart preparation.' : ''}</p>
+        <p className="text-[16px] text-[#a0a0a0]">Available at the last check. Price and delivered total not verified.{item.needsCustomization ? ' Options must be confirmed before any cart preparation.' : ''}</p>
       </div>)}
     </section>}
     {addresses && <section aria-label="Saved delivery addresses" className="space-y-3">
@@ -178,6 +178,6 @@ export default function CommerceConnectionsPage() {
         {addresses.hasMore && addresses.page < 50 && <button disabled={busy !== null} onClick={() => readAddresses(addresses.page + 1)}>More addresses</button>}
       </div>
     </section>}
-    <p className="text-sm text-[#a0a0a0]">Connecting an account does not place an order. Cart preparation and phone handoff will only be reported as verified after provider readback.</p>
+    <p className="text-[16px] text-[#a0a0a0]">Connecting an account does not place an order. Cart preparation and phone handoff will only be reported as verified after provider readback.</p>
   </div>
 }

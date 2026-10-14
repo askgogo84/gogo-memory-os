@@ -254,16 +254,16 @@ export function BreathingSpace() {
             <header className="relative z-10 flex items-center justify-between px-4 py-4 sm:px-8 sm:py-5">
               <button type="button" onClick={close} className="grid h-11 w-11 place-items-center rounded-full border border-white/20 bg-black/10 text-xl text-white/90 backdrop-blur" aria-label="Close breathing space">←</button>
               <div className="min-w-0 px-2 text-center">
-                <div className="text-[9px] font-bold uppercase tracking-[0.18em] text-white/55 sm:text-[10px] sm:tracking-[0.22em]">Breathe with Gogo</div>
-                <div className="mt-1 hidden text-sm font-semibold text-white/85 sm:block">A quiet minute, whenever you need one.</div>
+                <div className="text-[12px] font-bold uppercase tracking-[0.18em] text-white/55 sm:text-[13px] sm:tracking-[0.22em]">Breathe with Gogo</div>
+                <div className="mt-1 hidden text-[16px] font-semibold text-white/85 sm:block">A quiet minute, whenever you need one.</div>
               </div>
               <button type="button" onClick={toggleSound} className="grid h-11 w-11 place-items-center rounded-full border border-white/20 bg-black/10 text-white/90 backdrop-blur" aria-label={soundOn ? 'Mute ambient sound' : 'Turn on ambient sound'} title={soundOn ? 'Sound on' : 'Sound off'}>{soundOn ? '♪' : '×'}</button>
             </header>
 
             <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-4 py-5 text-center sm:px-8 sm:py-8">
               <div className="mb-4 max-w-[92vw] rounded-2xl border border-white/15 bg-white/88 px-4 py-3 text-left text-[#3e2312] shadow-lg sm:mb-5 sm:max-w-none">
-                <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#714c77]">AskGogo</div>
-                <div className="mt-1 text-[13px] font-semibold sm:text-sm">{running ? phase.hint : 'Get comfortable. Let your shoulders soften. Begin when you’re ready.'}</div>
+                <div className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#714c77]">AskGogo</div>
+                <div className="mt-1 text-[16px] font-semibold sm:text-[16px]">{running ? phase.hint : 'Get comfortable. Let your shoulders soften. Begin when you’re ready.'}</div>
               </div>
 
               <div className="relative grid h-[220px] w-[220px] place-items-center sm:h-[300px] sm:w-[300px]">
@@ -280,7 +280,7 @@ export function BreathingSpace() {
                 <div className="absolute inset-[27%] grid place-items-center rounded-full border border-white/20 bg-black/8 shadow-inner">
                   <GogoCharacter state="breathing" size={150} dark animate={running} showStatus={false} />
                 </div>
-                <div className="relative z-10 mt-[184px] rounded-full border border-white/15 bg-black/20 px-4 py-2 text-xs font-semibold text-white/90 backdrop-blur sm:mt-[250px] sm:text-sm">
+                <div className="relative z-10 mt-[184px] rounded-full border border-white/15 bg-black/20 px-4 py-2 text-[14px] font-semibold text-white/90 backdrop-blur sm:mt-[250px] sm:text-[16px]">
                   {running ? `${phase.label} · ${remaining || phase.seconds}s` : mode.name}
                 </div>
               </div>
@@ -289,13 +289,13 @@ export function BreathingSpace() {
                 {running ? (
                   <div>
                     <div className="text-2xl font-semibold tracking-[-0.04em] sm:text-3xl">{phase.label}</div>
-                    <div className="mt-1 text-xs text-white/60 sm:text-sm">Cycle {cycles + 1} · breathe only as comfortably as feels natural.</div>
+                    <div className="mt-1 text-[14px] text-white/60 sm:text-[16px]">Cycle {cycles + 1} · breathe only as comfortably as feels natural.</div>
                   </div>
                 ) : (
                   <div>
                     <div className="text-2xl font-semibold tracking-[-0.04em] sm:text-3xl">{mode.name}</div>
-                    <div className="mt-1 text-xs text-white/60 sm:text-sm">{mode.subtitle}</div>
-                    <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/40">{mode.sound}</div>
+                    <div className="mt-1 text-[14px] text-white/60 sm:text-[16px]">{mode.subtitle}</div>
+                    <div className="mt-2 text-[13px] font-semibold uppercase tracking-[0.14em] text-white/40">{mode.sound}</div>
                   </div>
                 )}
               </div>
@@ -308,23 +308,23 @@ export function BreathingSpace() {
                     onClick={() => changeMode(index)}
                     className={`rounded-2xl border px-4 py-3 text-left transition ${index === modeIndex ? 'border-white/45 bg-white/18' : 'border-white/14 bg-black/10 hover:bg-white/10'}`}
                   >
-                    <div className="text-xs font-bold text-white/90">{item.name}</div>
-                    <div className="mt-0.5 text-[10px] text-white/50">{item.subtitle}</div>
-                    <div className="mt-1 text-[9px] text-white/35">{item.sound}</div>
+                    <div className="text-[14px] font-bold text-white/90">{item.name}</div>
+                    <div className="mt-0.5 text-[13px] text-white/50">{item.subtitle}</div>
+                    <div className="mt-1 text-[12px] text-white/35">{item.sound}</div>
                   </button>
                 ))}
               </div>
 
               <div className="mt-5 flex items-center justify-center gap-3 sm:mt-6">
                 {!running ? (
-                  <button type="button" onClick={start} className="min-w-36 rounded-full bg-white px-6 py-3 text-sm font-bold text-[#3e2312] shadow-lg transition hover:scale-[1.02]">Begin</button>
+                  <button type="button" onClick={start} className="min-w-36 rounded-full bg-white px-6 py-3 text-[16px] font-bold text-[#3e2312] shadow-lg transition hover:scale-[1.02]">Begin</button>
                 ) : (
-                  <button type="button" onClick={stop} className="min-w-36 rounded-full border border-white/30 bg-black/15 px-6 py-3 text-sm font-bold text-white backdrop-blur">Pause</button>
+                  <button type="button" onClick={stop} className="min-w-36 rounded-full border border-white/30 bg-black/15 px-6 py-3 text-[16px] font-bold text-white backdrop-blur">Pause</button>
                 )}
               </div>
             </main>
 
-            <footer className="relative z-10 px-5 pb-4 text-center text-[10px] text-white/45 sm:px-6 sm:pb-5 sm:text-[10.5px]">If you feel light-headed or uncomfortable, stop and return to normal breathing.</footer>
+            <footer className="relative z-10 px-5 pb-4 text-center text-[13px] text-white/45 sm:px-6 sm:pb-5 sm:text-[13px]">If you feel light-headed or uncomfortable, stop and return to normal breathing.</footer>
           </div>
         </div>
       )}

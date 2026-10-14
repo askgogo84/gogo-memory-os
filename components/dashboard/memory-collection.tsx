@@ -55,7 +55,7 @@ export function MemoryCollection({ items }: { items: DashboardMemoryItem[] }) {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search anything you've saved…"
             aria-label="Search your memory"
-            className="min-w-0 flex-1 bg-transparent text-[15px] text-gogo-ink outline-none placeholder:text-gogo-ink-4 lg:text-[16px]"
+            className="min-w-0 flex-1 bg-transparent text-[16px] text-gogo-ink outline-none placeholder:text-gogo-ink-4 lg:text-[16px]"
           />
         </div>
       </div>
@@ -68,7 +68,7 @@ export function MemoryCollection({ items }: { items: DashboardMemoryItem[] }) {
               key={key}
               type="button"
               onClick={() => setFilter(key)}
-              className={`shrink-0 rounded-full border px-3.5 py-2 text-[12.5px] font-semibold transition-colors ${active ? 'border-gogo-plum bg-gogo-plum text-white' : 'border-gogo-ink/10 bg-gogo-surface text-gogo-ink-2 hover:bg-gogo-ink/5'}`}
+              className={`shrink-0 rounded-full border px-3.5 py-2 text-[15px] font-semibold transition-colors ${active ? 'border-gogo-plum bg-gogo-plum text-white' : 'border-gogo-ink/10 bg-gogo-surface text-gogo-ink-2 hover:bg-gogo-ink/5'}`}
             >
               {label}
             </button>
@@ -80,7 +80,7 @@ export function MemoryCollection({ items }: { items: DashboardMemoryItem[] }) {
         <div className="rounded-[22px] border border-dashed border-gogo-ink/15 bg-gogo-surface/70 px-5 py-12 text-center">
           <div className="text-3xl">🧠</div>
           <h2 className="mt-3 font-serif text-[20px] font-semibold text-gogo-ink">Nothing matching that yet.</h2>
-          <p className="mx-auto mt-1.5 max-w-sm text-[13.5px] leading-6 text-gogo-ink-3">Send AskGogo a note, screenshot, photo or PDF on WhatsApp and it will appear here when saved.</p>
+          <p className="mx-auto mt-1.5 max-w-sm text-[16px] leading-6 text-gogo-ink-3">Send AskGogo a note, screenshot, photo or PDF on WhatsApp and it will appear here when saved.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
@@ -89,20 +89,20 @@ export function MemoryCollection({ items }: { items: DashboardMemoryItem[] }) {
               <div className="flex items-start gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-gogo-orange-tint text-xl" aria-hidden="true">{ICONS[item.kind]}</div>
                 <div className="min-w-0 flex-1">
-                  <h2 className="truncate text-[15px] font-bold text-gogo-ink">{item.title}</h2>
-                  <p className="mt-0.5 text-[11.5px] font-semibold uppercase tracking-[0.08em] text-gogo-ink-3">{relativeDate(item.savedAt)}</p>
+                  <h2 className="truncate text-[16px] font-bold text-gogo-ink">{item.title}</h2>
+                  <p className="mt-0.5 text-[14px] font-semibold uppercase tracking-[0.08em] text-gogo-ink-3">{relativeDate(item.savedAt)}</p>
                 </div>
-                {item.sensitive && <span className="rounded-full bg-gogo-plum-tint px-2 py-1 text-[10.5px] font-bold text-gogo-plum">Private</span>}
+                {item.sensitive && <span className="rounded-full bg-gogo-plum-tint px-2 py-1 text-[13px] font-bold text-gogo-plum">Private</span>}
               </div>
 
-              <p className="mt-4 line-clamp-3 flex-1 text-[13px] leading-[1.55] text-gogo-ink-2">{item.subtitle}</p>
+              <p className="mt-4 line-clamp-3 flex-1 text-[16px] leading-[1.55] text-gogo-ink-2">{item.subtitle}</p>
 
               <div className="mt-4 flex items-center justify-between gap-3 border-t border-gogo-ink/[0.06] pt-3">
-                <span className="text-[11.5px] font-medium capitalize text-gogo-ink-3">{item.kind}</span>
+                <span className="text-[14px] font-medium capitalize text-gogo-ink-3">{item.kind}</span>
                 {item.openUrl ? (
-                  <a href={item.openUrl} target="_blank" rel="noreferrer" className="text-[12.5px] font-bold text-gogo-orange hover:text-gogo-orange-deep">Open original →</a>
+                  <a href={item.openUrl} target="_blank" rel="noreferrer" className="text-[15px] font-bold text-gogo-orange hover:text-gogo-orange-deep">Open original →</a>
                 ) : (
-                  <span className="text-[11.5px] text-gogo-ink-4">No file attached</span>
+                  <span className="text-[14px] text-gogo-ink-4">No file attached</span>
                 )}
               </div>
             </article>

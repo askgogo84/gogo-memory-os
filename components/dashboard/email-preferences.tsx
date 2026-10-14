@@ -76,23 +76,23 @@ export function EmailPreferences() {
           <div className="flex items-center gap-3">
             <span className="grid h-11 w-11 place-items-center rounded-[15px] bg-gogo-orange-tint text-xl">✉️</span>
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gogo-orange">Gogo Tips</p>
+              <p className="text-[13px] font-bold uppercase tracking-[0.14em] text-gogo-orange">Gogo Tips</p>
               <h2 className="mt-0.5 font-serif text-[25px] font-semibold text-gogo-ink">A useful idea, one at a time</h2>
             </div>
           </div>
-          <p className="mt-4 text-[13px] leading-6 text-gogo-ink-2">
+          <p className="mt-4 text-[16px] leading-6 text-gogo-ink-2">
             Get one short AskGogo idea a day for your first month — reminders, documents, lists, travel, memory, dashboard shortcuts and more. Original AskGogo guidance, not generic marketing.
           </p>
-          <p className="mt-2 text-[11.5px] leading-5 text-gogo-ink-3">
+          <p className="mt-2 text-[14px] leading-5 text-gogo-ink-3">
             This is optional. You can pause it here or unsubscribe from any email. We do not enrol your connected Gmail address automatically.
           </p>
-          <a href="/api/dashboard/email-preview?day=0" target="_blank" rel="noreferrer" className="mt-3 inline-flex text-[12px] font-bold text-gogo-plum no-underline hover:text-gogo-plum-deep">
+          <a href="/api/dashboard/email-preview?day=0" target="_blank" rel="noreferrer" className="mt-3 inline-flex text-[15px] font-bold text-gogo-plum no-underline hover:text-gogo-plum-deep">
             Preview the first Gogo Tip →
           </a>
         </div>
 
         <form onSubmit={save} className="w-full lg:max-w-[430px]">
-          <label htmlFor="gogo-tips-email" className="text-[11px] font-bold uppercase tracking-[0.1em] text-gogo-ink-3">Email address</label>
+          <label htmlFor="gogo-tips-email" className="text-[14px] font-bold uppercase tracking-[0.1em] text-gogo-ink-3">Email address</label>
           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
             <input
               id="gogo-tips-email"
@@ -102,23 +102,23 @@ export function EmailPreferences() {
               placeholder="you@example.com"
               autoComplete="email"
               disabled={status === 'loading' || status === 'saving'}
-              className="min-w-0 flex-1 rounded-[15px] border border-gogo-ink/10 bg-gogo-cream/50 px-4 py-3 text-[14px] text-gogo-ink outline-none transition focus:border-gogo-orange disabled:opacity-60"
+              className="min-w-0 flex-1 rounded-[15px] border border-gogo-ink/10 bg-gogo-cream/50 px-4 py-3 text-[16px] text-gogo-ink outline-none transition focus:border-gogo-orange disabled:opacity-60"
             />
             <button
               type="submit"
               disabled={status === 'loading' || status === 'saving' || !email.trim()}
-              className="shrink-0 rounded-[15px] bg-gogo-orange px-4 py-3 text-[12.5px] font-bold text-white transition hover:bg-gogo-orange-deep disabled:opacity-45"
+              className="shrink-0 rounded-[15px] bg-gogo-orange px-4 py-3 text-[15px] font-bold text-white transition hover:bg-gogo-orange-deep disabled:opacity-45"
             >
               {status === 'saving' ? 'Saving…' : enabled ? 'Update email' : 'Send me Gogo Tips'}
             </button>
           </div>
 
           <div className="mt-3 flex min-h-5 flex-wrap items-center justify-between gap-2">
-            <div className={`text-[11.5px] ${status === 'error' ? 'text-red-600' : enabled ? 'font-semibold text-emerald-600' : 'text-gogo-ink-3'}`}>
+            <div className={`text-[14px] ${status === 'error' ? 'text-red-600' : enabled ? 'font-semibold text-emerald-600' : 'text-gogo-ink-3'}`}>
               {message || (status === 'loading' ? 'Checking your preference…' : enabled ? 'Gogo Tips are on.' : 'No lifecycle emails are being sent.')}
             </div>
             {enabled && (
-              <button type="button" onClick={pause} disabled={status === 'saving'} className="text-[11.5px] font-semibold text-gogo-ink-3 underline decoration-gogo-ink/20 underline-offset-4 hover:text-gogo-ink">
+              <button type="button" onClick={pause} disabled={status === 'saving'} className="text-[14px] font-semibold text-gogo-ink-3 underline decoration-gogo-ink/20 underline-offset-4 hover:text-gogo-ink">
                 Pause emails
               </button>
             )}
