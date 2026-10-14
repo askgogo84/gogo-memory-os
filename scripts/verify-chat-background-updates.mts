@@ -5,6 +5,7 @@ import ts from 'typescript'
 import * as runState from '../lib/dashboard/run-state'
 import * as chatState from '../lib/dashboard/gogo-chat-state'
 import * as flightChoices from '../lib/agent/flight-choices'
+import * as chatSuggestions from '../lib/dashboard/chat-suggestions'
 
 // Execute the shipped component's effects and send callbacks with a controlled
 // clock/network. This reproduces a worker finishing while chat stays open.
@@ -43,6 +44,7 @@ runInNewContext(ts.transpileModule(readFileSync('components/dashboard/gogo-chat.
     if(id.includes('run-state'))return {selectActiveRun:()=>null,summarizeActiveRunState:()=>({label:'Ready',tone:'idle'})}
     if(id.includes('gogo-chat-state'))return chatState
     if(id.includes('flight-choices'))return flightChoices
+    if(id.includes('chat-suggestions'))return chatSuggestions
     return {}
   },
 })
@@ -113,6 +115,7 @@ function renderStatus(runs:any[]) {
     if(id.includes('run-state'))return runState
     if(id.includes('gogo-chat-state'))return chatState
     if(id.includes('flight-choices'))return flightChoices
+    if(id.includes('chat-suggestions'))return chatSuggestions
     return {}
   }})
   const labels:string[]=[]
