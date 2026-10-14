@@ -69,7 +69,7 @@ assert.equal(active().length, 3, 'nothing stopped when nothing matched')
 seed()
 stores.agent_watchers.push({ id: 'w-sony2', telegram_id: '42', type: 'web_search', active: true, created_at: '2026-10-14T13:27:00Z', condition_json: { title: 'Sony WH-1000XM5 price below ₹22,000', query: 'x' } })
 const two = await wc.tryStopWatcherFromCommand({ actor, text: 'stop watching Sony WH-1000XM5' })
-assert.ok(two && two.status === 'completed' && /Stopped 2 watches/.test(two.text), two?.text)
+assert.ok(two && two.status === 'completed' && two.text.startsWith('Stopped 2 Sony WH-1000XM5 watches.'), two?.text)
 assert.deepEqual(active(), ['w-iphone', 'w-trip'])
 
 // A one-word name shared by different products is listed by name, and nothing is stopped.
