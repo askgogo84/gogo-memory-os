@@ -52,7 +52,7 @@ export function ListCreate() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex min-h-11 items-center gap-2 self-start rounded-full border border-gogo-ink/15 bg-gogo-surface px-4 text-[13px] font-semibold text-gogo-ink transition-colors duration-500 ease-calm hover:bg-gogo-ink/5"
+        className="inline-flex min-h-11 items-center gap-2 self-start rounded-full border border-gogo-ink/15 bg-gogo-surface px-4 text-[16px] font-semibold text-gogo-ink transition-colors duration-500 ease-calm hover:bg-gogo-ink/5"
       >
         <span aria-hidden className="text-[16px] leading-none text-gogo-ink-3">
           +
@@ -77,12 +77,12 @@ export function ListCreate() {
           maxLength={60}
           placeholder="List name"
           aria-label="New list name"
-          className="min-w-0 flex-1 rounded-[10px] border border-gogo-ink/15 bg-gogo-surface px-3 py-2 text-[14px] text-gogo-ink outline-none focus:border-gogo-ink/30"
+          className="min-w-0 flex-1 rounded-[10px] border border-gogo-ink/15 bg-gogo-surface px-3 py-2 text-[16px] text-gogo-ink outline-none focus:border-gogo-ink/30"
         />
         <button
           type="submit"
           disabled={working || !name.trim()}
-          className="inline-flex min-h-9 items-center rounded-full bg-gogo-ink px-4 text-[13px] font-semibold text-white disabled:opacity-50"
+          className="inline-flex min-h-9 items-center rounded-full bg-gogo-ink px-4 text-[16px] font-semibold text-white disabled:opacity-50"
         >
           {working ? 'Creating…' : 'Create'}
         </button>
@@ -94,12 +94,12 @@ export function ListCreate() {
             setError(null)
           }}
           disabled={working}
-          className="inline-flex min-h-9 items-center px-2 text-[13px] font-semibold text-gogo-ink-3 disabled:opacity-50"
+          className="inline-flex min-h-9 items-center px-2 text-[16px] font-semibold text-gogo-ink-3 disabled:opacity-50"
         >
           Cancel
         </button>
       </div>
-      {error && <p className="text-[12.5px] text-gogo-orange-deep">{error}</p>}
+      {error && <p className="text-[15px] text-gogo-orange-deep">{error}</p>}
     </form>
   )
 }

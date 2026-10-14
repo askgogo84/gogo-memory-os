@@ -19,15 +19,15 @@ type ConnectionRowProps={
 function ConnRow({name,state,available,operations,approval,verification,detail,href}:ConnectionRowProps){
   const body=<div className="border-t border-[#1f1f1f] py-5 first:border-t-0">
     <div className="grid gap-4 lg:grid-cols-[170px_130px_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-start">
-      <div className="text-[13px] font-medium text-[#f2efea]">{name}</div>
+      <div className="text-[16px] font-medium text-[#f2efea]">{name}</div>
       <div>
-        <div className={`text-[11px] font-medium ${available?'text-[#7fb069]':'text-[#9a9a9a]'}`}>{state}</div>
-        {detail&&<div className="mt-1 text-[10px] leading-4 text-[#666]">{detail}</div>}
+        <div className={`text-[14px] font-medium ${available?'text-[#7fb069]':'text-[#9a9a9a]'}`}>{state}</div>
+        {detail&&<div className="mt-1 text-[13px] leading-4 text-[#666]">{detail}</div>}
       </div>
-      <div><div className="text-[9px] uppercase tracking-[.14em] text-[#555]">Supported operations</div><div className="mt-1 text-[11px] leading-4 text-[#9a9a9a]">{operations}</div></div>
-      <div><div className="text-[9px] uppercase tracking-[.14em] text-[#555]">Approval boundary</div><div className="mt-1 text-[11px] leading-4 text-[#9a9a9a]">{approval}</div></div>
-      <div><div className="text-[9px] uppercase tracking-[.14em] text-[#555]">Verification</div><div className="mt-1 text-[11px] leading-4 text-[#9a9a9a]">{verification}</div></div>
-      {href&&<span className="text-[10px] text-[#2fb8a6]">Open →</span>}
+      <div><div className="text-[12px] uppercase tracking-[.14em] text-[#555]">Supported operations</div><div className="mt-1 text-[14px] leading-4 text-[#9a9a9a]">{operations}</div></div>
+      <div><div className="text-[12px] uppercase tracking-[.14em] text-[#555]">Approval boundary</div><div className="mt-1 text-[14px] leading-4 text-[#9a9a9a]">{approval}</div></div>
+      <div><div className="text-[12px] uppercase tracking-[.14em] text-[#555]">Verification</div><div className="mt-1 text-[14px] leading-4 text-[#9a9a9a]">{verification}</div></div>
+      {href&&<span className="text-[13px] text-[#2fb8a6]">Open →</span>}
     </div>
   </div>
   return href?<Link href={href} className="block hover:bg-[#141414]">{body}</Link>:body
@@ -35,11 +35,11 @@ function ConnRow({name,state,available,operations,approval,verification,detail,h
 
 function ConnectionCard({name,state,detail,available,href}:{name:string;state:string;detail:string;available:boolean;href:string}){
   return <Link href={href} className="final-dark-panel block min-h-[132px] p-4 transition-colors hover:border-[#2fb8a6] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#77d2c4]">
-    <div className="text-[14px] font-semibold text-[#f2efea]">{name}</div>
-    <div className={`mt-3 flex items-center gap-2 text-[12px] font-medium ${available?'text-[#83c3b8]':'text-[#e4c17b]'}`}>
+    <div className="text-[16px] font-semibold text-[#f2efea]">{name}</div>
+    <div className={`mt-3 flex items-center gap-2 text-[15px] font-medium ${available?'text-[#83c3b8]':'text-[#e4c17b]'}`}>
       <span className={`h-2 w-2 rounded-full ${available?'bg-[#7fb069]':'bg-[#d9a441]'}`} aria-hidden="true"/>{state}
     </div>
-    <p className="mt-2 text-[11px] leading-4 text-[#a8a8a8]">{detail}</p>
+    <p className="mt-2 text-[14px] leading-4 text-[#a8a8a8]">{detail}</p>
   </Link>
 }
 
@@ -71,13 +71,13 @@ export default async function ConnectionsPage(){
     <header className="border-b border-[#1f1f1f] pb-5">
       <div className="final-dark-eyebrow">Reach · authority · evidence</div>
       <h1 className="final-dark-title mt-2 text-[34px]">Connections</h1>
-      <Link href="/dashboard/commerce" className="mt-3 inline-block text-sm text-[#2fb8a6]">Connect food and grocery accounts →</Link>
-      <p className="mt-2 max-w-3xl text-[13px] leading-5 text-[#9a9a9a]">What Gogo can reach, what it is allowed to do there, and what evidence is required before it claims success.</p>
+      <Link href="/dashboard/commerce" className="mt-3 inline-block text-[16px] text-[#2fb8a6]">Connect food and grocery accounts →</Link>
+      <p className="mt-2 max-w-3xl text-[16px] leading-5 text-[#9a9a9a]">What Gogo can reach, what it is allowed to do there, and what evidence is required before it claims success.</p>
     </header>
 
     <section className="mt-5" aria-labelledby="connection-overview">
       <h2 id="connection-overview" className="final-dark-eyebrow">At a glance</h2>
-      <p className="mt-1 text-[12px] leading-5 text-[#a8a8a8]">Saved connection and permission state for this account. Open a card for what Gogo can do and how it verifies results.</p>
+      <p className="mt-1 text-[15px] leading-5 text-[#a8a8a8]">Saved connection and permission state for this account. Open a card for what Gogo can do and how it verifies results.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <ConnectionCard name="Gmail" state={!c.gmail?'Not connected':gmailReadUnknown?'Reading status unavailable':gmailReadOff?'Reading off':gmailSend?'Read and send connected':'Read only'}
           detail={!c.gmail?'Connect Gmail in You.':gmailReadOff?'Your saved preference disables reading.':gmailReadUnknown?'Your reading preference could not be checked.':'Reading does not authorize a send.'}
@@ -95,7 +95,7 @@ export default async function ConnectionsPage(){
     </section>
 
     <section className="mt-5 final-dark-panel overflow-hidden">
-      <div className="hidden border-b border-[#1f1f1f] px-4 py-3 text-[9px] uppercase tracking-[.14em] text-[#555] lg:grid lg:grid-cols-[170px_130px_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+      <div className="hidden border-b border-[#1f1f1f] px-4 py-3 text-[12px] uppercase tracking-[.14em] text-[#555] lg:grid lg:grid-cols-[170px_130px_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
         <div>Connection</div><div>Availability</div><div>Operations</div><div>Approval</div><div>Evidence</div><div />
       </div>
       <div className="px-4">
@@ -135,11 +135,11 @@ export default async function ConnectionsPage(){
     <section className="mt-5 grid gap-4 md:grid-cols-2">
       <div className="final-dark-panel p-4">
         <div className="final-dark-eyebrow">Security boundary</div>
-        <p className="mt-3 text-[12px] leading-5 text-[#9a9a9a]">Passwords, one-time codes, passkeys and payment-auth values never belong in chat or memory. Connections provide reach; they do not silently grant execution authority.</p>
+        <p className="mt-3 text-[15px] leading-5 text-[#9a9a9a]">Passwords, one-time codes, passkeys and payment-auth values never belong in chat or memory. Connections provide reach; they do not silently grant execution authority.</p>
       </div>
       <div className="final-dark-panel p-4">
         <div className="final-dark-eyebrow">Evidence boundary</div>
-        <p className="mt-3 text-[12px] leading-5 text-[#9a9a9a]">Gogo should only claim a mutation succeeded after provider-grounded read-back. If the provider cannot confirm the outcome, the run remains blocked or outcome-unknown rather than guessed.</p>
+        <p className="mt-3 text-[15px] leading-5 text-[#9a9a9a]">Gogo should only claim a mutation succeeded after provider-grounded read-back. If the provider cannot confirm the outcome, the run remains blocked or outcome-unknown rather than guessed.</p>
       </div>
     </section>
   </div>

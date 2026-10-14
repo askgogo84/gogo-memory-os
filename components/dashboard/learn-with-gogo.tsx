@@ -242,18 +242,18 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
       <aside className="rounded-[28px] border border-gogo-ink/7 bg-gogo-surface/72 p-5 shadow-[0_18px_55px_rgba(62,35,18,.045)] xl:sticky xl:top-8 xl:h-[calc(100vh-6rem)] xl:overflow-y-auto">
         <div className="flex items-center gap-3">
           <GogoCharacter state={playing ? 'acting' : 'listening'} size={56} showStatus={playing} />
-          <div><div className="text-[9px] font-bold uppercase tracking-[0.17em] text-gogo-orange">Master Gogo</div><div className="font-serif text-[23px] font-semibold text-gogo-ink">Learn by doing</div></div>
+          <div><div className="text-[12px] font-bold uppercase tracking-[0.17em] text-gogo-orange">Master Gogo</div><div className="font-serif text-[23px] font-semibold text-gogo-ink">Learn by doing</div></div>
         </div>
         <div className="mt-5 rounded-[18px] border border-gogo-ink/7 bg-gogo-cream/55 p-4">
-          <div className="flex items-center justify-between text-[11px] font-bold text-gogo-ink-2"><span>Your progress</span><span>{doneCount}/{lessons.length}</span></div>
+          <div className="flex items-center justify-between text-[14px] font-bold text-gogo-ink-2"><span>Your progress</span><span>{doneCount}/{lessons.length}</span></div>
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-gogo-ink/7"><div className="h-full rounded-full bg-gogo-orange transition-all" style={{ width: `${pct}%` }} /></div>
-          <div className="mt-2 text-[10px] text-gogo-ink-4">{pct}% explored</div>
+          <div className="mt-2 text-[13px] text-gogo-ink-4">{pct}% explored</div>
         </div>
-        <div className="mt-5 rounded-[18px] border border-gogo-orange/15 bg-gogo-orange-tint/55 px-4 py-3 text-[10.5px] leading-5 text-gogo-ink-2">All lessons are open. Pick anything that looks useful, or follow the suggested order.</div>
+        <div className="mt-5 rounded-[18px] border border-gogo-orange/15 bg-gogo-orange-tint/55 px-4 py-3 text-[13px] leading-5 text-gogo-ink-2">All lessons are open. Pick anything that looks useful, or follow the suggested order.</div>
         <div className="mt-5 space-y-5">
           {categories.map((category) => (
             <div key={category}>
-              <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">{category}</div>
+              <div className="mb-2 text-[12px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">{category}</div>
               <div className="space-y-1.5">
                 {lessons.filter((l) => l.category === category).map((lesson) => {
                   const selected = lesson.key === active?.key
@@ -263,8 +263,8 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
                     <button key={lesson.key} type="button" onClick={() => selectLesson(lesson.key)}
                       className={`w-full rounded-[15px] px-3 py-2.5 text-left transition active:scale-[.99] ${selected ? 'bg-gogo-orange-tint ring-1 ring-gogo-orange/20' : 'hover:bg-gogo-cream/70'}`}>
                       <div className="flex items-start gap-2.5">
-                        <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${done ? 'bg-emerald-100 text-emerald-700' : seen ? 'bg-gogo-orange/10 text-gogo-orange' : 'bg-gogo-ink/5 text-gogo-ink-4'}`}>{done ? '✓' : seen ? '▶' : '•'}</div>
-                        <div className="min-w-0"><div className={`text-[11px] font-semibold ${selected ? 'text-gogo-ink' : 'text-gogo-ink-2'}`}>{lesson.title}</div><div className="mt-0.5 text-[9.5px] text-gogo-ink-4">{done ? 'Completed' : seen ? 'Watched' : `${lesson.minutes} min`}</div></div>
+                        <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${done ? 'bg-emerald-100 text-emerald-700' : seen ? 'bg-gogo-orange/10 text-gogo-orange' : 'bg-gogo-ink/5 text-gogo-ink-4'}`}>{done ? '✓' : seen ? '▶' : '•'}</div>
+                        <div className="min-w-0"><div className={`text-[14px] font-semibold ${selected ? 'text-gogo-ink' : 'text-gogo-ink-2'}`}>{lesson.title}</div><div className="mt-0.5 text-[12px] text-gogo-ink-4">{done ? 'Completed' : seen ? 'Watched' : `${lesson.minutes} min`}</div></div>
                       </div>
                     </button>
                   )
@@ -277,9 +277,9 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
 
       <section ref={lessonTopRef} className="min-w-0 rounded-[28px] border border-gogo-ink/7 bg-gogo-surface/72 shadow-[0_18px_55px_rgba(62,35,18,.045)]">
         <div className="border-b border-gogo-ink/7 px-5 py-5 sm:px-7 lg:px-8">
-          <div className="text-[9px] font-bold uppercase tracking-[0.17em] text-gogo-orange">{active?.category} · {active?.minutes} min</div>
+          <div className="text-[12px] font-bold uppercase tracking-[0.17em] text-gogo-orange">{active?.category} · {active?.minutes} min</div>
           <div className="mt-1 font-serif text-[31px] font-semibold leading-tight text-gogo-ink">{active?.title}</div>
-          <div className="mt-2 max-w-3xl text-[11px] leading-5 text-gogo-ink-3">{active?.description}</div>
+          <div className="mt-2 max-w-3xl text-[14px] leading-5 text-gogo-ink-3">{active?.description}</div>
         </div>
 
         <div className="p-4 sm:p-6 lg:p-7">
@@ -296,18 +296,18 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
                   preload="metadata"
                   className="absolute inset-0 h-full w-full object-cover object-left"
                 />
-                <div className="absolute left-4 top-4 z-10 rounded-full bg-white/80 px-3 py-1 text-[8px] font-bold uppercase tracking-[0.16em] text-gogo-orange backdrop-blur">Master Gogo</div>
-                <div className="absolute bottom-4 left-4 z-10 rounded-full bg-white/80 px-3 py-1 text-[8px] font-bold text-gogo-ink-2 backdrop-blur">{playing ? '● Gogo is explaining' : 'Ready when you are'}</div>
+                <div className="absolute left-4 top-4 z-10 rounded-full bg-white/80 px-3 py-1 text-[12px] font-bold uppercase tracking-[0.16em] text-gogo-orange backdrop-blur">Master Gogo</div>
+                <div className="absolute bottom-4 left-4 z-10 rounded-full bg-white/80 px-3 py-1 text-[12px] font-bold text-gogo-ink-2 backdrop-blur">{playing ? '● Gogo is explaining' : 'Ready when you are'}</div>
               </div>
               <div className="flex min-h-[330px] flex-col justify-center p-6 lg:p-8">
-                <div className="text-[8px] font-bold uppercase tracking-[0.18em] text-gogo-orange">{sceneCopy?.eyebrow}</div>
+                <div className="text-[12px] font-bold uppercase tracking-[0.18em] text-gogo-orange">{sceneCopy?.eyebrow}</div>
                 <div className="mt-3 font-serif text-[29px] font-semibold leading-[1.08] text-gogo-ink">{sceneCopy?.title}</div>
-                <div className="mt-4 max-w-xl text-[11px] leading-5 text-gogo-ink-3">{sceneCopy?.body}</div>
-                {active?.example && <div className="mt-5 rounded-[16px] border border-gogo-ink/10 bg-white/80 px-4 py-3 text-[11px] font-medium text-gogo-ink-2">“{active.example}”</div>}
+                <div className="mt-4 max-w-xl text-[14px] leading-5 text-gogo-ink-3">{sceneCopy?.body}</div>
+                {active?.example && <div className="mt-5 rounded-[16px] border border-gogo-ink/10 bg-white/80 px-4 py-3 text-[14px] font-medium text-gogo-ink-2">“{active.example}”</div>}
                 <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-gogo-ink/7"><div className="h-full rounded-full bg-gogo-orange transition-all" style={{ width: `${Math.max(5, progress * 100)}%` }} /></div>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <button type="button" onClick={toggleNarration} className="rounded-full bg-gogo-ink px-4 py-2 text-[10px] font-bold text-white active:scale-[.98]">{playing ? 'Pause Gogo' : progress > 0 && progress < 1 ? 'Continue lesson' : 'Play lesson'}</button>
-                  <div className="text-[9px] text-gogo-ink-4">Talking Gogo · narration · captions</div>
+                  <button type="button" onClick={toggleNarration} className="rounded-full bg-gogo-ink px-4 py-2 text-[13px] font-bold text-white active:scale-[.98]">{playing ? 'Pause Gogo' : progress > 0 && progress < 1 ? 'Continue lesson' : 'Play lesson'}</button>
+                  <div className="text-[12px] text-gogo-ink-4">Talking Gogo · narration · captions</div>
                 </div>
                 <audio
                   ref={audioRef}
@@ -324,42 +324,42 @@ export function LearnWithGogo({ lessons, completedKeys }: { lessons: GogoLesson[
 
           <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_270px]">
             <div className="rounded-[22px] border border-gogo-ink/7 bg-gogo-cream/45 p-5">
-              <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-gogo-ink-4">Try it for real</div>
-              <div className="mt-3 space-y-3">{active?.steps?.map((step, i) => <div key={step} className="flex gap-3 text-[11px] leading-5 text-gogo-ink-2"><div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-[9px] font-bold text-gogo-orange">{i + 1}</div><div>{step}</div></div>)}</div>
+              <div className="text-[12px] font-bold uppercase tracking-[0.14em] text-gogo-ink-4">Try it for real</div>
+              <div className="mt-3 space-y-3">{active?.steps?.map((step, i) => <div key={step} className="flex gap-3 text-[14px] leading-5 text-gogo-ink-2"><div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-[12px] font-bold text-gogo-orange">{i + 1}</div><div>{step}</div></div>)}</div>
             </div>
             <div className="rounded-[22px] border border-gogo-ink/7 bg-gogo-cream/45 p-5 text-center">
               <div className="mx-auto flex justify-center"><GogoCharacter state={practiceSending ? 'thinking' : 'listening'} size={58} showStatus={practiceSending} /></div>
               <div className="mt-2 font-serif text-[20px] font-semibold text-gogo-ink">Your turn</div>
-              <div className="mt-1 text-[10px] leading-4 text-gogo-ink-4">{active?.tryText}</div>
-              <button type="button" disabled={!watched.has(active?.key || '')} onClick={() => active && void openPractice(active)} className="mt-4 w-full rounded-full bg-gogo-ink px-4 py-2.5 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-35 active:scale-[.98]">Practice below ↓</button>
+              <div className="mt-1 text-[13px] leading-4 text-gogo-ink-4">{active?.tryText}</div>
+              <button type="button" disabled={!watched.has(active?.key || '')} onClick={() => active && void openPractice(active)} className="mt-4 w-full rounded-full bg-gogo-ink px-4 py-2.5 text-[13px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-35 active:scale-[.98]">Practice below ↓</button>
             </div>
           </div>
 
           {practiceOpen && active && (
             <div className="mt-5 overflow-hidden rounded-[22px] border border-gogo-orange/15 bg-white/70">
               <div className="flex items-center justify-between border-b border-gogo-ink/7 px-5 py-3">
-                <div><div className="text-[8px] font-bold uppercase tracking-[0.15em] text-gogo-orange">Practice without leaving the lesson</div><div className="mt-0.5 font-serif text-[17px] font-semibold text-gogo-ink">Talk to Gogo here</div></div>
-                <button type="button" onClick={resetPractice} className="rounded-full border border-gogo-ink/10 px-3 py-1 text-[9px] font-semibold text-gogo-ink-4">Close</button>
+                <div><div className="text-[12px] font-bold uppercase tracking-[0.15em] text-gogo-orange">Practice without leaving the lesson</div><div className="mt-0.5 font-serif text-[17px] font-semibold text-gogo-ink">Talk to Gogo here</div></div>
+                <button type="button" onClick={resetPractice} className="rounded-full border border-gogo-ink/10 px-3 py-1 text-[12px] font-semibold text-gogo-ink-4">Close</button>
               </div>
               <div className="space-y-3 p-5">
-                <div className="rounded-[14px] bg-gogo-cream/55 px-4 py-3 text-[10px] text-gogo-ink-4">Try the suggested phrase below, or change it to something real for you.</div>
-                {practiceMessages.map((message, index) => <div key={index} className={`max-w-[86%] rounded-[16px] px-4 py-3 text-[11px] leading-5 ${message.role === 'user' ? 'ml-auto bg-gogo-orange text-white' : 'bg-gogo-cream text-gogo-ink-2'}`}>{linkify(message.content)}</div>)}
-                {practiceSending && <div className="max-w-[86%] rounded-[16px] bg-gogo-cream px-4 py-3 text-[11px] text-gogo-ink-4">Gogo is working on that…</div>}
-                {practiceError && <div className="text-[10px] font-medium text-red-600">{practiceError}</div>}
+                <div className="rounded-[14px] bg-gogo-cream/55 px-4 py-3 text-[13px] text-gogo-ink-4">Try the suggested phrase below, or change it to something real for you.</div>
+                {practiceMessages.map((message, index) => <div key={index} className={`max-w-[86%] rounded-[16px] px-4 py-3 text-[14px] leading-5 ${message.role === 'user' ? 'ml-auto bg-gogo-orange text-white' : 'bg-gogo-cream text-gogo-ink-2'}`}>{linkify(message.content)}</div>)}
+                {practiceSending && <div className="max-w-[86%] rounded-[16px] bg-gogo-cream px-4 py-3 text-[14px] text-gogo-ink-4">Gogo is working on that…</div>}
+                {practiceError && <div className="text-[13px] font-medium text-red-600">{practiceError}</div>}
                 <div ref={practiceEndRef} />
                 <form onSubmit={onPracticeSubmit} className="flex items-center gap-2 rounded-[16px] border border-gogo-ink/10 bg-gogo-cream/45 p-2">
-                  <input value={practiceText} onChange={(e) => setPracticeText(e.target.value)} placeholder={active.prompt || 'Type naturally…'} className="min-w-0 flex-1 bg-transparent px-2 text-[11px] text-gogo-ink outline-none placeholder:text-gogo-ink-4" />
-                  <button disabled={!practiceText.trim() || practiceSending} className="flex h-9 w-9 items-center justify-center rounded-xl bg-gogo-orange text-sm font-bold text-white disabled:opacity-35">↑</button>
+                  <input value={practiceText} onChange={(e) => setPracticeText(e.target.value)} placeholder={active.prompt || 'Type naturally…'} className="min-w-0 flex-1 bg-transparent px-2 text-[14px] text-gogo-ink outline-none placeholder:text-gogo-ink-4" />
+                  <button disabled={!practiceText.trim() || practiceSending} className="flex h-9 w-9 items-center justify-center rounded-xl bg-gogo-orange text-[16px] font-bold text-white disabled:opacity-35">↑</button>
                 </form>
-                {autoVerified && verifyState !== 'done' && <div className="text-[9.5px] text-gogo-ink-4">{verifyState === 'checking' ? 'Checking that AskGogo completed the real action…' : 'Complete the real action and Gogo will mark this lesson practised.'}</div>}
-                {verifyState === 'done' && <div className="text-[9.5px] font-semibold text-emerald-700">✓ Practised with a real AskGogo action</div>}
+                {autoVerified && verifyState !== 'done' && <div className="text-[12px] text-gogo-ink-4">{verifyState === 'checking' ? 'Checking that AskGogo completed the real action…' : 'Complete the real action and Gogo will mark this lesson practised.'}</div>}
+                {verifyState === 'done' && <div className="text-[12px] font-semibold text-emerald-700">✓ Practised with a real AskGogo action</div>}
               </div>
             </div>
           )}
 
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-gogo-ink/7 bg-gogo-cream/35 px-4 py-3">
-            <div className="text-[10px] text-gogo-ink-4">Every lesson is available anytime. Progress still tracks what you have explored.</div>
-            {nextLesson && <button type="button" onClick={() => selectLesson(nextLesson.key)} className="rounded-full border border-gogo-ink/10 bg-white px-4 py-2 text-[10px] font-bold text-gogo-ink-2 active:scale-[.98]">Next: {nextLesson.title} →</button>}
+            <div className="text-[13px] text-gogo-ink-4">Every lesson is available anytime. Progress still tracks what you have explored.</div>
+            {nextLesson && <button type="button" onClick={() => selectLesson(nextLesson.key)} className="rounded-full border border-gogo-ink/10 bg-white px-4 py-2 text-[13px] font-bold text-gogo-ink-2 active:scale-[.98]">Next: {nextLesson.title} →</button>}
           </div>
         </div>
       </section>

@@ -12,7 +12,7 @@ export function BrowserLiveShot({runId,enabled=true}:{runId:string;enabled?:bool
     return()=>clearInterval(id)
   },[enabled])
 
-  if(!enabled||failed)return <div className="grid min-h-[260px] place-items-center bg-[#f0eaf1] px-6 text-center text-[13px] leading-5 text-[#6b4a34]">Live browser preview is not available for this handoff.</div>
+  if(!enabled||failed)return <div className="grid min-h-[260px] place-items-center bg-[#f0eaf1] px-6 text-center text-[16px] leading-5 text-[#6b4a34]">Live browser preview is not available for this handoff.</div>
 
   return <img
     src={`/api/dashboard/agent/runs/${encodeURIComponent(runId)}/browser-shot?t=${stamp}`}

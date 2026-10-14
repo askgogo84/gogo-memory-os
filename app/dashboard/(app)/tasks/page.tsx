@@ -26,16 +26,16 @@ export default async function TasksPage() {
         <div className="pointer-events-none absolute bottom-[-8rem] left-[42%] h-52 w-52 rounded-full bg-gogo-orange/8 blur-3xl" />
         <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gogo-orange">Your to-dos</p>
+            <p className="text-[13px] font-bold uppercase tracking-[0.16em] text-gogo-orange">Your to-dos</p>
             <h1 className="mt-1 font-serif text-[38px] font-semibold tracking-[-0.9px] text-gogo-ink">Tasks</h1>
-            <p className="mt-2 text-[13.5px] text-gogo-ink-3">{result.open.length} open · {result.completed.length} completed · separate from reminders</p>
+            <p className="mt-2 text-[16px] text-gogo-ink-3">{result.open.length} open · {result.completed.length} completed · separate from reminders</p>
           </div>
-          <Link href="/dashboard/chat?prompt=show%20my%20tasks" className="rounded-full border border-gogo-orange/15 bg-gogo-orange/8 px-4 py-2.5 text-[11px] font-bold text-gogo-orange transition hover:bg-gogo-orange hover:text-white">Manage with Gogo →</Link>
+          <Link href="/dashboard/chat?prompt=show%20my%20tasks" className="rounded-full border border-gogo-orange/15 bg-gogo-orange/8 px-4 py-2.5 text-[14px] font-bold text-gogo-orange transition hover:bg-gogo-orange hover:text-white">Manage with Gogo →</Link>
         </div>
 
         <div className="relative mt-5 grid max-w-[520px] grid-cols-2 gap-2">
-          <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[10px] uppercase tracking-[0.12em] text-gogo-ink-3">Open</div><div className="mt-1 font-serif text-[24px] font-semibold text-gogo-orange">{result.open.length}</div></div>
-          <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[10px] uppercase tracking-[0.12em] text-gogo-ink-3">Completed</div><div className="mt-1 font-serif text-[24px] font-semibold text-emerald-700">{result.completed.length}</div></div>
+          <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[13px] uppercase tracking-[0.12em] text-gogo-ink-3">Open</div><div className="mt-1 font-serif text-[24px] font-semibold text-gogo-orange">{result.open.length}</div></div>
+          <div className="rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/55 px-4 py-3"><div className="text-[13px] uppercase tracking-[0.12em] text-gogo-ink-3">Completed</div><div className="mt-1 font-serif text-[24px] font-semibold text-emerald-700">{result.completed.length}</div></div>
         </div>
       </header>
 

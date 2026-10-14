@@ -51,7 +51,7 @@ function ZenCard({
           <Icon className="block h-[19px] w-[19px]" />
         </span>
         <div className="min-w-0 flex-1">
-          {eyebrow && <div className="text-[9.5px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">{eyebrow}</div>}
+          {eyebrow && <div className="text-[12px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">{eyebrow}</div>}
           <h2 className="mt-0.5 text-[17px] font-semibold tracking-[-0.2px] text-gogo-ink">{title}</h2>
         </div>
         {count !== undefined && <div className={`font-serif text-[31px] font-semibold leading-none ${accentText}`}>{count}</div>}
@@ -59,7 +59,7 @@ function ZenCard({
       <div className="relative mt-4 min-h-[72px]">{children}</div>
       <div className="relative mt-4 flex items-center justify-between gap-3">
         {action ?? <span />}
-        {href && <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-gogo-ink-4 transition-colors group-hover:text-gogo-orange">Open →</span>}
+        {href && <span className="text-[14px] font-bold uppercase tracking-[0.08em] text-gogo-ink-4 transition-colors group-hover:text-gogo-orange">Open →</span>}
       </div>
     </article>
   )
@@ -71,14 +71,14 @@ async function CalendarCard({ telegramId }: { telegramId: string }) {
   if (!calendar.ok) {
     return (
       <ZenCard eyebrow="Schedule" title="Calendar" Icon={CalendarIcon} accent="plum" count="—" href="/dashboard/calendar">
-        <p className="text-[13px] leading-5 text-gogo-ink-3">Couldn’t load your calendar right now.</p>
+        <p className="text-[16px] leading-5 text-gogo-ink-3">Couldn’t load your calendar right now.</p>
       </ZenCard>
     )
   }
   if (!calendar.connected) {
     return (
       <ZenCard eyebrow="Schedule" title="Calendar" Icon={CalendarIcon} accent="plum" count="0" href="/dashboard/calendar">
-        <p className="text-[13px] leading-5 text-gogo-ink-3">Connect Google Calendar and let AskGogo keep the day in view.</p>
+        <p className="text-[16px] leading-5 text-gogo-ink-3">Connect Google Calendar and let AskGogo keep the day in view.</p>
       </ZenCard>
     )
   }
@@ -95,13 +95,13 @@ async function CalendarCard({ telegramId }: { telegramId: string }) {
       {calendar.events.length ? (
         <div className="space-y-2">
           {calendar.events.slice(0, 2).map((event) => (
-            <div key={event.id} className="flex items-center gap-2 text-[13px] text-gogo-ink-2">
+            <div key={event.id} className="flex items-center gap-2 text-[16px] text-gogo-ink-2">
               <span className="h-1.5 w-1.5 rounded-full bg-gogo-plum" />
               <span className="truncate"><strong>{event.time || 'All day'}</strong> · {event.title}</span>
             </div>
           ))}
         </div>
-      ) : <p className="text-[13px] leading-5 text-gogo-ink-3">Your calendar is clear today.</p>}
+      ) : <p className="text-[16px] leading-5 text-gogo-ink-3">Your calendar is clear today.</p>}
     </ZenCard>
   )
 }
@@ -123,13 +123,13 @@ function UsagePulse({ usage }: { usage: UsageSummary }) {
             <circle cx="100" cy="100" r="84" fill="none" stroke="#F18219" strokeWidth="11" strokeLinecap="round" strokeDasharray={`${dash} ${circ}`} transform="rotate(-90 100 100)" />
           </svg>
           <div className="absolute inset-0 grid place-items-center text-center">
-            <div><div className="font-serif text-[30px] font-semibold text-gogo-ink">{used}</div><div className="text-[9px] font-bold uppercase tracking-[0.1em] text-gogo-ink-4">of {limit}</div></div>
+            <div><div className="font-serif text-[30px] font-semibold text-gogo-ink">{used}</div><div className="text-[12px] font-bold uppercase tracking-[0.1em] text-gogo-ink-4">of {limit}</div></div>
           </div>
         </div>
         <div>
-          <div className="text-[9.5px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">Quiet pulse</div>
+          <div className="text-[12px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">Quiet pulse</div>
           <div className="mt-1 font-serif text-[23px] font-semibold tracking-[-0.4px] text-gogo-ink">You’re doing fine.</div>
-          <p className="mt-2 text-[12.5px] leading-5 text-gogo-ink-3">{message}</p>
+          <p className="mt-2 text-[15px] leading-5 text-gogo-ink-3">{message}</p>
         </div>
       </div>
     </Link>
@@ -150,13 +150,13 @@ function ConnectionsCard({ profile }: { profile: Profile }) {
       {rows.length ? (
         <div className="space-y-2.5">
           {rows.map(([name, ok]) => (
-            <div key={name} className="flex items-center justify-between gap-3 text-[12.5px]">
+            <div key={name} className="flex items-center justify-between gap-3 text-[15px]">
               <span className="text-gogo-ink-2">{name}</span>
-              <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${ok ? 'bg-emerald-500/10 text-emerald-600' : 'bg-gogo-cream text-gogo-ink-4'}`}>{ok ? 'Connected' : 'Not connected'}</span>
+              <span className={`rounded-full px-2 py-1 text-[13px] font-bold ${ok ? 'bg-emerald-500/10 text-emerald-600' : 'bg-gogo-cream text-gogo-ink-4'}`}>{ok ? 'Connected' : 'Not connected'}</span>
             </div>
           ))}
         </div>
-      ) : <p className="text-[13px] leading-5 text-gogo-ink-3">Connection status is unavailable right now.</p>}
+      ) : <p className="text-[16px] leading-5 text-gogo-ink-3">Connection status is unavailable right now.</p>}
     </ZenCard>
   )
 }
@@ -207,13 +207,13 @@ export function TodayDesktop({
         <div className="pointer-events-none absolute bottom-[-12rem] right-[18%] h-72 w-72 rounded-full bg-emerald-400/7 blur-[90px]" />
         <div className="relative grid grid-cols-[minmax(0,1fr)_220px] items-center gap-8">
           <div>
-            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-gogo-orange">
+            <div className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-[0.16em] text-gogo-orange">
               <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_0_5px_rgba(16,185,129,0.08)]" />
               Everything is under control
             </div>
             <h1 className="mt-4 max-w-[850px] font-serif text-[44px] font-semibold leading-[1.02] tracking-[-1.1px] text-gogo-ink xl:text-[52px]">{greeting}</h1>
-            <p className="mt-3 text-[14px] font-medium text-gogo-ink-3">{dayLine}{hasThread ? ` · ${leftLabel}` : ' · a quiet day'}</p>
-            <p className="mt-5 max-w-[720px] text-[15px] leading-7 text-gogo-ink-2">You don’t need to remember everything. AskGogo is holding the details, the follow-ups and the little things in one calm place.</p>
+            <p className="mt-3 text-[16px] font-medium text-gogo-ink-3">{dayLine}{hasThread ? ` · ${leftLabel}` : ' · a quiet day'}</p>
+            <p className="mt-5 max-w-[720px] text-[16px] leading-7 text-gogo-ink-2">You don’t need to remember everything. AskGogo is holding the details, the follow-ups and the little things in one calm place.</p>
           </div>
           <div className="relative hidden h-[190px] items-center justify-center xl:flex">
             <div className="absolute h-40 w-40 rounded-full bg-gogo-orange/12 blur-3xl" />
@@ -239,12 +239,12 @@ export function TodayDesktop({
             href="/dashboard/today"
             action={<WhatsAppChip message="Gogo, remind me to…" label="New reminder" />}
           >
-            {!today.ok ? <p className="text-[13px] text-gogo-ink-3">Couldn’t load reminders.</p> : upcoming[0] ? (
+            {!today.ok ? <p className="text-[16px] text-gogo-ink-3">Couldn’t load reminders.</p> : upcoming[0] ? (
               <div className="space-y-2">
-                <div className="text-[13.5px] font-semibold text-gogo-ink-2">Next · {upcoming[0].label}</div>
-                <div className="text-[12px] text-gogo-ink-3">{upcoming[0].timeLabel}{upcoming[1] ? ` · then ${upcoming[1].label}` : ''}</div>
+                <div className="text-[16px] font-semibold text-gogo-ink-2">Next · {upcoming[0].label}</div>
+                <div className="text-[15px] text-gogo-ink-3">{upcoming[0].timeLabel}{upcoming[1] ? ` · then ${upcoming[1].label}` : ''}</div>
               </div>
-            ) : <p className="text-[13px] leading-5 text-gogo-ink-3">Nothing needs your attention right now.</p>}
+            ) : <p className="text-[16px] leading-5 text-gogo-ink-3">Nothing needs your attention right now.</p>}
           </ZenCard>
 
           {telegramId ? <Suspense fallback={<div className="min-h-[220px] animate-pulse rounded-[28px] border border-gogo-ink/7 bg-gogo-surface/45" />}><CalendarCard telegramId={telegramId} /></Suspense> : null}
@@ -260,10 +260,10 @@ export function TodayDesktop({
           >
             {topList ? (
               <div className="space-y-2">
-                <div className="text-[13.5px] font-semibold text-gogo-ink-2">{topName} · {topOpen} of {topList.items.length} left</div>
-                {secondList && <div className="text-[12px] text-gogo-ink-3">{sentenceCase(secondList.name)} · {secondList.items.filter((i) => !i.done).length} left</div>}
+                <div className="text-[16px] font-semibold text-gogo-ink-2">{topName} · {topOpen} of {topList.items.length} left</div>
+                {secondList && <div className="text-[15px] text-gogo-ink-3">{sentenceCase(secondList.name)} · {secondList.items.filter((i) => !i.done).length} left</div>}
               </div>
-            ) : <p className="text-[13px] leading-5 text-gogo-ink-3">No lists yet. Start one naturally in WhatsApp.</p>}
+            ) : <p className="text-[16px] leading-5 text-gogo-ink-3">No lists yet. Start one naturally in WhatsApp.</p>}
           </ZenCard>
 
           <ZenCard eyebrow="Remembered" title="Memory" Icon={MemoryIcon} accent="green" count={memoryItems.length} href="/dashboard/memory" action={<WhatsAppChip message="Gogo, save this for me" label="Save something" />}>
@@ -271,23 +271,23 @@ export function TodayDesktop({
               <div className="space-y-2">
                 {recentMemory.map((item) => (
                   <div key={item.id} className="rounded-[14px] border border-gogo-ink/7 bg-gogo-cream/55 px-3 py-2.5">
-                    <div className="truncate text-[12px] font-semibold text-gogo-ink-2">{item.title}</div>
-                    <div className="mt-0.5 truncate text-[10.5px] text-gogo-ink-4">{item.subtitle}</div>
+                    <div className="truncate text-[15px] font-semibold text-gogo-ink-2">{item.title}</div>
+                    <div className="mt-0.5 truncate text-[13px] text-gogo-ink-4">{item.subtitle}</div>
                   </div>
                 ))}
               </div>
-            ) : <p className="text-[13px] leading-5 text-gogo-ink-3">Nothing saved yet. Send AskGogo a document, screenshot or thought.</p>}
+            ) : <p className="text-[16px] leading-5 text-gogo-ink-3">Nothing saved yet. Send AskGogo a document, screenshot or thought.</p>}
           </ZenCard>
 
           <ZenCard eyebrow="People" title="Your circle" Icon={YouIcon} accent="orange" count={friends.ok ? friends.count : '—'} href="/dashboard/you">
             {people.length ? (
               <div>
                 <div className="flex -space-x-2">
-                  {people.map((person) => <span key={person.name} title={person.name} className="grid h-9 w-9 place-items-center rounded-full border-2 border-gogo-surface bg-gogo-orange-tint text-[10px] font-bold text-gogo-orange">{person.initials}</span>)}
+                  {people.map((person) => <span key={person.name} title={person.name} className="grid h-9 w-9 place-items-center rounded-full border-2 border-gogo-surface bg-gogo-orange-tint text-[13px] font-bold text-gogo-orange">{person.initials}</span>)}
                 </div>
-                <p className="mt-3 text-[12.5px] leading-5 text-gogo-ink-3">People you remind, remember and keep in the loop.</p>
+                <p className="mt-3 text-[15px] leading-5 text-gogo-ink-3">People you remind, remember and keep in the loop.</p>
               </div>
-            ) : <p className="text-[13px] leading-5 text-gogo-ink-3">Your people will appear here as AskGogo learns who matters to you.</p>}
+            ) : <p className="text-[16px] leading-5 text-gogo-ink-3">Your people will appear here as AskGogo learns who matters to you.</p>}
           </ZenCard>
 
           <ConnectionsCard profile={profile} />
@@ -295,15 +295,15 @@ export function TodayDesktop({
 
         <aside className="col-span-4 flex flex-col gap-5">
           <section className="rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/88 p-5 shadow-[0_16px_44px_rgba(62,35,18,0.045)] backdrop-blur-xl">
-            <div className="text-[9.5px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">Your flow</div>
+            <div className="text-[12px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">Your flow</div>
             <div className="mt-1 font-serif text-[25px] font-semibold tracking-[-0.45px] text-gogo-ink">What’s ahead</div>
             <div className="mt-5 space-y-3">
               {upcoming.length ? upcoming.slice(0, 4).map((item, index) => (
                 <div key={`${item.label}-${index}`} className="flex gap-3 rounded-[16px] border border-gogo-ink/7 bg-gogo-cream/48 p-3.5">
                   <div className="mt-1 h-2 w-2 flex-none rounded-full bg-gogo-orange" />
-                  <div className="min-w-0"><div className="text-[11px] font-bold uppercase tracking-[0.08em] text-gogo-orange">{item.timeLabel}</div><div className="mt-1 truncate text-[13px] font-semibold text-gogo-ink">{item.label}</div></div>
+                  <div className="min-w-0"><div className="text-[14px] font-bold uppercase tracking-[0.08em] text-gogo-orange">{item.timeLabel}</div><div className="mt-1 truncate text-[16px] font-semibold text-gogo-ink">{item.label}</div></div>
                 </div>
-              )) : <div className="rounded-[18px] border border-dashed border-gogo-ink/10 bg-gogo-cream/35 px-5 py-9 text-center text-[13px] leading-5 text-gogo-ink-3">Nothing pressing. Enjoy the space.</div>}
+              )) : <div className="rounded-[18px] border border-dashed border-gogo-ink/10 bg-gogo-cream/35 px-5 py-9 text-center text-[16px] leading-5 text-gogo-ink-3">Nothing pressing. Enjoy the space.</div>}
             </div>
             <div className="mt-4"><WhatsAppChip message="Gogo, what’s next?" label="Ask what’s next" /></div>
           </section>
@@ -316,7 +316,7 @@ export function TodayDesktop({
         <div className="rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/72 p-5 shadow-[0_16px_44px_rgba(62,35,18,0.04)] backdrop-blur-xl">
           <div className="flex items-center justify-between gap-5">
             <div>
-              <div className="text-[9.5px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">A little less to carry</div>
+              <div className="text-[12px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">A little less to carry</div>
               <div className="mt-1 font-serif text-[24px] font-semibold tracking-[-0.4px] text-gogo-ink">Quick actions</div>
             </div>
             <div className="flex flex-wrap justify-end gap-2">
@@ -328,9 +328,9 @@ export function TodayDesktop({
           </div>
         </div>
         <div className="rounded-[28px] border border-gogo-ink/8 bg-[linear-gradient(135deg,var(--color-gogo-orange-tint),var(--color-gogo-plum-tint))] p-5 shadow-[0_16px_44px_rgba(62,35,18,0.04)]">
-          <div className="text-[9.5px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">Your plan</div>
+          <div className="text-[12px] font-bold uppercase tracking-[0.15em] text-gogo-ink-4">Your plan</div>
           <div className="mt-2 font-serif text-[25px] font-semibold text-gogo-ink">{profile.ok ? profile.planLabel : 'AskGogo'}</div>
-          <p className="mt-2 text-[12px] leading-5 text-gogo-ink-3">Your dashboard stays private on this device for up to 30 days after sign-in.</p>
+          <p className="mt-2 text-[15px] leading-5 text-gogo-ink-3">Your dashboard stays private on this device for up to 30 days after sign-in.</p>
         </div>
       </section>
     </div>

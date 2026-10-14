@@ -144,7 +144,7 @@ export function ReminderActions({
           value={label}
           onChange={e => setLabel(e.target.value)}
           disabled={working}
-          className="w-full rounded-[10px] border border-gogo-ink/15 bg-gogo-surface px-3 py-2 text-[14px] text-gogo-ink outline-none focus:border-gogo-ink/30"
+          className="w-full rounded-[10px] border border-gogo-ink/15 bg-gogo-surface px-3 py-2 text-[16px] text-gogo-ink outline-none focus:border-gogo-ink/30"
           aria-label="Reminder text"
         />
         <div className="flex items-center gap-2">
@@ -153,14 +153,14 @@ export function ReminderActions({
             value={time}
             onChange={e => setTime(e.target.value)}
             disabled={working}
-            className="rounded-[10px] border border-gogo-ink/15 bg-gogo-surface px-3 py-2 text-[14px] tabular-nums text-gogo-ink outline-none focus:border-gogo-ink/30"
+            className="rounded-[10px] border border-gogo-ink/15 bg-gogo-surface px-3 py-2 text-[16px] tabular-nums text-gogo-ink outline-none focus:border-gogo-ink/30"
             aria-label="Reminder time"
           />
           <button
             type="button"
             onClick={onSaveEdit}
             disabled={working}
-            className="inline-flex min-h-9 items-center rounded-full bg-gogo-ink px-4 text-[13px] font-semibold text-white disabled:opacity-50"
+            className="inline-flex min-h-9 items-center rounded-full bg-gogo-ink px-4 text-[16px] font-semibold text-white disabled:opacity-50"
           >
             {working ? 'Saving…' : 'Save'}
           </button>
@@ -173,12 +173,12 @@ export function ReminderActions({
               setTime(timeInTz(remindAtIso, tz))
             }}
             disabled={working}
-            className="inline-flex min-h-9 items-center px-2 text-[13px] font-semibold text-gogo-ink-3 disabled:opacity-50"
+            className="inline-flex min-h-9 items-center px-2 text-[16px] font-semibold text-gogo-ink-3 disabled:opacity-50"
           >
             Cancel
           </button>
         </div>
-        {error && <p className="text-[12.5px] text-gogo-orange-deep">{error}</p>}
+        {error && <p className="text-[15px] text-gogo-orange-deep">{error}</p>}
       </div>
     )
   }
@@ -186,12 +186,12 @@ export function ReminderActions({
   if (mode === 'confirmDelete') {
     return (
       <div className="mt-2 flex items-center gap-2">
-        <span className="text-[12.5px] font-medium text-gogo-ink-2">Delete this reminder?</span>
+        <span className="text-[15px] font-medium text-gogo-ink-2">Delete this reminder?</span>
         <button
           type="button"
           onClick={onDelete}
           disabled={working}
-          className="inline-flex min-h-9 items-center rounded-full bg-gogo-ink px-4 text-[13px] font-semibold text-white disabled:opacity-50"
+          className="inline-flex min-h-9 items-center rounded-full bg-gogo-ink px-4 text-[16px] font-semibold text-white disabled:opacity-50"
         >
           {working ? 'Deleting…' : 'Delete'}
         </button>
@@ -202,11 +202,11 @@ export function ReminderActions({
             setError(null)
           }}
           disabled={working}
-          className="inline-flex min-h-9 items-center px-2 text-[13px] font-semibold text-gogo-ink-3 disabled:opacity-50"
+          className="inline-flex min-h-9 items-center px-2 text-[16px] font-semibold text-gogo-ink-3 disabled:opacity-50"
         >
           Cancel
         </button>
-        {error && <p className="text-[12.5px] text-gogo-orange-deep">{error}</p>}
+        {error && <p className="text-[15px] text-gogo-orange-deep">{error}</p>}
       </div>
     )
   }
@@ -214,12 +214,12 @@ export function ReminderActions({
   if (mode === 'confirmStop') {
     return (
       <div className="mt-2 flex items-center gap-2">
-        <span className="text-[12.5px] font-medium text-gogo-ink-2">Stop this repeating reminder for good?</span>
+        <span className="text-[15px] font-medium text-gogo-ink-2">Stop this repeating reminder for good?</span>
         <button
           type="button"
           onClick={() => onSeriesAction('stop')}
           disabled={working}
-          className="inline-flex min-h-9 items-center rounded-full bg-gogo-ink px-4 text-[13px] font-semibold text-white disabled:opacity-50"
+          className="inline-flex min-h-9 items-center rounded-full bg-gogo-ink px-4 text-[16px] font-semibold text-white disabled:opacity-50"
         >
           {working ? 'Stopping…' : 'Stop series'}
         </button>
@@ -230,11 +230,11 @@ export function ReminderActions({
             setError(null)
           }}
           disabled={working}
-          className="inline-flex min-h-9 items-center px-2 text-[13px] font-semibold text-gogo-ink-3 disabled:opacity-50"
+          className="inline-flex min-h-9 items-center px-2 text-[16px] font-semibold text-gogo-ink-3 disabled:opacity-50"
         >
           Keep it
         </button>
-        {error && <p className="text-[12.5px] text-gogo-orange-deep">{error}</p>}
+        {error && <p className="text-[15px] text-gogo-orange-deep">{error}</p>}
       </div>
     )
   }
@@ -250,7 +250,7 @@ export function ReminderActions({
           type="button"
           onClick={() => onSeriesAction('skip')}
           disabled={working}
-          className="text-[12.5px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2 disabled:opacity-50"
+          className="text-[15px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2 disabled:opacity-50"
         >
           {working ? 'Skipping…' : 'Skip once'}
         </button>
@@ -261,11 +261,11 @@ export function ReminderActions({
             setError(null)
           }}
           disabled={working}
-          className="text-[12.5px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2 disabled:opacity-50"
+          className="text-[15px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2 disabled:opacity-50"
         >
           Stop
         </button>
-        {error && <p className="text-[12.5px] text-gogo-orange-deep">{error}</p>}
+        {error && <p className="text-[15px] text-gogo-orange-deep">{error}</p>}
       </div>
     )
   }
@@ -278,7 +278,7 @@ export function ReminderActions({
           setMode('editing')
           setError(null)
         }}
-        className="text-[12.5px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2"
+        className="text-[15px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2"
       >
         Edit
       </button>
@@ -288,7 +288,7 @@ export function ReminderActions({
           setMode('confirmDelete')
           setError(null)
         }}
-        className="text-[12.5px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2"
+        className="text-[15px] font-semibold text-gogo-ink-3 hover:text-gogo-ink-2"
       >
         Delete
       </button>

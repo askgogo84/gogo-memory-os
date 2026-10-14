@@ -33,13 +33,13 @@ export function TodayThreadCompact({ rows, tz }: { rows: ReminderRow[]; tz: stri
 
       {before.map((node) => (
         <div key={node.id} className="flex gap-[14px] py-[7px] opacity-[0.55]">
-          <span className="w-[46px] shrink-0 pt-0.5 text-right text-[11.5px] font-semibold tabular-nums text-gogo-ink-3">
+          <span className="w-[46px] shrink-0 pt-0.5 text-right text-[14px] font-semibold tabular-nums text-gogo-ink-3">
             {node.timeLabel}
           </span>
           <span className="flex w-[9px] shrink-0 justify-center pt-1.5">
             <span className="h-[7px] w-[7px] rounded-full bg-gogo-sand" />
           </span>
-          <span className="min-w-0 flex-1 text-[14px] font-medium text-gogo-ink line-through decoration-gogo-ink/20">
+          <span className="min-w-0 flex-1 text-[16px] font-medium text-gogo-ink line-through decoration-gogo-ink/20">
             {node.label}
           </span>
         </div>
@@ -48,7 +48,7 @@ export function TodayThreadCompact({ rows, tz }: { rows: ReminderRow[]; tz: stri
       {/* The now-marker — orange, once, between past and upcoming. The 36px column
           fits the word "now" where a full clock time would clip. */}
       <div className="flex items-center gap-[14px] py-2">
-        <span className="w-[46px] shrink-0 text-right text-[11.5px] font-bold tabular-nums text-gogo-orange">now</span>
+        <span className="w-[46px] shrink-0 text-right text-[14px] font-bold tabular-nums text-gogo-orange">now</span>
         <span className="flex w-[9px] shrink-0 justify-center">
           <span className="h-[11px] w-[11px] rounded-full bg-gogo-orange shadow-[0_0_0_4px_rgba(241,130,25,0.16)]" />
         </span>
@@ -57,22 +57,22 @@ export function TodayThreadCompact({ rows, tz }: { rows: ReminderRow[]; tz: stri
 
       {/* The spoken gap line, indented to the content column (46 + 14 + 9 = 69). */}
       {gapLine && (
-        <p className="mb-1 ml-[69px] mt-0.5 font-serif text-[14px] font-semibold leading-[1.35] text-gogo-plum">
+        <p className="mb-1 ml-[69px] mt-0.5 font-serif text-[16px] font-semibold leading-[1.35] text-gogo-plum">
           {gapLine}
         </p>
       )}
 
       {after.map((node) => (
         <div key={node.id} className="flex gap-[14px] py-[7px]">
-          <span className="w-[46px] shrink-0 pt-0.5 text-right text-[11.5px] font-semibold tabular-nums text-gogo-ink-2">
+          <span className="w-[46px] shrink-0 pt-0.5 text-right text-[14px] font-semibold tabular-nums text-gogo-ink-2">
             {node.timeLabel}
           </span>
           <span className="flex w-[9px] shrink-0 justify-center pt-[5px]">
             <span className="h-[9px] w-[9px] rounded-full border-2 border-gogo-plum bg-gogo-surface" />
           </span>
           <div className="min-w-0 flex-1">
-            <div className="text-[14px] font-semibold text-gogo-ink">{node.label}</div>
-            {node.seriesMeta && <div className="mt-0.5 text-[12px] text-gogo-ink-3">{node.seriesMeta}</div>}
+            <div className="text-[16px] font-semibold text-gogo-ink">{node.label}</div>
+            {node.seriesMeta && <div className="mt-0.5 text-[15px] text-gogo-ink-3">{node.seriesMeta}</div>}
           </div>
         </div>
       ))}

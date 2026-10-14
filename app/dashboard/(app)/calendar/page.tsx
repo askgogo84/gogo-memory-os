@@ -26,7 +26,7 @@ export default async function CalendarPage() {
     return (
       <div className="w-full">
         <header className="rounded-[30px] border border-gogo-ink/8 bg-gogo-surface/78 px-7 py-6 shadow-[0_18px_55px_rgba(62,35,18,0.05)] backdrop-blur-xl">
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gogo-orange">Your schedule</p>
+          <p className="text-[13px] font-bold uppercase tracking-[0.16em] text-gogo-orange">Your schedule</p>
           <h1 className="mt-1 font-serif text-[36px] font-semibold tracking-[-0.8px] text-gogo-ink">Calendar</h1>
         </header>
         <div className="mt-5"><CardError message="Couldn’t load your calendar right now." /></div>
@@ -41,16 +41,16 @@ export default async function CalendarPage() {
           <div className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full bg-gogo-plum/10 blur-3xl" />
           <div className="relative grid items-center gap-8 lg:grid-cols-[1.25fr_.75fr]">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gogo-orange">Your schedule</p>
+              <p className="text-[13px] font-bold uppercase tracking-[0.16em] text-gogo-orange">Your schedule</p>
               <h1 className="mt-1 font-serif text-[38px] font-semibold tracking-[-0.9px] text-gogo-ink">Calendar</h1>
-              <p className="mt-3 max-w-2xl text-[14px] leading-6 text-gogo-ink-3">Connect Google Calendar once and AskGogo can quietly fold your meetings into Today, reminders and your daily brief.</p>
+              <p className="mt-3 max-w-2xl text-[16px] leading-6 text-gogo-ink-3">Connect Google Calendar once and AskGogo can quietly fold your meetings into Today, reminders and your daily brief.</p>
               <div className="mt-5"><WhatsAppChip message="Gogo, connect my calendar" label="Connect Google Calendar" /></div>
             </div>
             <div className="grid min-h-[190px] place-items-center rounded-[26px] border border-dashed border-gogo-ink/10 bg-gogo-cream/45">
               <div className="text-center">
                 <div className="mx-auto flex justify-center"><GogoCharacter state="listening" size={92} showStatus={false} /></div>
                 <div className="mt-2 font-serif text-[18px] font-semibold text-gogo-ink">I can hold your meetings too.</div>
-                <div className="mt-1 text-[12px] text-gogo-ink-3">One connection, calmer days.</div>
+                <div className="mt-1 text-[15px] text-gogo-ink-3">One connection, calmer days.</div>
               </div>
             </div>
           </div>
@@ -67,11 +67,11 @@ export default async function CalendarPage() {
         <div className="pointer-events-none absolute -right-20 -top-28 h-72 w-72 rounded-full bg-gogo-plum/10 blur-3xl" />
         <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gogo-orange">Your schedule</p>
+            <p className="text-[13px] font-bold uppercase tracking-[0.16em] text-gogo-orange">Your schedule</p>
             <h1 className="mt-1 font-serif text-[38px] font-semibold tracking-[-0.9px] text-gogo-ink">Calendar</h1>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <p className="text-[13px] font-medium text-gogo-ink-3">{today}</p>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-gogo-ink/10 bg-gogo-surface px-2.5 py-1 text-[11px] font-semibold text-gogo-ink-2">
+              <p className="text-[16px] font-medium text-gogo-ink-3">{today}</p>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-gogo-ink/10 bg-gogo-surface px-2.5 py-1 text-[14px] font-semibold text-gogo-ink-2">
                 <span className="h-2 w-2 rounded-full bg-gogo-plum" /> Google Calendar connected
               </span>
             </div>
@@ -87,7 +87,7 @@ export default async function CalendarPage() {
         <section className="min-h-[520px] rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/80 p-6 shadow-[0_18px_50px_rgba(62,35,18,0.045)] backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gogo-ink-3">Today</p>
+              <p className="text-[13px] font-bold uppercase tracking-[0.14em] text-gogo-ink-3">Today</p>
               <h2 className="mt-1 font-serif text-[26px] font-semibold text-gogo-ink">Your agenda</h2>
             </div>
             <div className="font-serif text-[26px] font-semibold text-gogo-plum">{events.length}</div>
@@ -98,18 +98,18 @@ export default async function CalendarPage() {
               <div>
                 <div className="mx-auto flex justify-center"><GogoCharacter state="calm" size={76} showStatus={false} hands /></div>
                 <div className="mt-3 font-serif text-[20px] font-semibold text-gogo-ink">Your calendar’s clear today.</div>
-                <div className="mt-1 text-[13px] text-gogo-ink-3">Nothing scheduled — enjoy the quiet.</div>
+                <div className="mt-1 text-[16px] text-gogo-ink-3">Nothing scheduled — enjoy the quiet.</div>
               </div>
             </div>
           ) : (
             <ol className="relative mt-6 space-y-3 before:absolute before:bottom-4 before:left-[80px] before:top-4 before:w-px before:bg-gogo-ink/8">
               {events.map((e, index) => (
                 <li key={e.id} className="relative grid grid-cols-[68px_1fr] gap-5 rounded-[20px] border border-gogo-ink/8 bg-gogo-cream/40 px-4 py-4 transition hover:bg-gogo-surface">
-                  <div className="pt-0.5 text-right text-[12px] font-semibold tabular-nums text-gogo-ink-3">{e.time ?? 'all day'}</div>
+                  <div className="pt-0.5 text-right text-[15px] font-semibold tabular-nums text-gogo-ink-3">{e.time ?? 'all day'}</div>
                   <span className="absolute left-[75px] top-[23px] h-3 w-3 rounded-full border-[3px] border-gogo-surface bg-gogo-orange shadow-[0_0_0_1px_rgba(62,35,18,.08)]" />
                   <div>
-                    <div className="text-[15px] font-semibold text-gogo-ink">{e.title}</div>
-                    <div className="mt-1 text-[11.5px] text-gogo-ink-3">Google Calendar · event {index + 1}</div>
+                    <div className="text-[16px] font-semibold text-gogo-ink">{e.title}</div>
+                    <div className="mt-1 text-[14px] text-gogo-ink-3">Google Calendar · event {index + 1}</div>
                   </div>
                 </li>
               ))}
@@ -119,10 +119,10 @@ export default async function CalendarPage() {
 
         <aside className="flex flex-col gap-4">
           <section className="rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/80 p-5 shadow-[0_18px_50px_rgba(62,35,18,0.04)] backdrop-blur-xl">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gogo-ink-3">At a glance</p>
+            <p className="text-[13px] font-bold uppercase tracking-[0.14em] text-gogo-ink-3">At a glance</p>
             <div className="mt-4 space-y-3">
-              <div className="flex items-center justify-between rounded-[16px] bg-gogo-cream/55 px-4 py-3"><span className="text-[12.5px] text-gogo-ink-2">Events today</span><strong className="font-serif text-[20px] text-gogo-ink">{events.length}</strong></div>
-              <div className="flex items-center justify-between rounded-[16px] bg-gogo-cream/55 px-4 py-3"><span className="text-[12.5px] text-gogo-ink-2">Calendar</span><strong className="text-[12px] text-gogo-plum">Connected</strong></div>
+              <div className="flex items-center justify-between rounded-[16px] bg-gogo-cream/55 px-4 py-3"><span className="text-[15px] text-gogo-ink-2">Events today</span><strong className="font-serif text-[20px] text-gogo-ink">{events.length}</strong></div>
+              <div className="flex items-center justify-between rounded-[16px] bg-gogo-cream/55 px-4 py-3"><span className="text-[15px] text-gogo-ink-2">Calendar</span><strong className="text-[15px] text-gogo-plum">Connected</strong></div>
             </div>
           </section>
 
@@ -130,7 +130,7 @@ export default async function CalendarPage() {
             <div className="pointer-events-none absolute -bottom-12 -right-10 h-32 w-32 rounded-full bg-gogo-orange/10 blur-2xl" />
             <div className="relative"><GogoCharacter state="listening" size={58} showStatus={false} /></div>
             <div className="relative mt-3 font-serif text-[20px] font-semibold text-gogo-ink">Need space?</div>
-            <p className="relative mt-2 text-[12.5px] leading-5 text-gogo-ink-3">Ask Gogo to move, add or remind you about anything on your schedule.</p>
+            <p className="relative mt-2 text-[15px] leading-5 text-gogo-ink-3">Ask Gogo to move, add or remind you about anything on your schedule.</p>
             <div className="relative mt-4"><WhatsAppChip message="Gogo, help me plan today" label="Plan with Gogo" /></div>
           </section>
         </aside>

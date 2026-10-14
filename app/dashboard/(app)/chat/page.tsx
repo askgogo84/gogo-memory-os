@@ -23,7 +23,7 @@ export default async function ChatPage() {
   }
 
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-gogo-ink-3">Opening Gogo’s room…</div>}>
+    <Suspense fallback={<div className="p-8 text-[16px] text-gogo-ink-3">Opening Gogo’s room…</div>}>
       <GogoChat initialDrink={comfortDrink} userName={userName} />
     </Suspense>
   )

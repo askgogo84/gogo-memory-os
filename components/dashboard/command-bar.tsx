@@ -32,7 +32,7 @@ export function CommandBar() {
         onChange={(e) => setText(e.target.value)}
         placeholder="Ask Gogo anything — stay right here in your dashboard…"
         aria-label="Ask Gogo anything"
-        className="min-w-0 flex-1 bg-transparent text-[15px] font-medium text-gogo-ink outline-none placeholder:font-normal placeholder:text-gogo-ink-4"
+        className="min-w-0 flex-1 bg-transparent text-[16px] font-medium text-gogo-ink outline-none placeholder:font-normal placeholder:text-gogo-ink-4"
       />
       <button
         type="submit"

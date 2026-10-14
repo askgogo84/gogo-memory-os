@@ -13,11 +13,11 @@ export function CardError({ message }: { message?: string }) {
   const router = useRouter()
   return (
     <div className="rounded-2xl border border-gogo-ink/10 bg-gogo-surface p-5 text-center">
-      <p className="text-sm text-gogo-ink/70">{message ?? 'Couldn’t load this right now.'}</p>
+      <p className="text-[16px] text-gogo-ink/70">{message ?? 'Couldn’t load this right now.'}</p>
       <button
         type="button"
         onClick={() => router.refresh()}
-        className="mt-3 inline-flex min-h-9 items-center rounded-full border border-gogo-ink/15 px-4 text-sm font-semibold text-gogo-ink transition-colors duration-500 ease-calm hover:bg-gogo-ink/5"
+        className="mt-3 inline-flex min-h-9 items-center rounded-full border border-gogo-ink/15 px-4 text-[16px] font-semibold text-gogo-ink transition-colors duration-500 ease-calm hover:bg-gogo-ink/5"
       >
         Try again
       </button>

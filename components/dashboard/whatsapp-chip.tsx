@@ -26,7 +26,7 @@ export function WhatsAppChip({ message, label }: WhatsAppChipProps) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex items-center gap-1.5 rounded-full bg-[#25D366] px-[11px] py-[7px] text-[11.5px] font-semibold text-white transition-colors duration-500 ease-calm hover:bg-[#1EBE5B]"
+      className="inline-flex items-center gap-1.5 rounded-full bg-[#25D366] px-[11px] py-[7px] text-[14px] font-semibold text-white transition-colors duration-500 ease-calm hover:bg-[#1EBE5B]"
     >
       <WhatsAppIcon className="block h-3 w-3" />
       {label ?? message}

@@ -24,9 +24,9 @@ export default async function PersonalizePage() {
     <div className="mx-auto w-full max-w-[1320px]">
       <div className="mb-6 flex items-end justify-between gap-5">
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gogo-orange">Make it yours</div>
+          <div className="text-[13px] font-bold uppercase tracking-[0.18em] text-gogo-orange">Make it yours</div>
           <h1 className="mt-2 font-serif text-[38px] font-semibold tracking-[-.7px] text-gogo-ink sm:text-[44px]">Personalize Gogo</h1>
-          <p className="mt-2 max-w-2xl text-[13px] leading-6 text-gogo-ink-3">Choose how Gogo sounds and what your calm room feels like. Your underlying memory and actions stay unchanged.</p>
+          <p className="mt-2 max-w-2xl text-[16px] leading-6 text-gogo-ink-3">Choose how Gogo sounds and what your calm room feels like. Your underlying memory and actions stay unchanged.</p>
         </div>
       </div>
       <PersonalizeGogo initialPersonality={initialPersonality} initialDrink={initialDrink} />
