@@ -128,7 +128,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
       },err=>{
         if(!quiet)setLocNote(err?.code===1?'Location is blocked for this site. Allow it in your browser settings, then try again.':'Could not get your location. Try again in a moment.')
         resolve(null)
-      },{enableHighAccuracy:false,timeout:10000,maximumAge:10*60*1000})
+      },{enableHighAccuracy:true,timeout:15000,maximumAge:2*60*1000})
     })
   }
   async function enableLocation(){
