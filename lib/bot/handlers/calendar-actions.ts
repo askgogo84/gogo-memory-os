@@ -345,7 +345,8 @@ export function parseCalendarCreate(text: string) {
       : `${head} at ${thenMove[1]}`
     text = moved
   }
-  const lower = text.toLowerCase()
+  // "meeting notes" is a document about a meeting, not a calendar event.
+  const lower = text.replace(/\b(?:meetings?|call|standup|stand-up)\s+(?:notes?|minutes|agenda|summary|summaries|recap|transcripts?|docs?|documents?)\b/gi, 'document').toLowerCase()
 
   // Structural detection. The old test matched exact contiguous bigrams ("add meeting",
   // "schedule call"), so a single article broke it: "add a meeting" ≠ "add meeting". A
