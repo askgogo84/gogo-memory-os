@@ -315,7 +315,7 @@ body {
 }
 .dashboard-root.final-dark .final-dark-eyebrow {
   color:#6a6a6a;
-  font-size:10px;
+  font-size:12px;
   font-weight:700;
   letter-spacing:.08em;
   text-transform:uppercase;
@@ -338,3 +338,51 @@ body {
 @media (max-width:1023px) {
   .dashboard-root.final-dark .dashboard-shell { max-width:none; }
 }
+
+/* Light theme (the person's choice; dark stays the default). The dashboard root carries data-theme='light'.
+   Tokens go back to the askgogo.in cream palette; the hard-coded dark utility colours are remapped in
+   app/dashboard-light.css (generated). */
+.dashboard-root.final-dark[data-theme='light'] {
+  --color-gogo-orange: #9a6512;
+  --color-gogo-orange-deep: #7a4f0d;
+  --color-gogo-teal: #0f6f64;
+  --color-gogo-teal-soft: #dff1ed;
+  --color-gogo-plum: #76556f;
+  --color-gogo-plum-deep: #53384f;
+  --color-gogo-plum-tint: #eee6ed;
+  --color-gogo-ink: #16130f;
+  --color-gogo-ink-2: #3a342d;
+  --color-gogo-ink-3: #5c554c;
+  --color-gogo-ink-4: #6f675d;
+  --color-gogo-sand: #d9b08f;
+  --color-gogo-orange-tint: #fbf1dd;
+  --color-gogo-cream: #f6f1e8;
+  --color-gogo-rail: #f2ebe0;
+  --color-gogo-surface: #fffdf9;
+  --background: #f6f1e8;
+  --foreground: #16130f;
+  color-scheme: light;
+  background:#f6f1e8;
+  color:#16130f;
+}
+.dashboard-root.final-dark[data-theme='light'] .dashboard-shell,
+.dashboard-root.final-dark[data-theme='light'] main { background:#f6f1e8; }
+.dashboard-root.final-dark[data-theme='light'] .dashboard-rail { background:#f2ebe0; border-color:#e3d9cb; box-shadow:inset -1px 0 0 #e3d9cb; }
+.dashboard-root.final-dark[data-theme='light'] .dashboard-brand { border-color:#e3d9cb !important; background:#fffdf9 !important; }
+.dashboard-root.final-dark[data-theme='light'] .dashboard-nav-active { border-color:#ddd2c3; background:#fffdf9; }
+.dashboard-root.final-dark[data-theme='light'] .dashboard-nav-active::before { background:#0f6f64; }
+.dashboard-root.final-dark[data-theme='light'] .dashboard-rail-status { background:#fffdf9; border-color:#e3d9cb; color:#3a342d; }
+.dashboard-root.final-dark[data-theme='light'] .zen-home,
+.dashboard-root.final-dark[data-theme='light'] .zen-hero-card,
+.dashboard-root.final-dark[data-theme='light'] .zen-home-glass,
+.dashboard-root.final-dark[data-theme='light'] .zen-home-pill { background:#fffdf9; border-color:#e3d9cb; }
+.dashboard-root.final-dark[data-theme='light'] .final-dark-panel { border-color:#e3d9cb; background:#fffdf9; }
+.dashboard-root.final-dark[data-theme='light'] .final-dark-card { border-color:#e3d9cb; background:#fffdf9; }
+.dashboard-root.final-dark[data-theme='light'] .final-dark-muted { color:#5c554c; }
+.dashboard-root.final-dark[data-theme='light'] .final-dark-eyebrow { color:#6f675d; }
+.dashboard-root.final-dark[data-theme='light'] .final-dark-title { color:#16130f; }
+.dashboard-root.final-dark[data-theme='light'] .final-dark-pill { border-color:#e3d9cb; background:#fffdf9; color:#3a342d; }
+.dashboard-root.final-dark[data-theme='light'] .final-dark-teal { color:#0f6f64; }
+.dashboard-root.final-dark[data-theme='light'] .final-dark-amber { color:#8a5a0f; }
+.dashboard-root.final-dark[data-theme='light'] .final-dark-danger { color:#a63d30; }
+.dashboard-root.final-dark[data-theme='light'] .final-dark-success { color:#336622; }

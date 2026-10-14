@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { ThemeToggle } from '@/components/dashboard/theme-toggle'
 import { getSession } from '@/lib/dashboard/session'
 import { getProfile, getFriendContacts, getUsageSummary } from '@/lib/dashboard/queries'
 import { CardError } from '@/components/dashboard/card-error'
@@ -55,6 +56,7 @@ export default async function YouPage(){
 
     <section className="mt-5 final-dark-panel overflow-hidden px-4">
       <Setting title="Safe mode" detail="Gogo asks before anything that sends, spends, books or submits."><span className="inline-flex items-center gap-2 text-[14px] text-[#7fb069]"><span className="h-2 w-2 rounded-full bg-[#7fb069]"/>On</span></Setting>
+      <Setting title="Appearance" detail="Dark is the default. Light uses the cream askgogo.in colours. Saved in this browser."><ThemeToggle/></Setting>
       <Setting title="Background checks" detail="Let watchers keep checking while you’re away."><Link href="/dashboard/agent?section=background" className="text-[14px] text-[#2fb8a6]">Manage →</Link></Setting>
       <Setting title="Brain & Autonomy" detail="Measured learning, routing confidence and model usage from your outcomes."><Link href="/dashboard/brain" className="text-[14px] text-[#2fb8a6]">Open Brain →</Link></Setting>
       <Setting title="Memory" detail="Review what Gogo knows and what it may reuse later."><Link href="/dashboard/memory" className="text-[14px] text-[#2fb8a6]">Review memory →</Link></Setting>
