@@ -87,6 +87,7 @@ const db={from(table:string){
   const filters:Array<(row:any)=>boolean>=[]
   let limit=Infinity
   const q:any={select:()=>q,eq:(key:string,value:unknown)=>{selected.push(['eq',key,value]);filters.push(row=>row[key]===value);return q},
+    gte:(key:string,value:string)=>{selected.push(['gte',key,value]);filters.push(row=>String(row[key])>=value);return q},
     contains:(key:string,value:any)=>{selected.push(['contains',key,value]);filters.push(row=>key==='metadata_json'&&typeof row.metadata_json?.handoff==='object'&&row.metadata_json.handoff!==null);return q},
     or:(expression:string)=>{selected.push(['or',expression,null]);
       if(expression.includes('takeoverUrl'))filters.push(row=>Boolean(row.metadata_json?.handoff?.takeoverUrl||row.metadata_json?.handoff?.providerUrl))
@@ -103,7 +104,11 @@ const handoffExports:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/dashboard/human-handoffs.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports:handoffExports,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./run-state'?{isActionablePause}:null,
 })
-const handoffs=await handoffExports.getPendingBrowserHandoffs('42')
+// 15 Oct: 11 old "Take control" cards from earlier weeks sat in Needs you. Older than 72 hours = not actionable.
+rows.push({id:'old-handoff',telegram_id:'42',type:'secure_browser',status:'paused',title:'Old Playo login',summary:'Robot check.',updated_at:'2026-10-01T00:00:00Z',metadata_json:{handoff:{takeoverUrl:'old-token'}}})
+const handoffs=await handoffExports.getPendingBrowserHandoffs('42',20,Date.parse('2026-10-05T03:00:00Z'))
+assert.ok(!handoffs.some((row:any)=>row.id==='old-handoff'),'a handoff older than 72 hours leaves Needs you')
+assert.ok(selected.some(([op,key,value])=>op==='gte'&&key==='updated_at'&&value==='2026-10-02T03:00:00.000Z'))
 assert.equal(handoffs.map((row:any)=>row.id).join(','),'robot-5,device,rail,zepto','six identical robot checks are one card, the newest, with the repeat count')
 assert.equal(handoffs.find((row:any)=>row.id==='robot-5').repeats,5)
 assert.equal(handoffs.find((row:any)=>row.id==='zepto').repeats,0)

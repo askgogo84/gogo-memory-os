@@ -297,6 +297,9 @@ export async function tryUpdateWebWatchFromCommand(params:{actor:AgentActor;text
     text:'Updated the same saved watch: '+query+'. I’ll use these criteria on future checks. The next check is queued; search leads still need provider verification.',handledBy:'watcher-update'}
 }
 
+/** The watch name exactly as the person typed it, for the reply ("Stopped 3 Sony WH-1000XM5 watches"). */
+function typedWatchName(text:string){return clean(text,400).replace(/^(?:stop|cancel|remove|disable)\s+/i,'').replace(/^(?:monitoring|watching|tracking)\s+/i,'').replace(/^(?:the|my)\s+/i,'').replace(/\s+(?:watcher|watch|monitor)\b.*$/i,'').trim()}
+
 export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:string}) {
   const intent=stopWatcherIntent(params.text)
   if(!intent)return null
@@ -330,7 +333,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
         if(remaining.some((row:any)=>ids.includes(String(row.id))))throw new Error('watcher_stop_read_after_write_failed')
         await dismissIdeasForWatcherIds(tg,ids)
         return {runId:`watcher-stop-${ids[0]}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-          text:`Stopped ${ids.length} watches for ${String(best.label)}. ${remaining.length} active monitor${remaining.length===1?'':'s'} left.`,handledBy:'watcher-stop'}
+          text:`Stopped ${ids.length} ${typedWatchName(params.text)} watches. ${remaining.length} active monitor${remaining.length===1?'':'s'} left.`,handledBy:'watcher-stop'}
       }
       const list=tied.slice(0,6).map((x:any,i:number)=>`${i+1}. ${String(x.label)}`).join('\n')
       return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
