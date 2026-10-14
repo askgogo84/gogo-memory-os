@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { FLIGHT_CHOICES } from './flight-choices'
 import { rememberTypedObjects } from './typed-object-context'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { searchCreditIQLiveFlights } from '@/lib/integrations/creditiq-travel'
@@ -509,26 +510,21 @@ export function travellersLabel(brief: FlightBrief): string {
   return parts.join(', ')
 }
 
-/** The one message that asks for everything still open. */
+/** The next open question. One at a time, so each can be answered with a tap on WhatsApp. */
 export function askFlightBrief(brief: FlightBrief, slots: FlightBriefSlot[]): string {
   if (slots.includes('route') || slots.includes('date')) {
     const missing = [slots.includes('route') && (!brief.originLabel ? 'departure city' : null), slots.includes('route') && (!brief.destinationLabel ? 'destination' : null), slots.includes('date') && 'travel date'].filter(Boolean)
     return `Please send the ${missing.join(', ')} together so I can compare the right flights.`
   }
-  const questions: string[] = []
-  const examples: string[] = []
-  if (slots.includes('return_confirm') && brief.returnSuggestion) questions.push(`Return date: the date you gave is before you leave. Did you mean ${dayLabel(brief.returnSuggestion)}? Reply yes, or send the right date.`)
-  if (slots.includes('trip')) { questions.push('Trip: one-way, or round trip? For a round trip, send the return date too.'); examples.push('round trip back 2 Nov') }
-  if (slots.includes('return')) { questions.push('Return date: which day are you coming back?'); examples.push('back on 2 Nov') }
-  if (slots.includes('travellers')) { questions.push('Travellers: how many adults, and any children or infants?'); examples.push('2 adults') }
-  if (slots.includes('cabin')) { questions.push('Cabin: economy, premium economy, business or first class?'); examples.push('economy') }
-  if (slots.includes('time')) { questions.push('Departure time: morning, afternoon, evening, night or any time?'); examples.push('morning') }
-  const head = `${cityOf(brief, 'origin')} to ${cityOf(brief, 'destination')} on ${dayLabel(brief.departDate!)}. A few quick choices so I search the right fares:`
-  const list = questions.map((q, i) => `${i + 1}. ${q}`).join('\n')
-  const eg = examples.length ? `Reply in one line, for example: ${examples.join(', ')}.\n` : ''
+  const head = `${cityOf(brief, 'origin')} to ${cityOf(brief, 'destination')} on ${dayLabel(brief.departDate!)}.`
+  const next = slots[0]
   const defaults = withFlightDefaults(brief)
-  const goLine = slots.every(s => s === 'return_confirm') ? '' : `Or say go and I'll search ${travellersLabel(defaults)}, ${CABIN_TEXT[defaults.cabin!]}, ${defaults.tripType === 'round_trip' ? 'round trip' : 'one-way'}, any departure time.`
-  return `${head}\n\n${list}\n\n${eg}${goLine}`.trim()
+  const goLine = `Or say go and I'll search ${travellersLabel(defaults)}, ${CABIN_TEXT[defaults.cabin!]}, ${defaults.tripType === 'round_trip' ? 'round trip' : 'one-way'}, any departure time.`
+  if (next === 'return_confirm' && brief.returnSuggestion) return `${head}\n\nReturn date: the date you gave is before you leave. Did you mean ${dayLabel(brief.returnSuggestion)}? Reply yes, or send the right date.`
+  if (next === 'return') return `${head}\n\nReturn date: which day are you coming back? For example, back on 2 Nov.\n\n${goLine}`
+  const choice = next === 'trip' || next === 'travellers' || next === 'cabin' || next === 'time' ? FLIGHT_CHOICES[next] : null
+  if (!choice) return `${head}\n\n${goLine}`
+  return `${head}\n\n${choice.question}\n\n${goLine}`
 }
 
 export type FlightLeg = { from: string; to: string; date: string; text: string; label: string }
