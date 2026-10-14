@@ -38,7 +38,16 @@ Safety properties confirmed in code: secret-shaped text is withheld or redacted 
 - Latency: p50 303 ms, p95 363 ms.
 - Tokens per call (277 of 279 calls had usage data): average input 1,476.9, average output 299.5. Totals for the week: about 412,000 input and 83,600 output tokens.
 - Estimate (characters divided by 4, not a tokenizer count): the fixed question and criteria text is about 1,050 tokens per plain call and 1,230 per contextual call, so roughly 70 to 83% of input is the same text re-sent every call. The intent question alone is about 550 tokens.
-- Cost in rupees or dollars: not computed. TypeSafe pricing is not known to me.
+
+
+## 2c. Pricing and spend (TypeSafe console screenshot from the owner, and the launch blog post)
+Source: https://typesafe.ai/blog/introducing-system-one-models-and-jev and console.typesafe.ai (usage page, all time, since about 22 Sep).
+- Price: input $0.042 per million tokens, output free. The blog says it cannot prove the price is not subsidised, and Jev is in early access.
+- Console: 813 requests in total. Input tokens: Gogo 1,074,304, CreditIQ 76,640. Estimated spend on Gogo to date: 1,074,304 x $0.042 / 1,000,000 = about $0.045.
+- At the measured average of 1,477 input tokens per call: about $0.062 per 1,000 calls (output free).
+- Illustration only, not a measurement of any model AskGogo uses: the blog gives existing LLMs as $0.20 to $10 per million input tokens with output about 5x input. The same call (1,477 in, 300 out) would cost about $0.60 per 1,000 calls at $0.20 and about $30 at $10. Real LLM classifier cost depends on the model, prompt and caching.
+- Conclusion on cost: Jev's spend is negligible. Trimming tokens is not worth doing for cost. The case for or against Jev rests on latency (about 0.3 s per turn) and accuracy (unmeasured).
+- Blog claims not verified by us: "can't hallucinate", 70 to 500 ms, 40x to 200x faster. The blog says its evals ran from laptops on the US West Coast and its workflow evals use its own team's content. The blog does not mention self-hosting, rate limits or data retention.
 
 ## 3. Gaps found
 1. Dashboard and WhatsApp differ. The dashboard chat route passes Jev to `routeFeatureIntent` and `processIncomingMessage` (so the gate applies) but never calls `promotedJevIntent`, `recordJevRoutingHint` or `jevClarificationReply`. Only WhatsApp gets first-refusal promotion and the clarification guard.
@@ -48,7 +57,7 @@ Safety properties confirmed in code: secret-shaped text is withheld or redacted 
 5. Jev adds a call per turn; it replaces no LLM call today. Cost per LLM call avoided is therefore zero so far. Where typed decisions could replace LLM calls is not measured.
 6. Not verified: what `recentConversation()` can contain. Up to 700 characters of it go to TypeSafe. If assistant replies containing email text are included, then email content reaches Jev, which the docs say does not treat injected text as hostile.
 7. Data handling: user text and recent context are sent to a US-hosted vendor. Needs a decision against DPDP expectations and your privacy policy.
-8. About 70 to 83% of every call is the same question text. Asking only the questions a turn needs (referent and attention state only when relevant) would cut input tokens. Whether Jev bills per token or per call is not known.
+8. About 70 to 83% of every call is the same question text. At $0.042 per million input tokens this costs almost nothing, so it is not a priority.
 9. Admin report at /api/admin/shadow-brain needs an admin session; not called here.
 
 ## 4. Component registry: what exists
@@ -56,5 +65,4 @@ There is no registry. The only UI-selection mechanism is `lib/agent/flight-choic
 
 ## 5. Not done in this pass (needs decisions or access)
 - Hosted-vs-self-hosted comparison: Jev appears hosted-only, so the comparison is Jev vs a small open model. Needs a labelled set of at least 150 sanitised messages and a choice of model.
-- Cost per 1,000 decisions: needs token usage from agent_activity (query supplied separately) and TypeSafe pricing, which I do not have.
 - Accuracy, fallback behaviour under failure injection.
