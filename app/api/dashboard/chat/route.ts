@@ -24,6 +24,7 @@ import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { isStandaloneWorkspaceMeetingPrep, tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
+import { isGroundedReminderCommand, jevClarificationReply } from '@/lib/agent/jev-router'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
@@ -321,6 +322,16 @@ export async function POST(req: NextRequest) {
         await saveConversation(user.telegram_id,text,meeting.text)
         return NextResponse.json(meeting)
       }
+    }
+
+    // High-confidence semantic ambiguity stops before the broad planner can act on the wrong object
+    // (same guard WhatsApp has). Jev only asks for the missing detail; it never gets execution authority.
+    // Grounded reminder commands ("move it", "what reminders do I have") are never second-guessed.
+    const jevClarify = isGroundedReminderCommand(text) ? null : jevClarificationReply(webObservation?.jev)
+    if (jevClarify) {
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'jev-clarification-guard',actualCapability:null,status:'paused'}).catch(()=>{})
+      await saveConversation(user.telegram_id, text, jevClarify)
+      return NextResponse.json({ text: jevClarify, handledBy: 'jev-clarification-guard', status: 'paused' })
     }
 
     const mission = await tryRunGeneralPlan({

@@ -237,7 +237,8 @@ export async function observeShadowBrainTurn(params:{
   console.info('SEMANTIC_READING:',JSON.stringify({
     ok:Boolean(jev?.ok),skip:deterministicRead?'deterministic_read':jev?null:'not_configured',
     intent:jev?.intent?.choice??null,confidence:jev?.intent?.confidence??null,
-    readiness:jev?.decisionReadiness?.choice??null,referent:jev?.referentKind?.choice??null,
+    readiness:jev?.decisionReadiness?.choice??null,readinessConfidence:jev?.decisionReadiness?.confidence??null,
+    referent:jev?.referentKind?.choice??null,referentConfidence:jev?.referentKind?.confidence??null,
     ms:jev?.latencyMs??null,error:jev?.error??null,
   }))
 

@@ -92,3 +92,16 @@ export function jevClarificationReply(jev:JevShadowResult|null|undefined):string
 
   return `I’m not certain which ${noun} you mean, and I don’t want to act on the wrong one. Please name it or give me one identifying detail.`
 }
+
+/**
+ * A reminder command whose target is grounded state, not semantic ambiguity ("move it" right after a
+ * reminder was created, "what reminders do I have"). The clarification guard must never discard these.
+ * Same rules the WhatsApp route applies before its guard.
+ */
+export function isGroundedReminderCommand(text:string):boolean{
+  const t=String(text||'')
+  if(/\b(?:meeting|meetings|calendar|event|events|appointment|appointments)\b/i.test(t))return false
+  return /^(?:what|which|show|list|display|my|pending|active|upcoming)\b.*\breminders?\b/i.test(t)||
+    /^(?:show|find|when|what time|how many)\b.*\b(?:reminder|reminders|remind me|calling)\b/i.test(t)||
+    /^(?:move|reschedule|change|update)\b.*(?:\breminder\b|\bit\b|\bthat\b|\bthis\b)/i.test(t)
+}

@@ -76,6 +76,7 @@ const routeDb={from(table:string){if(table==='users'){const q:any={select:()=>q,
 const shadowOutcomes:any[]=[]
 const routeDeps:any={
  '@/lib/agent/shadow-router-outcome':{recordShadowRouterOutcome:async(value:any)=>{shadowOutcomes.push(value)}},
+ '@/lib/agent/jev-router':{isGroundedReminderCommand:()=>false,jevClarificationReply:()=>null},
  'next/server':{NextRequest,NextResponse},crypto:{randomUUID:()=> 'fixture-drive-turn'},
  '@/lib/dashboard/session':{getSession:async()=>({telegramId:'42'})},
  '@/lib/supabase-admin':{supabaseAdmin:routeDb},
