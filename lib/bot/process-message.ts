@@ -32,6 +32,7 @@ import { buildAmPmReminderSetReply, buildReminderFromAmPmChoice, isAmPmChoice, a
 import { editLatestReminder } from './handlers/edit-reminder'
 import { buildMorningBriefing } from './handlers/morning-briefing'
 import { setBriefingTime } from './handlers/briefing-settings'
+import { locationQuery } from '@/lib/dashboard/approx-location'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
@@ -173,6 +174,8 @@ export type ProcessIncomingParams = {
   messageId?: string | number | null
   /** The semantic classifier's reading of this sentence (with recent conversation), when available. */
   semantic?: JevShadowResult | null
+  /** Rounded position the person allowed on the dashboard; used only as the default place for weather. */
+  approxLocation?: { lat: number; lon: number } | null
 }
 
 export type ProcessIncomingResult = {
@@ -1154,7 +1157,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'weather_live') {
     let reply = ''
-    try { reply = await buildDeterministicWeatherReply(incomingText) } catch { reply = `I couldn't fetch the weather right now. Please try again in a moment.` }
+    try { reply = await buildDeterministicWeatherReply(incomingText, params.approxLocation ? locationQuery(params.approxLocation) : null) } catch { reply = `I couldn't fetch the weather right now. Please try again in a moment.` }
     const styledWeatherReply = styleReplyByIntent('weather_live', reply)
     await saveConversation(resolvedUser.telegramId, 'assistant', styledWeatherReply)
     return { text: formatOutgoingText(params.channel, styledWeatherReply), resolvedUser }

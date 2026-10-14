@@ -8,6 +8,7 @@ import { selectActiveRun, summarizeActiveRunState } from '@/lib/dashboard/run-st
 import { CHAT_STATE_LABEL, CHAT_STATE_SHORT, chatGogoState, type ChatGogoState } from '@/lib/dashboard/gogo-chat-state'
 import { flightChoiceFromText } from '@/lib/agent/flight-choices'
 import { CHAT_SUGGESTIONS, greetingFor, type ChatSuggestion } from '@/lib/dashboard/chat-suggestions'
+import { LOCATION_STORAGE_KEY, locationIsStale, locationTag, parseApproxLocation, parseLocationPreference, type LocationPreference } from '@/lib/dashboard/approx-location'
 
 type ChatMessage={
   role:'user'|'assistant'
@@ -94,6 +95,51 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
   const [canDictate,setCanDictate]=useState(false)
   const inputRef=useRef<HTMLTextAreaElement|null>(null)
   const recognitionRef=useRef<any>(null)
+  // Location is the person's choice. It lives in this browser only and goes out with a message, never on its own.
+  const [loc,setLoc]=useState<LocationPreference>({status:'off'})
+  const [locBusy,setLocBusy]=useState(false)
+  const [locNote,setLocNote]=useState('')
+
+  function saveLoc(next:LocationPreference){
+    setLoc(next)
+    try{window.localStorage.setItem(LOCATION_STORAGE_KEY,JSON.stringify(next))}catch{}
+  }
+  function readPosition(quiet:boolean):Promise<LocationPreference|null>{
+    return new Promise(resolve=>{
+      if(typeof navigator==='undefined'||!navigator.geolocation){if(!quiet)setLocNote('This browser cannot share a location.');resolve(null);return}
+      navigator.geolocation.getCurrentPosition(async pos=>{
+        const point=parseApproxLocation({lat:pos.coords.latitude,lon:pos.coords.longitude})
+        if(!point){resolve(null);return}
+        let label:string|undefined
+        try{
+          const res=await fetch('/api/dashboard/location',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(point),signal:AbortSignal.timeout(8000)})
+          const data=await res.json().catch(()=>({}))
+          if(typeof data?.label==='string'&&data.label)label=data.label
+        }catch{}
+        resolve({status:'on',...point,label,at:Date.now()})
+      },err=>{
+        if(!quiet)setLocNote(err?.code===1?'Location is blocked for this site. Allow it in your browser settings, then try again.':'Could not get your location. Try again in a moment.')
+        resolve(null)
+      },{enableHighAccuracy:false,timeout:10000,maximumAge:10*60*1000})
+    })
+  }
+  async function enableLocation(){
+    if(locBusy)return
+    setLocBusy(true);setLocNote('')
+    const next=await readPosition(false)
+    if(next)saveLoc(next)
+    setLocBusy(false)
+  }
+  function disableLocation(){setLocNote('');saveLoc({status:'off'})}
+  useEffect(()=>{
+    let stored:string|null=null
+    try{stored=window.localStorage.getItem(LOCATION_STORAGE_KEY)}catch{}
+    const pref=parseLocationPreference(stored)
+    setLoc(pref)
+    // Already allowed and the saved position is old: refresh it quietly (no prompt appears if permission was given).
+    if(locationIsStale(pref,Date.now()))void readPosition(true).then(next=>{if(next)saveLoc(next)})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[])
 
   async function loadSnapshot(){
     try{
@@ -172,7 +218,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
       const res=await fetch('/api/dashboard/chat',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({text:next}),
+        body:JSON.stringify(loc.status==='on'?{text:next,location:{lat:loc.lat,lon:loc.lon}}:{text:next}),
       })
       const data=await res.json().catch(()=>({}))
       if(!res.ok)throw new Error(data?.message||'chat')
@@ -251,12 +297,26 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
           <div className="mx-auto w-fit"><Avatar state={gogoState} size={104}/></div>
           <h2 className="mt-5 text-[28px] font-bold leading-tight text-[#f2efea] lg:text-[34px]" suppressHydrationWarning>{greetingFor(new Date().getHours())}{userName?`, ${userName}`:''}.</h2>
           <p className="mx-auto mt-2 max-w-xl text-[16px] leading-relaxed text-[#b4b4b0]">Ask here or on WhatsApp. The same context, tasks, approvals and background work carry across both.</p>
+          {loc.status==='ask'&&<div className="mx-auto mt-6 max-w-xl rounded-[18px] border border-[#2a2a2a] bg-[#151515] p-4 text-left">
+            <div className="text-[17px] font-bold text-[#f2efea]">Get more useful local help</div>
+            <p className="mt-1 text-[15px] leading-[1.5] text-[#c4c4c0]">Weather for where you are now, and more local help soon. Your approximate area (about 1 km) stays in this browser and goes out only with a message. You can turn it off any time.</p>
+            <div className="mt-3 flex gap-3">
+              <button type="button" onClick={()=>saveLoc({status:'off'})} className="min-h-11 flex-1 rounded-xl border border-[#2f2f2f] text-[15px] text-[#d8d8d3] hover:text-[#f2efea]">Not now</button>
+              <button type="button" onClick={()=>void enableLocation()} disabled={locBusy} className="min-h-11 flex-1 rounded-xl bg-[#efe6d7] text-[15px] font-bold text-[#0b0b0b] disabled:opacity-60">{locBusy?'Checking…':'Enable location'}</button>
+            </div>
+            {locNote&&<p className="mt-2 text-[14px] text-[#e2b04a]">{locNote}</p>}
+          </div>}
           <div className="mt-8 grid grid-cols-1 gap-3 text-left sm:grid-cols-2 xl:grid-cols-3">
             {CHAT_SUGGESTIONS.map(item=><button key={item.id} type="button" onClick={()=>pickSuggestion(item)} className="min-h-[76px] rounded-[18px] border border-[#242424] bg-[#141414] px-5 py-4 transition hover:border-[#4cd0bd] hover:bg-[#101f1d]">
               <div className="text-[17px] font-semibold text-[#f2efea]">{item.title}</div>
               <div className="mt-0.5 text-[15px] text-[#a8a8a4]">{item.hint}</div>
             </button>)}
           </div>
+          {loc.status!=='ask'&&<div className="mt-6 flex flex-wrap items-center justify-center gap-x-3 text-[15px] text-[#a8a8a4] lg:hidden">
+            <span>{loc.status==='on'?`Location on · ${locationTag(loc)}`:'Location is off'}</span>
+            <button type="button" onClick={loc.status==='on'?disableLocation:()=>void enableLocation()} disabled={locBusy} className="min-h-11 text-[#8be6d8] underline underline-offset-4 disabled:opacity-60">{loc.status==='on'?'Turn off':locBusy?'Checking…':'Turn on'}</button>
+            {locNote&&<span className="w-full text-center text-[14px] text-[#e2b04a]">{locNote}</span>}
+          </div>}
         </div>}
         <div className="mx-auto flex max-w-[980px] flex-col gap-6">
           {visible.map((message,index)=><Message key={`${index}-${message.createdAt||''}`} message={message} chips={index===visible.length-1?lastChips:undefined} onPick={v=>void submit(v)}/>)}
@@ -305,6 +365,17 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
         <div className="mt-2">
           {snapshot.watchers.length?snapshot.watchers.slice(0,4).map(w=><RailRow key={w.id} tone="teal" title={w.title||'Background watch'} meta={`${String(w.type||'watch').replaceAll('_',' ')} · every ${w.cadenceMinutes||60} min`} href="/dashboard/agent?section=background"/>):<div className="py-3 text-[15px] text-[#a8a8a4]">No active background watches.</div>}
         </div>
+      </section>
+
+      <section className="mt-6">
+        <div className="text-[13px] font-bold uppercase tracking-[.1em] text-[#a8a8a4]">Location</div>
+        <div className="mt-2 flex items-center justify-between gap-3 text-[15px] text-[#c4c4c0]">
+          <span className="min-w-0 truncate">{loc.status==='on'?locationTag(loc):'Off'}</span>
+          {loc.status==='on'
+            ?<button type="button" onClick={disableLocation} className="min-h-10 shrink-0 rounded-full border border-[#2f2f2f] px-4 text-[14px] text-[#d8d8d3] hover:text-[#f2efea]">Turn off</button>
+            :<button type="button" onClick={()=>void enableLocation()} disabled={locBusy} className="min-h-10 shrink-0 rounded-full border border-[#2f2f2f] px-4 text-[14px] text-[#d8d8d3] hover:text-[#f2efea] disabled:opacity-60">{locBusy?'Checking…':'Turn on'}</button>}
+        </div>
+        {locNote&&<p className="mt-2 text-[14px] text-[#e2b04a]">{locNote}</p>}
       </section>
 
       <section className="mt-6">

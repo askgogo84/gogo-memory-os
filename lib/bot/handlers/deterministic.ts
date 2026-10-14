@@ -42,7 +42,7 @@ function titleCase(input: string) {
     .join(' ')
 }
 
-function extractWeatherLocation(userText: string) {
+function extractWeatherLocation(userText: string): string | null {
   const raw = (userText || '').trim()
 
   const patterns = [
@@ -65,11 +65,15 @@ function extractWeatherLocation(userText: string) {
     }
   }
 
-  return 'Bangalore'
+  return null
 }
 
-export async function buildDeterministicWeatherReply(userText: string) {
-  const location = extractWeatherLocation(userText)
+/**
+ * A place named in the sentence always wins. With none named, the caller's fallback is used (the dashboard
+ * passes the person's approximate location when they allowed it); without either, Bangalore as before.
+ */
+export async function buildDeterministicWeatherReply(userText: string, fallbackLocation?: string | null) {
+  const location = extractWeatherLocation(userText) || fallbackLocation || 'Bangalore'
   const forecast = await fetchWeatherForecast(location, 2)
 
   if (!forecast) {
