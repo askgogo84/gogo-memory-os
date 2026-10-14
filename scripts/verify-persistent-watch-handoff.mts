@@ -176,7 +176,7 @@ const commandMocks:any={
   './typed-object-context':{rememberTypedObjects:async(_owner:any,domain:string,items:any[])=>{recalledWatchContext={domain,items}},latestTypedContext:async()=>recalledWatchContext},
   './watchers':freshWorker(), '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/services/cost-guard':{getCostBudget:async()=>budget}, './google-workspace-read':{listRecentWorkspaceInbox:async(actor:any)=>{assert.equal(actor.legacyTelegramId,101);if(!inboxReadingEnabled)throw new Error('workspace_email_reading_disabled');return {messages:structuredClone(inboxMessages)}}},
-    './watch-cost-policy':cadence,
+    './watch-cost-policy':cadence,'./price-threshold':priceThreshold,
 }
 vm.runInNewContext(commandsOutput,{exports:commandExports,module:{exports:commandExports},require:(name:string)=>commandMocks[name]||{},Date,URL,console,Buffer})
 const parsed=commandExports.parseWebWatchCommand('Keep searching for Christopher Ward C63 Sealander in India and alert me when you find a new listing')
@@ -314,6 +314,12 @@ const recallQuestions=[
   'Which headphones am I watching, and what offers did I ask you to exclude?',
   'What are you monitoring for me?',
 ]
+// The run ledger is shown in the person's own words, from the saved rule and the checks so far.
+const ledgerWatch=store.agent_watchers.find((w:any)=>w.id==='watch-one')
+ledgerWatch.condition_json={...ledgerWatch.condition_json,priceRule:{threshold:22000,comparison:'below',offers:'excluded'}}
+ledgerWatch.last_state_json={...(ledgerWatch.last_state_json||{}),priceRuns:[
+  {at:'2026-10-04T09:00:00Z',outcome:'sent_nothing',observed:24990,kind:'price',reason:'not_below',source:'amazon.in'},
+  {at:'2026-10-04T10:30:00Z',outcome:'no_price_found',observed:null,kind:null,reason:'no_price',source:null}]}
 const beforeRecall=JSON.stringify(store.agent_watchers)
 for(const text of recallQuestions){
   const reply=await dashboardExports.POST({headers:{get:()=> 'https://app.askgogo.in'},nextUrl:{host:'app.askgogo.in'},json:async()=>({text})})
@@ -322,6 +328,7 @@ for(const text of recallQuestions){
   assert.match(reply.body.text,/Last checked:.*4 Oct.*4:00 pm/)
   assert.match(reply.body.text,/Next check:.*4 Oct.*6:30 pm/)
   assert.match(reply.body.text,/150 min/)
+  assert.match(reply.body.text,/Alert when the price is below ₹22,000\. 2 checks, 0 alerts sent, 1 at or above the limit, 1 with no price found\./,'the run ledger is shown in plain words')
   assert.doesNotMatch(reply.body.text,/PRIVATE OTHER OWNER|SECRET/)
   if(text!==recallQuestions[2]){
     assert.doesNotMatch(reply.body.text,/AT9|Unrelated|Itinerary|Expires:|Source:/,'focused recall excludes unrelated tasks and repeated metadata')

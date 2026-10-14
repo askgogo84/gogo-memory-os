@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 const {
   parseMoneyAmount, extractPrices, evaluatePriceRule, decidePriceAlert, INITIAL_PRICE_STATE,
-  appendPriceRun, summarizePriceRuns, normalizePriceRule, PRICE_RUN_HISTORY,
+  appendPriceRun, summarizePriceRuns, priceRunLine, normalizePriceRule, PRICE_RUN_HISTORY,
   assessPriceCheck, buildPriceRun, priceStateFrom, priceAlertText,
 } = await import('../lib/agent/price-threshold.ts')
 
@@ -109,3 +109,17 @@ assert.match(text, /not confirmed on the store page/)
 assert.match(text, /never buy/i)
 
 console.log('Price threshold: strict below, offers excluded, equality silent, deterministic alert policy, one run ledger')
+
+// The ledger is readable by the person: what the rule is, what each check found, and the last result.
+const lineRule: PriceRule = { threshold: 25000, comparison: 'below', offers: 'excluded' }
+assert.match(priceRunLine(undefined, lineRule), /Alert when the price is below ₹25,000\. No check has finished yet\./)
+const ledger = [
+  { at: '2026-10-14T09:00:00Z', outcome: 'sent_nothing', observed: 27990, kind: 'price', reason: 'not_below', source: 'a.in' },
+  { at: '2026-10-14T10:00:00Z', outcome: 'no_price_found', observed: null, kind: null, reason: 'no_price', source: null },
+  { at: '2026-10-14T11:00:00Z', outcome: 'alert', observed: 24500, kind: 'price', reason: 'first_alert', source: 'a.in' },
+] as any
+const ledgerLine = priceRunLine(ledger, lineRule)
+assert.match(ledgerLine, /3 checks, 1 alert sent, 1 at or above the limit, 1 with no price found\./)
+assert.match(ledgerLine, /Last check .* IST: alert sent at ₹24,500\./)
+assert.match(priceRunLine(ledger.slice(0, 1), lineRule), /1 check, 0 alerts sent, 1 at or above the limit\. Last check .*: ₹27,990, not below the limit\./)
+console.log('price run ledger is readable in plain words')

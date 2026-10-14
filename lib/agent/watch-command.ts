@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { formatRupees, parseMoneyAmount } from './price-threshold'
+import { formatRupees, parseMoneyAmount, priceRunLine } from './price-threshold'
 import { latestTypedContext, selectedTypedObject, rememberTypedObjects } from './typed-object-context'
 import { getCostBudget } from '@/lib/services/cost-guard'
 import { buildGmailConnectUrl } from '@/lib/services/google-gmail'
@@ -70,6 +70,12 @@ function watchSubjectTokens(value:string){
     .filter(word=>!['the','my','for','all','active','current','saved','watch','watche','watcher','monitor','background'].includes(word))
 }
 
+function priceWatchLine(row:any){
+  const rule=row?.condition_json?.priceRule
+  if(!rule||typeof priceRunLine!=='function')return ''
+  return priceRunLine(row?.last_state_json?.priceRuns,rule)
+}
+
 function watchCheckTime(value:unknown){
   const time=Date.parse(String(value||''))
   return Number.isFinite(time)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(time))+' IST':null
@@ -107,7 +113,8 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
       const criteria=clean(c.query||c.originalRequest||c.productUrl||c.url||c.title||row.type,700)
       const delivery=row.last_state_json?.alertDelivery?.state
       const alert=delivery==='outcome_unknown'?'\nAlert delivery is unconfirmed.':delivery==='failed'?'\nThe last alert could not be delivered.':row.last_state_json?.pendingAlert?'\nAn alert is waiting to be retried.':''
-      return `${selected.length>1?`${index+1}. `:''}${criteria}\nLast checked: ${watchCheckTime(row.last_checked_at)||'not yet recorded'}\nNext check: ${watchCheckTime(row.next_check_at)||'not scheduled'} (about every ${Math.max(1,Number(row.cadence_minutes||60))} min)${alert}`
+      const priceLine=priceWatchLine(row)
+      return `${selected.length>1?`${index+1}. `:''}${criteria}${priceLine?`\n${priceLine}`:''}\nLast checked: ${watchCheckTime(row.last_checked_at)||'not yet recorded'}\nNext check: ${watchCheckTime(row.next_check_at)||'not scheduled'} (about every ${Math.max(1,Number(row.cadence_minutes||60))} min)${alert}`
     })
     return {
       runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
@@ -150,7 +157,8 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     }
     const last='\n   Last checked: '+(checkTime(row.last_checked_at)||'no completed check recorded')
     const next='\n   Next check: '+(checkTime(row.next_check_at)||'not scheduled')
-    return `${index+1}. ${label} — active, checking about every ${cadence} min${criteriaLine}${why}${source}${expires}${last}${next}${notification}`
+    const priceLine=priceWatchLine(row)?`\n   ${priceWatchLine(row)}`:''
+    return `${index+1}. ${label} — active, checking about every ${cadence} min${criteriaLine}${priceLine}${why}${source}${expires}${last}${next}${notification}`
   }
   const contextualRows=data.filter((row:any)=>row.condition_json?.contextual===true)
   const manualRows=data.filter((row:any)=>row.condition_json?.contextual!==true)

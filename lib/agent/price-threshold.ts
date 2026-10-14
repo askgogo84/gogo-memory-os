@@ -141,6 +141,23 @@ export function summarizePriceRuns(runs: PriceRun[] | undefined) {
   }
 }
 
+/** One readable line of what this price watch has actually done, from the run ledger. */
+export function priceRunLine(runs: PriceRun[] | undefined, rule?: PriceRule | null): string {
+  const list = Array.isArray(runs) ? runs : []
+  const limit = rule ? `Alert when the price is below ${formatRupees(rule.threshold)}` : 'Price watch'
+  if (!list.length) return `${limit}. No check has finished yet.`
+  const summary = summarizePriceRuns(list)
+  const parts = [`${summary.checks} check${summary.checks === 1 ? '' : 's'}`, `${summary.alerts} alert${summary.alerts === 1 ? '' : 's'} sent`]
+  if (summary.silent) parts.push(`${summary.silent} at or above the limit`)
+  if (summary.noPrice) parts.push(`${summary.noPrice} with no price found`)
+  const last = summary.last
+  const lastWhen = last ? new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(last.at)) + ' IST' : ''
+  const lastWhat = !last ? '' : last.outcome === 'alert' ? `alert sent at ${formatRupees(last.observed as number)}`
+    : last.outcome === 'sent_nothing' ? `${last.observed !== null ? formatRupees(last.observed) : 'price'}, not below the limit`
+    : last.outcome === 'no_price_found' ? 'a result came back but with no clear price' : 'no matching result'
+  return `${limit}. ${parts.join(', ')}.${last ? ` Last check ${lastWhen}: ${lastWhat}.` : ''}`
+}
+
 export function normalizePriceRule(input: any): PriceRule | null {
   const threshold = Number(input?.threshold)
   if (!Number.isFinite(threshold) || threshold <= 0) return null

@@ -3,6 +3,7 @@ import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { browserContextForRun, getDashboardActivityRuns, type DashboardActivityRun } from '@/lib/dashboard/agent-activity'
 import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
+import { priceRunLine } from '@/lib/agent/price-threshold'
 
 export const dynamic='force-dynamic'
 
@@ -72,7 +73,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
     getDashboardActivityRuns(session.telegramId),
     getPendingBrowserHandoffs(session.telegramId),
     supabaseAdmin.from('agent_watchers')
-      .select('id,type,condition_json,cadence_minutes,last_checked_at,next_check_at')
+      .select('id,type,condition_json,last_state_json,cadence_minutes,last_checked_at,next_check_at')
       .eq('telegram_id',String(session.telegramId))
       .eq('active',true)
       .order('next_check_at',{ascending:true})
@@ -221,6 +222,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
                       <div className="min-w-0">
                         <div className="truncate text-[12.5px] font-semibold text-[#F2EFEA]">{title}</div>
                         <div className="mt-1 text-[10.5px] text-[#6A6A6A]">Every {w.cadence_minutes||60} min · next {w.next_check_at?fmtTime(w.next_check_at):'—'}</div>
+                        {condition.priceRule&&<div className="mt-1 text-[10.5px] leading-4 text-[#9A9A9A]">{priceRunLine(w.last_state_json?.priceRuns,condition.priceRule)}</div>}
                       </div>
                     </div>
                   </div>
