@@ -124,7 +124,7 @@ export default async function HomePage(){
           <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[10px] text-[#d9a441]">{approvalRows.length+handoffRows.length}</Link></div>
           <div className="border-t border-[#1f1f1f] px-4">
             {approvalRows.map((a:any)=><Row key={a.id} tone="amber" title={a.title||'Approval needed'} meta={a.description||'Gogo stopped before a consequential action.'} right="Review" href="/dashboard/agent?section=approvals"/>)}
-            {handoffRows.map(handoff=><Row key={handoff.id} tone="amber" title={handoff.title} meta={handoff.summary} right="Take control" href={`/dashboard/activity/${handoff.id}/browser`}/>)}
+            {handoffRows.map(handoff=><Row key={handoff.id} tone="amber" title={handoff.title} meta={handoff.repeats>0?`${handoff.summary} (${handoff.repeats+1} identical checks are waiting on this one step.)`:handoff.summary} right="Take control" href={`/dashboard/activity/${handoff.id}/browser`}/>)}
             {!approvalRows.length&&!handoffRows.length&&<div className="py-5 text-[12px] text-[#6a6a6a]">Nothing is waiting for you.</div>}
           </div>
         </section>

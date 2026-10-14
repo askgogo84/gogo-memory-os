@@ -1,7 +1,7 @@
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {isActionablePause} from './run-state'
 
-export type PendingBrowserHandoff={id:string;title:string;summary:string;updatedAt:string|null}
+export type PendingBrowserHandoff={id:string;title:string;summary:string;updatedAt:string|null;repeats:number}
 
 // Read the actual paused browser handoffs separately from recent activity.
 // A long conversation must not push an unresolved Take control task out of
@@ -18,15 +18,26 @@ export async function getPendingBrowserHandoffs(telegramId:string,limit=20):Prom
     .or('metadata_json->>state.is.null,metadata_json->>state.not.in.(closed_stale,closed)')
     .or('summary.is.null,summary.neq.Superseded by duplicate mission submission')
     .or('error.is.null,error.not.in.(stale_provider_access_limited,background_browser_resume_expired,stale_run_recovered,background_browser_actor_missing)')
-    .order('updated_at',{ascending:false}).order('id',{ascending:false}).limit(limit)
+    .order('updated_at',{ascending:false}).order('id',{ascending:false}).limit(limit*5)
   if(error)throw new Error('browser_handoff_lookup_failed')
+  // Fetch extra rows: repeats collapse below, so they must not use up the page.
+  // The same blocked step (for example a robot check on one site) can pause many runs.
+  // The person has one thing to do, so one card: the newest run, with a count of repeats.
+  const byStep=new Map<string,PendingBrowserHandoff>()
   for(const row of data||[]){
     const handoff=row.metadata_json?.handoff
     if(!isActionablePause(row)||!handoff||!(handoff.takeoverUrl||(handoff.mode==='device'&&handoff.providerUrl)))continue
-    found.push({id:String(row.id),title:String(row.title||'Browser task'),
-      summary:String(row.summary||'Choose Take control to complete the provider step.'),
-      updatedAt:row.updated_at||null})
+    const title=String(row.title||'Browser task')
+    const summary=String(row.summary||'Choose Take control to complete the provider step.')
+    let host=''
+    try{host=handoff.providerUrl?new URL(String(handoff.providerUrl)).hostname.toLowerCase():''}catch{host=''}
+    const key=[title.trim().toLowerCase(),summary.trim().toLowerCase(),host].join('|')
+    const seen=byStep.get(key)
+    if(seen){seen.repeats+=1;continue}
+    const card={id:String(row.id),title,summary,updatedAt:row.updated_at||null,repeats:0}
+    byStep.set(key,card)
+    found.push(card)
   }
-  return found
+  return found.slice(0,limit)
 }
 

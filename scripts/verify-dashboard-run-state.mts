@@ -77,6 +77,7 @@ const rows:any[]=[
   {id:'device',telegram_id:'42',type:'train_research',status:'paused',title:'Train on device',updated_at:'2026-10-04T15:12:00Z',metadata_json:{handoff:{mode:'device',providerUrl:'https://provider.example/'}}},
   {id:'json-null',telegram_id:'42',type:'life_event',status:'paused',title:'No takeover',updated_at:'2026-10-05T00:00:00Z',metadata_json:{handoff:null,browser_waiting:true}},
 ]
+for(let i=0;i<6;i++)rows.push({id:`robot-${i}`,telegram_id:'42',type:'secure_browser',status:'paused',title:'Check Playo slots',summary:'Complete the robot check.',updated_at:`2026-10-04T16:0${i}:00Z`,metadata_json:{handoff:{takeoverUrl:`robot-token-${i}`,providerUrl:'https://playo.co/venue'}}})
 for(let i=0;i<45;i++)rows.push({id:`unrelated-${i}`,telegram_id:'42',type:'secure_browser',status:'paused',updated_at:`2026-10-05T00:${String(i).padStart(2,'0')}:00Z`,metadata_json:{}})
 for(let i=0;i<110;i++)rows.push({id:`retired-${i}`,telegram_id:'42',type:'life_event',status:'paused',updated_at:`2026-10-05T02:${String(Math.floor(i/60)).padStart(2,'0')}:${String(i%60).padStart(2,'0')}Z`,metadata_json:{state:'closed_stale',handoff:{takeoverUrl:'retired-token'}}})
 rows.push(rows.shift()) // Keep the real handoff older than more than one page of unrelated pauses.
@@ -103,8 +104,10 @@ runInNewContext(ts.transpileModule(readFileSync('lib/dashboard/human-handoffs.ts
   exports:handoffExports,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./run-state'?{isActionablePause}:null,
 })
 const handoffs=await handoffExports.getPendingBrowserHandoffs('42')
-assert.equal(handoffs.map((row:any)=>row.id).join(','),'device,rail,zepto')
-assert.equal(handoffs[2].summary,'Select your delivery location.')
+assert.equal(handoffs.map((row:any)=>row.id).join(','),'robot-5,device,rail,zepto','six identical robot checks are one card, the newest, with the repeat count')
+assert.equal(handoffs.find((row:any)=>row.id==='robot-5').repeats,5)
+assert.equal(handoffs.find((row:any)=>row.id==='zepto').repeats,0)
+assert.equal(handoffs[3].summary,'Select your delivery location.')
 assert.doesNotMatch(JSON.stringify(handoffs),/private-token|foreign|rail-token/,'Needs you exposes task links, not takeover tokens')
 assert.ok(selected.some(([op,key,value])=>op==='eq'&&key==='telegram_id'&&value==='42'))
 assert.ok(selected.some(([op,key])=>op==='contains'&&key==='metadata_json'))
