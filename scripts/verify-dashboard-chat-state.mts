@@ -11,7 +11,7 @@ function load(file: string, mocks: Record<string, any>) {
       require(name: string) { if (name in mocks) return mocks[name]; throw new Error(`Unmocked: ${name}`) } })
   return module.exports
 }
-const { chatGogoState, CHAT_STATE_LABEL } = load('lib/dashboard/gogo-chat-state.ts', {})
+const { chatGogoState, CHAT_STATE_LABEL, CHAT_STATE_SHORT } = load('lib/dashboard/gogo-chat-state.ts', {})
 const base = { sending: false, typing: false, runTone: 'idle', justReplied: false, watchers: 0 }
 const at = (over: Record<string, any>) => chatGogoState({ ...base, ...over })
 
@@ -37,4 +37,13 @@ for (const state of Object.keys(CHAT_STATE_LABEL)) {
   assert.ok(drawable.includes(state), `${state} is not a GogoCharacter state`)
   assert.ok(String(CHAT_STATE_LABEL[state]).length > 0)
 }
+// The slim phone header has room for about two words next to the title.
+for (const state of Object.keys(CHAT_STATE_LABEL)) {
+  assert.ok(CHAT_STATE_SHORT[state] && CHAT_STATE_SHORT[state].length <= 16, `${state} needs a short phone label`)
+}
+// Installed-app screens have a gesture bar and notch: the tab bar and page must leave room for them.
+const tabBar = readFileSync('components/dashboard/tab-bar.tsx', 'utf8')
+assert.ok(tabBar.includes('pb-[env(safe-area-inset-bottom)]'), 'tab bar must sit above the phone gesture bar')
+const shell = readFileSync('app/dashboard/(app)/layout.tsx', 'utf8')
+assert.ok(shell.includes('env(safe-area-inset-bottom)') && shell.includes('env(safe-area-inset-top)'), 'page must leave room for notch and gesture bar')
 console.log('verify-dashboard-chat-state: ok')
