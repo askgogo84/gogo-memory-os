@@ -25,6 +25,7 @@ import { isStandaloneWorkspaceMeetingPrep, tryPrepareWorkspaceMeetingPlan } from
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
 import { isGroundedReminderCommand, jevClarificationReply } from '@/lib/agent/jev-router'
+import { parseApproxLocation } from '@/lib/dashboard/approx-location'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
@@ -380,6 +381,7 @@ export async function POST(req: NextRequest) {
       messageType: 'text',
       messageId: shadowEventId,
       semantic: webObservation?.jev,
+      approxLocation: parseApproxLocation(body?.location),
     })
 
     await recordShadowRouterOutcome({
