@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+import * as priceThreshold from '../lib/agent/price-threshold'
 import {
   parsePriceWatchCommand,
   parseOffersBasis,
@@ -91,6 +92,7 @@ function makeDb() {
       }
       function resolveSingle() {
         if (b._insert) { const row = applyInsert(); return { data: { id: row.id, ...row }, error: null } }
+        if (b._update) { for (const x of rows()) Object.assign(x, b._update) }
         const r = rows(); return { data: r[0] || null, error: null }
       }
       function resolveTerminal() {
@@ -172,6 +174,7 @@ function loadWatchCommand() {
     '@/lib/bot/handlers/followup-state': followupMock,
     './actor': {}, './orchestrator': {},
     './watchers': watchersMock,
+    './price-threshold': priceThreshold,
     './watch-cost-policy': {
       initialWatcherCadence: () => 15,
       isUrgentWatchRequest: () => false,
@@ -217,6 +220,9 @@ assert.match(q, /excluding bank\/card offers/i, 'DEFECT 3: persisted query store
 assert.match(t2.text, /excluding bank\/card offers/i, 'DEFECT 3: confirmation says excluded, matching the persisted record')
 assert.doesNotMatch(t2.text, /including bank\/card offers/i, 'the confirmation must NOT invert the constraint')
 assert.match(t2.text, /N\/A|no storage variant/i, 'storage recorded as N/A in the confirmation')
+assert.equal(JSON.stringify(stores.agent_watchers.at(-1)?.condition_json?.priceRule), JSON.stringify({ threshold: 22000, comparison: 'below', offers: 'excluded' }), 'the numeric price rule is stored on the watch, not only in the query text')
+assert.match(t2.text, /strictly below alerts, equal or above stays silent, and I never buy/i, 'the confirmation says how the rule is checked')
+assert.match(t2.text, /₹22,000/, 'the threshold is shown as the number the rule uses')
 console.log('live transcript regression passed (defects 1, 2, 3)')
 
 // ── At most ONE clarification question in the whole headphones flow ───────────
@@ -229,6 +235,7 @@ const inc = await wc.tryRunPriceWatchClarification({ actor, surface, text: 'incl
 assert.ok(inc && inc.status === 'completed')
 assert.match(latestWatcherQuery(), /including bank\/card offers/i, '"include bank and card offers" -> INCLUDED')
 assert.match(inc.text, /including bank\/card offers/i, 'confirmation reflects INCLUDED from the persisted record')
+assert.equal(JSON.stringify(stores.agent_watchers.at(-1)?.condition_json?.priceRule), JSON.stringify({ threshold: 25000, comparison: 'below', offers: 'included' }), 'offers included is stored in the rule')
 
 // ── FIX 7/8: the confirmation is bound to the PERSISTED record, not a template. ──
 // Tamper the persisted query so it disagrees with the user's explicit constraint;
