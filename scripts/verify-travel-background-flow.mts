@@ -106,7 +106,7 @@ const worker = load('lib/agent/travel-research-worker.ts',{
   }},
 })
 
-const text='Compare one-way flights from Bengaluru to Mumbai on 20 October 2026 for 1 adult in economy. Show verified non-stop options with INR fares and provider links. Do not book or pay.'
+const text='Compare one-way flights from Bengaluru to Mumbai on 20 October 2026 for 1 adult in economy, any time. Show verified non-stop options with INR fares and provider links. Do not book or pay.'
 const preferences=travel.flightSearchPreferences('Search flights from BLR to BOM on 20 October 2026 for two adults in premium economy, non-stop')
 assert.equal(preferences.cabin,'premium_economy');assert.equal(preferences.adults,2);assert.equal(preferences.nonStop,true)
 const late=new Date('2026-10-07T20:00:00Z')
@@ -232,7 +232,7 @@ const web=load('app/api/dashboard/chat/route.ts',webMocks)
 const initialDetails=await web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:'Compare flights to Mumbai. Research only; do not book or pay.'})}))
 assert.equal(initialDetails.status,200)
 assert.equal((await initialDetails.json()).handledBy,'travel-details')
-const detailsText='From Bengaluru on 20 October 2026, one-way, for 1 adult in economy, non-stop. Research only; do not book or pay.'
+const detailsText='From Bengaluru on 20 October 2026, one-way, for 1 adult in economy, non-stop, any time. Research only; do not book or pay.'
 assert.equal(travel.isTravelResearchDetailsReply('Forget that search.'),false,'prefix matching must not consume an unrelated instruction')
 const resumedDetails=await web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:detailsText})}))
 assert.equal(resumedDetails.status,200,'a flight details reply must not fall through to generic PIM')
@@ -262,7 +262,7 @@ assert.equal(resumedOnWhatsApp.runId,resumedReply.runId,'shared queue uses the s
 assert.equal(tables.agent_runs.length,1,'failed context checks cannot enqueue browser work')
 tables.agent_runs.length=0;tables.conversations.length=0
 const postDetails=(value:string)=>web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:value})}))
-assert.equal((await postDetails('Compare non-stop one-way flights to Mumbai for 2 adults in premium economy. Research only; do not book or pay.')).status,200)
+assert.equal((await postDetails('Compare non-stop one-way flights to Mumbai for 2 adults in premium economy, any time. Research only; do not book or pay.')).status,200)
 const partialDetails=await postDetails('From Bengaluru.')
 assert.equal(partialDetails.status,200)
 assert.match((await partialDetails.json()).text,/travel date together/)
@@ -289,12 +289,15 @@ turn=await say('yes')
 assert.equal(turn.handledBy,'travel-details');assert.doesNotMatch(turn.text,/Return date/);assert.match(turn.text,/Travellers: how many adults/)
 assert.equal(tables.agent_runs.length,0)
 turn=await say('2 adults, business')
-assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/2 adults, business, round trip/);assert.match(turn.text,/two results/);assert.match(turn.text,/never book, pay/)
+assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Departure time: morning, afternoon, evening, night or any time\?/);assert.doesNotMatch(turn.text,/Travellers:/)
+assert.equal(tables.agent_runs.length,0,'time of day is asked before searching')
+turn=await say('morning')
+assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/2 adults, business, morning departures, round trip/);assert.match(turn.text,/two results/);assert.match(turn.text,/never book, pay/)
 assert.equal(tables.agent_runs.length,2,'one saved search per direction')
 const legInputs=tables.agent_runs.map((row:any)=>row.metadata_json.input_text).sort()
-assert.deepEqual(legInputs,['Compare flights from BLR to SIN on 2026-10-27 for 2 adults in business. Research only; do not book or pay.','Compare flights from SIN to BLR on 2026-11-02 for 2 adults in business. Research only; do not book or pay.'])
+assert.deepEqual(legInputs,['Compare flights from BLR to SIN on 2026-10-27 for 2 adults in business, departing in the morning. Research only; do not book or pay.','Compare flights from SIN to BLR on 2026-11-02 for 2 adults in business, departing in the morning. Research only; do not book or pay.'])
 const outbound=tables.agent_runs.find((row:any)=>row.metadata_json.context.origin.code==='BLR').metadata_json.context
-assert.equal(outbound.destination.code,'SIN');assert.equal(outbound.adults,2);assert.equal(outbound.cabin,'business');assert.equal(outbound.startDate,'2026-10-27')
+assert.equal(outbound.timeOfDay,'morning');assert.equal(outbound.destination.code,'SIN');assert.equal(outbound.adults,2);assert.equal(outbound.cabin,'business');assert.equal(outbound.startDate,'2026-10-27')
 // Once searched, a stray "yes" or an unrelated message is not read as an answer.
 assert.equal(await queue.enqueueTravelResearch({actor,surface:'web',text:'yes'}),null)
 assert.equal(tables.agent_runs.length,2)
@@ -384,6 +387,17 @@ const priorAttempts=browserAttempts
 await worker.processTravelResearchQueue(Clock.now()+270000)
 assert.equal(interruptedRun.status,'failed');assert.equal(browserAttempts,priorAttempts,'a second interruption is terminal')
 assert.match(interruptedRun.metadata_json.result_text,/interrupted/)
+
+// One search per person at a time: the return leg waits while the outbound leg is still running.
+const outboundLeg=await queue.enqueueTravelResearch({actor,surface:'web',text:text.replace('20 October','23 October')})
+const returnLeg=await queue.enqueueTravelResearch({actor,surface:'web',text:text.replace('20 October','24 October')})
+const outboundRow=tables.agent_runs.find(r=>r.id===outboundLeg.runId);const returnRow=tables.agent_runs.find(r=>r.id===returnLeg.runId)
+outboundRow.status='running';outboundRow.updated_at=new Date(Clock.now()).toISOString()
+const waiting=await worker.processTravelResearchQueue(Clock.now()+270000)
+assert.equal(waiting.claimed,0,'a second leg is not started while the first is running');assert.equal(returnRow.status,'queued')
+outboundRow.status='completed';outboundRow.metadata_json.notified=true
+await worker.processTravelResearchQueue(Clock.now()+270000)
+assert.notEqual(returnRow.status,'queued','the waiting leg runs once the first has finished')
 
 // The actual cron export requires bearer authorization before invoking any worker.
 let cronCalls=0

@@ -14,6 +14,7 @@ function safe(value: unknown, max = 1600) {
   return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
 }
 
+export type TimeOfDay = 'morning' | 'afternoon' | 'evening' | 'night'
 type Place = { label: string; code?: string; aliases: string[] }
 type TravelContext = {
   kind: 'flight' | 'hotel'
@@ -27,6 +28,7 @@ type TravelContext = {
   cabin?: 'economy' | 'premium_economy' | 'business' | 'first'
   adults?: number
   nonStop?: boolean
+  timeOfDay?: TimeOfDay
 }
 type DateRelevance = 'matched' | 'unknown' | 'mismatched'
 
@@ -184,7 +186,51 @@ export function flightSearchPreferences(text: string) {
   const words: Record<string, number> = {one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9}
   const adultText = text.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine)\s+adults?\b/i)?.[1]?.toLowerCase()
   const adults = adultText ? words[adultText] ?? Number(adultText) : 1
-  return {cabin, adults, nonStop: /\b(?:non[- ]?stop|direct flights?)\b/i.test(text)}
+  const timeOfDay = timeOfDayFrom(text)
+  return {cabin, adults, nonStop: /\b(?:non[- ]?stop|direct flights?)\b/i.test(text), ...(timeOfDay ? { timeOfDay } : {})}
+}
+
+export function timeOfDayFrom(text: string): TimeOfDay | undefined {
+  const t = String(text || '')
+  if (/\btonight\b/i.test(t)) return 'night'
+  if (/\b(?:red[\s-]?eye|late\s+night|after\s+(?:9|10|11)\s*pm)\b/i.test(t)) return 'night'
+  const m = t.match(/\b(morning|afternoon|evening|night)\b/i)
+  return m ? (m[1].toLowerCase() as TimeOfDay) : undefined
+}
+
+// Local departure hour from "2026-10-27T06:30", "6:30 AM" or "06:30".
+export function departureHour(value: unknown): number | null {
+  const text = String(value || '')
+  const iso = text.match(/T(\d{2}):(\d{2})/)
+  if (iso) return Number(iso[1])
+  const clock = text.match(/\b(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/)
+  if (!clock) return null
+  let hour = Number(clock[1])
+  const meridiem = clock[3]?.toLowerCase()
+  if (meridiem === 'pm' && hour < 12) hour += 12
+  if (meridiem === 'am' && hour === 12) hour = 0
+  return hour >= 0 && hour <= 23 ? hour : null
+}
+export function inTimeOfDay(hour: number, tod: TimeOfDay): boolean {
+  return tod === 'morning' ? hour >= 5 && hour < 12 : tod === 'afternoon' ? hour >= 12 && hour < 17 : tod === 'evening' ? hour >= 17 && hour < 21 : hour >= 21 || hour < 5
+}
+/** Keep the options in the asked-for part of the day. If there are none, say so and show the rest. */
+export function applyTimeOfDay<T>(rows: T[], departure: (row: T) => unknown, tod?: TimeOfDay): { rows: T[]; note: string } {
+  if (!tod) return { rows, note: '' }
+  const matching = rows.filter(row => { const hour = departureHour(departure(row)); return hour !== null && inTimeOfDay(hour, tod) })
+  if (matching.length) return { rows: matching, note: `Showing ${tod} departures only.\n\n` }
+  return { rows, note: `No ${tod} departures were found, so these are the other options.\n\n` }
+}
+
+// A search the person can open to see live prices themselves. No login is needed and nothing is booked.
+export function googleFlightsSearchUrl(context: TravelContext, date?: string): string {
+  const origin = context.origin?.code || context.origin?.label || ''
+  const destination = context.destination?.code || context.destination?.label || ''
+  const when = date || context.startDate || ''
+  const cabin = (context.cabin || 'economy').replace(/_/g, ' ')
+  const adults = context.adults || 1
+  const q = `One-way ${context.nonStop ? 'non-stop ' : ''}flights from ${origin} to ${destination} on ${when} for ${adults} adult${adults === 1 ? '' : 's'} in ${cabin}`
+  return `https://www.google.com/travel/flights?hl=en&curr=INR&q=${encodeURIComponent(q)}`
 }
 
 export function verifiedProviderFlights(rows: CreditIQFlightResult[], context: TravelContext) {
@@ -245,20 +291,20 @@ export async function executeTravelResearch(params:{actor:AgentActor;surface:Age
     const live=await tryCreditIQLive(context,params.actor)
     console.log('TRAVEL_INVENTORY_RESULT:',{runId,source:live?.source||'unavailable',live:live?.live===true,
       eligibleCount:live?.flights.length||0,requiresServiceAuth:live?.requiresServiceAuth===true})
-    if(live?.live&&live.flights.length){const completedAt=new Date().toISOString();const top=live.flights.slice(0,8);const rewardsLine=live.identity?.pointsAware?`Rewards: linked CreditIQ wallet · ${live.identity.verifiedBalances} verified balance${live.identity.verifiedBalances===1?'':'s'}`:live.identity?.linked?'Rewards: CreditIQ is linked, but wallet balances were unavailable for this search':'Rewards: CreditIQ account not linked';const text=`Flight task completed · ${context.routeLabel} · ${context.whenLabel}\n${rewardsLine}\n\n${top.map(formatLiveFlight).join('\n\n')}`;await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,liveInventory:live,source:'creditiq',inventoryType:'live-provider'},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} live provider options.`,{travel_engine:'creditiq'});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'creditiq-travel' as const}}
+    if(live?.live&&live.flights.length){const completedAt=new Date().toISOString();const timedLive=applyTimeOfDay(live.flights,(f:any)=>f.departure,context.timeOfDay);const top=timedLive.rows.slice(0,8);const rewardsLine=live.identity?.pointsAware?`Rewards: linked CreditIQ wallet · ${live.identity.verifiedBalances} verified balance${live.identity.verifiedBalances===1?'':'s'}`:live.identity?.linked?'Rewards: CreditIQ is linked, but wallet balances were unavailable for this search':'Rewards: CreditIQ account not linked';const text=`Flight task completed · ${context.routeLabel} · ${context.whenLabel}\n${rewardsLine}\n\n${timedLive.note}${top.map(formatLiveFlight).join('\n\n')}`;await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,liveInventory:live,source:'creditiq',inventoryType:'live-provider'},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} live provider options.`,{travel_engine:'creditiq'});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'creditiq-travel' as const}}
     if(context.kind==='flight'){
       await supabaseAdmin.from('agent_runs').update({summary:'Live inventory was unavailable. Gogo is now working through the browser.',progress:45,updated_at:new Date().toISOString()}).eq('id',runId)
       await supabaseAdmin.from('agent_steps').update({title:'Work through live flight search in secure browser'}).eq('id',String(step.id))
       await addActivity(tg,runId,'browser_research_started','Gogo opened a secure browser to complete the flight-search task.',{route:context.routeLabel})
       const browserTask=await runLiveFlightBrowserTask({actor:params.actor,context,objective:effectiveText,deadline:params.deadline})
       browserReadDiagnostics=sanitizeBrowserReadDiagnostics(browserTask && 'browserReadDiagnostics' in browserTask ? browserTask.browserReadDiagnostics : [])
-      if(browserTask?.options?.length){const completedAt=new Date().toISOString();const top=browserTask.options.slice(0,8);const text=formatBrowserFlightResult(context,top,browserTask.browser?.sourceUrl||browserTask.browser?.url||'');await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,source:'browser-live',inventoryType:'browser-verified',browser:browserTask.browser,flights:top},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} browser-verified flight options.`,{travel_engine:'secure-browser',result_count:top.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'browser-flight-task' as const}}
+      if(browserTask?.options?.length){const completedAt=new Date().toISOString();const timedBrowser=applyTimeOfDay(browserTask.options,(f:any)=>f.departure,context.timeOfDay);const top=timedBrowser.rows.slice(0,8);const text=timedBrowser.note+formatBrowserFlightResult(context,top,browserTask.browser?.sourceUrl||browserTask.browser?.url||'');await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,source:'browser-live',inventoryType:'browser-verified',browser:browserTask.browser,flights:top},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} browser-verified flight options.`,{travel_engine:'secure-browser',result_count:top.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'browser-flight-task' as const}}
       console.warn('TRAVEL_BROWSER_DIAGNOSTICS:',JSON.stringify({runId,status:browserTask?.status||'no_result',browserReadDiagnostics}))
       await addActivity(tg,runId,'browser_research_incomplete','The browser could not produce verified flight rows; falling back to public sources.',{status:browserTask?.status||'no_result',browserReadDiagnostics})
     }
     // A projected redemption is never treated as executable until verified; browser research is read-only and cannot book or transfer points.
     await supabaseAdmin.from('agent_runs').update({summary:'Browser/provider inventory did not yield verifiable rows. Checking public sources as a last fallback.',progress:75,updated_at:new Date().toISOString()}).eq('id',runId)
-    const batches=await Promise.all(queries.map(q=>searchWebResults(q,{timeoutMs:15_000})));const curated=curateTravelResults(batches.flat(),context);const completedAt=new Date().toISOString();const output={context,results:curated,source:'public-web-fallback',inventoryType:'research',browserReadDiagnostics};await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:output,completed_at:completedAt}).eq('id',String(step.id));const intro=`Task could not obtain verified live rows · ${context.routeLabel} · ${context.whenLabel}`;const text=curated.length?`${intro}\n\n${curated.map((r,i)=>`${i+1}. ${r.source} — ${r.title}\n${r.inrFare?`Public snippet mentions ${r.inrFare}`:'Fare not verified'}\nOpen source: ${r.url}`).join('\n\n')}\n\nThese are fallback sources only, not completed live inventory.`:`${intro}\n\nGogo could not produce a verified result from the available providers.`;await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed','Task ended with fallback research rather than verified live inventory.',{travel_engine:'public-web-fallback',result_count:curated.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'travel-research' as const}
+    const batches=await Promise.all(queries.map(q=>searchWebResults(q,{timeoutMs:15_000})));const curated=curateTravelResults(batches.flat(),context);const completedAt=new Date().toISOString();const output={context,results:curated,source:'public-web-fallback',inventoryType:'research',browserReadDiagnostics};await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:output,completed_at:completedAt}).eq('id',String(step.id));const intro=`Task could not obtain verified live rows · ${context.routeLabel} · ${context.whenLabel}`;const text=curated.length?`${intro}\n\nI could not read live fares just now. Open this search to see live prices (no login needed, nothing is booked):\n${googleFlightsSearchUrl(context)}\n\n${curated.map((r,i)=>`${i+1}. ${r.source} — ${r.title}\n${r.inrFare?`Public snippet mentions ${r.inrFare}`:'Fare not verified'}\nOpen source: ${r.url}`).join('\n\n')}\n\nThese are fallback sources only, not completed live inventory.`:`${intro}\n\nI could not read live fares just now. Open this search to see live prices (no login needed, nothing is booked):\n${googleFlightsSearchUrl(context)}`;await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed','Task ended with fallback research rather than verified live inventory.',{travel_engine:'public-web-fallback',result_count:curated.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'travel-research' as const}
   }catch(error:any){const message=safe(error?.message||'travel_research_failed',500);const completedAt=new Date().toISOString();await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:message,completed_at:completedAt}).eq('id',String(step.id))).catch(()=>{});await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'failed',summary:'Gogo could not complete the travel task.',error:message,completed_at:completedAt,updated_at:completedAt}).eq('id',runId)).catch(()=>{});await addActivity(tg,runId,'run_failed','Travel task failed.',{error:message});throw error}
 }
 
@@ -277,9 +323,10 @@ export type FlightBrief = {
   adults?: number; children?: number; infants?: number
   cabin?: 'economy' | 'premium_economy' | 'business' | 'first'
   nonStop?: boolean
+  timeOfDay?: TimeOfDay | 'any'
   useDefaults?: boolean
 }
-export type FlightBriefSlot = 'route' | 'date' | 'trip' | 'return' | 'return_confirm' | 'travellers' | 'cabin'
+export type FlightBriefSlot = 'route' | 'date' | 'trip' | 'return' | 'return_confirm' | 'travellers' | 'cabin' | 'time'
 
 const COUNT_WORDS: Record<string, number> = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9 }
 const COUNT_RE = '(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine)'
@@ -367,6 +414,9 @@ export function parseFlightBriefText(raw: string, now = new Date(), timezone = '
   const cabin = cabinFrom(text)
   if (cabin) brief.cabin = cabin
   if (/\b(?:non[\s-]*stop|direct\s+flights?)\b/i.test(text)) brief.nonStop = true
+  const tod = timeOfDayFrom(text)
+  if (tod) brief.timeOfDay = tod
+  else if (/\b(?:any\s*time|anytime|whenever|no\s+preference\s+(?:on|for)\s+(?:the\s+)?time)\b/i.test(text)) brief.timeOfDay = 'any'
   return fixReturnOrder(brief)
 }
 
@@ -401,7 +451,7 @@ export function isFlightBriefAnswer(raw: string): boolean {
   if (AFFIRM_RE.test(text) || DEFAULTS_RE.test(text)) return true
   if (PLACES[text.toLowerCase().replace(/[.!?]+$/g, '')]) return true
   if (/^\s*(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine)\s*[.!]?\s*$/i.test(text)) return true
-  return /\b(?:round[\s-]*trip|one[\s-]*way|return|back|economy|business|first[\s-]*class|premium|adults?|children|child|kids?|infants?|passengers?|travell?ers?|people|persons?|just\s+me|only\s+me|solo|couple|of\s+us|non[\s-]*stop|direct)\b/i.test(text)
+  return /\b(?:round[\s-]*trip|one[\s-]*way|return|back|economy|business|first[\s-]*class|premium|adults?|children|child|kids?|infants?|passengers?|travell?ers?|people|persons?|just\s+me|only\s+me|solo|couple|of\s+us|non[\s-]*stop|direct|morning|afternoon|evening|night|any\s*time|anytime)\b/i.test(text)
     || flightDateMentions(text, new Date()).length > 0
 }
 
@@ -440,6 +490,7 @@ export function flightBriefSlots(brief: FlightBrief): FlightBriefSlot[] {
   else if (brief.tripType === 'round_trip' && !brief.returnDate && !brief.returnSuggestion) slots.push('return')
   if (brief.adults === undefined) slots.push('travellers')
   if (!brief.cabin) slots.push('cabin')
+  if (!brief.timeOfDay) slots.push('time')
   return slots
 }
 
@@ -471,11 +522,12 @@ export function askFlightBrief(brief: FlightBrief, slots: FlightBriefSlot[]): st
   if (slots.includes('return')) { questions.push('Return date: which day are you coming back?'); examples.push('back on 2 Nov') }
   if (slots.includes('travellers')) { questions.push('Travellers: how many adults, and any children or infants?'); examples.push('2 adults') }
   if (slots.includes('cabin')) { questions.push('Cabin: economy, premium economy, business or first class?'); examples.push('economy') }
+  if (slots.includes('time')) { questions.push('Departure time: morning, afternoon, evening, night or any time?'); examples.push('morning') }
   const head = `${cityOf(brief, 'origin')} to ${cityOf(brief, 'destination')} on ${dayLabel(brief.departDate!)}. A few quick choices so I search the right fares:`
   const list = questions.map((q, i) => `${i + 1}. ${q}`).join('\n')
   const eg = examples.length ? `Reply in one line, for example: ${examples.join(', ')}.\n` : ''
   const defaults = withFlightDefaults(brief)
-  const goLine = slots.every(s => s === 'return_confirm') ? '' : `Or say go and I'll search ${travellersLabel(defaults)}, ${CABIN_TEXT[defaults.cabin!]}, ${defaults.tripType === 'round_trip' ? 'round trip' : 'one-way'}.`
+  const goLine = slots.every(s => s === 'return_confirm') ? '' : `Or say go and I'll search ${travellersLabel(defaults)}, ${CABIN_TEXT[defaults.cabin!]}, ${defaults.tripType === 'round_trip' ? 'round trip' : 'one-way'}, any departure time.`
   return `${head}\n\n${list}\n\n${eg}${goLine}`.trim()
 }
 
@@ -487,7 +539,7 @@ export function flightLegs(brief: FlightBrief): FlightLeg[] {
   const adults = b.adults!
   const make = (from: string, to: string, date: string): FlightLeg => ({
     from, to, date, label: `${from} to ${to}, ${dayLabel(date)}`,
-    text: `Compare ${b.nonStop ? 'non-stop ' : ''}flights from ${from} to ${to} on ${date} for ${adults} adult${adults === 1 ? '' : 's'} in ${CABIN_TEXT[b.cabin!]}. Research only; do not book or pay.`,
+    text: `Compare ${b.nonStop ? 'non-stop ' : ''}flights from ${from} to ${to} on ${date} for ${adults} adult${adults === 1 ? '' : 's'} in ${CABIN_TEXT[b.cabin!]}${b.timeOfDay && b.timeOfDay !== 'any' ? `, departing in the ${b.timeOfDay}` : ''}. Research only; do not book or pay.`,
   })
   const origin = b.originCode || b.originLabel || ''
   const destination = b.destinationCode || b.destinationLabel || ''
@@ -501,7 +553,7 @@ export function flightSearchStartedText(brief: FlightBrief): string {
   const round = b.tripType === 'round_trip' && b.returnDate
   const when = round ? `${dayLabel(b.departDate!)} and back ${dayLabel(b.returnDate!)}` : dayLabel(b.departDate!)
   const perAdult = b.children || b.infants ? ' Fares are per adult; child and infant fares can differ.' : ''
-  return `Searching ${cityOf(b, 'origin')} to ${cityOf(b, 'destination')}, ${when}: ${travellersLabel(b)}, ${CABIN_TEXT[b.cabin!]}, ${round ? 'round trip' : 'one-way'}.\n\n` +
+  return `Searching ${cityOf(b, 'origin')} to ${cityOf(b, 'destination')}, ${when}: ${travellersLabel(b)}, ${CABIN_TEXT[b.cabin!]}, ${b.timeOfDay && b.timeOfDay !== 'any' ? `${b.timeOfDay} departures, ` : ''}${round ? 'round trip' : 'one-way'}.\n\n` +
     `${round ? 'Outbound and return are searched separately, so I will send two results; two one-way fares added together can differ from an airline round-trip fare. ' : ''}` +
     `I'm checking in the background and will send the options with prices here when it finishes. I only read fares. I never book, pay or enter traveller details.${perAdult}`
 }
