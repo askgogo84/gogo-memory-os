@@ -23,13 +23,19 @@ export async function processTravelResearchQueue(deadline: number) {
   }
   const {data:queued,error:queueError} = await supabaseAdmin.from('agent_runs').select('id,telegram_id')
     .eq('type','travel_research').eq('metadata_json->>background_travel','true').eq('status','queued')
-    .order('updated_at',{ascending:true}).limit(1)
+    .order('updated_at',{ascending:true}).limit(5)
   if(queueError) throw new Error('travel_worker_queue_failed')
   let claimed = 0
   for(const run of queued || []) {
     // 225s public flight read + 30s extraction/fallback/persistence/publication.
     // The browser also receives this absolute deadline after provider setup.
     if(Date.now()+255_000 >= deadline) break
+    // One flight search per person at a time. Outbound and return searches share one browser session, so
+    // running them together makes both fail. The next cron tick picks the waiting one up.
+    const {data:running,error:runningError} = await supabaseAdmin.from('agent_runs').select('id')
+      .eq('type','travel_research').eq('telegram_id',run.telegram_id).eq('status','running').limit(1)
+    if(runningError) throw new Error('travel_worker_running_check_failed')
+    if((running || []).length) continue
     const {data:claim,error} = await supabaseAdmin.from('agent_runs').update({status:'running',updated_at:new Date().toISOString()})
       .eq('id',run.id).eq('telegram_id',run.telegram_id).eq('type','travel_research').eq('status','queued').select('id').maybeSingle()
     if(error) throw new Error('travel_worker_claim_failed')
