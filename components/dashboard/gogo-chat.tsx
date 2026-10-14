@@ -7,6 +7,7 @@ import { GogoCharacter } from '@/components/gogo/gogo-character'
 import { selectActiveRun, summarizeActiveRunState } from '@/lib/dashboard/run-state'
 import { CHAT_STATE_LABEL, CHAT_STATE_SHORT, chatGogoState, type ChatGogoState } from '@/lib/dashboard/gogo-chat-state'
 import { flightChoiceFromText } from '@/lib/agent/flight-choices'
+import { CHAT_SUGGESTIONS, greetingFor, type ChatSuggestion } from '@/lib/dashboard/chat-suggestions'
 
 type ChatMessage={
   role:'user'|'assistant'
@@ -20,13 +21,6 @@ type AgentSnapshot={
   watchers:any[]
   approvals:any[]
 }
-
-const QUICK=[
-  'What do I have today?',
-  'Find a saved document',
-  'Show my reminders',
-  'Plan my day',
-]
 
 function linkify(text:string){
   const parts=String(text||'').split(/(https?:\/\/[^\s]+)/g)
@@ -80,7 +74,7 @@ function RailRow({title,meta,tone='muted',href}:{title:string;meta:string;tone?:
   return href?<Link href={href} className="block rounded-lg hover:bg-[#151515]">{body}</Link>:body
 }
 
-export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
+export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:string;userName?:string}){
   const searchParams=useSearchParams()
   const initialPrompt=searchParams.get('prompt')||''
   const [messages,setMessages]=useState<ChatMessage[]>([])
@@ -96,6 +90,10 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
   const messageScrollRef=useRef<HTMLDivElement|null>(null)
   const sendingRef=useRef(false)
   const conversationVersion=useRef(0)
+  const [dictating,setDictating]=useState(false)
+  const [canDictate,setCanDictate]=useState(false)
+  const inputRef=useRef<HTMLTextAreaElement|null>(null)
+  const recognitionRef=useRef<any>(null)
 
   async function loadSnapshot(){
     try{
@@ -157,7 +155,7 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
   // "Working" despite a dead-end reply).
   const runState=summarizeActiveRunState(snapshot.runs)
   const runStateDot=runState.tone==='working'?'bg-[#4cd0bd]':runState.tone==='waiting'?'bg-[#e2b04a]':'bg-[#8a8a86]'
-  const gogoState=chatGogoState({sending,typing:text.trim().length>0,runTone:runState.tone,justReplied,watchers:snapshot.watchers.length})
+  const gogoState=chatGogoState({sending,typing:text.trim().length>0||dictating,runTone:runState.tone,justReplied,watchers:snapshot.watchers.length})
   // Gogo's own flight questions come back with tap answers, the same ones WhatsApp shows as buttons.
   const lastMessage=visible[visible.length-1]
   const lastChoice=!sending&&!historyOpen&&lastMessage?.role==='assistant'?flightChoiceFromText(lastMessage.content)?.choice:null
@@ -193,12 +191,46 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
     }
   }
 
+  function pickSuggestion(item:ChatSuggestion){
+    if(item.send){void submit(item.prompt);return}
+    // Needs details from the person: fill the box and put the cursor at the end.
+    setText(item.prompt)
+    setTimeout(()=>{const el=inputRef.current;if(!el)return;el.focus();el.setSelectionRange(item.prompt.length,item.prompt.length)},0)
+  }
+
+  // Voice dictation uses the browser's own speech recognition, so it appears only where the browser has it.
+  useEffect(()=>{
+    if(typeof window==='undefined')return
+    const w=window as any
+    setCanDictate(Boolean(w.SpeechRecognition||w.webkitSpeechRecognition))
+    return()=>{try{recognitionRef.current?.stop()}catch{}}
+  },[])
+
+  function toggleDictation(){
+    const w=window as any
+    const Recognition=w.SpeechRecognition||w.webkitSpeechRecognition
+    if(!Recognition)return
+    if(dictating){try{recognitionRef.current?.stop()}catch{};return}
+    const rec=new Recognition()
+    rec.lang=navigator.language||'en-IN'
+    rec.interimResults=false
+    rec.continuous=false
+    rec.onresult=(event:any)=>{
+      const heard=Array.from(event.results||[]).map((r:any)=>r?.[0]?.transcript||'').join(' ').trim()
+      if(heard)setText(current=>current?`${current.replace(/\s+$/,'')} ${heard}`:heard)
+    }
+    rec.onend=()=>setDictating(false)
+    rec.onerror=()=>setDictating(false)
+    recognitionRef.current=rec
+    try{rec.start();setDictating(true)}catch{setDictating(false)}
+  }
+
   function onSubmit(e:FormEvent){
     e.preventDefault()
     void submit()
   }
 
-  return <div className="grid h-[calc(100dvh-6rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-[520px] w-full overflow-hidden bg-[#0b0b0b] lg:border lg:border-[#1f1f1f] lg:h-[calc(100dvh-4.25rem)] lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
+  return <div className="grid h-[calc(100dvh-5.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-[520px] w-full overflow-hidden bg-[#0b0b0b] lg:border lg:border-[#1f1f1f] lg:h-[calc(100dvh-4.25rem)] lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
     <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <header className="shrink-0 border-b border-[#1f1f1f] px-4 py-2.5 sm:px-6 lg:px-10 lg:py-5">
         <div className="flex items-center justify-between gap-3">
@@ -215,10 +247,16 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
 
       <div ref={messageScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-6 sm:px-6 lg:px-10">
         {loading&&<div className="py-16 text-center text-[16px] text-[#a8a8a4]">Bringing your conversation in…</div>}
-        {!loading&&visible.length===0&&<div className="py-16 text-center">
-          <div className="mx-auto w-fit"><Avatar state={gogoState==='calm'?'calm':gogoState} size={104}/></div>
-          <h2 className="mt-5 text-[26px] font-bold text-[#f2efea]">What should we work on?</h2>
-          <p className="mx-auto mt-2 max-w-xl text-[16px] leading-relaxed text-[#b4b4b0]">Ask Gogo here or on WhatsApp. The same context, tasks, approvals and background work carry across both.</p>
+        {!loading&&visible.length===0&&<div className="mx-auto max-w-[980px] py-8 text-center lg:py-14">
+          <div className="mx-auto w-fit"><Avatar state={gogoState} size={104}/></div>
+          <h2 className="mt-5 text-[28px] font-bold leading-tight text-[#f2efea] lg:text-[34px]" suppressHydrationWarning>{greetingFor(new Date().getHours())}{userName?`, ${userName}`:''}.</h2>
+          <p className="mx-auto mt-2 max-w-xl text-[16px] leading-relaxed text-[#b4b4b0]">Ask here or on WhatsApp. The same context, tasks, approvals and background work carry across both.</p>
+          <div className="mt-8 grid grid-cols-1 gap-3 text-left sm:grid-cols-2 xl:grid-cols-3">
+            {CHAT_SUGGESTIONS.map(item=><button key={item.id} type="button" onClick={()=>pickSuggestion(item)} className="min-h-[76px] rounded-[18px] border border-[#242424] bg-[#141414] px-5 py-4 transition hover:border-[#4cd0bd] hover:bg-[#101f1d]">
+              <div className="text-[17px] font-semibold text-[#f2efea]">{item.title}</div>
+              <div className="mt-0.5 text-[15px] text-[#a8a8a4]">{item.hint}</div>
+            </button>)}
+          </div>
         </div>}
         <div className="mx-auto flex max-w-[980px] flex-col gap-6">
           {visible.map((message,index)=><Message key={`${index}-${message.createdAt||''}`} message={message} chips={index===visible.length-1?lastChips:undefined} onPick={v=>void submit(v)}/>)}
@@ -230,11 +268,14 @@ export function GogoChat({initialDrink='coffee'}:{initialDrink?:string}){
       <div className="sticky bottom-0 z-20 shrink-0 border-t border-[#1f1f1f] bg-[#0b0b0b] px-4 pb-4 pt-3 sm:px-6 lg:px-10 lg:pb-5">
         <div className="mx-auto max-w-[980px]">
           {error&&<div className="mb-3 rounded-[12px] border border-red-500/30 bg-red-500/10 px-4 py-3 text-[15px] text-red-300">{error}</div>}
-          <div className="mb-3 flex gap-2.5 overflow-x-auto pb-1">
-            {QUICK.map(q=><button key={q} type="button" onClick={()=>void submit(q)} className="min-h-11 shrink-0 rounded-full border border-[#2f2f2f] px-5 text-[15px] text-[#d8d8d3] hover:border-[#4cd0bd] hover:text-[#f2efea] lg:text-[16px]">{q}</button>)}
-          </div>
+          {(loading||visible.length>0)&&<div className="mb-3 flex gap-2.5 overflow-x-auto pb-1">
+            {CHAT_SUGGESTIONS.map(item=><button key={item.id} type="button" onClick={()=>pickSuggestion(item)} className="min-h-11 shrink-0 rounded-full border border-[#2f2f2f] px-5 text-[15px] text-[#d8d8d3] hover:border-[#4cd0bd] hover:text-[#f2efea] lg:text-[16px]">{item.title}</button>)}
+          </div>}
           <form onSubmit={onSubmit} className="flex items-end gap-3 rounded-[28px] border border-[#2f2f2f] bg-[#131313] py-2 pl-5 pr-2 focus-within:border-[#4cd0bd]">
-            <textarea value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void submit()}}} rows={1} maxLength={2000} placeholder="Message Gogo" className="max-h-32 min-h-12 flex-1 resize-none bg-transparent py-3 text-[17px] leading-6 text-[#f2efea] outline-none placeholder:text-[#a8a8a4] lg:text-[18px]"/>
+            <textarea ref={inputRef} value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void submit()}}} rows={1} maxLength={2000} placeholder="Message Gogo" className="max-h-32 min-h-12 flex-1 resize-none bg-transparent py-3 text-[17px] leading-6 text-[#f2efea] outline-none placeholder:text-[#a8a8a4] lg:text-[18px]"/>
+            {canDictate&&<button type="button" onClick={toggleDictation} aria-pressed={dictating} aria-label={dictating?'Stop dictation':'Dictate a message'} className={`grid h-12 w-12 shrink-0 place-items-center rounded-full border ${dictating?'border-[#4cd0bd] bg-[#123d38] text-[#8be6d8]':'border-[#2f2f2f] text-[#d8d8d3]'}`}>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+            </button>}
             <button disabled={sending||!text.trim()} className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#efe6d7] text-[22px] font-bold text-[#0b0b0b] disabled:opacity-30" aria-label="Send">↑</button>
           </form>
         </div>
