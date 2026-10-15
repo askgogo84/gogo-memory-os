@@ -53,11 +53,11 @@ function statusLabel(status:string){
 }
 function runSubline(run:DashboardActivityRun){return readableRunSummary(rawRunSubline(run))}
 function rawRunSubline(run:DashboardActivityRun){
-  if(run.status==='closed')return 'Closed or superseded. No verified completion is recorded for this task.'
+  if(run.status==='closed')return 'Closed before it finished: a newer request replaced it, or it was stopped. Nothing was changed.'
   const browser=browserContextForRun(run)
   if(run.status==='running')return run.summary||'Gogo is working on it.'
   if(run.status==='waiting_approval')return run.summary||'Waiting for your approval.'
-  if(run.status==='paused'&&browser.providerBlocked)return 'The provider blocked server access. Open it on your own device to continue.'
+  if(run.status==='paused'&&browser.providerBlocked)return "The site blocked Gogo's browser. Open it on your own phone to continue."
   if(run.status==='paused')return run.summary||'This task is waiting for you.'
   // An error code (stale_run_recovered) is not a sentence for the person; the saved summary is.
   if(run.status==='failed')return run.summary||(run.error&&!/^[a-z0-9_:.-]+$/.test(run.error)?run.error:'')||'This task could not be completed.'
