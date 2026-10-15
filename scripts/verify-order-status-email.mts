@@ -45,3 +45,22 @@ const padded = formatOrderEmailAnswer(amazon, [{ subject: 'Ordered: "Huawei Free
 assert.doesNotMatch(padded, /͏/)
 assert.equal(padded.match(/Huawei FreeClip 2/g)?.length, 1)
 console.log('verify-order-status-email: padding ok')
+
+// 15 Oct: Swiggy and Zomato. Swiggy order emails come from swiggy.in; its card offers are dropped by subject.
+const { orderUpdatesOnly } = await import('../lib/agent/order-email-status')
+const { accountSiteFromText } = await import('../lib/agent/account-site-gate')
+const { VAULT_CONNECT_SITES } = await import('../lib/dashboard/connection-catalogue')
+const { getVaultProvider } = await import('../lib/vault/providers')
+assert.equal(accountSiteFromText('Where is my Swiggy order?')?.id, 'swiggy')
+assert.equal(accountSiteFromText('Where is my Zomato order?')?.id, 'zomato')
+assert.match(orderEmailQuery(findCatalogueSite('swiggy')!)!, /^from:\(swiggy\.in\)/)
+assert.deepEqual(orderUpdatesOnly([{ subject: 'Zero fees. Zero regrets. ✅' }, { subject: 'Your Swiggy order was delivered on time' }]).map(m => m.subject), ['Your Swiggy order was delivered on time'])
+for (const id of ['swiggy', 'zomato']) {
+  assert.equal(VAULT_CONNECT_SITES[id], id)
+  assert.equal(getVaultProvider(id)!.phoneOnly, true, `${id} signs in only with a phone and code`)
+}
+assert.match(read('components/dashboard/connect-site-form.tsx'), /\{!props\.phoneOnly && option\('password', 'Password'\)\}/)
+const script = read('lib/agent/secure-computer.ts')
+assert.match(script, /Sites like Swiggy and Zomato keep the login in a panel opened from the header/)
+assert.match(script, /button:has-text\("Send One Time Password"\)/)
+console.log('verify-order-status-email: swiggy/zomato ok')
