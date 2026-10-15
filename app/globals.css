@@ -386,3 +386,26 @@ body {
 .dashboard-root.final-dark[data-theme='light'] .final-dark-amber { color:#8a5a0f; }
 .dashboard-root.final-dark[data-theme='light'] .final-dark-danger { color:#a63d30; }
 .dashboard-root.final-dark[data-theme='light'] .final-dark-success { color:#336622; }
+
+/* ── Lenis (marketing routes only) ───────────────────────────────────────────
+   Scoped to .lenis, which Lenis adds to <html> only while it is running, so
+   every one of these rules is inert on dashboard routes and under
+   prefers-reduced-motion. See components/scroll/smooth-scroll.tsx. */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+html.lenis {
+  /* Lenis sets the real scroll position each frame; a native smooth behaviour
+     on top of that animates towards each intermediate target. */
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-stopped {
+  overflow: clip;
+}
+.lenis [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-smooth iframe {
+  pointer-events: none;
+}
