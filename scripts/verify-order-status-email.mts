@@ -66,3 +66,10 @@ const script = read('lib/agent/secure-computer.ts')
 assert.match(script, /Sites like Swiggy and Zomato keep the login in a panel opened from the header/)
 assert.match(script, /button:has-text\("Send One Time Password"\)/)
 console.log('verify-order-status-email: swiggy/zomato ok')
+
+// 16 Oct live: the Swiggy preview carried the delivery address and name; keep restaurant and delivery time.
+const swiggy = formatOrderEmailAnswer(findCatalogueSite('swiggy')!, [{ subject: 'Your Swiggy order was delivered on time', date: 'Wed, 14 Oct 2026 02:42:08 +0000',
+  snippet: 'Delivery in 12 mins! ₹49 saved on this order ₹49 saved with Swiggy ORDER JOURNEY Priyadarshini Grand 315, Siddhaiah Puranik Road, Basaveshwara Nagar, Bangalore - 560020 Oct 14, 7:59 AM Goverdhan 1475' }])!
+assert.match(swiggy, /\nFrom Priyadarshini Grand · delivered in 12 mins/)
+assert.doesNotMatch(swiggy, /Siddhaiah|560020|1475/)
+console.log('verify-order-status-email: swiggy summary ok')

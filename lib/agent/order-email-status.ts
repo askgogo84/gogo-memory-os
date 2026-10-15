@@ -48,7 +48,14 @@ export function formatOrderEmailAnswer(site: CatalogueSite, messages: Array<{ su
   const line = (m: any) => {
     const date = formatEmailDateIST(m.date)
     const subject = String(m.subject || '').trim()
-    let snippet = cleanEmailSnippet(m.snippet, 120)
+    let snippet = cleanEmailSnippet(m.snippet, 400)
+    // Swiggy's preview runs restaurant, address and name together ("ORDER JOURNEY Priyadarshini Grand 315, Siddhaiah…
+    // Goverdhan 1475"); keep the restaurant and the delivery time only.
+    const swiggyPlace = snippet.match(/ORDER JOURNEY\s+(.+?)\s+\d/)?.[1]
+    if (swiggyPlace) {
+      const mins = snippet.match(/Delivery in (\d+) mins/i)?.[1]
+      snippet = `From ${swiggyPlace.trim()}${mins ? ` · delivered in ${mins} mins` : ''}`
+    } else if (snippet.length > 120) snippet = `${snippet.slice(0, 119).trimEnd()}…`
     // Shop emails often repeat the subject as the preview text; show it once.
     if (subject && snippet.replace(/["'…]/g, '').toLowerCase().startsWith(subject.replace(/["'…]/g, '').toLowerCase().slice(0, 30))) snippet = ''
     return `*${String(m.subject || 'Order update').trim()}*${date ? `\n${date}` : ''}${snippet ? `\n${snippet}` : ''}`
