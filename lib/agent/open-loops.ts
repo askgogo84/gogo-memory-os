@@ -433,9 +433,12 @@ function looksLikeIncomingPromise(text:string){
   return /\b(?:i(?:'ll| will)|we(?:'ll| will)|i\s+can|we\s+can)\s+(?:send|share|resend|reply|respond|confirm|approve|review|deliver|update|call|get\s+back|revert)\b/i.test(text)
 }
 
-function isAutomatedGmailMessage(message:any){
+export function isAutomatedGmailMessage(message:any){
   const from=headerEmail(message?.from)
-  if(/(?:^|[._+-])(no-?reply|do-?not-?reply|newsletter|digest|notifications?)(?:[._+-]|@)/i.test(from))return true
+  if(/(?:^|[._+-])(no-?reply|do-?not-?reply|newsletter|digest|notifications?|alerts?|instaalerts?|mailers?|marketing|promotions?|offers|updates|feedback|surveys?|bounces?)(?:[._+-]|@)/i.test(from))return true
+  // Bank transaction alerts, OTPs and feedback surveys never need a reply (HDFC "Rs.2249.38 debited", JioFiber "Share your experience").
+  const text=clean(`${message?.subject||''} ${message?.snippet||''}`,600)
+  if(/\b(?:debited|credited)\b.{0,80}\b(?:a\/c|account|card|upi)\b|\b(?:a\/c|account|card)\b.{0,80}\b(?:debited|credited)\b|\bone[- ]time password\b|\bOTP\b|\bshare your (?:experience|feedback)\b|\brate (?:us|your (?:experience|order))\b|\bhow (?:was|did we do)\b/i.test(text))return true
   if(clean(message?.listId,240))return true
   if(/\b(?:bulk|list|junk)\b/i.test(clean(message?.precedence,80)))return true
   const auto=clean(message?.autoSubmitted,120).toLowerCase()

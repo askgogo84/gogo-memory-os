@@ -216,7 +216,9 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
 
   const dedup=new Map<string,PulseItem>()
   for(const item of items.sort((a,b)=>b.score-a.score))if(!dedup.has(item.key))dedup.set(item.key,item)
-  const top=Array.from(dedup.values()).slice(0,3)
+  // Two threads with the same sender and subject (two JioFiber surveys) read as one line, so show it once.
+  const seenLines=new Set<string>()
+  const top=Array.from(dedup.values()).filter(item=>{const k=item.line.toLowerCase().replace(/\s+/g,' ').trim();if(seenLines.has(k))return false;seenLines.add(k);return true}).slice(0,3)
   return {items:top,fingerprint:fingerprint(top.map(x=>x.key))}
 }
 
