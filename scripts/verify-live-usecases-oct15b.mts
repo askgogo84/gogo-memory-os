@@ -42,6 +42,10 @@ const agent = read('app/dashboard/(app)/agent/page.tsx')
 assert.match(agent, /needsYou:\(snapshot\?\.approvals\?\.length\|\|0\)\+handoffGroups\.length/)
 assert.match(agent, /earlier stop\{earlier\.length===1\?'':'s'\} on this site/)
 
+// 4b. "Waiting for you" on Today is the Needs you count, not every old paused run (it said 25 while Needs you said 1).
+assert.match(home, /waiting:approvalRows\.length\+handoffGroups\.length \}/)
+assert.doesNotMatch(home, /pausedRunsRes|actionablePaused/)
+
 // 5. Cancelled reminders are not part of today.
 assert.match(home, /filter\(r=>r\.status!=='cancelled'&&r\.delivery_state!=='cancelled'\)/)
 
