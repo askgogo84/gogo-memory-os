@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist_Mono, Onest } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
+import SmoothScroll from "@/components/scroll/smooth-scroll";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -67,7 +68,10 @@ export default function RootLayout({
       lang="en"
       className={`${geistMono.variable} ${newsreader.variable} ${onest.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <SmoothScroll />
+      </body>
     </html>
   );
 }
