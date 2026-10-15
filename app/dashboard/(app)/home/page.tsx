@@ -5,7 +5,6 @@ import { getTodayReminders, getLists } from '@/lib/dashboard/queries'
 import { getDashboardMemory } from '@/lib/dashboard/memory'
 import { CommandBar } from '@/components/dashboard/command-bar'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
-import { isActionablePause } from '@/lib/dashboard/run-state'
 import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
 import { reminderStateLabel } from '@/lib/dashboard/reminder-state'
 import { retiredRunReason } from '@/lib/agent/task-lifecycle'
@@ -47,7 +46,7 @@ export default async function HomePage(){
   const session=await getSession()
   const tg=session?.telegramId||''
   const tgNum=parseInt(tg,10)
-  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,waitingCountRes,pausedRunsRes,handoffs,recentUpdatesResult]=await Promise.all([
+  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,handoffs,recentUpdatesResult]=await Promise.all([
     Number.isFinite(tgNum)?supabaseAdmin.from('users').select('name,timezone').eq('telegram_id',tgNum).maybeSingle():Promise.resolve({data:null as any}),
     session?getTodayReminders(tg):Promise.resolve({ok:true as const,reminders:[]}),
     session?getLists(tg):Promise.resolve({ok:true as const,lists:[]}),
@@ -58,11 +57,6 @@ export default async function HomePage(){
     // Indicator counts come from untruncated head-counts, not the limited display list,
     // so a running row can never be hidden behind more-recent paused/waiting rows.
     session?supabaseAdmin.from('agent_runs').select('id',{count:'exact',head:true}).eq('telegram_id',tg).in('status',['running','queued']).gte('updated_at',staleRunningCutoff()):Promise.resolve({count:0}),
-    session?supabaseAdmin.from('agent_runs').select('id',{count:'exact',head:true}).eq('telegram_id',tg).eq('status','waiting_approval'):Promise.resolve({count:0}),
-    // A paused run stopped at a human-action boundary (sign-in / secure handoff /
-    // browser-waiting) is actionable and counts as waiting; a rejected/terminal paused
-    // run does not. The signal lives in error OR metadata, so fetch rows and classify.
-    session?supabaseAdmin.from('agent_runs').select('id,error,metadata_json,status').eq('telegram_id',tg).eq('status','paused').order('updated_at',{ascending:false}).limit(50):Promise.resolve({data:[] as any[]}),
     session?getPendingBrowserHandoffs(tg):Promise.resolve([]),
     session?supabaseAdmin.from('agent_runs').select('id,type,title,summary,status,source,error,metadata_json,updated_at')
       .eq('telegram_id',tg).in('status',['completed','paused','failed']).neq('type','secure_browser')
@@ -89,8 +83,9 @@ export default async function HomePage(){
   // Distinguish actively-executing runs from runs awaiting an approval. Counts come from
   // untruncated head-counts so active work is never hidden by the display limit; only
   // running/queued is "Working" (a paused/blocked run must not read as working).
-  const actionablePaused=((pausedRunsRes as any)?.data||[]).filter((r:any)=>isActionablePause(r)).length
-  const runState={ working:Number(workingCountRes?.count||0), waiting:Number(waitingCountRes?.count||0)+actionablePaused }
+  // "Waiting for you" is what Needs you shows: approvals plus one item per site that stopped for you. Old paused runs
+  // (25 of them, mostly the same playo.co stop) are history, not 25 things to do.
+  const runState={ working:Number(workingCountRes?.count||0), waiting:approvalRows.length+handoffGroups.length }
   const contextBits=[
     memory.ok?`${memory.items.length} memories`:null,
     lists.ok?`${lists.lists.length} lists`:null,
@@ -102,7 +97,7 @@ export default async function HomePage(){
     : runState.working
       ? `Gogo is working on ${runState.working} active task${runState.working===1?'':'s'}. You can leave — it will stop if anything needs your approval.`
       : runState.waiting
-      ? `${runState.waiting} task${runState.waiting===1?' is':'s are'} waiting for you to continue.`
+      ? `${runState.waiting} thing${runState.waiting===1?' is':'s are'} waiting for you in Needs you.`
       : pending.length
         ? `You have ${pending.length} reminder${pending.length===1?'':'s'} today. Gogo is quiet unless something changes or needs you.`
         : 'Your day is clear. Tell Gogo what matters and it will carry the next safe steps.'
