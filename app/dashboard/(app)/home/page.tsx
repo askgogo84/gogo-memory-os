@@ -78,7 +78,9 @@ export default async function HomePage(){
   const handoffGroups=[...handoffRows.reduce((map,h)=>{const g=map.get(h.title);if(g){g.count+=1+h.repeats}else map.set(h.title,{first:h,count:1+h.repeats});return map},new Map<string,{first:typeof handoffRows[number];count:number}>()).values()]
   const watcherRows=watchers.data||[]
   const runRows=runs.data||[]
-  const recentUpdates=((recentUpdatesResult as any)?.data||[]).filter((run:any)=>!retiredRunReason(run)).slice(0,3)
+  // The same background check repeated (KLM status unchanged, three times) is one update, not three.
+  const recentUpdates=((recentUpdatesResult as any)?.data||[]).filter((run:any)=>!retiredRunReason(run))
+    .filter((run:any,i:number,all:any[])=>all.findIndex((x:any)=>x.title===run.title&&x.summary===run.summary&&x.status===run.status)===i).slice(0,3)
   const updatesUnavailable=Boolean((recentUpdatesResult as any)?.error)
   // Distinguish actively-executing runs from runs awaiting an approval. Counts come from
   // untruncated head-counts so active work is never hidden by the display limit; only
@@ -122,7 +124,7 @@ export default async function HomePage(){
 
     <div className="grid gap-4 lg:gap-5 xl:grid-cols-3">
         <section className="final-dark-panel overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[14px] font-semibold text-[#d9a441]">{approvalRows.length+handoffGroups.reduce((n,g)=>n+g.count,0)}</Link></div>
+          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[14px] font-semibold text-[#d9a441]">{approvalRows.length+handoffRows.length}</Link></div>
           <div className="border-t border-[#1f1f1f] px-4">
             {approvalRows.map((a:any)=><Row key={a.id} tone="amber" title={a.title||'Approval needed'} meta={a.description||'Gogo stopped before a consequential action.'} right="Review" href="/dashboard/agent?section=approvals"/>)}
             {handoffGroups.map(({first,count})=><Row key={first.id} tone="amber" title={first.title} meta={count>1?`${count} waiting on you here. Latest: ${first.summary}`:first.summary} right={count>1?'Open':'Take control'} href={count>1?'/dashboard/agent?section=approvals':`/dashboard/activity/${first.id}/browser`}/>)}
