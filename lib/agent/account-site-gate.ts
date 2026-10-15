@@ -60,9 +60,24 @@ export async function tryAccountSiteSignInGate(params: { telegramId: string | nu
  * The full answer for an account question: order and delivery questions are answered from the shop's emails first
  * (instant, no sign-in); otherwise an unconnected site gets the Connect link. Null means "connected, go to the site".
  */
+// Sites whose food orders exist only in their phone app (16 Oct: zomato.com's signed-in profile has Reviews and
+// Settings but no orders), so no browser can read them. Answered from email, else told plainly.
+export const APP_ONLY_ORDER_SITES: Record<string, string> = {
+  zomato: 'Zomato keeps food orders only in its app: open the Zomato app, tap your profile, then Your orders.',
+}
+
 export async function tryAccountSiteAnswer(actor: import('./actor').AgentActor, text: string) {
   const site = accountSiteFromText(text)
   if (!site) return null
+  if (APP_ONLY_ORDER_SITES[site.id]) {
+    const { tryOrderStatusFromEmail, isOrderStatusQuestion } = await import('./order-email-status')
+    if (isOrderStatusQuestion(text)) {
+      const fromEmail = await tryOrderStatusFromEmail(actor, site, text).catch(() => null)
+      return fromEmail
+        ? { text: fromEmail, status: 'completed' as const, handledBy: 'account-site-order-email', siteId: site.id }
+        : { text: `I couldn't find any ${site.name} order emails in your Gmail from the last 45 days. ${APP_ONLY_ORDER_SITES[site.id]}`, status: 'completed' as const, handledBy: 'account-site-app-only', siteId: site.id }
+    }
+  }
   const gate = await tryAccountSiteSignInGate({ telegramId: actor.legacyTelegramId, text })
   const { tryOrderStatusFromEmail } = await import('./order-email-status')
   const fromEmail = await tryOrderStatusFromEmail(actor, site, text).catch(() => null)
