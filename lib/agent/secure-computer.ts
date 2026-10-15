@@ -16,7 +16,8 @@ import { needsBrowserDeliveryLocation } from './browser-location-gate'
 import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
 import { beginSignupCredential, resolveSignupCredential, resumeSignupCredential, type BegunSignup, type SignupVaultResult } from '@/lib/vault/signup-credential'
-import { upsertVaultSession } from '@/lib/vault/session-store'
+import { upsertVaultSession, listVaultSessions } from '@/lib/vault/session-store'
+import { findVaultProviderForDomain } from '@/lib/vault/providers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_GENERATION, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 import { canAuthorizeConsequentialAction, type TrustClass } from './trust'
@@ -1904,7 +1905,19 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // never exposed to the model planner, task objective, Activity, or logs.
       // A sign-up page also has a password field; never try a saved login while creating an account.
       // A saved login is also tried once on a signed-out page that only offers a header "Log in" link.
-      const signedOutEntry=!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
+      let signedOutEntry=!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
+      // Phone-code sites (Swiggy, Zomato): sign in once at the start unless Gogo already holds a live session there,
+      // because the planner may wander to pages with no "Log in" link (16 Oct live run).
+      if(!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
+        const entryHost=(()=>{try{return new URL(String(page.url||target.toString())).hostname}catch{return ''}})()
+        // typeof guard: browser test harnesses stub the vault modules with empty objects.
+        const phoneSite=entryHost&&typeof findVaultProviderForDomain==='function'?findVaultProviderForDomain(entryHost):null
+        if(phoneSite?.phoneOnly){
+          vaultEntryChecked=true
+          const sessions=typeof listVaultSessions==='function'?await listVaultSessions(String(params.userId)).catch(()=>null):null
+          signedOutEntry=!!sessions&&!sessions.some(row=>row.status==='active'&&phoneSite.domains.some(d=>row.domain===d||row.domain.endsWith('.'+d)))
+        }
+      }
       if(signedOutEntry)vaultEntryChecked=true
       if(!vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
       const currentUrl=String(page.url||target.toString())
@@ -2333,6 +2346,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         inputs:(page.forms||[]).reduce((n:number,f:any)=>n+(f.inputs?.length||0),0),
         links:page.links?.length||0,actions:actionLog.map(a=>({kind:a.kind,status:a.status,...(a.failure?{failure:a.failure}:{})})),
         controls:page.controls?.length||0,
+        // Where the run ended (path only, no query) and whether the page still offered a sign-in.
+        at:(()=>{try{const u=new URL(String(page.url||''));return u.hostname+u.pathname.slice(0,80)}catch{return null}})(),title:safeText(page.title,80),
+        signInEntry:hasSignInEntry(page),loginForm:pageLooksLikeLogin(page),
         ...(googleFlightReadProgress(page)?{flight:{...googleFlightReadProgress(page),selectedControls:page.flightEvidence?.searchControls?.length||0,observedRows:page.flightEvidence?.resultLabels?.length||0}}:{}),
       }))
       throw new Error('browser_objective_unverified')
