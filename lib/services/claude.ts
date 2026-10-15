@@ -196,12 +196,21 @@ FORMATTING: Delivered over WhatsApp (no markdown). Never emit [text](url); write
   }
 }
 
+/** Today's date in India, so answers about releases, events and schedules compare against the real day. */
+export function webAnswerDateLine(now = new Date()) {
+  const today = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(now)
+  return `TODAY: ${today} (India time). Compare every date in the results with today: something dated today is happening today, an earlier date is past, and only a later date is upcoming. Never call today's date "the future".`
+}
+
 export async function askClaudeWithContext(
   userMessage: string,
   context: string,
   userName: string
 ): Promise<string> {
+  // 15 Oct live: on Jailer 2's release day Gogo called it "in the future" because the prompt had no date.
   const prompt=`You are AskGogo, a helpful AI assistant for ${userName}. Answer the user's question using the web search results provided below.
+
+${webAnswerDateLine()}
 
 User's question: ${userMessage}
 
