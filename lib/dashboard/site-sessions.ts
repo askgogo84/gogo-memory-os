@@ -30,7 +30,23 @@ export async function startSiteSignIn(actor: AgentActor, siteId: string) {
   if (error || !run?.id) throw new Error(`site_sign_in_create_failed:${error?.message || 'unknown'}`)
   const runId = String(run.id)
   const { startProviderBrowserHandoff } = await import('@/lib/agent/provider-browser-handoff')
-  const handoff = await startProviderBrowserHandoff({ userId: actor.userId, url: site.url, sessionTaskId: runId })
+  const start = () => startProviderBrowserHandoff({ userId: actor.userId, url: site.url, sessionTaskId: runId })
+  let handoff: Awaited<ReturnType<typeof start>>
+  try {
+    handoff = await start()
+  } catch (error: any) {
+    // Your secure browser is held by an earlier sign-in (an older Settings sign-in that was never closed): close
+    // those and try once more. Another task's live browser (a booking waiting on you) is never taken over.
+    let retried = false
+    if (error?.message === 'browser_handoff_in_use' && await releaseEarlierSignIns(actor, runId)) {
+      try { handoff = await start(); retried = true } catch (retryError: any) { error = retryError }
+    }
+    if (!retried) {
+      const at = new Date().toISOString()
+      await supabaseAdmin.from('agent_runs').update({ status: 'failed', error: String(error?.message || 'site_sign_in_failed').slice(0, 120), summary: `The secure browser could not open ${site.name}. Nothing was signed in.`, completed_at: at, updated_at: at }).eq('id', runId).eq('telegram_id', owner)
+      throw new Error(error?.message === 'browser_handoff_in_use' ? 'browser_busy' : String(error?.message || 'site_sign_in_failed'))
+    }
+  }
   const { error: saveError } = await supabaseAdmin.from('agent_runs').update({
     status: 'paused', updated_at: new Date().toISOString(),
     metadata_json: { plan_type: 'secure_browser', url: site.url, objective: signInObjective(site), mode: 'read', risk: 'low', site_session: site.id, handoff },
@@ -50,12 +66,39 @@ export async function confirmSiteSignIn(actor: AgentActor, siteId: string) {
     sandboxName: browserSandboxNameFor(actor.userId), profileGeneration: SANDBOX_GENERATION,
     status: 'active', authMethod: 'human_handoff', metadata: { site: site.id, confirmedBy: 'person' },
   })
+  // Close the sign-in browser so it does not hold your secure browser for the next task.
+  await releaseEarlierSignIns(actor, null, site.id)
   const at = new Date().toISOString()
   await supabaseAdmin.from('agent_runs').update({
     status: 'completed', progress: 100, completed_at: at, updated_at: at,
     summary: `You signed in to ${site.name}. Gogo can use this session; it never saw your password.`,
   }).eq('telegram_id', owner).eq('type', 'secure_browser').eq('status', 'paused').eq('metadata_json->>site_session', site.id)
   return site
+}
+
+/** Release the takeover browsers of earlier Settings sign-ins (all sites, or one), except the one being started. */
+async function releaseEarlierSignIns(actor: AgentActor, exceptRunId: string | null, siteId?: string) {
+  const owner = String(actor.legacyTelegramId)
+  let query = supabaseAdmin.from('agent_runs').select('id,status,metadata_json').eq('telegram_id', owner).eq('type', 'secure_browser')
+    .not('metadata_json->>site_session', 'is', null).gte('updated_at', new Date(Date.now() - 24 * 3600_000).toISOString())
+  if (siteId) query = query.eq('metadata_json->>site_session', siteId)
+  const { data } = await query.limit(20)
+  const { cancelProviderBrowserHandoff } = await import('@/lib/agent/provider-browser-handoff')
+  let released = 0
+  for (const run of (data || []) as any[]) {
+    if (String(run.id) === exceptRunId) continue
+    const handoff = run.metadata_json?.handoff
+    if (!handoff?.token || !handoff?.releaseUrl || run.metadata_json?.handoff_released) continue
+    await cancelProviderBrowserHandoff(actor.userId, handoff).catch(() => {})
+    const at = new Date().toISOString()
+    await supabaseAdmin.from('agent_runs').update({
+      metadata_json: { ...run.metadata_json, handoff_released: at },
+      ...(run.status === 'paused' ? { status: 'completed', completed_at: at, summary: 'Closed this sign-in browser.' } : {}),
+      updated_at: at,
+    }).eq('id', run.id).eq('telegram_id', owner)
+    released++
+  }
+  return released > 0
 }
 
 /** Stop Gogo using a site session. */

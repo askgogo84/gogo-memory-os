@@ -40,4 +40,12 @@ assert.doesNotMatch(view, /\bitalic\b/)
 const nav = read('components/dashboard/dashboard-nav.tsx')
 assert.match(nav, /href:'\/dashboard\/settings', label:'Settings'/)
 assert.match(view, /Opening \$\{site\.name\} in your secure browser\. This can take up to a minute/)
+// 15 Oct live: Amazon sign-in failed with browser_handoff_in_use, held by the earlier Myntra sign-in that was confirmed
+// without closing its browser. Confirming now closes it, a busy browser retries once after closing old sign-ins, and the
+// page says plainly when another task holds the browser.
+assert.match(store, /if \(error\?\.message === 'browser_handoff_in_use' && await releaseEarlierSignIns\(actor, runId\)\)/)
+assert.match(store, /await releaseEarlierSignIns\(actor, null, site\.id\)/)
+assert.match(store, /cancelProviderBrowserHandoff\(actor\.userId, handoff\)/)
+assert.match(store, /throw new Error\(error\?\.message === 'browser_handoff_in_use' \? 'browser_busy'/)
+assert.match(view, /Your secure browser is busy with another task that is waiting for you/)
 console.log('verify-settings-connections: ok')
