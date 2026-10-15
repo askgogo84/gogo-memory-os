@@ -44,9 +44,11 @@ export default function AgentDashboardPage(){
 
   useEffect(()=>{load();const id=setInterval(()=>load(true),8000);return()=>clearInterval(id)},[load])
 
+  // Several stops on one site (four playo.co robot checks) are one thing to do: the latest leads, earlier ones fold away.
+  const handoffGroups=[...(snapshot?.handoffs||[]).reduce((m,h)=>{const g=m.get(h.title);if(g)g.push(h);else m.set(h.title,[h]);return m},new Map<string,Array<{id:string;title:string;summary:string}>>()).values()]
   const counts=useMemo(()=>({
     active:(snapshot?.runs||[]).filter(r=>['queued','running','waiting_approval'].includes(r.status)).length,
-    needsYou:(snapshot?.approvals?.length||0)+(snapshot?.handoffs?.length||0),
+    needsYou:(snapshot?.approvals?.length||0)+handoffGroups.length,
     watchers:snapshot?.watchers?.length||0,
     goals:snapshot?.goals?.length||0,
   }),[snapshot])
@@ -176,7 +178,7 @@ export default function AgentDashboardPage(){
       {(!section||section==='approvals')&&<Panel title="Needs you" eyebrow="You stay in control" badge={String(counts.needsYou)}>
         {!counts.needsYou&&<Empty text="Nothing needs your input right now."/>}
         {snapshot?.approvals?.map((a:any)=><Card key={a.id}><div className="flex items-start justify-between gap-3"><div><b>{a.title}</b><p>{a.description}</p><span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-1 text-[12px] font-bold uppercase text-amber-700">{a.risk} risk</span></div></div><div className="mt-3 flex gap-2"><button onClick={()=>resolveApproval(a,'reject')} className="btn-secondary">Reject</button><button onClick={()=>resolveApproval(a,'approve')} className="btn-primary">Approve & run</button></div></Card>)}
-        {snapshot?.handoffs?.map(handoff=><Card key={handoff.id}><b>{handoff.title}</b><p>{handoff.summary}</p><Link href={`/dashboard/activity/${handoff.id}/browser`} className="btn-primary mt-3 inline-flex">Take control</Link></Card>)}
+        {handoffGroups.map(([latest,...earlier])=><Card key={latest.id}><b>{latest.title}</b><p>{latest.summary}</p><Link href={`/dashboard/activity/${latest.id}/browser`} className="btn-primary mt-3 inline-flex">Take control</Link>{earlier.length>0&&<details className="mt-3"><summary className="cursor-pointer text-[14px]">{earlier.length} earlier stop{earlier.length===1?'':'s'} on this site</summary>{earlier.map(h=><div key={h.id} className="mt-2 border-t border-[#262626] pt-2"><p>{h.summary}</p><Link href={`/dashboard/activity/${h.id}/browser`} className="text-[14px] underline">Open</Link></div>)}</details>}</Card>)}
       </Panel>}
       {(!section||section==='background')&&<Panel title="Background Gogo" eyebrow="Keeps watching" badge={String(snapshot?.watchers?.length||0)}>{!snapshot?.watchers?.length?<Empty text="No active watches. Ask Gogo to watch a price, deadline or change."/>:snapshot.watchers.map((w:any)=><Card key={w.id}><b>{w.title}</b><p>{w.type.replaceAll('_',' ')} · every {w.cadenceMinutes} min</p><p>Next: {w.nextCheckAt?new Date(w.nextCheckAt).toLocaleString():'—'}</p><button onClick={()=>stopWatcher(w.id)} className="mt-3 btn-secondary">Stop</button></Card>)}</Panel>}
       {(!section||section==='goals')&&<Panel title="Goals" eyebrow="Longer outcomes" badge={String(snapshot?.goals?.length||0)}>

@@ -9,6 +9,8 @@ import { isActionablePause } from '@/lib/dashboard/run-state'
 import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
 import { reminderStateLabel } from '@/lib/dashboard/reminder-state'
 import { retiredRunReason } from '@/lib/agent/task-lifecycle'
+import { staleRunningCutoff, isStaleRunning } from '@/lib/agent/stale-runs'
+import { readableRunSummary } from '@/lib/dashboard/readable-summary'
 
 export const dynamic='force-dynamic'
 
@@ -52,10 +54,10 @@ export default async function HomePage(){
     session?getDashboardMemory(tg):Promise.resolve({ok:true as const,items:[]}),
     session?supabaseAdmin.from('agent_approvals').select('id,run_id,title,description,risk_level,created_at').eq('telegram_id',tg).eq('status','pending').order('created_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
     session?supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,active').eq('telegram_id',tg).eq('active',true).order('next_check_at',{ascending:true}).limit(4):Promise.resolve({data:[] as any[]}),
-    session?supabaseAdmin.from('agent_runs').select('id,title,summary,status,updated_at').eq('telegram_id',tg).in('status',['running','queued','waiting_approval']).order('updated_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
+    session?supabaseAdmin.from('agent_runs').select('id,title,summary,status,updated_at').eq('telegram_id',tg).in('status',['running','queued','waiting_approval']).order('updated_at',{ascending:false}).limit(12):Promise.resolve({data:[] as any[]}),
     // Indicator counts come from untruncated head-counts, not the limited display list,
     // so a running row can never be hidden behind more-recent paused/waiting rows.
-    session?supabaseAdmin.from('agent_runs').select('id',{count:'exact',head:true}).eq('telegram_id',tg).in('status',['running','queued']):Promise.resolve({count:0}),
+    session?supabaseAdmin.from('agent_runs').select('id',{count:'exact',head:true}).eq('telegram_id',tg).in('status',['running','queued']).gte('updated_at',staleRunningCutoff()):Promise.resolve({count:0}),
     session?supabaseAdmin.from('agent_runs').select('id',{count:'exact',head:true}).eq('telegram_id',tg).eq('status','waiting_approval'):Promise.resolve({count:0}),
     // A paused run stopped at a human-action boundary (sign-in / secure handoff /
     // browser-waiting) is actionable and counts as waiting; a rejected/terminal paused
@@ -70,14 +72,16 @@ export default async function HomePage(){
   const tz=user?.timezone||'Asia/Kolkata'
   const now=new Date()
   const name=user?.name?.trim().split(/\s+/)[0]||'there'
-  const reminders=today.ok?today.reminders:[]
+  // A cancelled reminder is not part of today.
+  const reminders=(today.ok?today.reminders:[]).filter(r=>r.status!=='cancelled'&&r.delivery_state!=='cancelled')
   const pending=reminders.filter(r=>!r.sent)
   const approvalRows=approvals.data||[]
   const handoffRows=handoffs.filter(handoff=>!approvalRows.some((approval:any)=>String(approval.run_id)===handoff.id))
   // Several hand-offs on the same site (four playo.co robot checks) are one thing to do: one row with a count.
   const handoffGroups=[...handoffRows.reduce((map,h)=>{const g=map.get(h.title);if(g){g.count+=1+h.repeats}else map.set(h.title,{first:h,count:1+h.repeats});return map},new Map<string,{first:typeof handoffRows[number];count:number}>()).values()]
   const watcherRows=watchers.data||[]
-  const runRows=runs.data||[]
+  // A task stuck in running for hours lost its worker; it is not "now" work.
+  const runRows=(runs.data||[]).filter((r:any)=>!isStaleRunning(r,now)).slice(0,4)
   // The same background check repeated (KLM status unchanged, three times) is one update, not three.
   const recentUpdates=((recentUpdatesResult as any)?.data||[]).filter((run:any)=>!retiredRunReason(run))
     .filter((run:any,i:number,all:any[])=>all.findIndex((x:any)=>x.title===run.title&&x.summary===run.summary&&x.status===run.status)===i).slice(0,3)
@@ -124,10 +128,10 @@ export default async function HomePage(){
 
     <div className="grid gap-4 lg:gap-5 xl:grid-cols-3">
         <section className="final-dark-panel overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[14px] font-semibold text-[#d9a441]">{approvalRows.length+handoffRows.length}</Link></div>
+          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[14px] font-semibold text-[#d9a441]">{approvalRows.length+handoffGroups.length}</Link></div>
           <div className="border-t border-[#1f1f1f] px-4">
             {approvalRows.map((a:any)=><Row key={a.id} tone="amber" title={a.title||'Approval needed'} meta={a.description||'Gogo stopped before a consequential action.'} right="Review" href="/dashboard/agent?section=approvals"/>)}
-            {handoffGroups.map(({first,count})=><Row key={first.id} tone="amber" title={first.title} meta={count>1?`${count} waiting on you here. Latest: ${first.summary}`:first.summary} right={count>1?'Open':'Take control'} href={count>1?'/dashboard/agent?section=approvals':`/dashboard/activity/${first.id}/browser`}/>)}
+            {handoffGroups.map(({first,count})=><Row key={first.id} tone="amber" title={first.title} meta={count>1?`Stopped here ${count} times. Latest: ${readableRunSummary(first.summary)}`:readableRunSummary(first.summary)} right={count>1?'Open':'Take control'} href={count>1?'/dashboard/agent?section=approvals':`/dashboard/activity/${first.id}/browser`}/>)}
             {!approvalRows.length&&!handoffGroups.length&&<div className="py-5 text-[15px] text-[#a8a8a4]">Nothing is waiting for you.</div>}
           </div>
         </section>
@@ -142,7 +146,7 @@ export default async function HomePage(){
         <section className="final-dark-panel overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">In the background</div><Link href="/dashboard/agent?section=background" className="text-[14px] text-[#2fb8a6]">All</Link></div>
           <div className="border-t border-[#1f1f1f] px-4">
-            {runRows.slice(0,2).map((r:any)=><Row key={r.id} tone={r.status==='waiting_approval'?'amber':'teal'} title={r.title||'Gogo task'} meta={r.summary||r.status} right="now" href={`/dashboard/activity/${r.id}`}/>)}
+            {runRows.slice(0,2).map((r:any)=><Row key={r.id} tone={r.status==='waiting_approval'?'amber':'teal'} title={r.title||'Gogo task'} meta={readableRunSummary(r.summary)||r.status} right="now" href={`/dashboard/activity/${r.id}`}/>)}
             {watcherRows.slice(0,3).map((w:any)=><Row key={w.id} tone="teal" title={w.title||'Background watch'} meta={String(w.type||'watch').replaceAll('_',' ')} right={w.next_check_at?clock(w.next_check_at,tz):''} href="/dashboard/agent?section=background"/>)}
             {!runRows.length&&!watcherRows.length&&<div className="py-5 text-[15px] text-[#a8a8a4]">Nothing is running in the background.</div>}
           </div>
@@ -165,7 +169,7 @@ export default async function HomePage(){
               return <Link key={run.id} href={`/dashboard/activity/${encodeURIComponent(String(run.id))}`} className="block border-t border-[#242424] py-4 first:border-t-0 hover:bg-[#151515] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#77d2c4]">
                 <div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[13px] font-semibold ${state.tone}`}>{state.label}</span><span className="text-[14px] text-[#a8a8a8]">{when}{origin?` · ${origin}`:''}</span></div>
                 <h3 className="mt-2 text-[16px] font-semibold leading-5 text-[#f2efea]">{run.title||'Gogo task'}</h3>
-                <p className="mt-1 line-clamp-2 text-[15px] leading-5 text-[#b7b7b7]">{run.summary||'Open the task to see what happened.'}</p>
+                <p className="mt-1 line-clamp-2 text-[15px] leading-5 text-[#b7b7b7]">{readableRunSummary(run.summary)||'Open the task to see what happened.'}</p>
                 <span className="mt-2 inline-block text-[14px] font-medium text-[#77d2c4]">View task details →</span>
               </Link>
             })}

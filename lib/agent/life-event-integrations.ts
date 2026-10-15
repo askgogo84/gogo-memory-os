@@ -72,6 +72,17 @@ export type LifecycleMonitorTarget = {
   objective: string
 }
 
+/** A flight, appointment, reservation or event that is well over has nothing left to watch (a KLM status page checked
+ * every hour two days after landing). Ends 12 hours after the saved end, or 36 hours after the start when no end is saved. */
+export function lifecycleMonitorExpired(event: any, now = new Date()): boolean {
+  const eventType = String(event?.event_type || '')
+  if (!['travel', 'appointment', 'reservation', 'event'].includes(eventType)) return false
+  const end = Date.parse(String(event?.end_at || ''))
+  const start = Date.parse(String(event?.start_at || ''))
+  const over = Number.isFinite(end) ? end + 12 * 3600_000 : Number.isFinite(start) ? start + 36 * 3600_000 : NaN
+  return Number.isFinite(over) && now.getTime() > over
+}
+
 export function lifecycleMonitorTarget(event: any, action?: any): LifecycleMonitorTarget | null {
   const eventType = String(event?.event_type || '')
   const subtype = String(event?.subtype || '')

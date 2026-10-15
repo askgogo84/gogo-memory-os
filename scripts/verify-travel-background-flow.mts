@@ -1,3 +1,4 @@
+import { formatFlightTiming } from '../lib/agent/flight-timing'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
@@ -74,7 +75,7 @@ const browser = load('lib/agent/travel-browser-task.ts',{
   './secure-computer':{runSecureBrowser:async(params:any)=>{browserAttempts++;browserDeadline=params.readDeadline;throw Object.assign(new Error('browser_objective_unverified'),{browserReadDiagnostics:rejectedActions})}},
 })
 let queue:any
-const travel = load('lib/agent/travel-research.ts',{
+const travel = load('lib/agent/travel-research.ts',{'./flight-timing':{formatFlightTiming},
   '@/lib/supabase-admin':{supabaseAdmin:db},'./typed-object-context':{rememberTypedObjects:async()=>{}},'./flight-choices':load('lib/agent/flight-choices.ts',{}),
   '@/lib/web-search':{searchWebResults:async(_query:string,options:any)=>{assert.equal(options.timeoutMs,15000,'fallback is bounded inside the completion reserve');searches++;return [{title:'BLR to BOM fare ₹4,999',snippet:'Generic route page without a departure date',url:'https://example.com/flights'}]}},
   '@/lib/integrations/creditiq-travel':{searchCreditIQLiveFlights:async()=>null},

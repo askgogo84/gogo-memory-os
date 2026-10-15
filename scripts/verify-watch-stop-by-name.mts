@@ -62,7 +62,7 @@ for (const text of ['stop watching the Sony WH-1000XM5', 'stop tracking Sony WH-
 // A name that matches nothing is said plainly, and nothing is stopped.
 seed()
 const none = await wc.tryStopWatcherFromCommand({ actor, text: 'stop watching Pixel 9' })
-assert.ok(none && none.status === 'paused' && /could not find/i.test(none.text))
+assert.ok(none && none.status === 'paused' && /You don't have a watch for Pixel 9\. Your active watches:/.test(none.text), none?.text)
 assert.equal(active().length, 3, 'nothing stopped when nothing matched')
 
 // 15 Oct: the same full name saved twice (two Sony WH-1000XM5 watches) stops both and says so.

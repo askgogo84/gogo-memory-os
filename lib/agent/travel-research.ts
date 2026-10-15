@@ -1,4 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { formatFlightTiming } from './flight-timing'
+export { formatFlightTiming }
 import { FLIGHT_CHOICES } from './flight-choices'
 import { rememberTypedObjects } from './typed-object-context'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
@@ -248,14 +250,6 @@ export function verifiedProviderFlights(rows: CreditIQFlightResult[], context: T
  * Live fares come with local airport times like "2026-11-20T10:20:00". Show "10:20 am → 5:40 pm", with "(+1)"
  * when the arrival is on a later day. Anything else is shown as it came.
  */
-export function formatFlightTiming(departure?:string|null,arrival?:string|null){
-  const parse=(v?:string|null)=>{const m=String(v||'').match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);return m?{day:m[1],h:Number(m[2]),min:m[3]}:null}
-  const clock=(t:{h:number;min:string})=>`${t.h%12||12}:${t.min} ${t.h<12?'am':'pm'}`
-  const d=parse(departure),a=parse(arrival)
-  if(!d||!a)return [departure,arrival].filter(Boolean).join(' → ')
-  const days=Math.round((Date.parse(a.day)-Date.parse(d.day))/86400000)
-  return `${clock(d)} → ${clock(a)}${days>0?` (+${days})`:''}`
-}
 function formatLiveFlight(value:CreditIQFlightResult,index:number){const price=value.price != null && Number.isFinite(value.price) && value.price > 0?`₹${Math.round(value.price).toLocaleString('en-IN')}`:'INR fare not verified';const stops=value.stops != null && Number.isInteger(value.stops)?(value.stops===0?'non-stop':`${value.stops} stop${value.stops===1?'':'s'}`):'stops not verified';const timing=formatFlightTiming(value.departure,value.arrival);const bits=[price,value.airline,timing,stops].filter(Boolean);return`${index+1}. ${bits.join(' · ')}${formatRedemption(value)}${value.bookingLink?`\nBooking/provider link: ${value.bookingLink}`:''}`}
 async function tryCreditIQLive(context:TravelContext,actor:AgentActor){if(context.kind!=='flight'||!context.origin?.code||!context.destination?.code||!context.startDate)return null;const live=await searchCreditIQLiveFlights({from:context.origin.code,to:context.destination.code,date:context.startDate,dateTo:context.endDate||context.startDate,cabin:context.cabin||'economy',adults:context.adults||1,userLinkId: actor.creditiqUserId || null});return live ? {...live,flights:verifiedProviderFlights(live.flights,context)} : null}
 

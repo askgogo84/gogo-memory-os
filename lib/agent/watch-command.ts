@@ -340,7 +340,12 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
         text:`More than one watch matches:\n${list}\n\nSay stop watching followed by the exact name.`,handledBy:'watcher-stop'}
     }
     if(!best){
-      return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text:best?'I found more than one plausible active watcher. Please be more specific.':'I could not find that active watcher in persistent watcher state.',handledBy:'watcher-stop'}
+      // Say what is running, so the person can pick the right name instead of guessing again.
+      const names=[...new Set(rows.map((row:any)=>String((row.condition_json as any)?.title||row.type).trim()).filter(Boolean))].slice(0,5)
+      const text=names.length
+        ?`You don't have a watch for ${typedWatchName(params.text)||'that'}. Your active watches:\n${names.map((n,i)=>`${i+1}. ${n}`).join('\n')}\n\nSay stop watching followed by one of these names.`
+        :`You don't have a watch for ${typedWatchName(params.text)||'that'}. Nothing is being watched right now.`
+      return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,text,handledBy:'watcher-stop'}
     }
     const chosen=best.row
     const now=new Date().toISOString()
