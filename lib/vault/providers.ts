@@ -8,6 +8,8 @@ export type VaultProvider = {
   usernameLabel:string
   secretLabel:string
   note:string
+  // The site signs in only with a phone number and a texted code (no passwords).
+  phoneOnly?:boolean
 }
 
 export const VAULT_PROVIDERS:Record<string,VaultProvider>={
@@ -53,6 +55,18 @@ export const VAULT_PROVIDERS:Record<string,VaultProvider>={
     signupUrl:'https://huggingface.co/join',
     usernameLabel:'Username or email',secretLabel:'Password',
     note:'Used only on huggingface.co through Gogo’s secure browser.',
+  },
+  swiggy:{
+    key:'swiggy',label:'Swiggy',aliases:['swiggy'],domains:['swiggy.com'],
+    loginUrl:'https://www.swiggy.com/',
+    usernameLabel:'Mobile number',secretLabel:'Password',phoneOnly:true,
+    note:'Used only on swiggy.com through Gogo’s secure browser.',
+  },
+  zomato:{
+    key:'zomato',label:'Zomato',aliases:['zomato'],domains:['zomato.com'],
+    loginUrl:'https://www.zomato.com/',
+    usernameLabel:'Mobile number',secretLabel:'Password',phoneOnly:true,
+    note:'Used only on zomato.com through Gogo’s secure browser.',
   },
   booking:{
     key:'booking',label:'Booking.com',aliases:['booking.com'],domains:['booking.com'],

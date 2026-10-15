@@ -16,6 +16,6 @@ export default async function ConnectSitePage({ params, searchParams }: { params
   if (!site || !provider) notFound()
   const ask = String((await searchParams)?.ask || '').slice(0, 300)
   return <div className="mx-auto w-full max-w-[520px] pb-10">
-    <ConnectSiteForm siteName={site.name} siteDomain={provider.domains[0]} providerKey={provider.key} usernameLabel={provider.usernameLabel} ask={ask} />
+    <ConnectSiteForm siteName={site.name} siteDomain={provider.domains[0]} providerKey={provider.key} usernameLabel={provider.usernameLabel} phoneOnly={!!provider.phoneOnly} ask={ask} />
   </div>
 }

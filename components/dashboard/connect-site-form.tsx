@@ -6,7 +6,7 @@ import { FormEvent, useState } from 'react'
 type Method = 'phone_code' | 'password'
 
 /** Save how to sign in to one site: a phone number (each sign-in asks you for the text code) or a password. */
-export function ConnectSiteForm(props: { siteName: string; siteDomain: string; providerKey: string; usernameLabel: string; ask: string }) {
+export function ConnectSiteForm(props: { siteName: string; siteDomain: string; providerKey: string; usernameLabel: string; phoneOnly?: boolean; ask: string }) {
   const [method, setMethod] = useState<Method>('phone_code')
   const [phone, setPhone] = useState('')
   const [username, setUsername] = useState('')
@@ -48,7 +48,7 @@ export function ConnectSiteForm(props: { siteName: string; siteDomain: string; p
     <div className="mt-6 text-[15px] font-semibold text-[#ecebe8]">How do you sign in to {props.siteName}?</div>
     <div role="radiogroup" aria-label="Sign-in method" className="mt-2.5 space-y-1 rounded-[16px] bg-[#141414] p-1.5">
       {option('phone_code', 'Phone number and a text code')}
-      {option('password', 'Password')}
+      {!props.phoneOnly && option('password', 'Password')}
     </div>
 
     {method === 'phone_code' ? <div className="mt-5">

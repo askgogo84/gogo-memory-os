@@ -230,7 +230,12 @@ async function model(page){
   try{
     await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
     await page.waitForTimeout(800);
-    const USER_FIELDS='input[autocomplete="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"]';
+    const USER_FIELDS='input[autocomplete="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"], input[name*="mobile" i], input[name*="phone" i], input[placeholder*="phone" i], input[placeholder*="mobile" i]';
+    // Sites like Swiggy and Zomato keep the login in a panel opened from the header.
+    if(!(await visibleFields(page,USER_FIELDS)).length){
+      const opener=await firstVisible(page,['a:has-text("Sign in")','button:has-text("Sign in")','a:has-text("Log in")','button:has-text("Log in")','a:has-text("Login")','button:has-text("Login")','[role="button"]:has-text("Sign in")','[role="button"]:has-text("Log in")']);
+      if(opener){ await opener.click({timeout:10000}).catch(()=>{}); await page.waitForTimeout(1500); }
+    }
     const PASS_FIELDS='input[type="password"]';
     const userFields=await visibleFields(page,USER_FIELDS);
     if(userFields.length>1) ambiguous.push('username_fields');
@@ -239,7 +244,7 @@ async function model(page){
     if(!passFields.length && usernameFilled){
       const next=await firstVisible(page,[
         'button:has-text("Continue")','button:has-text("Next")','button:has-text("Sign in")',
-        'button:has-text("Log in")','button[type="submit"]','input[type="submit"]'
+        'button:has-text("Log in")','button:has-text("Login")','a:has-text("Login")','button[type="submit"]','input[type="submit"]'
       ]);
       if(next){ await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200); }
       passFields=await visibleFields(page,PASS_FIELDS);
@@ -249,7 +254,7 @@ async function model(page){
       // The site may show a password box with a "get a code" option (Amazon), or go straight to the code.
       const codeButton=await firstVisible(page,[
         'a:has-text("Get an OTP")','button:has-text("Get an OTP")','a:has-text("Get OTP")','button:has-text("Get OTP")',
-        'button:has-text("Send OTP")','a:has-text("Send OTP")','button:has-text("Request OTP")','a:has-text("Sign in with OTP")',
+        'button:has-text("Send OTP")','button:has-text("Send One Time Password")','a:has-text("Send OTP")','button:has-text("Request OTP")','a:has-text("Sign in with OTP")',
         'button:has-text("Login with OTP")','a:has-text("Login with OTP")','button:has-text("Send code")','input[type="submit"][value*="OTP" i]'
       ]);
       if(codeButton){ await codeButton.click({timeout:10000}); submitted=true; codeRequested=true; await page.waitForTimeout(1800); }

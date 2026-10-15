@@ -24,6 +24,8 @@ const ORDER_SENDERS: Record<string, string[]> = {
   jiomart: ['jiomart.com'],
   blinkit: ['blinkit.com'],
   zomato: ['zomato.com'],
+  swiggy: ['swiggy.in'],
+  instamart: ['swiggy.in'],
 }
 
 /** Only questions about orders and deliveries are answered from email. */
@@ -35,6 +37,10 @@ export function orderEmailQuery(site: CatalogueSite) {
   const senders = ORDER_SENDERS[site.id]
   if (!senders) return null
   return `from:(${senders.join(' OR ')}) newer_than:45d -category:promotions (order OR ordered OR shipped OR dispatched OR delivered OR delivery OR "out for delivery" OR arriving)`
+}
+
+export function orderUpdatesOnly<T extends { subject?: string }>(messages: T[]) {
+  return messages.filter(m => /\b(?:order(?:ed)?|deliver(?:y|ed)|shipped|dispatched|out for delivery|arriving|refund|return(?:ed)?|payment)\b/i.test(String(m.subject || '')))
 }
 
 export function formatOrderEmailAnswer(site: CatalogueSite, messages: Array<{ subject?: string; date?: string; snippet?: string }>) {
@@ -58,7 +64,8 @@ export async function tryOrderStatusFromEmail(actor: AgentActor, site: Catalogue
   if (!isOrderStatusQuestion(text)) return null
   const q = orderEmailQuery(site)
   if (!q) return null
-  const messages = await searchWorkspaceEmailsByQuery(actor, q, 3).catch(() => null)
-  if (!messages) return null
-  return formatOrderEmailAnswer(site, messages)
+  const found = await searchWorkspaceEmailsByQuery(actor, q, 8).catch(() => null)
+  if (!found) return null
+  // Shops also send offers that mention "order" in the body (Swiggy's card offers); keep order emails by subject.
+  return formatOrderEmailAnswer(site, orderUpdatesOnly(found).slice(0, 3))
 }

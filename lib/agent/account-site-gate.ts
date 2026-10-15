@@ -21,7 +21,7 @@ export function accountSiteFromText(text: string): CatalogueSite | null {
   const t = String(text || '').toLowerCase()
   if (!/\b(?:my|mine|i\s+(?:ordered|bought|booked))\b/.test(t)) return null
   for (const site of CONNECTION_CATALOGUE) {
-    if (site.kind !== 'signin') continue
+    if (site.kind === 'soon') continue
     const name = `(?:${siteNames(site).join('|')})`
     const near = new RegExp(String.raw`\b${name}\b(?:\W+\w+){0,3}?\W+${ACCOUNT_THING}\b|\b${ACCOUNT_THING}\b(?:\W+\w+){0,3}?\W+(?:on|from|at|in)\W+${name}\b`, 'i')
     if (near.test(t)) return site

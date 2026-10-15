@@ -18,7 +18,8 @@ assert.equal(id('show my IndiGo ticket'), null, 'saved tickets are answered from
 assert.equal(id('find my Amsterdam flight ticket'), null)
 assert.equal(id('compare AirPods prices on Amazon and Flipkart'), null, 'not about the person’s own account')
 assert.equal(id('check my booking'), null, 'booking alone is not Booking.com')
-assert.equal(id('my swiggy order'), null, 'Swiggy has its own connect flow')
+assert.equal(id('my swiggy order'), 'swiggy', 'Swiggy order questions: emails first, then phone-code connect (its official connector awaits approval)')
+assert.equal(id('order biryani on swiggy'), null, 'placing food orders stays with the Swiggy food flow')
 assert.equal(id('my order'), null)
 
 // Amazon is a vault site: the reply links to Connect (verify-connect-from-chat). Myntra keeps the Settings sign-in.
