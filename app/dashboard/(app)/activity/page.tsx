@@ -105,8 +105,8 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
   return <div className="w-full pb-8">
     <header className="flex flex-col gap-4 border-b border-[#2A2A2A]/70 pb-5 lg:flex-row lg:items-end lg:justify-between">
       <div>
-        <p className="text-[14px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">AskGogo</p>
-        <h1 className="mt-1 text-[36px] font-medium leading-none tracking-[-.035em] text-[#F2EFEA] lg:text-[40px]">Activity</h1>
+        <p className="hidden text-[14px] font-bold uppercase tracking-[.12em] text-[#6A6A6A] lg:block">AskGogo</p>
+        <h1 className="mt-1 hidden text-[36px] font-medium leading-none tracking-[-.035em] text-[#F2EFEA] lg:block lg:text-[40px]">Activity</h1>
         <p className="mt-2 text-[16px] text-[#6A6A6A]">What Gogo has done, newest first.</p>
       </div>
       <div className="flex gap-1.5 overflow-x-auto pb-1">
