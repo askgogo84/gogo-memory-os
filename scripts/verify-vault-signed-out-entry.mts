@@ -13,7 +13,7 @@ assert.equal(hasSignInEntry({ links: [{ text: 'Sign in to see your orders and ea
 assert.equal(hasSignInEntry({ controls: [{ label: 'My account' }] }), false)
 assert.ok('zwstatic.zomato.com' in browserPageAllowlist('https://www.zomato.com/'))
 const src = readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
-assert.match(src, /let signedOutEntry=!vaultAttempted&&!vaultEntryChecked&&!authGate\.required&&!loginish&&hasSignInEntry\(page\)/)
+assert.match(src, /let signedOutEntry=!params\.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate\.required&&!loginish&&hasSignInEntry\(page\)/)
 assert.match(src, /\(!authGate\.required&&\(loginish\|\|signedOutEntry\)\)/)
 console.log('verify-vault-signed-out-entry: ok')
 // Second live run: the saved login was tried but no phone field was found. The opener also clicks a plain-text

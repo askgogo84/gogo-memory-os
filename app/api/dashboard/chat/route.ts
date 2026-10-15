@@ -22,6 +22,8 @@ import { isPublicTravelResearchRequest, isTravelResearchDetailsReply, tryRunTrav
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { tryAccountSiteAnswer } from '@/lib/agent/account-site-gate'
+import { otpReply } from '@/lib/agent/provider-booking'
+import { claimLoginCodeRun, findLoginCodeRun, resumePausedBrowserRun } from '@/lib/agent/browser-command'
 import { isStandaloneWorkspaceMeetingPrep, tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
@@ -118,6 +120,24 @@ export async function POST(req: NextRequest) {
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+    // A sign-in code for a read that is waiting for it (16 Oct): typed into the same page once, never saved to the
+    // conversation or logged. Checked before anything else so the code never reaches a model.
+    const loginCode = text.length <= 24 && /\d{4}/.test(text.replace(/[\s-]/g, '')) ? otpReply(text) : null
+    if (loginCode) {
+      const codeRunId = await findLoginCodeRun(user.telegram_id)
+      if (codeRunId && await claimLoginCodeRun(user.telegram_id, codeRunId)) {
+        let reply = ''
+        try {
+          const resumed = await resumePausedBrowserRun({ actor, runId: codeRunId, loginCode })
+          reply = String(resumed?.text || '').trim() || "I entered the code, but couldn't read the answer yet. Ask me again."
+        } catch (err: any) {
+          console.error('DASHBOARD_LOGIN_CODE_FAILED:', String(err?.message || '').slice(0, 120))
+          reply = "I couldn't finish signing in with that code. Nothing was changed. Ask me again and I'll start over."
+        }
+        await saveConversation(user.telegram_id, '[sign-in code sent]', reply)
+        return NextResponse.json({ text: reply, handledBy: 'login-code', runId: codeRunId })
+      }
+    }
     const inboxReplyRead = await handleInboxReplyRead({actor,text})
     if(inboxReplyRead){
       await saveConversation(user.telegram_id,text,inboxReplyRead.text)

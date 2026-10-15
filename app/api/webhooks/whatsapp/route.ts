@@ -1,8 +1,8 @@
 import { isSportsVenueRequest } from '@/lib/agent/appointment-research'
 import { unsupportedCapability } from '@/lib/bot/unsupported-capabilities'
 import { otpReply } from '@/lib/agent/provider-booking'
-import { claimBookingOtpRun, findBookingAwaitingOtp } from '@/lib/agent/browser-command'
-import { triggerBookingOtpResume } from '@/lib/agent/approved-browser-worker'
+import { claimBookingOtpRun, claimLoginCodeRun, findBookingAwaitingOtp, findLoginCodeRun } from '@/lib/agent/browser-command'
+import { triggerBookingOtpResume, triggerLoginCodeResume } from '@/lib/agent/approved-browser-worker'
 import { subscriptionReviewText } from '@/lib/agent/general-planner'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
@@ -358,6 +358,18 @@ export async function POST(req: NextRequest) {
           ? "Got the code. I'm entering it and continuing your booking. I'll message you here when it's at the payment step."
           : "I couldn't pass the code on just now. Open the Take control link I sent and type the code there."
         await saveConversation(resolvedUser.telegramId, 'user', '[booking code sent]')
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWhatsAppMessage(from, reply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+      // A sign-in code for a read waiting for it (Swiggy, Amazon…): same rules, never saved or logged.
+      const codeRunId = await findLoginCodeRun(resolvedUser.telegramId)
+      if (codeRunId && await claimLoginCodeRun(resolvedUser.telegramId, codeRunId)) {
+        const trigger = await triggerLoginCodeResume(codeRunId, bookingCode)
+        const reply = trigger === 'dispatched'
+          ? "Got the code. I'm signing in and checking that for you now. I'll message you here in a minute."
+          : "I couldn't pass the code on just now. Open the Take control link I sent and type the code there."
+        await saveConversation(resolvedUser.telegramId, 'user', '[sign-in code sent]')
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         await sendWhatsAppMessage(from, reply)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })

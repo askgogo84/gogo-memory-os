@@ -116,6 +116,8 @@ export type SecureBrowserResult = {
   // Provider booking: where Gogo handed over (OTP needed, payment, or anything else).
   bookingStage?: BookingStage
   otpRejected?: boolean
+  // A saved phone login asked the site for a text code; the person can send it in chat or on WhatsApp.
+  loginCodeStage?: boolean
   // Where the site sent the login code (12 Oct: Playo's email login sent it by email).
   otpChannel?: 'sms'|'email'
   // 13 Oct safeguards: Gogo refused to switch login method / stopped at account creation.
@@ -286,6 +288,50 @@ async function model(page){
   } finally { if(attached)await attached.close();else await context.close(); }
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
 `
+// 16 Oct: the person's sign-in code (texted by Swiggy, Amazon…) typed into the code box of the page Gogo left open.
+// It arrives as a command-scoped variable, is typed key by key, and is never logged, returned or stored.
+const VAULT_CODE_SCRIPT=String.raw`
+const { chromium } = require('playwright');
+const code = String(process.env.GOGO_LOGIN_CODE || '');
+if (!/^\d{4,8}$/.test(code)) throw new Error('missing_login_code');
+const visible = async loc => { try { return await loc.isVisible(); } catch { return false; } };
+(async()=>{
+  const __env=(process&&process.env)||{};
+  const attached=await chromium.connectOverCDP(__env.GOGO_BROWSER_CDP_URL||'${COMMERCE_CDP_URL}').catch(()=>{throw Error('browser_connection_failed')});
+  const context=attached.contexts()[0];
+  const page=context.pages()[context.pages().length-1];
+  let codeEntered=false,submitted=false;
+  try{
+    // The code box: labelled for a one-time code, else the first of several one-digit boxes, else the only short input.
+    const named=page.locator('input[autocomplete="one-time-code"], input[name*="otp" i], input[id*="otp" i], input[placeholder*="otp" i], input[aria-label*="otp" i], input[placeholder*="code" i], input[name*="code" i], input[aria-label*="code" i]');
+    let target=null;
+    for(let i=0;i<Math.min(await named.count().catch(()=>0),6);i++){ const loc=named.nth(i); if(await visible(loc)){ target=loc; break; } }
+    if(!target){
+      const boxes=page.locator('input[maxlength="1"]'); const seen=[];
+      for(let i=0;i<Math.min(await boxes.count().catch(()=>0),10);i++){ const loc=boxes.nth(i); if(await visible(loc)) seen.push(loc); }
+      if(seen.length>=4) target=seen[0];
+    }
+    if(target){
+      await target.click({timeout:10000});
+      await target.fill('',{timeout:3000}).catch(()=>{});
+      await page.keyboard.type(code,{delay:90});
+      codeEntered=true;
+      await page.waitForTimeout(900);
+      // Many sites submit by themselves once the last digit is in; otherwise press their verify control. Never a pay control.
+      const verify=['Verify','Verify OTP','Verify code','Continue','Submit','Login','Log in','Sign in','Confirm','Next','Proceed'];
+      for(const t of verify){
+        const b=page.getByRole('button',{name:t,exact:true}).first();
+        if(await visible(b) && await b.isEnabled().catch(()=>false)){ await b.click({timeout:10000}).catch(()=>{}); submitted=true; break; }
+      }
+      await page.waitForTimeout(2500);
+    }
+    const out={url:page.url(),title:await page.title().catch(()=>''),text:String(await page.evaluate(()=>document.body?.innerText||'').catch(()=>'')).replace(/[^\S\n]+/g,' ').trim().slice(0,18000),forms:[],controls:[],links:[]};
+    out.vaultCode={codeEntered,submitted};
+    console.log(JSON.stringify(out));
+  } finally { await attached.close(); }
+})().catch(e=>{console.error(String(e&&e.message||e).slice(0,200));process.exit(1)});
+`
+
 // The field name shown beside a picker ("Sports", "Date"): used by the page model and by the
 // choose action. Plain JS for the worker; no backticks.
 const FIELD_OF_JS=String.raw`
@@ -1198,6 +1244,7 @@ async function getComputer(userId:string,targetUrl:string,keepAlive=false){
   await sandbox.writeFiles([
     {path:`${SANDBOX_WORKDIR}/gogo-browser.js`,content:Buffer.from(BROWSER_SCRIPT)},
     {path:`${SANDBOX_WORKDIR}/gogo-vault-login.js`,content:Buffer.from(VAULT_LOGIN_SCRIPT)},
+    {path:`${SANDBOX_WORKDIR}/gogo-vault-code.js`,content:Buffer.from(VAULT_CODE_SCRIPT)},
   ])
   const {allow}=managed||allowedHosts(targetUrl)
   await sandbox.updateNetworkPolicy({allow} as any)
@@ -1292,6 +1339,18 @@ async function attemptVaultLogin(params:{sandbox:any;url:string;username:string;
   if(!lines.length)throw new Error('vault_browser_login_empty')
   return JSON.parse(lines[lines.length-1])
 }
+async function attemptVaultCode(params:{sandbox:any;url:string;code:string;managedEnv?:Record<string,string>}){
+  const result=await params.sandbox.runCommand({
+    cmd:'bash',
+    args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-vault-code.js`],
+    env:{GOGO_LOGIN_CODE:params.code,...browserProxyEnv(params.url),...params.managedEnv},
+  } as any)
+  if(result.exitCode!==0)throw new Error('vault_browser_code_failed')
+  const lines=String(await result.stdout()||'').trim().split('\n').filter(Boolean)
+  if(!lines.length)throw new Error('vault_browser_code_empty')
+  return JSON.parse(lines[lines.length-1])
+}
+
 async function inspect(userId:string,url:string,keepAlive=false,taskId='',reusePage=false,readDeadline?:number){
   const {sandbox,name,releaseOwnerLock,managed}=await getComputer(userId,url,keepAlive)
   try{
@@ -1752,7 +1811,7 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
   let publicFlightRead=false
   try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
   const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
@@ -1796,6 +1855,13 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     const completedSearches:CompletedReadSearch[]=[]
     let missingActionEvidence=false
     let vaultAttempted=false,vaultEntryChecked=false
+    // Phone-and-code sign-in (16 Oct): the saved number asked for a code, and the code the person sent is used once.
+    let vaultPhoneCodeRequested=false,loginCodeUsed=false
+    const codeStop=async(rejected:boolean):Promise<SecureBrowserResult>=>({
+      status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,
+      handoffReservation:params.reserveHumanHandoff===true?await releaseOwnerLock!.reserveHandoff():undefined,
+      title:safeText(page.title,300),summary:'The site sent a sign-in code to your phone.',pageText:'Gogo is waiting for the sign-in code. The code is never stored.',
+      forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:'otp',loginCodeStage:true,otpRejected:rejected})
     let credentialSelectionRequired=false
     let readAnswer:string|null=null
     let assessedReadPage:any=null
@@ -1854,6 +1920,31 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         return {status:'blocked',url:safeText(page.url||target,1200),title:safeText(page.title,300),summary:providerBlock,pageText:safeText(page.text,1200),forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'provider_access_limited'}
       }
 
+      // On the resumed run the open page IS the code screen, even when its wording is not recognised.
+      if(params.loginCode&&!loginCodeUsed&&!providerBooking&&(wave===0||bookingOtpPrompt(page)||detectHumanAuthGate(page).reason==='otp')){
+        loginCodeUsed=true
+        const codeUrl=String(page.url||target.toString())
+        page=await attemptVaultCode({sandbox:first.sandbox,url:codeUrl,code:params.loginCode,managedEnv:first.managed?.env})
+        const entered=Boolean(page?.vaultCode?.codeEntered)
+        actionLog.push({kind:'login_code',detail:entered?'Entered the code you sent':'Could not find the code box on the page',status:entered?'done':'failed'})
+        console.log('VAULT_LOGIN_CODE:',JSON.stringify({entered,submitted:Boolean(page?.vaultCode?.submitted),stillCode:bookingOtpPrompt(page)}))
+        if(!entered||bookingOtpPrompt(page)||detectHumanAuthGate(page).reason==='otp')return await codeStop(entered)
+        // Signed in: next time Gogo starts from this live session instead of asking for a code again.
+        try{
+          const codeHost=new URL(codeUrl).hostname
+          const credential=await resolveVaultCredentialForBrowser(params.userId,codeHost,params.vaultCredentialId||null).catch(()=>null)
+          if(credential)await upsertVaultSession({telegramId:credential.telegramId,provider:credential.provider,domain:credential.domain,credentialId:credential.credentialId,
+            sandboxName:first.name,profileGeneration:SANDBOX_GENERATION,status:'active',authMethod:'vault_credential',metadata:{source:'secure_browser',via:'login_code'}})
+        }catch(err:any){console.error('VAULT_CODE_SESSION_UPSERT_FAILED:',String(err?.message||err).slice(0,120))}
+        // The code screen returns a page summary only; read the full page model before planning.
+        try{
+          const reread=Buffer.from(JSON.stringify({url:String(page.url||codeUrl),mode:'read',actions:[],keepAlive:params.keepAlive,taskId:params.sessionTaskId,reusePage:true,readDeadline})).toString('base64')
+          const out=await first.sandbox.runCommand({cmd:'bash',args:['-lc',`cd ${SANDBOX_WORKDIR} && node gogo-browser.js "$1"`,'--',reread],env:{...browserProxyEnv(codeUrl),...first.managed?.env}} as any)
+          const outLines=String(await out.stdout()||'').trim().split('\n').filter(Boolean)
+          if(out.exitCode===0&&outLines.length){page=JSON.parse(outLines[outLines.length-1]);mergeBlocked(page)}
+        }catch(err:any){console.error('VAULT_CODE_REREAD_FAILED:',String(err?.message||err).slice(0,120))}
+      }
+
       // 13 Oct: the code screen appeared just as time ran out and Gogo sent a generic handover.
       // A run waiting for the person's code asks for it, whatever the clock says.
       if(providerBooking&&Date.now()-bookingStartedAt>BOOKING_BUDGET_MS){
@@ -1905,10 +1996,11 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // never exposed to the model planner, task objective, Activity, or logs.
       // A sign-up page also has a password field; never try a saved login while creating an account.
       // A saved login is also tried once on a signed-out page that only offers a header "Log in" link.
-      let signedOutEntry=!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
+      // With a code in hand the saved number is never re-sent (that would text a new code and void this one).
+      let signedOutEntry=!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
       // Phone-code sites (Swiggy, Zomato): sign in once at the start unless Gogo already holds a live session there,
       // because the planner may wander to pages with no "Log in" link (16 Oct live run).
-      if(!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
+      if(!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
         const entryHost=(()=>{try{return new URL(String(page.url||target.toString())).hostname}catch{return ''}})()
         // typeof guard: browser test harnesses stub the vault modules with empty objects.
         const phoneSite=entryHost&&typeof findVaultProviderForDomain==='function'?findVaultProviderForDomain(entryHost):null
@@ -1948,6 +2040,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
             })
             const vaultFill=page?.vaultLogin||{}
             if(!vaultFill.usernameFilled)console.warn('VAULT_LOGIN_NOT_FILLED:',JSON.stringify({host,openerClicked:!!vaultFill.openerClicked,phoneCode:!!vaultFill.phoneCode,fieldsSeen:vaultFill.fieldsSeen||[],title:safeText(page?.title,80)}))
+            if(vaultFill.phoneCode&&vaultFill.codeRequested)vaultPhoneCodeRequested=true
             const vaultFilled=Boolean(vaultFill.usernameFilled&&(vaultFill.passwordFilled||vaultFill.phoneCode))
             actionLog.push(vaultFilled
               ?{kind:'vault_login',detail:vaultFill.phoneCode?`Entered your saved ${credential.provider} number and asked for a text code`:`Used the saved ${credential.provider} login`,status:'done'}
@@ -2006,6 +2099,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
 
       authGate=detectHumanAuthGate(page)
+      // The saved number asked the site for a text code: stop here and ask the person for it (chat or WhatsApp).
+      if(vaultPhoneCodeRequested&&!params.loginCode&&!providerBooking)return await codeStop(false)
       // 10 Oct live run: the Hugging Face sign-up form (email + password) was read as a sign-in
       // wall and the run stopped before filling anything. While creating an account, a password
       // field is expected; only non-password human steps (OTP, passkey, device approval) pause here.

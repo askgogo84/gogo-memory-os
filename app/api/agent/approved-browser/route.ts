@@ -1,5 +1,5 @@
 import { after, NextResponse } from 'next/server'
-import { runApprovedBrowserRun, runBackgroundBrowserRead, runBookingOtpResume } from '@/lib/agent/approved-browser-worker'
+import { runApprovedBrowserRun, runBackgroundBrowserRead, runBookingOtpResume, runLoginCodeResume } from '@/lib/agent/approved-browser-worker'
 
 // Internal trigger, called by the WhatsApp webhook right after the user approves a browser
 // action. It answers 202 immediately and runs the approved browser work in `after()`, so the
@@ -28,6 +28,16 @@ export async function POST(request: Request) {
       } catch (err: any) {
         console.error('BACKGROUND_READ_CRASHED:', runId, String(err?.message || '').slice(0, 120))
       }
+    })
+    return NextResponse.json({ accepted: true, runId }, { status: 202 })
+  }
+  // A sign-in code for a paused read: used for this one run and never stored or logged.
+  const loginCode = typeof body?.loginCode === 'string' ? body.loginCode : ''
+  if (loginCode) {
+    if (!/^\d{4,8}$/.test(loginCode)) return NextResponse.json({ error: 'invalid_code' }, { status: 400 })
+    after(async () => {
+      try { console.log('LOGIN_CODE_RESUME_DONE:', runId, await runLoginCodeResume(runId, loginCode)) }
+      catch (err: any) { console.error('LOGIN_CODE_RESUME_CRASHED:', runId, String(err?.message || '').slice(0, 120)) }
     })
     return NextResponse.json({ accepted: true, runId }, { status: 202 })
   }
