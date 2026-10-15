@@ -29,7 +29,9 @@ export const NORMAL_SESSION_TIMEOUT_SECONDS=300
 // capped at the 20-minute owner-lock window (browser-owner-lock.ts). keepAlive sessions
 // run until REQUEST_RELEASE or this timeout, so PR-0 also guarantees release and sweeps.
 export const KEEPALIVE_SESSION_TIMEOUT_SECONDS=1200
-export function managedSessionConfig(projectId:string,contextId:string,owner:string,scope:string,timeoutSeconds:number,keepAlive:boolean,envTag:string,recordSession:boolean){
+// Advanced Stealth (Browserbase Scale plan) makes the browser look like a normal one to sites that refuse automated
+// browsers (amazon.in answered 503 on 15 Oct). Off unless GOGO_BROWSER_ADVANCED_STEALTH=1; CAPTCHAs are still never solved.
+export function managedSessionConfig(projectId:string,contextId:string,owner:string,scope:string,timeoutSeconds:number,keepAlive:boolean,envTag:string,recordSession:boolean,advancedStealth=false){
   // keepAlive is ALWAYS true for managed sessions: the broker and the per-wave executor
   // each open their own CDP connection (managed-browser.ts broker connectOverCDP +
   // secure-computer.ts executor connectOverCDP that closes after every runCommand), so a
@@ -41,7 +43,7 @@ export function managedSessionConfig(projectId:string,contextId:string,owner:str
   // debug flag (off unless GOGO_BROWSER_RECORD_SESSIONS==='1').
   return {projectId,region:'ap-southeast-1',timeout:timeoutSeconds,keepAlive,
     proxies:[{type:'browserbase',geolocation:{country:'IN'}}],
-    browserSettings:{context:{id:contextId,persist:true},allowedDomains:[scope],solveCaptchas:false,recordSession,logSession:recordSession,ignoreCertificateErrors:false,viewport:{width:1280,height:900}},
+    browserSettings:{context:{id:contextId,persist:true},allowedDomains:[scope],solveCaptchas:false,...(advancedStealth?{advancedStealth:true}:{}),recordSession,logSession:recordSession,ignoreCertificateErrors:false,viewport:{width:1280,height:900}},
     userMetadata:{owner,scope,application:'askgogo',app:'askgogo',env:envTag}}
 }
 function connection(data:any){
@@ -109,7 +111,7 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
   }
   if(!uuid.test(state.contexts[scope]))throw Error('managed_browser_context_invalid')
   state.pending='session';await store.save(state)
-  const created=await api('sessions',managedSessionConfig(project,state.contexts[scope],digest,scope,sessionTimeout,true,String(env.VERCEL_ENV||''),recordSessions))
+  const created=await api('sessions',managedSessionConfig(project,state.contexts[scope],digest,scope,sessionTimeout,true,String(env.VERCEL_ENV||''),recordSessions,String(env.GOGO_BROWSER_ADVANCED_STEALTH||'')==='1'))
   if(!uuid.test(created.id)||created.projectId!==project||created.contextId!==state.contexts[scope])throw Error('managed_browser_session_invalid')
   state.session={id:created.id,scope,fingerprint};delete state.pending;await store.save(state)
   return {...await connect(created),id:created.id,newSession:true,scope,release:async()=>{await api(`sessions/${created.id}`,{status:'REQUEST_RELEASE'})}}

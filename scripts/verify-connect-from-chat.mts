@@ -62,5 +62,5 @@ assert.ok(resolveBrowserProxy('https://www.amazon.in/ap/signin', proxyEnv), 'ama
 assert.ok(resolveBrowserProxy('https://www.flipkart.com/account/login', proxyEnv))
 assert.equal(resolveBrowserProxy('https://example.com/', proxyEnv), null)
 const route = read('app/api/dashboard/chat/route.ts')
-assert.ok(route.indexOf('tryAccountSiteSignInGate({ telegramId: user.telegram_id, text })') < route.indexOf("tryRunBrowserCommand({ actor, surface:'web', text })"), 'the connect check runs before the browser')
+assert.ok(route.indexOf('tryAccountSiteAnswer(actor, text)') < route.indexOf("tryRunBrowserCommand({ actor, surface:'web', text })"), 'the connect check runs before the browser')
 console.log('verify-connect-from-chat: ok')
