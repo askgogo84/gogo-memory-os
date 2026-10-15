@@ -26,5 +26,13 @@ export async function sweepStaleRunningRuns() {
     .lt('updated_at', staleRunningCutoff())
     .select('id')
   if (error) { console.error('STALE_RUN_SWEEP_FAILED:', error.message); return 0 }
-  return (data || []).length
+  const ids = (data || []).map((row: any) => String(row.id))
+  // The run's own steps stop too, so the task page no longer says "Gogo is working on this step now".
+  if (ids.length) {
+    const { error: stepError } = await supabaseAdmin.from('agent_steps')
+      .update({ status: 'failed', error: STALE_RUN_ERROR, completed_at: at })
+      .in('run_id', ids).in('status', ['running', 'queued'])
+    if (stepError) console.error('STALE_RUN_STEP_SWEEP_FAILED:', stepError.message)
+  }
+  return ids.length
 }
