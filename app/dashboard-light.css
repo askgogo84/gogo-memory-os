@@ -18,6 +18,7 @@
 .dashboard-root[data-theme='light'] .bg-\[\#2A2A2A\]{background-color:#e6ddd0}
 .dashboard-root[data-theme='light'] .bg-\[\#2A2A2A\]\/50{background-color:rgba(230,221,208,0.5)}
 .dashboard-root[data-theme='light'] .bg-\[\#2a2111\]{background-color:#fbf1dd}
+.dashboard-root[data-theme='light'] .bg-\[\#2a2a2a\]{background-color:#e6ddd0}
 .dashboard-root[data-theme='light'] .bg-\[\#322a1b\]{background-color:#f6e7c7}
 .dashboard-root[data-theme='light'] .bg-\[\#35221d\]{background-color:#fbe9e4}
 .dashboard-root[data-theme='light'] .border-\[\#111111\]{border-color:#fffdf9}
@@ -56,6 +57,7 @@
 .dashboard-root[data-theme='light'] .hover\:text-\[\#8be6d8\]:hover{color:#0f6f64}
 .dashboard-root[data-theme='light'] .hover\:text-\[\#f2efea\]:hover{color:#16130f}
 @media (width >= 64rem){.dashboard-root[data-theme='light'] .lg\:border-\[\#1f1f1f\]{border-color:#e3d9cb}}
+.dashboard-root[data-theme='light'] .placeholder\:text-\[\#8a8a86\]::placeholder{color:#6f675d}
 .dashboard-root[data-theme='light'] .placeholder\:text-\[\#a8a8a4\]::placeholder{color:#5c554c}
 .dashboard-root[data-theme='light'] .text-\[\#2FB8A6\]{color:#0f6f64}
 .dashboard-root[data-theme='light'] .text-\[\#2fb8a6\]{color:#0f6f64}

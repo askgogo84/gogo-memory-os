@@ -23,9 +23,9 @@ export const NAV: NavItem[] = [
   { href:'/dashboard/brain', label:'Brain', glyph:'◈' },
   { href:'/dashboard/memory', label:'Memory', glyph:'◇' },
   { href:'/dashboard/library', label:'Library', glyph:'▣' },
-  { href:'/dashboard/connections', label:'Connections', glyph:'⌁' },
   { href:'/dashboard/you/vault', label:'Vault', glyph:'▰' },
-  { href:'/dashboard/you', label:'You', glyph:'♙', match:(p,s)=>p==='/dashboard/you'&&!s },
+  // One Settings page (approved mock): General, Connections, Permissions, Payments, Addresses, Notifications, Voice, Invites.
+  { href:'/dashboard/settings', label:'Settings', glyph:'⚙', match:(p)=>p==='/dashboard/settings'||p==='/dashboard/connections'||p==='/dashboard/you' },
 ]
 
 export type NavCounts = { approvals: number; watchers: number; handoffs: number }

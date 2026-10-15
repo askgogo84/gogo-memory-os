@@ -13,7 +13,7 @@ assert.match(css,/--color-gogo-cream: #0b0b0b/)
 assert.match(css,/--color-gogo-teal: #2fb8a6/)
 assert.match(css,/--color-gogo-ink: #f2efea/)
 
-for(const label of ['Today','Gogo','Activity','Needs you','Background','Goals','Memory','Library','Connections','Vault','You']){
+for(const label of ['Today','Gogo','Activity','Needs you','Background','Goals','Memory','Library','Vault','Settings']){
   assert.ok(rail.includes("label:'"+label+"'"),'rail must expose '+label)
 }
 // 15 Oct redesign: the phone drawer shows the same list as the desktop rail (no bottom tab bar).
