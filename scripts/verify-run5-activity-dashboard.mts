@@ -24,8 +24,7 @@ const detail=fs.readFileSync('app/dashboard/(app)/activity/[runId]/page.tsx','ut
 const browser=fs.readFileSync('app/dashboard/(app)/activity/[runId]/browser/page.tsx','utf8')
 const handoff=fs.readFileSync('app/api/dashboard/agent/runs/[runId]/handoff/route.ts','utf8')
 const shot=fs.readFileSync('app/api/dashboard/agent/runs/[runId]/browser-shot/route.ts','utf8')
-const side=fs.readFileSync('components/dashboard/side-rail.tsx','utf8')
-const tabs=fs.readFileSync('components/dashboard/tab-bar.tsx','utf8')
+const side=fs.readFileSync('components/dashboard/dashboard-nav.tsx','utf8')
 
 assert.match(activity,/What Gogo has done, newest first/)
 for (const filter of ['Reminders','Browser','Research','Documents']) assert.match(activity,new RegExp(filter),`Activity must expose ${filter} filter`)
@@ -45,6 +44,5 @@ assert.match(shot,/\/shot/)
 assert.match(browser,/handoffActive/)
 assert.match(browser,/latest\?\.output\?\.browserState\|\|latest\?\.output/)
 assert.match(side,/\/dashboard\/activity/)
-assert.match(tabs,/key: 'activity'/)
 
 console.log('Run 5 Activity / Task Detail dashboard contract passed')

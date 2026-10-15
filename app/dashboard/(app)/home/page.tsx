@@ -29,7 +29,7 @@ function Dot({tone}:{tone:'teal'|'amber'|'muted'|'green'}){
 function Row({tone,title,meta,right,href}:{tone:'teal'|'amber'|'muted'|'green';title:string;meta:string;right?:string;href?:string}){
   const body=<div className="flex items-start gap-3 border-t border-[#1f1f1f] py-3.5 first:border-t-0">
     <Dot tone={tone}/>
-    <div className="min-w-0 flex-1"><div className="truncate text-[16px] font-medium text-[#f2efea]">{title}</div><div className="mt-1 text-[14px] leading-4 text-[#6a6a6a]">{meta}</div></div>
+    <div className="min-w-0 flex-1"><div className="truncate text-[16px] font-medium text-[#f2efea]">{title}</div><div className="mt-1 text-[14px] leading-5 text-[#a8a8a4]">{meta}</div></div>
     {right&&<div className="shrink-0 text-[13px] text-[#9a9a9a]">{right}</div>}
   </div>
   return href?<Link href={href} className="block hover:bg-[#141414]">{body}</Link>:body
@@ -74,6 +74,8 @@ export default async function HomePage(){
   const pending=reminders.filter(r=>!r.sent)
   const approvalRows=approvals.data||[]
   const handoffRows=handoffs.filter(handoff=>!approvalRows.some((approval:any)=>String(approval.run_id)===handoff.id))
+  // Several hand-offs on the same site (four playo.co robot checks) are one thing to do: one row with a count.
+  const handoffGroups=[...handoffRows.reduce((map,h)=>{const g=map.get(h.title);if(g){g.count+=1+h.repeats}else map.set(h.title,{first:h,count:1+h.repeats});return map},new Map<string,{first:typeof handoffRows[number];count:number}>()).values()]
   const watcherRows=watchers.data||[]
   const runRows=runs.data||[]
   const recentUpdates=((recentUpdatesResult as any)?.data||[]).filter((run:any)=>!retiredRunReason(run)).slice(0,3)
@@ -99,43 +101,53 @@ export default async function HomePage(){
         ? `You have ${pending.length} reminder${pending.length===1?'':'s'} today. Gogo is quiet unless something changes or needs you.`
         : 'Your day is clear. Tell Gogo what matters and it will carry the next safe steps.'
 
-  return <div className="mx-auto w-full max-w-[1180px] pb-10">
-    <header className="flex items-center justify-between gap-4 border-b border-[#1f1f1f] pb-4">
+  return <div className="mx-auto w-full max-w-[1600px] pb-10">
+    <header className="hidden items-center justify-between gap-4 border-b border-[#1f1f1f] pb-4 lg:flex">
       <div className="flex items-center gap-3">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-[#f2efea]"><GogoCharacter state={approvalRows.length?'approval':runState.working?'acting':runState.waiting?'approval':watcherRows.length?'watching':'calm'} size={38} showStatus={false}/></div>
         <div>
           <div className="text-[16px] font-medium text-[#f2efea]">Gogo</div>
-          <div className="mt-0.5 flex items-center gap-2 text-[13px] text-[#6a6a6a]"><span className={`h-1.5 w-1.5 rounded-full ${runState.working?'bg-[#2fb8a6]':runState.waiting?'bg-[#D9A441]':watcherRows.length?'bg-[#2fb8a6]':'bg-[#6a6a6a]'}`}/>{runState.working?'Working':runState.waiting?'Waiting for you':watcherRows.length?'Watching':'Ready'}</div>
+          <div className="mt-0.5 flex items-center gap-2 text-[13px] text-[#a8a8a4]"><span className={`h-1.5 w-1.5 rounded-full ${runState.working?'bg-[#2fb8a6]':runState.waiting?'bg-[#D9A441]':watcherRows.length?'bg-[#2fb8a6]':'bg-[#6a6a6a]'}`}/>{runState.working?'Working':runState.waiting?'Waiting for you':watcherRows.length?'Watching':'Ready'}</div>
         </div>
       </div>
-      <div className="text-right text-[13px] text-[#6a6a6a]">Safe mode on<br/><span className="text-[#9a9a9a]">WhatsApp + Dashboard</span></div>
+      <div className="text-right text-[13px] text-[#a8a8a4]">Safe mode on<br/><span className="text-[#9a9a9a]">WhatsApp + Dashboard</span></div>
     </header>
 
-    <section className="py-8 lg:py-10">
+    <section className="pb-5 pt-2 lg:py-8">
       <div className="final-dark-eyebrow">{dayLabel(now,tz)}</div>
-      <h1 className="final-dark-title mt-2 text-[34px] leading-[1.05] sm:text-[42px]">{greeting(now,tz)}, {name}.</h1>
-      <p className="mt-4 max-w-[760px] text-[16px] leading-6 text-[#9a9a9a]">{summary}</p>
-      <div className="mt-6 max-w-[760px]"><CommandBar/></div>
+      <h1 className="final-dark-title mt-1.5 text-[26px] leading-[1.15] sm:text-[32px] lg:text-[36px]">{greeting(now,tz)}, {name}</h1>
+      <p className="mt-2 max-w-[760px] text-[16px] leading-6 text-[#a8a8a4]">{summary}</p>
+      <div className="mt-5 hidden max-w-[760px] lg:block"><CommandBar/></div>
     </section>
 
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,.65fr)]">
-      <div className="space-y-5">
+    <div className="grid gap-4 lg:gap-5 xl:grid-cols-3">
         <section className="final-dark-panel overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[13px] text-[#d9a441]">{approvalRows.length+handoffRows.length}</Link></div>
+          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[14px] font-semibold text-[#d9a441]">{approvalRows.length+handoffGroups.reduce((n,g)=>n+g.count,0)}</Link></div>
           <div className="border-t border-[#1f1f1f] px-4">
             {approvalRows.map((a:any)=><Row key={a.id} tone="amber" title={a.title||'Approval needed'} meta={a.description||'Gogo stopped before a consequential action.'} right="Review" href="/dashboard/agent?section=approvals"/>)}
-            {handoffRows.map(handoff=><Row key={handoff.id} tone="amber" title={handoff.title} meta={handoff.repeats>0?`${handoff.summary} (${handoff.repeats+1} identical checks are waiting on this one step.)`:handoff.summary} right="Take control" href={`/dashboard/activity/${handoff.id}/browser`}/>)}
-            {!approvalRows.length&&!handoffRows.length&&<div className="py-5 text-[15px] text-[#6a6a6a]">Nothing is waiting for you.</div>}
+            {handoffGroups.map(({first,count})=><Row key={first.id} tone="amber" title={first.title} meta={count>1?`${count} waiting on you here. Latest: ${first.summary}`:first.summary} right={count>1?'Open':'Take control'} href={count>1?'/dashboard/agent?section=approvals':`/dashboard/activity/${first.id}/browser`}/>)}
+            {!approvalRows.length&&!handoffGroups.length&&<div className="py-5 text-[15px] text-[#a8a8a4]">Nothing is waiting for you.</div>}
           </div>
         </section>
 
         <section className="final-dark-panel overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Today</div><span className="text-[13px] text-[#6a6a6a]">{reminders.length}</span></div>
+          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Today</div><span className="text-[14px] text-[#a8a8a4]">{reminders.length}</span></div>
           <div className="border-t border-[#1f1f1f] px-4">
-            {reminders.length?reminders.slice(0,6).map(r=><Row key={String(r.id)} tone={r.status==='completed'||['read','delivered'].includes(r.delivery_state||'')?'green':'muted'} title={r.message||'Reminder'} meta={reminderStateLabel(r)} right={clock(r.remind_at,tz)}/>):<div className="py-5 text-[15px] text-[#6a6a6a]">No reminders scheduled for today.</div>}
+            {reminders.length?reminders.slice(0,6).map(r=><Row key={String(r.id)} tone={r.status==='completed'||['read','delivered'].includes(r.delivery_state||'')?'green':'muted'} title={r.message||'Reminder'} meta={reminderStateLabel(r)} right={clock(r.remind_at,tz)}/>):<div className="py-5 text-[15px] text-[#a8a8a4]">No reminders today.</div>}
           </div>
         </section>
 
+        <section className="final-dark-panel overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">In the background</div><Link href="/dashboard/agent?section=background" className="text-[14px] text-[#2fb8a6]">All</Link></div>
+          <div className="border-t border-[#1f1f1f] px-4">
+            {runRows.slice(0,2).map((r:any)=><Row key={r.id} tone={r.status==='waiting_approval'?'amber':'teal'} title={r.title||'Gogo task'} meta={r.summary||r.status} right="now" href={`/dashboard/activity/${r.id}`}/>)}
+            {watcherRows.slice(0,3).map((w:any)=><Row key={w.id} tone="teal" title={w.title||'Background watch'} meta={String(w.type||'watch').replaceAll('_',' ')} right={w.next_check_at?clock(w.next_check_at,tz):''} href="/dashboard/agent?section=background"/>)}
+            {!runRows.length&&!watcherRows.length&&<div className="py-5 text-[15px] text-[#a8a8a4]">Nothing is running in the background.</div>}
+          </div>
+        </section>
+    </div>
+
+    <div className="mt-4 grid gap-4 lg:mt-5 lg:gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section className="final-dark-panel overflow-hidden" aria-labelledby="from-your-work">
           <div className="flex items-center justify-between gap-3 px-4 py-3.5">
             <div><h2 id="from-your-work" className="final-dark-eyebrow">From your work</h2><p className="mt-1 text-[15px] text-[#a8a8a8]">Recent updates from your saved tasks.</p></div>
@@ -159,18 +171,8 @@ export default async function HomePage(){
             {!updatesUnavailable&&!recentUpdates.length&&<p className="py-5 text-[15px] text-[#b7b7b7]">No finished or paused task updates yet. They will appear here when Gogo has something to report.</p>}
           </div>
         </section>
-      </div>
 
       <div className="space-y-5">
-        <section className="final-dark-panel overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">In the background</div><Link href="/dashboard/agent?section=background" className="text-[13px] text-[#2fb8a6]">All</Link></div>
-          <div className="border-t border-[#1f1f1f] px-4">
-            {runRows.slice(0,2).map((r:any)=><Row key={r.id} tone={r.status==='waiting_approval'?'amber':'teal'} title={r.title||'Gogo task'} meta={r.summary||r.status} right="now" href={`/dashboard/activity/${r.id}`}/>)}
-            {watcherRows.slice(0,3).map((w:any)=><Row key={w.id} tone="teal" title={w.title||'Background watch'} meta={String(w.type||'watch').replaceAll('_',' ')} right={w.next_check_at?clock(w.next_check_at,tz):''} href="/dashboard/agent?section=background"/>)}
-            {!runRows.length&&!watcherRows.length&&<div className="py-5 text-[15px] text-[#6a6a6a]">Nothing is running in the background.</div>}
-          </div>
-        </section>
-
         <section className="final-dark-panel p-4">
           <div className="final-dark-eyebrow">Context</div>
           <div className="mt-3 flex flex-wrap gap-2">

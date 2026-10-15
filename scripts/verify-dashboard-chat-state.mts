@@ -42,8 +42,8 @@ for (const state of Object.keys(CHAT_STATE_LABEL)) {
   assert.ok(CHAT_STATE_SHORT[state] && CHAT_STATE_SHORT[state].length <= 16, `${state} needs a short phone label`)
 }
 // Installed-app screens have a gesture bar and notch: the tab bar and page must leave room for them.
-const tabBar = readFileSync('components/dashboard/tab-bar.tsx', 'utf8')
-assert.ok(tabBar.includes('pb-[env(safe-area-inset-bottom)]'), 'tab bar must sit above the phone gesture bar')
+const drawer = readFileSync('components/dashboard/mobile-nav.tsx', 'utf8')
+assert.ok(drawer.includes('env(safe-area-inset-bottom)') && drawer.includes('env(safe-area-inset-top)'), 'phone menu drawer must clear the notch and gesture bar')
 const shell = readFileSync('app/dashboard/(app)/layout.tsx', 'utf8')
 assert.ok(shell.includes('env(safe-area-inset-bottom)') && shell.includes('env(safe-area-inset-top)'), 'page must leave room for notch and gesture bar')
 console.log('verify-dashboard-chat-state: ok')
