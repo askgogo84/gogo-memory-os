@@ -87,7 +87,7 @@ const allowed = (hosts: string[], value: string) => {
   const sc = readFileSync('lib/agent/secure-computer.ts', 'utf8')
   assert.match(sc, /didn[’']t load in the secure browser/)
   assert.doesNotMatch(sc, /could not load in the cloud browser\. Availability and prices remain unverified; there is no usable sign-in page yet/)
-  assert.match(sc, /sign in first — secure reconnect is coming soon/)
+  assert.match(sc, /sign in first\. Open the link, sign in yourself, then tap Resume\./)
   const bc = readFileSync('lib/agent/browser-command.ts', 'utf8')
   assert.doesNotMatch(bc, /did not expose verifiable live availability/)
 }

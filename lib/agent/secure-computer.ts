@@ -2020,7 +2020,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         const reason=authGate.reason||'password'
         const summary=credentialSelectionRequired
           ? 'Multiple saved logins match this site. Choose which account Gogo should use.'
-          : authGate.message||'This site needs you to sign in first — secure reconnect is coming soon.'
+          : authGate.message||'This site needs you to sign in first. Open the link, sign in yourself, then tap Resume.'
         const handoffReservation=!credentialSelectionRequired&&(reason!=='password'||params.reservePasswordHandoff===true)&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
         return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation,title:safeText(page.title,300),summary,pageText:'Gogo paused before authentication. No password, OTP, passkey or payment-auth value was requested, inferred or stored.',forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:reason,credentialSelectionRequired}
       }

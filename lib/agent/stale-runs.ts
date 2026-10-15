@@ -36,3 +36,21 @@ export async function sweepStaleRunningRuns() {
   }
   return ids.length
 }
+
+// A Settings sign-in left unconfirmed keeps showing "Sign in to Amazon.in yourself…" as Gogo's current work for days
+// (16 Oct). Its browser timed out long ago, so after two hours the run is closed. The takeover itself is still released
+// by the next sign-in (site-sessions releaseEarlierSignIns), which needs the person's id.
+export const ABANDONED_SIGN_IN_HOURS = 2
+export const ABANDONED_SIGN_IN_SUMMARY = 'Closed this sign-in: it was not finished. Sign in again from Settings when you need it.'
+
+export async function sweepAbandonedSignIns(now = new Date()) {
+  const at = now.toISOString()
+  const { data, error } = await supabaseAdmin.from('agent_runs')
+    .update({ status: 'completed', summary: ABANDONED_SIGN_IN_SUMMARY, completed_at: at, updated_at: at })
+    .eq('type', 'secure_browser').in('status', ['paused', 'queued'])
+    .not('metadata_json->>site_session', 'is', null)
+    .lt('updated_at', new Date(now.getTime() - ABANDONED_SIGN_IN_HOURS * 3600_000).toISOString())
+    .select('id')
+  if (error) { console.error('ABANDONED_SIGN_IN_SWEEP_FAILED:', error.message); return 0 }
+  return (data || []).length
+}
