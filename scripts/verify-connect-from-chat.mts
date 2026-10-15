@@ -45,7 +45,8 @@ assert.match(chat, /if\(loading\|\|!askAfterConnect\|\|askedAfterConnect\.curren
 
 // WhatsApp: a connected account read runs in the background and answers there.
 const bridge = read('lib/agent/whatsapp-bridge.ts')
-assert.match(bridge, /queueBrowserRead\(\{ actor, surface:'whatsapp', text:params\.text \}\)/)
+assert.match(bridge, /queueBrowserRead\(\{ actor, surface:'whatsapp', text \}\)/)
+assert.equal(bridge.match(/await accountSiteReply\(actor, ?params\.text\)/g)?.length, 2, 'both WhatsApp browser paths check the account first')
 assert.match(read('lib/agent/browser-command.ts'), /const command=parseBrowserCommand\(params\.text\)\|\|parseConnectedProviderReadCommand\(params\.text\)/)
 assert.doesNotMatch(read('lib/agent/approved-browser-worker.ts'), /couldn't read the free slots on \$\{host\}/)
 
@@ -60,4 +61,6 @@ const proxyEnv = { GOGO_BROWSER_PROXY_URL: 'http://gw.example:7000', GOGO_BROWSE
 assert.ok(resolveBrowserProxy('https://www.amazon.in/ap/signin', proxyEnv), 'amazon.in uses the proxy even with a custom host list')
 assert.ok(resolveBrowserProxy('https://www.flipkart.com/account/login', proxyEnv))
 assert.equal(resolveBrowserProxy('https://example.com/', proxyEnv), null)
+const route = read('app/api/dashboard/chat/route.ts')
+assert.ok(route.indexOf('tryAccountSiteSignInGate({ telegramId: user.telegram_id, text })') < route.indexOf("tryRunBrowserCommand({ actor, surface:'web', text })"), 'the connect check runs before the browser')
 console.log('verify-connect-from-chat: ok')

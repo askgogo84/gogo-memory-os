@@ -292,6 +292,14 @@ export async function POST(req: NextRequest) {
     // especially important for Vault-backed tasks such as "find my saved reels
     // on Instagram": the secure browser must own the request before the generic
     // planner or WhatsApp compatibility bridge can claim it.
+    // Before the browser: a question about an unconnected account (Amazon orders) gets the Connect card, not a
+    // browser run that hits the site's sign-in page (15 Oct live: amazon.in returned 503 and no card was shown).
+    const accountGate = await tryAccountSiteSignInGate({ telegramId: user.telegram_id, text })
+    if (accountGate) {
+      await saveConversation(user.telegram_id, text, accountGate.text)
+      return NextResponse.json({ text: accountGate.text, handledBy: accountGate.handledBy, status: accountGate.status })
+    }
+
     const browserTask = await tryRunBrowserCommand({ actor, surface:'web', text })
     if (browserTask) {
       const suffix = browserTask.status === 'waiting_approval'
@@ -334,12 +342,6 @@ export async function POST(req: NextRequest) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'jev-clarification-guard',actualCapability:null,status:'paused'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, jevClarify)
       return NextResponse.json({ text: jevClarify, handledBy: 'jev-clarification-guard', status: 'paused' })
-    }
-
-    const accountGate = await tryAccountSiteSignInGate({ telegramId: user.telegram_id, text })
-    if (accountGate) {
-      await saveConversation(user.telegram_id, text, accountGate.text)
-      return NextResponse.json({ text: accountGate.text, handledBy: accountGate.handledBy, status: accountGate.status })
     }
 
     const mission = await tryRunGeneralPlan({

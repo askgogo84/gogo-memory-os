@@ -231,6 +231,18 @@ async function tryCreateGoal(actor: AgentActor, text: string): Promise<WhatsAppA
   }
 }
 
+// "Where is my Amazon order?": not connected -> the Connect link; connected -> signing in and reading the account
+// takes longer than a WhatsApp reply can wait, so it runs in the background and the answer is sent here.
+async function accountSiteReply(actor: AgentActor, text: string): Promise<WhatsAppAgentResult | null> {
+  const accountGate = await tryAccountSiteSignInGate({ telegramId: actor.legacyTelegramId, text })
+  if (accountGate) return { text: accountGate.text, status: accountGate.status, handledBy: accountGate.handledBy } as any
+  const accountSite = accountSiteFromText(text)
+  if (!accountSite) return null
+  const queued = await queueBrowserRead({ actor, surface:'whatsapp', text }).catch(() => null)
+  if (!queued) return null
+  return { text:`Checking your ${accountSite.name} account now. I'll send the answer here in a minute or two. If ${accountSite.name} asks for a code or a check only you can do, I'll send you a link to finish it.`, status:'running', handledBy:'account-site-background-read' } as any
+}
+
 export async function tryRunWhatsAppJevSpecialist(params:{
   user:ResolvedUser
   text:string
@@ -311,6 +323,8 @@ export async function tryRunWhatsAppJevSpecialist(params:{
     return await learnedReturn(actor,params.text,hardened,'travel-research',params.messageId)
   }
 
+  const accountReply=await accountSiteReply(actor,params.text)
+  if(accountReply)return accountReply
   const browser=await withWhatsAppBrowserBudget(actor,tryRunBrowserCommand({actor,surface:'whatsapp',text:params.text}))
   if(!browser)return null
   return {
@@ -398,16 +412,8 @@ export async function tryRunWhatsAppAgent(params: {
     if (approval) return approval
   }
 
-  // "Check my last Amazon order" with no Amazon sign-in: say so with the Settings link, before any browser work.
-  const accountGate = await tryAccountSiteSignInGate({ telegramId: actor.legacyTelegramId, text: params.text })
-  if (accountGate) return { text: accountGate.text, status: accountGate.status, handledBy: accountGate.handledBy }
-  // Connected: signing in and reading the account takes longer than a WhatsApp reply can wait, so run it in the
-  // background and send the answer here when it is ready.
-  const accountSite = accountSiteFromText(params.text)
-  if (accountSite) {
-    const queued = await queueBrowserRead({ actor, surface:'whatsapp', text:params.text }).catch(() => null)
-    if (queued) return { text:`Checking your ${accountSite.name} account now. I'll send the answer here in a minute or two. If ${accountSite.name} asks for a code or a check only you can do, I'll send you a link to finish it.`, status:'running', handledBy:'account-site-background-read' } as any
-  }
+  const accountReply = await accountSiteReply(actor, params.text)
+  if (accountReply) return accountReply
 
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal
