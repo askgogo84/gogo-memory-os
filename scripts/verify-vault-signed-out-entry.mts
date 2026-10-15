@@ -16,3 +16,10 @@ const src = readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.
 assert.match(src, /const signedOutEntry=!vaultAttempted&&!vaultEntryChecked&&!authGate\.required&&!loginish&&hasSignInEntry\(page\)/)
 assert.match(src, /\(!authGate\.required&&\(loginish\|\|signedOutEntry\)\)/)
 console.log('verify-vault-signed-out-entry: ok')
+// Second live run: the saved login was tried but no phone field was found. The opener also clicks a plain-text
+// "Log in", and a miss logs field shapes only (never values).
+assert.match(src, /page\.getByText\(t,\{exact:true\}\)/)
+assert.match(src, /VAULT_LOGIN_NOT_FILLED:/)
+assert.match(src, /\[el\.type,el\.name,el\.placeholder,el\.autocomplete\]/)
+assert.doesNotMatch(src, /fieldsSeen=[^\n]*el\.value/, 'never logs what is typed')
+console.log('verify-vault-signed-out-entry: diag ok')

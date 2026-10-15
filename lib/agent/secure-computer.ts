@@ -225,7 +225,7 @@ async function model(page){
   const attached=__env.GOGO_BROWSER_CDP_URL||__env.GOGO_BROWSER_KEEP_ALIVE==='true'?await chromium.connectOverCDP(__env.GOGO_BROWSER_CDP_URL||'${COMMERCE_CDP_URL}').catch(()=>{throw Error('browser_connection_failed')}):null;
   const context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
   const page=context.pages()[0]||await context.newPage();
-  let usernameFilled=false,passwordFilled=false,submitted=false;
+  let usernameFilled=false,passwordFilled=false,submitted=false,openerClicked=false;
   const ambiguous=[];
   try{
     await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
@@ -234,7 +234,10 @@ async function model(page){
     // Sites like Swiggy and Zomato keep the login in a panel opened from the header.
     if(!(await visibleFields(page,USER_FIELDS)).length){
       const opener=await firstVisible(page,['a:has-text("Sign in")','button:has-text("Sign in")','a:has-text("Log in")','button:has-text("Log in")','a:has-text("Login")','button:has-text("Login")','[role="button"]:has-text("Sign in")','[role="button"]:has-text("Log in")']);
-      if(opener){ await opener.click({timeout:10000}).catch(()=>{}); await page.waitForTimeout(1500); }
+      // Some headers render "Log in" as plain text with a click handler (no link or button).
+      const plain=opener?null:await (async()=>{ for(const t of ['Log in','Login','Sign in','Sign In','Log In']){ const loc=page.getByText(t,{exact:true}).first(); if(await visible(loc)) return loc; } return null; })();
+      const target=opener||plain;
+      if(target){ openerClicked=true; await target.click({timeout:10000}).catch(()=>{}); await page.waitForTimeout(2000); }
     }
     const PASS_FIELDS='input[type="password"]';
     const userFields=await visibleFields(page,USER_FIELDS);
@@ -260,7 +263,7 @@ async function model(page){
       if(codeButton){ await codeButton.click({timeout:10000}); submitted=true; codeRequested=true; await page.waitForTimeout(1800); }
       else if(!passFields.length) codeRequested=true;
       const out=await model(page);
-      out.vaultLogin={usernameFilled,passwordFilled:false,submitted,ambiguous,phoneCode:true,codeRequested};
+      out.vaultLogin={usernameFilled,passwordFilled:false,submitted,ambiguous,phoneCode:true,codeRequested,openerClicked};
       console.log(JSON.stringify(out));
       return;
     }
@@ -275,7 +278,9 @@ async function model(page){
       if(submit){ await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800); }
     }
     const out=await model(page);
-    out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous};
+    out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous,openerClicked};
+    // Field shapes only (type, name, placeholder): never values. Used to fix sites whose login is not found.
+    if(!usernameFilled) out.vaultLogin.fieldsSeen=await page.evaluate(()=>Array.from(document.querySelectorAll('input')).filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0}).slice(0,8).map(el=>[el.type,el.name,el.placeholder,el.autocomplete].map(v=>String(v||'').slice(0,40)).join('|'))).catch(()=>[]);
     console.log(JSON.stringify(out));
   } finally { if(attached)await attached.close();else await context.close(); }
 })().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
@@ -1929,6 +1934,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
               managedEnv:first.managed?.env,
             })
             const vaultFill=page?.vaultLogin||{}
+            if(!vaultFill.usernameFilled)console.warn('VAULT_LOGIN_NOT_FILLED:',JSON.stringify({host,openerClicked:!!vaultFill.openerClicked,phoneCode:!!vaultFill.phoneCode,fieldsSeen:vaultFill.fieldsSeen||[],title:safeText(page?.title,80)}))
             const vaultFilled=Boolean(vaultFill.usernameFilled&&(vaultFill.passwordFilled||vaultFill.phoneCode))
             actionLog.push(vaultFilled
               ?{kind:'vault_login',detail:vaultFill.phoneCode?`Entered your saved ${credential.provider} number and asked for a text code`:`Used the saved ${credential.provider} login`,status:'done'}
