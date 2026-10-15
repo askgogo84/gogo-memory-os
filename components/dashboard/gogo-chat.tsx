@@ -45,6 +45,18 @@ function Avatar({state='calm',size=40,showStatus=false}:{state?:ChatGogoState;si
   return <div className="grid shrink-0 place-items-center overflow-hidden rounded-full bg-[#efe6d7]" style={{width:size,height:size}}><GogoCharacter state={state} size={Math.round(size*.94)} showStatus={showStatus}/></div>
 }
 
+// A reply asking to connect a site ("…/dashboard/connect/amazon?ask=…") shows a Connect button, as in the approved mock.
+function connectCard(text:string){
+  const m=String(text||'').match(/https:\/\/app\.askgogo\.in(\/dashboard\/connect\/([a-z0-9]+)[^\s]*)/)
+  if(!m)return null
+  const name=String(text).match(/sign in to (.+?) for you/)?.[1]||'the site'
+  return <div className="mt-3 flex items-center gap-3 rounded-[14px] bg-[#1c1c1c] p-3">
+    <div className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[10px] bg-[#2a2a2a] font-bold text-[#ecebe8]" aria-hidden="true">{name[0]?.toUpperCase()}</div>
+    <div className="min-w-0 flex-1"><div className="truncate font-semibold text-[#ecebe8]">Connect {name}</div><div className="text-[13px] text-[#a8a8a4]">About 20 seconds</div></div>
+    <a href={m[1]} className="inline-flex min-h-10 shrink-0 items-center rounded-full bg-[#4cd0bd] px-4 text-[15px] font-bold text-[#0b0b0b]">Connect</a>
+  </div>
+}
+
 type Chip={title:string;description?:string}
 
 function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPick?:(title:string)=>void}){
@@ -63,6 +75,7 @@ function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPic
         {richText(message.content)}
         {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
       </div>
+      {connectCard(message.content)}
       {chips&&chips.length>0&&onPick&&<div className="mt-4 flex flex-wrap gap-2.5" role="group" aria-label="Quick answers">
         {chips.map(c=><button key={c.title} type="button" onClick={()=>onPick(c.title)} className="min-h-12 rounded-full border border-[#2f2f2f] bg-[#161616] px-5 text-left text-[16px] font-semibold text-[#f2efea] transition hover:border-[#4cd0bd] hover:bg-[#123d38] hover:text-[#8be6d8] sm:text-[17px]">
           {c.title}{c.description&&<span className="ml-2 text-[14px] font-normal text-[#a8a8a4]">{c.description}</span>}
@@ -87,6 +100,9 @@ function RailRow({title,meta,tone='muted',href}:{title:string;meta:string;tone?:
 export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:string;userName?:string}){
   const searchParams=useSearchParams()
   const initialPrompt=searchParams.get('prompt')||''
+  // Back from connecting a site: send the question that needed it, once.
+  const askAfterConnect=searchParams.get('ask')||''
+  const askedAfterConnect=useRef(false)
   const [messages,setMessages]=useState<ChatMessage[]>([])
   const [text,setText]=useState(initialPrompt)
   const [loading,setLoading]=useState(true)
@@ -215,6 +231,14 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
   const lastMessage=visible[visible.length-1]
   const lastChoice=!sending&&!historyOpen&&lastMessage?.role==='assistant'?flightChoiceFromText(lastMessage.content)?.choice:null
   const lastChips:Chip[]=lastChoice?lastChoice.options:[]
+
+  useEffect(()=>{
+    if(loading||!askAfterConnect||askedAfterConnect.current)return
+    askedAfterConnect.current=true
+    try{window.history.replaceState(null,'','/dashboard/chat')}catch{}
+    void submit(askAfterConnect)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[loading,askAfterConnect])
 
   async function submit(value?:string){
     const next=String(value??text).trim()

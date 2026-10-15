@@ -1,5 +1,5 @@
 import { tryRunWorkspaceDriveContext } from './workspace-drive-context'
-import { tryAccountSiteSignInGate } from './account-site-gate'
+import { tryAccountSiteSignInGate, accountSiteFromText } from './account-site-gate'
 import { tryTypedTimeRouting } from './typed-time-routing'
 import { executeApprovedCalendarUpdate } from './calendar-update'
 import { executeApprovedReminderUpdate } from './reminder-update'
@@ -11,7 +11,7 @@ import { decisionDomain, recordDecisionLearning, isSameBrainIntrospection, sameB
 import { observedOutcome, learningDecisionId } from './decision-evidence'
 import { isGmailVerificationQuery } from './gmail-verification'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand, tryUpdateWebWatchFromCommand } from './watch-command'
-import { tryRunBrowserCommand, executeApprovedBrowserCommand } from './browser-command'
+import { tryRunBrowserCommand, executeApprovedBrowserCommand, queueBrowserRead } from './browser-command'
 import { triggerApprovedBrowserRun } from './approved-browser-worker'
 import { tryRunExternalAccountFlow } from './external-account'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
@@ -401,6 +401,13 @@ export async function tryRunWhatsAppAgent(params: {
   // "Check my last Amazon order" with no Amazon sign-in: say so with the Settings link, before any browser work.
   const accountGate = await tryAccountSiteSignInGate({ telegramId: actor.legacyTelegramId, text: params.text })
   if (accountGate) return { text: accountGate.text, status: accountGate.status, handledBy: accountGate.handledBy }
+  // Connected: signing in and reading the account takes longer than a WhatsApp reply can wait, so run it in the
+  // background and send the answer here when it is ready.
+  const accountSite = accountSiteFromText(params.text)
+  if (accountSite) {
+    const queued = await queueBrowserRead({ actor, surface:'whatsapp', text:params.text }).catch(() => null)
+    if (queued) return { text:`Checking your ${accountSite.name} account now. I'll send the answer here in a minute or two. If ${accountSite.name} asks for a code or a check only you can do, I'll send you a link to finish it.`, status:'running', handledBy:'account-site-background-read' } as any
+  }
 
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal

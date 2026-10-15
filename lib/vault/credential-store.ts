@@ -96,7 +96,9 @@ export async function saveVaultCredential(params:{
   const username=String(params.username||'').trim()
   const secret=String(params.secret||'')
   const allowedDomains=Array.from(new Set((params.allowedDomains||[]).map(normalizeVaultDomain).filter(Boolean))).slice(0,12)
-  if(!provider||!accountLabel||!username||!secret||!allowedDomains.length)throw new Error('vault_credential_invalid')
+  // A phone-and-text-code login stores the number only: no password exists, and codes are never saved.
+  const phoneCode=(params.metadata as any)?.login_method==='phone_code'
+  if(!provider||!accountLabel||!username||(!secret&&!phoneCode)||(secret&&phoneCode)||!allowedDomains.length)throw new Error('vault_credential_invalid')
 
   const now=new Date().toISOString()
   const values={

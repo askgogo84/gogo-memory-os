@@ -21,8 +21,9 @@ assert.equal(id('check my booking'), null, 'booking alone is not Booking.com')
 assert.equal(id('my swiggy order'), null, 'Swiggy has its own connect flow')
 assert.equal(id('my order'), null)
 
-const reply = signInFirstReply(accountSiteFromText('Check my last Amazon order')!)
-assert.ok(reply.includes(CONNECTIONS_URL) && reply.includes('Amazon.in') && reply.includes('never sees your password'))
+// Amazon is a vault site: the reply links to Connect (verify-connect-from-chat). Myntra keeps the Settings sign-in.
+const reply = signInFirstReply(accountSiteFromText('show my myntra returns')!)
+assert.ok(reply.includes(CONNECTIONS_URL) && reply.includes('Myntra') && reply.includes('never sees your password'))
 assert.doesNotMatch(reply, /provider|persistent|context/i, 'plain words')
 
 const bridge = read('lib/agent/whatsapp-bridge.ts')

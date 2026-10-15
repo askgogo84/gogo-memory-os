@@ -8,7 +8,7 @@ import { ThemeToggle } from './theme-toggle'
 import { SignOutButton } from './sign-out-button'
 import { DailyBriefEmail } from './daily-brief-email'
 import { EmailPreferences } from './email-preferences'
-import { CONNECTION_CATALOGUE, CONNECTION_CATEGORIES, type CatalogueSite, type ConnectionCategory } from '@/lib/dashboard/connection-catalogue'
+import { CONNECTION_CATALOGUE, CONNECTION_CATEGORIES, VAULT_CONNECT_SITES, connectPath, type CatalogueSite, type ConnectionCategory } from '@/lib/dashboard/connection-catalogue'
 import { LOCATION_STORAGE_KEY, parseLocationPreference, type LocationPreference } from '@/lib/dashboard/approx-location'
 import { waLink } from '@/lib/product-urls'
 import type { SiteConnection } from '@/lib/dashboard/site-sessions'
@@ -207,7 +207,7 @@ function Connections(props: Props) {
       {providers.filter(p => p.state === 'authorized').map(p => <AppRow key={p.provider} name={p.label} what="Connected through the provider" action={<Link href="/dashboard/commerce" className={`${pill} border border-[#262626] text-[#c4c4c0]`}>Manage</Link>} />)}
       {sites.map(conn => {
         const site = CONNECTION_CATALOGUE.find(item => item.id === conn.siteId)!
-        return <AppRow key={conn.siteId} name={conn.name} what={conn.status === 'active' ? `Signed in · ${site.what}` : 'Needs you to sign in again'}
+        return <AppRow key={conn.siteId} name={conn.name} what={conn.status !== 'active' ? 'Needs you to sign in again' : conn.via === 'vault' ? `Login saved in your vault · ${site.what}` : `Signed in · ${site.what}`}
           action={<button type="button" disabled={!!busy} onClick={() => post('remove', site)} className={`${pill} border border-[#262626] text-[#c4c4c0]`}>{busy === site.id + 'remove' ? 'Removing…' : 'Remove'}</button>} />
       })}
     </div>
@@ -218,6 +218,7 @@ function Connections(props: Props) {
       {list.map(site => {
         const done = connectedIds.has(site.id) || (site.kind === 'oauth' && oauthState(site) === 'authorized')
         const action = done ? <span className="text-[14px] text-[#7fb069]">Connected</span>
+                    : VAULT_CONNECT_SITES[site.id] ? <Link href={connectPath(site)} className={`${pill} bg-[#1c1c1c] text-[#ecebe8]`}>Connect</Link>
                     : site.kind !== 'soon' && !useOauth(site) ? <button type="button" disabled={!!busy} onClick={() => post('sign_in', site)} className={`${pill} bg-[#1c1c1c] text-[#ecebe8]`}>{busy === site.id + 'sign_in' ? 'Opening…' : 'Sign in'}</button>
             : useOauth(site) ? <Link href="/dashboard/commerce" className={`${pill} bg-[#1c1c1c] text-[#ecebe8]`}>Connect</Link>
               : <span className="text-[14px] text-[#8a8a86]">Coming soon</span>

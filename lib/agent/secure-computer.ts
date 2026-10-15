@@ -174,7 +174,9 @@ const profile = '${BROWSER_PROFILE_DIR}';
 const url = process.env.GOGO_LOGIN_URL || '';
 const username = process.env.GOGO_VAULT_USERNAME || '';
 const secret = process.env.GOGO_VAULT_SECRET || '';
-if (!url || !username || !secret) throw new Error('missing_vault_login_inputs');
+// No secret means a phone-and-text-code login: fill the number, ask the site to text a code, and stop there.
+const phoneCode = !secret;
+if (!url || !username) throw new Error('missing_vault_login_inputs');
 
 const clean = s => String(s||'').replace(/\s+/g,' ').trim();
 const visible = async loc => { try { return await loc.isVisible(); } catch { return false; } };
@@ -241,6 +243,21 @@ async function model(page){
       ]);
       if(next){ await next.click({timeout:10000}); submitted=true; await page.waitForTimeout(1200); }
       passFields=await visibleFields(page,PASS_FIELDS);
+    }
+    let codeRequested=false;
+    if(phoneCode && usernameFilled){
+      // The site may show a password box with a "get a code" option (Amazon), or go straight to the code.
+      const codeButton=await firstVisible(page,[
+        'a:has-text("Get an OTP")','button:has-text("Get an OTP")','a:has-text("Get OTP")','button:has-text("Get OTP")',
+        'button:has-text("Send OTP")','a:has-text("Send OTP")','button:has-text("Request OTP")','a:has-text("Sign in with OTP")',
+        'button:has-text("Login with OTP")','a:has-text("Login with OTP")','button:has-text("Send code")','input[type="submit"][value*="OTP" i]'
+      ]);
+      if(codeButton){ await codeButton.click({timeout:10000}); submitted=true; codeRequested=true; await page.waitForTimeout(1800); }
+      else if(!passFields.length) codeRequested=true;
+      const out=await model(page);
+      out.vaultLogin={usernameFilled,passwordFilled:false,submitted,ambiguous,phoneCode:true,codeRequested};
+      console.log(JSON.stringify(out));
+      return;
     }
     if(passFields.length>1) ambiguous.push('password_fields');
     if(passFields.length===1){
@@ -1904,9 +1921,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
               managedEnv:first.managed?.env,
             })
             const vaultFill=page?.vaultLogin||{}
-            const vaultFilled=Boolean(vaultFill.usernameFilled&&vaultFill.passwordFilled)
+            const vaultFilled=Boolean(vaultFill.usernameFilled&&(vaultFill.passwordFilled||vaultFill.phoneCode))
             actionLog.push(vaultFilled
-              ?{kind:'vault_login',detail:`Used the saved ${credential.provider} login`,status:'done'}
+              ?{kind:'vault_login',detail:vaultFill.phoneCode?`Entered your saved ${credential.provider} number and asked for a text code`:`Used the saved ${credential.provider} login`,status:'done'}
               :{kind:'vault_login',detail:Array.isArray(vaultFill.ambiguous)&&vaultFill.ambiguous.length
                   ?`Did not fill the ${credential.provider} login: the page shows more than one ${vaultFill.ambiguous.join(' and ')}. Gogo will not guess which one to use.`
                   :`Did not fill the ${credential.provider} login: the username or password field was not found.`,status:'failed'})
