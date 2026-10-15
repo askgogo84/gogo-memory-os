@@ -65,7 +65,6 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
   const digest=createHash('sha256').update(owner).digest('hex')
   let state=await store.load()||{owner:digest,contexts:{}}
   if(state.owner!==digest)throw Error('managed_browser_owner_mismatch')
-  if(state.pending)throw Error('managed_browser_setup_outcome_unknown')
   const api=async(path:string,body?:unknown)=>{
     let response:Response
     try{response=await fetcher(`https://api.browserbase.com/v1/${path}`,{method:body?'POST':'GET',headers:{'X-BB-API-Key':key,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),redirect:'error',signal:AbortSignal.timeout(30000)})}
@@ -73,6 +72,14 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
     if(!response.ok)throw Error(`managed_browser_provider_http_${response.status}`)
     try{return await response.json()}catch{throw Error('managed_browser_invalid_response')}
   }
+  // A session request whose outcome is unknown blocks new sessions (two writers on one Context). It is cleared only when
+  // Browserbase confirms no running session belongs to this owner (15 Oct: a 403 left a user stuck on this forever).
+  if(state.pending==='session'){
+    const running=await api(`sessions?status=RUNNING&q=${encodeURIComponent(`user_metadata['owner']:'${digest}'`)}`).catch(()=>null)
+    if(!Array.isArray(running)||running.some((row:any)=>row?.userMetadata?.owner===digest))throw Error('managed_browser_setup_outcome_unknown')
+    delete state.pending;await store.save(state)
+  }
+  if(state.pending)throw Error('managed_browser_setup_outcome_unknown')
   // Explicit server-side import, bound to this exact sandbox owner and site.
   // No shared default Context: a new user can never inherit the demo login.
   if(!state.contexts[scope]&&env.GOGO_BROWSER_CONTEXT_IMPORTS){
@@ -111,7 +118,18 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
   }
   if(!uuid.test(state.contexts[scope]))throw Error('managed_browser_context_invalid')
   state.pending='session';await store.save(state)
-  const created=await api('sessions',managedSessionConfig(project,state.contexts[scope],digest,scope,sessionTimeout,true,String(env.VERCEL_ENV||''),recordSessions,String(env.GOGO_BROWSER_ADVANCED_STEALTH||'')==='1'))
+  const stealth=String(env.GOGO_BROWSER_ADVANCED_STEALTH||'')==='1'
+  const sessionConfig=(withStealth:boolean)=>managedSessionConfig(project,state.contexts[scope],digest,scope,sessionTimeout,true,String(env.VERCEL_ENV||''),recordSessions,withStealth)
+  // A plan without Advanced Stealth answers 403 (15 Oct live); fall back to a normal session instead of failing every run.
+  const created=await api('sessions',sessionConfig(stealth)).catch(async(error:any)=>{
+    if(!stealth||String(error?.message||'')!=='managed_browser_provider_http_403')throw error
+    console.warn('MANAGED_BROWSER_STEALTH_UNAVAILABLE: retrying without advanced stealth')
+    return api('sessions',sessionConfig(false))
+  }).catch(async(error:any)=>{
+    // A 4xx answer means Browserbase created nothing, so the request is not "outcome unknown".
+    if(/^managed_browser_provider_http_4\d\d$/.test(String(error?.message||''))){delete state.pending;await store.save(state)}
+    throw error
+  })
   if(!uuid.test(created.id)||created.projectId!==project||created.contextId!==state.contexts[scope])throw Error('managed_browser_session_invalid')
   state.session={id:created.id,scope,fingerprint};delete state.pending;await store.save(state)
   return {...await connect(created),id:created.id,newSession:true,scope,release:async()=>{await api(`sessions/${created.id}`,{status:'REQUEST_RELEASE'})}}
