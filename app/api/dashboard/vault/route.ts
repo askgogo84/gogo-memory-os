@@ -27,7 +27,10 @@ export async function POST(request:Request){
   const username=String(body?.username||'').trim()
   const secret=String(body?.secret||'')
   const accountLabel=String(body?.accountLabel||provider.label).trim().slice(0,120)
-  if(!username||!secret)return NextResponse.json({ok:false,error:'missing_credentials'},{status:400})
+  // phone_code: the number only. Each sign-in asks the person for the text code; nothing secret is saved.
+  const phoneCode=body?.method==='phone_code'
+  if(!username||(!phoneCode&&!secret))return NextResponse.json({ok:false,error:'missing_credentials'},{status:400})
+  if(phoneCode&&!/^\+?[\d\s-]{8,16}$/.test(username))return NextResponse.json({ok:false,error:'invalid_phone'},{status:400})
 
   try{
     const item=await saveVaultCredential({
@@ -36,9 +39,9 @@ export async function POST(request:Request){
       provider:provider.key,
       accountLabel:accountLabel||provider.label,
       username,
-      secret,
+      secret:phoneCode?'':secret,
       allowedDomains:provider.domains,
-      metadata:{login_url:provider.loginUrl,source:'dashboard'},
+      metadata:{login_url:provider.loginUrl,source:'dashboard',login_method:phoneCode?'phone_code':'password'},
     })
     return NextResponse.json({ok:true,item})
   }catch(err:any){

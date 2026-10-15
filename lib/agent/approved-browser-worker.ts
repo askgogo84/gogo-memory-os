@@ -129,7 +129,7 @@ export async function runBackgroundBrowserRead(runId: string): Promise<ApprovedB
   }
   try {
     const result = await resumePausedBrowserRun({ actor, runId })
-    const body = result?.status === 'completed' || result?.status === 'paused' ? String(result.text || '') : `I couldn't read the free slots on ${host} from here.`
+    const body = result?.status === 'completed' || result?.status === 'paused' ? String(result.text || '') : `I couldn't finish that on ${host} from here. Nothing was bought, booked or submitted.`
     if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, [body, suffix].filter(Boolean).join('\n\n'))
     return result?.status === 'completed' ? 'completed' : 'blocked'
   } catch (err: any) {

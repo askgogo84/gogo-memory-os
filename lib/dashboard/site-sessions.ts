@@ -7,7 +7,7 @@ import type { AgentActor } from '@/lib/agent/actor'
 import { listVaultSessions, upsertVaultSession, markVaultSessionStatus } from '@/lib/vault/session-store'
 import { CONNECTION_CATALOGUE, catalogueDomain, findCatalogueSite, type CatalogueSite } from './connection-catalogue'
 
-export type SiteConnection = { siteId: string; name: string; domain: string; status: string; since: string | null }
+export type SiteConnection = { siteId: string; name: string; domain: string; status: string; since: string | null; via?: 'session' | 'vault' }
 
 export function signInObjective(site: CatalogueSite) {
   return `Open ${site.name} so the person can sign in themselves. Do not type, read or store any password, OTP or card detail.`
@@ -107,6 +107,12 @@ export async function removeSiteConnection(actor: AgentActor, siteId: string) {
   if (!site) throw new Error('site_unknown')
   const { browserSandboxNameFor } = await import('@/lib/agent/secure-browser-bootstrap')
   await markVaultSessionStatus({ telegramId: String(actor.legacyTelegramId), domain: catalogueDomain(site), sandboxName: browserSandboxNameFor(actor.userId), status: 'revoked' })
+  // Remove a saved login for the site too, so Gogo stops signing in with it.
+  const { listVaultCredentials, removeVaultCredential } = await import('@/lib/vault/credential-store')
+  const saved = await listVaultCredentials(String(actor.legacyTelegramId)).catch(() => [])
+  for (const item of saved) {
+    if ((item.allowedDomains || []).some((d: string) => d === catalogueDomain(site) || d.endsWith('.' + catalogueDomain(site)))) await removeVaultCredential(String(actor.legacyTelegramId), item.id)
+  }
   return site
 }
 
@@ -118,7 +124,16 @@ export async function listSiteConnections(telegramId: string): Promise<SiteConne
     if (session.status === 'revoked' || session.status === 'expired') continue
     const site = CONNECTION_CATALOGUE.find(item => catalogueDomain(item) === session.domain || session.domain.endsWith('.' + catalogueDomain(item)))
     if (!site || out.some(row => row.siteId === site.id)) continue
-    out.push({ siteId: site.id, name: site.name, domain: session.domain, status: session.status, since: session.updatedAt })
+    out.push({ siteId: site.id, name: site.name, domain: session.domain, status: session.status, since: session.updatedAt, via: 'session' })
+  }
+  // A login saved from chat ("Connect Amazon.in") is a connection too: Gogo signs in with it when needed.
+  const { listVaultCredentials } = await import('@/lib/vault/credential-store')
+  const saved = await listVaultCredentials(telegramId).catch(() => [])
+  for (const item of saved) {
+    if (item.status === 'revoked') continue
+    const site = CONNECTION_CATALOGUE.find(entry => (item.allowedDomains || []).some((d: string) => d === catalogueDomain(entry) || d.endsWith('.' + catalogueDomain(entry))))
+    if (!site || out.some(row => row.siteId === site.id)) continue
+    out.push({ siteId: site.id, name: site.name, domain: catalogueDomain(site), status: 'active', since: item.updatedAt, via: 'vault' })
   }
   return out
 }

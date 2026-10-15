@@ -99,6 +99,15 @@ export const CONNECTION_CATALOGUE: CatalogueSite[] = [
   s('zapier', 'Zapier', 'work', 'Automations', 'https://zapier.com/', 'soon'),
 ]
 
+// Sites whose login Gogo can keep in the vault and use itself (phone and text code, or password). The value is the
+// vault provider key in lib/vault/providers.ts. Other sign-in sites use the secure-browser sign-in.
+export const VAULT_CONNECT_SITES: Record<string, string> = { amazon: 'amazon', flipkart: 'flipkart', irctc: 'irctc', booking: 'booking' }
+
+export function connectPath(site: CatalogueSite, ask?: string) {
+  const base = `/dashboard/connect/${site.id}`
+  return ask ? `${base}?ask=${encodeURIComponent(ask.slice(0, 300))}` : base
+}
+
 export function findCatalogueSite(id: unknown): CatalogueSite | null {
   return CONNECTION_CATALOGUE.find(site => site.id === String(id || '')) || null
 }

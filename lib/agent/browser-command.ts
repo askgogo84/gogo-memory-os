@@ -815,7 +815,8 @@ function internalBaseUrl(){return String(process.env.NEXT_PUBLIC_APP_URL||proces
  * result on WhatsApp, followed by notifySuffix. Returns null when this cannot be queued.
  */
 export async function queueBrowserRead(params:{actor:AgentActor;surface:AgentSurface;text:string;notifySuffix?:string;metadata?:Record<string,unknown>}){
-  const command=parseBrowserCommand(params.text)
+  // Account reads ("check my last Amazon order") start from the site's sign-in page so the saved login is used.
+  const command=parseBrowserCommand(params.text)||parseConnectedProviderReadCommand(params.text)
   if(!command||command.mode!=='read')return null
   const tg=params.actor.legacyTelegramId
   const policy=evaluateAgentExecutionPolicy({capability:'browser',permissionLevel:await permission(tg),mode:'read',risk:'low',irreversible:false,approvalStatus:null})
