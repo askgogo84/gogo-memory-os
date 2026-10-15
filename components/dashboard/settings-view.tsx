@@ -162,7 +162,7 @@ function Connections(props: Props) {
       if (Array.isArray(data.sites)) setSites(data.sites)
       setMessage(action === 'confirm' ? `${site.name} is connected. Gogo will use your signed-in session and ask before anything that buys, books or submits.` : `Gogo will no longer use your ${site.name} session. To end it on ${site.name} too, sign out there.`)
     } catch (error: any) {
-      setMessage(action === 'sign_in' ? `The secure browser could not open ${site.name} right now. Try again in a minute.` : 'That did not save. Try again.')
+      setMessage(action !== 'sign_in' ? 'That did not save. Try again.' : error?.message === 'browser_busy' ? `Your secure browser is busy with another task that is waiting for you. Finish or close it in Needs you, then try ${site.name} again.` : `The secure browser could not open ${site.name} right now. Try again in a minute.`)
     } finally { setBusy('') }
   }
 

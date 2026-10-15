@@ -37,6 +37,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, sites: await listSiteConnections(session.telegramId) })
   } catch (error: any) {
     console.error('DASHBOARD_CONNECTION_FAILED:', action, site.id, error?.message || error)
-    return NextResponse.json({ error: action === 'sign_in' ? 'browser_unavailable' : 'save_failed' }, { status: 502 })
+    return NextResponse.json({ error: action === 'sign_in' ? (error?.message === 'browser_busy' ? 'browser_busy' : 'browser_unavailable') : 'save_failed' }, { status: action === 'sign_in' && error?.message === 'browser_busy' ? 409 : 502 })
   }
 }
