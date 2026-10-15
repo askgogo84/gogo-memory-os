@@ -54,4 +54,10 @@ const sessions = read('lib/dashboard/site-sessions.ts')
 assert.match(sessions, /via: 'vault'/)
 assert.match(sessions, /await removeVaultCredential\(String\(actor\.legacyTelegramId\), item\.id\)/)
 assert.match(read('components/dashboard/settings-view.tsx'), /VAULT_CONNECT_SITES\[site\.id\] \? <Link href=\{connectPath\(site\)\}/)
+// 15 Oct live: amazon.in sent the cloud browser a 503 page. Account sites always use the residential proxy when configured.
+const { resolveBrowserProxy } = await import('../lib/agent/browser-proxy')
+const proxyEnv = { GOGO_BROWSER_PROXY_URL: 'http://gw.example:7000', GOGO_BROWSER_PROXY_HOSTS: 'blinkit.com' }
+assert.ok(resolveBrowserProxy('https://www.amazon.in/ap/signin', proxyEnv), 'amazon.in uses the proxy even with a custom host list')
+assert.ok(resolveBrowserProxy('https://www.flipkart.com/account/login', proxyEnv))
+assert.equal(resolveBrowserProxy('https://example.com/', proxyEnv), null)
 console.log('verify-connect-from-chat: ok')

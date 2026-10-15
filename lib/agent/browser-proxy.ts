@@ -41,10 +41,14 @@ function hostMatches(host: string, suffix: string): boolean {
 }
 
 /** Host suffixes that must egress through the residential proxy. */
+// Sites Gogo signs in to for the person (Connect from chat). 15 Oct live run: amazon.in answered the cloud browser
+// with "503 - Service Unavailable" before the saved login could be used. Always added, even when the env list is set.
+export const ACCOUNT_PROXY_HOSTS = ['amazon.in', 'flipkart.com', 'irctc.co.in']
+
 export function proxyRequiredHosts(env: Record<string, string | undefined> = process.env): string[] {
   const csv = String(env.GOGO_BROWSER_PROXY_HOSTS || '').trim()
-  if (!csv) return DEFAULT_PROXY_HOSTS
-  return csv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+  const base = csv ? csv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : DEFAULT_PROXY_HOSTS
+  return [...new Set([...base, ...ACCOUNT_PROXY_HOSTS])]
 }
 
 /**
