@@ -1,5 +1,6 @@
 'use client'
 
+import { findCatalogueSite } from '@/lib/dashboard/connection-catalogue'
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -49,7 +50,8 @@ function Avatar({state='calm',size=40,showStatus=false}:{state?:ChatGogoState;si
 function connectCard(text:string){
   const m=String(text||'').match(/https:\/\/app\.askgogo\.in(\/dashboard\/connect\/([a-z0-9]+)[^\s]*)/)
   if(!m)return null
-  const name=String(text).match(/sign in to (.+?) for you/)?.[1]||'the site'
+  // Name from the link's site id, so every wording of the reply shows the right site (15 Oct: "Connect the site").
+  const name=findCatalogueSite(m[2])?.name||String(text).match(/sign in to (.+?) for you/)?.[1]||'the site'
   return <div className="mt-3 flex items-center gap-3 rounded-[14px] bg-[#1c1c1c] p-3">
     <div className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[10px] bg-[#2a2a2a] font-bold text-[#ecebe8]" aria-hidden="true">{name[0]?.toUpperCase()}</div>
     <div className="min-w-0 flex-1"><div className="truncate font-semibold text-[#ecebe8]">Connect {name}</div><div className="text-[13px] text-[#a8a8a4]">About 20 seconds</div></div>
