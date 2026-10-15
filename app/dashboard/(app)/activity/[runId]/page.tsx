@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { readableRunSummary } from '@/lib/dashboard/readable-summary'
 import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/dashboard/session'
 import { browserContextForRun, getDashboardActivityRun } from '@/lib/dashboard/agent-activity'
@@ -95,14 +96,14 @@ export default async function ActivityRunPage({params}:{params:Promise<{runId:st
         {needsUser&&<section className="rounded-[16px] bg-[#1A1710] p-5">
           <p className="text-[13px] font-bold uppercase tracking-[.12em] text-[#D9A441]">Waiting on you</p>
           <h2 className="mt-2 font-serif text-[23px] font-semibold leading-tight text-[#F2EFEA]">{browser.providerBlocked?'Open the provider on your own device.':run.status==='waiting_approval'?'Review the pending action.':'This task needs one thing from you.'}</h2>
-          <p className="mt-2 text-[16px] leading-5 text-[#9A9A9A]">{run.summary||'Gogo paused safely before continuing.'}</p>
+          <p className="mt-2 text-[16px] leading-5 text-[#9A9A9A]">{readableRunSummary(run.summary)||'Gogo paused safely before continuing.'}</p>
           {run.status==='waiting_approval'&&<Link href="/dashboard/agent" className="mt-4 inline-flex h-10 items-center rounded-[10px] bg-[#2FB8A6] px-4 text-[16px] font-bold text-[#F2EFEA]">Review approval</Link>}
         </section>}
 
         <section className="rounded-[16px] border border-[#2A2A2A] bg-[#111111] p-5">
           <p className="text-[13px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">Summary</p>
           <h2 className="mt-2 font-serif text-[22px] font-semibold leading-tight text-[#F2EFEA]">{run.status==='completed'?'Done.':run.status==='failed'?'Stopped safely.':needsUser?'Almost done — needs you.':'Gogo is working on it.'}</h2>
-          <p className="mt-2 text-[16px] leading-5 text-[#9A9A9A]">{run.summary||run.why||'This task is recorded in Activity.'}</p>
+          <p className="mt-2 text-[16px] leading-5 text-[#9A9A9A]">{readableRunSummary(run.summary||run.why)||'This task is recorded in Activity.'}</p>
           {run.error&&<p className="mt-3 rounded-[10px] bg-[#161616] px-3 py-2 text-[14px] text-[#9A9A9A]">Error: {run.error}</p>}
         </section>
       </aside>

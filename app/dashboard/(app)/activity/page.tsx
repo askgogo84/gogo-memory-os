@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { readableRunSummary } from '@/lib/dashboard/readable-summary'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { browserContextForRun, getDashboardActivityRuns, type DashboardActivityRun } from '@/lib/dashboard/agent-activity'
@@ -50,14 +51,16 @@ function statusLabel(status:string){
   if(status==='failed')return 'Failed'
   return status.replaceAll('_',' ')
 }
-function runSubline(run:DashboardActivityRun){
+function runSubline(run:DashboardActivityRun){return readableRunSummary(rawRunSubline(run))}
+function rawRunSubline(run:DashboardActivityRun){
   if(run.status==='closed')return 'Closed or superseded. No verified completion is recorded for this task.'
   const browser=browserContextForRun(run)
   if(run.status==='running')return run.summary||'Gogo is working on it.'
   if(run.status==='waiting_approval')return run.summary||'Waiting for your approval.'
   if(run.status==='paused'&&browser.providerBlocked)return 'The provider blocked server access. Open it on your own device to continue.'
   if(run.status==='paused')return run.summary||'This task is waiting for you.'
-  if(run.status==='failed')return run.error||run.summary||'This task could not be completed.'
+  // An error code (stale_run_recovered) is not a sentence for the person; the saved summary is.
+  if(run.status==='failed')return run.summary||(run.error&&!/^[a-z0-9_:.-]+$/.test(run.error)?run.error:'')||'This task could not be completed.'
   return run.summary||run.why||'Gogo completed this task.'
 }
 function iconFor(run:DashboardActivityRun){
@@ -200,7 +203,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
                 </Link>)}
                 {handoffRows.slice(0,3).map(handoff=><Link key={handoff.id} href={`/dashboard/activity/${handoff.id}/browser`} className="block rounded-[14px] bg-[#1A1710] px-3.5 py-3 transition hover:bg-[#221D13]">
                   <div className="text-[15px] font-semibold text-[#F2EFEA]">{handoff.title}</div>
-                  <div className="mt-1 line-clamp-2 text-[14px] leading-4 text-[#9A9A9A]">{handoff.summary}</div>
+                  <div className="mt-1 line-clamp-2 text-[14px] leading-4 text-[#9A9A9A]">{readableRunSummary(handoff.summary)}</div>
                   <div className="mt-2 text-[14px] font-bold text-[#D9A441]">Take control →</div>
                 </Link>)}
               </div>}

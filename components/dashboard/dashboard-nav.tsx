@@ -43,7 +43,8 @@ export function useNavCounts(): NavCounts {
         setCounts({
           approvals: Array.isArray(data.approvals) ? data.approvals.length : 0,
           watchers: Array.isArray(data.watchers) ? data.watchers.length : 0,
-          handoffs: Array.isArray(data.handoffs) ? data.handoffs.length : 0,
+          // Several stops on the same site are one thing to do, as on Today.
+          handoffs: Array.isArray(data.handoffs) ? new Set(data.handoffs.map((h: any) => String(h?.title || h?.id))).size : 0,
         })
       }).catch(() => {})
     return () => { alive = false }

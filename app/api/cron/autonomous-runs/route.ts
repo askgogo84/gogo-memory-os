@@ -7,6 +7,7 @@ import { resumePausedBrowserRun } from '@/lib/agent/browser-command'
 import { runApprovedBrowserRun } from '@/lib/agent/approved-browser-worker'
 import { sendWhatsApp } from '@/lib/whatsapp'
 import { runQueuedRestaurantReservationResearch } from '@/lib/agent/restaurant-reservation'
+import { sweepStaleRunningRuns } from '@/lib/agent/stale-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -37,6 +38,8 @@ async function actorFor(telegramId:string):Promise<AgentActor|null> {
 export async function GET(request:Request){
   if(!authorized(request))return NextResponse.json({error:'unauthorized'},{status:401})
   try{
+    // Runs stuck in "running" for hours lost their worker; close them so they stop showing as active work.
+    const staleRunsClosed=await sweepStaleRunningRuns()
     // ---- restaurant_reservation_research: durable WhatsApp handoff ----
     // Restaurant/provider inspection can legitimately exceed the ~42s WhatsApp budget.
     // The WhatsApp path persists the objective first; this 300s worker owns the browser
@@ -297,7 +300,7 @@ export async function GET(request:Request){
         try{if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not complete the train search. I did not invent timings or availability. Try again shortly, or check IRCTC directly.')}catch{}
       }
     }
-    return NextResponse.json({ok:true,approvedBrowserClaimed,approvedBrowserDone,approvedBrowserFailed,checked,resumed,completed,failed,skipped,reservationResearchClaimed,reservationResearchDone,reservationResearchFailed,reservationResearchRequeued,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
+    return NextResponse.json({ok:true,staleRunsClosed,approvedBrowserClaimed,approvedBrowserDone,approvedBrowserFailed,checked,resumed,completed,failed,skipped,reservationResearchClaimed,reservationResearchDone,reservationResearchFailed,reservationResearchRequeued,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
   }catch(err:any){
     console.error('AUTONOMOUS_CRON_FAILED:',err?.message||err)
     return NextResponse.json({ok:false,error:'autonomous_worker_failed'},{status:500})

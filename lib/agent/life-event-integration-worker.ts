@@ -9,6 +9,7 @@ import { prepareBookingCalendarApproval } from './booking-calendar-execution'
 import {
   calendarInputFromLifeEvent,
   lifecycleFingerprint,
+  lifecycleMonitorExpired,
   lifecycleMonitorTarget,
   lifecycleTerminalState,
 } from './life-event-integrations'
@@ -195,6 +196,10 @@ async function processCalendarDraft(action: any, event: any, telegramId: string)
 }
 
 export async function processLifecycleMonitor(action: any, event: any, telegramId: string, resumeRunId?:string) {
+  if (!resumeRunId && lifecycleMonitorExpired(event)) {
+    await complete(action, { monitorState: 'event_over' })
+    return { status: 'completed' as const }
+  }
   const target = lifecycleMonitorTarget(event, action)
   if (!target) {
     if(resumeRunId)throw new Error('monitor_target_missing')
