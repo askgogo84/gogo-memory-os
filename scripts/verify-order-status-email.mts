@@ -55,10 +55,12 @@ assert.equal(accountSiteFromText('Where is my Swiggy order?')?.id, 'swiggy')
 assert.equal(accountSiteFromText('Where is my Zomato order?')?.id, 'zomato')
 assert.match(orderEmailQuery(findCatalogueSite('swiggy')!)!, /^from:\(swiggy\.in\)/)
 assert.deepEqual(orderUpdatesOnly([{ subject: 'Zero fees. Zero regrets. ✅' }, { subject: 'Your Swiggy order was delivered on time' }]).map(m => m.subject), ['Your Swiggy order was delivered on time'])
-for (const id of ['swiggy', 'zomato']) {
-  assert.equal(VAULT_CONNECT_SITES[id], id)
-  assert.equal(getVaultProvider(id)!.phoneOnly, true, `${id} signs in only with a phone and code`)
-}
+assert.equal(VAULT_CONNECT_SITES.swiggy, 'swiggy')
+assert.equal(getVaultProvider('swiggy')!.phoneOnly, true, 'Swiggy signs in only with a phone and code')
+// 16 Oct: zomato.com has no order history even when signed in, so there is no Zomato connect for orders.
+assert.equal(VAULT_CONNECT_SITES.zomato, undefined)
+const { APP_ONLY_ORDER_SITES } = await import('../lib/agent/account-site-gate')
+assert.match(APP_ONLY_ORDER_SITES.zomato, /open the Zomato app, tap your profile, then Your orders/)
 assert.match(read('components/dashboard/connect-site-form.tsx'), /\{!props\.phoneOnly && option\('password', 'Password'\)\}/)
 const script = read('lib/agent/secure-computer.ts')
 assert.match(script, /Sites like Swiggy and Zomato keep the login in a panel opened from the header/)

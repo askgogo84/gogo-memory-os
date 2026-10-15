@@ -52,7 +52,7 @@ export const CONNECTION_CATALOGUE: CatalogueSite[] = [
   s('jiomart', 'JioMart', 'grocery', 'Groceries', 'https://www.jiomart.com/'),
 
   s('swiggy', 'Swiggy', 'food', 'Food orders, Dineout tables', 'https://www.swiggy.com/', 'oauth'),
-  s('zomato', 'Zomato', 'food', 'Food orders', 'https://www.zomato.com/'),
+  s('zomato', 'Zomato', 'food', 'Dining out, reviews', 'https://www.zomato.com/'),
   s('district', 'District', 'food', 'Tables, movies and events', 'https://www.district.in/'),
   s('eazydiner', 'EazyDiner', 'food', 'Table bookings', 'https://www.eazydiner.com/'),
 
@@ -101,7 +101,7 @@ export const CONNECTION_CATALOGUE: CatalogueSite[] = [
 
 // Sites whose login Gogo can keep in the vault and use itself (phone and text code, or password). The value is the
 // vault provider key in lib/vault/providers.ts. Other sign-in sites use the secure-browser sign-in.
-export const VAULT_CONNECT_SITES: Record<string, string> = { amazon: 'amazon', flipkart: 'flipkart', irctc: 'irctc', booking: 'booking', swiggy: 'swiggy', zomato: 'zomato' }
+export const VAULT_CONNECT_SITES: Record<string, string> = { amazon: 'amazon', flipkart: 'flipkart', irctc: 'irctc', booking: 'booking', swiggy: 'swiggy' }
 
 export function connectPath(site: CatalogueSite, ask?: string) {
   const base = `/dashboard/connect/${site.id}`
