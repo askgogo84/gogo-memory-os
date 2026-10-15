@@ -124,7 +124,7 @@ assert.equal(metadata.browser_safe_to_retry,false)
 await assert.rejects(()=>command.executeBrowser(params),/reconciliation/)
 console.log('Device auth takeover, ticket lifetime, and same-run continuation verified')
 const computerSource=readFileSync(new URL('../lib/agent/secure-computer.ts',import.meta.url),'utf8')
-assert.match(computerSource,/authGate\.reason==='password'\|\|\(!authGate\.required&&loginish\)/,
+assert.match(computerSource,/authGate\.reason==='password'\|\|\(!authGate\.required&&\(loginish\|\|signedOutEntry\)\)/,
   'a detected secondary challenge must never trigger a Vault password attempt')
 
 let releaseStatus=410
