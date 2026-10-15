@@ -55,3 +55,20 @@ export async function tryAccountSiteSignInGate(params: { telegramId: string | nu
   }
   return { text: signInFirstReply(site, params.text), status: 'paused' as const, handledBy: 'account-site-sign-in', siteId: site.id }
 }
+
+/**
+ * The full answer for an account question: order and delivery questions are answered from the shop's emails first
+ * (instant, no sign-in); otherwise an unconnected site gets the Connect link. Null means "connected, go to the site".
+ */
+export async function tryAccountSiteAnswer(actor: import('./actor').AgentActor, text: string) {
+  const site = accountSiteFromText(text)
+  if (!site) return null
+  const gate = await tryAccountSiteSignInGate({ telegramId: actor.legacyTelegramId, text })
+  const { tryOrderStatusFromEmail } = await import('./order-email-status')
+  const fromEmail = await tryOrderStatusFromEmail(actor, site, text).catch(() => null)
+  if (fromEmail) {
+    const connectLine = gate && VAULT_CONNECT_SITES[site.id] ? `\n\nFor live tracking from inside ${site.name}, connect it once:\n${APP_URL}${connectPath(site, text)}` : ''
+    return { text: fromEmail + connectLine, status: 'completed' as const, handledBy: 'account-site-order-email', siteId: site.id }
+  }
+  return gate
+}

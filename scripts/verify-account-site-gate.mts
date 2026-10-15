@@ -27,7 +27,7 @@ assert.ok(reply.includes(CONNECTIONS_URL) && reply.includes('Myntra') && reply.i
 assert.doesNotMatch(reply, /provider|persistent|context/i, 'plain words')
 
 const bridge = read('lib/agent/whatsapp-bridge.ts')
-assert.match(bridge, /const accountGate = await tryAccountSiteSignInGate\(\{ telegramId: actor\.legacyTelegramId, text \}\)/)
+assert.match(bridge, /const accountGate = await tryAccountSiteAnswer\(actor, text\)/)
 assert.doesNotMatch(bridge, /safe response window/)
-assert.match(read('app/api/dashboard/chat/route.ts'), /const accountGate = await tryAccountSiteSignInGate\(\{ telegramId: user\.telegram_id, text \}\)/)
+assert.match(read('app/api/dashboard/chat/route.ts'), /const accountGate = await tryAccountSiteAnswer\(actor, text\)/)
 console.log('verify-account-site-gate: ok')

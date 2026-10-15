@@ -1,5 +1,5 @@
 import { tryRunWorkspaceDriveContext } from './workspace-drive-context'
-import { tryAccountSiteSignInGate, accountSiteFromText } from './account-site-gate'
+import { tryAccountSiteAnswer, accountSiteFromText } from './account-site-gate'
 import { tryTypedTimeRouting } from './typed-time-routing'
 import { executeApprovedCalendarUpdate } from './calendar-update'
 import { executeApprovedReminderUpdate } from './reminder-update'
@@ -231,10 +231,11 @@ async function tryCreateGoal(actor: AgentActor, text: string): Promise<WhatsAppA
   }
 }
 
-// "Where is my Amazon order?": not connected -> the Connect link; connected -> signing in and reading the account
+// "Where is my Amazon order?": answered from the shop's emails when possible; not connected -> the Connect link;
+// connected -> signing in and reading the account
 // takes longer than a WhatsApp reply can wait, so it runs in the background and the answer is sent here.
 async function accountSiteReply(actor: AgentActor, text: string): Promise<WhatsAppAgentResult | null> {
-  const accountGate = await tryAccountSiteSignInGate({ telegramId: actor.legacyTelegramId, text })
+  const accountGate = await tryAccountSiteAnswer(actor, text)
   if (accountGate) return { text: accountGate.text, status: accountGate.status, handledBy: accountGate.handledBy } as any
   const accountSite = accountSiteFromText(text)
   if (!accountSite) return null

@@ -21,7 +21,7 @@ import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/
 import { isPublicTravelResearchRequest, isTravelResearchDetailsReply, tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
-import { tryAccountSiteSignInGate } from '@/lib/agent/account-site-gate'
+import { tryAccountSiteAnswer } from '@/lib/agent/account-site-gate'
 import { isStandaloneWorkspaceMeetingPrep, tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
@@ -294,7 +294,7 @@ export async function POST(req: NextRequest) {
     // planner or WhatsApp compatibility bridge can claim it.
     // Before the browser: a question about an unconnected account (Amazon orders) gets the Connect card, not a
     // browser run that hits the site's sign-in page (15 Oct live: amazon.in returned 503 and no card was shown).
-    const accountGate = await tryAccountSiteSignInGate({ telegramId: user.telegram_id, text })
+    const accountGate = await tryAccountSiteAnswer(actor, text)
     if (accountGate) {
       await saveConversation(user.telegram_id, text, accountGate.text)
       return NextResponse.json({ text: accountGate.text, handledBy: accountGate.handledBy, status: accountGate.status })
