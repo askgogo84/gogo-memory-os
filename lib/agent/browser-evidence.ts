@@ -19,6 +19,15 @@ export function isLoginUrl(url:string):boolean {
 }
 
 /** A newsletter/email field beside a navigation Login link is not a login wall. */
+/**
+ * A signed-out page whose login sits behind a header link ("Log in", "Sign in"), as on Zomato and Swiggy.
+ * 15 Oct live: Zomato's home page is not a login form, so a saved phone login was never tried.
+ */
+export function hasSignInEntry(page:{links?:Array<{text?:string}>;controls?:Array<{text?:string;label?:string;name?:string}>}):boolean {
+  const labels=[...(page.links||[]).map(l=>l?.text),...(page.controls||[]).map(c=>c?.text||c?.label||c?.name)]
+  return labels.some(value=>/^(?:log ?in|sign ?in)(?:\s*(?:\/|or)\s*sign ?up)?$/i.test(String(value||'').trim()))
+}
+
 export function isLoginFormPage(page:{url?:string;title?:string;text?:string;forms?:Array<{inputs?:Array<{name?:string;type?:string;label?:string}>}>}):boolean {
   if(isLoginUrl(page.url||''))return true
   const inputs=(page.forms||[]).flatMap(form=>form.inputs||[])

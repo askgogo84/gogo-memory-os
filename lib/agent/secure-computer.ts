@@ -2,7 +2,7 @@ import { sanitizeBrowserReadDiagnostics, type BrowserReadDiagnostic, type Browse
 import { draftObjectiveCovered } from './draft-coverage'
 import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
 import {ensurePersistentCommerceBrowser, COMMERCE_CDP_URL} from './persistent-commerce-browser'
-import { isLoginDestination, isLoginUrl, isLoginFormPage, isTitleOnlyObjective, verifiedBrowserAnswer, publicCromaProductUrl, browserEvidenceChoices, selectedBrowserEvidence, parseBrowserEvidenceResponse } from './browser-evidence'
+import { isLoginDestination, isLoginUrl, isLoginFormPage, hasSignInEntry, isTitleOnlyObjective, verifiedBrowserAnswer, publicCromaProductUrl, browserEvidenceChoices, selectedBrowserEvidence, parseBrowserEvidenceResponse } from './browser-evidence'
 import { blockedHostsLogLine } from './browser-blocked-hosts'
 import { completeAgentPlanPrompt, completeVisionPrompt } from './planner-provider'
 import { Sandbox } from '@vercel/sandbox'
@@ -1789,7 +1789,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     runActionLog=actionLog
     const completedSearches:CompletedReadSearch[]=[]
     let missingActionEvidence=false
-    let vaultAttempted=false
+    let vaultAttempted=false,vaultEntryChecked=false
     let credentialSelectionRequired=false
     let readAnswer:string|null=null
     let assessedReadPage:any=null
@@ -1898,7 +1898,10 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // environment variables, and injected directly by Playwright. They are
       // never exposed to the model planner, task objective, Activity, or logs.
       // A sign-up page also has a password field; never try a saved login while creating an account.
-      if(!vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&loginish))){
+      // A saved login is also tried once on a signed-out page that only offers a header "Log in" link.
+      const signedOutEntry=!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
+      if(signedOutEntry)vaultEntryChecked=true
+      if(!vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
       const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
