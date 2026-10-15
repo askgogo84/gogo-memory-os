@@ -14,6 +14,7 @@ import { VAULT_PROVIDERS } from '@/lib/vault/providers'
 import { buildSignupHandback, type SignupHandbackReason } from './signup-handback'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { hasLeadingReportMutation } from '@/lib/services/reporting-directive'
+import { findVaultProviderForDomain } from '@/lib/vault/providers'
 import { bookingDirectUrl, bookingOtpMessage, bookingPaymentMessage, bookingReviewMessage, bookingTargetFromObjective, indianMobileFromWhatsApp } from './provider-booking'
 
 export type BrowserCommand = {
@@ -371,7 +372,7 @@ async function signupHandbackText(params:{ownerId:string;runId:string;command:Br
     vault:saved.vault,vaultLabel:saved.label,vaultUrl:`${appBaseUrl()}/dashboard/you/vault`,takeoverUrl:params.takeoverUrl||null})
 }
 
-async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:string;command:BrowserCommand;mode:BrowserMode;approved?:boolean;bookingOtp?:string|null}){
+async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:string;command:BrowserCommand;mode:BrowserMode;approved?:boolean;bookingOtp?:string|null;loginCode?:string|null}){
   const tg=params.actor.legacyTelegramId
   const sentinel=evaluateAgentSentinel({
     capability:'browser',mode:params.mode,risk:params.command.risk,irreversible:params.mode==='execute',
@@ -385,7 +386,10 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   const persistentCommerce=Boolean(runMetadata.commerce_parent_id||runMetadata.comparison_parent_id)&&params.mode==='read'
   const accountCreation=params.command.flow==='account_creation'
   const providerBooking=params.command.flow==='provider_booking'&&params.mode==='execute'
-  const persistentAccountSession=accountCreation||providerBooking
+  // A read on a site with a saved login (Swiggy, Amazon…) keeps its browser open, so a texted sign-in code can be
+  // typed into the same page when the person sends it (16 Oct). Same owner as ordinary reads: same saved cookies.
+  const vaultAccountRead=params.mode==='read'&&!persistentCommerce&&(()=>{try{return Boolean(findVaultProviderForDomain(new URL(params.command.url).hostname))}catch{return false}})()
+  const persistentAccountSession=accountCreation||providerBooking||vaultAccountRead
   const browserOwner=persistentCommerce?params.actor.userId+':commerce':accountCreation?params.actor.userId+':account:'+params.runId:providerBooking?params.actor.userId+':booking:'+params.runId:params.actor.userId
   const resumePage=(persistentCommerce||persistentAccountSession)&&Boolean(runMetadata.handoff)
   const reconciledResult=runMetadata.browser_safe_to_retry===false
@@ -408,7 +412,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   try{
     const bookingPhone=providerBooking?indianMobileFromWhatsApp(params.actor.whatsappId):null
     const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,
-      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
+      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
     // Why a run stopped, without page text, selectors or values: answers "why was it blocked?".
     try{console.log('BROWSER_RUN_RESULT:',JSON.stringify({runId:params.runId,status:result.status,blockReason:(result as any).blockReason||null,authReason:(result as any).authReason||null,host:(()=>{try{return new URL(String(result.url||'')).hostname}catch{return null}})(),title:String(result.title||'').slice(0,80),steps:(result.actions||[]).slice(0,20).map((a:any)=>`${a.kind}:${a.status}`),signupVault:(result as any).signupVault||null}))}catch{}
@@ -451,6 +455,15 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
           }
           const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
           const resumeUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+          if(result.loginCodeStage){
+            // The person may send the code in chat or on WhatsApp for 10 minutes; three wrong codes hand over.
+            const attempts=Number(runMetadata.login_code?.attempts||0)+(result.otpRejected?1:0)
+            const tooMany=attempts>=3
+            const site=new URL(params.command.url).hostname.replace(/^www\./,'')
+            const text=loginCodeMessage({site,rejected:result.otpRejected===true,tooMany,takeoverUrl:resumeUrl})
+            await supabaseAdmin.from('agent_runs').update({summary:safe(text.split('\n')[0],600),metadata_json:{...runMetadata,handoff,login_code:tooMany?null:{requested_at:new Date().toISOString(),attempts}}}).eq('id',params.runId).eq('telegram_id',String(tg))
+            return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text,blockedReason:blockReason,loginCodeStage:!tooMany,handledBy:'secure-browser' as const}
+          }
           if(providerBooking&&result.bookingStage){
             const host=new URL(params.command.url).hostname.replace(/^www\./,'')
             const tooMany=result.bookingStage==='otp'&&Number(bookingOtp?.attempts||0)>=3
@@ -676,7 +689,7 @@ export async function executeApprovedBrowserCommand(params:{actor:AgentActor;run
 }
 
 
-export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:string}){
+export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:string;loginCode?:string|null}){
   const tg=params.actor.legacyTelegramId
   const {data:run,error}=await supabaseAdmin.from('agent_runs')
     .select('id,status,type,metadata_json')
@@ -773,6 +786,7 @@ export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:stri
     stepId:String(step.id),
     command,
     mode,
+    ...(params.loginCode&&mode==='read'?{loginCode:params.loginCode}:{}),
     approved:false,
   })
 }
@@ -802,6 +816,37 @@ export async function claimBookingOtpRun(tg:number,runId:string){
   const {data:claimed}=await supabaseAdmin.from('agent_runs')
     .update({status:'running',metadata_json:{...meta,booking_otp:{...meta.booking_otp,requested_at:null}},summary:'Gogo is entering the code and continuing the booking.',updated_at:new Date().toISOString()})
     .eq('id',runId).eq('telegram_id',String(tg)).eq('status','paused').select('id').maybeSingle()
+  return Boolean(claimed?.id)
+}
+
+export function loginCodeMessage(params:{site:string;rejected?:boolean;tooMany?:boolean;takeoverUrl:string}){
+  if(params.tooMany)return `${params.site} didn't accept the code three times, so I stopped there. Open this, tap Take control and sign in yourself, then tap Resume:\n${params.takeoverUrl}`
+  const lead=params.rejected
+    ?`${params.site} didn't accept that code. Send me the newest code from your SMS (tap Resend on the site first if it expired).`
+    :`${params.site} sent a sign-in code to your phone.`
+  return `${lead}\n\nReply here with just the code, for example *482913*. I'll type it in and carry on with your question. I use it once and never save it.\n\nPrefer to type it yourself? Open this, tap Take control, enter it, then tap Resume:\n${params.takeoverUrl}`
+}
+
+/** A read run waiting (for up to 10 minutes) for the sign-in code the site texted the person. */
+export async function findLoginCodeRun(tg:number|string){
+  const {data,error}=await supabaseAdmin.from('agent_runs').select('id,metadata_json')
+    .eq('telegram_id',String(tg)).eq('type','secure_browser').eq('status','paused')
+    .not('metadata_json->login_code->>requested_at','is',null).order('updated_at',{ascending:false}).limit(1).maybeSingle()
+  if(error||!data)return null
+  const requested=Date.parse(String((data.metadata_json as any)?.login_code?.requested_at||''))
+  if(!Number.isFinite(requested)||Date.now()-requested>10*60_000||Date.now()<requested)return null
+  return String(data.id)
+}
+
+/** Use the code once: whichever request clears requested_at first owns it. The run stays paused for the resume. */
+export async function claimLoginCodeRun(tg:number|string,runId:string){
+  const {data:run}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',runId).eq('telegram_id',String(tg)).eq('status','paused').maybeSingle()
+  const meta:any=run?.metadata_json
+  const requested=meta?.login_code?.requested_at
+  if(!requested)return false
+  const {data:claimed}=await supabaseAdmin.from('agent_runs')
+    .update({metadata_json:{...meta,login_code:{...meta.login_code,requested_at:null}},summary:'Gogo is entering your code.',updated_at:new Date().toISOString()})
+    .eq('id',runId).eq('telegram_id',String(tg)).eq('status','paused').eq('metadata_json->login_code->>requested_at',String(requested)).select('id').maybeSingle()
   return Boolean(claimed?.id)
 }
 

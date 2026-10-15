@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp } from '@/lib/whatsapp'
 import type { AgentActor } from './actor'
 import { executeApprovedBrowserCommand, resumePausedBrowserRun } from './browser-command'
+import { evaluateAgentExecutionPolicy } from './policy'
 
 // Approved secure-browser runs are executed by ONE shared function, reached two ways:
 //  1. triggerApprovedBrowserRun(): right after the user approves on WhatsApp, the webhook
@@ -169,6 +170,48 @@ export async function runBookingOtpResume(runId: string, otp: string): Promise<A
     if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, `I couldn't continue the booking with that code, so nothing is booked or paid. You can book directly here:\n${String(meta.url || '')}`).catch(() => {})
     return 'failed'
   }
+}
+
+/**
+ * Continue a read that stopped for the sign-in code the site texted (Swiggy, Amazon…). The code was claimed once by
+ * claimLoginCodeRun and travels only to the browser run that types it; it is never stored or logged here.
+ */
+export async function runLoginCodeResume(runId: string, code: string): Promise<ApprovedBrowserRunOutcome> {
+  if (!/^\d{4,8}$/.test(code)) return 'skipped'
+  const { data: run } = await supabaseAdmin.from('agent_runs').select('id,telegram_id,type,status,metadata_json').eq('id', runId).maybeSingle()
+  const meta: any = run?.metadata_json || {}
+  if (!run || run.type !== 'secure_browser' || run.status !== 'paused' || !meta.login_code || String(meta.mode || 'read') !== 'read') return 'skipped'
+  const actor = await actorForTelegramId(String(run.telegram_id))
+  if (!actor) return 'failed'
+  const suffix = String(meta.notify_suffix || '').trim()
+  try {
+    const result = await resumePausedBrowserRun({ actor, runId: String(run.id), loginCode: code })
+    if (actor.whatsappId && result?.text) await sendWhatsApp(actor.whatsappId, [String(result.text), result?.status === 'completed' ? suffix : ''].filter(Boolean).join('\n\n'))
+    return result?.status === 'completed' ? 'completed' : 'blocked'
+  } catch (err: any) {
+    console.error('LOGIN_CODE_RESUME_FAILED:', run.id, String(err?.message || 'failed').slice(0, 120))
+    if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, "I couldn't finish signing in with that code. Nothing was changed. Ask me again and I'll start over.").catch(() => {})
+    return 'failed'
+  }
+}
+
+/** Hand a sign-in code to the internal route (300s budget). The code travels only in the request body. */
+export async function triggerLoginCodeResume(runId: string, code: string): Promise<'dispatched' | 'failed'> {
+  // Policy gate: only a paused read may continue, and only while the person's browser permission still allows reads.
+  const { data: run } = await supabaseAdmin.from('agent_runs').select('telegram_id,status,metadata_json').eq('id', runId).maybeSingle()
+  if (!run || run.status !== 'paused' || String((run.metadata_json as any)?.mode || 'read') !== 'read') return 'failed'
+  const { data: perm } = await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id', String(run.telegram_id)).eq('capability', 'browser').maybeSingle()
+  const policy = evaluateAgentExecutionPolicy({ capability: 'browser', permissionLevel: (perm?.level as any) || 'ask', mode: 'read', risk: 'low', irreversible: false, approvalStatus: null })
+  if (!policy.allowed) { console.error('LOGIN_CODE_TRIGGER_POLICY_BLOCKED:', runId, policy.reason); return 'failed' }
+  const secret = process.env.CRON_SECRET
+  if (!secret) return 'failed'
+  try {
+    const res = await fetch(`${appBaseUrl()}/api/agent/approved-browser`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ runId, loginCode: code }), signal: AbortSignal.timeout(20_000),
+    })
+    return res.ok ? 'dispatched' : 'failed'
+  } catch { return 'failed' }
 }
 
 /** Hand a booking OTP to the internal route (its own 300s budget). The code travels only in the request body. */
