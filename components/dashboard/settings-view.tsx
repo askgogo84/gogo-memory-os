@@ -145,7 +145,9 @@ function Connections(props: Props) {
   }, [props.sites])
 
   async function post(action: 'sign_in' | 'confirm' | 'remove', site: CatalogueSite) {
-    setBusy(site.id + action); setMessage('')
+    setBusy(site.id + action)
+    // Starting the secure browser takes up to a minute; say so instead of a silent button.
+    setMessage(action === 'sign_in' ? `Opening ${site.name} in your secure browser. This can take up to a minute…` : '')
     try {
       const response = await fetch('/api/dashboard/connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, site: site.id }) })
       const data = await response.json().catch(() => ({}))
