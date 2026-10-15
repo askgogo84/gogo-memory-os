@@ -26,7 +26,7 @@ const BOILERPLATE = [
   /\b(?:unsubscribe|manage preferences)\b.*$/gi,
 ]
 export function cleanEmailSnippet(raw: string | null | undefined, max = 200): string {
-  let s = String(raw || '').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/‌|​/g, '')
+  let s = String(raw || '').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/[\u200b-\u200d\u034f\u00ad\ufeff\u2007]/g, '')  // invisible preheader padding (Amazon pads with U+034F)
   for (const re of BOILERPLATE) s = s.replace(re, ' ')
   s = s.replace(/\s+/g, ' ').trim()
   return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s

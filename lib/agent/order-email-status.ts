@@ -41,7 +41,10 @@ export function formatOrderEmailAnswer(site: CatalogueSite, messages: Array<{ su
   if (!messages.length) return null
   const line = (m: any) => {
     const date = formatEmailDateIST(m.date)
-    const snippet = cleanEmailSnippet(m.snippet)
+    const subject = String(m.subject || '').trim()
+    let snippet = cleanEmailSnippet(m.snippet)
+    // Shop emails often repeat the subject as the preview text; show it once.
+    if (subject && snippet.replace(/["'…]/g, '').toLowerCase().startsWith(subject.replace(/["'…]/g, '').toLowerCase().slice(0, 30))) snippet = ''
     return `*${String(m.subject || 'Order update').trim()}*${date ? `\n${date}` : ''}${snippet ? `\n${snippet}` : ''}`
   }
   const [latest, ...earlier] = messages

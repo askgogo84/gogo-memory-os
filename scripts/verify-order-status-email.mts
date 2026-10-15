@@ -39,3 +39,9 @@ const stealth = managedSessionConfig('p', 'c', 'o', 'amazon.in', 300, true, 'pro
 assert.equal(stealth.browserSettings.advancedStealth, true)
 assert.equal(stealth.browserSettings.solveCaptchas, false)
 console.log('verify-order-status-email: ok')
+
+// 15 Oct live: Amazon pads the preview with U+034F and repeats the subject; the answer shows the subject once.
+const padded = formatOrderEmailAnswer(amazon, [{ subject: 'Ordered: "Huawei FreeClip 2, Open-Ear..."', date: 'Thu, 15 Oct 2026 07:57:00 +0000', snippet: 'Ordered: "Huawei FreeClip 2, Open-Ear..."͏ ͏ ͏ ͏' }])!
+assert.doesNotMatch(padded, /͏/)
+assert.equal(padded.match(/Huawei FreeClip 2/g)?.length, 1)
+console.log('verify-order-status-email: padding ok')
