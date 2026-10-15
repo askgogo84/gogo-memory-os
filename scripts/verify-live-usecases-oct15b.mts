@@ -58,4 +58,16 @@ assert.match(activity, /run\.error&&!\/\^\[a-z0-9_:\.-\]\+\$\/\.test\(run\.error
 const watch = read('lib/agent/watch-command.ts')
 assert.doesNotMatch(watch, /in persistent watcher state\.'.*handledBy:'watcher-stop'/)
 assert.match(watch, /You don't have a watch for \$\{typedWatchName\(params\.text\)\|\|'that'\}\. Your active watches:/)
+// 8. Steps of a closed stuck run stop too, and the task page never says a step of an ended task is still working.
+assert.match(stale, /\.in\('run_id', ids\)\.in\('status', \['running', 'queued'\]\)/)
+const runPage = read('app/dashboard/(app)/activity/[runId]/page.tsx')
+assert.match(runPage, /const runOver=\['completed','failed','closed','cancelled'\]\.includes/)
+assert.match(runPage, /\{stopped\?'Stopped when the task ended\.':/)
+
+// 9. A trip's flight-status watch ends 6 hours after the last leg lands, not with the 72-hour trip context.
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
+const { flightStatusExpiry } = await import('../lib/agent/contextual-travel-watchers')
+assert.equal(flightStatusExpiry([{ arrive_at: '2026-10-13T17:40:00Z' }] as any, '2026-10-16T17:40:00.000Z'), '2026-10-13T23:40:00.000Z')
+assert.equal(flightStatusExpiry([] as any, '2026-10-16T17:40:00.000Z'), '2026-10-16T17:40:00.000Z')
+assert.match(read('lib/agent/contextual-travel-watchers.ts'), /expiresAt:flightStatusExpiry\(rows,expiresAt\),/)
 console.log('verify-live-usecases-oct15b: ok')

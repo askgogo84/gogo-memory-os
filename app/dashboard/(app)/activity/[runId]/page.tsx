@@ -43,6 +43,8 @@ export default async function ActivityRunPage({params}:{params:Promise<{runId:st
   const done=run.steps.filter(s=>s.status==='completed').length
   const total=Math.max(run.steps.length,1)
   const needsUser=['paused','waiting_approval'].includes(run.status)
+  // A step left running inside a task that already ended did not keep going; say it stopped.
+  const runOver=['completed','failed','closed','cancelled'].includes(String(run.status))
 
   return <div className="mx-auto w-full max-w-[1180px] pb-10">
     <header className="border-b border-[#2A2A2A] pb-5">
@@ -68,16 +70,17 @@ export default async function ActivityRunPage({params}:{params:Promise<{runId:st
         <div className="relative mt-2">
           <div className="absolute bottom-4 left-[9px] top-4 w-px bg-[#2A2A2A]"/>
           {run.steps.map((step,index)=>{
-            const waiting=step.status==='waiting_approval'||(index===run.steps.length-1&&needsUser&&step.status!=='completed'&&step.status!=='failed')
+            const stopped=runOver&&['running','queued','waiting_approval'].includes(String(step.status))
+            const waiting=!stopped&&(step.status==='waiting_approval'||(index===run.steps.length-1&&needsUser&&step.status!=='completed'&&step.status!=='failed'))
             return <div key={step.id} className={`relative grid grid-cols-[20px_minmax(0,1fr)] gap-x-3 py-2.5 ${waiting?'mt-1':''}`}>
               <div className="flex justify-center pt-1.5"><span className={`relative z-10 h-[11px] w-[11px] rounded-full border-2 border-[#111111] ${dot(step.status)}`}/></div>
               <div className={waiting?'rounded-[14px] bg-[#1A1710] px-4 py-3':'pr-2'}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <div className="text-[16px] font-semibold text-[#F2EFEA]">{step.title}</div>
-                    <div className="mt-1 text-[15px] leading-5 text-[#9A9A9A]">{step.error?step.error:step.status==='completed'?'Completed successfully.':step.status==='failed'?'This step failed and Gogo stopped or retried safely.':step.status==='running'?'Gogo is working on this step now.':step.status==='queued'?'Queued for execution.':'Waiting before this step can continue.'}</div>
+                    <div className="mt-1 text-[15px] leading-5 text-[#9A9A9A]">{stopped?'Stopped when the task ended.':step.error&&!/^[a-z0-9_:.-]+$/.test(step.error)?step.error:step.status==='completed'?'Completed successfully.':step.status==='failed'?'This step failed and Gogo stopped or retried safely.':step.status==='running'?'Gogo is working on this step now.':step.status==='queued'?'Queued for execution.':'Waiting before this step can continue.'}</div>
                   </div>
-                  <div className="flex items-center gap-2"><span className={`text-[12px] font-bold uppercase tracking-[.1em] ${step.status==='failed'?'text-[#9A9A9A]':step.status==='completed'?'text-[#7FB069]':'text-[#D9A441]'}`}>{statusLabel(step.status)}</span><span className="text-[14px] text-[#6A6A6A]">{fmt(step.completedAt||step.startedAt)}</span></div>
+                  <div className="flex items-center gap-2"><span className={`text-[12px] font-bold uppercase tracking-[.1em] ${stopped||step.status==='failed'?'text-[#9A9A9A]':step.status==='completed'?'text-[#7FB069]':'text-[#D9A441]'}`}>{stopped?'Stopped':statusLabel(step.status)}</span><span className="text-[14px] text-[#6A6A6A]">{fmt(step.completedAt||step.startedAt)}</span></div>
                 </div>
               </div>
             </div>

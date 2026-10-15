@@ -97,6 +97,12 @@ function awayStay(rows:TravelRow[]):{city:string;arriveMs:number;endMs:number}|n
 // Destination weather tracks the STAY, not the outbound leg. Bounded by the return
 // departure when known; a one-way (open-ended) stay extends to a reasonable horizon
 // instead of ending 72h after arrival.
+export function flightStatusExpiry(rows:TravelRow[],fallbackExpiresAt:string){
+  const times=rows.map(row=>Date.parse(String(row.arrive_at||row.depart_at||''))).filter(Number.isFinite)
+  if(!times.length)return fallbackExpiresAt
+  const end=new Date(Math.max(...times)+6*3600_000).toISOString()
+  return Date.parse(end)<Date.parse(fallbackExpiresAt)?end:fallbackExpiresAt
+}
 function destinationStayExpiry(rows:TravelRow[],fallbackExpiresAt:string){
   const stay=awayStay(rows)
   if(!stay)return fallbackExpiresAt
@@ -148,6 +154,8 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
         // date of the SPECIFIC leg whose flight number the result cites (not any leg date).
         flightLegs:rows.map(row=>`${normalizeFlightNo(clean(row.flight_no,30))} @ ${dateLabel(String(row.depart_at||row.arrive_at||''),ticketTimezone(row.from_city))}`).filter(s=>!s.startsWith(' @')),
         ...base('flight_status','Watch only for material changes to the saved flight legs before and during departure.'),
+        // Once the last leg has landed there is no flight status left to watch (KL879 was still watched two days later).
+        expiresAt:flightStatusExpiry(rows,expiresAt),
       },
     },
     {
