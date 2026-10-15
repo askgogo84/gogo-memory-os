@@ -9,6 +9,7 @@ import { CHAT_STATE_LABEL, CHAT_STATE_SHORT, chatGogoState, type ChatGogoState }
 import { flightChoiceFromText } from '@/lib/agent/flight-choices'
 import { CHAT_SUGGESTIONS, greetingFor, type ChatSuggestion } from '@/lib/dashboard/chat-suggestions'
 import { splitChatText } from '@/lib/dashboard/chat-text'
+import { MobileMenuButton } from '@/components/dashboard/mobile-nav'
 import { LOCATION_STORAGE_KEY, locationIsStale, locationTag, parseApproxLocation, parseLocationPreference, type LocationPreference } from '@/lib/dashboard/approx-location'
 
 type ChatMessage={
@@ -57,7 +58,7 @@ function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPic
   }
   return <div className="flex items-start gap-3 sm:gap-3.5">
     <Avatar size={40}/>
-    <div className="min-w-0 max-w-[90%] pt-1 text-[16px] leading-[1.65] text-[#f2efea] sm:max-w-[84%] sm:text-[17px]">
+    <div className="min-w-0 max-w-[90%] pt-1 text-[16px] leading-[1.65] text-[#dcdad5] sm:max-w-[84%] sm:text-[17px]">
       <div className="whitespace-pre-wrap break-words">
         {richText(message.content)}
         {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
@@ -284,12 +285,13 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
     void submit()
   }
 
-  return <div className="grid h-[calc(100dvh-5.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-[520px] w-full overflow-hidden bg-[#0b0b0b] lg:border lg:border-[#1f1f1f] lg:h-[calc(100dvh-4.25rem)] lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
+  return <div className="grid h-[calc(100dvh-1.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-[520px] w-full overflow-hidden bg-[#0b0b0b] lg:border lg:border-[#1f1f1f] lg:h-[calc(100dvh-4.25rem)] lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
     <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-      <header className="shrink-0 border-b border-[#1f1f1f] px-4 py-2.5 sm:px-6 lg:px-10 lg:py-5">
+      <header className="shrink-0 border-b border-[#1f1f1f] px-1 py-2 sm:px-6 lg:px-10 lg:py-5">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="lg:hidden"><Avatar state={gogoState} size={40} showStatus/></div>
+          <div className="flex min-w-0 items-center gap-2 lg:gap-3">
+            <MobileMenuButton/>
+            <div className="lg:hidden"><Avatar state={gogoState} size={36} showStatus/></div>
             <div className="min-w-0">
               <h1 className="truncate text-[22px] font-bold leading-tight tracking-[-.02em] text-[#f2efea] lg:text-[34px]">Gogo<span className="ml-2 text-[14px] font-normal tracking-normal text-[#b4b4b0] lg:hidden">{CHAT_STATE_SHORT[gogoState]}</span></h1>
               <p className="mt-0.5 hidden text-[16px] text-[#b4b4b0] lg:block">One conversation, across here and WhatsApp.</p>

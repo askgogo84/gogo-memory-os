@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const home=readFileSync(new URL('../app/dashboard/(app)/home/page.tsx',import.meta.url),'utf8')
-const rail=readFileSync(new URL('../components/dashboard/side-rail.tsx',import.meta.url),'utf8')
-const tabs=readFileSync(new URL('../components/dashboard/tab-bar.tsx',import.meta.url),'utf8')
+const rail=readFileSync(new URL('../components/dashboard/dashboard-nav.tsx',import.meta.url),'utf8')
+const mobile=readFileSync(new URL('../components/dashboard/mobile-nav.tsx',import.meta.url),'utf8')
 const css=readFileSync(new URL('../app/globals.css',import.meta.url),'utf8')
 const library=readFileSync(new URL('../app/dashboard/(app)/library/page.tsx',import.meta.url),'utf8')
 const connections=readFileSync(new URL('../app/dashboard/(app)/connections/page.tsx',import.meta.url),'utf8')
@@ -16,9 +16,8 @@ assert.match(css,/--color-gogo-ink: #f2efea/)
 for(const label of ['Today','Gogo','Activity','Needs you','Background','Goals','Memory','Library','Connections','Vault','You']){
   assert.ok(rail.includes("label:'"+label+"'"),'rail must expose '+label)
 }
-for(const label of ['Today','Gogo','Activity','Memory','You']){
-  assert.ok(tabs.includes("label:'"+label+"'"),'mobile tabs must expose '+label)
-}
+// 15 Oct redesign: the phone drawer shows the same list as the desktop rail (no bottom tab bar).
+assert.ok(mobile.includes('<NavLinks counts={counts}'),'phone drawer must use the shared nav list')
 
 assert.match(home,/Needs you/)
 assert.match(home,/In the background/)
