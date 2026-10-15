@@ -1244,7 +1244,7 @@ metadata={objective:'Read airports',url:deadlinePage.url,mode:'read'}
 commandExecutionFailure=new Error('browser_read_deadline')
 const timedOut=await command.executeBrowser(params)
 assert.equal(timedOut.status,'failed')
-assert.match(timedOut.text,/time limit/i)
+assert.match(timedOut.text,/took too long/i)
 assert(mutations.some(m=>m.table==='agent_runs'&&m.update?.status==='failed'&&m.update?.error==='browser_read_deadline'),'persist failure before returning to chat')
 assert.equal(mutations.filter(m=>m.table==='agent_runs'&&m.update?.error==='browser_read_deadline').at(-1)?.update.summary,timedOut.text,'dashboard and chat share the saved failure explanation')
 for(const error of ['browser_objective_unverified','browser_planning_failed','browser_live_session_expired']){

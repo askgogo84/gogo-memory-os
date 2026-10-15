@@ -88,7 +88,7 @@ const first=await runtime.buildPulse(owner,'Asia/Kolkata')
 assert.equal(first.items.length,2,'same Zomato request must occupy one digest slot')
 assert(first.items.some((x:any)=>x.line.includes('/dashboard/activity/z-new')),'link latest attempt')
 assert(first.items.every((x:any)=>!x.line.includes('could not complete the secure browser session')),'explain the recorded failure')
-assert(first.items.every((x:any)=>/No input is requested from you/.test(x.line)),'do not imply user can repair an unverified browser read')
+assert(first.items.every((x:any)=>/Nothing was changed/.test(x.line)),'do not imply user can repair an unverified browser read')
 await runtime.sendPulse(owner)
 assert.equal(deliveries.length,1)
 // Same blocker stays quiet past the cooldown, including a new attempt ID.
