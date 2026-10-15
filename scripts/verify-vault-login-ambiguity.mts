@@ -16,7 +16,7 @@ assert.match(login,/async function visibleFields\(page, selector\)/,'the login s
 assert.match(login,/if\(userFields\.length>1\) ambiguous\.push\('username_fields'\)/,'several username fields are refused')
 assert.match(login,/if\(passFields\.length>1\) ambiguous\.push\('password_fields'\)/,'several password fields are refused')
 assert.match(login,/if\(passFields\.length===1\)\{/,'the password is typed only into a single unambiguous field')
-assert.match(login,/out\.vaultLogin=\{usernameFilled,passwordFilled,submitted,ambiguous\}/,'the fill outcome, including ambiguity, is reported')
+assert.match(login,/out\.vaultLogin=\{usernameFilled,passwordFilled,submitted,ambiguous,openerClicked\}/,'the fill outcome, including ambiguity, is reported')
 assert.doesNotMatch(login,/firstVisible\(page,\['input\[autocomplete="current-password"\]'/,'the password is no longer taken from the first visible match')
 
 const caller=src.slice(src.indexOf("actionLog.push(vaultFilled"),src.indexOf("actionLog.push(vaultFilled")+900)
