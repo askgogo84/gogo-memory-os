@@ -267,7 +267,7 @@ export async function tryRestartWatcherFromCommand(params:{actor:AgentActor;text
   await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,event_type:'watcher_restarted',
     message:`Gogo restarted ${best.label}.`.slice(0,900),metadata_json:{watcher_id:chosen.id,type:chosen.type}})
   return {runId:`watcher-restart-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-    text:`Watch restarted: ${best.label} — active, checking about every ${Math.max(1,Number(chosen.cadence_minutes||60))} min. Persistent state now shows ${active.length} active monitor${active.length===1?'':'s'}.`,handledBy:'watcher-restart'}
+    text:`Watch restarted: ${best.label} — active, checking about every ${Math.max(1,Number(chosen.cadence_minutes||60))} min. You have ${active.length} active watch${active.length===1?'':'es'}.`,handledBy:'watcher-restart'}
 }
 
 // Explicit replacement criteria, not a guessed edit to an ambiguous watch.
@@ -363,7 +363,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
     if(remaining.some((row:any)=>String(row.id)===String(chosen.id)))throw new Error('watcher_stop_read_after_write_failed')
     await dismissIdeasForWatcherIds(tg,[String(chosen.id)])
     return {runId:`watcher-stop-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-      text:`Stopped ${String((chosen.condition_json as any)?.title||'that monitor')}. Persistent state now shows ${remaining.length} active monitor${remaining.length===1?'':'s'}.`,handledBy:'watcher-stop'}
+      text:`Stopped ${String((chosen.condition_json as any)?.title||'that monitor')}. ${remaining.length} other watch${remaining.length===1?' is':'es are'} still running.`,handledBy:'watcher-stop'}
   }
   if(intent==='all'){
     const rows=await canonicalActiveWatchers(tg)
